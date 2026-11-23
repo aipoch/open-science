@@ -1243,7 +1243,10 @@ const callbackContainerSummaryArray = (
   return summaries
 }
 
-const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
+const normalizeFacts = (
+  value: unknown,
+  persistedTypeSummaries?: NotebookDependencyTypeSummary[]
+): NotebookRunDependencyFacts => {
   if (!value || typeof value !== 'object') return unknownFacts('invalid-parser-result')
   const record = value as Record<string, unknown>
   const callbackContainers = callbackContainerSummaryArray(
@@ -1271,7 +1274,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   if (record.rGraphicsState !== undefined && !graphics) return unknownFacts('invalid-parser-result')
   if (record.state === 'unknown') {
     const reasons = stringArray(record.reasons)
-    const typeSummaries = typeSummaryArray(record.typeSummaries ?? [])
+    const typeSummaries = persistedTypeSummaries ?? typeSummaryArray(record.typeSummaries ?? [])
     const typeBindings = typeBindingArray(record.typeBindings ?? [])
     const receiverCalls = receiverCallArray(record.receiverCalls ?? [])
     const memberWrites = memberWriteArray(record.memberWrites ?? [])
@@ -1376,7 +1379,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   const copyOnModifyInvalidatedNames = stringArray(record.copyOnModifyInvalidatedNames ?? [])
   const safeCallNames = stringArray(record.safeCallNames ?? [])
   const safeCallArgumentNames = stringArray(record.safeCallArgumentNames ?? [])
-  const typeSummaries = typeSummaryArray(record.typeSummaries ?? [])
+  const typeSummaries = persistedTypeSummaries ?? typeSummaryArray(record.typeSummaries ?? [])
   const typeBindings = typeBindingArray(record.typeBindings ?? [])
   const receiverCalls = receiverCallArray(record.receiverCalls ?? [])
   const memberWrites = memberWriteArray(record.memberWrites ?? [])
@@ -1546,6 +1549,12 @@ const boundedFileContext = (
   }
 }
 
+const environmentManifestChecksumForAnalysis = (run: NotebookRunRecord): unknown =>
+  run.environmentManifestChecksum ??
+  (run.environmentCapture?.state === 'available' || run.environmentCapture?.state === 'partial'
+    ? run.environmentCapture.manifestChecksum
+    : run.environmentManifest?.executionContext)
+
 const checksumFor = (run: NotebookRunRecord): string =>
   createHash('sha256')
     .update(
@@ -1561,6 +1570,7 @@ const checksumFor = (run: NotebookRunRecord): string =>
         run.cwdAfter,
         run.script,
         run.fileEvidence?.checksum,
+        environmentManifestChecksumForAnalysis(run),
         run.helperEvidenceStatus,
         run.helperModules?.map(
           ({ helperId, sourceDigest, exports, interfaceRevision, registeredGeneration }) => [
@@ -1730,7 +1740,7 @@ const projectionChecksumFor = ({ run, facts, fileAccess }: AnalyzedNotebookRun):
         run.kernelEpochId,
         run.status,
         run.kernelDispatched,
-        run.environmentManifest?.executionContext?.rPackages,
+        environmentManifestChecksumForAnalysis(run),
         facts,
         fileAccess,
         run.workingFiles.map(({ relativePath, generationId, checksum, change, createdByRunId }) => [
@@ -1776,7 +1786,11 @@ class NotebookDependencyAnalyzer {
     private readonly options: {
       cachePath: (projectId: string, sessionId: string) => string
       repository: {
-        readSessionRuns(projectId: string, sessionId: string): Promise<NotebookRunRecord[]>
+        readSessionRuns(
+          projectId: string,
+          sessionId: string,
+          options?: { includeEnvironmentManifests?: boolean }
+        ): Promise<NotebookRunRecord[]>
       }
       /** Execution directory within the generation path namespace. Defaults to its root. */
       executionRelativeRoot?: string
@@ -1979,12 +1993,16 @@ class NotebookDependencyAnalyzer {
   private async sourceFileAccessContextExclusive(
     request: NotebookSourceFileAccessContextRequest
   ): Promise<NotebookSourceFileAccessContext | undefined> {
-    const [runs, initialSidecar] = await Promise.all([
+    const [initialRuns, initialSidecar] = await Promise.all([
       this.options.repository.readSessionRuns(request.projectId, request.sessionId),
       this.readSidecar(this.sidecarPath(request.projectId, request.sessionId))
     ])
+    let runs = initialRuns
     const sidecar = initialSidecar
     if (sourceFileAccessContextNeedsRefresh(runs, sidecar, request)) {
+      runs = await this.options.repository.readSessionRuns(request.projectId, request.sessionId, {
+        includeEnvironmentManifests: true
+      })
       await this.projectExclusive(
         { projectId: request.projectId, sessionId: request.sessionId },
         request.currentRunId,
@@ -2043,7 +2061,9 @@ class NotebookDependencyAnalyzer {
   ): Promise<NotebookDependencyProjection> {
     const runs =
       prepared?.runs ??
-      (await this.options.repository.readSessionRuns(request.projectId, request.sessionId))
+      (await this.options.repository.readSessionRuns(request.projectId, request.sessionId, {
+        includeEnvironmentManifests: true
+      }))
     const boundaryRunId = analyzeBeforeRunId ?? request.throughRunId
     const boundaryIndex = boundaryRunId ? runs.findIndex((run) => run.runId === boundaryRunId) : -1
     const runsToAnalyze =
@@ -2459,7 +2479,6 @@ class NotebookDependencyAnalyzer {
                 stringArray(factsRecord.safeCallNames) !== undefined) &&
               (factsRecord.safeCallArgumentNames === undefined ||
                 stringArray(factsRecord.safeCallArgumentNames) !== undefined) &&
-              typeSummaryArray(factsRecord.typeSummaries, true) !== undefined &&
               typeBindingArray(factsRecord.typeBindings, true) !== undefined &&
               receiverCallArray(factsRecord.receiverCalls, true) !== undefined &&
               memberWriteArray(factsRecord.memberWrites, true) !== undefined
@@ -2506,14 +2525,15 @@ class NotebookDependencyAnalyzer {
                 stringArray(factsRecord.safeCallNames) !== undefined) &&
               (factsRecord.safeCallArgumentNames === undefined ||
                 stringArray(factsRecord.safeCallArgumentNames) !== undefined) &&
-              typeSummaryArray(factsRecord.typeSummaries, true) !== undefined &&
               typeBindingArray(factsRecord.typeBindings, true) !== undefined &&
               receiverCallArray(factsRecord.receiverCalls, true) !== undefined &&
               memberWriteArray(factsRecord.memberWrites, true) !== undefined
         if (!validFacts) return emptySidecar()
+        const typeSummaries = typeSummaryArray(factsRecord.typeSummaries, true)
+        if (!typeSummaries) return emptySidecar()
         runs[runId] = {
           checksum: record.checksum,
-          facts: normalizeFacts(rawFacts),
+          facts: normalizeFacts(rawFacts, typeSummaries),
           ...(fileAccess ? { fileAccess } : {}),
           ...(fileContext ? { fileContext } : {})
         }
@@ -2546,7 +2566,7 @@ class NotebookDependencyAnalyzer {
     await mkdir(dirname(path), { recursive: true })
     const temporaryPath = `${path}.${randomUUID()}.tmp`
     try {
-      await writeFile(temporaryPath, `${JSON.stringify(sidecar, null, 2)}\n`, 'utf8')
+      await writeFile(temporaryPath, `${JSON.stringify(sidecar)}\n`, 'utf8')
       await rename(temporaryPath, path)
     } catch (error) {
       await rm(temporaryPath, { force: true }).catch(() => undefined)

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { Badge } from './badge'
 import { Button } from './button'
+import { ZoomControls } from './zoom-controls'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -183,4 +184,28 @@ describe('shared control interaction styling', () => {
     expect(tooltip?.className).toContain('whitespace-normal')
     expect(tooltip?.className).toContain('break-words')
   })
+})
+
+it('shares zoom actions while keeping reset behavior and bounds with the caller', () => {
+  const actions: string[] = []
+  act(() =>
+    root.render(
+      <ZoomControls
+        onZoomIn={() => actions.push('in')}
+        onZoomOut={() => actions.push('out')}
+        onReset={() => actions.push('fit')}
+        resetLabel="Fit graph"
+        canZoomOut={false}
+      />
+    )
+  )
+  const button = (label: string): HTMLButtonElement =>
+    container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!
+  act(() => {
+    button('Zoom in').click()
+    button('Zoom out').click()
+    button('Fit graph').click()
+  })
+  expect(actions).toEqual(['in', 'fit'])
+  expect(button('Zoom out').disabled).toBe(true)
 })

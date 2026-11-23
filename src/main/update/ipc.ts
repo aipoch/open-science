@@ -18,6 +18,11 @@ export const registerUpdateIpcHandlers = (
     })
   }
   handle('update:recheck', () => owner.recheck())
+  if (strategy.setAutomaticDownloads) {
+    handle('update:set-automatic-downloads', (_event, enabled: boolean) =>
+      strategy.setAutomaticDownloads!(enabled)
+    )
+  }
   handle('update:recover', () => owner.recover())
   handle('update:get-app-info', () => owner.getAppInfo())
   handle('update:get-status', () => owner.getStatus())

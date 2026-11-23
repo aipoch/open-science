@@ -40,14 +40,7 @@ export type ComputeView =
     }
 
 export type CredentialsServiceId =
-  | 'github'
-  | 'literature'
-  | 'openalex'
-  | 'unpaywall'
-  | 'semantic-scholar'
-  | 'hugging-face'
-  | 'modal'
-  | 'ray'
+  'github' | 'literature' | 'openalex' | 'unpaywall' | 'hugging-face' | 'modal' | 'ray'
 
 export type CredentialsView =
   | { kind: 'list' }
@@ -151,6 +144,7 @@ export type SettingsPanelId =
   | 'storage'
   | 'network'
   | 'runtimes'
+  | 'lab'
   | 'remote-control'
 
 export type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' | 'logs' }

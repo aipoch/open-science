@@ -101,6 +101,9 @@
         "scripts/windows-signing-policy.mjs",
         "scripts/windows-signing-policy.test.ts",
         "scripts/stage-backend.mjs",
+        "scripts/desktop-film-compiler.mjs",
+        "scripts/desktop-package-modules.mjs",
+        "scripts/pack-web-assets.mjs",
         "scripts/stage-npm-release.mjs",
         "scripts/stage-npm-release.test.ts",
         "scripts/pack-npm-release.mjs",
@@ -126,7 +129,10 @@
         "scripts/test-backend-installed.mjs",
         "scripts/stage-node-runtime.mjs",
         "build/node-runtime.json",
-        "build/macos-service-launcher.c"
+        "build/macos-service-launcher.c",
+        "build/mac-open-after-update.m",
+        "build/mac-quit-handoff.cjs",
+        "build/mac-update-network.c"
       ],
       "mode": "full",
       "capabilities": []
@@ -221,6 +227,7 @@
         "src/main/agent-framework/codex.ts",
         "src/main/agent-framework/opencode.ts",
         "src/main/agent-framework/pi-runtime.ts",
+        "src/main/agent-framework/reviewer-mcp-transport.ts",
         "src/main/agent-framework/types.ts",
         "src/main/app-lifecycle.ts",
         "packages/reproducibility/**",
@@ -255,6 +262,10 @@
         "src/main/local-rpc-transport.ts",
         "packages/notebook-code-risk/src/index.ts",
         "src/main/notebook/runtime-service.ts",
+        "src/main/notebook/memory-policy.ts",
+        "src/main/notebook/memory-policy-platform.ts",
+        "src/main/notebook/resource-memory.ts",
+        "src/main/notebook/resource-release.ts",
         "src/shared/tool-detail-sanitizer.ts",
         "packages/notebook-analysis/src/dependency-analysis-python.ts",
         "packages/notebook-analysis/src/dependency-analysis-repl.ts",
@@ -316,7 +327,9 @@
         "src/main/settings/claude-cli-process.ts",
         "src/main/settings/claude-detect.ts",
         "src/main/settings/claude-install.ts",
+        "src/main/settings/codebuddy-auth.ts",
         "src/main/settings/codebuddy-detect.ts",
+        "src/main/settings/codebuddy-profile.ts",
         "src/main/settings/codex-auth.ts",
         "src/main/settings/codex-harness-auth.ts",
         "src/main/settings/codex-detect.ts",
@@ -366,6 +379,7 @@
         "src/main/delegation/production-framework-runtime.ts",
         "src/main/desktop-connection.ts",
         "src/main/backend-startup-log-retention.ts",
+        "src/main/backend-startup-recovery.ts",
         "src/main/desktop-runtime-launcher.ts",
         "src/main/node-entry.ts",
         "src/main/notebook/code-risk-adapter.ts",
@@ -386,7 +400,8 @@
         "src/main/update/verification-process.ts",
         "src/main/agent-framework/harness.ts",
         "src/main/harness-acp/tool-receipts.ts",
-        "src/main/harness-acp/storage-cleanup.ts"
+        "src/main/harness-acp/storage-cleanup.ts",
+        "src/main/web/invocation-store.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -505,6 +520,10 @@
         "e2e/desktop-runtime-restart.spec.ts",
         "e2e/desktop-runtime-preview-recovery.spec.ts",
         "e2e/desktop-runtime-stop.spec.ts",
+        "e2e/literature-citation-graph-live.spec.ts",
+        "e2e/literature-citation-graph.spec.ts",
+        "e2e/fixtures/citation-graph-electron.mjs",
+        "e2e/fixtures/citation-graph-interactions.ts",
         "e2e/pdf-annotations.spec.ts",
         "e2e/pdf-translation-pair.spec.ts",
         "e2e/pdf-translation-preparation.spec.ts",
@@ -519,6 +538,7 @@
         "e2e/session-plan-recovery.spec.ts",
         "e2e/auto-review-stop-resume.spec.ts",
         "e2e/provider-connection-validation.spec.ts",
+        "e2e/model-catalog-refresh.spec.ts",
         "e2e/global-search.spec.ts",
         "e2e/search-file-navigation.spec.ts",
         "e2e/transcript-capacity.spec.ts",
@@ -568,10 +588,15 @@
         "e2e/notebook-network-logs.spec.ts",
         "e2e/pi-harness.spec.ts",
         "e2e/builtin-harness.spec.ts",
+        "e2e/default-agent-conversation.spec.ts",
+        "e2e/harness-provider-errors.spec.ts",
+        "e2e/harness-provider-error-matrix.spec.ts",
+        "e2e/fixtures/provider-error-cases.ts",
         "e2e/session-wait-status.spec.ts",
         "e2e/settings-error-transport.spec.ts",
         "e2e/desktop-runtime-startup.spec.ts",
         "e2e/desktop-runtime-native-relaunch.spec.ts",
+        "e2e/kernel-startup-fence.spec.ts",
         "e2e/runtime-update-ui-acceptance.spec.ts",
         "e2e/session-journal-recovery.spec.ts",
         "e2e/session-history-pages.spec.ts",
@@ -579,15 +604,22 @@
         "e2e/official-science-ui-opening-diagnosis.spec.ts",
         "e2e/fixtures/legacy-json/open-science-1.0.8-session.v2.json",
         "e2e/fixtures/session-ui-performance.ts",
+        "e2e/mac-python-diagnostic-e2e.spec.ts",
         "e2e/fixtures/library.ts",
         "e2e/fixtures/relaunch-observer.cjs",
         "e2e/fixtures/runtime-relaunch-stall.cjs",
         "e2e/fixtures/replay-stage/**",
         "e2e/fixtures/reproducibility-preview/**",
-        "e2e/fixtures/session-outcome-fault.ts",
         "e2e/fixtures/settings-error-transport.ts"
       ],
       "capabilities": ["desktop_e2e_source", "e2e_regressions"]
+    },
+    {
+      "id": "desktop_e2e_session_outcome_fixture",
+      "role": "owner",
+      "runner": "playwright",
+      "paths": ["e2e/fixtures/session-outcome-fault.ts"],
+      "capabilities": ["desktop_e2e_source", "e2e_regressions", "e2e_functional", "e2e_delegation"]
     },
     {
       "id": "desktop_e2e_delegation",
@@ -633,7 +665,9 @@
         "e2e/fixtures/conversation.ts",
         "e2e/fixtures/electron-app.ts",
         "e2e/fixtures/local-service-cleanup.ts",
+        "e2e/fixtures/citation-graph-interactions.ts",
         "e2e/fixtures/fake-opencode.mjs",
+        "e2e/fixtures/macos-acceptance.mjs",
         "e2e/fixtures/fake-remoteit.cjs",
         "e2e/fixtures/mock-credential-identity.cjs",
         "e2e/fixtures/mock-credential-identity.sh",
@@ -646,6 +680,8 @@
         "e2e/fixtures/project.ts",
         "e2e/fixtures/renderer-failure-gate.ts",
         "e2e/fixtures/research-analysis.mjs",
+        "e2e/fixtures/kernel-fence.mjs",
+        "e2e/fixtures/kernel-fence.d.mts",
         "e2e/fixtures/sanitized-performance.png",
         "e2e/fixtures/session-outcome-preload.cjs",
         "e2e/fixtures/settings-preferences.ts"
@@ -659,7 +695,11 @@
       "paths": [
         "e2e/certification/*.spec.ts",
         "e2e/runtime-performance.spec.ts",
-        "e2e/startup-performance.spec.ts"
+        "e2e/startup-performance.spec.ts",
+        "e2e/builtin-web-fetch.spec.ts",
+        "e2e/builtin-web-evidence-lifecycle.spec.ts",
+        "e2e/builtin-web-package.spec.ts",
+        "e2e/fixtures/web-model.ts"
       ],
       "capabilities": ["desktop_e2e_source"]
     },
@@ -705,6 +745,7 @@
       "id": "desktop_e2e_browser_fixtures",
       "role": "overlay",
       "paths": [
+        "e2e/fixtures/citation-graph-interactions.ts",
         "e2e/fixtures/localized-settings.ts",
         "e2e/fixtures/settings-preferences.ts",
         "e2e/fixtures/scroll-geometry.ts"
@@ -790,6 +831,8 @@
       "role": "overlay",
       "paths": [
         "e2e/fixtures/fake-opencode.mjs",
+        "e2e/fixtures/kernel-fence.mjs",
+        "e2e/fixtures/macos-acceptance.mjs",
         "e2e/fixtures/research-analysis.mjs",
         "e2e/fixtures/session-outcome-fault.ts"
       ],

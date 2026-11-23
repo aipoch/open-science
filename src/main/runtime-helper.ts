@@ -1,4 +1,5 @@
 import { HARNESS_ACP_ARG } from './harness-acp/config'
+import { installationHelperFlags } from '../../packages/open-science/installation-startup.cjs'
 import {
   ARTIFACT_MCP_SERVER_ARG,
   IMAGE_MCP_SERVER_ARG,
@@ -10,16 +11,7 @@ import {
 } from './mcp-server-args'
 
 export const isRuntimeHelper = (argv: readonly string[]): boolean =>
-  [
-    HARNESS_ACP_ARG,
-    ARTIFACT_MCP_SERVER_ARG,
-    IMAGE_MCP_SERVER_ARG,
-    NOTEBOOK_MCP_SERVER_ARG,
-    REVIEWER_MCP_PROXY_ARG,
-    SKILL_IMPORT_MCP_SERVER_ARG,
-    SKILL_RUNTIME_MCP_SERVER_ARG,
-    PLAN_MCP_SERVER_ARG
-  ].some((argument) => argv.includes(argument))
+  installationHelperFlags.some((argument) => argv.includes(argument))
 
 export async function runRuntimeHelper(argv: readonly string[]): Promise<boolean> {
   if (argv.includes(HARNESS_ACP_ARG))

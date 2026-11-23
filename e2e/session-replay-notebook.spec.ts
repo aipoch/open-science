@@ -69,6 +69,9 @@ test('asks about a standalone Notebook input and restores its exact step offset 
         .click()
     } else {
       await page
+        .locator(`[data-session-id="${source.id}"] [data-slot="session-open-button"]`)
+        .click()
+      await page
         .getByRole('region', { name: 'Imported research history', exact: true })
         .getByRole('button', { name: 'View replay', exact: true })
         .click()
@@ -196,17 +199,13 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   expect((await conversationPrompts()).at(-1)!.prompt).not.toContain('ARCHIVED_RESULT_42')
   page = await app.restart()
   await open(true)
-  await page
-    .getByRole('region', { name: 'Conversation', exact: true })
-    .getByRole('button', { name: 'Show annotation source', exact: true })
-    .click()
   const restoredReplay = page.getByTestId('replay-panel')
   const restoredSlider = restoredReplay.getByRole('slider', {
     name: 'Replay progress',
     exact: true
   })
-  await restoredSlider.focus()
-  await page.keyboard.press('End')
+  await expect(restoredSlider).toHaveAttribute('aria-valuenow', String(offset))
+  await restoredSlider.press('End')
   await restoredReplay.getByRole('button', { name: 'Notebook', exact: true }).click()
   await expect(restoredReplay.getByText('ARCHIVED_RESULT_42', { exact: true })).toBeVisible()
   const restoredConversation = page.getByRole('region', { name: 'Conversation', exact: true })
@@ -368,6 +367,7 @@ test('renders archived research with shared workspace messages, grouped tools an
     .getByRole('region', { name: 'Projects', exact: true })
     .getByRole('button', { name: projectName, exact: true })
     .click()
+  await page.locator(`[data-session-id="${source.id}"] [data-slot="session-open-button"]`).click()
   const replay = page.getByTestId('replay-panel')
   await page
     .getByRole('region', { name: 'Imported research history', exact: true })
@@ -574,6 +574,7 @@ test('restores the selected one of two Notebook runs from a historical step afte
       .click()
   }
   await openProject()
+  await page.locator(`[data-session-id="${source.id}"] [data-slot="session-open-button"]`).click()
   await page
     .getByRole('region', { name: 'Imported research history' })
     .getByRole('button', { name: 'View replay' })
@@ -584,10 +585,9 @@ test('restores the selected one of two Notebook runs from a historical step afte
   await expect(replay.getByTestId('replay-current-step')).toHaveText('Step 11 of 11')
   const drawer = replay.getByRole('button', { name: 'Notebook', exact: true })
   if ((await drawer.getAttribute('aria-expanded')) === 'false') await drawer.click()
-  await replay
-    .locator('[data-replay-run-item="first"]')
-    .getByRole('button', { name: 'Ask', exact: true })
-    .click()
+  const firstRun = replay.locator('[data-replay-run-item="first"]')
+  await firstRun.hover()
+  await firstRun.getByRole('button', { name: 'Ask', exact: true }).click()
   const draft = page.getByTestId('session-discussion-draft')
   await expect(draft).toContainText('Step 3')
   await expect(draft).toContainText('Notebook run 0')

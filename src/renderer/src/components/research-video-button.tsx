@@ -1,3 +1,4 @@
+import { RESEARCH_VIDEO_PLAYER_SIZE_ERROR } from '@aipoch/research-film/contracts'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,6 +9,7 @@ import {
   RESEARCH_VIDEO_STATUS_TIMEOUT_MS,
   RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE,
   RESEARCH_FILM_BUSY_MESSAGE,
+  RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE,
   researchVideoFilename
 } from '../../../shared/research-video-presentation'
 import { dialogBodyClassName, dialogFooterClassName } from './ui/dialog-chrome'
@@ -250,7 +252,6 @@ function ResearchVideoModeButton({
   const installing = Boolean(status.narrationDownload)
   const [errors, setErrors] = useState<Partial<Record<ResearchFilmMode, string>>>({})
   const [readErrors, setReadErrors] = useState<Partial<Record<ResearchFilmMode, string>>>({})
-  const error = errors[mode] ?? readErrors[mode]
   const setError = (next: string | undefined): void =>
     setErrors((current) => ({ ...current, [mode]: next }))
   const triggerRef = useRef<HTMLSpanElement>(null)
@@ -309,6 +310,29 @@ function ResearchVideoModeButton({
     )
   }
   const filmErrors: Record<string, string> = {
+    [RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE]: t('Model request timed out. Try again.'),
+    'Research film readiness check timed out. Try again.': t(
+      'Generation preparation timed out. Try again.'
+    ),
+    'Research film model setup timed out. Try again.': t('Model setup timed out. Try again.'),
+    'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.':
+      t('The model reached its output limit. Increase the limit or select another model.'),
+    'Research film generation stopped before completing (cancelled). Try again or select another model.':
+      t('The model stopped before completing this step. Try again.'),
+    'Restricted inference was cancelled.': t(
+      'The model stopped before completing this step. Try again.'
+    ),
+    'Research film generation stopped before completing (refusal). Try again or select another model.':
+      t('The model declined to generate this content.'),
+    'Film is still waiting for the disk. Try again after the disk responds.': t(
+      'Waiting for storage. Try again after it responds.'
+    ),
+    [RESEARCH_VIDEO_PLAYER_SIZE_ERROR]: t(
+      'The film exceeds 200 MiB. Shorten it or use smaller media.'
+    ),
+    'Shorten the film to fit the narration audio limit.': t(
+      'Shorten the film to fit the narration audio limit.'
+    ),
     'The model returned no research film content. Try again or select another model.': t(
       'The model returned no film content.'
     ),
@@ -318,7 +342,8 @@ function ResearchVideoModeButton({
       'Narration installation did not finish. Retry to continue.'
     )
   }
-  const failure = error || status.error
+  const failure = errors[mode] || status.error
+  const statusReadFailure = !failure && readErrors[mode]
   const preflight = status.preflightError
   const knownPreflight = preflight && Object.hasOwn(preflightMessages, preflight)
   const blocked = status.generationBlock
@@ -326,7 +351,7 @@ function ResearchVideoModeButton({
     : preflight && (knownPreflight ? preflightMessages[preflight] : t('Research video failed'))
   const diagnostic = blocked
     ? !busy && !status.generationBlock && !knownPreflight && preflight
-    : failure
+    : failure || statusReadFailure
   const modelSettingsAvailable =
     !status.generationBlock &&
     status.preflightError &&
@@ -469,8 +494,15 @@ function ResearchVideoModeButton({
     setPending(true)
     setError(undefined)
     try {
-      const current = await readFilmStatus(request, !resume)
-      if (!live.current) return
+      const current = await readFilmStatus(request, !resume).catch((caught: unknown) => {
+        if (live.current)
+          setReadErrors((previous) => ({
+            ...previous,
+            [mode]: caught instanceof Error ? caught.message : String(caught)
+          }))
+        return undefined
+      })
+      if (!live.current || !current) return
       setStatus(current)
       if (
         current.narrationDownload ||
@@ -732,7 +764,11 @@ function ResearchVideoModeButton({
                         )}
                         {status.canResume || status.result
                           ? t('Generate again')
-                          : t('Start generation')}
+                          : failure ||
+                              status.progress?.phase === 'failed' ||
+                              status.progress?.phase === 'cancelled'
+                            ? t('Retry', { context: 'step' })
+                            : t('Start generation')}
                       </Button>
                     )}
                     {status.canResume && (
@@ -741,7 +777,7 @@ function ResearchVideoModeButton({
                         disabled={pending || Boolean(status.generationBlock)}
                         onClick={() => void generate(false, true)}
                       >
-                        {t('Continue generation')}
+                        {t('Retry', { context: 'step' })}
                       </Button>
                     )}
                     {status.result && (
@@ -845,9 +881,11 @@ function ResearchVideoModeButton({
                   key={diagnostic}
                   detail={diagnostic}
                   summary={
-                    Object.hasOwn(filmErrors, diagnostic)
-                      ? filmErrors[diagnostic]
-                      : t('Research video failed')
+                    statusReadFailure && diagnostic === statusReadFailure
+                      ? t('Could not retrieve generation status.')
+                      : Object.hasOwn(filmErrors, diagnostic)
+                        ? filmErrors[diagnostic]
+                        : t('Research video failed')
                   }
                 />
               )}
@@ -866,7 +904,19 @@ function ResearchVideoModeButton({
                         <AudioLines className="size-3.5" aria-hidden="true" />
                         {t('English narration')}
                       </span>
+                      {playableResult.scriptScore !== undefined && (
+                        <span>
+                          {t('Narration rubric {{score}}/9', { score: playableResult.scriptScore })}
+                        </span>
+                      )}
                     </div>
+                    {playableResult.sessionAppMode && (
+                      <p className="text-xs text-muted-foreground">
+                        {playableResult.sessionAppMode === 'live'
+                          ? t('Includes the session app in motion.')
+                          : t('Uses a drawn illustration of the session app.')}
+                      </p>
+                    )}
                   </div>
                   <Button
                     className="min-h-10 w-full whitespace-normal"

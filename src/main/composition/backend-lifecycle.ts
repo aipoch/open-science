@@ -1,3 +1,8 @@
+import {
+  NotebookExecutionIntent,
+  notebookExecutionIntent,
+  notebookUserOperation
+} from '../notebook/execution-intent'
 import type {
   ArtifactReproducibilityCheckRequest,
   GetArtifactReproducibilityCheckLogRequest,
@@ -27,6 +32,7 @@ import type { composeHandoff } from './handoff'
 import type { composeManagedFiles } from './managed-files'
 import type { composeSessionAuthority } from './session-authority'
 import type { composeSettingsBootstrap } from './settings-bootstrap'
+import type { NotebookRuntimeService } from '../notebook/runtime-service'
 
 export async function composeBackendLifecycle({
   settingsBootstrap,
@@ -34,6 +40,7 @@ export async function composeBackendLifecycle({
   sessionAuthority,
   backendTeardownOwnedByCoordinator,
   handoff,
+  notebookService,
   modules
 }: {
   settingsBootstrap: Awaited<ReturnType<typeof composeSettingsBootstrap>>
@@ -41,6 +48,10 @@ export async function composeBackendLifecycle({
   sessionAuthority: Awaited<ReturnType<typeof composeSessionAuthority>>
   backendTeardownOwnedByCoordinator: { current: boolean }
   handoff: Awaited<ReturnType<typeof composeHandoff>>
+  notebookService: Pick<
+    NotebookRuntimeService,
+    'createExecutionAdmission' | 'createExecutionIntent' | 'refreshResourceActivity'
+  >
   modules: ApplicationModuleBuilder
 }): Promise<void> {
   // The shared coordinator remains the sole ACP + Notebook teardown owner.
@@ -59,7 +70,40 @@ export async function composeBackendLifecycle({
   sessionAuthority.artifactReproducibilityAttemptOwnerRef.current = await modules.add(
     {
       storageRoot: resolveDataRoot(),
+      onResourcesChanged: () => notebookService.refreshResourceActivity(),
       processSandbox: settingsBootstrap.notebookNetworkSandbox,
+      prepareExecutionIntent: (
+        request:
+          | ArtifactReproducibilityCheckRequest
+          | import('../../shared/session-reproducibility').SessionReproducibilityCommand
+      ) => {
+        const inherited = notebookExecutionIntent(request)
+        if (inherited) return inherited
+        const scope = { projectId: request.projectId, sessionId: request.appSessionId }
+        const operation = notebookUserOperation(request)
+        if (operation) {
+          operation.assertCurrent()
+          return notebookService.createExecutionIntent(scope)
+        }
+        const missing = new NotebookExecutionIntent(scope)
+        missing.block('originating-execution-context-unavailable')
+        return missing
+      },
+      createExecutionAdmission: (
+        request: ArtifactReproducibilityCheckRequest,
+        signal?: AbortSignal,
+        intent?: NotebookExecutionIntent
+      ) =>
+        notebookService.createExecutionAdmission(
+          signal,
+          undefined,
+          {
+            projectId: request.projectId,
+            sessionId: request.appSessionId,
+            source: 'reproduction'
+          },
+          intent
+        ),
       retainOutput: (request: ArtifactReproducibilityCheckRequest, bytes: Buffer) =>
         retainArtifactReproducibilityOutput(
           managedFiles.artifactProvenanceRepository,

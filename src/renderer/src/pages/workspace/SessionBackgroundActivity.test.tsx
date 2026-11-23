@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { JobSummary } from '../../../../shared/compute'
-import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
+import type { NotebookBackgroundTask, NotebookSessionReference } from '../../../../shared/notebook'
 import { makeJob } from '@/test-utils/compute-job'
 import { SessionBackgroundActivity } from './SessionBackgroundActivity'
 
@@ -20,21 +20,13 @@ const notebook: NotebookSessionReference = {
   runJsonPath: '/notebook/run.json'
 }
 
-const run = (overrides: Partial<NotebookRunRecord> = {}): NotebookRunRecord => ({
+const run = (overrides: Partial<NotebookBackgroundTask> = {}): NotebookBackgroundTask => ({
   runId: 'run-1',
   agentFrameId: 'frame-1',
-  executionMode: 'background',
-  cellId: 'cell-1',
-  source: 'agent',
   kernelKind: 'python',
-  script: 'donor_level_qc()',
+  title: 'donor_level_qc()',
   status: 'running',
   startedAt: Date.now() - 5_000,
-  text: { stdout: '', stderr: '', traceback: '', plain: [] },
-  outputs: [],
-  artifacts: [],
-  workingFiles: [],
-  inputFiles: [],
   environment: 'Python 3.12',
   ...overrides
 })
@@ -305,7 +297,7 @@ describe('Session background activity ledger', () => {
           run({
             runId: 'repl-run-1',
             kernelKind: 'repl',
-            script: 'await host.llm("summarize")',
+            title: 'await host.llm("summarize")',
             environment: undefined
           })
         ]
@@ -333,13 +325,13 @@ describe('Session background activity ledger', () => {
           run({
             runId: 'shell-running',
             kernelKind: 'bash',
-            script: 'long-command',
+            title: 'long-command',
             shellConcurrency: { limit: 2, slot: 1 }
           }),
           run({
             runId: 'shell-queued',
             kernelKind: 'bash',
-            script: 'next-command',
+            title: 'next-command',
             status: 'queued',
             shellConcurrency: { limit: 2 }
           })

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { PlanCommandError, type ActivePlanProjection } from '../../shared/session-plan/contract'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { AcpRuntime } from './runtime'
+import { AcpPlanContinuationWorkflow } from './plan-continuation-workflow'
 import { composeAcpRuntimePlanWorkflow } from './runtime-plan-composition'
 
 const projection = (
@@ -166,6 +167,7 @@ const createRuntimeHarness = (options: {
   )
   const target = Object.create(AcpRuntime.prototype) as Record<string, unknown>
   Object.assign(target, {
+    options: {},
     planService: service,
     planInteractions: interactions,
     sessionInteractions,
@@ -181,7 +183,20 @@ const createRuntimeHarness = (options: {
       get: vi.fn(() => undefined),
       delete: vi.fn(() => false)
     },
-    planDeliveryClaimRetries: new Map(),
+    planContinuations: new AcpPlanContinuationWorkflow({
+      hasActiveSession: () => true,
+      context: { prepare: vi.fn() },
+      continuations: { set: vi.fn() },
+      publication: { pushEvent: (event) => options.onEvent?.(event), emitState: vi.fn() },
+      projection: async () => currentProjection,
+      send: vi.fn(),
+      scheduleContinuation: vi.fn()
+    }),
+    questionContinuations: { clearSession: vi.fn() },
+    permissionContinuations: {
+      requestCancellation: vi.fn(() => undefined),
+      settleCancelled: vi.fn(async () => undefined)
+    },
     cancellationTeardown: undefined,
     artifactTurns: {
       handleForExecution: () => 'artifact-handle',

@@ -159,6 +159,45 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(h.handles.retryTerminalCommits).toHaveBeenCalledOnce()
   })
 
+  it.each([true, false])(
+    'waits for user Stop cleanup before committing its terminal (clean=%s)',
+    async (clean) => {
+      const h = createHarness()
+      const cleanup = Promise.withResolvers<void>()
+      h.handles.disposeArtifact = vi.fn(() => cleanup.promise)
+      h.handles.commitTerminal = vi.fn(async (event) => {
+        h.events.push(event)
+      })
+      await h.interactions.cancelPrompt({
+        sessionId: 's1',
+        userInitiated: true,
+        notify: async () => {},
+        onAccepted: () => {},
+        onTimeout: () => {}
+      })
+      h.interactions.captureTerminal(h.interaction, 'stop')
+      h.interactions.supersede(h.interaction)
+      const replacement = h.interactions.claim({ sessionId: 's1', kind: 'prompt' })
+      expect(h.interactions.isCancellationAccepted(replacement, 'user')).toBe(false)
+      const final = new AcpPromptOutcomeFinalizer().finalize(
+        h.handles,
+        stopped({ stopReason: 'cancelled' })
+      )
+      await vi.waitFor(() => expect(h.handles.disposeArtifact).toHaveBeenCalledOnce())
+      expect(h.handles.commitTerminal).not.toHaveBeenCalled()
+      if (clean) {
+        cleanup.resolve()
+        await expect(final).resolves.toMatchObject({ stopReason: 'cancelled' })
+      } else {
+        const failure = new NotebookExecutionStopError()
+        cleanup.reject(failure)
+        await expect(final).rejects.toBe(failure)
+      }
+      expect(h.events.map((event) => event.kind)).toEqual([clean ? 'stop' : 'error'])
+      expect(h.handles.disposeArtifact).toHaveBeenCalledOnce()
+    }
+  )
+
   it('publishes cleanup failure as a live non-terminal notice without settling the turn', async () => {
     const h = createHarness()
     const committed: Array<Partial<AcpRuntimeEvent>> = []
@@ -387,6 +426,9 @@ describe('AcpPromptOutcomeFinalizer', () => {
       })
     }
     harness.handles.interactions = {
+      isCancellationAccepted: harness.interactions.isCancellationAccepted.bind(
+        harness.interactions
+      ),
       captureTerminal: harness.interactions.captureTerminal.bind(harness.interactions),
       current: harness.interactions.current.bind(harness.interactions),
       settle: harness.interactions.settle.bind(harness.interactions),
@@ -480,6 +522,34 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(harness.journal.filter((entry) => entry === 'event:artifact')).toHaveLength(1)
     expect(harness.journal.indexOf('event:artifact')).toBeLessThan(
       harness.journal.indexOf('event:stop')
+    )
+  })
+
+  it('identifies the stack overflow reported by ACP without assigning a provider or HTTP status', async () => {
+    const harness = createHarness()
+    const message = 'Maximum call stack size exceeded'
+    const body = JSON.stringify({ error: { type: 'invalid_request_error', message } })
+    const error = Object.assign(new Error('Internal error: ' + body), {
+      name: 'RequestError',
+      code: -32603,
+      data: { message: body }
+    })
+    await expect(
+      new AcpPromptOutcomeFinalizer().finalize(harness.handles, {
+        kind: 'failed',
+        error
+      })
+    ).rejects.toBe(error)
+    expect(harness.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        text: message,
+        failure: {
+          category: 'internal',
+          reason: 'internal/model-request-stack-overflow',
+          diagnostics: { code: 'invalid_request_error', model: 'test-model', raw: message }
+        }
+      })
     )
   })
 
@@ -586,7 +656,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         }
       ),
       recoverable: undefined,
-      failure: { category: 'service' }
+      failure: { category: 'configuration' }
     },
     {
       name: 'Claude Code API connection refused with an unknown error kind',

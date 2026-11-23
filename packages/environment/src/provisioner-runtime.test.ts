@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { once } from 'node:events'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -8,7 +9,9 @@ import {
   captureMicromamba,
   killAndConfirmExit,
   md5File,
-  micromambaDiagnosticText
+  micromambaDiagnosticText,
+  createMicromambaExecutor,
+  environmentChildCleanup
 } from './provisioner-runtime'
 import { verifyExecutable } from './process-test-support'
 import { runMicromamba } from './process-test-support'
@@ -368,6 +371,48 @@ describe('runMicromamba', () => {
 })
 
 describe('killAndConfirmExit', () => {
+  it('retains an unconfirmed installer tree and retries the same real child through its original supervisor', async () => {
+    let proofAvailable = false
+    const terminateTree = vi.fn(async (child: import('node:child_process').ChildProcess) => {
+      if (!proofAvailable) return { reaped: false }
+      if (child.exitCode !== null || child.signalCode !== null) return { reaped: true }
+      const closed = once(child, 'close')
+      child.kill('SIGKILL')
+      await closed
+      return { reaped: true }
+    })
+    const execute = createMicromambaExecutor({ terminateTree })
+    const controller = new AbortController()
+    const failure = await execute(
+      [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
+      undefined,
+      controller.signal,
+      () => controller.abort()
+    ).catch((error: unknown) => error)
+    const cleanup = environmentChildCleanup(failure)
+    try {
+      expect(failure).toMatchObject({
+        message: expect.stringContaining('RUNTIME_CHILD_UNCONFIRMED')
+      })
+      expect(cleanup).toMatchObject({
+        identity: terminateTree.mock.calls[0][0],
+        startedAt: expect.any(Number)
+      })
+      expect(Object.keys(failure as Error)).toEqual([])
+      await expect(cleanup!.release()).resolves.toEqual({ reaped: false })
+      proofAvailable = true
+      await expect(cleanup!.release()).resolves.toEqual({ reaped: true })
+      expect(terminateTree.mock.calls.every(([child]) => child === cleanup!.identity)).toBe(true)
+      const cyclic = new Error('old error')
+      cyclic.cause = cyclic
+      expect(environmentChildCleanup(cyclic)).toBeUndefined()
+    } finally {
+      proofAvailable = true
+      if (cleanup) await cleanup.release()
+      else terminateTree.mock.calls[0]?.[0].kill('SIGKILL')
+    }
+  })
+
   it('resolves true when the whole process tree is confirmed reaped', async () => {
     const terminateTree = vi.fn(async () => ({ reaped: true }))
     const child = { exitCode: null, signalCode: null } as never

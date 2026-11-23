@@ -276,6 +276,7 @@ type WorkspaceComposerController = {
     attachments: UploadedAttachment[]
     transfers: ComposerUploadTransfer[]
     error: string | null
+    attachmentNotice?: { title: string; description?: string }
     errorFailure?: ClassifiedFailure
     errorDetail?: string
     errorProviderValidations?: ProviderValidationSnapshot
@@ -1969,6 +1970,7 @@ const useWorkspaceComposerController = ({
       errorFailure: visionModelMissing
         ? { category: 'configuration', reason: 'configuration/vision-model', diagnostics: {} }
         : undefined,
+      attachmentNotice: uploadController.view.attachmentNotice,
       errorDetail,
       errorProviderValidations,
       historyStatus,

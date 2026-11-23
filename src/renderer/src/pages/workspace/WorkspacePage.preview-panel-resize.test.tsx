@@ -267,7 +267,11 @@ vi.mock('./PreviewPanel', () => ({
       workspacePageHarness.previewPanelRef.current = workspacePageHarness.previewPanelHandle
     }
 
-    return <div data-testid="preview-panel">{children}</div>
+    return (
+      <div id="right-panel" data-testid="preview-panel">
+        {children}
+      </div>
+    )
   }
 }))
 
@@ -545,6 +549,26 @@ describe('WorkspacePage preview panel resize sync', () => {
   })
 
   // Right preview edge keeps its resting border; pointer geometry is covered in Electron E2E.
+  it('releases the measured Notebook width if a preview drag is cancelled', async () => {
+    await renderPage()
+    await act(async () => usePreviewWorkbenchStore.setState({ panelState: 'open' }))
+    const handle = container.querySelector<HTMLElement>('[aria-label="Resize right panel"]')!
+    const panel = container.querySelector<HTMLElement>('#right-panel')!
+    const details = document.createElement('details')
+    details.open = true
+    const output = document.createElement('div')
+    output.className = 'notebook-large-text-output'
+    vi.spyOn(output, 'getBoundingClientRect').mockReturnValue(DOMRect.fromRect({ width: 420 }))
+    details.append(output)
+    panel.append(details)
+    handle.dataset.separator = 'active'
+    await vi.waitFor(() =>
+      expect(output.style.getPropertyValue('--notebook-output-drag-width')).toBe('420px')
+    )
+    window.dispatchEvent(new Event('pointercancel'))
+    expect(output.style.getPropertyValue('--notebook-output-drag-width')).toBe('')
+  })
+
   it('keeps the always-on border divider on the right preview resize handle', async () => {
     await renderPage()
 

@@ -132,6 +132,38 @@ describe('settings record codec', () => {
     })
   })
 
+  it('retains per-model Lab capability documents and drops malformed entries', () => {
+    const capabilities = {
+      reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+      modalities: { input: ['text', 'image'] },
+      limit: { context: 1_000_000, output: 64_000 }
+    }
+    const provider = sanitizeProvider({
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      modelCapabilities: {
+        'lab:research-default': capabilities,
+        'lab:malformed': 'not-an-object'
+      }
+    })
+    expect(provider?.modelCapabilities).toEqual({ 'lab:research-default': capabilities })
+  })
+
+  it('retains per-model streaming flags and drops malformed entries', () => {
+    const provider = sanitizeProvider({
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      modelStreaming: {
+        'lab:stream': true,
+        'lab:batch': false,
+        'lab:invalid': 'no'
+      }
+    })
+    expect(provider?.modelStreaming).toEqual({ 'lab:stream': true, 'lab:batch': false })
+  })
+
   it('rejects unusable provider identities and invalid compute grants', () => {
     expect(sanitizeProvider({ id: 'official', type: 'official', name: 'Unknown' })).toBeUndefined()
     expect(sanitizeProvider({ id: 'provider-1', type: 'removed', name: 'Old' })).toBeUndefined()

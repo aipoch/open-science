@@ -5,14 +5,14 @@ import { dirname, join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import { expect, type Locator } from '@playwright/test'
 import { test } from './fixtures/electron-app'
-import { createProject, openProjectSession } from './certification/helpers'
+import { createProject, openProjectSession, openRecentSession } from './certification/helpers'
 import { submitPromptViaUi } from './fixtures/conversation'
 import { openSettingsPage } from './fixtures/settings-preferences'
 
 const initialPrompt =
   'Use the Notebook REPL tool repl_execute to execute exactly eval("console.log(\'HARNESS_TOOL_OK\')"). Do not use any other tool. After successful execution, reply exactly HARNESS_TURN_OK.'
 
-test('built-in harness executes approved host MCP and restores its session after restart', async ({
+test('built-in harness executes approved host MCP and restores its session after restart @default-agent-release', async ({
   app
 }, testInfo) => {
   test.setTimeout(240_000)
@@ -63,8 +63,27 @@ test('built-in harness executes approved host MCP and restores its session after
         }
       : { content: resumed ? 'HARNESS_RESUMED_OK' : 'HARNESS_TURN_OK' }
     response.writeHead(200, { 'content-type': 'text/event-stream' })
+    const terminal = {
+      index: 0,
+      delta: { role: 'assistant', content: '' },
+      finish_reason: call ? 'tool_calls' : 'stop'
+    }
+    // Cover repeated empty trailing frames after text and tool completion, including restart recovery.
     response.end(
-      `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: call ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 100 } } })}\n\ndata: [DONE]\n\n`
+      [
+        { choices: [{ index: 0, delta, finish_reason: null }] },
+        { choices: [terminal] },
+        {
+          choices: [terminal],
+          usage: {
+            prompt_tokens: 1000,
+            completion_tokens: 20,
+            prompt_tokens_details: { cached_tokens: 100 }
+          }
+        }
+      ]
+        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+        .join('') + 'data: [DONE]\n\n'
     )
   })
   await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
@@ -119,11 +138,18 @@ test('built-in harness executes approved host MCP and restores its session after
       timeout: 90_000
     })
     await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toBeHidden()
+    await expect(page.locator('[data-slot="turn-outcome-notice"]')).toHaveCount(0)
     const before = (
       await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
     ).find((session) => session.projectId === projectId)!
     expect(before.agentFrameworkId).toBe('open-science-agent')
     expect(before.providerSessionId).toEqual(expect.any(String))
+    if (!relay)
+      expect(before.messages.find((message) => message.turnUsage)?.turnUsage).toMatchObject({
+        inputTokens: 1800,
+        cacheTokens: 200,
+        outputTokens: 40
+      })
     const runs = await app.readNotebookFixtureRuns(projectId, before.id)
     const executed = runs.filter(
       (run) => run.kernelKind === 'repl' && run.script.includes('HARNESS_TOOL_OK')
@@ -136,15 +162,23 @@ test('built-in harness executes approved host MCP and restores its session after
     await page.screenshot({ path: testInfo.outputPath('harness-executed.png'), fullPage: true })
     page = await app.restart()
     await openProjectSession(page, 'Built-in harness acceptance', initialPrompt)
+    await expect(page.getByText('HARNESS_TURN_OK', { exact: true })).toBeVisible()
     await submitPromptViaUi(page, 'Reply exactly HARNESS_RESUMED_OK without calling tools.')
     await expect(page.getByText('HARNESS_RESUMED_OK', { exact: true })).toBeVisible({
       timeout: 90_000
     })
     await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toBeHidden()
+    await expect(page.locator('[data-slot="turn-outcome-notice"]')).toHaveCount(0)
     const after = (
       await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
     ).find((session) => session.id === before.id)!
     expect(after.providerSessionId).toBe(before.providerSessionId)
+    if (!relay)
+      expect(after.messages.find((message) => message.turnUsage)?.turnUsage).toMatchObject({
+        inputTokens: 1800,
+        cacheTokens: 200,
+        outputTokens: 40
+      })
     expect(
       (await app.readNotebookFixtureRuns(projectId, before.id)).filter((run) =>
         run.script.includes('HARNESS_TOOL_OK')
@@ -600,7 +634,7 @@ const isChildRequest = (body: HarnessRequest): boolean =>
       JSON.stringify(message.content).includes('You are a Subagent executing a delegated Attempt')
   )
 
-test('built-in harness asks the user and receives the selected answer', async ({
+test('built-in harness asks the user and receives the selected answer @default-agent-release', async ({
   app
 }, testInfo) => {
   test.setTimeout(120000)
@@ -634,12 +668,7 @@ test('built-in harness asks the user and receives the selected answer', async ({
       timeout: 30000
     })
     host.page = await app.restart()
-    await host.page
-      .getByRole('button', {
-        name: 'Open session Ask which dataset to use., waiting for your answer',
-        exact: true
-      })
-      .click()
+    await openRecentSession(host.page, 'Ask which dataset to use.')
     await expect(host.page.getByText('Dataset Alpha', { exact: true }).first()).toBeVisible()
     await host.page.getByText('Dataset Alpha', { exact: true }).first().click()
     await expect(host.page.getByText('HARNESS_ANSWER_RECEIVED', { exact: true })).toHaveCount(0)
@@ -654,7 +683,7 @@ test('built-in harness asks the user and receives the selected answer', async ({
   }
 })
 
-test('built-in harness creates a host plan and continues only after approval', async ({
+test('built-in harness creates a host plan and continues only after approval @default-agent-release', async ({
   app
 }, testInfo) => {
   test.setTimeout(120000)
@@ -728,7 +757,7 @@ test('built-in harness creates a host plan and continues only after approval', a
   }
 })
 
-test('built-in harness rejects denied execution and can cancel then continue', async ({
+test('built-in harness rejects denied execution and can cancel then continue @default-agent-release', async ({
   app
 }, testInfo) => {
   test.setTimeout(120000)
@@ -1178,6 +1207,10 @@ test('built-in harness reloads an edited Skill in the same conversation', async 
         body: 'SKILL_REVISION_TWO'
       })
     }, skill.id)
+    // The settings command returns before the previous Skill catalog's runtime retires.
+    await expect
+      .poll(() => host.page.evaluate(async () => (await window.api.acp.getState()).sessionIds))
+      .toEqual([])
     await submitPromptViaUi(host.page, 'Reload harness-reload after the edit.')
     await expect(host.page.getByText('HARNESS_SKILL_TWO', { exact: true })).toBeVisible({
       timeout: 30000
@@ -1649,7 +1682,7 @@ test('built-in harness stops a detached child and retains cancellation after res
   }
 })
 
-test('built-in harness recovers a crashed model turn without repeating its completed tool', async ({
+test('built-in harness recovers a crashed model turn without repeating its completed tool @default-agent-release', async ({
   app
 }) => {
   test.setTimeout(180000)
@@ -1846,7 +1879,13 @@ test('built-in harness reaps a crashed running child before explicit continuatio
     host.page = await app.restartAfterCrash({ force: true })
     recovering = true
     await openProjectSession(host.page, 'Harness running child crash', prompt)
-    await host.page.getByRole('button', { name: 'Resume session', exact: true }).click()
+    await expect(
+      host.page.getByRole('button', { name: 'Resume session', exact: true })
+    ).toBeVisible()
+    await submitPromptViaUi(
+      host.page,
+      'Use the Notebook to continue the cancelled Cold child and collect its result.'
+    )
     await expect(host.page.getByText('COLD_PARENT_COMPLETE', { exact: true })).toBeVisible({
       timeout: 90000
     })

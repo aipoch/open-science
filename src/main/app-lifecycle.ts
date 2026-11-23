@@ -95,7 +95,12 @@ export type AppLifecycleDeps = {
   isMigrationInProgress: () => boolean
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void
-  beforeExit?: () => void | Promise<void>
+  holdPendingLaunchOnQuit?: () => void
+  resumePendingLaunchAfterCancelledQuit?: () => void
+  forwardPendingLaunchOnExit?: () => void
+  beforeExit?: (
+    cleanOrdinaryQuit: boolean
+  ) => void | Promise<void | { run: () => Promise<void>; timeoutMs: number }>
   // Number of live BrowserWindows (retained for existing lifecycle compositions).
   countWindows: () => number
   // Headless web mode starts the backend and tray without opening a renderer window.
@@ -363,16 +368,31 @@ export const installAppLifecycle = (
   // migration guard (registered earlier) via defaultPrevented + isMigrationInProgress so a
   // migration-cancelled quit is respected. #177's will-quit guard remains a synchronous backstop for a
   // committed quit that never reaches this path.
-  const finishShutdown = async (): Promise<void> => {
+  const finishShutdown = async (cleanOrdinaryQuit = false): Promise<void> => {
     if (shutdownFinished) return
     shutdownFinished = true
     trayBox.current?.destroy()
     try {
-      await awaitQuitStep(deps.beforeExit?.())
+      const handoff = await awaitQuitStep(deps.beforeExit?.(cleanOrdinaryQuit))
+      if (
+        handoff &&
+        cleanOrdinaryQuit &&
+        !systemShutdownRequested &&
+        shutdownTrigger() !== 'system'
+      ) {
+        // Teardown and admission have finished. Only the admitted native handoff owns this budget.
+        shutdownDeadline = Date.now() + handoff.timeoutMs
+        await awaitQuitStep(handoff.run(), handoff.timeoutMs)
+      }
     } catch (error) {
       deps.log?.error('application exit handoff failed', diagnosticErrorFields(error))
     } finally {
-      deps.app.exit(0)
+      try {
+        if (!systemShutdownRequested && shutdownTrigger() !== 'system')
+          deps.forwardPendingLaunchOnExit?.()
+      } finally {
+        deps.app.exit(0)
+      }
     }
   }
   let refreshedQuitBoundary = false
@@ -385,6 +405,9 @@ export const installAppLifecycle = (
       return
     }
     const trigger = shutdownTrigger()
+    // A second launch can arrive while the first quit is refreshing work or awaiting consent.
+    if (trigger === 'quit' && !event.defaultPrevented && !confirmInFlight)
+      deps.holdPendingLaunchOnQuit?.()
     if (deps.refreshQuitState && !refreshedQuitBoundary && !event.defaultPrevented) {
       event.preventDefault()
       if (refreshingQuitBoundary) return
@@ -411,6 +434,7 @@ export const installAppLifecycle = (
             }
             await finishShutdown()
           } else {
+            deps.resumePendingLaunchAfterCancelledQuit?.()
             deps.onQuitError?.(error)
           }
         })
@@ -429,6 +453,7 @@ export const installAppLifecycle = (
       // because the migration guard owns cancelling/joining the move and then reissues app.quit().
       if (trigger !== 'system') {
         clearApplicationShutdownTrigger()
+        deps.resumePendingLaunchAfterCancelledQuit?.()
         systemShutdownRequested = false
       }
       quitConfirmed = false
@@ -464,6 +489,10 @@ export const installAppLifecycle = (
         let choice: CloseConfirmChoice
         try {
           choice = await confirmResearchClose('quit', deps.detectActiveSessions())
+        } catch (error) {
+          deps.resumePendingLaunchAfterCancelledQuit?.()
+          deps.onQuitError?.(error)
+          return
         } finally {
           // app.quit() synchronously reenters before-quit. Release this confirmation first so a
           // changed-work warning can open, without an old finally clearing its new admission latch.
@@ -473,6 +502,7 @@ export const installAppLifecycle = (
           requestConfirmedQuit(settingsInstallAtConfirmation)
           return
         }
+        deps.resumePendingLaunchAfterCancelledQuit?.()
         // Cancel with no tray and no surviving window would strand the app with no UI (no-tray
         // Windows/Linux: X destroys the window -> window-all-closed quit -> Cancel): recreate the
         // window so the app the user chose to keep stays reachable. Gate on a window that existed
@@ -506,6 +536,7 @@ export const installAppLifecycle = (
       let shutdownAbortReason: SessionPersistenceFlushAbortReason | undefined
       let persistenceFailureNeedsConsent = false
       let backendFailure: unknown
+      let cleanOrdinaryQuit = false
       let quitScopeChanged = false
       const flushRendererSessionPersistence = async (
         phase: 'renderer-session-preflight' | 'renderer-session-flush',
@@ -676,6 +707,11 @@ export const installAppLifecycle = (
           usageDrainResult !== 'completed' ||
           rendererFlushResult !== 'completed' ||
           backendTeardownResult !== 'completed'
+        cleanOrdinaryQuit =
+          ordinaryQuit &&
+          !degraded &&
+          rendererPreflightResult === 'completed' &&
+          !persistenceFailureIsForced
         diagnostics?.complete({
           degraded,
           rendererPreflightResult,
@@ -731,20 +767,11 @@ export const installAppLifecycle = (
             showMainWindow()
             const disconnectedQuitHandled = ordinaryQuit && deps.handleDisconnectedQuit?.()
             if (backendFailure && !disconnectedQuitHandled) deps.onQuitError?.(backendFailure)
+            let choice: CloseConfirmChoice = 'cancel'
             if (persistenceFailureNeedsConsent && !disconnectedQuitHandled && !confirmInFlight) {
               confirmInFlight = true
               try {
-                let choice: CloseConfirmChoice
-                try {
-                  choice = await confirmClose('persistence-failed', [])
-                } finally {
-                  confirmInFlight = false
-                }
-                if (choice === 'retry') requestConfirmedQuit()
-                else if (choice === 'force-quit') {
-                  forceQuitAfterPersistenceFailure = true
-                  requestConfirmedQuit()
-                }
+                choice = await confirmClose('persistence-failed', [])
               } catch (error) {
                 try {
                   deps.log?.error(
@@ -754,11 +781,17 @@ export const installAppLifecycle = (
                 } catch {
                   // A failed confirmation keeps the app open; diagnostics remain best-effort.
                 }
+              } finally {
+                confirmInFlight = false
               }
             }
+            if (choice === 'retry' || choice === 'force-quit') {
+              forceQuitAfterPersistenceFailure = choice === 'force-quit'
+              requestConfirmedQuit()
+            } else deps.resumePendingLaunchAfterCancelledQuit?.()
           }
         } else {
-          await finishShutdown()
+          await finishShutdown(cleanOrdinaryQuit && !systemShutdownRequested)
         }
       }
     })()

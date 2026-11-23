@@ -1,3 +1,6 @@
+import { createNotebookExecutionAdmission } from './execution-admission'
+import { MemoryPolicyService } from './memory-policy'
+import * as wslMemory from './memory-policy-wsl'
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import * as processTree from '../process-tree'
@@ -38,18 +41,61 @@ let nodeRuntimeResolver: {
 
 beforeEach(async () => {
   portableRuntimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-portable-runtime-'))
+  vi.spyOn(wslMemory, 'createWslExecutionMemoryPolicy').mockResolvedValue(
+    new MemoryPolicyService({
+      adapter: {
+        platform: 'linux',
+        defaultExecutionScope: 'wsl:fixture',
+        sample: async () => ({
+          platform: 'linux',
+          source: 'fixture',
+          executionScope: 'wsl:fixture',
+          facts: { totalBytes: 1000, availableBytes: 800, overcommitMode: 0 }
+        })
+      }
+    })
+  )
   nodeRuntimeResolver = vi
     .spyOn(windowsRuntime, 'resolveWindowsNotebookNodeRuntime')
     .mockReturnValue({ root: 'D:\\bundled', node: 'D:\\bundled\\node.exe' })
 })
 
 afterEach(async () => {
+  vi.mocked(wslMemory.createWslExecutionMemoryPolicy).mockRestore()
   nodeRuntimeResolver.mockRestore()
   vi.unstubAllEnvs()
   await rm(portableRuntimeRoot, { recursive: true, force: true })
 })
 
 const previewAvailable = (): boolean => true
+const readyWslCommandReader =
+  'process.stdout.write("\\0open-science-wsl-ready\\0"); process.stdin.once("data", () => { process.stdout.write("finished"); process.stdin.destroy() })'
+const fixtureProbe = {
+  executionScope: 'wsl:fixture',
+  proofPath: '/unused',
+  token: 'unused',
+  openReader: vi.fn()
+}
+const fixtureAdmission = (): ReturnType<typeof createNotebookExecutionAdmission> =>
+  createNotebookExecutionAdmission({
+    policy: async () =>
+      new MemoryPolicyService({
+        adapter: {
+          platform: 'win32',
+          sample: async () => ({
+            platform: 'win32',
+            source: 'fixture',
+            executionScope: 'windows:host',
+            facts: {
+              totalBytes: 1000,
+              availableBytes: 800,
+              committedBytes: 100,
+              commitLimitBytes: 1000
+            }
+          })
+        }
+      })
+  })
 
 describe('notebook shell process behavior', () => {
   it.skipIf(process.platform === 'win32' && !process.env.OPEN_SCIENCE_TEST_BASH)(
@@ -166,6 +212,7 @@ describe('notebook shell process behavior', () => {
         .mockRejectedValue(new Error('stop-before-spawn'))
       try {
         const result = await runShellCommand({
+          executionAdmission: fixtureAdmission(),
           command: 'node --version',
           cwd: portableRuntimeRoot,
           handoffDir: portableRuntimeRoot,
@@ -208,6 +255,7 @@ describe('notebook shell process behavior', () => {
 
   it('returns application recovery facts when earlier cleanup blocks native preparation', async () => {
     const result = await runShellCommand({
+      executionAdmission: fixtureAdmission(),
       command: 'printf never-started',
       cwd: process.cwd(),
       handoffDir: process.cwd(),
@@ -250,7 +298,12 @@ describe('notebook shell process behavior', () => {
       errorCode: 'shell-cleanup-incomplete',
       recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
     })
-    expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
+    expect(await adapter.execute(request)).toMatchObject({
+      errorCode: 'shell-cleanup-incomplete',
+      stderr: expect.stringContaining('did not start'),
+      executionStarted: false,
+      recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
+    })
     expect(wrap).toHaveBeenCalledTimes(1)
     expect(await adapter.shutdown()).toEqual({ reaped: false })
     expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
@@ -308,6 +361,7 @@ describe('notebook shell process behavior', () => {
     const wrap = vi.fn()
     try {
       const result = await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'printf should-not-run',
         cwd: process.cwd(),
         handoffDir: process.cwd(),
@@ -452,6 +506,7 @@ describe('notebook shell process behavior', () => {
       }
 
       const result = await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'echo hi',
         runId: 'notebook-run-wsl',
         cwd: 'C:\\workspace',
@@ -512,6 +567,7 @@ describe('notebook shell process behavior', () => {
       }
 
       const result = await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'echo should-not-run',
         cwd: 'C:\\workspace',
         handoffDir: 'C:\\handoff',
@@ -552,6 +608,7 @@ describe('notebook shell process behavior', () => {
 
       await expect(
         runShellCommand({
+          executionAdmission: fixtureAdmission(),
           command: 'echo should-not-run',
           cwd: 'C:\\workspace',
           handoffDir: 'C:\\handoff',
@@ -592,6 +649,7 @@ describe('notebook shell process behavior', () => {
 
       await expect(
         runShellCommand({
+          executionAdmission: fixtureAdmission(),
           command: 'echo should-not-run',
           cwd: 'C:\\workspace',
           handoffDir: 'C:\\handoff',
@@ -618,6 +676,7 @@ describe('notebook shell process behavior', () => {
 
     it('fails a selected WSL2 runtime closed with a stable unavailable code instead of native fallback', async () => {
       const result = await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'Write-Output should-not-run',
         cwd: 'C:\\workspace',
         handoffDir: 'C:\\handoff',
@@ -691,6 +750,7 @@ describe('notebook shell process behavior', () => {
       ): Promise<string> => {
         const processSandbox: NotebookProcessSandbox = {
           wrap: vi.fn(async (invocation) => ({
+            memoryProbe: fixtureProbe,
             executable: process.execPath,
             args: ['-e', `process.stderr.write(${JSON.stringify(completedProgressClixml)})`],
             env: invocation.env,
@@ -703,6 +763,7 @@ describe('notebook shell process behavior', () => {
           }))
         }
         const result = await runShellCommand({
+          executionAdmission: fixtureAdmission(),
           command: 'emit stderr',
           cwd: process.cwd(),
           handoffDir: process.cwd(),
@@ -746,6 +807,7 @@ describe('notebook shell process behavior', () => {
       )}\n`
       const log = new ViolationLog()
       const result = await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'sample-command 2>&1',
         cwd: process.cwd(),
         handoffDir: process.cwd(),
@@ -756,6 +818,7 @@ describe('notebook shell process behavior', () => {
         runtimeBinding: { kind: 'powershell', version: '5.1' },
         processSandbox: {
           wrap: async (invocation) => ({
+            memoryProbe: fixtureProbe,
             executable: process.execPath,
             args: ['-e', `process.stdout.write(${JSON.stringify(stdout)})`],
             env: invocation.env,
@@ -1005,6 +1068,7 @@ describe('notebook shell process behavior', () => {
         wrap: vi.fn(async (invocation) => {
           controller.abort()
           return {
+            memoryProbe: fixtureProbe,
             executable: process.execPath,
             args: ['-e', 'process.exit(0)'],
             env: invocation.env,
@@ -1017,6 +1081,7 @@ describe('notebook shell process behavior', () => {
 
       await expect(
         runShellCommand({
+          executionAdmission: fixtureAdmission(),
           command: 'echo never-spawned',
           cwd: 'C:\\workspace',
           handoffDir: 'C:\\handoff',
@@ -1046,54 +1111,62 @@ describe('notebook shell process behavior', () => {
     }
   )
 
-  it('returns a stable failure instead of trusting an exit when sandbox cleanup is incomplete', async () => {
-    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-incomplete-cleanup-'))
-    const cleanup = vi.fn(async () => ({
-      processesTerminated: false,
-      networkClosed: true,
-      temporaryResourcesRemoved: false
-    }))
-    const processSandbox: NotebookProcessSandbox = {
-      wrap: vi.fn(async (invocation) => ({
-        executable: process.execPath,
-        args: ['-e', 'process.stdout.write("finished")'],
-        env: invocation.env,
-        annotateStderr: (stderr: string) => stderr,
-        confirmProcessState: async () => 'started-and-reaped' as const,
-        cleanup
+  it.each([false, true])(
+    'returns a stable failure instead of trusting an exit when sandbox cleanup is incomplete (processes terminated: %s)',
+    async (processesTerminated) => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-incomplete-cleanup-'))
+      const cleanup = vi.fn(async () => ({
+        processesTerminated,
+        networkClosed: true,
+        temporaryResourcesRemoved: false
       }))
-    }
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => ({
+          memoryProbe: fixtureProbe,
+          executable: process.execPath,
+          args: ['-e', 'process.stdout.write("finished")'],
+          env: invocation.env,
+          annotateStderr: (stderr: string) => stderr,
+          confirmProcessState: async () => 'started-and-reaped' as const,
+          cleanup
+        }))
+      }
 
-    try {
-      await expect(
-        runShellCommand({
-          command: 'echo finished',
-          cwd: process.cwd(),
-          handoffDir: process.cwd(),
-          runtimeRoot,
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          platform: process.platform,
-          processSandbox,
-          terminateTree: async () => ({ reaped: true })
+      try {
+        await expect(
+          runShellCommand({
+            executionAdmission: fixtureAdmission(),
+            command: 'echo finished',
+            cwd: process.cwd(),
+            handoffDir: process.cwd(),
+            runtimeRoot,
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            platform: process.platform,
+            processSandbox,
+            terminateTree: async () => ({ reaped: true })
+          })
+        ).resolves.toEqual({
+          stdout: 'finished',
+          stderr:
+            'SHELL_CLEANUP_INCOMPLETE: Shell execution cleanup did not complete; the result is not trusted.' +
+            (processesTerminated
+              ? ' Managed processes stopped and the network closed. Temporary resources could not be removed.'
+              : ''),
+          exitCode: null,
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
         })
-      ).resolves.toEqual({
-        stdout: 'finished',
-        stderr:
-          'SHELL_CLEANUP_INCOMPLETE: Shell execution cleanup did not complete; the result is not trusted.',
-        exitCode: null,
-        errorCode: 'shell-cleanup-incomplete',
-        recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
-      })
-      expect(cleanup).toHaveBeenCalledOnce()
-      expect(cleanup).toHaveBeenCalledWith('exit', {
-        processesTerminated: true,
-        processState: 'started-and-reaped'
-      })
-    } finally {
-      await rm(runtimeRoot, { recursive: true, force: true })
+        expect(cleanup).toHaveBeenCalledOnce()
+        expect(cleanup).toHaveBeenCalledWith('exit', {
+          processesTerminated: true,
+          processState: 'started-and-reaped'
+        })
+      } finally {
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   it('retries an incomplete WSL cleanup once before reporting the shell result', async () => {
     vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
@@ -1112,8 +1185,9 @@ describe('notebook shell process behavior', () => {
       })
     const processSandbox: NotebookProcessSandbox = {
       wrap: vi.fn(async (invocation) => ({
+        memoryProbe: fixtureProbe,
         executable: process.execPath,
-        args: ['-e', 'process.stdout.write("finished")'],
+        args: ['-e', readyWslCommandReader],
         env: invocation.env,
         annotateStderr: (stderr: string) => stderr,
         confirmProcessState: async () => 'started-and-reaped' as const,
@@ -1124,6 +1198,7 @@ describe('notebook shell process behavior', () => {
     try {
       await expect(
         runShellCommand({
+          executionAdmission: fixtureAdmission(),
           command: 'echo finished',
           cwd: process.cwd(),
           handoffDir: process.cwd(),
@@ -1156,6 +1231,163 @@ describe('notebook shell process behavior', () => {
     }
   })
 
+  it('settles a WSL launcher whose command pipe closes at dispatch', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    const cleanup = vi.fn(async () => ({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }))
+    let commandPipe: import('node:stream').Writable
+    const beginExecution = vi.fn(() => {
+      // Closing fd 0 in the child does not reliably break a Windows named pipe.
+      // End the parent stream before dispatch there to exercise the same async error handler.
+      if (process.platform === 'win32') commandPipe.end()
+      return () => undefined
+    })
+    const result = await runShellCommand({
+      executionAdmission: fixtureAdmission(),
+      command: 'printf finished',
+      cwd: process.cwd(),
+      handoffDir: process.cwd(),
+      runtimeRoot: portableRuntimeRoot,
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      platform: 'win32',
+      runtimeBinding: {
+        kind: 'wsl2-bash',
+        profileId: 'profile-1',
+        distro: 'fixture-distro',
+        user: 'fixture-user'
+      },
+      previewAvailable,
+      timeoutMs: 5_000,
+      claimProcess: (child) => {
+        commandPipe = child.stdin!
+        return () => undefined
+      },
+      terminateTree: async (child) => {
+        const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+        child.kill()
+        await exited
+        return { reaped: true }
+      },
+      processSandbox: {
+        wrap: async (invocation) => ({
+          executable: process.execPath,
+          args: [
+            '-e',
+            'require("node:fs").closeSync(0); process.stdout.write("\\0open-science-wsl-ready\\0"); setInterval(() => {}, 60000)'
+          ],
+          env: invocation.env,
+          memoryProbe: fixtureProbe,
+          beginExecution,
+          annotateStderr: (stderr) => stderr,
+          confirmProcessState: async () => 'started-and-reaped',
+          cleanup
+        })
+      }
+    })
+    expect(beginExecution).toHaveBeenCalledOnce()
+    expect(result.exitCode).toBeNull()
+    expect(result.stderr).toMatch(/EPIPE|EOF|ECONNRESET|broken pipe|write after end/i)
+    expect(result.stderr).not.toContain('Shell command timed out')
+    expect(cleanup).toHaveBeenCalledExactlyOnceWith('spawn-failed', {
+      processesTerminated: true,
+      processState: 'started-and-reaped'
+    })
+  })
+
+  it('opens one raw WSL network epoch only after both memory gates and closes it at finish', async () => {
+    vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
+    let releaseGuest: (() => void) | undefined
+    const guestGate = new Promise<void>((resolve) => {
+      releaseGuest = resolve
+    })
+    let guestVerified = false
+    const guest = new MemoryPolicyService({
+      adapter: {
+        platform: 'linux',
+        defaultExecutionScope: fixtureProbe.executionScope,
+        sample: async () => {
+          await guestGate
+          guestVerified = true
+          return {
+            platform: 'linux',
+            source: 'fixture',
+            executionScope: fixtureProbe.executionScope,
+            facts: { totalBytes: 1000, availableBytes: 800, overcommitMode: 0 }
+          }
+        }
+      }
+    })
+    vi.mocked(wslMemory.createWslExecutionMemoryPolicy).mockResolvedValueOnce(guest)
+    const endExecution = vi.fn()
+    const beginExecution = vi.fn(() => {
+      expect(guestVerified).toBe(true)
+      return endExecution
+    })
+    const cleanup = vi.fn(async () => ({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }))
+    const controller = new AbortController()
+    const command = 'printf finished'
+    const running = runShellCommand({
+      executionAdmission: fixtureAdmission(),
+      command,
+      cwd: process.cwd(),
+      handoffDir: process.cwd(),
+      runtimeRoot: portableRuntimeRoot,
+      sessionId: 'raw-wsl-session',
+      projectId: 'raw-wsl-project',
+      executionReference: 'raw-wsl-reference',
+      signal: controller.signal,
+      platform: 'win32',
+      runtimeBinding: {
+        kind: 'wsl2-bash',
+        profileId: 'fixture-profile',
+        distro: 'fixture-distro',
+        user: 'fixture-user'
+      },
+      previewAvailable,
+      terminateTree: async () => ({ reaped: true }),
+      processSandbox: {
+        wrap: async (invocation) => ({
+          executable: process.execPath,
+          args: ['-e', readyWslCommandReader],
+          env: invocation.env,
+          memoryProbe: fixtureProbe,
+          beginExecution,
+          annotateStderr: (stderr) => stderr,
+          confirmProcessState: async () => 'started-and-reaped',
+          cleanup
+        })
+      }
+    })
+    try {
+      await vi.waitFor(() =>
+        expect(wslMemory.createWslExecutionMemoryPolicy).toHaveBeenCalledOnce()
+      )
+      expect(beginExecution).not.toHaveBeenCalled()
+      releaseGuest?.()
+      await expect(running).resolves.toMatchObject({ stdout: 'finished', exitCode: 0 })
+      expect(beginExecution).toHaveBeenCalledExactlyOnceWith({
+        commandText: command,
+        executionReference: 'raw-wsl-reference',
+        signal: controller.signal,
+        onNetworkWaitChange: expect.any(Function)
+      })
+      expect(endExecution).toHaveBeenCalledOnce()
+      expect(cleanup).toHaveBeenCalledOnce()
+    } finally {
+      releaseGuest?.()
+      await running
+      guest.dispose()
+    }
+  })
+
   it.each([true, false])(
     'retains WSL launch evidence until guest cleanup is proven after an identity race: %s',
     async (reaped) => {
@@ -1179,6 +1411,7 @@ describe('notebook shell process behavior', () => {
       })
       try {
         const result = await runShellCommand({
+          executionAdmission: fixtureAdmission(),
           command: 'printf finished',
           cwd: process.cwd(),
           handoffDir: process.cwd(),
@@ -1197,8 +1430,9 @@ describe('notebook shell process behavior', () => {
           terminateTree: async () => ({ reaped: false }),
           processSandbox: {
             wrap: async () => ({
+              memoryProbe: fixtureProbe,
               executable: process.execPath,
-              args: ['-e', 'process.stdout.write("finished")'],
+              args: ['-e', readyWslCommandReader],
               env: process.env,
               annotateStderr: (stderr) => stderr,
               cleanup
@@ -1229,6 +1463,7 @@ describe('notebook shell process behavior', () => {
       const registry = new ShellProcessOwnershipRegistry(runtimeRoot)
       const cleanup = vi.fn()
       const result = await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'unused',
         cwd: process.cwd(),
         handoffDir: process.cwd(),
@@ -1355,6 +1590,7 @@ describe('notebook shell process behavior', () => {
           })
         try {
           const result = await runShellCommand({
+            executionAdmission: fixtureAdmission(),
             command: 'sleep 30',
             cwd: process.cwd(),
             handoffDir: process.cwd(),
@@ -1409,6 +1645,7 @@ describe('notebook shell process behavior', () => {
     it('exposes the authoritative native input root over an inherited override', async () => {
       const inputRoot = join(process.cwd(), '.open-science-test-inputs')
       const result = await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'printf "$OPEN_SCIENCE_INPUT_DIR"',
         cwd: process.cwd(),
         handoffDir: process.cwd(),
@@ -1428,6 +1665,7 @@ describe('notebook shell process behavior', () => {
 
     it('does not retain an inherited input directory when no input root is available', async () => {
       const result = await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'printf "${OPEN_SCIENCE_INPUT_DIR-unset}"',
         cwd: process.cwd(),
         handoffDir: process.cwd(),
@@ -1507,6 +1745,7 @@ describe('notebook shell process behavior', () => {
       }
 
       const result = await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'printf "$OPEN_SCIENCE_SANDBOX_TEST"',
         cwd: process.cwd(),
         handoffDir: process.cwd(),
@@ -1631,6 +1870,7 @@ describe('notebook shell process behavior', () => {
         }
 
         await runShellCommand({
+          executionAdmission: fixtureAdmission(),
           command,
           cwd: process.cwd(),
           handoffDir: process.cwd(),
@@ -1727,6 +1967,7 @@ describe('notebook shell process behavior', () => {
 
       await expect(
         runShellCommand({
+          executionAdmission: fixtureAdmission(),
           command: 'echo unreachable',
           cwd: process.cwd(),
           handoffDir: process.cwd(),
@@ -1762,6 +2003,7 @@ describe('notebook shell process behavior', () => {
       }
 
       await runShellCommand({
+        executionAdmission: fixtureAdmission(),
         command: 'echo unreachable',
         cwd: process.cwd(),
         handoffDir: process.cwd(),
@@ -1797,6 +2039,7 @@ describe('notebook shell process behavior', () => {
       await expect(execute("printf 'before timeout' >&2; sleep 5", 50)).resolves.toEqual({
         stdout: '',
         stderr: 'before timeout\nShell command timed out after 50ms and was killed.',
+        timedOut: true,
         exitCode: null
       })
     })

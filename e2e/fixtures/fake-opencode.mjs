@@ -22,7 +22,9 @@ import {
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
+import { macAcceptance } from './macos-acceptance.mjs'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
+import { fencePrompt, retryFencePrompt, exerciseKernelFence } from './kernel-fence.mjs'
 
 // A provider-boundary fault used by the Resume recovery journey. Application state and IPC stay real.
 const failResumeAttachmentWhenRequested = async (cwd) => {
@@ -35,6 +37,7 @@ const failResumeAttachmentWhenRequested = async (cwd) => {
   }
   throw acp.RequestError.internalError({}, message)
 }
+const coldRecoverySessions = new Set()
 const planRecoveryScenarios = new Set()
 const PLAN_DISMISS_PROMPT = 'Create the live dismissal regression Plan.'
 const PLAN_RECOVERY_PROMPT = 'Create the feedback Stop Resume regression Plan.'
@@ -545,14 +548,15 @@ const verifyRuntimeApproval = async (context, prompt) =>
     return `Runtime ${language} ${continued ? 'continued' : 'first'} cell verified: ${continued ? '42' : '41'}.`
   })
 
-const executeControlCode = async (sessionId, code) =>
+const executeControlCode = async (sessionId, code, options) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) =>
     toolResult(
       'repl_execute',
       await client.callTool({
         name: 'repl_execute',
         arguments: { code, timeoutMs: 120_000 }
-      })
+      }),
+      options
     )
   )
 
@@ -994,10 +998,11 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     // Hosted runners need 30-80s per AppContainer launch; the MCP SDK's default per-request
     // timeout (-32001) is far below the certification's per-cell budget.
-    const call = async (name, arguments_ = {}) =>
+    const call = async (name, arguments_ = {}, options) =>
       toolResult(
         name,
-        await client.callTool({ name, arguments: arguments_ }, undefined, { timeout: 240_000 })
+        await client.callTool({ name, arguments: arguments_ }, undefined, { timeout: 240_000 }),
+        options
       )
     const execute = async (code) =>
       controlResultValue(await call('repl_execute', { code, timeoutMs: 180_000 }))
@@ -1024,8 +1029,19 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
     if (second.marker !== 'second-cell' || !second.reset)
       throw new Error('REPL restart did not produce a fresh interpreter.')
     // Exercise an actual child exit, then verify cleanup does not fence the next Shell run.
-    const exited = await call('repl_execute', { code: 'process.exit(23)', timeoutMs: 180_000 })
-    if (exited.status !== 'failed') throw new Error('The deliberate REPL exit was not reported.')
+    const exited = await call(
+      'repl_execute',
+      { code: 'process.exit(23)', timeoutMs: 180_000 },
+      { allowToolError: true }
+    )
+    const kernel = exited.recovery?.kernel
+    if (
+      exited.status !== 'failed' ||
+      kernel?.kind !== 'repl' ||
+      kernel.exitCode !== 23 ||
+      kernel.cleanup !== 'verified'
+    )
+      throw new Error(`Unexpected result for the deliberate REPL exit: ${JSON.stringify(exited)}`)
     const shell = await call('bash_execute', { command: "Write-Output 'REPL_CLEANUP_SHELL_OK'" })
     if (shell.exitCode !== 0 || !shell.stdout?.includes('REPL_CLEANUP_SHELL_OK'))
       throw new Error('Shell remained blocked after REPL exit.')
@@ -1828,12 +1844,23 @@ if (process.argv.includes('--version')) {
         await waitForSessionCancellation(context.params.sessionId)
         return { stopReason: 'cancelled' }
       }
-      if (prompt.includes('Run delegated cold recovery regression.')) {
-        const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
-        const code = resumed
+      const continueChild =
+        coldRecoverySessions.has(context.params.sessionId) &&
+        prompt.includes('Recheck memory and reconsider the blocked Notebook work.')
+      if (continueChild || prompt.includes('Run delegated cold recovery regression.')) {
+        const reportOnly =
+          !continueChild && prompt.includes('Continue the interrupted turn from where it stopped.')
+        if (reportOnly) coldRecoverySessions.add(context.params.sessionId)
+        const code = continueChild
           ? 'const children = await host.children(); const child = children.find(c => c.name === "Cold recovery child"); if (!child) throw new Error("missing original child"); const receipt = await host.sendFrameMessage(child.frameId, "Continue explicitly after application restart."); return { before: child.status, receipt };'
           : 'return await host.delegate({ task: "Cold recovery held child.", name: "Cold recovery child" }, { wait: false })'
-        const value = controlResultValue(await executeControlCode(context.params.sessionId, code))
+        let text = 'Cold recovery is waiting for a new user instruction.'
+        if (!reportOnly) {
+          const value = controlResultValue(await executeControlCode(context.params.sessionId, code))
+          text = continueChild
+            ? 'Cold recovery resumed: ' + JSON.stringify(value)
+            : 'Cold recovery ready for exit.'
+        }
         await context.client.notify(acp.methods.client.session.update, {
           sessionId: context.params.sessionId,
           update: {
@@ -1841,13 +1868,11 @@ if (process.argv.includes('--version')) {
             messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
             content: {
               type: 'text',
-              text: resumed
-                ? 'Cold recovery resumed: ' + JSON.stringify(value)
-                : 'Cold recovery ready for exit.'
+              text
             }
           }
         })
-        if (!resumed) {
+        if (!reportOnly && !continueChild) {
           await waitForSessionCancellation(context.params.sessionId)
           return { stopReason: 'cancelled' }
         }
@@ -2985,6 +3010,8 @@ if (process.argv.includes('--version')) {
             }
           })
           reply = 'Compaction preview complete.'
+        } else if (prompt.includes('MACOS_ACCEPTANCE_REQUEST:')) {
+          reply = await macAcceptance(context.params.sessionId, prompt, withMcpClient, toolResult)
         } else if (prompt.includes('Verify Runtime approval ')) {
           reply = await verifyRuntimeApproval(context, prompt)
         } else if (prompt.includes('Verify risky code Home wait status.')) {
@@ -3130,6 +3157,25 @@ if (process.argv.includes('--version')) {
                 )
               return `Notebook update ready: ${JSON.stringify({ replPid: repl.pid, shellPid })}`
             }
+          )
+        } else if (
+          prompt.includes(fencePrompt) ||
+          prompt.includes(retryFencePrompt) ||
+          (() => {
+            const normalized = prompt.replace(/\s+/gu, '')
+            return (
+              normalized.includes('inspect_packages') &&
+              normalized.includes('reportlab') &&
+              normalized.includes('PyMuPDF')
+            )
+          })()
+        ) {
+          const normalized = prompt.replace(/\s+/gu, '')
+          const retry =
+            prompt.includes(retryFencePrompt) ||
+            (!normalized.includes('manage_packages') && !normalized.includes('manage_environments'))
+          reply = await withMcpClient(context.params.sessionId, 'open-science-notebook', (client) =>
+            exerciseKernelFence(client, retry)
           )
         } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
           reply = await verifyWindowsReplLifecycle(context.params.sessionId)
@@ -3365,10 +3411,14 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(DELEGATION_UNAVAILABLE_PROMPT)) {
           const delegated = await executeControlCode(
             context.params.sessionId,
-            `return await host.delegate({ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: ${JSON.stringify(DELEGATED_TERMINAL_NAME)}, profile: "missing-e2e-specialist" }, { wait: true })`
+            `return await host.delegate({ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: ${JSON.stringify(DELEGATED_TERMINAL_NAME)}, profile: "missing-e2e-specialist" }, { wait: true })`,
+            { allowToolError: true }
           )
-          if (delegated.status !== 'failed') {
-            throw new Error(`Unsupported delegation was admitted: ${JSON.stringify(delegated)}`)
+          if (
+            delegated.status !== 'failed' ||
+            !delegated.traceback?.includes('Requested Specialist is unknown')
+          ) {
+            throw new Error(`Unexpected Specialist rejection result: ${JSON.stringify(delegated)}`)
           }
           reply = 'Subagents are unavailable for this session configuration.'
         } else if (prompt.includes(DELEGATION_INHERITED_SPECIALIST_PROMPT)) {
@@ -3507,10 +3557,16 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(SUBAGENT_MODEL_UNAVAILABLE_PROMPT)) {
           const delegated = await executeControlCode(
             context.params.sessionId,
-            'return await host.delegate([{ task: "Unavailable batch A", name: "Unavailable batch A" }, { task: "Unavailable batch B", name: "Unavailable batch B" }], { wait: false })'
+            'return await host.delegate([{ task: "Unavailable batch A", name: "Unavailable batch A" }, { task: "Unavailable batch B", name: "Unavailable batch B" }], { wait: false })',
+            { allowToolError: true }
           )
-          if (delegated.status !== 'failed') {
-            throw new Error(`Unavailable Subagent model was admitted: ${JSON.stringify(delegated)}`)
+          if (
+            delegated.status !== 'failed' ||
+            !delegated.traceback?.includes('configured Subagent model is unavailable')
+          ) {
+            throw new Error(
+              `Unexpected Subagent model rejection result: ${JSON.stringify(delegated)}`
+            )
           }
           reply = 'Unavailable Subagent model rejected the whole batch.'
         } else if (prompt.includes(SUBAGENT_MODEL_INHERITED_PROMPT)) {

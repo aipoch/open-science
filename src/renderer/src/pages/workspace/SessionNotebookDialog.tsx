@@ -20,8 +20,9 @@ import type { ChatSession } from '@/stores/session-store-contract'
 import { resolveDataKernelForTab } from '../../../../shared/notebook'
 import type {
   NotebookKernelKind,
+  NotebookAgentSummary,
   NotebookRunPage,
-  NotebookRunHistorySummary,
+  NotebookRunEvidenceSnapshot,
   NotebookRunRecord
 } from '../../../../shared/notebook'
 import { kernelKindLabel, resolveRunKernelKind } from './notebook-cell-utils'
@@ -31,6 +32,9 @@ import {
   createNotebookFrameFilterOptions,
   notebookFrameFilterForExport,
   notebookFrameLabels,
+  notebookAgentSummariesForSession,
+  notebookHistorySummaries,
+  normalizeNotebookRootFrameRuns,
   projectNotebookRunsForFrame,
   type NotebookFrameFilterValue
 } from './session-notebook-projection'
@@ -40,7 +44,6 @@ type SessionNotebookStatus = 'loading' | 'error' | 'ready'
 
 // Fixed section order for the per-kernel grouping, mirroring NotebookPreview's tab order.
 const KERNEL_KIND_ORDER: NotebookKernelKind[] = ['python', 'r', 'repl', 'bash']
-const HISTORY_SUMMARY_CACHE_LIMIT = 20
 
 // Turns an IPC rejection into displayable text without losing non-Error values.
 const getErrorMessage = (error: unknown): string =>
@@ -61,8 +64,9 @@ type SessionNotebookContentProps = {
   viewportRef?: RefObject<HTMLDivElement | null>
   topSentinelRef?: RefObject<HTMLDivElement | null>
   frameLabels?: Readonly<Record<string, string>>
-  onLoadHistorySummary?: (agentFrameId: string) => Promise<NotebookRunHistorySummary | undefined>
+  agentSummaries?: readonly NotebookAgentSummary[]
   onLoadEarlier?: () => void
+  loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
   onClose: () => void
   onExport: (kernel: NotebookKernelKind, agentFrameFilter?: string | null) => Promise<void>
   onExportAll: (agentFrameFilter?: string | null) => Promise<string | undefined>
@@ -86,8 +90,9 @@ const SessionNotebookContent = ({
   viewportRef,
   topSentinelRef,
   frameLabels = {},
-  onLoadHistorySummary,
+  agentSummaries = [],
   onLoadEarlier,
+  loadRun,
   onClose,
   onExport,
   onExportAll
@@ -100,65 +105,19 @@ const SessionNotebookContent = ({
   const [exportError, setExportError] = useState<string>()
   const [exportSuccess, setExportSuccess] = useState<string>()
   const [frameFilter, setFrameFilter] = useState<NotebookFrameFilterValue>()
-  const [historySummaries, setHistorySummaries] = useState<
-    ReadonlyMap<string, NotebookRunHistorySummary>
-  >(() => new Map())
-  const historySummaryRequests = useRef(new Set<string>())
-  const mounted = useRef(true)
   const shortId = sessionId.slice(0, 8)
-  const frameOptions = createNotebookFrameFilterOptions(runs, frameLabels, historySummaries, true)
+  const summaries = notebookHistorySummaries(agentSummaries)
+  const frameOptions = createNotebookFrameFilterOptions(runs, frameLabels, summaries, true)
   const effectiveFrameFilter = frameOptions.some((option) => option.value === frameFilter)
     ? frameFilter
     : (frameOptions.find((option) => (option.count ?? 0) > 0)?.value ?? frameOptions[0]?.value)
   const effectiveAgentFrameId = effectiveFrameFilter?.slice('frame:'.length)
-  const historySummary = effectiveAgentFrameId
-    ? historySummaries.get(effectiveAgentFrameId)
-    : undefined
+  const historySummary = effectiveAgentFrameId ? summaries.get(effectiveAgentFrameId) : undefined
   const projectedRuns = effectiveFrameFilter
     ? projectNotebookRunsForFrame(runs, effectiveFrameFilter)
     : []
   const agents = frameOptions.filter((option) => (option.count ?? 0) > 0).length
 
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-
-  useEffect(() => {
-    if (
-      status !== 'ready' ||
-      !effectiveAgentFrameId ||
-      !onLoadHistorySummary ||
-      historySummaries.has(effectiveAgentFrameId) ||
-      historySummaryRequests.current.has(effectiveAgentFrameId)
-    ) {
-      return
-    }
-
-    historySummaryRequests.current.add(effectiveAgentFrameId)
-    void onLoadHistorySummary(effectiveAgentFrameId)
-      .then((summary) => {
-        if (!mounted.current || !summary || summary.agentFrameId !== effectiveAgentFrameId) return
-        setHistorySummaries((current) => {
-          const next = new Map(current)
-          next.delete(effectiveAgentFrameId)
-          next.set(effectiveAgentFrameId, summary)
-          if (next.size > HISTORY_SUMMARY_CACHE_LIMIT) {
-            const oldest = next.keys().next().value
-            if (oldest !== undefined) next.delete(oldest)
-          }
-          return next
-        })
-      })
-      .catch((summaryError: unknown) => {
-        console.error('Failed to load notebook history summary:', summaryError)
-      })
-      .finally(() => {
-        historySummaryRequests.current.delete(effectiveAgentFrameId)
-      })
-  }, [effectiveAgentFrameId, historySummaries, onLoadHistorySummary, status])
   // Only python/r runs are "cells" in the notebook sense; repl/bash are control-plane/shell runs
   // that share the run history but never became a notebook cell.
   const cells = runs.filter((run) => {
@@ -471,6 +430,7 @@ const SessionNotebookContent = ({
                       allowFolderAccess={allowFolderAccess}
                       index={index}
                       showInputData={Boolean(projectId)}
+                      loadRun={loadRun}
                     />
                   </div>
                 ))
@@ -592,12 +552,17 @@ const SessionNotebookDialog = ({
   const { t } = useTranslation()
   const [runs, setRuns] = useState<NotebookRunRecord[]>([])
   const [runCount, setRunCount] = useState(0)
+  const [agentSummaries, setAgentSummaries] = useState<NotebookAgentSummary[]>([])
   const [historyPage, setHistoryPage] = useState<NotebookRunPage>()
   const [loadingEarlier, setLoadingEarlier] = useState(false)
   const [earlierError, setEarlierError] = useState<string>()
   const [status, setStatus] = useState<SessionNotebookStatus>('loading')
   const [error, setError] = useState<string | undefined>(undefined)
   const dialogSession = useRetainedDialogValue(session)
+  const frameRuns = dialogSession ? normalizeNotebookRootFrameRuns(runs, dialogSession) : runs
+  const agents = dialogSession
+    ? notebookAgentSummariesForSession(dialogSession, runs, agentSummaries)
+    : []
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const topSentinelRef = useRef<HTMLDivElement | null>(null)
   const initialBottomPending = useRef(true)
@@ -679,16 +644,15 @@ const SessionNotebookDialog = ({
       })
   }, [dialogSession, historyPage, loadingEarlier, runs])
 
-  const loadHistorySummary = useCallback(
-    async (agentFrameId: string): Promise<NotebookRunHistorySummary | undefined> => {
+  const loadRun = useCallback(
+    async (runId: string) => {
       if (!dialogSession) return undefined
-      const state = await window.api.notebook.state({
+      return window.api.notebook.runEvidence({
         sessionId: dialogSession.id,
         projectId: dialogSession.projectId,
         workspaceCwd: dialogSession.cwd ?? '',
-        historySummaryFrameId: agentFrameId
+        runId
       })
-      return state.historySummary
     },
     [dialogSession]
   )
@@ -704,6 +668,7 @@ const SessionNotebookDialog = ({
       setError(undefined)
       setRuns([])
       setRunCount(0)
+      setAgentSummaries([])
       setHistoryPage(undefined)
       setEarlierError(undefined)
       setLoadingEarlier(false)
@@ -720,6 +685,7 @@ const SessionNotebookDialog = ({
 
           setRuns(loaded.runs)
           setRunCount(loaded.runCount)
+          setAgentSummaries(loaded.agentSummaries)
           setHistoryPage(loaded.historyPage)
           setStatus('ready')
         })
@@ -765,7 +731,7 @@ const SessionNotebookDialog = ({
               key={dialogSession.id}
               sessionId={dialogSession.id}
               projectId={dialogSession.projectId}
-              runs={runs}
+              runs={frameRuns}
               runCount={runCount}
               loadedRunCount={runs.length}
               historyPage={historyPage}
@@ -773,9 +739,10 @@ const SessionNotebookDialog = ({
               earlierError={earlierError}
               viewportRef={viewportRef}
               topSentinelRef={topSentinelRef}
-              frameLabels={notebookFrameLabels(dialogSession, t)}
-              onLoadHistorySummary={loadHistorySummary}
+              frameLabels={notebookFrameLabels(dialogSession, t, frameRuns, agents)}
+              agentSummaries={agents}
               onLoadEarlier={loadEarlier}
+              loadRun={loadRun}
               status={status}
               error={error}
               onClose={onClose}

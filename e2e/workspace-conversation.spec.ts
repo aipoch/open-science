@@ -1095,7 +1095,7 @@ test('shows the Electron failure reason when a source request fails', async ({ a
 
   const sourceError = page.locator('[data-source-preview-error]')
   await expect(sourceError).toContainText('Could not load this source')
-  await expect(sourceError).toContainText('The source could not be reached.')
+  await expect(sourceError).toContainText('The site refused the connection.')
   await expect(sourceError).toContainText('ERR_CONNECTION_REFUSED (-102)')
   await expect(page.locator('[data-source-preview-skeleton]')).toHaveCount(0)
   await expect(page.locator('[data-source-preview-progress]')).toHaveCount(0)
@@ -1132,7 +1132,9 @@ test('shows the Electron failure reason when a source request fails', async ({ a
     })
   )
   await sourceError.getByRole('button', { name: 'Try again' }).click()
-  await expect(sourceError).toContainText('This source does not allow embedded previews.')
+  await expect(sourceError).toContainText(
+    'The link leads to an address that cannot be opened in the sidebar.'
+  )
   await expect(page.locator('[data-source-preview-skeleton]')).toHaveCount(0)
   await expect(page.locator('[data-source-preview-progress]')).toHaveCount(0)
 })

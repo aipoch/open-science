@@ -39,6 +39,7 @@ import { randomUUID } from 'node:crypto'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
 import { loadSessionMutationAuthority, SessionRepository } from '../session-persistence/repository'
@@ -325,7 +326,7 @@ describe('TaskRunner', () => {
         now,
         sessions: {
           list: async () => (await coordinator.loadAll()).sessions,
-          save: (candidate) => coordinator.saveSession(candidate),
+          save: (candidate) => coordinator.saveSession(candidate, {}, { taskRunCommit: true }),
           bindSession: (request) => coordinator.bindTaskSession(request),
           admitTurn: (request) => coordinator.admitTaskTurn(request),
           stageCompletion: (request) => coordinator.stageTaskCompletion(request),
@@ -579,7 +580,7 @@ describe('TaskRunner', () => {
               const latest = await coordinator.loadSessionForContinuation(project.id, candidate.id)
               await coordinator.saveSession({ ...latest, title: 'Title from Web' })
             }
-            return coordinator.saveSession(candidate)
+            return coordinator.saveSession(candidate, {}, { taskRunCommit: true })
           },
           bindSession: async (request) => {
             if (injectWebSave) {
@@ -5417,6 +5418,7 @@ describe('TaskRunner', () => {
     })
     const failure = new NotebookExecutionStopError()
     const notebook = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: project.id,
@@ -5434,7 +5436,9 @@ describe('TaskRunner', () => {
     const connection = await rpc.issueSessionConnection(
       session.id,
       project.id,
-      `root-frame-${session.id}`
+      `root-frame-${session.id}`,
+      true,
+      notebook.createExecutionIntent({ projectId: project.id, sessionId: session.id })
     )
     const bind = (executionId: string): void =>
       rpc.setArtifactTurnBinding(session.id, {
@@ -7119,7 +7123,8 @@ const crashedRestartTaskRun = async (owner?: 'main') => {
       },
       sessions: {
         list: async () => (await coordinator.loadAll()).sessions,
-        save: (session: PersistedChatSession) => coordinator.saveSession(session),
+        save: (session: PersistedChatSession) =>
+          coordinator.saveSession(session, {}, { taskRunCommit: true }),
         bindSession: (request) => coordinator.bindTaskSession(request),
         admitTurn: (request) => coordinator.admitTaskTurn(request),
         stageCompletion: (request) => coordinator.stageTaskCompletion(request),

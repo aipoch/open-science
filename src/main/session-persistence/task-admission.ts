@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { ensureConversationRuntimeSegment } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
@@ -58,7 +59,7 @@ export const rebaseTaskTurnOntoLatestSession = (
   const currentGraph = materializeSessionConversationGraph(latest).conversationGraph
   const graphWithRuntime = ensureConversationRuntimeSegment(currentGraph, {
     id: `runtime-segment-${promptMessageId}`,
-    frameworkId: rebased.agentFrameworkId ?? 'claude-code',
+    frameworkId: rebased.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
     providerId: rebased.agentConfiguration?.providerId,
     backendId: rebased.agentBackendId,
     model: rebased.agentModel,

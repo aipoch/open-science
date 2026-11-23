@@ -5,6 +5,8 @@ import { getPdfTranslationTextContent } from './text-content.js'
 
 type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
 type Box = [number, number, number, number]
+const solidRgbInk = (fill: unknown): boolean =>
+  typeof fill === 'string' && /^#(?!ffffff$)[0-9a-f]{6}$/iu.test(fill)
 const identity = [1, 0, 0, 1, 0, 0]
 const axis = (m: readonly number[]): boolean =>
   m.length === 6 && m.every(Number.isFinite) && m[0] > 0 && m[3] > 0 && m[1] === 0 && m[2] === 0
@@ -289,7 +291,7 @@ export async function readNativeFormClippedText(
             state.inText &&
             state.verticalPositioned &&
             axis(matrix) &&
-            state.fill === '#000000' &&
+            solidRgbInk(state.fill) &&
             state.mode === 0 &&
             Number.isFinite(state.size) &&
             state.size > 0 &&
@@ -382,7 +384,7 @@ export async function readNativeFormClippedText(
         list.push({ hidden: false })
         if (
           !state.clips.length ||
-          state.fill !== '#000000' ||
+          !solidRgbInk(state.fill) ||
           state.mode !== 0 ||
           content.styles?.[state.font]?.vertical !== false ||
           !page.commonObjs.has(state.font)

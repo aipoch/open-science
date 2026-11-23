@@ -6,6 +6,8 @@ export type NotebookAnalysisRun = {
   kernelKind: 'python' | 'r' | 'repl' | 'bash'
   script: string
   status: 'queued' | 'running' | 'completed' | 'failed' | 'timeout' | 'interrupted' | 'cancelled'
+  startedAt?: number
+  endedAt?: number
   kernelEpochId?: string
   kernelDispatched?: boolean
   replPersistentBindings?: true
@@ -29,6 +31,10 @@ export type NotebookAnalysisRun = {
       before: { pythonRandomState?: { state: 'available' | 'unavailable' } }
     }
   }
+  environmentCapture?:
+    | { state: 'available' | 'partial'; manifestChecksum: string }
+    | { state: 'unavailable'; reason: string }
+  environmentManifestChecksum?: string
   fileEvidence?: {
     state: 'available' | 'partial' | 'unavailable'
     checksum?: string

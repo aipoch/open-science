@@ -148,7 +148,8 @@ export const useAgentAuthenticationRecovery = (
     ),
     provider,
     openSettings: () => {
-      if (provider)
+      if (provider?.type === 'lab') useSettingsStore.getState().openSettingsToPanel('lab')
+      else if (provider)
         useSettingsStore.getState().openSettingsToProvider(provider.id, recoveryTarget?.model)
       else useSettingsStore.getState().openSettingsToPanel('model')
     }

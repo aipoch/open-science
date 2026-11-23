@@ -7,9 +7,12 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 import {
+  copyProviderResponseHeaders,
+  PROVIDER_HOP_BY_HOP_HEADERS,
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
+  withProviderConnectionMarker,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 import {
@@ -30,19 +33,6 @@ const WIRE_PATH = {
   'chat-completions': '/v1/chat/completions',
   responses: '/v1/responses'
 } as const
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection',
-  'content-encoding',
-  'content-length',
-  'host',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade'
-])
 type ProviderErrorSnapshot = Readonly<{
   body: Buffer
   headers: Record<string, string>
@@ -58,10 +48,26 @@ export type ProtocolForwardingBridgeTarget = Readonly<{
   model: string
   /** Host-only OAuth resolution. These requests never replay errors or expose upstream diagnostics. */
   resolveConnection?: (
-    signal: AbortSignal
+    signal: AbortSignal,
+    forceRefresh?: boolean
   ) => Promise<
     Readonly<{ endpoint: string; key: string; headers?: Readonly<Record<string, string>> }>
   >
+  /** Retry once with a refreshed host credential after an upstream 401 (Lab only). */
+  refreshOnUnauthorized?: boolean
+  /** Upstream statuses to expose as terminal local 400s so ACP runtimes do not retry them. */
+  terminalUpstreamStatuses?: readonly number[]
+  /** Maps a host-only upstream failure to the token-free code/message shown to the caller. */
+  mapUpstreamError?: (
+    status: number,
+    parsed: unknown
+  ) => Readonly<{ code: string; message: string }> | undefined
+  /** Maps a host-only connection/credential failure to a stable local response. */
+  mapConnectionError?: (
+    error: unknown
+  ) => Readonly<{ status: number; code: string; message: string }> | undefined
+  /** Stable message used when a host-only request fails before an upstream response exists. */
+  privateCredentialsErrorMessage?: string
   adaptRequest?: (request: Record<string, unknown>) => Record<string, unknown>
   adaptStream?: (records: AsyncIterable<string>) => AsyncIterable<string>
 }>
@@ -76,7 +82,8 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
   for (const [name, value] of Object.entries(request.headers)) {
     const normalized = name.toLowerCase()
     if (
-      HOP_BY_HOP_HEADERS.has(normalized) ||
+      PROVIDER_HOP_BY_HOP_HEADERS.has(normalized) ||
+      normalized === 'content-encoding' ||
       // Fetch decodes upstream responses, so it must negotiate its own supported encodings.
       normalized === 'accept-encoding' ||
       normalized === 'authorization' ||
@@ -94,14 +101,6 @@ const requestHeaders = (request: ProviderLoopbackHttpRequest, key?: string): Hea
   }
   if (key) headers.set('authorization', `Bearer ${key}`)
   headers.set('content-type', 'application/json')
-  return headers
-}
-
-const responseHeaders = (source: Headers): Record<string, string> => {
-  const headers: Record<string, string> = {}
-  for (const [name, value] of source) {
-    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) headers[name] = value
-  }
   return headers
 }
 
@@ -187,7 +186,21 @@ export class ProtocolForwardingBridge {
     } catch (error) {
       // OAuth owners and network errors can contain account or credential details. ACP gets only
       // a stable failure; the auth owner is responsible for its own bounded diagnostics.
-      if (privateCredentials) throw new Error('Codex provider request failed.')
+      const mapped = privateCredentials ? this.target.mapConnectionError?.(error) : undefined
+      if (mapped) {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined)
+          return
+        }
+        json(response, mapped.status, {
+          error: { type: 'authentication_error', code: mapped.code, message: mapped.message }
+        })
+        return
+      }
+      if (privateCredentials)
+        throw new Error(
+          this.target.privateCredentialsErrorMessage ?? 'Codex provider request failed.'
+        )
       throw error
     }
   }
@@ -214,22 +227,36 @@ export class ProtocolForwardingBridge {
     const adapted = target.adaptRequest?.(parsed) ?? parsed
     const connection = await target.resolveConnection?.(request.signal)
     request.signal.throwIfAborted()
-    const endpoint = new URL(connection?.endpoint ?? target.endpoint)
-    if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
-      throw new Error('The protocol forwarding provider target has no valid endpoint URL.')
+    const resolveEndpoint = (value: string | undefined): URL => {
+      const resolved = new URL(value ?? target.endpoint)
+      if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') {
+        throw new Error('The protocol forwarding provider target has no valid endpoint URL.')
+      }
+      return resolved
     }
+    const endpoint = resolveEndpoint(connection?.endpoint)
     const body = JSON.stringify({ ...adapted, model: target.model })
     // Account routing and bearer credentials come exclusively from main. Client headers cannot
     // override the selected account, attach cookies, or route an OAuth request to another host.
-    const headersToForward = connection
-      ? new Headers({
-          'content-type': 'application/json',
-          accept: 'text/event-stream',
-          'user-agent': 'open-science-agent/0.1.0',
-          ...connection.headers,
-          authorization: `Bearer ${connection.key}`
-        })
-      : requestHeaders(request, target.key)
+    const forwardingHeaders = (
+      resolved:
+        | Readonly<{
+            endpoint: string
+            key: string
+            headers?: Readonly<Record<string, string>>
+          }>
+        | undefined
+    ): Headers =>
+      resolved
+        ? new Headers({
+            'content-type': 'application/json',
+            accept: 'text/event-stream',
+            'user-agent': 'open-science-agent/0.1.0',
+            ...resolved.headers,
+            authorization: `Bearer ${resolved.key}`
+          })
+        : requestHeaders(request, target.key)
+    const headersToForward = forwardingHeaders(connection)
     const replayKey = providerRequestFingerprint(
       target.id,
       requestUrl.pathname,
@@ -249,18 +276,45 @@ export class ProtocolForwardingBridge {
     const transport: typeof fetch = connection
       ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
       : this.fetchImpl
-    const upstream = await fetchProviderRequest(transport, endpoint, {
-      method: 'POST',
-      headers: headersToForward,
-      body,
-      signal: request.signal
-    })
+    const fetchUpstream = withProviderConnectionMarker(transport, response)
+    const send = (url: URL, headers: Headers): Promise<Response> =>
+      fetchProviderRequest(fetchUpstream, url, {
+        method: 'POST',
+        headers,
+        body,
+        signal: request.signal
+      })
+    let upstream = await send(endpoint, headersToForward)
+    // A host-owned credential can expire mid-generation. Refresh exactly once; a second 401 is a
+    // real authentication failure and must not loop.
+    if (
+      connection &&
+      target.refreshOnUnauthorized === true &&
+      upstream.status === 401 &&
+      target.resolveConnection
+    ) {
+      await upstream.body?.cancel()
+      const refreshed = await target.resolveConnection(request.signal, true)
+      request.signal.throwIfAborted()
+      upstream = await send(resolveEndpoint(refreshed.endpoint), forwardingHeaders(refreshed))
+    }
     if (connection && !upstream.ok) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })
       let code = 'provider_error'
+      let message = target.privateCredentialsErrorMessage ?? 'Codex provider request failed.'
       if (upstreamBody.complete) {
+        let parsed: unknown
         try {
-          const error = JSON.parse(upstreamBody.body.toString('utf8')).error
+          parsed = JSON.parse(upstreamBody.body.toString('utf8'))
+        } catch {
+          parsed = undefined
+        }
+        const mapped = target.mapUpstreamError?.(upstream.status, parsed)
+        if (mapped) {
+          code = mapped.code
+          message = mapped.message
+        } else {
+          const error = parsed as { error?: { code?: unknown } } | undefined
           const allowed = [
             'subscription_sharing_usage_limit_exceeded',
             'subscription_sharing_usage_unavailable',
@@ -271,20 +325,20 @@ export class ProtocolForwardingBridge {
             'insufficient_quota',
             'context_length_exceeded'
           ]
-          if (allowed.includes(error?.code)) code = error.code
-        } catch {
-          // Raw OAuth errors must not cross the loopback boundary, including malformed bodies.
+          if (typeof error?.error?.code === 'string' && allowed.includes(error.error.code)) {
+            code = error.error.code
+          }
         }
       }
+      const terminal = target.terminalUpstreamStatuses?.includes(upstream.status) === true
+      const clientStatus = terminal ? 400 : upstream.status >= 400 ? upstream.status : 502
       response.setHeader('x-open-science-upstream-status', String(upstream.status))
-      json(response, upstream.status >= 400 ? upstream.status : 502, {
-        error: { code, message: 'Codex provider request failed.' }
-      })
+      json(response, clientStatus, { error: { code, message } })
       return
     }
     const headers = connection
       ? { 'content-type': upstream.headers.get('content-type') ?? 'text/event-stream' }
-      : responseHeaders(upstream.headers)
+      : copyProviderResponseHeaders(upstream.headers)
     if (isDeterministicProviderErrorStatus(upstream.status)) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, {
         signal: request.signal

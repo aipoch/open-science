@@ -30,7 +30,7 @@ const children: ChildProcessWithoutNullStreams[] = []
 afterEach(async () => {
   vi.restoreAllMocks()
   await Promise.all(children.splice(0).map((child) => terminateProcessTree(child)))
-  if (root) await rm(root, { recursive: true, force: true })
+  if (root) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
   root = undefined
 })
 const scope = {

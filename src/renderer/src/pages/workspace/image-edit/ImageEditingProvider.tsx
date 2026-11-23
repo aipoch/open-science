@@ -1,3 +1,4 @@
+import { ImageComposerBridgeProvider } from './image-composer-bridge'
 import { useImageModelSettingsStore } from '@/stores/image-model-settings-store'
 import { isDesktopRuntimeConnectionError } from '../../../../../shared/desktop-runtime-recovery'
 import {
@@ -297,5 +298,9 @@ export function ImageEditingProvider({ children }: { children: ReactNode }): Rea
       cancelTask
     ]
   )
-  return <ImageEditingContext.Provider value={value}>{children}</ImageEditingContext.Provider>
+  return (
+    <ImageEditingContext.Provider value={value}>
+      <ImageComposerBridgeProvider>{children}</ImageComposerBridgeProvider>
+    </ImageEditingContext.Provider>
+  )
 }

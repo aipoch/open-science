@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { OfficePreviewRuntimeError, runOfficePreview } from './office-preview-runtime'
+import { runOfficePreview } from './office-preview-runtime'
 
 const mocks = vi.hoisted(() => ({
   validate: vi.fn(),
@@ -145,33 +145,36 @@ describe('runOfficePreview', () => {
     expect(mocks.validate).not.toHaveBeenCalled()
   })
 
-  it('preserves stable package-validation error codes', async () => {
-    const bytes = new Uint8Array([1, 2, 3])
-    mocks.validate.mockRejectedValue(
-      new OfficePreviewRuntimeError('RESOURCE_LIMIT_EXCEEDED', 'Package expansion limit exceeded')
-    )
-    const start = {
-      sessionId: 'session-1',
-      resource: {
-        id: 'resource-1',
-        url: 'open-science-preview://resource-1/report.docx',
-        size: bytes.byteLength,
-        mimeType: 'application/octet-stream',
-        version: 1
-      },
-      extension: 'docx' as const,
-      name: 'report.docx',
-      attempt: 0
-    }
+  it.each(['ENCRYPTED_PACKAGE', 'EXTERNAL_RESOURCES', 'RESOURCE_LIMIT_EXCEEDED'])(
+    'preserves validation reason %s',
+    async (code) => {
+      const bytes = new Uint8Array([1, 2, 3])
+      mocks.validate.mockRejectedValue(
+        Object.assign(new Error('Package validation failed'), { code })
+      )
+      const start = {
+        sessionId: 'session-1',
+        resource: {
+          id: 'resource-1',
+          url: 'open-science-preview://resource-1/report.docx',
+          size: bytes.byteLength,
+          mimeType: 'application/octet-stream',
+          version: 1
+        },
+        extension: 'docx' as const,
+        name: 'report.docx',
+        attempt: 0
+      }
 
-    await expect(
-      runOfficePreview({
-        start,
-        container: document.createElement('div'),
-        fetchFile: vi.fn().mockResolvedValue(new Response(bytes)),
-        reportState: vi.fn()
-      })
-    ).rejects.toMatchObject({ code: 'RESOURCE_LIMIT_EXCEEDED' })
-    expect(mocks.render).not.toHaveBeenCalled()
-  })
+      await expect(
+        runOfficePreview({
+          start,
+          container: document.createElement('div'),
+          fetchFile: vi.fn().mockResolvedValue(new Response(bytes)),
+          reportState: vi.fn()
+        })
+      ).rejects.toMatchObject({ code })
+      expect(mocks.render).not.toHaveBeenCalled()
+    }
+  )
 })

@@ -1,5 +1,6 @@
 // Owns one complete Reviewer assessment from scope resolution through durable submission.
 
+import { sharedCodeBuddySiteMatches } from '../settings/codebuddy-profile'
 import { homedir } from 'node:os'
 
 import type { ActiveSession } from '@agentclientprotocol/sdk'
@@ -191,12 +192,14 @@ const cleanupReviewerResources = async (
   let reviewerBridgeScoped: boolean | undefined
   let runtimeCleanupFailed = false
   let runtimeCleanupError: unknown
+  let providerClosed: Promise<void> | undefined
 
   if (reviewerSession) {
     try {
       const disposition = acpRuntime.disposeReviewerSession(reviewerSession)
       rejectedToolCalls = disposition.rejectedToolCalls
       reviewerBridgeScoped = disposition.reviewerBridgeScoped
+      providerClosed = disposition.providerClosed
     } catch (error) {
       runtimeCleanupFailed = true
       runtimeCleanupError = error
@@ -210,6 +213,7 @@ const cleanupReviewerResources = async (
       error: error instanceof Error ? error.message : String(error)
     })
   }
+  await providerClosed
 
   return {
     rejectedToolCalls,
@@ -383,6 +387,10 @@ export const runReviewAssessment = async (
           cwd: built.cwd
         })
         if (abortSignal?.aborted) throw new Error('reviewer session was aborted before stopping')
+        const site =
+          backend?.modelRoute === 'codebuddy-subscription' && backend.adapter.codeBuddySharedSite
+        if (site && !sharedCodeBuddySiteMatches(site))
+          throw new Error('Sign in to the selected site in CodeBuddy CLI.')
         const promptRequest = reviewerSession!.prompt([{ type: 'text', text: prompt }])
         void Promise.resolve(promptRequest).catch(() => undefined)
         const stopReason = await driveReviewerToStop(

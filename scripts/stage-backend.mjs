@@ -11,14 +11,18 @@ import {
   isBackendRuntimeDependency,
   isElectronPackage,
   missingOptionalDependencies,
-  prismaEngineFilenames
+  prismaEngineFilenames,
+  usesPackedDesktopPdfJs
 } from './backend-dependencies.mjs'
 import { prepareBackendStage } from './build-notebook-host.mjs'
 import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
 import { parseArgs } from 'node:util'
-import { stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
+import { packDesktopPdfJs } from './desktop-pdfjs.mjs'
+import { shareDesktopPdfLibPako, stageDesktopPdfLib } from './desktop-pdf-lib.mjs'
+import { bundleDesktopFilmCompiler } from './desktop-film-compiler.mjs'
+import { packWebAssets } from './pack-web-assets.mjs'
 import { syncFileEvidenceCodec } from './sync-file-evidence-codec.mjs'
 import {
   assertPrivateDependencyChain,
@@ -35,6 +39,34 @@ const cliManifest = JSON.parse(
 )
 const forbidden = isElectronPackage
 const metadata = JSON.parse(await readFile(join(backend, 'dependencies.json'), 'utf8'))
+// External agent runtimes belong to the user's managed installation. Check both compiled
+// inputs and copied packages, including nested dependencies and platform-specific binaries.
+const optionalAgentPackages = new Set([
+  '@agentclientprotocol/claude-agent-acp',
+  '@agentclientprotocol/codex-acp',
+  '@anthropic-ai/claude-code',
+  '@anthropic-ai/claude-agent-sdk',
+  '@openai/codex',
+  'opencode-ai',
+  '@tencent-ai/codebuddy-code',
+  '@openma/pi-acp',
+  '@earendil-works/pi-coding-agent'
+])
+function assertBaseBackendPackage(name) {
+  if (
+    optionalAgentPackages.has(name) ||
+    /^@anthropic-ai\/claude-(?:agent-sdk|code)-/.test(name) ||
+    /^(?:opencode-|@openai\/codex-)(?:darwin|linux|win32|windows)-/.test(name)
+  )
+    throw new Error('Optional agent runtime leaked into the backend: ' + name)
+}
+for (const meta of metadata)
+  for (const file of Object.keys(meta.inputs))
+    for (const [, name] of file
+      .replaceAll('\\', '/')
+      .matchAll(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/g))
+      assertBaseBackendPackage(name)
+
 const bundledDependencies = desktopBundledDependencies(metadata, undefined, root)
 const dependencyRoots = values.desktop
   ? desktopBackendDependencies(
@@ -53,10 +85,14 @@ await cp(backend, join(stage, 'out/backend'), {
 })
 // Pi dependencies are downloaded only after an explicit runtime install.
 await cp(join(root, 'out/pi-bootstrap'), join(stage, 'out/pi-bootstrap'), { recursive: true })
-await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
+if (values.desktop) await packWebAssets(join(root, 'out/web'), join(stage, 'out/web'))
+else await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
-  filter: (path) => !relative(join(root, 'resources'), path).split(sep).includes('bin')
+  filter: (path) =>
+    !relative(join(root, 'resources'), path)
+      .split(sep)
+      .some((part) => ['bin', 'node_modules'].includes(part))
 })
 await syncFileEvidenceCodec({
   root,
@@ -95,6 +131,7 @@ await cp(join(root, 'packages/open-science/README.md'), join(stage, 'README.md')
 await cp(join(root, 'packages/open-science/CLI.md'), join(stage, 'CLI.md'))
 
 const installed = new Map()
+const packageEdges = new Map()
 const privateDependencies = new Set()
 async function packageDirectory(name, from) {
   let directory = from
@@ -112,6 +149,7 @@ async function packageDirectory(name, from) {
   }
 }
 async function copyDependency(name, from, destinationParent = stage) {
+  assertBaseBackendPackage(name)
   assertPrivateDependencyChain(name, privateDependencies)
   if (forbidden(name)) throw new Error(`Standalone dependency closure includes ${name}`)
   if (bundledDependencies.has(name))
@@ -122,8 +160,11 @@ async function copyDependency(name, from, destinationParent = stage) {
   const pkg = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
   let destination = join(destinationParent, 'node_modules', name)
   const atRoot = installed.get(join(stage, 'node_modules', name))
-  if (atRoot === pkg.version) return
-  if (!atRoot) destination = join(stage, 'node_modules', name)
+  if (!atRoot || atRoot === pkg.version) destination = join(stage, 'node_modules', name)
+  if (values.desktop) {
+    if (!packageEdges.has(destinationParent)) packageEdges.set(destinationParent, new Map())
+    packageEdges.get(destinationParent).set(name, destination)
+  }
   if (installed.get(destination) === pkg.version) return
   installed.set(destination, pkg.version)
   const desktopIncludes = values.desktop ? createDesktopDependencyFilter(pkg) : undefined
@@ -150,7 +191,10 @@ async function copyDependency(name, from, destinationParent = stage) {
         )
       }
     })
-  if (values.desktop) await inlineDesktopDependencyMaps(pkg, destination)
+  if (values.desktop) {
+    if (usesPackedDesktopPdfJs(pkg)) await packDesktopPdfJs(source, destination)
+    await inlineDesktopDependencyMaps(pkg, destination)
+  }
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {
     delete pkg.scripts
@@ -198,6 +242,7 @@ if (!bundledDependencies.has('undici')) {
   await copyDependency('undici', root)
   dependencies.undici = installed.get(join(stage, 'node_modules/undici'))
 }
+if (values.desktop) await bundleDesktopFilmCompiler(stage, packageEdges)
 // Fail if a new peer edge reintroduces development tooling into a shipped dependency closure.
 for (const name of ['prisma', '@prisma/engines', 'typescript']) {
   if ([...installed.keys()].some((path) => path.endsWith(join('node_modules', name))))
@@ -256,7 +301,7 @@ await writeFile(
       ...cliManifest,
       version: manifest.version,
       description: 'Open-Science standalone Node backend, CLI and SDK',
-      files: ['*.mjs', '*.d.ts', '*.d.mts', 'LICENSE', 'README.md', 'CLI.md', 'out', 'resources'],
+      files: [...cliManifest.files, '*.d.mts', '*.d.cts', 'out', 'resources'],
       os: [process.platform],
       cpu: [process.arch],
       engines: { node: '>=22.13.0' },
@@ -267,6 +312,11 @@ await writeFile(
     2
   ) + '\n'
 )
+if (values.desktop) {
+  const { compactDesktopPackageModules } = await import('./desktop-package-modules.mjs')
+  await compactDesktopPackageModules(stage, installed)
+  await shareDesktopPdfLibPako(stage, installed)
+}
 console.log(
   `Staged ${process.platform}/${process.arch} ${values.desktop ? 'desktop' : 'standalone'} artifact at ${stage}; ${installed.size} dependency placements, no Electron.`
 )

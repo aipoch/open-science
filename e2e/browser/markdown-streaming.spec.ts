@@ -196,7 +196,7 @@ test('updates equal-length formatted text, table cells and formulas', async ({ p
 })
 
 // A real tall PNG exercises image decode and intrinsic layout without external network or fixtures.
-function tallPng(): Buffer {
+function fixturePng(width = 1200, height = 1800): Buffer {
   const chunk = (kind: string, bytes: Buffer): Buffer => {
     const payload = Buffer.concat([Buffer.from(kind), bytes])
     const length = Buffer.alloc(4)
@@ -206,12 +206,12 @@ function tallPng(): Buffer {
     return Buffer.concat([length, payload, checksum])
   }
   const header = Buffer.alloc(13)
-  header.writeUInt32BE(1200, 0)
-  header.writeUInt32BE(1800, 4)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
   header[8] = 8
   header[9] = 6
-  const pixels = Buffer.alloc((1200 * 4 + 1) * 1800, 200)
-  for (let row = 0; row < 1800; row++) pixels[row * (1200 * 4 + 1)] = 0
+  const pixels = Buffer.alloc((width * 4 + 1) * height, 200)
+  for (let row = 0; row < height; row++) pixels[row * (width * 4 + 1)] = 0
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk('IHDR', header),
@@ -229,10 +229,15 @@ for (const dimensions of [false, true]) {
       release = resolve
     })
     let requests = 0
+    let thumbnails = 0
+    await page.route('**/stream-thumbnail.png', async (route) => {
+      thumbnails++
+      await route.fulfill({ contentType: 'image/png', body: fixturePng(64, 96) })
+    })
     await page.route('**/delayed-stream-image.png', async (route) => {
       requests++
       await gate
-      await route.fulfill({ contentType: 'image/png', body: tallPng() })
+      await route.fulfill({ contentType: 'image/png', body: fixturePng() })
     })
     await page.goto(`/markdown-streaming.html?image-scroll${dimensions ? '&dimensions' : ''}`)
     const viewport = page.getByRole('region')
@@ -280,6 +285,7 @@ for (const dimensions of [false, true]) {
     await page.getByRole('button', { name: 'Complete generation', exact: true }).click()
     await expect(page.getByTestId('reply-tail')).toHaveText('Completed')
     await expect.poll(bottomGap).toBeLessThanOrEqual(1)
+    await expect.poll(() => thumbnails).toBe(1)
     expect(requests).toBe(1)
     await page.screenshot({ path: test.info().outputPath('image-stream-bottom.png') })
   })
@@ -294,7 +300,7 @@ test('delayed image growth respects an upward scroll and can resume bottom follo
   })
   await page.route('**/delayed-stream-image.png', async (route) => {
     await gate
-    await route.fulfill({ contentType: 'image/png', body: tallPng() })
+    await route.fulfill({ contentType: 'image/png', body: fixturePng() })
   })
   await page.goto('/markdown-streaming.html?image-scroll')
   const viewport = page.getByRole('region')

@@ -1,7 +1,10 @@
+import { join } from 'node:path'
+import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
 import { getAgentFramework } from '../agent-framework'
+import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import type { StoredProvider } from './types'
 import { resolveProviderDraft } from './provider-draft-projection'
 
@@ -17,6 +20,60 @@ const { ProviderRuntimeProjectionOwner } = await import('./provider-runtime-proj
 const { encryptKey } = await import('./crypto')
 
 describe('ProviderRuntimeProjectionOwner', () => {
+  it.each([
+    ['internal', 'hy4std', 'default-model'],
+    ['external', 'default-model', 'hy4std']
+  ] as const)(
+    'uses the %s base catalog until an account catalog is available',
+    (site, first, otherSite) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        ...codeBuddyAccounts[site],
+        type: 'codebuddy-subscription',
+        fetchedModels: []
+      }
+      const base = owner.toProviderView(provider).models
+      expect(base[0]).toBe(first)
+      expect(base).not.toContain(otherSite)
+      expect(owner.resolveActiveModel(provider)).toBe(first)
+      expect(owner.toProviderView({ ...provider, model: 'older-model' }).models).toEqual([
+        'older-model',
+        ...base
+      ])
+      const refreshed = { ...provider, fetchedModels: ['account-only'] }
+      expect(owner.toProviderView(refreshed).models).toEqual(['account-only'])
+      expect(owner.resolveActiveModel(refreshed)).toBe('account-only')
+    }
+  )
+
+  it('routes the same model to the saved CodeBuddy account when both sites are configured', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const framework = getAgentFramework('codebuddy')
+    const targets = (['internal', 'external'] as const).map((site) => {
+      const record: StoredProvider = {
+        ...codeBuddyAccounts[site],
+        type: 'codebuddy-subscription',
+        model: 'same-model',
+        apiEndpoints: ['chat-completions']
+      }
+      const selection = { kind: 'required', model: 'same-model' } as const
+      expect(
+        owner.resolveRuntimeTarget(record, selection, getAgentFramework('codex'))
+          .frameworkCompatible
+      ).toBe(false)
+      const target = owner.resolveRuntimeTarget(record, selection, framework)
+      expect(target.providerId).toBe(record.id)
+      const config = framework.prepareModelConfig(target.provider, {
+        storageRoot: 'profiles',
+        executablePath: 'codebuddy'
+      })
+      expect(config.env?.CODEBUDDY_INTERNET_ENVIRONMENT).toBe(site)
+      expect(config.env).not.toHaveProperty('CODEBUDDY_API_KEY')
+      expect(config.configFiles?.some((file) => file.path.endsWith('models.json'))).toBe(false)
+      return config.env?.HOME
+    })
+    expect(targets).toEqual([join('profiles', 'codebuddy-cn'), join('profiles', 'codebuddy-intl')])
+  })
   it.each([
     { type: 'codex-shared', codexAuthMode: undefined },
     { type: 'codex-isolated', codexAuthMode: 'imported' },
@@ -122,6 +179,106 @@ describe('ProviderRuntimeProjectionOwner', () => {
         model: 'manual-model[1m]',
         contextWindow: type === 'custom' ? 200_000 : 1_000_000
       })
+    }
+  )
+
+  it.each([undefined, { fetchedAt: 1, models: [{ id: 'gpt-6.1-sol' }] }])(
+    'uses the versioned official OpenAI route with a bundled or refreshed model catalog',
+    (modelCatalog) => {
+      const provider: StoredProvider = {
+        id: 'openai',
+        type: 'official',
+        vendorId: 'openai',
+        name: 'OpenAI',
+        modelCatalog
+      }
+      const target = new ProviderRuntimeProjectionOwner().resolveRuntimeTarget(
+        provider,
+        { kind: 'configured' },
+        getAgentFramework('codex')
+      )
+      expect(resolveResponsesBaseUrl(target.provider)).toBe('https://api.openai.com/v1')
+    }
+  )
+
+  it('restores only trusted protocol routes from a saved official catalog', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'saved',
+      type: 'official',
+      name: 'OpenCode',
+      vendorId: 'opencode',
+      modelCatalog: {
+        fetchedAt: 1,
+        models: [
+          {
+            id: 'mixed',
+            routes: {
+              responses: 'https://opencode.ai/inference/v1',
+              messages: 'https://other.example.invalid/v1'
+            }
+          },
+          { id: 'foreign-only', routes: { responses: 'https://other.example.invalid/v1' } }
+        ]
+      }
+    }
+    expect(owner.toProviderView(provider).models).toEqual(['mixed'])
+    const [target] = owner.resolveRuntimeModelCatalog(provider, getAgentFramework('codex'))
+    expect(target.apiEndpoints).toEqual(['responses'])
+    expect(resolveResponsesBaseUrl(target.provider)).toBe('https://opencode.ai/inference/v1')
+    expect(owner.toProviderView({ ...provider, vendorId: 'openai' }).models).toEqual([])
+  })
+
+  it('reads a large inventory once while enumerating its runtime targets', () => {
+    const models = Array.from({ length: 1000 }, (_, index) => ({ id: 'model-' + index }))
+    const readModels = vi.fn(() => models)
+    const stored: StoredProvider = {
+      id: 'directory',
+      type: 'official',
+      vendorId: 'opencode',
+      name: 'Directory',
+      modelCatalog: {
+        fetchedAt: 1,
+        get models() {
+          return readModels()
+        }
+      }
+    }
+    const targets = new ProviderRuntimeProjectionOwner().resolveRuntimeModelCatalog(
+      stored,
+      getAgentFramework('pi')
+    )
+    expect(targets.map((target) => target.effectiveModel)).toEqual(models.map((model) => model.id))
+    expect(readModels).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['openrouter', 'requesty'] as const)(
+    'excludes a historical full %s snapshot from views and runtime targets',
+    (vendorId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const stored: StoredProvider = {
+        id: vendorId,
+        name: vendorId,
+        type: 'official',
+        vendorId
+      }
+      const models = owner.toProviderView(stored).models
+      const historical = {
+        ...stored,
+        fetchedModels: ['directory-only'],
+        modelCatalogStatus: { attemptedAt: 1, ok: true },
+        modelCatalog: { fetchedAt: 1, models: [{ id: 'directory-only' }] }
+      }
+      expect(owner.toProviderView(historical)).toMatchObject({
+        models,
+        modelCatalog: undefined,
+        modelCatalogStatus: undefined
+      })
+      expect(
+        owner
+          .resolveRuntimeModelCatalog(historical, getAgentFramework('codex'))
+          .map((target) => target.effectiveModel)
+      ).toEqual(models)
     }
   )
 
@@ -232,10 +389,10 @@ describe('ProviderRuntimeProjectionOwner', () => {
     }
 
     expect(owner.toProviderView(openai).models).toEqual(
-      expect.arrayContaining(['gpt-6-sol', 'gpt-6-luna'])
+      expect.arrayContaining(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6-sol', 'gpt-6-luna'])
     )
     expect(owner.toProviderView(codex).models).toEqual(
-      expect.arrayContaining(['gpt-6-sol', 'gpt-6-luna'])
+      expect.arrayContaining(['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6-sol', 'gpt-6-luna'])
     )
   })
 
@@ -250,7 +407,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
         name: 'OpenAI',
         apiEndpoints: ['responses']
       }
-      const model = 'gpt-6.1-sol'
+      const model = 'gpt-6.2-sol'
 
       expect(owner.toProviderView(provider).models).toContain(model)
       expect(owner.resolveActiveModel(provider)).toBe(type === 'official' ? model : undefined)
@@ -485,6 +642,50 @@ describe('ProviderRuntimeProjectionOwner', () => {
     )
   })
 
+  it('projects Lab per-model context, output and image capabilities', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      baseUrl: 'https://lab.example/v1',
+      labServerUrl: 'https://lab.example.com',
+      fetchedModels: ['lab:vision-model', 'lab:text-model'],
+      modelCapabilities: {
+        'lab:vision-model': {
+          reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }],
+          modalities: { input: ['text', 'image'] },
+          limit: { context: 1_000_000, output: 64_000 }
+        },
+        'lab:text-model': { modalities: { input: ['text'] } }
+      }
+    }
+
+    expect(owner.resolveProvider(provider, 'lab:vision-model')).toMatchObject({
+      contextWindow: 1_000_000,
+      maxOutputTokens: 64_000,
+      supportsImageInput: true
+    })
+    expect(owner.resolveProvider(provider, 'lab:text-model')).toMatchObject({
+      supportsImageInput: false
+    })
+    expect(owner.resolveProvider(provider, 'lab:text-model')).not.toHaveProperty('contextWindow')
+    expect(owner.toProviderView(provider, 'lab:vision-model')).toMatchObject({
+      modelCapabilities: provider.modelCapabilities,
+      supportsImageInput: true
+    })
+    expect(owner.toProviderView(provider)).toMatchObject({ supportsImageInput: false })
+    const target = owner.resolveRuntimeTarget(
+      provider,
+      { kind: 'required', model: 'lab:vision-model' },
+      getAgentFramework('open-science-agent')
+    )
+    expect(target.reasoningEffortProfile).toEqual({
+      supported: true,
+      slots: ['low', 'high', 'max', 'max', 'max']
+    })
+  })
+
   it('projects a configured target without mutating or exposing the stored credential', () => {
     const owner = new ProviderRuntimeProjectionOwner()
     const provider: StoredProvider = {
@@ -550,15 +751,18 @@ describe('ProviderRuntimeProjectionOwner', () => {
         name: 'DeepSeek',
         fetchedModels: ['deepseek-flash', 'deepseek-v4-pro']
       }
-      for (const model of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
-        expect(owner.toProviderView(provider).models).toContain(model)
-        expect(
-          owner.resolveRuntimeTarget(
-            provider,
-            { kind: 'required', model },
-            getAgentFramework(frameworkId)
-          )
-        ).toMatchObject({ effectiveModel: model, provider: { model }, frameworkCompatible: true })
+      const modelCatalog = { fetchedAt: 1, models: provider.fetchedModels!.map((id) => ({ id })) }
+      for (const record of [provider, { ...provider, modelCatalog }]) {
+        for (const model of ['deepseek-v4-flash', 'deepseek-v4-flash-vision-exp']) {
+          expect(owner.toProviderView(record).models).toContain(model)
+          expect(
+            owner.resolveRuntimeTarget(
+              record,
+              { kind: 'required', model },
+              getAgentFramework(frameworkId)
+            )
+          ).toMatchObject({ effectiveModel: model, provider: { model }, frameworkCompatible: true })
+        }
       }
     }
   )
@@ -985,6 +1189,51 @@ describe('ProviderRuntimeProjectionOwner', () => {
       effectiveModel: 'account-model',
       provider: { model: 'account-model' }
     })
+  })
+
+  it.each(['open-science-agent', 'opencode'] as const)(
+    'excludes non-streaming Lab models from the %s runtime catalog',
+    (frameworkId) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'builtin-lab',
+        type: 'lab',
+        name: 'Lab',
+        baseUrl: 'https://lab.example.com/v1',
+        model: 'lab:stream',
+        fetchedModels: ['lab:stream', 'lab:batch'],
+        modelStreaming: { 'lab:stream': true, 'lab:batch': false },
+        apiEndpoints: ['chat-completions']
+      }
+      const framework = getAgentFramework(frameworkId)
+      expect(owner.resolveRuntimeModelCatalog(provider, framework)).toEqual([
+        expect.objectContaining({ effectiveModel: 'lab:stream' })
+      ])
+      expect(() =>
+        owner.resolveRuntimeTarget(provider, { kind: 'required', model: 'lab:batch' }, framework)
+      ).toThrow(/does not support streaming/)
+    }
+  )
+
+  it('rejects every Lab runtime target when the fetched catalog is empty', () => {
+    const owner = new ProviderRuntimeProjectionOwner()
+    const provider: StoredProvider = {
+      id: 'builtin-lab',
+      type: 'lab',
+      name: 'Lab',
+      baseUrl: 'https://lab.example.com/v1',
+      model: 'lab:removed',
+      fetchedModels: []
+    }
+    const framework = getAgentFramework('open-science-agent')
+    expect(owner.resolveRuntimeModelCatalog(provider, framework)).toEqual([])
+    expect(() =>
+      owner.resolveRuntimeTarget(
+        provider,
+        { kind: 'configured', requestedModel: 'lab:removed' },
+        framework
+      )
+    ).toThrow(/no longer available/)
   })
 
   it('builds a catalog and reasoning profile through the same effective-model policy', () => {

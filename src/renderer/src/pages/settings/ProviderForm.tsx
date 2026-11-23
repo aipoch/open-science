@@ -1,7 +1,19 @@
+import { ErrorNotice } from '@/components/error-notice'
+import {
+  isCatalogModelAvailable,
+  resolveOfficialModelCatalog
+} from '../../../../shared/provider-model-catalog'
+import {
+  resolveVendorModelCatalog,
+  type CatalogSnapshot,
+  type CatalogStatus
+} from '@aipoch/providers'
+import { modelCatalogErrorMessage } from './model-catalog-feedback'
+import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import type { TFunction } from 'i18next'
-import { ChevronDown, Eye, EyeOff } from 'lucide-react'
+import { ChevronDown, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
@@ -23,7 +35,6 @@ import {
   resolveVendorApiKeyUrl,
   type CustomReasoningEffortTransport
 } from '@aipoch/providers'
-import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 import {
   CUSTOM_REASONING_EFFORT_PRESETS,
   CUSTOM_REASONING_EFFORT_TRANSPORTS,
@@ -54,6 +65,7 @@ type ProviderFormProps = {
   onChange: (patch: Partial<ProviderFormValue>) => void
   // Whether a stored key already exists (drives the "leave blank to keep" affordance).
   hasStoredKey?: boolean
+  catalogHasStoredKey?: boolean
   // Masked hint for the stored key; never the plaintext value.
   maskedKey?: string
   // True when the stored key could not be decrypted and must be re-entered.
@@ -63,12 +75,19 @@ type ProviderFormProps = {
   // Effective supported-model list to show as tags (defaults to the vendor's bundled catalog). Passed
   // in edit mode so live-fetched models are reflected.
   supportedModels?: string[]
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  // A successful draft preview still needs the form to be saved; a saved-provider refresh is
+  // already persisted and should not show this reminder.
+  catalogNeedsSave?: boolean
+  catalogError?: string
   // When provided (a saved official provider with a key), renders a "refresh from vendor" control.
   onRefreshModels?: () => void
   isRefreshingModels?: boolean
   disabled?: boolean
   // Whether Electron can protect new keys with the operating system's secure storage.
   encryptionAvailable?: boolean
+  codeBuddyProviders?: readonly string[]
   showCodexSubscriptions?: boolean
   // Whether to surface the Claude subscription option in the provider-kind picker. Mirrors
   // showCodexSubscriptions: claude-isolated is only meaningful while Claude Code is the active
@@ -249,25 +268,54 @@ const ProviderForm = ({
   value,
   onChange,
   hasStoredKey = false,
+  catalogHasStoredKey = hasStoredKey,
   maskedKey,
   needsKey = false,
   errors = {},
   supportedModels,
+  modelCatalog,
+  modelCatalogStatus,
+  catalogNeedsSave = false,
+  catalogError,
   onRefreshModels,
   isRefreshingModels = false,
   disabled = false,
   encryptionAvailable = true,
+  codeBuddyProviders,
   showCodexSubscriptions = false,
   showClaudeIsolated = false,
   defaultCustomApiEndpoint = 'messages',
   framework
 }: ProviderFormProps): React.JSX.Element => {
   const { t } = useTranslation()
+  // Keep catalog feedback copy visible to the locale resource guard even though the helper maps codes.
+  void [
+    t('Online refresh is not supported for this provider or region.'),
+    t('Enter an API key to refresh the model list.'),
+    t('Complete the catalog parameters before refreshing.'),
+    t('The API key was rejected. Check the key and region.'),
+    t('This credential does not have permission to read the model catalog.'),
+    t('Too many catalog requests. Try again later.'),
+    t('The model catalog service is temporarily unavailable.'),
+    t('The configured model catalog address was not found.'),
+    t('The model catalog request timed out. Try again.'),
+    t('Could not connect to the model catalog. Check your network.'),
+    t('The model catalog exceeds the supported size limit.'),
+    t('The provider changed while loading models. Try again.'),
+    t('The vendor returned an invalid or empty model catalog.'),
+    t('Workspace ID'),
+    t('Refresh model list'),
+    t('Last updated: {{time}}'),
+    t('Save to apply the refreshed model list.'),
+    t('Model refresh failed. The previous list is kept.')
+  ]
+
   const fileCredentialNotice = useFileCredentialNotice()
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
   const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
   const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
+  const isCodeBuddySubscription = value.type === 'codebuddy-subscription'
   const isXaiSubscription = value.type === 'xai-subscription'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
   // A loopback custom gateway starts with the local-server presets visible, but the user can still
@@ -291,9 +339,8 @@ const ProviderForm = ({
     key: string
   }>()
   const keyVisible = revealedKeyDraft?.kind === selectedKey && revealedKeyDraft.key === value.key
-  // A loopback custom gateway (local model server) serves without a key, so the key field reads as
-  // optional and the required-field guard below stays quiet for it.
-  const keyRequired = !loopbackCustomGateway && (needsKey || !hasStoredKey)
+  const keyOptional = loopbackCustomGateway || vendor?.supportsAnonymousAccess === true
+  const keyRequired = needsKey || (!keyOptional && !hasStoredKey)
   // Whether the active framework can drive this draft as configured. Undefined while the caller
   // supplies no framework context, or before the framework list has loaded (compatibility
   // feedback stays hidden then).
@@ -323,7 +370,7 @@ const ProviderForm = ({
         <div className="flex items-center gap-1">
           <label className={fieldLabelClassName} htmlFor="provider-key">
             {t('API key')}
-            {loopbackCustomGateway ? (
+            {keyOptional ? (
               <span className="ml-0.5 font-normal text-muted-foreground">{t('(optional)')}</span>
             ) : (
               <RequiredMark />
@@ -369,7 +416,9 @@ const ProviderForm = ({
                 })
               : loopbackCustomGateway
                 ? t('Leave blank for a local server')
-                : t('Paste API key')
+                : vendor?.supportsAnonymousAccess
+                  ? t('Free models work without an API key.')
+                  : t('Paste API key')
           }
           className="pe-9"
           onChange={(event) => {
@@ -409,7 +458,10 @@ const ProviderForm = ({
 
   return (
     <div className="space-y-4">
-      {fileCredentialNotice && !isCodexSubscription && value.type !== 'claude-shared' ? (
+      {fileCredentialNotice &&
+      !isCodeBuddySubscription &&
+      !isCodexSubscription &&
+      value.type !== 'claude-shared' ? (
         <p role="status" className="text-sm text-muted-foreground">
           {fileCredentialNotice}
         </p>
@@ -417,13 +469,13 @@ const ProviderForm = ({
       <div className="space-y-1.5">
         <div className="flex items-center gap-1">
           <span className={fieldLabelClassName}>{t('Provider type')}</span>
-          {selectedKind ? (
+          {selectedKind?.descriptionKey ? (
             <FieldHelp label={t('Provider type')} content={t(selectedKind.descriptionKey)} />
           ) : null}
         </div>
         <Select
           value={selectedKey}
-          disabled={disabled}
+          disabled={disabled || (isCodeBuddySubscription && !codeBuddyProviders)}
           onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
         >
           <SelectTrigger aria-label={t('Provider type')}>
@@ -436,6 +488,7 @@ const ProviderForm = ({
             {PROVIDER_KIND_GROUPS.map((group) => {
               const kinds = PROVIDER_KINDS.filter((kind) => {
                 if (kind.group !== group.id) return false
+                if (codeBuddySiteForId(kind.key) && !codeBuddyProviders) return false
                 // Codex and the built-in Agent share the app-owned subscription sign-in.
                 if (group.id === 'codex' && !showCodexSubscriptions) return false
                 // The Claude subscription section mirrors it: gate on Claude Code being active,
@@ -454,6 +507,7 @@ const ProviderForm = ({
                     <SelectItem
                       key={kind.key}
                       value={kind.key}
+                      disabled={codeBuddyProviders?.includes(kind.key)}
                       icon={<ProviderKindIcon kindKey={kind.key} />}
                     >
                       {kindLabel(kind, t)}
@@ -466,7 +520,10 @@ const ProviderForm = ({
         </Select>
       </div>
 
-      {!isCodexSubscription && !isClaudeSubscription && !isXaiSubscription ? (
+      {!isCodeBuddySubscription &&
+      !isCodexSubscription &&
+      !isClaudeSubscription &&
+      !isXaiSubscription ? (
         <div className="space-y-1.5">
           <label className={fieldLabelClassName} htmlFor="provider-name">
             {t('Name')}
@@ -482,7 +539,30 @@ const ProviderForm = ({
         </div>
       ) : null}
 
-      {isXaiSubscription ? (
+      {isCodeBuddySubscription ? (
+        <div className="space-y-1.5">
+          <span className={fieldLabelClassName}>{t('Authentication')}</span>
+          <Select
+            value={value.codeBuddyAuthMode ?? 'isolated'}
+            disabled={disabled || !codeBuddyProviders}
+            onValueChange={(mode) =>
+              onChange({ codeBuddyAuthMode: mode === 'shared' ? 'shared' : 'isolated' })
+            }
+          >
+            <SelectTrigger aria-label={t('Authentication')}>
+              <span>
+                {value.codeBuddyAuthMode === 'shared'
+                  ? t('Use existing CodeBuddy CLI sign-in')
+                  : t('Sign in with Open-Science')}
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="shared">{t('Use existing CodeBuddy CLI sign-in')}</SelectItem>
+              <SelectItem value="isolated">{t('Sign in with Open-Science')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      ) : isXaiSubscription ? (
         <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
           <p className="text-sm font-medium text-foreground">{t('One xAI login, every agent')}</p>
           <p className="text-xs text-muted-foreground">
@@ -1054,42 +1134,131 @@ const ProviderForm = ({
           ) : null}
 
           {(() => {
-            const models = value.vendorId
-              ? getOfficialVendorModelIds(value.vendorId, value.region, supportedModels)
-              : (supportedModels ?? [])
-
-            if (models.length === 0) return null
+            const catalog = value.vendorId
+              ? resolveVendorModelCatalog(value.vendorId, value.region)
+              : undefined
+            const models = resolveOfficialModelCatalog({
+              vendorId: value.vendorId,
+              region: value.region,
+              modelCatalog,
+              hasKey: Boolean(value.key.trim() || (catalogHasStoredKey && !needsKey)),
+              fetchedModels: supportedModels
+            }).filter(isCatalogModelAvailable)
+            const catalogAuth = catalog?.options.auth
+            const missingKey =
+              catalogAuth &&
+              catalogAuth !== 'none' &&
+              catalogAuth.required !== false &&
+              !value.key.trim() &&
+              (!catalogHasStoredKey || needsKey)
+            const missingParameter = catalog?.options.inputs?.some(
+              (input) => input.required && !value.catalogParameters?.[input.id]?.trim()
+            )
+            const disabledReason = !catalog
+              ? modelCatalogErrorMessage('unsupported', t)
+              : missingKey
+                ? modelCatalogErrorMessage('missing-key', t)
+                : missingParameter
+                  ? modelCatalogErrorMessage('missing-parameter', t)
+                  : undefined
 
             return (
               <div className="space-y-1.5">
+                {catalog?.options.inputs?.map((input) => (
+                  <div key={input.id} className="space-y-1.5">
+                    <label className={fieldLabelClassName} htmlFor={`catalog-${input.id}`}>
+                      {t('Workspace ID')}
+                    </label>
+                    <Input
+                      id={`catalog-${input.id}`}
+                      value={value.catalogParameters?.[input.id] ?? ''}
+                      disabled={disabled || isRefreshingModels}
+                      onChange={(event) =>
+                        onChange({
+                          catalogParameters: {
+                            ...value.catalogParameters,
+                            [input.id]: event.target.value
+                          }
+                        })
+                      }
+                    />
+                  </div>
+                ))}
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1">
                     <span className={fieldLabelClassName}>{t('Supported models')}</span>
                     <FieldHelp
                       label={t('Supported models')}
-                      content={t(
-                        'Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.'
-                      )}
+                      content={
+                        catalog
+                          ? t(
+                              'Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.'
+                            )
+                          : modelCatalogErrorMessage('unsupported', t)
+                      }
                     />
                   </div>
-                  {onRefreshModels ? (
+                  {catalog ? (
                     <button
                       type="button"
                       onClick={onRefreshModels}
-                      disabled={disabled || isRefreshingModels}
-                      className="text-xs font-medium text-primary underline underline-offset-2 hover:text-primary/80 disabled:opacity-50"
+                      disabled={
+                        disabled ||
+                        isRefreshingModels ||
+                        Boolean(disabledReason) ||
+                        !onRefreshModels
+                      }
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary/35 px-2.5 text-xs font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 disabled:pointer-events-none disabled:opacity-50"
                     >
-                      {isRefreshingModels ? t('Refreshing…') : t('Refresh from vendor')}
+                      <RefreshCw
+                        aria-hidden="true"
+                        className={`size-3.5 ${isRefreshingModels ? 'animate-spin' : ''}`}
+                      />
+                      {isRefreshingModels ? t('Refreshing…') : t('Refresh model list')}
                     </button>
                   ) : null}
                 </div>
-                <div className="flex flex-wrap gap-1.5">
+                {disabledReason ? (
+                  <p className="text-xs text-muted-foreground">{disabledReason}</p>
+                ) : null}
+                {modelCatalog ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t('Last updated: {{time}}', {
+                      time: new Date(modelCatalog.fetchedAt).toLocaleString()
+                    })}
+                  </p>
+                ) : null}
+                {catalogError || modelCatalogStatus?.ok === false ? (
+                  <ErrorNotice
+                    inline
+                    role="alert"
+                    title={t('Model refresh failed. The previous list is kept.')}
+                    description={
+                      catalogError ?? modelCatalogErrorMessage(modelCatalogStatus?.code, t)
+                    }
+                  />
+                ) : null}
+                {modelCatalog && catalogNeedsSave && !catalogError ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t('Save to apply the refreshed model list.')}
+                  </p>
+                ) : null}
+                <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
                   {models.map((model) => (
                     <span
-                      key={model}
+                      key={model.id}
+                      title={[
+                        ...Object.keys(model.routes ?? {}),
+                        model.contextWindow,
+                        model.reasoningEffort?.supported
+                          ? model.reasoningEffort.values.join(' / ')
+                          : ''
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
                       className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
                     >
-                      {model}
+                      {model.id}
                     </span>
                   ))}
                 </div>

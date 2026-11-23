@@ -44,12 +44,11 @@ import {
   Pencil,
   Quote,
   Search,
-  Settings2,
   ShieldCheck,
   X
 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { fullCreatorLabel, publicationSummary } from '../literature-item-display'
 import type { useLiteratureMetadata } from '../workflows/useLiteratureMetadata'
@@ -152,30 +151,17 @@ export function LiteratureDetailDialog({
   renderOverview: (item: LiteratureItemView) => React.ReactNode
 }): React.JSX.Element | null {
   const { t } = useTranslation()
-  const [credentialsOpen, setCredentialsOpenState] = useState(false)
-  const credentialsOpenRef = useRef(false)
-  const setCredentialsOpen = (open: boolean): void => {
-    // Radix's capture listener can retain the preceding render's callback.
-    credentialsOpenRef.current = open
-    setCredentialsOpenState(open)
-  }
   const [relatedSaving, setRelatedSavingState] = useState(false)
+  const [citationToolbarHost, setCitationToolbarHost] = useState<HTMLDivElement | null>(null)
   const relatedSavingRef = useRef(false)
   const setRelatedSaving = useCallback((saving: boolean): void => {
     relatedSavingRef.current = saving
     setRelatedSavingState(saving)
   }, [])
-  const credentialFormId = useId()
-  const credentialTriggerRef = useRef<HTMLButtonElement>(null)
   const moreActionsTriggerRef = useRef<HTMLButtonElement>(null)
   const closeSelectedItemDetail = (): void => {
     if (relatedSavingRef.current) return
-    setCredentialsOpen(false)
     closeDetail()
-  }
-  const closeCredentials = (): void => {
-    setCredentialsOpen(false)
-    credentialTriggerRef.current?.focus()
   }
   const backdropDismissedChildRef = useRef(false)
   return (
@@ -239,6 +225,7 @@ export function LiteratureDetailDialog({
                   }}
                 />
                 <Dialog.Content
+                  data-citation-detail-dialog
                   ref={selectedItemDialogRef}
                   onCloseAutoFocus={(event) => {
                     event.preventDefault()
@@ -253,7 +240,7 @@ export function LiteratureDetailDialog({
                   }}
                   className={dialogPanelClassName(
                     cn(
-                      'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0',
+                      'flex w-[min(760px,calc(100vw-2rem))] flex-col p-0 has-[[data-citation-graph-active]]:h-[calc(100vh-2rem)] has-[[data-citation-graph-active]]:max-h-[calc(100vh-2rem)] has-[[data-citation-graph-active]]:w-[min(1440px,calc(100vw-2rem))] has-[[data-citation-graph-active]]:overflow-hidden',
                       metadata.mode === 'full-text' ||
                         metadata.mode === 'supplements' ||
                         metadata.mode === 'related'
@@ -268,11 +255,21 @@ export function LiteratureDetailDialog({
                   }}
                   onEscapeKeyDown={(event) => {
                     event.preventDefault()
-                    if (relatedSavingRef.current) return
-                    if (credentialsOpenRef.current) {
-                      closeCredentials()
+                    // Radix handles Escape in document capture, before the canvas key handler.
+                    // Let the visible title hint dismiss before closing its owning dialog.
+                    if (
+                      selectedItemDialogRef.current?.querySelector(
+                        '[data-current-frame="true"] [data-citation-hover-title]'
+                      )
+                    )
                       return
-                    }
+                    // The inspector handles its own list/details disclosure before dialog dismissal.
+                    if (
+                      event.target instanceof Element &&
+                      event.target.closest('[data-citation-inspector-pane][data-expanded="true"]')
+                    )
+                      return
+                    if (relatedSavingRef.current) return
                     if (
                       detailSelectOpenRef.current ||
                       detailTagMenuOpenRef.current ||
@@ -284,7 +281,14 @@ export function LiteratureDetailDialog({
                   }}
                 >
                   {discardMetadataDialog}
-                  <div className={cn(dialogHeaderClassName, 'shrink-0 items-start px-5 py-3')}>
+                  <div
+                    className={cn(
+                      dialogHeaderClassName,
+                      'shrink-0 items-start px-5 py-3',
+                      metadata.mode === 'related' &&
+                        'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]'
+                    )}
+                  >
                     <div className="flex min-w-0 flex-1 items-start gap-2">
                       {metadata.mode !== 'view' ? (
                         <Button
@@ -298,7 +302,6 @@ export function LiteratureDetailDialog({
                             if (relatedSavingRef.current) return
                             const fromRelated = metadata.mode === 'related'
                             const fromPublicationCheck = metadata.mode === 'publication-check'
-                            setCredentialsOpen(false)
                             leaveMetadataEditor()
                             if (fromPublicationCheck)
                               requestAnimationFrame(() => moreActionsTriggerRef.current?.focus())
@@ -334,7 +337,11 @@ export function LiteratureDetailDialog({
                                           : t('Citation')}
                             </Dialog.Title>
                             <Dialog.Description
-                              className={cn(dialogDescriptionClassName, 'mt-0.5 truncate text-xs')}
+                              className={cn(
+                                dialogDescriptionClassName,
+                                'mt-0.5 truncate text-xs',
+                                metadata.mode === 'related' && 'sr-only'
+                              )}
                             >
                               {selectedItem.item.title}
                             </Dialog.Description>
@@ -421,22 +428,13 @@ export function LiteratureDetailDialog({
                         )}
                       </div>
                     </div>
+                    {metadata.mode === 'related' && (
+                      <div
+                        ref={setCitationToolbarHost}
+                        className="col-span-2 row-start-2 min-w-0 sm:col-span-1 sm:col-start-2 sm:row-start-1"
+                      />
+                    )}
                     <div className="flex shrink-0 items-center gap-1">
-                      {metadata.mode === 'related' ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={t('Semantic Scholar settings')}
-                          disabled={relatedSaving}
-                          ref={credentialTriggerRef}
-                          aria-expanded={credentialsOpen}
-                          aria-controls={credentialsOpen ? credentialFormId : undefined}
-                          onClick={() => setCredentialsOpen(!credentialsOpenRef.current)}
-                        >
-                          <Settings2 className="size-4" aria-hidden="true" />
-                        </Button>
-                      ) : null}
                       {metadata.mode === 'view' ? (
                         <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
@@ -512,16 +510,10 @@ export function LiteratureDetailDialog({
                     <LiteratureRelatedLookup
                       key={`${selectedItem.id}:${selectedItem.metadataRevision}:${generation}`}
                       item={selectedItem}
+                      toolbarHost={citationToolbarHost}
                       initialDirection={relatedDirection}
                       onSavingChange={setRelatedSaving}
-                      credentialFormId={credentialFormId}
-                      credentialsOpen={credentialsOpen}
-                      onOpenCredentials={() => setCredentialsOpen(true)}
-                      onCloseCredentials={closeCredentials}
-                      onOpenInbox={() => {
-                        setCredentialsOpen(false)
-                        onOpenInbox()
-                      }}
+                      onOpenInbox={onOpenInbox}
                       onSaved={() => void loadEntries(true)}
                     />
                   ) : metadata.mode === 'supplements' ? (

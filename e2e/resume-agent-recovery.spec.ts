@@ -177,7 +177,13 @@ test('failed provider attachment exposes original details and exports real diagn
     .poll(async () =>
       (await application.evaluate(({ clipboard }) => clipboard.readText())).replace(/\r\n/g, '\n')
     )
-    .toBe(displayedDetails)
+    .toBe(
+      [
+        'An unexpected application error occurred',
+        'Report this error with its diagnostics to help us investigate.',
+        displayedDetails
+      ].join('\n')
+    )
   await page.screenshot({ path: info.outputPath('resume-original-details.png'), fullPage: true })
   const desktopSize = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   await page.setViewportSize({ width: 640, height: 850 })

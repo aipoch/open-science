@@ -1,12 +1,30 @@
+import {
+  decodeCatalogParameters,
+  providerCatalogState,
+  type ProviderCatalogState
+} from '../../shared/provider-model-catalog-codec'
+import {
+  WORKBUDDY_PROFILE_MESSAGE,
+  codeBuddyAccounts,
+  codeBuddySiteForId,
+  readCodeBuddyAccountRequest,
+  type CodeBuddyAccountRequest,
+  type CodeBuddyAuthMode,
+  type CodeBuddySite
+} from '../../shared/codebuddy-subscription'
+import { hasWorkBuddyProfile } from './codebuddy-profile'
+import { runCodeBuddyAuth } from './codebuddy-auth'
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
 import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
 import {
   customProviderRequiresKey,
+  providerAllowsAnonymousAccess,
   getCustomProviderBaseUrlError
 } from '../../shared/provider-url-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import { isModelStreamingCompatible } from '../../shared/agent-framework-id'
 
 import type {
   ProviderDeletionScenarioModelHandling,
@@ -26,6 +44,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   ENDPOINT_PATHS,
+  LAB_PROVIDER_ID,
   XAI_SUBSCRIPTION_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
@@ -33,6 +52,7 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  isLabProvider,
   isXaiSubscriptionProvider,
   DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
@@ -70,6 +90,7 @@ import {
 } from './provider-runtime-projection'
 import { resolveCustomTokenLimits } from './provider-token-limits'
 import {
+  reconcileCatalogHealth,
   buildProviderValidationPatch,
   targetForValidationResult
 } from './provider-validation-state'
@@ -85,6 +106,7 @@ type ProviderAccountsModuleOptions = {
   userClaudeDir: string
   userCodexDir: string
   allocateSettingsIdSequence: () => number
+  resolveCodeBuddyExecutable?: (path?: string) => Promise<string>
   resolveCodexExecutable: (
     adapterPath: string | undefined,
     nativePath: string | undefined,
@@ -103,10 +125,27 @@ type ProviderAccountsModuleOptions = {
   claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
   claudeSharedAuth?: ClaudeSharedAuthControllerPort
   xaiOAuth?: XaiOAuthControllerPort
+  // The optional Lab account owner; supplies the "signed in" probe without owning provider records.
+  lab?: { isUsable: () => Promise<boolean> }
 }
+type PreparedProvider = {
+  provider: StoredProvider
+  settings: StoredSettings
+  catalogBaseline?: ProviderCatalogState
+}
+
+const LAB_PROVIDER_MANAGED_MESSAGE = 'The Lab provider is managed in Settings → Lab.'
+
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
 // executable installation, runtime spawn, live ACP reconnect, and transports remain outside.
 class ProviderAccountsModule {
+  private readonly codeBuddyOperations = new Set<{
+    site: CodeBuddySite
+    action: Exclude<CodeBuddyAccountRequest['action'], 'cancel'>
+    controller: AbortController
+    settled: Promise<void>
+  }>()
+  private codeBuddyHolds = 0
   private readonly repository: SettingsRepository
   private readonly runtimeProjection = new ProviderRuntimeProjectionOwner()
   private readonly auth: ProviderAuthLifecycleOwner
@@ -133,15 +172,29 @@ class ProviderAccountsModule {
   }
 
   async dispose(): Promise<void> {
+    this.codeBuddyHolds++
+    await this.stopCodeBuddyOperations()
     await Promise.all([this.auth.dispose(), this.xai.dispose()])
   }
 
+  private stopCodeBuddyOperations(): Promise<unknown> {
+    const operations = [...this.codeBuddyOperations]
+    for (const operation of operations) operation.controller.abort()
+    return Promise.all(operations.map((operation) => operation.settled))
+  }
+
   quiesceAuthentication(): ReturnType<XaiProviderAccountOwner['quiesce']> {
+    this.codeBuddyHolds++
+    let released = false
+    const codeBuddy = this.stopCodeBuddyOperations()
     const xai = this.xai.quiesce()
     const codex = this.auth.quiesceCodexHarnessCredentials()
     return {
-      settled: Promise.all([xai.settled, codex.settled]).then(() => undefined),
+      settled: Promise.all([xai.settled, codex.settled, codeBuddy]).then(() => undefined),
       release: () => {
+        if (released) return
+        released = true
+        this.codeBuddyHolds--
         codex.release()
         xai.release()
       }
@@ -151,6 +204,7 @@ class ProviderAccountsModule {
   async prepareBootstrapCodex(): Promise<void> {
     await this.auth.serializeAccountMutation(async () => {
       const settings = await this.repository.getSettings()
+      if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
       const identity = codexSubscriptionProviderIdentity()
       const existing = settings.providers.find(({ id }) => id === identity.id)
       if (
@@ -181,6 +235,7 @@ class ProviderAccountsModule {
     return this.auth.serializeAccountMutation(async () => {
       const settings = await this.repository.getSettings()
       if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
+      if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
       const identity = codexSubscriptionProviderIdentity()
       const provider = settings.providers.find(({ id }) => id === identity.id)
       if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated')
@@ -206,10 +261,11 @@ class ProviderAccountsModule {
 
   async bootstrapOpenAi(key: string, model: string): Promise<string> {
     const settings = await this.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const id = 'cli-openai'
     const existing = settings.providers.find((provider) => provider.id === id)
     if (
-      settings.agentFrameworkId !== 'codex' ||
+      (framework !== DEFAULT_AGENT_FRAMEWORK_ID && framework !== 'codex') ||
       settings.providers.some((provider) => provider.id !== id) ||
       (settings.activeProviderId && settings.activeProviderId !== id) ||
       (existing &&
@@ -270,11 +326,21 @@ class ProviderAccountsModule {
   async upsertProvider(request: UpsertProviderRequest): Promise<void> {
     return this.auth.serializeAccountMutation(() => this.upsertProviderNow(request))
   }
-  private async prepareProvider(
-    request: UpsertProviderRequest
-  ): Promise<{ provider: StoredProvider; settings: StoredSettings }> {
+  private async prepareProvider(request: UpsertProviderRequest): Promise<PreparedProvider> {
+    if (isLabProvider(request.type) || request.id === LAB_PROVIDER_ID) {
+      throw new Error(LAB_PROVIDER_MANAGED_MESSAGE)
+    }
     assertProviderDraftLimits(request)
     const settings = await this.repository.getSettings()
+    if (
+      request.type === 'codebuddy-subscription' ||
+      (request.id &&
+        codeBuddySiteForId(request.id) &&
+        !settings.providers.some(
+          (provider) => provider.id === request.id && provider.type !== 'codebuddy-subscription'
+        ))
+    )
+      throw new Error('Use the CodeBuddy account sign-in to configure this provider.')
     if (
       request.requireExisting &&
       (!request.id || !settings.providers.some((provider) => provider.id === request.id))
@@ -322,15 +388,18 @@ class ProviderAccountsModule {
     }
 
     const carryKey = (): boolean => {
-      const hasKey = Boolean(request.key) || Boolean(existing?.keyRef)
       if (request.key) {
         provider.keyRef = encryptKey(request.key)
         provider.keyMask = maskKey(request.key)
-      } else if (existing?.keyRef) {
+      } else if (
+        existing?.keyRef &&
+        existing.type === provider.type &&
+        existing.vendorId === provider.vendorId
+      ) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
       }
-      return hasKey
+      return Boolean(provider.keyRef)
     }
 
     let credentialsChanged = false
@@ -376,13 +445,28 @@ class ProviderAccountsModule {
     } else if (request.type === 'official') {
       const vendorId = isOfficialVendorId(request.vendorId) ? request.vendorId : existing?.vendorId
       if (!vendorId) throw new Error('A vendor is required for an official provider.')
-      const region = request.region ?? existing?.region
+      const region =
+        request.region ?? (vendorId === existing?.vendorId ? existing.region : undefined)
       provider.vendorId = vendorId
       if (region) provider.region = region
-      if (existing?.fetchedModels && vendorId === existing.vendorId) {
-        provider.fetchedModels = existing.fetchedModels
+      provider.catalogParameters =
+        request.catalogParameters === undefined
+          ? vendorId === existing?.vendorId && region === existing.region
+            ? existing.catalogParameters
+            : undefined
+          : decodeCatalogParameters(request.catalogParameters)
+      if (request.catalogParameters && !provider.catalogParameters)
+        throw new Error('Invalid catalog parameters.')
+      if (
+        existing &&
+        vendorId === existing.vendorId &&
+        region === existing.region &&
+        !request.key &&
+        isDeepStrictEqual(provider.catalogParameters ?? {}, existing.catalogParameters ?? {})
+      ) {
+        Object.assign(provider, providerCatalogState(existing))
       }
-      if (!carryKey()) throw new Error('API key is required for an official provider.')
+      carryKey()
       credentialsChanged =
         Boolean(request.key) ||
         provider.vendorId !== existing?.vendorId ||
@@ -426,11 +510,26 @@ class ProviderAccountsModule {
     if (existing?.lastValidationFailure !== undefined && preserveValidationFailure)
       provider.lastValidationFailure = existing.lastValidationFailure
 
-    return { provider, settings }
+    const catalogBaseline = this.modelCatalog.applyDraft(
+      request.catalogDraftToken,
+      provider,
+      existing
+    )
+    if (
+      provider.type === 'official' &&
+      !provider.keyRef &&
+      !providerAllowsAnonymousAccess({ ...provider, model: request.model ?? provider.model })
+    )
+      throw new Error('API key is required for an official provider.')
+    return {
+      provider: existing ? reconcileCatalogHealth(existing, provider) : provider,
+      settings,
+      catalogBaseline
+    }
   }
 
   private async upsertProviderNow(request: UpsertProviderRequest): Promise<void> {
-    const { provider, settings } = await this.prepareProvider(request)
+    const { provider, settings, catalogBaseline } = await this.prepareProvider(request)
     const editId = request.requireExisting ? request.id : undefined
     if (isClaudeSubscriptionProvider(provider.type)) {
       const outgoingId =
@@ -447,16 +546,17 @@ class ProviderAccountsModule {
     }
 
     await this.repository.upsertProvider(provider, editId, {
+      catalogBaseline,
       expectedConfigRevision: request.expectedConfigRevision
     })
   }
 
-  private async prepareProviderEdit(request: UpsertProviderRequest): Promise<{
-    provider: StoredProvider
-    settings: StoredSettings
-    requireExisting: boolean
-    expectedConfigRevision?: number
-  }> {
+  private async prepareProviderEdit(request: UpsertProviderRequest): Promise<
+    PreparedProvider & {
+      requireExisting: boolean
+      expectedConfigRevision?: number
+    }
+  > {
     if (request.type !== 'custom' && request.type !== 'official')
       throw new Error('Connection testing edits requires an API-key provider.')
     const prepared = await this.prepareProvider(request)
@@ -475,19 +575,19 @@ class ProviderAccountsModule {
     const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
     // Validation metadata can change without a configuration revision. A successful probe of the
     // same connection must not overwrite a newer health observation while waiting to commit.
+    const tested = this.resolveProvider(
+      prepared.provider,
+      request.type === 'official' ? request.model?.trim() || undefined : undefined
+    )
     const expectedValidationState =
-      saved &&
-      this.sameValidationTarget(
-        this.resolveProvider(prepared.provider),
-        this.resolveProvider(saved)
-      )
+      saved && this.sameValidationTarget(tested, this.resolveProvider(saved))
         ? {
             lastValidatedAt: saved.lastValidatedAt,
             lastValidatedTarget: saved.lastValidatedTarget,
             lastValidationFailure: saved.lastValidationFailure
           }
         : undefined
-    const validation = await this.validateProviderEdit(prepared.provider, prepared.settings)
+    const validation = await this.validateProviderEdit(prepared.provider, prepared.settings, tested)
     if (!validation.ok) return { validation }
     if (validation.applied === false)
       throw new Error(
@@ -511,7 +611,19 @@ class ProviderAccountsModule {
       await this.repository.upsertProvider(
         provider,
         prepared.requireExisting ? provider.id : undefined,
-        { expectedConfigRevision: prepared.expectedConfigRevision, expectedValidationState }
+        {
+          catalogBaseline: prepared.catalogBaseline,
+          expectedConfigRevision: prepared.expectedConfigRevision,
+          expectedValidationState,
+          validationMatches: (merged) => {
+            const matches = this.sameValidationTarget(
+              tested,
+              this.resolveProvider(merged, tested.model)
+            )
+            if (!matches) validation.applied = false
+            return matches
+          }
+        }
       )
     })
     return { validation, providerId: provider.id }
@@ -522,13 +634,24 @@ class ProviderAccountsModule {
     scenarioModelHandling?: ProviderDeletionScenarioModelHandling
   ): Promise<void> {
     const settings = await this.repository.getSettings()
+    if (settings.providers.some((provider) => provider.id === id && isLabProvider(provider.type))) {
+      throw new Error(LAB_PROVIDER_MANAGED_MESSAGE)
+    }
     if (settings.providers.some((provider) => provider.id === id && isXaiRecord(provider))) {
       await this.xai.logout()
     }
 
-    await this.auth.serializeAccountMutation(async () => {
-      await this.auth.cleanupProviderBeforeDelete(id)
-      await this.repository.deleteProvider(id, scenarioModelHandling)
+    const remove = (): Promise<void> =>
+      this.auth.serializeAccountMutation(async () => {
+        await this.auth.cleanupProviderBeforeDelete(id)
+        await this.repository.deleteProvider(id, scenarioModelHandling)
+      })
+    const record = settings.providers.find((provider) => provider.id === id)
+    const site = record?.type === 'codebuddy-subscription' ? codeBuddySiteForId(id) : undefined
+    if (!site) return remove()
+    await this.withCodeBuddyOperation(site, 'logout', async (signal) => {
+      if (record?.codeBuddyAuthMode !== 'shared') await this.runCodeBuddy(site, 'logout', signal)
+      await remove()
     })
   }
 
@@ -563,6 +686,119 @@ class ProviderAccountsModule {
 
   getXaiOAuthAccessToken(forceRefresh = false): Promise<string> {
     return this.xai.getAccessToken(forceRefresh)
+  }
+
+  private async runCodeBuddy(
+    site: CodeBuddySite,
+    action: Exclude<CodeBuddyAccountRequest['action'], 'cancel'>,
+    signal: AbortSignal,
+    mode: CodeBuddyAuthMode = 'isolated'
+  ): ReturnType<typeof runCodeBuddyAuth> {
+    const settings = await this.repository.getSettings()
+    if (!this.options.resolveCodeBuddyExecutable) throw new Error('CodeBuddy runtime unavailable.')
+    const executable = await this.options.resolveCodeBuddyExecutable(settings.codebuddyPath)
+    signal.throwIfAborted()
+    return runCodeBuddyAuth(executable, this.options.storageRoot, site, action, signal, mode)
+  }
+
+  async codeBuddyAccount(input: CodeBuddyAccountRequest): Promise<ValidateProviderResult> {
+    const { site, action, mode: requestedMode } = readCodeBuddyAccountRequest(input)
+    if (action === 'cancel') {
+      const pending = [...this.codeBuddyOperations].find(
+        (op) => op.site === site && op.action === 'login'
+      )
+      if (pending) {
+        pending.controller.abort()
+        await pending.settled
+      }
+      return { ok: true, category: 'ok' }
+    }
+    const identity = codeBuddyAccounts[site]
+    return this.withCodeBuddyOperation(site, action, async (signal) => {
+      const before = await this.repository.getSettings()
+      const prior = before.providers.find((provider) => provider.id === identity.id)
+      if (prior && prior.type !== 'codebuddy-subscription')
+        throw new Error('The CodeBuddy account ID is already in use.')
+      const mode = prior ? (prior.codeBuddyAuthMode ?? 'isolated') : (requestedMode ?? 'isolated')
+      if (requestedMode && requestedMode !== mode)
+        throw new Error('Provider configuration changed. Your draft has not been saved.')
+      if (prior?.disconnectedAt !== undefined && (action === 'status' || action === 'refresh'))
+        return { ok: false, category: 'auth' }
+      if (action === 'status') {
+        const { authenticated } = await this.runCodeBuddy(site, action, signal, mode)
+        return authenticated ? { ok: true, category: 'ok' } : { ok: false, category: 'auth' }
+      }
+      this.advanceProviderValidationGeneration(identity.id)
+      if (action === 'login') assertProviderCapacity(before.providers.length, Boolean(prior))
+      if (action === 'refresh' && !prior) return { ok: false, category: 'auth' }
+      const sharedDisconnect = mode === 'shared' && action === 'logout'
+      const outcome = sharedDisconnect
+        ? { authenticated: false }
+        : await this.runCodeBuddy(site, action, signal, mode)
+      if (action === 'login' && !outcome.authenticated) {
+        return {
+          ok: false,
+          category: 'auth',
+          ...(mode === 'shared' && hasWorkBuddyProfile() && { message: WORKBUDDY_PROFILE_MESSAGE })
+        }
+      }
+      if (action === 'refresh' && outcome.authenticated && !outcome.models?.length)
+        return { ok: false, category: 'unknown' }
+      return await this.auth.serializeAccountMutation(async () => {
+        signal.throwIfAborted()
+        const settings = await this.repository.getSettings()
+        const existing = settings.providers.find((p) => p.id === identity.id)
+        if (action === 'logout' && !existing) return { ok: true, category: 'ok' }
+        if (existing && existing.type !== 'codebuddy-subscription')
+          throw new Error('The CodeBuddy account ID is already in use.')
+        assertProviderCapacity(settings.providers.length, Boolean(existing))
+        const health: ValidateProviderResult = outcome.authenticated
+          ? { ok: true, category: 'ok' }
+          : { ok: false, category: 'auth' }
+        const provider: StoredProvider = {
+          ...existing,
+          ...identity,
+          type: 'codebuddy-subscription',
+          ...(mode === 'shared' && {
+            codeBuddyAuthMode: mode,
+            disconnectedAt: sharedDisconnect ? Date.now() : undefined
+          }),
+          apiEndpoints: ['chat-completions'],
+          model: outcome.authenticated ? (outcome.model ?? existing?.model) : undefined,
+          fetchedModels: outcome.authenticated
+            ? (outcome.models ?? existing?.fetchedModels)
+            : undefined
+        }
+        await this.repository.upsertProvider({
+          ...provider,
+          ...buildProviderValidationPatch(provider, health, undefined)
+        })
+        return action === 'refresh' ? health : { ok: true, category: 'ok' }
+      })
+    })
+  }
+
+  private async withCodeBuddyOperation<T>(
+    site: CodeBuddySite,
+    action: Exclude<CodeBuddyAccountRequest['action'], 'cancel'>,
+    operation: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    if (this.codeBuddyHolds) throw new Error('CodeBuddy authentication is shutting down.')
+    if (
+      action !== 'status' &&
+      [...this.codeBuddyOperations].some((op) => op.site === site && op.action !== 'status')
+    )
+      throw new Error('CodeBuddy account operation is in progress.')
+    const controller = new AbortController()
+    const { promise: settled, resolve: finish } = Promise.withResolvers<void>()
+    const active = { site, action, controller, settled }
+    this.codeBuddyOperations.add(active)
+    try {
+      return await operation(controller.signal)
+    } finally {
+      this.codeBuddyOperations.delete(active)
+      finish()
+    }
   }
 
   cancelCodexLogin(): void {
@@ -632,9 +868,22 @@ class ProviderAccountsModule {
         (!current || (current.configRevision ?? 0) !== prepared.expectedConfigRevision)
       )
         return { ...result, applied: false }
+      if (current) {
+        const model = result.testedTarget.model
+        const original = prepared.settings.providers.find(({ id }) => id === current.id)
+        if (original && !isDeepStrictEqual(original.modelCatalog, current.modelCatalog)) {
+          const tested = this.resolveProvider(prepared.provider, model)
+          if (
+            this.sameValidationTarget(tested, this.resolveProvider(original, model)) &&
+            !this.sameValidationTarget(tested, this.resolveProvider(current, model))
+          )
+            return { ...result, applied: false }
+        }
+      }
       return result
     }
     if (request.draft) {
+      if (isLabProvider(request.draft.type)) throw new Error(LAB_PROVIDER_MANAGED_MESSAGE)
       assertProviderDraftLimits(request.draft)
       if (request.draft.type === 'custom') {
         const baseUrlError = getCustomProviderBaseUrlError(request.draft.baseUrl?.trim() ?? '')
@@ -643,19 +892,37 @@ class ProviderAccountsModule {
     }
     assertProviderModelLimit(request.model)
     const settings = await this.repository.getSettings()
-    const resolved = this.resolveValidationTarget(request, settings)
-    if (!resolved) {
-      return { ok: false, category: 'unknown', message: 'No provider to validate.' }
+    const stored = settings.providers.find((provider) => provider.id === request.providerId)
+    if (request.providerId === LAB_PROVIDER_ID || (stored && isLabProvider(stored.type))) {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: LAB_PROVIDER_MANAGED_MESSAGE,
+        applied: false
+      }
     }
-
-    return this.validateResolvedProvider(request, settings, resolved)
+    if (stored) {
+      const model =
+        request.model ??
+        (settings.activeProviderId === stored.id ? settings.activeModel : undefined)
+      return this.validateResolvedProvider(request, settings, {
+        provider: this.resolveProvider(stored, model),
+        storedId: stored.id
+      })
+    }
+    if (request.draft) {
+      return this.validateResolvedProvider(request, settings, {
+        provider: this.resolveDraft(request.draft)
+      })
+    }
+    return { ok: false, category: 'unknown', message: 'No provider to validate.' }
   }
 
   private async validateProviderEdit(
     candidate: StoredProvider,
-    settings: StoredSettings
+    settings: StoredSettings,
+    provider = this.resolveProvider(candidate)
   ): Promise<ValidateProviderResult & { testedTarget: ProviderValidationTarget }> {
-    const provider = this.resolveProvider(candidate)
     const saved = settings.providers.find(({ id }) => id === candidate.id)
     // A failure belongs to the saved connection only when the tested input resolves to that exact
     // connection. Candidate credentials and routes must never change the original account's health.
@@ -740,10 +1007,19 @@ class ProviderAccountsModule {
         }
       }
     }
-    const authResult =
-      incompatibility || xaiAuthResult
-        ? undefined
-        : await this.auth.validateProviderAuth(resolved.provider, settings, storedValidationTarget)
+    // A model without a route fails locally, but its validation still has to reach the saved card.
+    const localResult: ValidateProviderResult | undefined =
+      resolved.provider.vendorId && resolved.provider.apiEndpoints?.length === 0
+        ? { ok: false, category: 'model-not-found' }
+        : resolved.provider.type === 'codebuddy-subscription' && resolved.provider.codeBuddySite
+          ? await this.codeBuddyAccount({ site: resolved.provider.codeBuddySite, action: 'status' })
+          : incompatibility || xaiAuthResult
+            ? undefined
+            : await this.auth.validateProviderAuth(
+                resolved.provider,
+                settings,
+                storedValidationTarget
+              )
     const usesCompatibilityTransport = requiresChatCompletionsBridge(resolved.provider, framework)
     // An incompatible pairing no longer replaces the probe: compatibility is a derivable
     // (provider, framework) relationship, not an endpoint-health fact. The probe still runs —
@@ -755,7 +1031,7 @@ class ProviderAccountsModule {
     )
     let probeResult =
       xaiAuthResult ??
-      authResult ??
+      localResult ??
       (await validateProviderTarget(validationProvider, {
         fetchImpl: netFetchStandard,
         requireBridgeToolCall: framework.id === 'codex' && usesCompatibilityTransport,
@@ -769,7 +1045,7 @@ class ProviderAccountsModule {
     if (
       !probeResult.ok &&
       !incompatibility &&
-      !authResult &&
+      !localResult &&
       !xaiAuthResult &&
       (validationProvider.type === 'custom' || validationProvider.type === 'official') &&
       this.options.runAcpValidation
@@ -923,8 +1199,17 @@ class ProviderAccountsModule {
   async isProviderKeyUsable(
     provider: StoredProvider,
     frameworkId?: AgentFrameworkId
-  ): Promise<boolean> {
+  ): Promise<boolean | undefined> {
+    if (provider.type === 'codebuddy-subscription') {
+      const site = codeBuddySiteForId(provider.id)
+      if (!site) return false
+      return this.codeBuddyAccount({ site, action: 'status' }).then(
+        (result) => result.ok,
+        () => undefined
+      )
+    }
     if (isXaiSubscriptionProvider(provider.type)) return this.xai.isUsable()
+    if (isLabProvider(provider.type)) return (await this.options.lab?.isUsable()) ?? false
     if (!isCodexSubscriptionProvider(provider.type)) return this.auth.isProviderKeyUsable(provider)
     return this.auth.isProviderKeyUsable(
       provider,
@@ -978,6 +1263,9 @@ class ProviderAccountsModule {
     provider: ResolvedProvider,
     framework: ReturnType<typeof getAgentFramework>
   ): string | undefined {
+    if (!isModelStreamingCompatible(framework.id, provider.streaming)) {
+      return `Not compatible with ${framework.displayName}: this model does not support streaming. Pick another model or switch the agent framework.`
+    }
     if (
       isProviderUsableByFramework(
         { apiEndpoints: provider.apiEndpoints, type: provider.type },
@@ -994,33 +1282,15 @@ class ProviderAccountsModule {
       .join(' or ')}. Change the API format or switch the agent framework.`
   }
 
-  private resolveValidationTarget(
-    request: ValidateProviderRequest,
-    settings: StoredSettings
-  ): { provider: ResolvedProvider; storedId?: string } | undefined {
-    if (request.providerId) {
-      const stored = settings.providers.find((provider) => provider.id === request.providerId)
-      const model =
-        request.model ??
-        (settings.activeProviderId === stored?.id ? settings.activeModel : undefined)
-      return stored
-        ? {
-            provider: this.resolveProvider(stored, model),
-            storedId: stored.id
-          }
-        : undefined
-    }
-    if (request.draft) return { provider: this.resolveDraft(request.draft) }
-    return undefined
-  }
-
   private sameValidationTarget(left: ResolvedProvider, right: ResolvedProvider): boolean {
     return (
       left.type === right.type &&
+      left.codeBuddyAuthMode === right.codeBuddyAuthMode &&
       left.codexAuthMode === right.codexAuthMode &&
       left.codexTransport === right.codexTransport &&
       left.baseUrl === right.baseUrl &&
       left.chatCompletionsBaseUrl === right.chatCompletionsBaseUrl &&
+      left.responsesBaseUrl === right.responsesBaseUrl &&
       left.model === right.model &&
       left.key === right.key &&
       (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')

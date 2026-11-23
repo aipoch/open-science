@@ -87,7 +87,8 @@ const UpdateCapsule = ({
   const [focusAttentionCycle, setFocusAttentionCycle] = useState(0)
   const lastAttentionAtRef = useRef(0)
 
-  const drawsAttention = status.state === 'available' || status.state === 'ready'
+  const drawsAttention =
+    !status.automaticDownloads && (status.state === 'available' || status.state === 'ready')
 
   useEffect(() => {
     if (!drawsAttention) return
@@ -115,7 +116,12 @@ const UpdateCapsule = ({
     status.state === 'downloading' ||
     status.state === 'ready' ||
     (status.state === 'error' && Boolean(status.latest))
-  if (!isVisible) return null
+  if (
+    !isVisible ||
+    (status.automaticDownloads && status.state === 'available') ||
+    (status.backgroundDownload && (status.state === 'downloading' || status.state === 'error'))
+  )
+    return null
 
   const copy = updateCopy(status, t)
   const Icon = copy.icon

@@ -70,6 +70,7 @@ let root: Root
 const originalSettingsActions = (() => {
   const state = useSettingsStore.getState()
   return {
+    refreshProviderModels: state.refreshProviderModels,
     persistProvider: state.persistProvider,
     saveValidatedProvider: state.saveValidatedProvider,
     validateProvider: state.validateProvider,
@@ -1411,9 +1412,13 @@ describe('SettingsPage layout', () => {
       'Notifications',
       'Model',
       'Agent',
+      'Skills',
+      'Specialists',
       'Memory',
+      'Connectors',
       'Network',
       'Remote',
+      'Lab',
       'Credentials',
       'Compute',
       'Tags',
@@ -2056,9 +2061,75 @@ describe('SettingsPage layout', () => {
     expect(useSettingsStore.getState().providers[0]?.region).toBe('global')
   })
 
-  it('shows an error when refreshing a provider model catalog rejects', async () => {
+  it('scopes catalog history to the current key and workspace and retries a settings read independently', async () => {
+    const catalog = { fetchedAt: 123, models: [{ id: 'workspace-only' }] }
+    const provider: ProviderView = {
+      id: 'account',
+      name: 'Anthropic',
+      type: 'official',
+      vendorId: 'anthropic',
+      models: ['workspace-only'],
+      hasKey: true,
+      needsKey: false,
+      supportsImageInput: false,
+      catalogParameters: { workspaceId: 'first' },
+      modelCatalog: catalog,
+      modelCatalogStatus: { attemptedAt: 124, ok: false, code: 'timeout' }
+    }
+    useSettingsStore.getState().openSettingsToPanel('model')
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    const saved = { fetchedAt: 125, models: [{ id: 'new-saved-model' }] }
+    const refresh = vi.fn().mockResolvedValue({
+      ok: true,
+      category: 'ok',
+      catalog: saved,
+      catalogStatus: { attemptedAt: 125, ok: true },
+      refreshFailed: true
+    })
+    await act(async () =>
+      useSettingsStore.setState({ providers: [provider], refreshProviderModels: refresh })
+    )
+    await act(async () =>
+      document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')!.click()
+    )
+    const button = (name: string): HTMLButtonElement =>
+      Array.from(document.body.querySelectorAll('button')).find(
+        (b) => b.textContent?.trim() === name
+      )!
+    for (const [id, next, original] of [
+      ['catalog-workspaceId', 'second', 'first'],
+      ['provider-key', 'new-key', '']
+    ]) {
+      expect(document.body.textContent).toContain('Last updated:')
+      expect(document.body.textContent).toContain('Model refresh failed.')
+      const input = document.getElementById(id)!
+      act(() => fireEvent.change(input, { target: { value: next } }))
+      expect(document.body.textContent).not.toContain('workspace-only')
+      expect(document.body.textContent).not.toContain('Last updated:')
+      expect(document.body.textContent).not.toContain('Model refresh failed.')
+      expect(button('Refresh model list').disabled).toBe(false)
+      act(() => fireEvent.change(input, { target: { value: original } }))
+    }
+    await act(async () => button('Refresh model list').click())
+    expect(document.body.textContent).toContain('Model list saved.')
+    expect(document.body.textContent).toContain('new-saved-model')
+    expect(document.body.textContent).not.toContain('Model refresh failed.')
+    const read = vi.mocked(window.api.settings.getSettings)
+    read.mockResolvedValueOnce({
+      ...(await read()),
+      providers: [
+        { ...provider, modelCatalog: saved, modelCatalogStatus: { attemptedAt: 125, ok: true } }
+      ]
+    })
+    await act(async () => button('Retry').click())
+    expect(document.body.textContent).not.toContain('Model list saved.')
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a local catalog write failure distinct from a vendor network failure', async () => {
     const provider: ProviderView = {
       id: 'anthropic-provider',
+      configRevision: 4,
       type: 'official',
       vendorId: 'anthropic',
       name: 'Anthropic',
@@ -2070,7 +2141,7 @@ describe('SettingsPage layout', () => {
       supportsImageInput: true
     }
     useSettingsStore.setState({ providers: [provider], activeProviderId: provider.id })
-    const refreshProviderModels = vi.fn().mockRejectedValue(new Error('transport failed'))
+    const refreshProviderModels = vi.fn().mockRejectedValue(new Error('settings.json write failed'))
     useSettingsStore.setState({ refreshProviderModels: refreshProviderModels as never })
 
     useSettingsStore.getState().openSettingsToPanel('model')
@@ -2082,14 +2153,18 @@ describe('SettingsPage layout', () => {
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
     )
     const refresh = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Refresh from vendor'
+      (button) => button.textContent?.trim() === 'Refresh model list'
     )
     await act(async () => refresh?.click())
 
-    expect(refreshProviderModels).toHaveBeenCalledWith(provider.id)
-    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(
-      'Could not refresh models from the vendor.'
-    )
+    expect(refreshProviderModels).toHaveBeenCalledWith({
+      providerId: provider.id,
+      expectedConfigRevision: 4
+    })
+    const alertText = document.body.querySelector('[role="alert"]')?.textContent ?? ''
+    expect(alertText).toContain('Model refresh failed. The previous list is kept.')
+    expect(alertText).toContain('Something went wrong. Try again.')
+    expect(alertText).not.toContain('Check your network')
   })
 
   it('opens Usage as a standalone history-driven settings panel', async () => {
@@ -4358,6 +4433,30 @@ describe('SettingsPage uninstall confirmation', () => {
   })
 })
 
+it('removes the Pi update action when the installed runtime becomes ready', async () => {
+  const settings = window.api.settings
+  const snapshot = await settings.getSettings()
+  vi.mocked(settings.getSettings).mockResolvedValue({
+    ...snapshot,
+    agentFrameworks: [{ id: 'pi', displayName: 'Pi', supportsSkills: true }]
+  })
+  const preflight = {
+    ...(await settings.getPreflight()),
+    piRuntimePath: '/data/pi-managed/adapter/dist/bin.js',
+    piReady: false
+  }
+  vi.mocked(settings.getPreflight).mockResolvedValue(preflight)
+  await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+  await openAgentPanel()
+  expect(document.body.querySelector('[aria-label="Update Pi"]')).not.toBeNull()
+
+  vi.mocked(settings.getPreflight).mockResolvedValue({ ...preflight, piReady: true })
+  await act(async () => useSettingsStore.getState().refreshPreflight())
+  const readyCard = document.body.querySelector('[aria-label="Use Pi"]')
+  expect(readyCard?.textContent).toContain('Uninstall')
+  expect(readyCard?.querySelector('[aria-label="Update Pi"]')).toBeNull()
+})
+
 describe('SettingsPage Codex framework', () => {
   const frameworks = [
     { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
@@ -5189,6 +5288,30 @@ describe('Provider editor leave protection', () => {
     fireEvent.change(field('Provider name'), { target: { value: 'Research endpoint draft' } })
   }
 
+  it('refreshes a switched provider with only its own key and catalog parameters', async () => {
+    await mountEditor(true)
+    selectSettingsOption('Provider type', 'Anthropic')
+    act(() => {
+      fireEvent.change(field('API key'), { target: { value: 'first-provider-key' } })
+      fireEvent.change(document.getElementById('catalog-workspaceId')!, {
+        target: { value: 'first-workspace' }
+      })
+    })
+    selectSettingsOption('Provider type', 'OpenAI')
+    expect(field('API key').value).toBe('')
+    const refresh = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+    useSettingsStore.setState({ refreshProviderModels: refresh })
+    act(() => fireEvent.change(field('API key'), { target: { value: 'second-provider-key' } }))
+    await clickLabel('Refresh model list')
+    expect(refresh).toHaveBeenCalledWith({
+      draft: expect.objectContaining({
+        vendorId: 'openai',
+        key: 'second-provider-key',
+        catalogParameters: undefined
+      })
+    })
+  })
+
   it('locks the new provider type through a pending save and allows retry after failure', async () => {
     let reject!: (error: Error) => void
     const saveValidatedProvider = vi
@@ -5223,6 +5346,8 @@ describe('Provider editor leave protection', () => {
     expect(document.body.textContent).toContain('Write failed')
     selectSettingsOption('Provider type', 'OpenAI')
     selectSettingsOption('Provider type', 'Anthropic')
+    expect(field('API key').value).toBe('')
+    act(() => fireEvent.change(field('API key'), { target: { value: 'new-provider-key' } }))
     await clickLabel('Save')
     expect(saveValidatedProvider).toHaveBeenCalledTimes(2)
     expect(field('Provider type')).toBeNull()
@@ -5296,14 +5421,14 @@ describe('Provider editor leave protection', () => {
       expect(onClose).toHaveBeenCalledOnce()
       const intent = useNavigationStore.getState().resourceCenterIntent
       if (route === 'resource connector')
-        expect(intent).toEqual({
+        expect(intent).toMatchObject({
           resource: 'connectors',
           view: { kind: 'list', recoveryConnectorId: 'connector-a' }
         })
       else if (route === 'resource skill')
-        expect(intent).toEqual({ resource: 'skills', skillId: 'alpha' })
+        expect(intent).toMatchObject({ resource: 'skills', skillId: 'alpha' })
       else if (route === 'resource specialist')
-        expect(intent).toEqual({ resource: 'specialists', specialistId: 'specialist-a' })
+        expect(intent).toMatchObject({ resource: 'specialists', specialistId: 'specialist-a' })
       else expect(intent?.resource).toBe('skills')
     } else if (['Close settings', 'Escape', 'host navigation'].includes(route))
       expect(onClose).toHaveBeenCalledOnce()

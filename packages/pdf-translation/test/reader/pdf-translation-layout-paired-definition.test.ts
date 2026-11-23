@@ -103,3 +103,47 @@ it('keeps native terminal punctuation with its own column and proves the actual 
     'A distinct final left paragraph describes the stable bounds and the differences between neighboring values in the original samples under the same verified settings.'
   )
 })
+
+it.each([1.5, 3])('keeps a paired function definition with its lowered index (%s)', (drop) => {
+  const native = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Body',
+    height = 10
+  ): PdfLayoutPage['items'][number] => ({
+    str,
+    width,
+    height,
+    fontName,
+    dir: 'ltr',
+    fontAscent: 0.75,
+    fontDescent: -0.25,
+    fontVertical: false,
+    hasEOL: str.endsWith('.'),
+    transform: [height, 0, 0, height, x, y]
+  })
+  const items = [
+    native('The adjusted measurements are obtained from the equation below.', 126, 560, 284),
+    native('Z(β) = T(β)/T₁(β)', 261, 537, 105, 'Math'),
+    { ...native('(3)', 548, 537, 11), hasEOL: true },
+    native('where', 126, 515, 26),
+    native('T', 155, 515, 5, 'Math'),
+    native('(', 160.5, 515, 4),
+    native('β', 164.5, 515, 5.5, 'Math'),
+    native(') and', 170, 515, 24),
+    native('T', 197, 515, 5, 'Math'),
+    native('1', 202.1, 515 - drop, 4, 'Script', 7),
+    native('(', 206.4, 515, 4),
+    native('β', 210.4, 515, 5.5, 'Math'),
+    native(') represent the adjusted and raw readings, respectively.', 215.9, 515, 271),
+    native('An independent measurement provided an estimate of the uncertainty.', 126, 464, 382)
+  ]
+  const { units } = extract({ page: 1, width: 600, height: 800, rotation: 0, items })
+  const owner = units.find((unit) => unit.items.includes('1:3'))!
+  expect(owner.sourceOnly).toBeUndefined()
+  expect(owner.items.includes('1:12')).toBe(drop === 1.5)
+  expect(owner.items).not.toContain('1:1')
+  expect(owner.items).not.toContain('1:13')
+})

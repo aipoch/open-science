@@ -1,4 +1,6 @@
 import { getProviderDefinition } from '@aipoch/providers'
+import type { CatalogErrorCode } from '@aipoch/providers'
+import type { ImageErrorDetail } from './image-model-error'
 
 export const IMAGE_MODEL_PRESET_ADAPTERS = {
   'minimax-h3/official': 'minimax',
@@ -45,6 +47,12 @@ export type ImageModelSettingsMutation =
   | { kind: 'remove'; id: string }
   | { kind: 'bind'; binding?: ImageModelBinding }
 
+export type ImageModelTestRequest = Extract<ImageModelSettingsMutation, { kind: 'save' }>
+export type ImageModelTestResult = { ok: true } | { ok: false; error: ImageErrorDetail }
+export type ImageModelCatalogRequest = Omit<ImageModelTestRequest, 'kind' | 'name' | 'models'>
+export type ImageModelCatalogResult =
+  { ok: true; modelIds: string[]; fetchedAt: number } | { ok: false; code: CatalogErrorCode }
+
 export const IMAGE_VENDOR_PRESETS = {
   minimax: 'minimax-h3/official',
   openai: 'openai/gpt-image-2.6',
@@ -67,6 +75,7 @@ export const IMAGE_VENDOR_CATALOG = Object.entries(IMAGE_VENDOR_PRESETS).map(([i
     id: id as ImageVendorId,
     label: vendor.label,
     adapter: IMAGE_MODEL_PRESET_ADAPTERS[presetId],
+    supportsCatalogRefresh: Boolean(vendor.imageGeneration!.modelsList),
     regions: vendor.imageGeneration!.regions,
     models: vendor.imageGeneration!.models.map((model): ImageServiceModel => ({
       id: model.id,

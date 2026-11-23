@@ -36,7 +36,12 @@
     h('i', {}, 'i'),
     h('span', {}, M.disclaimer || '')
   )
-  stage.append(bgWrap, veil, ovLayer, tag, disc, capLayer)
+  const fly = h('img', {
+    class: 'brand-fly',
+    src: 'brand/logos/open-science-lockup-black.svg',
+    alt: ''
+  })
+  stage.append(bgWrap, veil, ovLayer, tag, disc, fly, capLayer)
   document.getElementById('root').append(stage)
 
   // ---- background: the session in the app's own UI ----
@@ -62,15 +67,7 @@
     if (!pn || !f || f === shownFile) return
     shownFile = f
     const k = PV.order.indexOf(f)
-    pn.querySelectorAll('.osk-tab').forEach((tb, j) => {
-      const on = j === k
-      tb.classList.toggle('osk-tab-active', on)
-      tb.classList.toggle('bg-bg-300', on)
-      tb.classList.toggle('text-text-000', on)
-      tb.classList.toggle('text-text-300', !on)
-    })
-    pn.querySelector('.osk-file-head span').textContent = f
-    pn.querySelector('.osk-file-body').replaceChildren(fileNode(f))
+    S.ws.panel.select(k, { title: f, body: fileNode(f) })
   }
   const marks = TL.scenes.map((sc) =>
     sc.highlight ? window.Session.mark(S.thread, sc.msg, sc.highlight) : null
@@ -100,7 +97,9 @@
     })
     const col = side ? h('div', { class: 'ov-col' }) : null
     const foot = h('div', { class: 'ov-foot' })
-    root.append(main, foot)
+    const group = h('div', { class: 'ov-group' })
+    group.append(main, foot)
+    root.append(group)
     ovLayer.append(root)
     let placed = 0
     const ctx = {
@@ -124,7 +123,7 @@
       const update = window.Panels.make(p.type, box, p, ctx)
       return { p, box, update }
     })
-    return { sc, root, panels }
+    return { sc, root, group, panels, occupancy: null }
   })
 
   // ---- captions: chunks resolved in Python ----
@@ -153,6 +152,7 @@
         (s, i) => t >= s.start && (i === TL.scenes.length - 1 || t < TL.scenes[i + 1].start)
       )
     )
+  let BRAND = null
   let current = 0
   function seek(t) {
     const i = sceneAt(t),
@@ -189,8 +189,10 @@
       }
       o.root.style.display = ''
       const sceneOut = 1 - seg(lt, sc.dur - 0.35, sc.dur, ease.in)
+      let occupancy = ''
       for (const { p, box, update } of o.panels) {
         const occupied = lt >= p.occ_from && (p.t_out == null || lt < p.t_out)
+        occupancy += occupied ? '1' : '0'
         box.style.display = occupied ? '' : 'none'
         if (!occupied) continue
         const vis = Math.min(
@@ -202,10 +204,39 @@
         box.style.transform = `translateY(${((1 - seg(lt, p.t_in, p.t_in + 0.5)) * 30).toFixed(1)}px) scale(${lerp(0.97, 1, seg(lt, p.t_in, p.t_in + 0.5)).toFixed(4)})`
         if (vis > 0) update(lt)
       }
+      if (occupancy !== o.occupancy) {
+        // Work in stage pixels so preview zoom and capture resolution agree.
+        // Measure the whole group, including the gap above any verdict.
+        const style = getComputedStyle(o.root)
+        const width = W - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+        const height = H - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+        const scale = Math.min(1, width / o.group.offsetWidth, height / o.group.offsetHeight)
+        o.group.style.transform = `scale(${scale})`
+        o.occupancy = occupancy
+      }
     })
-    tag.style.opacity = TL.scenes.at(-1).panels.some((p) => p.type === 'end_card')
+    // brand hand-off: the opening shows AIPOCH | Open-Science; as it ends, AIPOCH fades and the Open-Science logo glides
+    // into the corner, where the badge takes over for the rest of the video
+    const tagOut = TL.scenes.at(-1).panels.some((p) => p.type === 'end_card')
       ? 1 - seg(t, TL.duration - 6, TL.duration - 5)
       : 1
+    let tagIn = 1
+    if (BRAND) {
+      const q = seg(t, BRAND.h0, BRAND.h1, ease.inOut)
+      tagIn = seg(q, 0.75, 1)
+      BRAND.ai.forEach((n) => (n.style.opacity = (1 - seg(t, BRAND.h0, BRAND.h0 + 0.3)).toFixed(3)))
+      BRAND.os.style.visibility = t >= BRAND.h0 ? 'hidden' : 'visible'
+      const on = t >= BRAND.h0 && t < BRAND.h1
+      fly.style.opacity = on ? (1 - seg(q, 0.8, 1)).toFixed(3) : 0
+      if (on) {
+        const [x0, y0, , h0] = BRAND.from,
+          [x1, y1, , h1] = BRAND.to,
+          hh = lerp(h0, h1, q)
+        fly.style.height = `${h0}px`
+        fly.style.transform = `translate(${lerp(x0, x1, q).toFixed(1)}px, ${(lerp(y0, y1, q) - Math.sin(q * Math.PI) * 40).toFixed(1)}px) scale(${(hh / h0).toFixed(4)})`
+      }
+    }
+    tag.style.opacity = Math.min(tagIn, tagOut).toFixed(3)
     setFile(fileOf[i])
     const dOn = (k) => !!(TL.scenes[k] && TL.scenes[k].disclaimer && M.disclaimer)
     disc.style.opacity = !dOn(i)
@@ -226,6 +257,74 @@
       (x) => +x.toFixed(1)
     )
   }
+  // Measure every phrase with the same words, font and box as live playback.
+  window.__checkCaptions = () => {
+    const issues = []
+    const keep = [...capBox.childNodes]
+    try {
+      for (const chunk of chunks) {
+        capBox.replaceChildren(...chunk.words.map(([word]) => h('span', { class: 'w on' }, word)))
+        const [x, y, w, height] = rectOf(capBox)
+        const rows = new Set([...capBox.children].map((span) => span.offsetTop))
+        // A readable wrap or a narrow margin alone should not spend a repair attempt.
+        const clipped =
+          x < 0 ||
+          y < 0 ||
+          x + w > W ||
+          y + height > H ||
+          capBox.scrollWidth > capBox.clientWidth + 2 ||
+          capBox.scrollHeight > capBox.clientHeight + 2
+        if (clipped || rows.size > 1 || x < 24 || y < 24 || x + w > W - 24 || y + height > H - 24) {
+          const time = chunk.words[0][1]
+          const sc = TL.scenes[sceneAt(time)]
+          issues.push({
+            scene: sc.id,
+            textLayout: clipped,
+            line: sc.lines.findIndex((line) => time <= sc.start + line.t1 + 0.001),
+            message:
+              'This caption does not fit on one row inside the safe area: "' +
+              chunk.words.map(([word]) => word).join(' ') +
+              '". Rephrase the line and keep its evidence.'
+          })
+        }
+      }
+    } finally {
+      capBox.replaceChildren(...keep)
+    }
+    return issues
+  }
+  // Only measure glyph ranges when two visible panel boxes intersect.
+  window.__filmTextOverlaps = (first, second) => {
+    const textRects = (id) => {
+      const el = stage.querySelector('[data-box="' + CSS.escape(id) + '"]')
+      if (!el) return []
+      const nodes = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      const range = document.createRange()
+      const rects = []
+      while (nodes.nextNode()) {
+        if (
+          !nodes.currentNode.textContent.trim() ||
+          !nodes.currentNode.parentElement.checkVisibility({
+            opacityProperty: true,
+            visibilityProperty: true
+          })
+        )
+          continue
+        range.selectNodeContents(nodes.currentNode)
+        rects.push(...range.getClientRects())
+      }
+      return rects
+    }
+    const a = textRects(first)
+    const b = textRects(second)
+    return a.some((r) =>
+      b.some((s) => {
+        const w = Math.min(r.right, s.right) - Math.max(r.left, s.left)
+        const h = Math.min(r.bottom, s.bottom) - Math.max(r.top, s.top)
+        return w > 0 && h > 0 && w * h > 0.15 * Math.min(r.width * r.height, s.width * s.height)
+      })
+    )
+  }
   window.__layout = () => {
     const out = []
     stage.querySelectorAll('[data-box]').forEach((el) => {
@@ -237,8 +336,8 @@
           (n) =>
             n.children.length === 0 &&
             n.textContent.trim() &&
-            n.scrollWidth > n.clientWidth + 2 &&
-            getComputedStyle(n).overflow !== 'visible'
+            ((n.scrollWidth > n.clientWidth + 2 && getComputedStyle(n).overflowX !== 'visible') ||
+              (n.scrollHeight > n.clientHeight + 2 && getComputedStyle(n).overflowY !== 'visible'))
         )
         .map((n) => n.textContent.trim().slice(0, 40))
       out.push({ id: el.dataset.box, rect: rectOf(el), overflow: over })
@@ -279,12 +378,31 @@
     )
     window.Panels.afterFonts()
     measure()
+    // where the brand hand-off starts and lands: measured once on a settled frame of the opening (deterministic)
+    const hook = scenesOv[0],
+      os = hook && hook.root.querySelector('.cobrand .cb-os')
+    if (os) {
+      const hd = TL.scenes[0].dur,
+        h0 = Math.max(1.2, hd - 0.7),
+        h1 = hd + 0.3
+      seek(Math.min(h0 - 0.05, Math.max(1.0, hd - 1.0)))
+      const from = rectOf(os),
+        to = rectOf(tag.querySelector('img'))
+      BRAND = {
+        h0,
+        h1,
+        os,
+        ai: [...hook.root.querySelectorAll('.cobrand .cb-ai, .cobrand .cb-bar')],
+        from,
+        to
+      }
+    }
     seek(+qs.get('t') || 0)
     return { duration: TL.duration, fps: TL.fps, frames: TL.frames, W, H }
   })()
   window.__seek = (t) => seek(t)
   if (RENDER) return
-  parent.postMessage({ type: 'open-science-research-video-ready' }, '*')
+  parent.postMessage({ type: 'open-science-research-video-ready', duration: TL.duration }, '*')
 
   // ---- preview player ----
   const fit = () => {

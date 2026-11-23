@@ -266,7 +266,16 @@ describe('Compute service architecture', () => {
     const source = readSource(resolve(mainRoot, 'composition/compute-recovery.ts'))
     expect(source).toContain('const jobPoller = createComputeJobRuntime')
     expect(source).toContain('disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS')
-    expect(source).toContain('dispose: () => jobPoller.stop()')
+    expect(source).toContain('dispose: async () =>')
+    expect(source).toContain('disposed = true')
+    expect(source).toContain('await jobPoller.stop()')
+  })
+
+  it('shares Session catalog hydration with startup projection', () => {
+    const source = readSource(resolve(mainRoot, 'composition/compute-recovery.ts'))
+    expect(source).toContain('beginStartupProjection()')
+    expect(source).not.toContain('loadAllReadOnly')
+    expect(source).not.toContain('hydrateSessionComputeHosts')
   })
 
   it('resolves Compute policy without entering Session catalog hydration or coordinator locks', () => {

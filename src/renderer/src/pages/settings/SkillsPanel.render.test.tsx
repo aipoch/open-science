@@ -2090,13 +2090,13 @@ describe('SkillsPanel (sub-views)', () => {
     expect(selectionControls?.textContent).not.toContain('Skills in hugohe3/ppt-master')
   })
 
-  it('renders GitHub search failures in the Settings danger banner', async () => {
+  it('shows the GitHub failure reason without the Electron command wrapper', async () => {
     useSettingsStore.setState({
       scanRepoSkills: vi
         .fn()
         .mockRejectedValue(
           new Error(
-            'GitHub search is temporarily rate-limited. Try again later or paste an owner/repo reference.'
+            "Error invoking remote method 'settings:scan-repo-skills': ApplicationCommandError: GitHub rate limit reached. Retry after 30 seconds."
           )
         )
     })
@@ -2114,7 +2114,7 @@ describe('SkillsPanel (sub-views)', () => {
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'GitHub search is temporarily rate-limited'
+      'GitHub rate limit reached. Retry in 30 s.'
     )
   })
 

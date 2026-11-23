@@ -1,0 +1,31 @@
+name: Trigger AI PR review
+
+on:
+  workflow_run:
+    workflows: [PR Automation Signal]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  resolve:
+    permissions:
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/resolve-pr-signal.yml
+    with:
+      run_id: ${{ format('{0}', github.event.workflow_run.id) }}
+      run_attempt: ${{ format('{0}', github.event.workflow_run.run_attempt) }}
+
+  review:
+    needs: resolve
+    if: needs.resolve.outputs.number != '' && needs.resolve.outputs.action != 'edited'
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/ai-review-single.yml
+    with:
+      pull_request_number: ${{ needs.resolve.outputs.number }}
+      expected_head_sha: ${{ needs.resolve.outputs.head_sha }}
+    secrets: inherit

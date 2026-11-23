@@ -12,6 +12,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
 import type { NotebookSessionExecutionResult } from './session-aggregate'
+import type { NotebookOwnedResource } from './owned-resources'
 
 import {
   buildManagedRuntimeProcessEnvironment,
@@ -41,10 +42,21 @@ import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './ke
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { resolveLoopScriptPaths } from './runtime-service'
+import { resolveConfigRoot } from '../storage-root'
+import {
+  createNotebookMemoryPolicy,
+  createNotebookExecutionAdmission,
+  NotebookExecutionAdmissionError,
+  type NotebookExecutionAdmission,
+  type NotebookMemoryPolicyPort
+} from './execution-admission'
 import type { NotebookSessionExecutor } from './session-aggregate'
 
 type CreateNotebookReproductionRuntimeInput = Parameters<CreateReproductionRuntime>[0] & {
   storageRoot: string
+  configRoot?: string
+  createExecutionAdmission?: (signal?: AbortSignal) => NotebookExecutionAdmission
+  onAdmissionRejected?: (error: NotebookExecutionAdmissionError) => void
   processSandbox: NotebookProcessSandbox
   projectId: string
   sessionId: string
@@ -409,6 +421,18 @@ const createNotebookReproductionRuntime = async (
   }
   const executor =
     dependencies.createExecutor?.(executorOptions) ?? new NotebookKernelExecutor(executorOptions)
+  let ownedMemoryPolicy: Promise<NotebookMemoryPolicyPort> | undefined
+  const createAdmission =
+    input.createExecutionAdmission ??
+    ((signal?: AbortSignal) =>
+      createNotebookExecutionAdmission({
+        signal,
+        policy: () =>
+          (ownedMemoryPolicy ??= createNotebookMemoryPolicy(
+            input.configRoot ?? resolveConfigRoot(),
+            dependencies.platform
+          ))
+      }))
   const helperEpochs = new Map<string, HelperEpoch>()
   const environmentNames = new Map<string, string>()
   const epochPrefixes = new Map<string, string>()
@@ -436,6 +460,7 @@ const createNotebookReproductionRuntime = async (
   }
 
   return {
+    resources: () => executor.resources?.() ?? [],
     execute: async ({
       step,
       source,
@@ -445,75 +470,127 @@ const createNotebookReproductionRuntime = async (
       helperModules = [],
       signal
     }) => {
-      const requirementId = step.environmentRequirementId
-      const environment = requirementId ? restored.get(requirementId) : undefined
-      if (!environment) {
-        throw new Error(`Reproducibility step has no restored Environment: ${step.stepId}`)
-      }
-      const execution = executionEnvironment(step, environment, kernelEpochId)
-      let helperEpoch = helperEpochs.get(execution.epochKey)
-      let helperPlan: Awaited<ReturnType<NotebookHelperModuleHost['plan']>> | undefined
-      if (helperModules.length > 0) {
-        if (!helperEpoch) {
-          const activeById = new Map<string, NotebookHelperModuleEvidence>()
-          helperEpoch = {
-            ownership: { id: kernelEpochId ?? step.runId, processKey: execution.epochKey },
-            activeById,
-            host: new NotebookHelperModuleHost({
-              resolve: async (id) => {
-                const helper = activeById.get(id)
-                return helper ? helperDescriptor(helper) : undefined
-              }
-            })
-          }
-          helperEpochs.set(execution.epochKey, helperEpoch)
+      const baseAdmission = createAdmission(signal)
+      let rejected = false
+      const reportRejection = (error: unknown): never => {
+        if (!rejected && error instanceof NotebookExecutionAdmissionError) {
+          rejected = true
+          input.onAdmissionRejected?.(error)
         }
-        for (const helper of helperModules) helperEpoch.activeById.set(helper.helperId, helper)
-        const request = await helperEpoch.host.preflight(
-          step.kernelKind,
-          helperModules.map(({ helperId }) => helperId),
-          helperEpoch.ownership
-        )
-        helperPlan = await helperEpoch.host.plan(helperEpoch.ownership, request)
+        throw error
       }
-      const dataRoot = join(sessionRoot, 'data')
-      const result = await executor.execute({
-        ...(step.kernelKind === 'python'
-          ? {
-              pythonRandomState: validatePythonRandomState(
-                executionContext?.before.pythonRandomState
-              )
-            }
-          : {}),
-        code:
-          step.kernelKind === 'r'
-            ? restoreRRandomState(source, executionContext?.before.rRandomState)
-            : source,
-        ...(helperPlan?.injections.length ? { helperModules: helperPlan.injections } : {}),
-        cwd: dataRoot,
-        notebookSessionRoot: sessionRoot,
-        dataRoot,
-        runtimeRoot: join(input.attemptRoot, 'runtime'),
-        protectedDirs: [input.storageRoot],
-        signal,
-        language: step.kernelKind,
-        environment: execution.name,
-        resolvedInterpreter: {
-          command: environment.command,
-          condaPrefix: environment.prefix
+      const admission: NotebookExecutionAdmission = {
+        prepare: async (boundary) => {
+          try {
+            await baseAdmission.prepare(boundary)
+          } catch (error) {
+            reportRejection(error)
+          }
         },
-        sessionId: input.sessionId,
-        projectId: input.projectId
-      })
-      if (helperEpoch) {
-        helperEpoch.host.commitInitialized(
-          helperEpoch.ownership,
-          result.helperModulesInitialized ?? []
-        )
+        assertCurrent: (boundary) => {
+          try {
+            baseAdmission.assertCurrent(boundary)
+          } catch (error) {
+            reportRejection(error)
+          }
+        }
       }
-      return result
+      try {
+        await admission.prepare('submit')
+        admission.assertCurrent('submit')
+        const requirementId = step.environmentRequirementId
+        const environment = requirementId ? restored.get(requirementId) : undefined
+        if (!environment) {
+          throw new Error(`Reproducibility step has no restored Environment: ${step.stepId}`)
+        }
+        const execution = executionEnvironment(step, environment, kernelEpochId)
+        let helperEpoch = helperEpochs.get(execution.epochKey)
+        let helperPlan: Awaited<ReturnType<NotebookHelperModuleHost['plan']>> | undefined
+        if (helperModules.length > 0) {
+          if (!helperEpoch) {
+            const activeById = new Map<string, NotebookHelperModuleEvidence>()
+            helperEpoch = {
+              ownership: { id: kernelEpochId ?? step.runId, processKey: execution.epochKey },
+              activeById,
+              host: new NotebookHelperModuleHost({
+                resolve: async (id) => {
+                  const helper = activeById.get(id)
+                  return helper ? helperDescriptor(helper) : undefined
+                }
+              })
+            }
+            helperEpochs.set(execution.epochKey, helperEpoch)
+          }
+          for (const helper of helperModules) helperEpoch.activeById.set(helper.helperId, helper)
+          const request = await helperEpoch.host.preflight(
+            step.kernelKind,
+            helperModules.map(({ helperId }) => helperId),
+            helperEpoch.ownership
+          )
+          helperPlan = await helperEpoch.host.plan(helperEpoch.ownership, request)
+        }
+        const dataRoot = join(sessionRoot, 'data')
+        await admission.prepare('dispatch')
+        admission.assertCurrent('dispatch')
+        const result = await executor.execute({
+          executionAdmission: admission,
+          ...(step.kernelKind === 'python'
+            ? {
+                pythonRandomState: validatePythonRandomState(
+                  executionContext?.before.pythonRandomState
+                )
+              }
+            : {}),
+          code:
+            step.kernelKind === 'r'
+              ? restoreRRandomState(source, executionContext?.before.rRandomState)
+              : source,
+          ...(helperPlan?.injections.length ? { helperModules: helperPlan.injections } : {}),
+          cwd: dataRoot,
+          notebookSessionRoot: sessionRoot,
+          dataRoot,
+          runtimeRoot: join(input.attemptRoot, 'runtime'),
+          protectedDirs: [input.storageRoot],
+          signal,
+          language: step.kernelKind,
+          environment: execution.name,
+          resolvedInterpreter: {
+            command: environment.command,
+            condaPrefix: environment.prefix
+          },
+          sessionId: input.sessionId,
+          projectId: input.projectId
+        })
+        if (helperEpoch) {
+          helperEpoch.host.commitInitialized(
+            helperEpoch.ownership,
+            result.helperModulesInitialized ?? []
+          )
+        }
+        return result
+      } catch (error) {
+        if (!(error instanceof NotebookExecutionAdmissionError)) throw error
+        return {
+          status: 'failed',
+          kernelDispatched: false,
+          executionStarted: false,
+          recovery: error.recovery,
+          stdout: '',
+          stderr: error.message,
+          traceback: error.message,
+          cwdAfter: join(sessionRoot, 'data'),
+          outputs: []
+        }
+      }
     },
-    shutdown: () => executor.shutdown()
+    shutdown: async () => {
+      try {
+        return await executor.shutdown()
+      } finally {
+        const policy = await ownedMemoryPolicy?.catch(() => undefined)
+        policy?.dispose?.()
+      }
+    }
   }
 }
 
@@ -541,6 +618,10 @@ const executeReproduction = createReproductionExecutor({
 export type HostReproductionInput = Omit<ExecuteArtifactReproducibilityInput, 'evidence'> & {
   storageRoot: string
   processSandbox: NotebookProcessSandbox
+  configRoot?: string
+  createExecutionAdmission?: (signal?: AbortSignal) => NotebookExecutionAdmission
+  onAdmissionRejected?: (error: NotebookExecutionAdmissionError) => void
+  onRuntimeCreated?: (runtime: NotebookReproductionRuntime) => void
 }
 export type HostReproductionDependencies = Omit<
   ExecuteArtifactReproducibilityDependencies,
@@ -553,25 +634,40 @@ export const executeArtifactReproducibility = (
   input: HostReproductionInput,
   dependencies: HostReproductionDependencies = {}
 ): ReturnType<typeof executeReproduction> => {
-  const { storageRoot, processSandbox, ...attempt } = input
+  const {
+    storageRoot,
+    processSandbox,
+    configRoot,
+    createExecutionAdmission,
+    onAdmissionRejected,
+    onRuntimeCreated,
+    ...attempt
+  } = input
   return executeReproduction(
     { ...attempt, evidence: reproductionEvidence(storageRoot) },
     {
       createAttemptRoot: dependencies.createAttemptRoot,
-      createRuntime: (runtime) =>
-        (dependencies.createRuntime ?? createNotebookReproductionRuntime)({
+      createRuntime: async (runtime) => {
+        const created = await (dependencies.createRuntime ?? createNotebookReproductionRuntime)({
           ...runtime,
           storageRoot,
           processSandbox,
+          configRoot,
+          createExecutionAdmission,
+          onAdmissionRejected,
           projectId: 'artifact-reproducibility',
           sessionId: 'reproduction-' + input.execution.reproducibilityRecipe!.recipeId.slice(0, 16)
         })
+        onRuntimeCreated?.(created)
+        return created
+      }
     }
   )
 }
 
 // Host callers may inspect kernel outputs; replay needs only the base execution result.
 type NotebookReproductionRuntime = Omit<ReproductionRuntime, 'execute'> & {
+  resources?: () => NotebookOwnedResource[]
   execute(
     input: Parameters<ReproductionRuntime['execute']>[0]
   ): Promise<NotebookSessionExecutionResult>

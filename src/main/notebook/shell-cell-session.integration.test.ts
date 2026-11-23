@@ -21,6 +21,7 @@ import { NOTEBOOK_TEXT_LIMIT_BYTES, NOTEBOOK_DIAGNOSTIC_RESERVE_BYTES } from './
 import { shellNpmPaths } from './shell-npm-environment'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import { healthyNotebookExecutionAdmission } from './memory-policy.test-support'
 
 // Exercise the native platform interpreter through the actual adapter and cleanup owner.
 describe('persistent platform shell cells', () => {
@@ -436,6 +437,8 @@ console.log(JSON.stringify(result))
     async (decision) => {
       const pending = Promise.withResolvers<void>()
       const entered = Promise.withResolvers<void>()
+      const cleaning = Promise.withResolvers<void>()
+      const releaseCleanup = Promise.withResolvers<void>()
       const controller = new AbortController()
       let waiting = true
       adapter = new NotebookShellProcessAdapter(process.platform, {
@@ -476,11 +479,17 @@ console.log(JSON.stringify(result))
             },
             waitForNetworkApprovals: () => pending.promise,
             networkApprovalRetryRequired: () => !waiting && !controller.signal.aborted,
-            cleanup: async () => ({
-              processesTerminated: true,
-              networkClosed: true,
-              temporaryResourcesRemoved: true
-            })
+            cleanup: async () => {
+              if (decision === 'cancel') {
+                cleaning.resolve()
+                await releaseCleanup.promise
+              }
+              return {
+                processesTerminated: true,
+                networkClosed: true,
+                temporaryResourcesRemoved: true
+              }
+            }
           }
         }
       })
@@ -493,6 +502,7 @@ console.log(JSON.stringify(result))
           )
         ),
         timeoutMs: 50,
+        executionAdmission: healthyNotebookExecutionAdmission(),
         signal: controller.signal
       })
       void run.then(() => {
@@ -502,8 +512,15 @@ console.log(JSON.stringify(result))
       await new Promise((resolve) => setTimeout(resolve, 200))
       expect(settled).toBe(false)
       waiting = false
-      if (decision === 'cancel') controller.abort()
-      else pending.resolve()
+      if (decision === 'cancel') {
+        controller.abort()
+        try {
+          await cleaning.promise
+          expect(settled).toBe(false)
+        } finally {
+          releaseCleanup.resolve()
+        }
+      } else pending.resolve()
       const result = await run
       expect(result.stderr).not.toContain('timed out')
       if (decision === 'cancel') expect(result.cancelled).toBe(true)
@@ -692,6 +709,8 @@ console.log(JSON.stringify(result))
     })
     expect(result.exitCode).toBeNull()
     expect(result.stderr).toContain('timed out')
+    expect(result.timedOut).toBe(true)
+    expect(result.stderr).not.toContain('Shell command was cancelled.')
     expect(
       await adapter.execute(
         request(

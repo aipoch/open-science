@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { z } from 'zod'
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   sessionPackageRequestSchema,
@@ -319,7 +319,7 @@ export class SessionPackageDeletion {
         signal.throwIfAborted()
         await assertPackageSourcePath(
           this.options.configRoot,
-          relative(this.options.configRoot, directory)
+          relative(this.options.configRoot, directory).split(sep).join('/')
         )
         const current = (await readdir(directory)).sort()
         if (

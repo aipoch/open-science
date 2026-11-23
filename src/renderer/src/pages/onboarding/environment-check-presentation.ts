@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next'
 
 import type { EnvironmentCheckItem } from '../../../../shared/settings'
 import { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../../../../shared/claude-runtime'
+import { CLAUDE_ACP_MISSING_MESSAGE } from '../../../../shared/failure/messages'
 
 const localizedLabel = (check: EnvironmentCheckItem, t: TFunction): string => {
   switch (check.id) {
@@ -22,6 +23,14 @@ const localizeHostEnvironmentCheck = (
   check: EnvironmentCheckItem,
   t: TFunction
 ): EnvironmentCheckItem => {
+  if (check.summary === CLAUDE_ACP_MISSING_MESSAGE) {
+    return {
+      ...check,
+      summary: t(
+        'Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.'
+      )
+    }
+  }
   if (check.summary === CLAUDE_CLI_INCOMPATIBLE_MESSAGE) {
     return {
       ...check,

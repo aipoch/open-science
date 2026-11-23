@@ -1,14 +1,26 @@
+import type { PromptResponse } from '@agentclientprotocol/sdk'
+
 import type { AcpPromptRequest } from '../../shared/acp'
 
 type AcpAppContinuationOwnerOptions = Readonly<{
   activityChanged: () => void
 }>
 
+// Process-local execution facts. Each continuation owns its definition of settlement.
+// Only the provider dispatch callback may advance phase to dispatched.
+type AcpContinuationOutcome = Readonly<{
+  phase: 'not-prepared' | 'not-dispatched' | 'dispatched'
+  stopReason?: PromptResponse['stopReason']
+  error?: unknown
+  retryable: boolean
+}>
+
 type AcpAppContinuation = Readonly<{
   request: AcpPromptRequest
   condition: 'always' | 'provider-cancelled'
   beforeSend?: () => Promise<AcpPromptRequest | undefined>
-  onUnaccepted?: (error?: unknown, retryable?: boolean) => Promise<void>
+  send?: (request: AcpPromptRequest, onProviderDispatched: () => void) => Promise<PromptResponse>
+  settle?: (outcome: AcpContinuationOutcome) => Promise<void>
 }>
 
 // Owns app-authored continuations parked between a durable interaction response and the next
@@ -78,4 +90,4 @@ class AcpAppContinuationOwner {
 }
 
 export { AcpAppContinuationOwner }
-export type { AcpAppContinuation }
+export type { AcpAppContinuation, AcpContinuationOutcome }

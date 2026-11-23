@@ -418,21 +418,22 @@
   // ---- cue resolution (same syntax as the spec): "1", "1+0.4", "1:thrust", "1.end", "end-1.5" ----
   function cueTime(cue, sc) {
     if (typeof cue === 'number') return cue
-    const m = String(cue).match(/^(end|\d+)(\.end|:([^\s+-]+))?([+-]\d+(?:\.\d+)?)?$/)
+    const m = String(cue).match(
+      /^(end|\d+)(\.end|:([^\s+-]+(?:-[^\s+\d-][^\s+-]*)*))?([+-]\d+(?:\.\d+)?)?$/
+    )
     if (!m) throw new Error(`bad cue '${cue}' (use e.g. "1", "1:thrust", "1.end+0.3", "end-1")`)
     const off = parseFloat(m[4] || 0)
-    if (m[1] === 'end') return sc.dur + off
+    if (m[1] === 'end') {
+      if (m[2]) throw new Error(`Invalid end cue: ${cue}`)
+      return sc.dur + off
+    }
     const ln = sc.lines[+m[1]]
     if (!ln) throw new Error(`cue '${cue}': the scene has lines 0–${sc.lines.length - 1}`)
     if (!m[2]) return ln.t0 + off
     if (m[2] === '.end') return ln.t1 + off
-    const key = m[3].toLowerCase().replace(/[^\w.%,]/g, '')
-    const w = ln.words.find((x) =>
-      x[0]
-        .toLowerCase()
-        .replace(/[^\w.%,]/g, '')
-        .startsWith(key)
-    )
+    const normalize = (word) => word.toLowerCase().replace(/[^\p{L}\p{N}_.%,]/gu, '')
+    const key = normalize(m[3])
+    const w = key && ln.words.find(([word]) => normalize(word).startsWith(key))
     if (!w)
       throw new Error(
         `cue '${cue}': no word starting with '${m[3]}' in line ${m[1]} ("${ln.caption}")`
@@ -543,7 +544,8 @@
       frames: 0,
       cover: 0,
       offPalette: [],
-      freeText: []
+      freeText: [],
+      cardSpill: []
     }
     const sc = ctx.scene
     const tables = window.DATA.tables || {}
@@ -555,6 +557,7 @@
       g.clearRect(0, 0, W, H)
       if (!fn) return
       const texts = []
+      const cards = []
       diag.last = []
       const occ = new Uint8Array(16 * 10)
       const track = (x0, y0, x1, y1, what) => {
@@ -680,6 +683,7 @@
         start: p.t_in,
         local: t - p.t_in,
         sceneEnd: sc.dur,
+        scene: sc.id,
         // the full toolset: the raw 2D canvas (already cleared and scaled; save/restore around your own transforms) and the open layer
         ctx: g,
         dom: layer,
@@ -816,6 +820,14 @@
           return yy - y - gap
         },
         // small comparison bars inside an animation: items [{ label, value, display, tone }], grown by o.p (0→1)
+        readoutCard(x, y, w, rows, o = {}) {
+          const pad = o.pad ?? 28
+          const rowHeight = k.readouts(x, y, rows, { gap: o.gap, alpha: 0 })
+          const height = rowHeight + 2 * pad + (o.eyebrow ? TK.text.eyebrow.line + 10 : 0)
+          const content = k.card(x, y, w, height, o)
+          k.readouts(content.x, content.y, rows, { gap: o.gap, alpha: o.alpha })
+          return { x, y, w, h: height }
+        },
         bars(x, y, w, items, o = {}) {
           const max = o.max ?? Math.max(...items.map((i) => i.value)),
             bh = o.height ?? 32,
@@ -1295,6 +1307,8 @@
             shadow: true,
             alpha: o.alpha
           })
+          if (window.__CHECK && (o.alpha ?? 1) * (k._alpha ?? 1) > 0.5)
+            cards.push(track(x, y, x + w, y + h, 'card'))
           let iy = y + pad
           if (o.eyebrow) {
             txt(o.eyebrow, x + pad, iy, 'eyebrow', { baseline: 'top', alpha: o.alpha })
@@ -1477,6 +1491,39 @@
               diag.textHits.push({ key, shape, t: +t.toFixed(2) })
           }
         }
+      const contains = (c, x, y) => x >= c[0] && x <= c[2] && y >= c[1] && y <= c[3]
+      for (const { str, r } of texts) {
+        const owns = (c) =>
+          contains(c, r[0] + 1, r[1] + 1) || contains(c, (r[0] + r[2]) / 2, (r[1] + r[3]) / 2)
+        const owner = cards.findLast(owns)
+        for (const c of owner ? [owner] : cards) {
+          // A detached label can still belong to a column of readouts on the card.
+          if (
+            !owner &&
+            !(
+              r[0] >= c[0] &&
+              r[2] <= c[2] + 4 &&
+              r[1] < c[3] + 90 &&
+              r[3] > c[1] - 90 &&
+              texts.some(
+                (other) =>
+                  other.r !== r &&
+                  Math.abs(other.r[0] - r[0]) < 2 &&
+                  contains(c, (other.r[0] + other.r[2]) / 2, (other.r[1] + other.r[3]) / 2)
+              )
+            )
+          )
+            continue
+          const by = Math.max(c[0] - r[0], c[1] - r[1], r[2] - c[2], r[3] - c[3])
+          const shape = str.replace(/[\d.,]+/g, '#')
+          if (
+            by > 3 &&
+            diag.cardSpill.length < 8 &&
+            !diag.cardSpill.some((hit) => hit.shape === shape)
+          )
+            diag.cardSpill.push({ str, shape, by: Math.round(by), t: +t.toFixed(2) })
+        }
+      }
       diag.cover = Math.max(diag.cover, occ.reduce((a, b) => a + b, 0) / occ.length)
       diag.frames++
     }

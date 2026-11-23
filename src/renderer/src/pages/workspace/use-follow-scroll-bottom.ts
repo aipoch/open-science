@@ -4,8 +4,9 @@ import { followScrollBottomTop, isAtFollowScrollBottom } from './follow-notebook
 
 type FollowScrollOptions = {
   onFollowingChange?: (following: boolean) => void
-  // Explicit navigation can resume following without replacing the viewport or its observer.
+  // Reset follow on explicit navigation; revealing history starts away from the live tail.
   resetKey?: string | number
+  followOnReset?: boolean
 }
 
 // Keeps a scroller pinned to the latest content while the caller allows follow. User movement
@@ -15,7 +16,7 @@ export const useFollowScrollBottom = (
   options: FollowScrollOptions = {}
 ): RefObject<HTMLDivElement | null> => {
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  const followingRef = useRef(true)
+  const followingRef = useRef(options.followOnReset ?? true)
   const autoscrollingRef = useRef(false)
   const enabledRef = useRef(enabled)
   const autoscrollFrameRef = useRef<number | undefined>(undefined)
@@ -41,7 +42,7 @@ export const useFollowScrollBottom = (
     }
     const resetRequested = resetKeyRef.current !== options.resetKey
     resetKeyRef.current = options.resetKey
-    if (resetRequested) updateFollowing(true)
+    if (resetRequested) updateFollowing(options.followOnReset ?? true)
     const wasEnabled = enabledRef.current
     const hasResizeObserver = typeof ResizeObserver !== 'undefined'
     enabledRef.current = enabled

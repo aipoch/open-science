@@ -73,6 +73,8 @@ import {
   createElectronSurfaceAdapter
 } from './desktop-surface-declarations'
 import { LocalePreferenceOwner } from './locale/owner'
+import { netFetchStandard } from './network-fetch'
+import { OrgCaseService } from './session-package/org-cases'
 import { createManagedPreviewProtocolHandler } from './managed-preview-handler'
 import { runtimeMetadata } from './runtime-metadata'
 
@@ -175,6 +177,7 @@ export type ApplicationRuntimeInterfaces = {
     'configureDesktop' | 'syncViewState' | 'handleAppFocus' | 'handleWindowCreated' | 'refreshBadge'
   >
   settingsService: WindowSettingsCapabilities
+  initializeDesktopKiloDefaults: (upgrading: boolean) => Promise<void>
   commitClosePreference: (
     preference: Parameters<WindowSettingsCapabilities['setClosePreference']>[0]
   ) => Promise<void>
@@ -319,6 +322,11 @@ export const createApplicationModules = async (
     ...sessionFoundation,
     getDetectSessionExportBlockingSessions: () =>
       projectLifecycle.detectSessionExportBlockingSessions,
+    getSessionExportOwners: () => ({
+      archiveCoordinator: projectLifecycle.archiveCoordinator,
+      sessionPersistenceCoordinator: sessionAuthority.sessionPersistenceCoordinator,
+      notebookService: notebookRuntime.notebookService
+    }),
     readImageTasks: (scope) => imageTasks.list(scope, true),
     modules
   })
@@ -385,6 +393,7 @@ export const createApplicationModules = async (
     modules
   })
   const researchFilm = await composeResearchFilm({
+    translate,
     previewResources: managedFiles.previewResources,
     ...settingsBootstrap,
     ...sessionFoundation,
@@ -856,6 +865,51 @@ export const createApplicationModules = async (
     declareElectronAdapter
   })
   sessionAuthority.reviewerCommandOwnerRef.current = reviewerCommandOwner
+  const orgCases = new OrgCaseService({
+    getLabView: () => settingsBootstrap.settingsService.getLabView?.() ?? { state: 'unconfigured' },
+    listLabCases: (query, signal) => settingsBootstrap.settingsService.listLabCases(query, signal),
+    getLabCase: (caseId, signal) => settingsBootstrap.settingsService.getLabCase(caseId, signal),
+    getLabCaseDownload: (caseId, signal) =>
+      settingsBootstrap.settingsService.getLabCaseDownload(caseId, signal),
+    uploadLabCase: (input, signal) =>
+      settingsBootstrap.settingsService.uploadLabCase(input, signal),
+    enqueuePackageFile: (path, onReleased, validateBeforeTarget) =>
+      sessionPackageSurfaces.sessionPackageDesktop.enqueueFile(
+        path,
+        onReleased,
+        validateBeforeTarget
+      ),
+    isImportBusy: () =>
+      sessionPackageSurfaces.sessionPackageDesktop.operations.active ||
+      sessionPackageSurfaces.browserPackageImport.active,
+    cancelQueuedFile: (path) =>
+      sessionPackageSurfaces.sessionPackageDesktop.cancelReceivedFile(path),
+    publishDownloadChanged: (snapshot) =>
+      applicationEvents.publish('sessions:org-case-download-changed', snapshot),
+    downloadFetch: netFetchStandard
+  })
+  const unregisterOrgCaseUploader =
+    sessionPackageSurfaces.sessionPackageDesktop.registerOrgCaseUploader?.((input, signal) =>
+      orgCases.uploadCase(input, signal)
+    )
+  const unregisterOrgTransferCheck = sessionPackageSurfaces.registerExternalTransferCheck?.(() =>
+    orgCases.hasActiveDownload()
+  )
+  const unsubscribeOrgCasesLabSync = applicationEvents.subscribe?.((event) => {
+    if (event.channel === 'settings:changed') {
+      orgCases.handleLabViewChanged(event.payload.lab)
+    }
+  })
+  await modules.add(orgCases, (cases) => ({
+    name: 'org-cases',
+    capability: cases,
+    dispose: () => {
+      unregisterOrgCaseUploader?.()
+      unregisterOrgTransferCheck?.()
+      unsubscribeOrgCasesLabSync?.()
+      cases.dispose()
+    }
+  }))
   const commandDependencies = composeCommandDependencies({
     schedules,
     imageTasks,
@@ -893,10 +947,12 @@ export const createApplicationModules = async (
     storageHandoff,
     artifactSurfaces,
     sessionPackageSurfaces,
+    orgCases,
     reviewerCommandOwner,
     listAppIconPreviews
   })
   await composeBackendLifecycle({
+    notebookService: notebookRuntime.notebookService,
     settingsBootstrap,
     managedFiles,
     sessionAuthority,
@@ -917,11 +973,10 @@ export const createApplicationModules = async (
     dispose: () => owner.dispose(),
     disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
   }))
-  // Recovery starts only after foreground commands and selected-session startup are ready.
+  // Deferred catalog cleanup starts after foreground commands are ready. Session Details recovery
+  // is triggered by the Session load path when the user opens a Session.
   await modules.add(sessionProjection, (projection) => {
-    const recovery = projection.createDeferredRecovery((session) =>
-      sessionSurfaces.sessionDetailsOwner.recoverSession(session)
-    )
+    const recovery = projection.createDeferredRecovery(async () => undefined)
     return {
       name: 'deferred-session-recovery',
       capability: recovery,
@@ -998,6 +1053,11 @@ export const createApplicationModules = async (
     taskNotifications: notifications.taskNotifications,
     notificationInbox: storageStartup.notificationInbox,
     settingsService: settingsBootstrap.settingsService,
+    initializeDesktopKiloDefaults: async (upgrading) => {
+      const added =
+        await settingsBootstrap.settingsRepository.initializeDesktopKiloDefaults(upgrading)
+      if (added) await settingsBootstrap.settingsSnapshotCommits.projectAfter(Promise.resolve())
+    },
     commitClosePreference: async (preference) => {
       await settingsBootstrap.settingsSnapshotCommits.currentSnapshotAfter(
         settingsBootstrap.settingsService.setClosePreference(preference)
@@ -1030,8 +1090,8 @@ export const createApplicationModules = async (
         } catch (error) {
           if (!(error instanceof Error) || error.message !== 'Session projection is not ready.')
             throw error
-          await sessionProjection.ensureSessionProjection()
-          summaries = await sessionFoundation.sessionRepository.loadSessionSummaries()
+          // Recovery can return readable sessions while the projection is still incomplete.
+          summaries = (await sessionProjection.ensureSessionProjection()).sessions
         }
         const projects = await sessionPackages.projectRepository.list()
         const projectsById = new Map(
@@ -1059,7 +1119,8 @@ export const createApplicationModules = async (
     abortDesktopUpdate: handoff.abortDesktopUpdate,
     hasActivePackageTransfer: () =>
       sessionPackageSurfaces.browserPackageImport.active ||
-      sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer(),
+      sessionPackageSurfaces.sessionPackageDesktop.hasActiveTransfer() ||
+      orgCases.hasActiveDownload(),
     hasActiveReviewerWork: () =>
       handoff.reviewerModelRuntimeShutdown.current?.hasActiveWork() ?? false,
     getActiveSettingsInstallId: () => settingsBootstrap.settingsService.getActiveInstallId(),

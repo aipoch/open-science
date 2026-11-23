@@ -1,4 +1,9 @@
+import type { CodeBuddyAccountRequest } from '../codebuddy-subscription'
 import type {
+  ImageModelCatalogRequest,
+  ImageModelCatalogResult,
+  ImageModelTestRequest,
+  ImageModelTestResult,
   ImageModelSettingsMutation,
   ImageModelSettingsSnapshot
 } from '../image-model-settings'
@@ -124,6 +129,9 @@ export const settingsLoginIsolatedClaudeContracts = {
     'settings',
     ['settings:login-isolated-claude-browser', LOCAL]
   ),
+  'settings.codeBuddyAccount': callable<
+    (request: CodeBuddyAccountRequest) => Promise<ValidateProviderResult>
+  >()('settings', ['settings:codebuddy-account', LOCAL]),
   'settings.loginIsolatedCodex': callable<() => Promise<ValidateProviderResult>>()('settings', [
     'settings:login-isolated-codex',
     LOCAL
@@ -232,6 +240,12 @@ export const settingsUpsertProviderContracts = {
 } as const
 
 export const settingsImageModelsContracts = {
+  'settings.testImageModel': callable<
+    (request: ImageModelTestRequest) => Promise<ImageModelTestResult>
+  >()('settings', ['settings:test-image-model', LOCAL]),
+  'settings.refreshImageModelCatalog': callable<
+    (request: ImageModelCatalogRequest) => Promise<ImageModelCatalogResult>
+  >()('settings', ['settings:refresh-image-model-catalog', LOCAL]),
   'settings.getImageModels': callable<() => Promise<ImageModelSettingsSnapshot>>()('settings', [
     'settings:get-image-models',
     LOCAL

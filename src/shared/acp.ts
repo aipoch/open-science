@@ -1,4 +1,5 @@
 import type { ClassifiedFailure } from './failure/contract'
+import type { WebInvocationMetadata } from './web-tools'
 import type { ToolCallContent, ToolCallLocation, ToolKind, Usage } from '@agentclientprotocol/sdk'
 import type { AcpMessageImage, AcpReplayMessageImage } from './acp-image-contract'
 import { ACP_MESSAGE_IMAGE_EVENT_TEXT, sanitizeAcpMessageImage } from './acp-image-contract'
@@ -448,12 +449,13 @@ type AcpRuntimeEventBase = {
   toolCallId?: string
   // App-owned authorization outcome. It stays separate from provider tool status so a rejected or
   // otherwise closed permission request cannot be presented as an execution failure.
-  toolDisposition?: 'declined' | 'permission-closed'
+  toolDisposition?: 'declined' | 'permission-closed' | 'cancelled'
   // App-owned one-shot identity for exact Notebook activity/Run correlation. Provider payloads
   // cannot supply it; the permission and authenticated RPC owners issue and consume it.
   executionInvocationId?: string
   // Set only by the main-process permission owner, never by provider metadata.
   appOwned?: true
+  webInvocation?: WebInvocationMetadata
   providerToolName?: string
   toolKind?: ToolKind
   toolContent?: ToolCallContent[]
@@ -757,6 +759,11 @@ export type AcpSaveAsSkillRequest = {
 export type AcpSetPermissionProfileRequest = {
   sessionId: string
   profile: PermissionProfileId
+}
+
+export type AcpContinueNotebookExecutionRequest = AcpPromptRequest & {
+  projectId: string
+  refusalId: string
 }
 
 export type AcpPromptRequest = {

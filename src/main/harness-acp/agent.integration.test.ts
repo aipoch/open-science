@@ -1,26 +1,40 @@
+import { readPersistedFailure } from '../../shared/session-persistence/turn-outcome'
+import { WebService } from '../web/service'
+import { SearchService } from '../web/search-service'
+import { WebInvocationOwner } from '../web/invocation-owner'
+import { WebInvocationStore } from '../web/invocation-store'
+import { WebSnapshotStore } from '../web/snapshot-store'
 import { ScheduleMcp } from '../schedules/mcp'
 import type { ScheduleManagement } from '../schedules/management'
 import { SCHEDULE_TURN_META, type ScheduleCreateRequest } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
 import { createServer, type ServerResponse } from 'node:http'
 import { once } from 'node:events'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AddressInfo } from 'node:net'
+import { createConnection, type AddressInfo } from 'node:net'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createJournalAgentStore } from '@aipoch/agent-harness'
 import { createHarnessAcpAgent } from './agent'
+import { createHarnessTracing, type HarnessTracing } from './tracing'
 import {
   HARNESS_AUTH_METHOD,
+  HARNESS_EPHEMERAL_SESSION,
   HARNESS_INSTRUCTIONS,
   HARNESS_OWNER,
-  HARNESS_TOOL_LESS
+  HARNESS_TOOL_LESS,
+  HARNESS_TRACE_ENABLED,
+  HARNESS_USER_TEXT_RANGE
 } from './config'
 import { AgentMcpHttpHost } from '../acp/mcp-http-host'
+import { ReviewerSessionOwner } from '../acp/reviewer-session-owner'
+import { harnessFramework } from '../agent-framework/harness'
+import { ReviewerMcpServer } from '../reviewer/mcp-server'
+import { readReviewerMcpStdioProxyConfig } from '../agent-framework/reviewer-mcp-transport'
 import { HARNESS_INVOCATION, HARNESS_RECEIPT_METHOD, receiptResponseSchema } from './tool-receipts'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -28,6 +42,7 @@ import { collectPromptFailureFacts } from '../acp/prompt-error'
 import { classifyFailure } from '../../shared/failure/classify'
 import { ProtocolForwardingBridge } from '../settings/protocol-forwarding-bridge'
 import { harnessTurnAdapter } from '../acp/harness-turn-adapter'
+import { AcpProviderPromptExecutor } from '../acp/provider-prompt-executor'
 import { toAcpRuntimeEvent } from '../acp/runtime-events'
 
 const cleanup: (() => Promise<unknown>)[] = []
@@ -165,12 +180,15 @@ it('retrieves a large MCP result through the session reader with no repeated eff
 })
 async function modelServer(
   reply?: (body: WireRequest, response: ServerResponse) => void
-): Promise<{ endpoint: string; requests: WireRequest[] }> {
+): Promise<{ endpoint: string; requests: WireRequest[]; rawRequests: string[] }> {
   const requests: WireRequest[] = []
+  const rawRequests: string[] = []
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = []
     for await (const chunk of request) chunks.push(Buffer.from(chunk))
-    const body = JSON.parse(Buffer.concat(chunks).toString()) as WireRequest
+    const raw = Buffer.concat(chunks).toString()
+    const body = JSON.parse(raw) as WireRequest
+    rawRequests.push(raw)
     requests.push(body)
     if (request.url?.endsWith('/messages'))
       expect(request.headers['x-api-key']).toBe('local-test-token')
@@ -187,21 +205,23 @@ async function modelServer(
   })
   return {
     endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`,
-    requests
+    requests,
+    rawRequests
   }
 }
 function finish(
   response: ServerResponse,
   text: string,
   tool?: string,
-  args: unknown = { value: 1 }
+  args: unknown = { value: 1 },
+  callId = 'call-1'
 ): void {
   const delta = tool
     ? {
         tool_calls: [
           {
             index: 0,
-            id: 'call-1',
+            id: callId,
             type: 'function',
             function: { name: tool, arguments: JSON.stringify(args) }
           }
@@ -218,7 +238,8 @@ async function fixture(
   allow: boolean | (() => Promise<boolean>) = true,
   contextWindow = 32768,
   inputCapabilities?: { images?: boolean; files?: boolean; audio?: boolean; video?: boolean },
-  token = 'local-test-token'
+  token = 'local-test-token',
+  tracing?: HarnessTracing
 ): Promise<{
   directory: string
   owner: ReturnType<typeof createHarnessAcpAgent>
@@ -229,7 +250,7 @@ async function fixture(
 }> {
   const directory = existing ?? (await mkdtemp(join(tmpdir(), 'harness-acp-')))
   if (!existing) cleanup.push(() => rm(directory, { recursive: true, force: true }))
-  const owner = createHarnessAcpAgent(directory)
+  const owner = createHarnessAcpAgent(directory, tracing)
   const updates: acp.SessionNotification[] = [],
     approvals: acp.RequestPermissionRequest[] = []
   const connection = acp
@@ -295,11 +316,14 @@ it('does not advertise audio before the authenticated protocol is known', async 
 const prompt = (
   connection: acp.ClientConnection,
   sessionId: string,
-  text = 'do the task'
+  text = 'do the task',
+  traceEnabled = false
 ): Promise<acp.PromptResponse> =>
   connection.agent.request(acp.methods.agent.session.prompt, {
     sessionId,
-    prompt: [{ type: 'text', text }]
+    prompt: [
+      { type: 'text', text, ...(traceEnabled ? { _meta: { [HARNESS_TRACE_ENABLED]: true } } : {}) }
+    ]
   })
 async function mcpServer(
   disconnectAfterCall = false,
@@ -410,16 +434,761 @@ it('keeps streamed chunks in one message per request and separates reasoning and
   expect(new Set([...thoughts, messages[0].messageId, messages[3].messageId]).size).toBe(4)
 })
 
+type Attribute = {
+  key: string
+  value: {
+    stringValue?: string
+    boolValue?: boolean
+    intValue?: string
+    arrayValue?: { values: { stringValue: string }[] }
+  }
+}
+type ExportedSpan = {
+  name: string
+  traceId: string
+  spanId: string
+  parentSpanId?: string
+  startTimeUnixNano: string
+  endTimeUnixNano: string
+  attributes: Attribute[]
+}
+type TraceExport = {
+  resourceSpans: {
+    resource: { attributes: Attribute[] }
+    scopeSpans: { spans: ExportedSpan[] }[]
+  }[]
+}
+function attributes(entries: Attribute[]): Record<string, string | boolean | string[] | undefined> {
+  return Object.fromEntries(
+    entries.map(({ key, value }) => [
+      key,
+      value.stringValue ??
+        value.intValue ??
+        value.boolValue ??
+        value.arrayValue?.values.map(({ stringValue }) => stringValue)
+    ])
+  )
+}
+
+it('exports only opted-in project turns in an already attached helper shared by two projects', async () => {
+  const endpoint = 'https://trace-scope.example/v1/traces'
+  const tracing = createHarnessTracing(endpoint)!
+  cleanup.push(async () => tracing.dispose())
+  expect(await tracing.ready).toBe(true)
+  const received: ExportedSpan[] = []
+  const fetchLocal = globalThis.fetch
+  const send = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    if (String(url) !== endpoint) return fetchLocal(url, init)
+    const batch = JSON.parse(String(init?.body)) as TraceExport
+    received.push(
+      ...batch.resourceSpans.flatMap((resource) =>
+        resource.scopeSpans.flatMap((scope) => scope.spans)
+      )
+    )
+    return new Response('{}')
+  })
+  cleanup.push(async () => send.mockRestore())
+
+  const model = await modelServer()
+  const f = await fixture(model.endpoint, undefined, true, 32768, undefined, undefined, tracing)
+  const sessions = await Promise.all(
+    ['selected', 'other', undefined].map((projectId) =>
+      f.connection.agent
+        .buildSession({
+          cwd: f.directory,
+          mcpServers: [],
+          ...(projectId ? { _meta: { [HARNESS_OWNER]: { projectId } } } : {})
+        })
+        .start()
+    )
+  )
+  const executor = new AcpProviderPromptExecutor({
+    backendGeneration: {
+      openCodeUsageApi: () => undefined,
+      current: { adapter: { nativeMcpEnabled: false, bridgeMcpAliasesEnabled: false } }
+    }
+  })
+  let selectedEnabled = false
+  const run = async (index: number, authorize: () => Promise<boolean>): Promise<void> => {
+    const outcome = await executor.execute({
+      session: sessions[index],
+      cwd: f.directory,
+      frameworkId: 'open-science-agent',
+      content: [
+        { type: 'text', text: 'synthetic prompt', _meta: { [HARNESS_TRACE_ENABLED]: true } }
+      ],
+      authorizeHarnessTracing: authorize,
+      isCurrent: () => true,
+      beforeDispatch: async () => 'active',
+      captureStop: () => true,
+      onAccepted: () => undefined,
+      routeNotification: () => undefined
+    })
+    expect(outcome).toMatchObject({ kind: 'stopped', response: { stopReason: 'end_turn' } })
+  }
+  await run(0, async () => selectedEnabled)
+  selectedEnabled = true
+  await run(0, async () => selectedEnabled)
+  await run(1, async () => false)
+  await run(2, async () => true)
+  selectedEnabled = false
+  await run(0, async () => selectedEnabled)
+  await run(0, async () => {
+    throw new Error('project settings unavailable')
+  })
+
+  await vi.waitFor(() => expect(received).toHaveLength(2))
+  expect(model.requests).toHaveLength(6)
+  expect(received.map((span) => span.name).sort()).toEqual(['harness.model', 'harness.turn'])
+  expect(new Set(received.map((span) => attributes(span.attributes)['session.id']))).toEqual(
+    new Set([sessions[0].sessionId])
+  )
+})
+
+it('exports correlated OTLP metadata and completes ACP turns when the receiver fails', async () => {
+  const requests: {
+    body: string
+    url?: string
+    authorization?: string
+    contentType?: string
+    team?: string | string[]
+    status: number
+  }[] = []
+  let collectorStatus = 200
+  let disconnectCollector = false
+  const rejection = Promise.withResolvers<void>()
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    if (disconnectCollector) {
+      response.destroy()
+      return
+    }
+    const status = collectorStatus
+    requests.push({
+      body: Buffer.concat(chunks).toString(),
+      url: request.url,
+      authorization: request.headers.authorization,
+      contentType: request.headers['content-type'],
+      team: request.headers['x-diagnostics-team'],
+      status
+    })
+    if (status === 503) await rejection.promise
+    response.writeHead(status, { 'content-type': 'application/json' }).end('{}')
+  })
+  collector.listen(0, '127.0.0.1')
+  await once(collector, 'listening')
+  cleanup.push(async () => {
+    rejection.resolve()
+    collector.closeAllConnections()
+    await new Promise<void>((resolve, reject) =>
+      collector.close((error) => (error ? reject(error) : resolve()))
+    )
+  })
+  const directory = await mkdtemp(join(tmpdir(), 'harness-otel-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const credentials = 'collector-test-credential'
+  const envFile = join(directory, '.env')
+  const tracePath = '/v1/traces'
+  const endpoint = `http://127.0.0.1:${(collector.address() as AddressInfo).port}${tracePath}`
+  await writeFile(
+    envFile,
+    [
+      `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}`,
+      `OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS='{"Authorization":"Bearer ${credentials}","X-Diagnostics-Team":"test-team"}'`,
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=0',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=0',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_ARGUMENTS=0',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS=0',
+      ''
+    ].join('\n'),
+    { mode: 0o600 }
+  )
+  const tracing = createHarnessTracing(undefined, undefined, envFile)!
+  expect(await tracing.ready).toBe(true)
+  const statusFile = `${envFile}.otel-status.json`
+  cleanup.push(async () => tracing.dispose())
+  const managed = await mcpServer(false, undefined, false, 'private-tool-result', true)
+  let step = 0
+  let modelToolName: string | undefined
+  const model = await modelServer((body, response) => {
+    if (step++ === 0) {
+      modelToolName = body.tools![0].function.name
+      finish(response, '', modelToolName, { value: { name: 'private-tool-input' } })
+    } else setTimeout(() => finish(response, 'private-model-output'), 25)
+  })
+  const f = await fixture(
+    model.endpoint,
+    directory,
+    true,
+    32768,
+    { images: true },
+    undefined,
+    tracing
+  )
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [managed.config],
+    _meta: {
+      [HARNESS_INSTRUCTIONS]: 'private-system-instructions',
+      [HARNESS_OWNER]: { projectId: 'traced-project' }
+    }
+  })
+  const imageData = Buffer.from('private-image-data').toString('base64')
+  const result = await f.connection.agent.request(acp.methods.agent.session.prompt, {
+    sessionId,
+    prompt: [
+      {
+        type: 'text',
+        text: 'private-user-prompt',
+        _meta: { [HARNESS_TRACE_ENABLED]: true }
+      },
+      { type: 'image', mimeType: 'image/png', data: imageData }
+    ]
+  })
+  expect(result.stopReason).toBe('end_turn')
+  expect(managed.calls).toEqual(['append'])
+  expect(model.rawRequests[0]).toContain('private-system-instructions')
+  expect(model.rawRequests[0]).toContain('private-user-prompt')
+  expect(model.rawRequests[0]).toContain(imageData)
+  expect(model.rawRequests[1]).toContain('private-tool-result')
+  const receipts = result._meta?.['open-science-agent/requests'] as { id: string }[]
+  expect(receipts).toHaveLength(2)
+
+  const exportedResources = (status: number): TraceExport['resourceSpans'] =>
+    requests
+      .filter((request) => request.status === status)
+      .flatMap(({ body }) => (JSON.parse(body) as TraceExport).resourceSpans)
+  const exportedSpans = (status: number): ExportedSpan[] =>
+    exportedResources(status).flatMap(({ scopeSpans }) => scopeSpans.flatMap(({ spans }) => spans))
+  await vi.waitFor(() => expect(exportedSpans(200)).toHaveLength(4), { timeout: 3000 })
+  await vi.waitFor(async () => {
+    const status = await readFile(statusFile, 'utf8')
+    expect(JSON.parse(status)).toMatchObject({ outcome: 'http_accepted', httpStatus: 200 })
+  })
+  for (const { resource } of exportedResources(200))
+    expect(attributes(resource.attributes)['service.name']).toBe('open-science-agent')
+  const spans = exportedSpans(200)
+  const turn = spans.find((span) => span.name === 'harness.turn')!
+  expect(BigInt(turn.endTimeUnixNano) - BigInt(turn.startTimeUnixNano)).toBeGreaterThan(20_000_000n)
+  expect(attributes(turn.attributes)).toMatchObject({
+    'session.id': sessionId,
+    'harness.session.id': sessionId,
+    'gen_ai.operation.name': 'invoke_agent',
+    'harness.model.protocol': 'chat-completions',
+    'harness.outcome': 'end_turn',
+    'harness.prompt.block_count': '2',
+    'harness.request.count': '2',
+    'harness.compaction.request_count': '0',
+    'harness.tool.execution_count': '1'
+  })
+  for (const span of spans) {
+    expect(span.traceId).toMatch(/^[0-9a-f]{32}$/)
+    expect(span.traceId).toBe(turn.traceId)
+    expect(attributes(span.attributes)['session.id']).toBe(sessionId)
+    expect(span.spanId).toMatch(/^[0-9a-f]{16}$/)
+    expect(span.startTimeUnixNano).toMatch(/^\d{19}$/)
+    expect(span.endTimeUnixNano).toMatch(/^\d{19}$/)
+    expect(BigInt(span.endTimeUnixNano)).toBeGreaterThanOrEqual(BigInt(span.startTimeUnixNano))
+    if (span !== turn) expect(span.parentSpanId).toBe(turn.spanId)
+  }
+  const modelSpans = spans.filter((span) => span.name === 'harness.model')
+  expect(modelSpans).toHaveLength(2)
+  for (const [index, receipt] of receipts.entries()) {
+    const modelSpan = modelSpans.find(
+      (span) => attributes(span.attributes)['harness.request.id'] === receipt.id
+    )!
+    expect(attributes(modelSpan.attributes)).toMatchObject({
+      'gen_ai.operation.name': 'chat',
+      'gen_ai.request.model': 'test',
+      'gen_ai.usage.input_tokens': '100',
+      'gen_ai.usage.output_tokens': '10',
+      'gen_ai.usage.cache_read.input_tokens': '40',
+      'harness.outcome': index === 0 ? 'tools' : 'complete',
+      'harness.request.purpose': 'turn',
+      'harness.context.window_tokens': '32768',
+      'harness.context.input_budget_tokens': '25395',
+      'harness.context.message_count': expect.any(String),
+      'harness.tool.offered_names': model.requests[index].tools?.map(
+        ({ function: tool }) => tool.name
+      ),
+      'harness.tool.requested_count': index === 0 ? '1' : '0'
+    })
+  }
+  const tool = attributes(spans.find((span) => span.name === 'harness.tool')!.attributes)
+  expect(tool).toMatchObject({
+    'gen_ai.operation.name': 'execute_tool',
+    'gen_ai.tool.name': modelToolName,
+    'harness.tool.invocation.id': expect.any(String),
+    'harness.outcome': 'complete'
+  })
+  expect(JSON.parse(String(tool['input.value']))).toEqual({
+    tool: modelToolName,
+    argumentCount: 1
+  })
+  expect(JSON.parse(String(tool['output.value']))).toEqual({
+    outcome: 'complete',
+    resultBlockCount: 1
+  })
+  expect(modelSpans.map((span) => attributes(span.attributes))).toContainEqual(
+    expect.objectContaining({ 'harness.tool.requested_names': [modelToolName] })
+  )
+
+  collectorStatus = 503
+  const followUp = prompt(f.connection, sessionId, 'private-follow-up', true)
+  await vi.waitFor(() => expect(exportedSpans(503).length).toBeGreaterThan(0))
+  await vi.waitFor(() => expect(followUp).resolves.toMatchObject({ stopReason: 'end_turn' }))
+  rejection.resolve()
+  await vi.waitFor(
+    () =>
+      expect(exportedSpans(503)).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'harness.turn' })])
+      ),
+    { timeout: 3000 }
+  )
+  await vi.waitFor(async () => {
+    const status = await readFile(statusFile, 'utf8')
+    expect(JSON.parse(status)).toMatchObject({ outcome: 'http_rejected', httpStatus: 503 })
+    expect(status).not.toContain(credentials)
+    expect(status).not.toContain(endpoint)
+  })
+  for (const request of requests) {
+    expect(request.url).toBe(tracePath)
+    expect(request.contentType).toBe('application/json')
+    expect(request.authorization).toBe(`Bearer ${credentials}`)
+    expect(request.team).toBe('test-team')
+    expect(request.body).not.toContain(credentials)
+    expect(request.body).not.toContain(imageData)
+    expect(request.body).not.toMatch(/private-|local-test-token|langfuse\./)
+  }
+  disconnectCollector = true
+  await expect(
+    prompt(f.connection, sessionId, 'after collector disconnect', true)
+  ).resolves.toMatchObject({
+    stopReason: 'end_turn'
+  })
+  await vi.waitFor(async () => {
+    const status = await readFile(statusFile, 'utf8')
+    expect(JSON.parse(status)).toMatchObject({ outcome: 'transport_error' })
+  })
+})
+
+it.each([
+  { excerpts: true, bodies: false, toolArguments: true, toolResults: false, oversized: false },
+  { excerpts: false, bodies: true, toolArguments: false, toolResults: true, oversized: false },
+  { excerpts: true, bodies: true, toolArguments: true, toolResults: true, oversized: true },
+  {
+    excerpts: true,
+    bodies: true,
+    toolArguments: true,
+    toolResults: true,
+    oversized: false,
+    useDefaults: true
+  }
+])(
+  'captures trace data independently ($excerpts, $bodies, $toolArguments, $toolResults, oversized $oversized, defaults $useDefaults)',
+  async ({ excerpts, bodies, toolArguments, toolResults, oversized, useDefaults }) => {
+    const directory = await mkdtemp(join(tmpdir(), 'harness-otel-content-'))
+    cleanup.push(() => rm(directory, { recursive: true, force: true }))
+    const endpoint = 'https://otel.example/v1/traces'
+    const envFile = join(directory, '.env')
+    await writeFile(
+      envFile,
+      [
+        `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=${endpoint}`,
+        ...(useDefaults
+          ? []
+          : [
+              `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=${Number(excerpts)}`,
+              `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=${Number(bodies)}`,
+              `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_ARGUMENTS=${Number(toolArguments)}`,
+              `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS=${Number(toolResults)}`
+            ])
+      ].join('\n')
+    )
+    const tracing = createHarnessTracing(undefined, undefined, envFile)!
+    cleanup.push(async () => tracing.dispose())
+    const receive: ExportedSpan[] = []
+    const fetchModel = globalThis.fetch
+    const transport = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url) !== endpoint) return fetchModel(url, init)
+      const payload = JSON.parse(String(init?.body)) as TraceExport
+      receive.push(
+        ...payload.resourceSpans.flatMap(({ scopeSpans }) =>
+          scopeSpans.flatMap(({ spans }) => spans)
+        )
+      )
+      return new Response('{}')
+    })
+    cleanup.push(async () => transport.mockRestore())
+    expect(await tracing.ready).toBe(true)
+    const promptPrefix = 'prompt'.padEnd(4095, 'p')
+    const injected = 'host-added-context'.padEnd(4500, 'h') + '\n\n'
+    const userText = promptPrefix + '😀tail'
+    const replyPrefix = 'reply'.padEnd(4095, 'r')
+    const outputText = 'tool-result-for-trace'.padEnd(oversized ? 17_000 : 21, 'r')
+    const managed = await mcpServer(false, undefined, false, outputText, true)
+    const toolInput = {
+      value: { name: 'tool-argument-for-trace'.padEnd(oversized ? 17_000 : 23, 'x') }
+    }
+    let step = 0
+    const model = await modelServer((body, response) => {
+      if (step++ === 0) finish(response, '', body.tools![0].function.name, toolInput)
+      else {
+        response.write(
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta: { reasoning_content: 'private-reasoning-text' } }] })}\n\n`
+        )
+        finish(response, replyPrefix + '😀tail')
+      }
+    })
+    const f = await fixture(
+      model.endpoint,
+      directory,
+      true,
+      2 ** 20,
+      { images: true },
+      undefined,
+      tracing
+    )
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [managed.config],
+      _meta: {
+        [HARNESS_INSTRUCTIONS]: 'system-instructions-for-trace',
+        [HARNESS_OWNER]: { projectId: 'traced-project' }
+      }
+    })
+    const image = Buffer.from('image-for-trace')
+      .toString('base64')
+      .repeat(oversized ? 100_000 : 1)
+    const result = await f.connection.agent.request(acp.methods.agent.session.prompt, {
+      sessionId,
+      prompt: [
+        {
+          type: 'text',
+          text: injected + userText,
+          _meta: {
+            [HARNESS_USER_TEXT_RANGE]: [injected.length, injected.length + userText.length],
+            [HARNESS_TRACE_ENABLED]: true
+          }
+        },
+        { type: 'text', text: 'attachment-preview-for-trace file:///example/preview.dat' },
+        { type: 'resource_link', name: 'resource.dat', uri: 'file:///example/resource.dat' },
+        { type: 'image', mimeType: 'image/png', data: image }
+      ]
+    })
+    expect(result.stopReason).toBe('end_turn')
+    await vi.waitFor(() => expect(receive).toHaveLength(4))
+    const turn = attributes(receive.find(({ name }) => name === 'harness.turn')!.attributes)
+    expect(turn['input.value']).toBe(excerpts ? promptPrefix : undefined)
+    expect(turn['output.value']).toBe(excerpts ? replyPrefix : undefined)
+    expect(turn['harness.prompt.excerpt_truncated']).toBe(excerpts ? true : undefined)
+    expect(turn['harness.reply.excerpt_truncated']).toBe(excerpts ? true : undefined)
+
+    const tool = attributes(receive.find(({ name }) => name === 'harness.tool')!.attributes)
+    expect(JSON.parse(String(tool['input.value']))).toEqual({
+      tool: model.requests[0].tools![0].function.name,
+      argumentCount: 1,
+      ...(toolArguments && !oversized ? { arguments: toolInput } : {}),
+      ...(toolArguments && oversized ? { argumentsOmitted: 'size_limit' } : {})
+    })
+    expect(JSON.parse(String(tool['output.value']))).toEqual({
+      outcome: 'complete',
+      resultBlockCount: 1,
+      ...(toolResults && !oversized
+        ? { result: { content: [{ type: 'text', text: outputText }] } }
+        : {}),
+      ...(toolResults && oversized ? { resultOmitted: 'size_limit' } : {})
+    })
+
+    const requests = receive.filter(({ name }) => name === 'harness.model')
+    const receipts = result._meta?.['open-science-agent/requests'] as { id: string }[]
+    expect(requests).toHaveLength(2)
+    expect(model.rawRequests[1]).toContain('tool-result-for-trace')
+    for (const [index, { id }] of receipts.entries()) {
+      const request = requests
+        .map(({ attributes: attrs }) => attributes(attrs))
+        .find((attrs) => attrs['harness.request.id'] === id)!
+      expect(request['harness.request.body_capture']).toBe(
+        bodies ? (oversized ? 'size_limit' : 'captured') : undefined
+      )
+      expect(request['input.value']).toBe(
+        bodies && !oversized ? model.rawRequests[index] : undefined
+      )
+    }
+    const exported = JSON.stringify(receive)
+    expect(exported).not.toContain('local-test-token')
+    expect(exported).not.toContain('private-reasoning-text')
+    if (!bodies || oversized) {
+      expect(exported).not.toContain('system-instructions-for-trace')
+      expect(exported).not.toContain('tool-result-for-trace')
+      expect(exported).not.toContain('file:///example/resource.dat')
+      expect(exported).not.toContain('file:///example/preview.dat')
+      expect(exported).not.toContain('host-added-context')
+    }
+  }
+)
+
+it('derives OTLP authentication from Langfuse project keys only for the Langfuse traces path', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'harness-otel-langfuse-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const envFile = join(directory, '.env')
+  const send = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}'))
+  cleanup.push(async () => send.mockRestore())
+  const configure = async (
+    path: string,
+    secretKey = 'sk-lf-test'
+  ): Promise<HarnessTracing | undefined> => {
+    await writeFile(
+      envFile,
+      [
+        `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=https://otel.example${path}`,
+        'LANGFUSE_PUBLIC_KEY=pk-lf-test',
+        `LANGFUSE_SECRET_KEY=${secretKey}`
+      ].join('\n')
+    )
+    const tracing = createHarnessTracing(undefined, undefined, envFile)!
+    cleanup.push(async () => tracing.dispose())
+    return (await tracing.ready) ? tracing : undefined
+  }
+
+  for (const path of ['/api/public/otel/v1/traces', '/v1/traces']) {
+    const tracing = (await configure(path))!
+    const session = tracing.session('session', {
+      model: 'test',
+      protocol: 'chat-completions',
+      contextWindow: 4096,
+      inputBudget: 2000
+    })
+    session.startTurn([{ type: 'text', text: 'test' }])!('end_turn')
+    await vi.waitFor(() => expect(send).toHaveBeenCalled())
+    const [url, init] = send.mock.calls[0]
+    expect(url).toEqual(new URL(`https://otel.example${path}`))
+    const headers = new Headers(init?.headers)
+    if (path.startsWith('/api/')) {
+      const credentials = Buffer.from('pk-lf-test:sk-lf-test').toString('base64')
+      expect(headers.get('authorization')).toBe(`Basic ${credentials}`)
+      expect(headers.get('x-langfuse-ingestion-version')).toBe('4')
+      expect(init?.body).not.toContain(credentials)
+    } else {
+      expect(headers.has('authorization')).toBe(false)
+      expect(headers.has('x-langfuse-ingestion-version')).toBe(false)
+    }
+    expect(init?.body).not.toMatch(/[ps]k-lf-test/)
+    send.mockClear()
+  }
+
+  await expect(configure('/api/public/otel/v1/traces', '')).resolves.toBeUndefined()
+})
+
+it('stops preparing an oversized tool preview before visiting the rest of the result', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'harness-otel-tool-result-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const envFile = join(directory, '.env')
+  await writeFile(
+    envFile,
+    'OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=https://otel.example/v1/traces\n' +
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS=1'
+  )
+  const send = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}'))
+  cleanup.push(async () => send.mockRestore())
+  const tracing = createHarnessTracing(undefined, undefined, envFile)!
+  cleanup.push(async () => tracing.dispose())
+  expect(await tracing.ready).toBe(true)
+  const session = tracing.session('session', {
+    model: 'test',
+    protocol: 'chat-completions',
+    contextWindow: 4096,
+    inputBudget: 2000
+  })
+  const finishTurn = session.startTurn([{ type: 'text', text: 'test' }])!
+  const readLaterBlock = vi.fn(() => 'later content')
+  const result = {
+    content: [
+      { type: 'text' as const, text: 'x'.repeat(40_000) },
+      {
+        type: 'text' as const,
+        get text(): string {
+          return readLaterBlock()
+        }
+      }
+    ]
+  }
+  const tool = session.wrapTool({
+    name: 'preview_limit',
+    description: '',
+    version: '1',
+    parameters: {},
+    validate: (args) => args,
+    authorize: async () => true,
+    execute: async () => result
+  })
+  await expect(
+    tool.execute(
+      {},
+      {
+        sessionId: 'session',
+        runId: 'run',
+        invocationId: 'invocation',
+        signal: new AbortController().signal,
+        update: () => undefined
+      }
+    )
+  ).resolves.toBe(result)
+  finishTurn('end_turn')
+  await vi.waitFor(() => expect(send).toHaveBeenCalled())
+  const batch = JSON.parse(String(send.mock.calls[0][1]?.body)) as TraceExport
+  const toolSpan = batch.resourceSpans[0].scopeSpans[0].spans.find(
+    (span) => span.name === 'harness.tool'
+  )!
+  expect(JSON.parse(String(attributes(toolSpan.attributes)['output.value']))).toMatchObject({
+    outcome: 'complete',
+    resultOmitted: 'size_limit'
+  })
+  expect(readLaterBlock).not.toHaveBeenCalled()
+})
+
+it('keeps launch settings and file capture settings with their own trace destinations', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'harness-otel-destinations-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const envFile = join(directory, '.env')
+  const launchHeadersFile = join(directory, 'launch-headers.json')
+  await writeFile(launchHeadersFile, '{"Authorization":"Bearer launch-credential"}')
+  await writeFile(
+    envFile,
+    [
+      'OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT=https://file.example/v1/traces',
+      'OPEN_SCIENCE_AGENT_OTLP_TRACES_API_KEY=file-credential',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT=0',
+      'OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS=0'
+    ].join('\n')
+  )
+  const send = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}'))
+  cleanup.push(async () => send.mockRestore())
+  const launchEndpoint = 'https://launch.example/v1/traces'
+  for (const { endpoint, launchSwitches, capturesContent } of [
+    { endpoint: undefined, capturesContent: false },
+    {
+      endpoint: launchEndpoint,
+      launchSwitches: {
+        OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT: '0',
+        OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS: '0'
+      },
+      capturesContent: false
+    },
+    { endpoint: launchEndpoint, capturesContent: true }
+  ]) {
+    const tracing = createHarnessTracing(endpoint, launchHeadersFile, envFile, launchSwitches)!
+    cleanup.push(async () => tracing.dispose())
+    const session = tracing.session('session', {
+      model: 'test',
+      protocol: 'chat-completions',
+      contextWindow: 4096,
+      inputBudget: 2000
+    })
+    const excerpt = 'opted-in-excerpt'
+    const blocks = [
+      { type: 'text', text: excerpt, _meta: { [HARNESS_USER_TEXT_RANGE]: [0, excerpt.length] } }
+    ]
+    expect(session.startTurn(blocks)).toBeUndefined()
+    expect(await tracing.ready).toBe(true)
+    session.startTurn(blocks)!('end_turn')
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    const [[url, init]] = send.mock.calls
+    expect(String(url)).toBe(endpoint ?? 'https://file.example/v1/traces')
+    expect(new Headers(init?.headers).get('authorization')).toBe(
+      endpoint ? 'Bearer launch-credential' : 'Bearer file-credential'
+    )
+    expect(String(init?.body).includes('opted-in-excerpt')).toBe(capturesContent)
+    send.mockClear()
+    session.startTurn([{ type: 'text', text: 'unmarked text' }])!('end_turn')
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    expect(String(send.mock.calls[0][1]?.body)).not.toContain('unmarked text')
+    send.mockClear()
+    const statusFile = `${envFile}.otel-status.json`
+    if (capturesContent) {
+      await vi.waitFor(async () => {
+        expect(JSON.parse(await readFile(statusFile, 'utf8'))).toMatchObject({
+          outcome: 'http_accepted'
+        })
+      })
+    } else {
+      await expect(readFile(statusFile)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  }
+})
+
+it('leaves tracing uninitialized without an explicit, valid Agent OTLP destination', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'harness-otel-off-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const envFile = join(directory, '.env')
+  await writeFile(
+    envFile,
+    [
+      'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces',
+      'LANGFUSE_PUBLIC_KEY=pk-lf-test',
+      'LANGFUSE_SECRET_KEY=sk-lf-test',
+      'OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS=1',
+      'OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST=1',
+      ''
+    ].join('\n')
+  )
+
+  expect(createHarnessTracing(undefined)).toBeUndefined()
+  const statusFile = `${envFile}.otel-status.json`
+  for (const { endpoint, headers, launchSwitches, writesStatus } of [
+    { endpoint: undefined, writesStatus: false },
+    {
+      endpoint: 'file:///trace.json',
+      launchSwitches: { OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS: '0' },
+      writesStatus: false
+    },
+    {
+      endpoint: 'http://127.0.0.1:4318/v1/traces',
+      headers: join(directory, 'missing-headers.json'),
+      writesStatus: true
+    }
+  ]) {
+    const tracing = createHarnessTracing(endpoint, headers, envFile, launchSwitches)!
+    cleanup.push(async () => tracing.dispose())
+    expect(await tracing.ready).toBe(false)
+    expect(
+      tracing
+        .session('session', {
+          model: 'test',
+          protocol: 'chat-completions',
+          contextWindow: 4096,
+          inputBudget: 2000
+        })
+        .startTurn([{ type: 'text', text: 'untraced' }])
+    ).toBeUndefined()
+    if (writesStatus) {
+      await vi.waitFor(async () => {
+        expect(JSON.parse(await readFile(statusFile, 'utf8'))).toMatchObject({
+          outcome: 'invalid_configuration'
+        })
+      })
+    } else {
+      await expect(readFile(statusFile)).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  }
+})
+
 it('sends task-only instructions without a tool catalog on the provider wire', async () => {
   const model = await modelServer()
   const a = await fixture(model.endpoint)
   const created = await a.connection.agent.request(acp.methods.agent.session.new, {
     cwd: a.directory,
     mcpServers: [],
-    _meta: { [HARNESS_INSTRUCTIONS]: 'Translate faithfully.', [HARNESS_TOOL_LESS]: true }
+    _meta: {
+      [HARNESS_INSTRUCTIONS]: 'Translate faithfully.',
+      [HARNESS_TOOL_LESS]: true,
+      [HARNESS_EPHEMERAL_SESSION]: true
+    }
   })
   await prompt(a.connection, created.sessionId, 'Cell')
   expect(model.requests).toHaveLength(1)
+  expect(await readdir(a.directory)).toEqual([])
   expect(model.requests[0]).not.toHaveProperty('max_tokens')
   expect(model.requests[0].tools ?? []).toEqual([])
   expect(model.requests[0].messages.map(({ role }) => role)).toEqual(['system', 'user'])
@@ -733,6 +1502,303 @@ it('rejects duplicate authentication, unsupported MCP and changed resume workspa
   expect(model.requests).toHaveLength(0)
 })
 
+it('reports an absent Fork checkpoint as missing while preserving corrupt or partial native Sessions', async () => {
+  const model = await modelServer()
+  const f = await fixture(model.endpoint)
+  const missing = '11111111-1111-4111-8111-111111111111'
+  const request = (sessionId: string): Promise<acp.ResumeSessionResponse> =>
+    f.connection.agent.request(acp.methods.agent.session.resume, {
+      sessionId,
+      cwd: f.directory,
+      mcpServers: []
+    })
+  await expect(request(missing)).rejects.toMatchObject({ code: -32002 })
+  await writeFile(join(f.directory, `${missing}.json`), 'corrupt JSON')
+  await expect(request(missing)).rejects.toMatchObject({ code: -32603 })
+  await rm(join(f.directory, `${missing}.json`))
+  const created = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  await f.connection.agent.request(acp.methods.agent.session.close, {
+    sessionId: created.sessionId
+  })
+  const binding = await readFile(join(f.directory, `${created.sessionId}.json`), 'utf8')
+  await rm(join(f.directory, `${created.sessionId}.json`))
+  await expect(request(created.sessionId)).rejects.toMatchObject({ code: -32603 })
+  await writeFile(join(f.directory, `${created.sessionId}.json`), binding)
+  await expect(request(created.sessionId)).resolves.toEqual(expect.any(Object))
+  expect(model.requests).toHaveLength(0)
+})
+
+function fixtureReviewerOwner(): ReviewerSessionOwner {
+  return new ReviewerSessionOwner({
+    addStartupBlocker: vi.fn(),
+    assertCurrentConnection: vi.fn(),
+    clearPermissionCorrelations: vi.fn(),
+    currentSessionSetup: () => ({
+      framework: harnessFramework,
+      sessionOptions: undefined,
+      supportsSessionClose: true
+    }),
+    currentStartupGeneration: () => 0,
+    isPrimarySessionIdClaimed: () => false,
+    onActiveSessionReleased: vi.fn(),
+    registerBridgeSession: vi.fn(),
+    removeStartupBlocker: vi.fn(),
+    unregisterBridgeSession: () => undefined
+  })
+}
+
+it.each([
+  { transport: 'pipe', denySubmit: false },
+  { transport: 'tcp', denySubmit: false },
+  { transport: 'pipe', denySubmit: true }
+] as const)(
+  'runs a Built-in Agent Reviewer session over $transport (deny submission: $denySubmit)',
+  async ({ transport, denySubmit }) => {
+    const block = {
+      id: 'message:review-target',
+      kind: 'message' as const,
+      sourceId: 'review-target',
+      blockIndex: 0,
+      contentHash: 'review-target-hash'
+    }
+    const submit = vi.fn().mockResolvedValue(undefined)
+    const server = new ReviewerMcpServer(
+      { turnMessageId: block.sourceId, blocks: [block], artifactVersionIds: [] },
+      submit,
+      {
+        readTurn: () => [{ ...block, role: 'agent', content: 'The audited result is 42.' }],
+        queryExecutionLog: () => [],
+        readArtifact: vi.fn(),
+        fileRole: vi.fn()
+      },
+      'initial',
+      [],
+      { command: 'unused-reviewer-proxy', entryPath: 'unused-entry', transport }
+    )
+    await server.start()
+    cleanup.push(() => server.stop())
+
+    const checks = [{ status: 'pass', claim: 'The result is 42.', evidence: 'The audited turn.' }]
+    let step = 0
+    const model = await modelServer((body, response) => {
+      step++
+      const tools = body.tools!.map(({ function: { name } }) => name)
+      if (step === 1) {
+        finish(
+          response,
+          '',
+          tools.find((name) => name.endsWith('__read_turn'))!,
+          {}
+        )
+      } else if (step === 2 || (step === 3 && !denySubmit)) {
+        const scopedChecks =
+          step === 2 && !denySubmit
+            ? [{ ...checks[0], locator: { blockRef: { blockIndex: 1 }, contentHash: 'other' } }]
+            : checks
+        finish(
+          response,
+          '',
+          tools.find((name) => name.endsWith('__submit_findings'))!,
+          {
+            checks: scopedChecks
+          }
+        )
+      } else {
+        finish(response, 'Review complete')
+      }
+    })
+    const f = await fixture(model.endpoint, undefined, async () => !denySubmit || step === 1)
+    const owner = fixtureReviewerOwner()
+    const { session, cwd } = await owner.create(
+      { cwd: f.directory, mcpServers: [server.toAcpMcpServerConfig()] },
+      { ensureConnected: async () => f.connection }
+    )
+    try {
+      expect((await session.prompt([{ type: 'text', text: 'Review this turn' }])).stopReason).toBe(
+        'end_turn'
+      )
+      expect(model.requests[1].messages.at(-1)?.content).toContain('The audited result is 42.')
+      expect(model.requests[2].messages.at(-1)?.content).toContain(
+        denySubmit ? 'Permission denied' : 'is not in the turn scope'
+      )
+      expect(f.approvals.map(({ toolCall }) => toolCall.title)).toEqual([
+        expect.stringMatching(/__read_turn$/),
+        expect.stringMatching(/__submit_findings$/),
+        ...(denySubmit ? [] : [expect.stringMatching(/__submit_findings$/)])
+      ])
+      expect(submit.mock.calls.map(([submitted]) => submitted)).toEqual(
+        denySubmit ? [] : [[expect.objectContaining(checks[0])]]
+      )
+      expect(await readdir(f.directory)).toEqual([])
+    } finally {
+      await owner.dispose(session).providerClosed
+    }
+    expect(owner.snapshot()).toEqual([])
+    await expect(readdir(cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readdir(f.directory)).toEqual([])
+    await expect(prompt(f.connection, session.sessionId)).rejects.toMatchObject({
+      data: { details: 'Built-in Agent session is unavailable' }
+    })
+  }
+)
+
+it('cleans up Reviewer pipe startup failures before and after provider session creation', async () => {
+  const model = await modelServer()
+  const f = await fixture(model.endpoint)
+  const server = new ReviewerMcpServer(
+    { turnMessageId: 'review-target', blocks: [], artifactVersionIds: [] },
+    vi.fn(),
+    undefined,
+    'initial',
+    [],
+    { command: 'unused-proxy', entryPath: 'unused-entry', transport: 'pipe' }
+  )
+  const { token } = await server.start()
+  const config = server.toAcpMcpServerConfig()
+  if ('type' in config) throw new Error('Expected Reviewer pipe config')
+  const credentials = readReviewerMcpStdioProxyConfig(config)!
+  const owner = fixtureReviewerOwner()
+  try {
+    const invalid = {
+      ...config,
+      env: config.env.map((entry) =>
+        entry.value === token ? { ...entry, value: 'invalid-token' } : entry
+      )
+    }
+    await expect(
+      owner.create(
+        { cwd: f.directory, mcpServers: [invalid] },
+        { ensureConnected: async () => f.connection }
+      )
+    ).rejects.toMatchObject({
+      code: -32603,
+      data: { details: expect.stringContaining('Unauthorized') }
+    })
+    expect(owner.snapshot()).toEqual([])
+    expect(await readdir(f.directory)).toEqual([])
+    expect(f.approvals).toEqual([])
+    expect(model.requests).toEqual([])
+
+    let createdSession: acp.ActiveSession | undefined
+    await expect(
+      owner.create(
+        { cwd: f.directory, mcpServers: [config] },
+        {
+          ensureConnected: async () => f.connection,
+          configureModel: async (_connection, session) => {
+            createdSession = session
+            throw new Error('Reviewer model setup failed')
+          }
+        }
+      )
+    ).rejects.toThrow('Reviewer model setup failed')
+    expect(owner.snapshot()).toEqual([])
+    expect(await readdir(f.directory)).toEqual([])
+    await expect(prompt(f.connection, createdSession!.sessionId)).rejects.toMatchObject({
+      data: { details: 'Built-in Agent session is unavailable' }
+    })
+
+    const { session } = await owner.create(
+      { cwd: f.directory, mcpServers: [config] },
+      { ensureConnected: async () => f.connection }
+    )
+    await owner.dispose(session).providerClosed
+  } finally {
+    await server.stop()
+  }
+  const connection = createConnection(credentials.socketPath)
+  try {
+    await expect(once(connection, 'connect')).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    connection.destroy()
+  }
+})
+
+it('cancels an in-flight Reviewer evidence read over the pipe', async () => {
+  const { promise: readStarted, resolve: captureSignal } = Promise.withResolvers<AbortSignal>()
+  const readArtifact = vi.fn<
+    NonNullable<ConstructorParameters<typeof ReviewerMcpServer>[2]>['readArtifact']
+  >(async (_id, _options, signal) => {
+    captureSignal(signal!)
+    await new Promise<void>((resolve) =>
+      signal!.addEventListener('abort', () => resolve(), { once: true })
+    )
+    throw signal!.reason
+  })
+  const submit = vi.fn()
+  const server = new ReviewerMcpServer(
+    { turnMessageId: 'review-target', blocks: [], artifactVersionIds: ['admitted'] },
+    submit,
+    {
+      readTurn: () => [],
+      queryExecutionLog: () => [],
+      fileRole: () => 'work_product',
+      readArtifact
+    },
+    'initial',
+    [],
+    { command: 'unused-proxy', entryPath: 'unused-entry', transport: 'pipe' }
+  )
+  await server.start()
+  cleanup.push(() => server.stop())
+  const model = await modelServer((body, response) => {
+    finish(
+      response,
+      '',
+      body.tools!.find(({ function: { name } }) => name.endsWith('__read_artifact'))!.function.name,
+      {
+        id: 'admitted',
+        view: 'trace'
+      }
+    )
+  })
+  const f = await fixture(model.endpoint)
+  const owner = fixtureReviewerOwner()
+  const { session } = await owner.create(
+    { cwd: f.directory, mcpServers: [server.toAcpMcpServerConfig()] },
+    { ensureConnected: async () => f.connection }
+  )
+  try {
+    const running = session.prompt([{ type: 'text', text: 'Read the artifact' }])
+    void running.catch(() => undefined)
+    await vi.waitFor(() => expect(readArtifact).toHaveBeenCalledOnce())
+    const signal = await readStarted
+    await f.connection.agent.notify(acp.methods.agent.session.cancel, {
+      sessionId: session.sessionId
+    })
+    await expect(running).resolves.toMatchObject({ stopReason: 'cancelled' })
+    await vi.waitFor(() => expect(signal.aborted).toBe(true))
+    expect(submit).not.toHaveBeenCalled()
+  } finally {
+    await owner.dispose(session).providerClosed
+  }
+})
+
+it('rejects stdio commands at the Built-in Agent ACP boundary', async () => {
+  const model = await modelServer()
+  const f = await fixture(model.endpoint)
+  await expect(
+    f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [
+        {
+          name: 'open-science-reviewer',
+          command: process.execPath,
+          args: ['unused-entry', '--open-science-reviewer-mcp-proxy'],
+          env: []
+        }
+      ]
+    })
+  ).rejects.toMatchObject({
+    code: -32603,
+    data: { details: 'Built-in Agent requires host-provided HTTP MCP servers' }
+  })
+  expect(await readdir(f.directory)).toEqual([])
+})
+
 it.each([false, true])(
   'compacts and continues after overflow through the subscription bridge (%s)',
   async (subscription) => {
@@ -904,7 +1970,7 @@ it('closes an active session before acknowledging release and rejects further pr
   ).rejects.toThrow()
 })
 
-it.each(['notebook', 'plan'] as const)(
+it.each(['notebook', 'plan', 'web'] as const)(
   'recovers a lost %s receipt after helper reattachment without executing twice',
   async (kind) => {
     const root = await mkdtemp(join(tmpdir(), 'host-tool-recovery-'))
@@ -952,12 +2018,34 @@ it.each(['notebook', 'plan'] as const)(
     }
     const register = (route: string): void => {
       if (kind === 'notebook') host.registerNotebook(route, environment)
-      else host.registerPlan(route, environment)
+      else if (kind === 'plan') host.registerPlan(route, environment)
+      else {
+        const web = new WebService({
+          store: new WebSnapshotStore(join(root, 'web')),
+          transport: async () => {
+            executions++
+            return {
+              body: Buffer.from('RECOVERED_EFFECT'),
+              contentType: 'text/plain',
+              finalUrl: 'https://example.org/'
+            }
+          }
+        })
+        host.registerWeb(route, {
+          fetchPage: (input, context) => web.fetch('app-session', input, context)
+        })
+      }
       host.registerReceiptScope(route, 'app-session', kind)
     }
     register('old-route')
-    const toolName = kind === 'notebook' ? 'repl_execute' : 'generate_plan'
-    const argumentsForTool = kind === 'notebook' ? { code: 'return 1' } : { approve: true }
+    const toolName =
+      kind === 'notebook' ? 'repl_execute' : kind === 'plan' ? 'generate_plan' : 'web_fetch'
+    const argumentsForTool =
+      kind === 'notebook'
+        ? { code: 'return 1' }
+        : kind === 'plan'
+          ? { approve: true }
+          : { url: 'https://example.org/' }
     let route = 'old-route',
       lost = false
     const proxy = createServer(async (request, response) => {
@@ -998,7 +2086,7 @@ it.each(['notebook', 'plan'] as const)(
     })
     const mcp: acp.McpServer = {
       type: 'http',
-      name: kind,
+      name: kind === 'web' ? 'open-science-web' : kind,
       url: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}/mcp`,
       headers: []
     }
@@ -1371,13 +2459,15 @@ it.each([
   }
 )
 
-it('preserves the baseline generic HTTP failure instead of newly labeling quota as temporary throttling', async () => {
+it('classifies HTTP quota rejection as billing while retaining bounded diagnostics', async () => {
   const server = createServer(async (request, response) => {
     request.resume()
     await once(request, 'end')
     response.writeHead(429, { 'content-type': 'application/json' })
     response.end(
-      JSON.stringify({ error: { code: 'insufficient_quota', message: 'private account' } })
+      JSON.stringify({
+        error: { code: 'insufficient_quota', message: 'private account and token must not escape' }
+      })
     )
   })
   server.listen(0, '127.0.0.1')
@@ -1393,10 +2483,8 @@ it('preserves the baseline generic HTTP failure instead of newly labeling quota 
   })
   const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
   expect(failure).toBeInstanceOf(Error)
-  expect(failure).not.toHaveProperty('data.errorName', 'APIError')
-  expect(classifyFailure(collectPromptFailureFacts(failure)).reason).not.toBe(
-    'service/rate-limited'
-  )
+  expect(failure).toHaveProperty('data.errorName', 'APIError')
+  expect(classifyFailure(collectPromptFailureFacts(failure)).reason).toBe('configuration/billing')
   expect(JSON.stringify(failure)).not.toContain('private account')
 })
 
@@ -1481,3 +2569,504 @@ it('injects Schedule identity outside model arguments and fences a cancelled per
   expect(f.approvals).toHaveLength(approvals)
   expect(create).toHaveBeenCalledTimes(1)
 })
+
+for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
+  it.each([
+    [400, 'invalid_request_error', 'Maximum call stack size exceeded', 'service/provider-error'],
+    [400, 'model_unavailable', 'Model is unavailable', 'configuration/model-unavailable'],
+    [401, 'authentication_error', 'Invalid API key', 'configuration/auth-failed'],
+    [403, 'permission_denied', 'Access denied', 'configuration/auth-failed'],
+    [429, 'rate_limit_exceeded', 'Too many requests', 'service/rate-limited'],
+    [503, 'server_error', 'Model service unavailable', 'service/unavailable']
+  ] as const)(
+    `${protocol} transports HTTP %i through ACP and the persisted failure`,
+    async (status, code, message, reason) => {
+      const server = createServer(async (request, response) => {
+        request.resume()
+        await once(request, 'end')
+        response.writeHead(status, {
+          'content-type': 'application/json',
+          'x-request-id': 'provider-request-123'
+        })
+        response.end(
+          JSON.stringify({
+            error: { code, message: message + '. PRIVATE_REQUEST_DATA' },
+            credentials: 'PRIVATE_REQUEST_DATA'
+          })
+        )
+      })
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      cleanup.push(async () => {
+        server.closeAllConnections()
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      })
+      const path = protocol === 'chat-completions' ? 'chat/completions' : protocol
+      const f = await fixture(
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/${path}`
+      )
+      const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+        cwd: f.directory,
+        mcpServers: []
+      })
+      const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
+      expect(failure).toMatchObject({
+        data: {
+          errorKind: 'provider-error',
+          protocol,
+          model: 'test',
+          status,
+          code:
+            status === 401 || status === 403
+              ? 'authentication_error'
+              : code === 'model_unavailable'
+                ? 'model_not_found'
+                : code,
+          requestId: 'provider-request-123',
+          phase: 'response'
+        }
+      })
+      const classified = classifyFailure(
+        collectPromptFailureFacts(failure, { providerName: 'Fixture Provider' })
+      )
+      expect(classified).toMatchObject({
+        reason,
+        diagnostics: {
+          protocol,
+          model: 'test',
+          provider: 'Fixture Provider',
+          status,
+          requestId: 'provider-request-123'
+        }
+      })
+      expect(readPersistedFailure({ failure: JSON.parse(JSON.stringify(classified)) })).toEqual(
+        classified
+      )
+      expect(JSON.stringify(failure)).not.toMatch(/PRIVATE_REQUEST_DATA|local-test-token/)
+      if (status === 401 || status === 429 || code === 'invalid_request_error') {
+        expect(classified.diagnostics).toHaveProperty('providerExcerpt', message)
+      } else {
+        expect(JSON.stringify(failure)).not.toContain(message)
+      }
+      expect(classified.responseMessage).toBeUndefined()
+      expect(classified.diagnostics.raw).toBeUndefined()
+      const checkpoint = await createJournalAgentStore({
+        directory: join(f.directory, 'checkpoints')
+      }).load(sessionId)
+      expect(checkpoint?.requests.at(-1)?.status).toBe('failed')
+    }
+  )
+
+  it.each([
+    [400, 'text/plain', 'Model is unavailable', 'configuration/model-unavailable', 'response'],
+    [
+      404,
+      'application/json',
+      '{"error":{"code":"endpoint_not_found"}}',
+      'configuration/endpoint-invalid',
+      'response'
+    ],
+    [
+      503,
+      'text/html',
+      '<!doctype html><html><body>PRIVATE_GATEWAY_PAGE</body></html>',
+      'service/unavailable',
+      'response'
+    ],
+    [
+      200,
+      'application/json',
+      '{"error":{"code":"model_unavailable","message":"Model is unavailable"}}',
+      'configuration/model-unavailable',
+      'response'
+    ],
+    [
+      200,
+      'text/event-stream',
+      'data: {"type":"error","error":{"type":"invalid_request_error","message":"Unsupported parameter: temperature. PRIVATE_REQUEST_DATA"}}\n\n',
+      'configuration/request-invalid',
+      'provider'
+    ],
+    [200, 'text/event-stream', 'data: invalid-json\n\n', 'service/response-invalid', 'event-json'],
+    [
+      200,
+      'text/event-stream',
+      'data: {"type":"error","error":{"code":"new_provider_failure","message":"Request rejected"}}\n\n',
+      'service/provider-error',
+      'provider'
+    ]
+  ] as const)(
+    `${protocol} handles HTTP %i/%s without falling back to internal`,
+    async (status, contentType, body, reason, phase) => {
+      const server = createServer((request, response) => {
+        request.resume()
+        response.writeHead(status, { 'content-type': contentType, 'x-request-id': 'sse-request' })
+        response.end(body)
+      })
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      cleanup.push(async () => {
+        server.closeAllConnections()
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+      })
+      const path = protocol === 'chat-completions' ? 'chat/completions' : protocol
+      const f = await fixture(
+        `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/${path}`
+      )
+      const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+        cwd: f.directory,
+        mcpServers: []
+      })
+      const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
+      const classified = classifyFailure(collectPromptFailureFacts(failure))
+      expect(classified).toMatchObject({
+        reason,
+        diagnostics: {
+          protocol,
+          phase,
+          requestId: 'sse-request',
+          ...(phase === 'response' ? { status } : {})
+        }
+      })
+      if (body.includes('Unsupported parameter')) {
+        expect(classified.diagnostics).toHaveProperty(
+          'providerExcerpt',
+          'Unsupported parameter: temperature'
+        )
+        expect(readPersistedFailure({ failure: JSON.parse(JSON.stringify(classified)) })).toEqual(
+          classified
+        )
+      }
+      expect(JSON.stringify([failure, classified])).not.toMatch(
+        /PRIVATE_GATEWAY_PAGE|PRIVATE_REQUEST_DATA/
+      )
+    }
+  )
+}
+
+it.each([401, 403, 404, 413])(
+  'restores upstream HTTP %i through the actual forwarding bridge',
+  async (status) => {
+    const server = createServer((request, response) => {
+      request.resume()
+      response.writeHead(status, {
+        'content-type': 'application/json',
+        'request-id': 'bridge-request-123'
+      })
+      response.end(
+        JSON.stringify({
+          error: { message: status === 404 ? 'Model test does not exist' : 'Request rejected' }
+        })
+      )
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    cleanup.push(async () => {
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+    const bridge = new ProtocolForwardingBridge(
+      [
+        {
+          id: 'fixture',
+          wire: 'chat-completions',
+          endpoint: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/chat/completions`,
+          model: 'test',
+          key: 'UPSTREAM_SECRET'
+        }
+      ],
+      'fixture'
+    )
+    const connection = await bridge.start()
+    cleanup.push(() => bridge.close())
+    const f = await fixture(
+      `${connection.baseUrl}/v1/chat/completions`,
+      undefined,
+      true,
+      32768,
+      undefined,
+      connection.token
+    )
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: []
+    })
+    const failure = await prompt(f.connection, sessionId).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ data: { status, requestId: 'bridge-request-123' } })
+    expect(JSON.stringify(failure)).not.toContain('UPSTREAM_SECRET')
+  }
+)
+
+it('publishes authoritative cancellation for an in-flight Web invocation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'web-cancel-'))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+  cleanup.push(() => host.close())
+  const started = Promise.withResolvers<void>()
+  const aborted = Promise.withResolvers<void>()
+  const web = new WebService({
+    store: new WebSnapshotStore(join(root, 'web')),
+    transport: async (_url, signal) => {
+      started.resolve()
+      return new Promise((_resolve, reject) =>
+        signal.addEventListener(
+          'abort',
+          () => {
+            aborted.resolve()
+            reject(signal.reason)
+          },
+          { once: true }
+        )
+      )
+    }
+  })
+  const { token } = await host.ensureStarted()
+  host.registerWeb('route', { fetchPage: (input, context) => web.fetch('session', input, context) })
+  host.registerReceiptScope('route', 'session', 'web')
+  const model = await modelServer((body, response) =>
+    finish(
+      response,
+      '',
+      body.tools!.find((tool) => tool.function.name.endsWith('__web_fetch'))!.function.name,
+      { url: 'https://example.org/' }
+    )
+  )
+  const f = await fixture(model.endpoint)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [
+      {
+        type: 'http',
+        name: 'open-science-web',
+        url: host.urlFor('web', 'route'),
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      }
+    ]
+  })
+  const running = prompt(f.connection, sessionId)
+  await started.promise
+  await f.connection.agent.notify(acp.methods.agent.session.cancel, { sessionId })
+  expect((await running).stopReason).toBe('cancelled')
+  await aborted.promise
+  expect(
+    f.updates.filter(({ update }) => update.sessionUpdate === 'tool_call_update')
+  ).toContainEqual(
+    expect.objectContaining({
+      update: expect.objectContaining({
+        _meta: expect.objectContaining({ 'open-science/web-cancelled': true }),
+        status: 'failed'
+      })
+    })
+  )
+})
+
+it('retains canonical Web identity on progress and terminal ACP updates', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'web-update-identity-'))
+  cleanup.push(() => rm(root, { recursive: true, force: true }))
+  const host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+  cleanup.push(() => host.close())
+  const service = new WebService({ store: new WebSnapshotStore(join(root, 'evidence')) })
+  const { token } = await host.ensureStarted()
+  host.registerWeb('route', {
+    fetchPage: (input, context) => service.fetch('session', input, context)
+  })
+  host.registerReceiptScope('route', 'session', 'web')
+  const model = await modelServer((body, response) => {
+    if (body.messages.some((message) => message.role === 'tool')) finish(response, 'Failed safely')
+    else
+      finish(
+        response,
+        '',
+        body.tools!.find((tool) => tool.function.name.endsWith('__web_fetch'))!.function.name,
+        { url: 'http://127.0.0.1/private' }
+      )
+  })
+  const f = await fixture(model.endpoint)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [
+      {
+        type: 'http',
+        name: 'open-science-web',
+        url: host.urlFor('web', 'route'),
+        headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+      }
+    ]
+  })
+  expect((await prompt(f.connection, sessionId)).stopReason).toBe('end_turn')
+  const updates = f.updates
+    .map(({ update }) => update)
+    .filter((update) => update.sessionUpdate === 'tool_call_update')
+  expect(updates).toContainEqual(expect.objectContaining({ status: 'in_progress' }))
+  expect(updates).toContainEqual(expect.objectContaining({ status: 'failed' }))
+  for (const update of updates)
+    expect(update._meta?.toolName).toBe('mcp__open_science_web__web_fetch')
+})
+
+it.each(['chat-completions', 'messages', 'responses'] as const)(
+  'searches, fetches evidence, and cites the source through the %s harness',
+  async (protocol) => {
+    const root = await mkdtemp(join(tmpdir(), 'web-harness-evidence-'))
+    cleanup.push(() => rm(root, { recursive: true, force: true }))
+    const host = new AgentMcpHttpHost({ receiptDirectory: join(root, 'receipts') })
+    cleanup.push(() => host.close())
+    const url = 'https://example.org/paper'
+    const text = 'The public dataset contains 42 observations.'
+    const citation = `The dataset contains 42 observations [Dataset](${url}).`
+    const search = vi.fn(async () => ({
+      sources: [
+        {
+          source_id: 'paper',
+          url,
+          title: 'Dataset',
+          snippet: 'Search excerpt',
+          evidence_kind: 'search_snippet' as const
+        }
+      ]
+    }))
+    const fetch = vi.fn(async () => ({
+      finalUrl: url,
+      contentType: 'text/plain',
+      body: Buffer.from(text)
+    }))
+    const snapshots = new WebSnapshotStore(join(root, 'snapshots'))
+    const store = new WebInvocationStore(join(root, 'invocations'))
+    const searchService = new SearchService({ provider: { search } })
+    const web = new WebService({ store: snapshots, transport: fetch })
+    const binding = { projectId: 'project', sessionId: 'session' }
+    const scope = {
+      ...binding,
+      branchId: 'branch',
+      agentFrameId: 'frame',
+      promptMessageId: 'prompt',
+      runtimeSegmentId: 'segment'
+    }
+    const owner = new WebInvocationOwner({
+      store,
+      scope: async () => scope,
+      execute: (_scope, operation, input, context) =>
+        operation === 'search'
+          ? searchService.search(binding.sessionId, input, context)
+          : web.fetch(scope.branchId, input, context),
+      publishSnapshot: (record, id, authorize) => snapshots.commit(record.branchId, id, authorize)
+    })
+    host.registerWeb('route', {
+      search: (input, context) => owner.execute(binding, 'search', input, context),
+      fetchPage: (input, context) => owner.execute(binding, 'fetch', input, context),
+      receiptSignal: (id) => owner.receiptSignal(binding, id),
+      receiptCommitted: (result) => owner.receiptCommitted(binding, result),
+      reconcileResult: (query) => owner.reconcileResult(binding, query)
+    })
+    host.registerReceiptScope('route', binding.sessionId, 'web')
+
+    const steps = [
+      { suffix: '__web_search', args: { query: 'public dataset', max_results: 1 } },
+      { suffix: '__web_fetch', args: { url } }
+    ]
+    const modelHistory: unknown[] = []
+    const model = await modelServer((body, response) => {
+      const request = body as unknown as {
+        messages?: unknown[]
+        input?: unknown[]
+        tools: { name?: string; function?: { name: string } }[]
+      }
+      modelHistory.push((request.messages ?? request.input)?.at(-1))
+      const step = steps[modelHistory.length - 1]
+      const tool = step
+        ? request.tools
+            .map(({ name, function: fn }) => name ?? fn?.name)
+            .find((name) => name?.endsWith(step.suffix))!
+        : undefined
+      const id = `web-call-${modelHistory.length}`
+      if (protocol === 'chat-completions') {
+        finish(response, citation, tool, step?.args, id)
+        return
+      }
+      const args = JSON.stringify(step?.args)
+      const events =
+        protocol === 'messages'
+          ? [
+              ...(tool
+                ? [
+                    {
+                      type: 'content_block_start',
+                      content_block: { type: 'tool_use', id, name: tool, input: {} }
+                    },
+                    {
+                      type: 'content_block_delta',
+                      delta: { type: 'input_json_delta', partial_json: args }
+                    },
+                    { type: 'content_block_stop' }
+                  ]
+                : [
+                    {
+                      type: 'content_block_delta',
+                      delta: { type: 'text_delta', text: citation }
+                    }
+                  ]),
+              { type: 'message_delta', delta: { stop_reason: tool ? 'tool_use' : 'end_turn' } },
+              { type: 'message_stop' }
+            ]
+          : [
+              tool
+                ? {
+                    type: 'response.output_item.done',
+                    item: { type: 'function_call', call_id: id, name: tool, arguments: args }
+                  }
+                : { type: 'response.output_text.delta', delta: citation },
+              { type: 'response.completed', response: {} }
+            ]
+      response.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''))
+    })
+    const endpoint =
+      protocol === 'chat-completions'
+        ? model.endpoint
+        : model.endpoint.replace('/chat/completions', `/${protocol}`)
+    const f = await fixture(endpoint)
+    const { token } = await host.ensureStarted()
+    const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+      cwd: f.directory,
+      mcpServers: [
+        {
+          type: 'http',
+          name: 'open-science-web',
+          url: host.urlFor('web', 'route'),
+          headers: [{ name: 'authorization', value: `Bearer ${token}` }]
+        }
+      ]
+    })
+    expect(
+      (await prompt(f.connection, sessionId, 'Find the dataset and cite it.')).stopReason
+    ).toBe('end_turn')
+    expect(modelHistory).toHaveLength(3)
+    expect(JSON.stringify(modelHistory[1])).toContain(url)
+    expect(JSON.stringify(modelHistory[2])).toContain(text)
+    expect(search).toHaveBeenCalledExactlyOnceWith(steps[0].args, expect.any(AbortSignal))
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(url, expect.any(AbortSignal))
+    const updates = f.updates.map(({ update }) => update)
+    const completed = updates.filter(
+      (update) => update.sessionUpdate === 'tool_call_update' && update.status === 'completed'
+    )
+    expect(completed.map((update) => update._meta?.toolName)).toEqual([
+      'mcp__open_science_web__web_search',
+      'mcp__open_science_web__web_fetch'
+    ])
+    for (const update of completed) {
+      if (update.sessionUpdate !== 'tool_call_update') throw new Error('Expected a tool update')
+      const record = await store.read(binding, update.toolCallId)
+      expect(record.status).toBe('completed')
+      if (record.operation === 'search')
+        expect(record.searchAttempts).toMatchObject([{ status: 'ok', provider: { id: 'exa' } }])
+      else
+        expect(
+          (await snapshots.readCommitted(scope.branchId, record.result!.document!.snapshot_id)).text
+        ).toBe(text)
+    }
+    expect(updates).toContainEqual(
+      expect.objectContaining({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: citation }
+      })
+    )
+  }
+)

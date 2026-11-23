@@ -201,6 +201,29 @@ describe('desktop projection of application commands and events', () => {
     }
   )
 
+  it('opens a complete history page larger than one desktop frame', async () => {
+    const channel = 'sessions:load-history-page'
+    const page = {
+      complete: true,
+      session: { messages: [{ content: 'x'.repeat(16 * 1024 * 1024) }] }
+    }
+    const server = await startDesktopRuntimeTransport({
+      version: 'test',
+      events: new ApplicationEventHub(),
+      commands: { commandNames: () => [channel], invoke: async () => page }
+    })
+    cleanups.push(server.close)
+    const client = await connectDesktopRuntime({
+      endpoint: server.endpoint,
+      onEvent: vi.fn(),
+      onDisconnect: vi.fn()
+    })
+    cleanups.push(async () => client.close())
+    await expect(
+      client.invoke(randomUUID(), channel, [{ projectId: 'project', sessionId: 'history' }])
+    ).resolves.toEqual(page)
+  })
+
   it.each([undefined, null, false, 0])(
     'preserves the command result %s for renderer and host callers',
     async (result) => {
@@ -903,6 +926,66 @@ describe('native desktop requests over the authenticated connection', () => {
       expect(value.disconnected).not.toHaveBeenCalled()
     } finally {
       for (const finish of finishes) finish()
+      value.client.close()
+    }
+  })
+
+  it('keeps a queued Film inspection cancellable beyond the native dialog deadline', async () => {
+    const started = Promise.withResolvers<AbortSignal>()
+    const value = await nativeSetup(async (_request, signal) => {
+      started.resolve(signal)
+      return new Promise(() => {})
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const controller = new AbortController()
+    try {
+      const pending = expect(
+        value.server.requestNative(
+          {
+            operation: 'research-video-check',
+            htmlPath: '/film/player.html',
+            includeFrames: false
+          },
+          undefined,
+          controller.signal
+        )
+      ).rejects.toThrow(/cancel/i)
+      const signal = await started.promise
+      await vi.advanceTimersByTimeAsync(310_000)
+      expect(signal.aborted).toBe(false)
+      controller.abort()
+      await pending
+      while (!signal.aborted) await new Promise((resolve) => setImmediate(resolve))
+    } finally {
+      controller.abort()
+      vi.useRealTimers()
+      value.client.close()
+    }
+  })
+
+  it('allows a progressing 4K render to cross one hour', async () => {
+    const started = Promise.withResolvers<void>()
+    const output = Promise.withResolvers<string>()
+    const value = await nativeSetup(async () => {
+      started.resolve()
+      return output.promise
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const htmlPath = '/film/player.html'
+      const pending = value.server.requestNative({
+        operation: 'research-video-mp4',
+        htmlPath,
+        encoderPath: '/tools/encoder',
+        probePath: '/tools/probe',
+        resolution: '4k'
+      })
+      await started.promise
+      await vi.advanceTimersByTimeAsync(3_602_000)
+      output.resolve(htmlPath + '.mp4')
+      await expect(pending).resolves.toBe(htmlPath + '.mp4')
+    } finally {
+      vi.useRealTimers()
       value.client.close()
     }
   })

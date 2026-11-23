@@ -211,7 +211,7 @@ it('serializes fresh sources without proof and restores historical snapshots unc
   })
   rememberPdfTranslationExtraction(extraction)
   const snapshot = getPdfTranslationLayoutSnapshot(extraction.source)!
-  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-72')
+  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-193')
   const saved = JSON.parse(JSON.stringify(snapshot))
   expect(Object.keys(saved).sort()).toEqual(
     ['version', 'parserVersion', 'fingerprint', 'pages', 'units', 'coverage'].sort()
@@ -275,5 +275,365 @@ it.each(['matching captions', 'different tail', 'different center'] as const)(
     expect(units.flatMap((unit) => unit.items).sort()).toEqual(
       pages.flatMap((p) => p.items.map((_, index) => `${p.page}:${index}`)).sort()
     )
+  }
+)
+
+it.each(['terminal', 'different center', 'intervening prose'] as const)(
+  'joins the short centered figure caption ending only at a native page boundary: %s',
+  (shape) => {
+    const run = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Caption'
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: 8,
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      hasEOL: false,
+      transform: [8, 0, 0, 8, x, y]
+    })
+    const label = run('Fig. 3:', 320, 627, 24, 'CaptionLabel')
+    const lead = run('Response changes in the steady', 346, 627, 162)
+    const ending = run('sampling range', shape === 'different center' ? 400 : 385, 615, 58)
+    const gap = { ...run('', 0, 0, 0), height: 0, hasEOL: true }
+    const body = run(
+      'The earlier estimates provide a separate physical comparison.',
+      309,
+      310,
+      220,
+      'Body'
+    )
+    const trailing = run('An independent observation follows the caption.', 310, 580, 220, 'Body')
+    const items = [
+      body,
+      gap,
+      label,
+      lead,
+      gap,
+      ending,
+      ...(shape === 'intervening prose' ? [trailing] : [])
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 840, rotation: 0, items }]
+    })
+    const first = units.find((u) => u.items.includes('1:2'))!
+    expect(first.source.endsWith('sampling range')).toBe(shape === 'terminal')
+    expect(first.fragments.length).toBe(shape === 'terminal' ? 2 : 1)
+    expect(units.flatMap((u) => u.items).sort()).toEqual(
+      items.flatMap((i, n) => (i.str ? [`1:${n}`] : [])).sort()
+    )
+  }
+)
+
+it.each(['separate sizes', 'same size'] as const)(
+  'uses native caption size and the paragraph gap to separate a completed caption: %s',
+  (shape) => {
+    const row = (str: string, y: number, width: number, size: number): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: size,
+      dir: 'ltr',
+      fontName: 'Text',
+      fontVertical: false,
+      hasEOL: true,
+      transform: [size, 0, 0, size, 62, y]
+    })
+    const captionSize = shape === 'same size' ? 10 : 9
+    const items = [
+      row('Figure 2. Overview of the measured response across both', 520, 248, captionSize),
+      row('conditions. Each curve shows a separate trial.', 510, 230, captionSize),
+      row('The reference measurements remained stable during the', 493.3, 248, 10),
+      row('experiment and the procedure was repeated twice to check', 482.3, 248, 10),
+      row('for changes over time.', 471.3, 98, 10)
+    ]
+    const page: PdfLayoutPage = { page: 1, width: 610, height: 790, rotation: 0, items }
+    const { units } = groupPdfTranslationPages({ pages: [page] })
+    expect(units[0].items).toEqual(
+      shape === 'same size' ? ['1:0', '1:1', '1:2', '1:3', '1:4'] : ['1:0', '1:1']
+    )
+    if (shape === 'separate sizes') {
+      expect(units[0].source.endsWith('a separate trial.')).toBe(true)
+      expect(units[1].items).toEqual(['1:2', '1:3', '1:4'])
+      expect(units[0].fragments[0].rect.bottom).toBeLessThan(units[1].fragments[0].rect.y)
+    }
+    expect(units.flatMap((unit) => unit.items)).toEqual(items.map((_, i) => `1:${i}`))
+  }
+)
+
+it.each([true, false])(
+  'joins a centered caption ending before a separate acknowledgments heading (%s)',
+  (heading) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      hasEOL = true
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: 11,
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      fontAscent: 0.75,
+      fontDescent: -0.2,
+      hasEOL,
+      transform: [11, 0, 0, 11, x, y]
+    })
+    const items = [
+      row(
+        'Measurements were recorded using the same procedures throughout the session.',
+        65,
+        405,
+        465
+      ),
+      row(
+        'Figure 3. The samples are on the left, the reference is in the middle, and the',
+        75,
+        306,
+        450
+      ),
+      row('output is on the right.', 230, 293.3, 140, 'Body', false),
+      row(
+        heading ? 'Acknowledgments' : 'An independent observation begins here.',
+        65,
+        268,
+        126,
+        'Heading',
+        false
+      ),
+      row('We thank the field staff who maintained the instruments.', 65, 255, 360)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 792, rotation: 0, items }]
+    })
+    const caption = units.find((unit) => unit.items.includes('1:1'))
+    expect(caption?.source.endsWith('output is on the right.')).toBe(heading)
+    expect(caption?.items).toEqual(heading ? ['1:1', '1:2'] : ['1:1'])
+    expect(units.filter((unit) => unit.items.includes('1:2'))).toHaveLength(1)
+    expect(caption?.items.includes('1:3')).toBe(false)
+  }
+)
+
+it.each([true, false])(
+  'joins a centered series of captions around lowered symbols (%s)',
+  (aligned) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL = true,
+      height = 10,
+      fontName = 'Text'
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      fontAscent: 0.69,
+      fontDescent: -0.19,
+      transform: [height, 0, 0, height, x, y],
+      hasEOL
+    })
+    const pages = Array.from({ length: 3 }, (_, page) => {
+      const center = !aligned && page === 2 ? 430 : 438
+      return {
+        page: page + 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        items: [
+          row('A separate paragraph begins in the left column.', 54, 700, 240),
+          row('Its final sentence explains the protocol.', 54, 688.5, 190),
+          row(`FIG. ${page + 1}: A diagram records the device settings.`, center - 112, 541, 224),
+          row('The teams compared the two measured quantities', center - 114, 529.5, 228),
+          row('Read the first setting as:', center - 106, 518, 124, false),
+          row('V', center + 22, 518, 6, false, 10, 'Math'),
+          row('C', center + 28, 516.5, 6, false, 7, 'Subscript'),
+          row('(the range', center + 40, 518, 66),
+          row('recorded across channel C) and', center - 109, 506.5, 138, false),
+          row('V', center + 34, 506.5, 6, false, 10, 'Math'),
+          row('D', center + 40, 505, 6, false, 7, 'Subscript'),
+          row('(the range', center + 52, 506.5, 57),
+          row('recorded across channel D)', center - 58, 495, 116),
+          row('The next complete paragraph reports measurements.', 317, 452, 240),
+          row('This sentence remains separate from the figure.', 317, 440.5, 225)
+        ]
+      }
+    })
+    const { units } = groupPdfTranslationPages({ pages })
+    const captions = units.filter((unit) => unit.source.startsWith('FIG. '))
+    expect(captions).toHaveLength(3)
+    expect(captions.every((unit) => unit.source.endsWith('recorded across channel D)'))).toBe(
+      aligned
+    )
+    expect(
+      units
+        .filter((unit) => unit.source.includes('The next complete paragraph'))
+        .every((unit) => !unit.source.includes('diagram records'))
+    ).toBe(true)
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      pages.flatMap((page) => page.items.map((_, index) => `${page.page}:${index}`)).sort()
+    )
+  }
+)
+
+it.each([true, false])(
+  'joins a closed figure cross-reference at its native caption wrap (%s)',
+  (aligned) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL: boolean
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: 9,
+      dir: 'ltr',
+      transform: [9, 0, 0, 9, x, y],
+      fontName: 'Body',
+      fontAscent: 0.7,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL
+    })
+    const items = [
+      item(
+        'Fig. 1. Measurements were recorded at three evenly spaced locations',
+        42,
+        404,
+        215,
+        true
+      ),
+      item(
+        'The highest marker shows the measurements of the second trial (see',
+        42,
+        394,
+        215,
+        true
+      ),
+      item('Fig. 4).', aligned ? 42 : 61, 384, 24, false),
+      item('The following narrative begins an independent paragraph.', 42, 351, 220, true)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+    const head = units.find((unit) => unit.items.includes('1:0'))
+    expect(head?.items.includes('1:2')).toBe(aligned)
+    expect(head?.items).not.toContain('1:3')
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(['1:0', '1:1', '1:2', '1:3'])
+  }
+)
+
+it.each(['centered', 'shifted ending', 'narrow body'] as const)(
+  'keeps a centered continuation after a parenthesized caption subject (%s)',
+  (shape) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      fontName = 'Body',
+      hasEOL = true
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      fontAscent: 0.75,
+      fontDescent: -0.2,
+      hasEOL,
+      transform: [height, 0, 0, height, x, y]
+    })
+    const firstBody = 'The observations describe the independent response over time.'
+    const items = [
+      row('Figure 2.', 75, 560, 36, 9, 'CaptionLabel', false),
+      row('Comparison of the adjusted measurements. The RATE(model)', 113, 560, 312, 9),
+      row(
+        'values decline as the records reach their stable limits.',
+        shape === 'shifted ending' ? 152 : 140,
+        550,
+        220,
+        9,
+        'Body',
+        false
+      ),
+      row(firstBody, 70, 528, shape === 'narrow body' ? 325 : 360, 10),
+      row('The remaining samples were collected in the same chamber.', 70, 516, 360, 10)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 580, height: 830, rotation: 0, items }]
+    })
+    const caption = units.find((unit) => unit.items.includes('1:0'))!
+    expect(caption.items).toEqual(shape === 'centered' ? ['1:0', '1:1', '1:2'] : ['1:0', '1:1'])
+    expect(caption.source.endsWith(items[2].str)).toBe(shape === 'centered')
+    expect(caption.fragments).toHaveLength(shape === 'centered' ? 2 : 1)
+    expect(units.find((unit) => unit.items.includes('1:3'))?.source.startsWith(firstBody)).toBe(
+      true
+    )
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(items.map((_, i) => `1:${i}`))
+  }
+)
+
+it.each(['centered', 'shifted tail', 'missing native break'] as const)(
+  'joins an enumerated caption subject to the predicate on its shorter centered row (%s)',
+  (shape) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      fontName: string
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      transform: [height, 0, 0, height, x, y],
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL: false
+    })
+    const first =
+      'Figure 7: Collecting repeated measurements, checking reference settings, comparing consecutive readings'
+    const last = 'to confirm changes across the samples is a method for assessing stability.'
+    const items = [
+      row(first, 120, 488, 360, 9, 'Caption'),
+      { ...row('', 0, 0, 0, 0, ''), hasEOL: shape !== 'missing native break' },
+      row(last, shape === 'shifted tail' ? 180 : 165, 477, 270, 9, 'Caption'),
+      row(
+        'Independent validation uses the full native body rail below this figure.',
+        66,
+        453,
+        468,
+        11,
+        'Body'
+      )
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+    const caption = units.find((unit) => unit.items.includes('1:0'))
+    expect(caption?.source).toBe(shape === 'centered' ? first + ' ' + last : first)
+    expect(caption?.fragments).toHaveLength(shape === 'centered' ? 2 : 1)
+    expect(units.find((unit) => unit.items.includes('1:3'))?.items).toEqual(['1:3'])
   }
 )

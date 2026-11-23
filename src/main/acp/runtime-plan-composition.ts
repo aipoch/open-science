@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEventInput } from '../../shared/acp'
 import type {
@@ -27,7 +28,11 @@ import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
-import type { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
+import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
+import {
+  AcpPlanContinuationWorkflow,
+  type PlanContinuationDependencies
+} from './plan-continuation-workflow'
 
 type AcpSessionPlanCall = Readonly<{
   projectId: string
@@ -194,7 +199,9 @@ const composeAcpRuntimePlanWorkflow = (
       return {
         availability: 'available',
         reference: renderAppMcpToolReferences(
-          base.backendGeneration?.current.framework.id ?? options.framework?.id ?? 'claude-code',
+          base.backendGeneration?.current.framework.id ??
+            options.framework?.id ??
+            DEFAULT_AGENT_FRAMEWORK_ID,
           SESSION_PLAN_FILE_REFERENCE
         ),
         artifactVersionId: refreshed.artifactVersionId,
@@ -1184,3 +1191,28 @@ type AcpRuntimePlanWorkflow = ReturnType<typeof composeAcpRuntimePlanWorkflow>
 
 export { composeAcpRuntimePlanWorkflow }
 export type { AcpRuntimePlanWorkflow, AcpSessionPlanCall }
+
+// Keep delivery authority and its preparation/retry workflow at the same composition boundary.
+export function composeAcpRuntimePlanContinuations(
+  options: AcpRuntimeOptions,
+  session: AcpRuntimeSessionOwners,
+  host: Pick<PlanContinuationDependencies, 'send' | 'scheduleContinuation' | 'projection'>
+): Readonly<{
+  deliveries: SessionPlanDeliveryOwner | undefined
+  workflow: AcpPlanContinuationWorkflow
+}> {
+  const deliveries = options.plan ? new SessionPlanDeliveryOwner(options.plan.sessions) : undefined
+  return Object.freeze({
+    deliveries,
+    workflow: new AcpPlanContinuationWorkflow({
+      ...host,
+      deliveries,
+      sessions: options.plan?.sessions,
+      hasActiveSession: (sessionId) =>
+        Boolean(session.sessionRegistry.lookup(sessionId)?.attachment?.session),
+      context: session.durableContinuationContext,
+      continuations: session.appContinuations,
+      publication: session.publication
+    })
+  })
+}

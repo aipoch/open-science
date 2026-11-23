@@ -33,6 +33,7 @@ import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 const log = createLogger('research-video')
 import {
   filmConversationDigest,
+  filmOutputFingerprint,
   readPendingFilm,
   savePendingFilm,
   savePendingFilmOwner,
@@ -43,6 +44,7 @@ import {
   type PendingFilm
 } from './checkpoint'
 import { stageResearchVideoSessionImages } from './session-images'
+import { stageFilmSessionApp } from './session-app'
 import { operationReplaySource } from './replay-source'
 import { waitForFilmStep } from './wait'
 import type { ResearchFilmLifecycle } from './lifecycle'
@@ -113,12 +115,15 @@ export function createResearchVideoPresentationOwner(options: {
   >
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   writeScreenplay: ResearchFilmAuthor['writeScreenplay']
+  reviewScript?: ResearchFilmAuthor['reviewScript']
+  confirmSessionApp?: Parameters<typeof stageFilmSessionApp>[6]
   writeAnimation?: ResearchFilmAuthor['writeAnimation']
   writeReplay?: ResearchFilmAuthor['writeReplay']
   loadReplayRecords?: (
     session: PersistedChatSession
   ) => Promise<import('@aipoch/research-film').ReplayRecords>
   generate: ResearchVideoGenerate
+  reviewPlayer?: Parameters<typeof generateResearchFilm>[0]['reviewPlayer']
   checkGenerationAdmission?: () => void
   engineDirectory: string
   loadImportedFilm?: (
@@ -452,7 +457,7 @@ export function createResearchVideoPresentationOwner(options: {
           ? 1
           : step.phase === 'writing'
             ? 2
-            : ['build', 'publishing'].includes(step.phase)
+            : ['build', 'verifying', 'repairing', 'publishing'].includes(step.phase)
               ? 5
               : 4
       )
@@ -583,9 +588,12 @@ export function createResearchVideoPresentationOwner(options: {
         resumable?.built && (await diskStep(() => filmPathInfo(join(existingBase!, 'pending'))))
       const hasBuiltOutput =
         resumable?.built &&
-        (await diskStep(() =>
-          hasResearchFilmOutputs(join(existingBase!, pending ? 'pending' : resumable.id))
-        ))
+        (!options.reviewPlayer || request.mode === 'operation-replay' || resumable.visualChecked) &&
+        resumable.outputFingerprint &&
+        resumable.outputFingerprint ===
+          (await diskStep(() =>
+            filmOutputFingerprint(join(existingBase!, pending ? 'pending' : resumable.id), signal)
+          ))
       // Publishing a verified checkpoint does not start a generator.
       if (resume && !hasBuiltOutput) {
         options.checkGenerationAdmission?.()
@@ -651,6 +659,8 @@ export function createResearchVideoPresentationOwner(options: {
           }
         }
         delete saved.built
+        delete saved.visualChecked
+        delete saved.outputFingerprint
         saved.step = 1
         delete saved.completed
         delete saved.total
@@ -685,7 +695,7 @@ export function createResearchVideoPresentationOwner(options: {
           // first so that a cancellation during this write cannot remove it in finally.
           checkpointStarted = true
         })
-        for (const file of ['files', 'anims', 'video.json', 'output'])
+        for (const file of ['files', 'anims', 'libs', 'video.json', 'output', 'best-layout'])
           await diskStep(() => rm(join(job!, file), { recursive: true, force: true }))
         await diskStep(() => mkdir(join(job!, 'files')))
         const stagedChecksums: string[] = []
@@ -701,16 +711,28 @@ export function createResearchVideoPresentationOwner(options: {
         )
         if (JSON.stringify(checksums) !== JSON.stringify(stagedChecksums))
           throw new Error('Research images changed during preparation.')
-        await diskStep(() =>
-          writeDurableJsonFile(join(job!, 'session.json'), JSON.stringify(source))
-        )
         const attemptContext = { operationId: id, attempt: saved.attempt, invocationId }
         const checkpoint = filmAuthoringCheckpoint(job, (outcome) =>
           log.info('film authoring unit', { ...context(), phase: stage, outcome })
         )
+        let sessionAppMode: 'drawn' | 'live' | undefined
+        if (options.confirmSessionApp && request.mode !== 'operation-replay')
+          sessionAppMode = await stageFilmSessionApp(
+            source,
+            session,
+            options.dataRoot(),
+            job!,
+            checkpoint,
+            signal,
+            options.confirmSessionApp
+          )
+        await diskStep(() =>
+          writeDurableJsonFile(join(job!, 'session.json'), JSON.stringify(source))
+        )
         const generated = await filmAttempt.run(attemptContext, () =>
           generateResearchFilm({
             source,
+            drawnSessionApp: sessionAppMode === 'drawn',
             directory: job!,
             author: options,
             signal,
@@ -741,13 +763,27 @@ export function createResearchVideoPresentationOwner(options: {
               })
             },
             generate: options.generate,
+            reviewPlayer: options.reviewPlayer,
             modelDirectory: dirname(model!.path),
             modelRevision: lease!.revision,
             engineDirectory: options.engineDirectory,
             onProgress: report
           })
         )
-        saved.built = { id, title: generated.title, duration: generated.duration }
+        if (source.sessionApp) sessionAppMode = generated.usedSessionApp ? 'live' : 'drawn'
+        if (source.sessionApp && !generated.usedSessionApp)
+          await diskStep(() => rm(join(job!, 'libs'), { recursive: true, force: true }))
+        saved.outputFingerprint = await diskStep(() => filmOutputFingerprint(job!, signal))
+        if (!saved.outputFingerprint)
+          throw new Error('Missing or empty research presentation output.')
+        saved.built = {
+          id,
+          title: generated.title,
+          duration: generated.duration,
+          scriptScore: generated.scriptScore,
+          sessionAppMode
+        }
+        if (options.reviewPlayer && request.mode !== 'operation-replay') saved.visualChecked = true
         saved.step = 5
         await writes
         await diskStep(() => savePendingFilm(publishBase, saved!))
@@ -766,7 +802,8 @@ export function createResearchVideoPresentationOwner(options: {
       if (!(await diskStep(() => hasResearchFilmOutputs(pendingDirectory ? job! : outputJob))))
         throw new Error('Missing or empty research presentation output.')
       if (pendingDirectory) await diskStep(() => rename(job!, outputJob))
-      const receipt = JSON.stringify(saved.built)
+      const { id: filmId, title, duration } = saved.built!
+      const receipt = JSON.stringify({ id: filmId, title, duration })
       signal.throwIfAborted()
       await diskStep(() => writeDurableJsonFile(join(publishBase, 'latest.json'), receipt), true)
       completedResult = {
@@ -782,8 +819,10 @@ export function createResearchVideoPresentationOwner(options: {
       await diskStep(() => removePendingPointer(publishBase), true).catch(() =>
         log.info('film cleanup deferred', { ...context(), phase: 'publishing' })
       )
-      states.delete(key)
-      if (diskFailure) return
+      if (diskFailure) {
+        states.delete(key)
+        return
+      }
       await diskStep(async () => {
         for (const name of await readdir(outputJob)) {
           if (name.startsWith('unit-') || name === 'speech' || name === PENDING_FILM_OWNER)
@@ -914,6 +953,7 @@ export function createResearchVideoPresentationOwner(options: {
         )
       }
       lease?.release()
+      if (completedResult && !diskFailure) states.delete(key)
     }
   }
   return {

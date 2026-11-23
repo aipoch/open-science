@@ -1,3 +1,7 @@
+import {
+  SessionExportBlockedError,
+  sessionExportBlockerMessage
+} from '../archive/availability-error'
 import { callerContextForEvent } from '../caller-context'
 import { desktopFileInteraction, type DesktopInteraction } from '../desktop-interaction'
 import { tmpdir } from 'node:os'
@@ -256,7 +260,15 @@ const createConversationExportService = (
   return {
     exportConversation: async (rawRequest, callerId) => {
       const request = assertExportConversationRequest(rawRequest)
-      const release = await deps.reserveExport(request.projectId, request.sessionId)
+      const release = await deps
+        .reserveExport(request.projectId, request.sessionId)
+        .catch((error: unknown) => {
+          if (error instanceof SessionExportBlockedError)
+            throw new Error(sessionExportBlockerMessage(error.reason, deps.translate), {
+              cause: error
+            })
+          throw error
+        })
       try {
         return await performExport(request, callerId)
       } finally {

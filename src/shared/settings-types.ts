@@ -1,3 +1,5 @@
+import type { CatalogSnapshot, CatalogStatus, CatalogErrorCode } from '@aipoch/providers'
+import type { CodeBuddyAuthMode } from './codebuddy-subscription'
 import type {
   AgentHomeSkillRef,
   GitHubRepositorySearchView,
@@ -15,6 +17,7 @@ import {
   type CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import { type ReasoningEffort } from './model-preference-contract'
+import type { LabModelCapabilities, LabView } from './lab'
 import { type ReasoningEffortPresetSetting } from './reasoning-effort'
 import type { AgentModelRoute, AgentFrameworkId } from './agent-framework-id'
 export type { AgentFrameworkId } from './agent-framework-id'
@@ -46,7 +49,9 @@ export type ProviderType =
   | 'official'
   | 'codex-shared'
   | 'codex-isolated'
+  | 'codebuddy-subscription'
   | 'xai-subscription'
+  | 'lab'
 
 // The stored Codex subscription always uses the app-owned runtime type. This discriminator preserves
 // which setup choice produced it so editing an imported profile does not masquerade as an isolated
@@ -129,10 +134,14 @@ export type ProviderValidationFailure = {
 
 // Renderer-facing provider view: masked and stripped of every secret field.
 export type ProviderView = {
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  catalogParameters?: Record<string, string>
   // Human configuration revision; legacy records start at zero.
   configRevision?: number
   id: string
   type: ProviderType
+  codeBuddyAuthMode?: CodeBuddyAuthMode
   codexAuthMode?: CodexSubscriptionAuthMode
   codexTransport?: CodexSubscriptionTransport
   // Host-derived capability of the built-in Agent; native Codex remains independently available.
@@ -160,6 +169,16 @@ export type ProviderView = {
   // Models selectable for this provider in the composer: the vendor catalog for official providers,
   // or the single configured model for custom. Derived from the registry in main.
   models: string[]
+  // Per-model protocol sets for app-managed providers whose catalog is heterogeneous (Lab). Absent
+  // means the provider-level apiEndpoints apply to every model.
+  modelProtocols?: Record<string, ModelProtocol[]>
+  // Per-model streaming support for app-managed catalogs (Lab). Absent means streaming is
+  // supported; false makes the model unavailable to streaming-only runtimes.
+  modelStreaming?: Record<string, boolean>
+  // Exact Lab deployment address for app-managed Lab providers; non-secret.
+  labServerUrl?: string
+  // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
+  modelCapabilities?: Record<string, LabModelCapabilities>
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
   // Non-secret account label returned by the provider during subscription sign-in.
@@ -292,6 +311,9 @@ export type SettingsSnapshot = {
   // for official providers it's the chosen catalog entry. Undefined until a provider exists.
   activeModel?: string
   providers: ProviderView[]
+  // Optional Lab enterprise connection status. Absent on builds without the Lab feature and on
+  // every snapshot produced before the Lab owner has been constructed.
+  lab?: LabView
   // The selected agent backend, and the frameworks available to choose from.
   agentFrameworkId: AgentFrameworkId
   agentFrameworks: AgentFrameworkView[]
@@ -460,6 +482,8 @@ export type ReadinessPreflight = Preflight & {
 // A provider draft as entered in the renderer form. The plaintext `key` is present only when the user
 // typed a new one; leaving it undefined on edit keeps the previously stored key.
 export type ProviderDraft = {
+  catalogParameters?: Record<string, string>
+  catalogDraftToken?: string
   type: ProviderType
   codexTransport?: CodexSubscriptionTransport
   name?: string
@@ -575,12 +599,18 @@ export type SaveValidatedProviderResult = {
 // Request to refresh a saved provider's model list from the vendor's live API (fills the bundled
 // catalog with the account's current models).
 export type RefreshProviderModelsRequest = {
-  providerId: string
+  providerId?: string
+  draft?: ProviderDraft
+  expectedConfigRevision?: number
 }
 
 // Outcome of a model-list refresh. On success `models` is the fetched list (also persisted on the
 // provider); on failure the caller keeps the bundled catalog and can surface `message`.
 export type RefreshProviderModelsResult = {
+  catalog?: CatalogSnapshot
+  catalogStatus?: CatalogStatus
+  draftToken?: string
+  code?: CatalogErrorCode
   ok: boolean
   models?: string[]
   category: ValidationCategory
@@ -1136,14 +1166,12 @@ export type ConnectorsSnapshot = {
   ncbi: NcbiCredentialsView
   // Optional only for compatibility with an older main process during local development.
   openAlex?: OpenAlexCredentialView
-  semanticScholar?: { hasApiKey: boolean }
 }
 
 export type SetConnectorEnabledRequest = { id: string; enabled: boolean }
 export type SetConnectorAutoAllowRequest = { id: string; autoAllow: boolean }
 export type SetToolPermissionRequest = { toolId: string; permission: ToolPermission }
 export type SetNcbiCredentialsRequest = { contactEmail?: string; apiKey?: string }
-export type SetSemanticScholarCredentialRequest = { apiKey: string }
 export type SetOpenAlexCredentialRequest = { apiKey: string }
 export type ValidateOpenAlexCredentialRequest = { apiKey: string }
 export type OpenAlexCredentialValidation =

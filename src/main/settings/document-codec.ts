@@ -301,6 +301,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
 
   const onboardingCompletedAt = asNumber(value.onboardingCompletedAt)
   if (onboardingCompletedAt !== undefined) settings.onboardingCompletedAt = onboardingCompletedAt
+  if (value.kiloDefaultInitialized === true) settings.kiloDefaultInitialized = true
 
   const disabledSkillIds = Array.isArray(value.disabledSkillIds)
     ? [

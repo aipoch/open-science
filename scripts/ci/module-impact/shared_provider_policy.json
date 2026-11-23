@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/shared/provider-model-catalog.ts",
+    "src/shared/provider-model-catalog-codec.ts",
     "src/shared/reasoning-effort.ts",
     "src/shared/provider-reasoning-effort.ts",
     "src/shared/model-preference-contract.ts",
@@ -21,6 +23,8 @@
     "src/shared/image-model-presets/index.test.ts"
   ],
   "interfacePaths": [
+    "src/shared/provider-model-catalog.ts",
+    "src/shared/provider-model-catalog-codec.ts",
     "src/shared/reasoning-effort.ts",
     "src/shared/provider-reasoning-effort.ts",
     "src/shared/model-preference-contract.ts",

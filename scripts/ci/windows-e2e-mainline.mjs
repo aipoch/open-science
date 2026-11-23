@@ -87,7 +87,10 @@ export function runMainlineSelection(environment = process.env) {
     )
   )
   const plan = selectWindowsMainline(changes, loadModuleImpactManifest())
-  if (environment.GITHUB_OUTPUT) appendFileSync(environment.GITHUB_OUTPUT, `grep=${plan.grep}\n`)
+  if (environment.GITHUB_OUTPUT) {
+    appendFileSync(environment.GITHUB_OUTPUT, `grep=${plan.grep}\n`)
+    appendFileSync(environment.GITHUB_OUTPUT, `groups=${JSON.stringify(plan.groups)}\n`)
+  }
   if (environment.GITHUB_STEP_SUMMARY) {
     const escape = (text) =>
       text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')

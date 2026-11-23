@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import * as runtimeMetadata from '../runtime-metadata'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -19,9 +23,15 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   createLogger: () => ({ info: mocks.info, warn: mocks.warn, error: mocks.error })
 }))
 
-import { buildAgentSpawnEnv, spawnClaudeAgentAcp, toUnpackedAsarPath } from './agent-process'
+import {
+  buildAgentSpawnEnv,
+  resolveClaudeAgentAcpEntry,
+  spawnClaudeAgentAcp,
+  toUnpackedAsarPath
+} from './agent-process'
 
 const originalDebugAgent = process.env.OPEN_SCIENCE_DEBUG_AGENT
+const testAdapterEntryPath = '/fixture/claude-agent-acp/dist/index.js'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -151,6 +161,26 @@ describe('buildAgentSpawnEnv', () => {
 })
 
 describe('spawnClaudeAgentAcp', () => {
+  it('reports a missing adapter in an initialized product host, including source builds', async () => {
+    const profile = await mkdtemp(join(tmpdir(), 'claude-acp-absent-'))
+    const host = vi.spyOn(runtimeMetadata, 'runtimeMetadataIfConfigured').mockReturnValue({
+      version: '1.0.0',
+      locale: 'en',
+      packaged: false,
+      applicationPath: process.cwd(),
+      homePath: profile,
+      downloadsPath: profile,
+      resourcesPath: profile
+    })
+    try {
+      expect(() => resolveClaudeAgentAcpEntry(profile)).toThrow('Claude ACP is not installed')
+      expect(mocks.spawn).not.toHaveBeenCalled()
+    } finally {
+      host.mockRestore()
+      await rm(profile, { recursive: true, force: true })
+    }
+  })
+
   it('rejects startup without a detected Claude executable', () => {
     expect(() => spawnClaudeAgentAcp()).toThrow(
       'Claude executable path is not configured. Complete Claude detection in settings first.'
@@ -166,6 +196,7 @@ describe('spawnClaudeAgentAcp', () => {
     expect(
       spawnClaudeAgentAcp({
         executablePath: '/bin/claude',
+        adapterEntryPath: testAdapterEntryPath,
         envOverrides: {
           CLAUDE_CONFIG_DIR: '/provider/config',
           ANTHROPIC_AUTH_TOKEN: 'secret'
@@ -197,6 +228,7 @@ describe('spawnClaudeAgentAcp', () => {
 
     spawnClaudeAgentAcp({
       executablePath: '/bin/claude',
+      adapterEntryPath: testAdapterEntryPath,
       envOverrides: { CLAUDE_CONFIG_DIR: '/provider/config' }
     })
 
@@ -213,6 +245,7 @@ it('prevents Claude physical launch when delegated ownership admission fails', (
   })
   const input = {
     executablePath: '/runtime/claude',
+    adapterEntryPath: testAdapterEntryPath,
     envOverrides: { CLAUDE_CONFIG_DIR: '/isolated/claude' },
     spawnProcess: ownedSpawn
   }

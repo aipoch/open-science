@@ -1,3 +1,5 @@
+import { readPackageWebEvidence } from '../workspace-package-web-evidence'
+import { WorkspacePackageWebActivityRow } from '../WorkspacePackageWebActivityRow'
 import { notebookOutputTextClassName } from '../NotebookRunOutputs'
 import { cn } from '@/lib/utils'
 import { WorkspaceElicitationCard } from '../WorkspaceElicitationCard'
@@ -169,9 +171,17 @@ const ReplayInteractiveToolRecord = memo(function ReplayInteractiveToolRecord({
       </div>
     )
   }
+  const packageEvidence = showResults ? readPackageWebEvidence(activity) : undefined
   return (
     <div className="min-w-0" data-replay-activity={activity.id}>
-      {details ? (
+      {packageEvidence ? (
+        <WorkspacePackageWebActivityRow
+          activity={visibleActivity}
+          evidence={packageEvidence}
+          isExpanded={expanded}
+          onToggle={(_, value) => setExpanded(value)}
+        />
+      ) : details ? (
         <WorkspaceToolDetailsRow
           activity={visibleActivity}
           details={details}
@@ -309,7 +319,9 @@ const ReplayRawToolRecord = memo(function ReplayRawToolRecord({
               {t('Recorded decision')}:{' '}
               {activity.toolDisposition === 'declined'
                 ? t('Request declined')
-                : t('Permission request was closed.')}
+                : activity.toolDisposition === 'cancelled'
+                  ? t('Cancelled')
+                  : t('Permission request was closed.')}
             </p>
           ) : null}
           {activity.terminalExitCode !== undefined && activity.terminalExitCode !== null ? (
@@ -344,7 +356,7 @@ export const ReplayToolRecord = memo(function ReplayToolRecord({
   showResults: boolean
   interactive?: boolean
 }): React.JSX.Element {
-  return interactive ? (
+  return interactive || (showResults && readPackageWebEvidence(activity)) ? (
     <ReplayInteractiveToolRecord activity={activity} showResults={showResults} />
   ) : (
     <ReplayRawToolRecord activity={activity} showResults={showResults} />

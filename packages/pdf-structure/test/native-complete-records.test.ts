@@ -9,7 +9,7 @@ import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { readWorkerResult } from '../src/worker-result.js'
 import { readPdfFixture } from './read-fixture'
 
-const { refineTable, recoverCaptionedRuledTables } = await import(
+const { refineTable, recoverCaptionedRuledTables, nativeRecordReadingOrder } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
 )
 const panelRefineHelpers = await import(
@@ -17100,4 +17100,101 @@ it('returns four leaf columns and complete records through common-gutter product
   ])
   expect(result.unassigned).toEqual([])
   expect(result.cropRect).toEqual(f.table.cropRect)
+})
+
+const staggeredRecordItems = [
+  { text: 'A', height: 10, baseline: 0, rect: [20, 0, 21, 10] },
+  { text: 'B', height: 10, baseline: 5, rect: [10, 5, 11, 15] },
+  { text: 'C', height: 10, baseline: 10, rect: [0, 10, 1, 20] }
+]
+
+it.each([
+  [0, 1, 2],
+  [0, 2, 1],
+  [1, 0, 2],
+  [1, 2, 0],
+  [2, 0, 1],
+  [2, 1, 0]
+])('groups staggered baselines independently of source order: %j', (...indices) => {
+  const input = indices.map((index) => staggeredRecordItems[index])
+  const before = structuredClone(input)
+  expect(nativeRecordReadingOrder(input, 10).map((item) => item.text)).toEqual(['B', 'A', 'C'])
+  expect(input).toEqual(before)
+  const scaled = input.map((item) => ({
+    ...item,
+    height: item.height * 1.7,
+    baseline: item.baseline * 1.7 + 70,
+    rect: item.rect.map((value, index) => value * 1.7 + (index % 2 ? 70 : 30))
+  }))
+  expect(nativeRecordReadingOrder(scaled, 17).map((item) => item.text)).toEqual(['B', 'A', 'C'])
+})
+
+it('honors an explicit body baseline height even when one glyph is taller', () => {
+  const input = [
+    { text: 'UPPER', height: 30, baseline: 0, rect: [100, 0, 130, 30] },
+    { text: 'LOWER', height: 10, baseline: 12, rect: [0, 12, 30, 22] }
+  ]
+  expect(nativeRecordReadingOrder(input, 10).map((item) => item.text)).toEqual(['UPPER', 'LOWER'])
+})
+
+it.each([false, true])(
+  'keeps short rows independent of a distant tall glyph (reverse=%s)',
+  (reverse) => {
+    const shortRows = [
+      { text: 'UPPER', height: 10, baseline: 0, rect: [100, 0, 130, 10] },
+      { text: 'LOWER', height: 10, baseline: 12, rect: [0, 12, 30, 22] }
+    ]
+    const input = [
+      ...shortRows,
+      { text: 'TALL', height: 40, baseline: 100, rect: [0, 60, 30, 100] }
+    ]
+    if (reverse) input.reverse()
+    expect(nativeRecordReadingOrder(input).map((item) => item.text)).toEqual([
+      ...nativeRecordReadingOrder(shortRows).map((item) => item.text),
+      'TALL'
+    ])
+  }
+)
+
+it.each([
+  [0, 1, 2],
+  [0, 2, 1],
+  [1, 0, 2],
+  [1, 2, 0],
+  [2, 0, 1],
+  [2, 1, 0]
+])('does not expand a row after admitting a tall glyph: %j', (...indices) => {
+  const items = [
+    { text: 'UPPER', baseline: 0, height: 10, rect: [100, -10, 130, 0] },
+    { text: 'TALL', baseline: 4, height: 40, rect: [140, -36, 160, 4] },
+    { text: 'LOWER', baseline: 12, height: 10, rect: [0, 2, 30, 12] }
+  ]
+  const input = indices.map((index) => items[index])
+  const before = structuredClone(input)
+  expect(nativeRecordReadingOrder(input).map((item) => item.text)).toEqual([
+    'UPPER',
+    'TALL',
+    'LOWER'
+  ])
+  expect(input).toEqual(before)
+  const transformed = input.map((item) => ({
+    ...item,
+    height: item.height * 1.7,
+    baseline: item.baseline * 1.7 + 70,
+    rect: item.rect.map((value, index) => value * 1.7 + (index % 2 ? 70 : 30))
+  }))
+  expect(nativeRecordReadingOrder(transformed).map((item) => item.text)).toEqual([
+    'UPPER',
+    'TALL',
+    'LOWER'
+  ])
+})
+
+it('keeps short rows separate when the first glyph is tall', () => {
+  const items = [
+    { text: 'A', height: 10, baseline: 10, rect: [40, 0, 45, 10] },
+    { text: 'T', height: 30, baseline: 8, rect: [50, -22, 55, 8] },
+    { text: 'B', height: 10, baseline: 22, rect: [0, 12, 5, 22] }
+  ]
+  expect(nativeRecordReadingOrder(items).map((item) => item.text)).toEqual(['A', 'T', 'B'])
 })

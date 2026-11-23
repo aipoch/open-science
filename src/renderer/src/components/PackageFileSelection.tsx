@@ -1,11 +1,22 @@
+import { PackageWebOmissions } from './PackageWebOmissions'
 import { InlineNotice } from '@/components/ui/inline-notice'
-import { useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Checkbox } from 'radix-ui'
-import { Check, ChevronDown, FileCheck2, Info, Files, ListFilter, Minus } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  FileCheck2,
+  Info,
+  Files,
+  ListFilter,
+  Minus,
+  Upload
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   dialogBodyClassName,
   dialogFooterClassName,
@@ -13,6 +24,14 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
+import {
+  ORG_CASE_DESCRIPTION_MAX_LENGTH,
+  ORG_CASE_NAME_MAX_LENGTH,
+  clampOrgCaseName,
+  orgCaseUploadMetadataSchema,
+  unicodeCharacterLength,
+  type OrgCaseUploadMetadata
+} from '../../../shared/org-cases'
 import type {
   PackageSelectableFile,
   PackageSelectionSummary
@@ -29,6 +48,10 @@ const PAGE_SIZE = 25
 export const PackageFileSelection = ({
   files,
   summary,
+  defaultTitle,
+  canUploadToOrg = false,
+  initialOrgCase,
+  openOrgCaseByDefault = false,
   onSelect,
   onCancel,
   notice,
@@ -36,10 +59,15 @@ export const PackageFileSelection = ({
 }: {
   files: PackageSelectableFile[]
   summary?: PackageSelectionSummary
+  defaultTitle?: string
+  canUploadToOrg?: boolean
+  initialOrgCase?: { name: string; description: string } | null
+  openOrgCaseByDefault?: boolean
   onSelect: (
     excludedStorageKeys: string[],
     includePdfNotes?: boolean,
-    includeResearchFilms?: boolean
+    includeResearchFilms?: boolean,
+    uploadTarget?: OrgCaseUploadMetadata
   ) => void
   onCancel: () => void
   notice?: React.ReactNode
@@ -48,6 +76,16 @@ export const PackageFileSelection = ({
   const { t } = useTranslation()
   const thresholdId = useId()
   const retainedFilesId = useId()
+  const caseNameId = useId()
+  const caseDescriptionId = useId()
+  const orgPanelRef = useRef<HTMLElement>(null)
+  const caseNameInputRef = useRef<HTMLInputElement>(null)
+  const focusFrameRef = useRef<number | null>(null)
+  const defaultCaseName = clampOrgCaseName(defaultTitle, t('Session'))
+  const [orgCaseOpen, setOrgCaseOpen] = useState(Boolean(canUploadToOrg && openOrgCaseByDefault))
+  const [caseName, setCaseName] = useState(initialOrgCase?.name ?? defaultCaseName)
+  const [caseDescription, setCaseDescription] = useState(initialOrgCase?.description ?? '')
+  const [uploadValidationError, setUploadValidationError] = useState<string>()
   const [showRetainedFiles, setShowRetainedFiles] = useState(false)
   const { excludedStorageKeys, selectionPreset, threshold, setThreshold } =
     usePackageOperationStore()
@@ -207,6 +245,65 @@ export const PackageFileSelection = ({
     })
     setCustomizing(false)
   }
+  useEffect(
+    () => () => {
+      if (focusFrameRef.current !== null) cancelAnimationFrame(focusFrameRef.current)
+    },
+    []
+  )
+  const nameLength = unicodeCharacterLength(caseName.trim())
+  const descriptionLength = unicodeCharacterLength(caseDescription.trim())
+  const validateOrgCase = (): OrgCaseUploadMetadata | null => {
+    const parsed = orgCaseUploadMetadataSchema.safeParse({
+      name: caseName,
+      description: caseDescription
+    })
+    if (!parsed.success) {
+      if (!caseName.trim()) {
+        setUploadValidationError(t('Enter a case name.'))
+      } else if (nameLength > ORG_CASE_NAME_MAX_LENGTH) {
+        setUploadValidationError(
+          t('Case name must be {{limit}} characters or fewer.', {
+            limit: ORG_CASE_NAME_MAX_LENGTH
+          })
+        )
+      } else if (descriptionLength > ORG_CASE_DESCRIPTION_MAX_LENGTH) {
+        setUploadValidationError(
+          t('Case description must be {{limit}} characters or fewer.', {
+            limit: ORG_CASE_DESCRIPTION_MAX_LENGTH
+          })
+        )
+      } else {
+        setUploadValidationError(t('Check the case name and description, then try again.'))
+      }
+      return null
+    }
+    setUploadValidationError(undefined)
+    return parsed.data
+  }
+  const handleOrgUploadClick = (): void => {
+    if (requiredOversized || !canUploadToOrg) return
+    if (!orgCaseOpen) {
+      if (!caseName.trim()) setCaseName(defaultCaseName)
+      setOrgCaseOpen(true)
+      setUploadValidationError(undefined)
+      if (focusFrameRef.current !== null) cancelAnimationFrame(focusFrameRef.current)
+      focusFrameRef.current = requestAnimationFrame(() => {
+        focusFrameRef.current = null
+        orgPanelRef.current?.scrollIntoView?.({ block: 'nearest' })
+        caseNameInputRef.current?.focus()
+        caseNameInputRef.current?.select()
+      })
+      return
+    }
+    const metadata = validateOrgCase()
+    if (!metadata) {
+      caseNameInputRef.current?.focus()
+      return
+    }
+    onSelect([...excluded], includePdfNotes, includeResearchFilms, metadata)
+  }
+
   return (
     <>
       <div
@@ -306,6 +403,7 @@ export const PackageFileSelection = ({
                   : '—'}
               </strong>
             </div>
+            <PackageWebOmissions omissions={summary?.webOmissions} />
             {summary ? (
               <p className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
                 <span>{t('History and required evidence')}</span>
@@ -760,13 +858,122 @@ export const PackageFileSelection = ({
               )}
             </label>
           ) : null}
+          {canUploadToOrg && orgCaseOpen ? (
+            <section
+              ref={orgPanelRef}
+              aria-label={t('Organization case details')}
+              className="space-y-3 rounded-lg border border-border bg-muted/30 p-3.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-medium text-foreground">
+                    {t('Upload to organization')}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('Share directly with your Lab organization without saving locally.')}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setOrgCaseOpen(false)
+                    setUploadValidationError(undefined)
+                  }}
+                >
+                  {t('Collapse')}
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <Label htmlFor={caseNameId} className="text-xs font-medium">
+                    {t('Case name')}
+                  </Label>
+                  <span
+                    className={`text-xs tabular-nums ${nameLength > ORG_CASE_NAME_MAX_LENGTH ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground' : 'text-muted-foreground'}`}
+                  >
+                    {`${nameLength} / ${ORG_CASE_NAME_MAX_LENGTH}`}
+                  </span>
+                </div>
+                <Input
+                  ref={caseNameInputRef}
+                  id={caseNameId}
+                  value={caseName}
+                  placeholder={defaultCaseName}
+                  aria-invalid={
+                    uploadValidationError &&
+                    (!caseName.trim() || nameLength > ORG_CASE_NAME_MAX_LENGTH)
+                      ? true
+                      : undefined
+                  }
+                  onChange={(event) => {
+                    setCaseName(event.target.value)
+                    if (uploadValidationError) setUploadValidationError(undefined)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                      event.preventDefault()
+                      handleOrgUploadClick()
+                    }
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <Label htmlFor={caseDescriptionId} className="text-xs font-medium">
+                    {t('Description (optional)')}
+                  </Label>
+                  <span
+                    className={`text-xs tabular-nums ${descriptionLength > ORG_CASE_DESCRIPTION_MAX_LENGTH ? 'text-status-failure-foreground dark:text-status-failure-dark-foreground' : 'text-muted-foreground'}`}
+                  >
+                    {`${descriptionLength} / ${ORG_CASE_DESCRIPTION_MAX_LENGTH}`}
+                  </span>
+                </div>
+                <Textarea
+                  id={caseDescriptionId}
+                  rows={3}
+                  value={caseDescription}
+                  placeholder={t('Add optional context or notes for teammates…')}
+                  aria-invalid={
+                    uploadValidationError && descriptionLength > ORG_CASE_DESCRIPTION_MAX_LENGTH
+                      ? true
+                      : undefined
+                  }
+                  onChange={(event) => {
+                    setCaseDescription(event.target.value)
+                    if (uploadValidationError) setUploadValidationError(undefined)
+                  }}
+                />
+              </div>
+              {uploadValidationError ? (
+                <p
+                  role="alert"
+                  className="text-xs text-status-failure-foreground dark:text-status-failure-dark-foreground"
+                >
+                  {uploadValidationError}
+                </p>
+              ) : null}
+            </section>
+          ) : null}
         </div>
       </div>
       <div data-package-footer className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
         <Button variant="ghost" className={dialogCancelButtonClassName} onClick={onCancel}>
           {t('Cancel')}
         </Button>
+        {canUploadToOrg ? (
+          <Button
+            variant={orgCaseOpen ? 'default' : 'outline'}
+            disabled={requiredOversized}
+            onClick={handleOrgUploadClick}
+          >
+            <Upload className="size-4" aria-hidden="true" />
+            {orgCaseOpen ? t('Confirm and upload') : t('Export and upload')}
+          </Button>
+        ) : null}
         <Button
+          variant={canUploadToOrg && orgCaseOpen ? 'outline' : 'default'}
           disabled={requiredOversized}
           onClick={() => onSelect([...excluded], includePdfNotes, includeResearchFilms)}
         >

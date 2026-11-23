@@ -1,3 +1,5 @@
+import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
+import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
 import { releaseResolvedAgentBackendLeases } from '../agent-framework'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1975,6 +1977,40 @@ describe('AgentBackendResolver bridge predicates', () => {
       await backend.providerTransportLease?.release()
     }
   )
+
+  it('opens a saved China conversation through its original account after activating the international account', async () => {
+    const providers = Object.values(codeBuddyAccounts).map((identity) => ({
+      ...identity,
+      type: 'codebuddy-subscription' as const,
+      model: 'shared-model',
+      apiEndpoints: ['chat-completions' as const]
+    }))
+    const projection = new ProviderRuntimeProjectionOwner()
+    const harness = makeHarness({
+      settings: makeSettings({
+        providers,
+        activeProviderId: codeBuddyAccounts.external.id,
+        agentFrameworkId: 'codebuddy'
+      })
+    })
+    harness.resolveRuntimeTarget.mockImplementation((record, selection, framework) =>
+      projection.resolveRuntimeTarget(record, selection, framework)
+    )
+    const backend = await harness.resolver.resolveExplicitTarget({
+      frameworkId: 'codebuddy',
+      providerId: codeBuddyAccounts.internal.id,
+      model: { kind: 'required', id: 'shared-model' },
+      reasoningEffort: 'default'
+    })
+    expect(backend).toMatchObject({
+      providerId: codeBuddyAccounts.internal.id,
+      backendId: 'codebuddy:' + codeBuddyAccounts.internal.id,
+      modelRoute: 'codebuddy-subscription',
+      sessionModelRequired: true,
+      env: { CODEBUDDY_INTERNET_ENVIRONMENT: 'internal' }
+    })
+    expect(backend.env).not.toHaveProperty('CODEBUDDY_BASE_URL')
+  })
 
   it('provisions an isolated Connector Skill runtime for CodeBuddy', async () => {
     const harness = makeHarness({ connectorIds: ['pubmed'] })

@@ -50,8 +50,11 @@ type RestrictedInferenceRunnerOptions = Readonly<{
   // Use the supplied task contract without Workspace instructions, skills or client tools.
   taskOnly?: boolean
   allowNativeCodexSubscription?: boolean
+  allowCodeBuddySubscription?: boolean
   // Validation must exercise the configured route, including native Responses.
   preserveModelRoute?: boolean
+  // Automatic Film retries must not overlap a disposable runtime whose exit is unconfirmed.
+  requireConfirmedCleanup?: boolean
 }>
 
 type ActiveRun = {
@@ -156,7 +159,8 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
     let backendTransferred = false
     let deferredProfileCleanup = false
     let runtime: RestrictedInferenceRuntime | undefined
-    let runtimeShutdown: Promise<unknown> | undefined
+    let runtimeShutdown: Promise<{ reaped: boolean } | undefined> | undefined
+    let inferenceFailure: unknown
     let sessionId: string | undefined
     let toolLessBridgeScopeRegistered = false
     let toolViolation = false
@@ -168,9 +172,24 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
     const cancelPrompt = (): void => {
       if (runtime && sessionId) void runtime.cancelPrompt({ sessionId }).catch(() => undefined)
     }
-    const shutdownRuntime = (): Promise<unknown> | undefined => {
+    const shutdownRuntime = (): typeof runtimeShutdown => {
       if (runtime) runtimeShutdown ??= runtime.shutdownForQuit().catch(() => undefined)
       return runtimeShutdown
+    }
+    const finishRuntime = async (): Promise<void> => {
+      const outcome = await shutdownRuntime()
+      if (this.options.requireConfirmedCleanup && runtime && outcome?.reaped !== true) {
+        const failure = new RestrictedInferenceError(
+          'transport-unavailable',
+          'Research film model cleanup could not be confirmed. Automatic retry was stopped.',
+          turnUsage
+        )
+        failure.cause = inferenceFailure
+        throw failure
+      }
+      if (backend && !backendTransferred) await releaseUnattachedBackend(backend)
+      if (jobRoot && !deferredProfileCleanup)
+        await rm(jobRoot, { recursive: true, force: true }).catch(() => undefined)
     }
     const onAbort = (): void => {
       cancelPrompt()
@@ -263,6 +282,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       ensureActive()
       const resolvedBackend = await prepareRestrictedBackend(backend, profileRoot, {
         taskOnly: this.options.taskOnly,
+        allowCodeBuddySubscription: this.options.allowCodeBuddySubscription,
         agentName: input.agentName,
         description: input.description,
         systemPrompt: input.systemPrompt,
@@ -294,9 +314,10 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
         appVersion: this.options.appVersion,
         separateProviderNotices: true,
         recoverOutputTruncation: true,
-        sessionCapabilityPolicy: this.options.taskOnly
-          ? { role: 'restricted-inference', delegation: 'denied' }
-          : undefined,
+        sessionCapabilityPolicy:
+          this.options.taskOnly || resolvedBackend.framework.id === 'open-science-agent'
+            ? { role: 'restricted-inference', delegation: 'denied' }
+            : undefined,
         defaultCwd: cwd,
         resolveBackend: () => {
           backendTransferred = true
@@ -375,6 +396,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
         ...(turnUsage ? { usage: Object.freeze({ ...turnUsage }) } : {})
       })
     } catch (error) {
+      inferenceFailure = error
       if (turnUsage && error instanceof RestrictedInferenceError && !error.usage) {
         throw new RestrictedInferenceError(
           error.code,
@@ -395,12 +417,12 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       if (sessionId && toolLessBridgeScopeRegistered) {
         backend?.responsesTransportLease?.unregisterToolLessSession?.(sessionId)
       }
-      await shutdownRuntime()
-      if (backend && !backendTransferred) await releaseUnattachedBackend(backend)
-      if (jobRoot && !deferredProfileCleanup)
-        await rm(jobRoot, { recursive: true, force: true }).catch(() => undefined)
-      this.activeRuns.delete(active)
-      active.finish()
+      try {
+        await finishRuntime()
+      } finally {
+        this.activeRuns.delete(active)
+        active.finish()
+      }
     }
   }
 

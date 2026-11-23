@@ -51,6 +51,7 @@ enum class EnvironmentReadStatus { kFound, kAbsent, kIncomplete };
 
 void RegisterWindowsOwnedProcess(napi_env env, napi_value exports);
 void RegisterResourceSnapshot(napi_env env, napi_value exports);
+void RegisterDarwinMemoryPressure(napi_env env, napi_value exports);
 
 namespace {
 
@@ -165,6 +166,7 @@ EnvironmentReadStatus ReadDarwinEnvironmentValue(int32_t pid, const std::string&
     return read_error == ESRCH || ProcessVanished(pid) ? EnvironmentReadStatus::kAbsent
                                                        : EnvironmentReadStatus::kIncomplete;
   }
+  if (size > 16 * 1024 * 1024) return EnvironmentReadStatus::kIncomplete;
   std::vector<char> buffer(size);
   errno = 0;
   if (sysctl(mib, 3, buffer.data(), &size, nullptr, 0) != 0 || size <= sizeof(int)) {
@@ -174,15 +176,32 @@ EnvironmentReadStatus ReadDarwinEnvironmentValue(int32_t pid, const std::string&
   }
 
   const std::string prefix = name + "=";
+  int count = 0;
+  std::memcpy(&count, buffer.data(), sizeof(count));
+  if (count <= 0 || static_cast<size_t>(count) > size - sizeof(int))
+    return EnvironmentReadStatus::kIncomplete;
   size_t offset = sizeof(int);
+  const size_t executable_length = strnlen(buffer.data() + offset, size - offset);
+  if (executable_length == size - offset) return EnvironmentReadStatus::kIncomplete;
+  offset += executable_length + 1;
+  while (offset < size && buffer[offset] == '\0') offset++;
+  // Only the environment block is ownership evidence. argv may contain NAME=value,
+  // including empty arguments; skip exactly argc strings, not all nonempty strings.
+  for (int i = 0; i < count; i++) {
+    if (offset >= size) return EnvironmentReadStatus::kIncomplete;
+    const size_t length = strnlen(buffer.data() + offset, size - offset);
+    if (length == size - offset) return EnvironmentReadStatus::kIncomplete;
+    offset += length + 1;
+  }
   while (offset < size) {
     const size_t length = strnlen(buffer.data() + offset, size - offset);
+    if (length == size - offset) return EnvironmentReadStatus::kIncomplete;
+    if (length == 0) break;
     if (length >= prefix.size() &&
         std::memcmp(buffer.data() + offset, prefix.data(), prefix.size()) == 0) {
       output->assign(buffer.data() + offset + prefix.size(), length - prefix.size());
       return EnvironmentReadStatus::kFound;
     }
-    if (length == size - offset) break;
     offset += length + 1;
   }
   return EnvironmentReadStatus::kAbsent;
@@ -347,6 +366,7 @@ napi_value ListDarwinProcesses(napi_env env, napi_callback_info info) {
 napi_value Init(napi_env env, napi_value exports) {
   RegisterWindowsOwnedProcess(env, exports);
   RegisterResourceSnapshot(env, exports);
+  RegisterDarwinMemoryPressure(env, exports);
   napi_value get_process;
   napi_create_function(
       env, "getDarwinProcess", NAPI_AUTO_LENGTH, GetDarwinProcess, nullptr, &get_process);

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { encodeVideoWav, prepareVideoNarration } from './narration.js'
+import { encodeVideoWav, mixFilmNarration, prepareVideoNarration } from './narration.js'
 
 describe('research video narration', () => {
   it('speaks original skill say text while aligning expanded numbers and units to caption words', async () => {
@@ -37,6 +37,21 @@ describe('research video narration', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+  it('rejects an oversized stereo mix before opening line recordings', async () => {
+    const voice = { duration: 275, words: [[0, 275] as [number, number]] }
+    await expect(
+      mixFilmNarration(
+        {
+          scenes: [
+            { id: 's', msg: 0, panels: [], lines: [{ caption: 'One.' }, { caption: 'Two.' }] }
+          ]
+        },
+        { s_0: voice, s_1: voice },
+        'unused',
+        new AbortController().signal
+      )
+    ).rejects.toThrow('Shorten the film to fit the narration audio limit.')
   })
   it('writes bounded PCM and rejects nonfinite samples', () => {
     const wav = encodeVideoWav(new Float32Array([-2, 0, 2]), 24000)

@@ -447,15 +447,26 @@ class ArtifactProvenanceVersionWriter {
             throw new Error('Artifact origin Session is being deleted and cannot accept a Version.')
           }
 
-          let lineage = await transaction.artifactLineage.findUnique({
-            where: {
-              projectId_sessionId_normalizedFilename: {
-                projectId,
-                sessionId: appSessionId,
-                normalizedFilename
-              }
-            }
-          })
+          const sourceLineage = request.lineageId
+            ? await transaction.artifactLineage.findFirst({
+                where: { id: request.lineageId, projectId }
+              })
+            : undefined
+          if (request.lineageId && !sourceLineage)
+            throw new Error('Source artifact lineage is unavailable.')
+          // Cross-session outputs belong to the task session. The input edge records their origin.
+          let lineage =
+            sourceLineage?.sessionId === appSessionId
+              ? sourceLineage
+              : await transaction.artifactLineage.findUnique({
+                  where: {
+                    projectId_sessionId_normalizedFilename: {
+                      projectId,
+                      sessionId: appSessionId,
+                      normalizedFilename
+                    }
+                  }
+                })
           if (!lineage) {
             lineage = await transaction.artifactLineage.create({
               data: {

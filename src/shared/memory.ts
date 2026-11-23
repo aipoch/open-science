@@ -87,7 +87,11 @@ export const updateMemoryCategoryRequestSchema = createMemoryCategoryRequestSche
   .extend({ id: z.string().min(1), expectedRevision: z.number().int().positive() })
   .strict()
 export const deleteMemoryCategoryRequestSchema = z
-  .object({ id: z.string().min(1), expectedRevision: z.number().int().positive() })
+  .object({
+    id: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+    expectedEntryIds: z.array(z.string().min(1))
+  })
   .strict()
 export const createMemoryEntryRequestSchema = z
   .object({

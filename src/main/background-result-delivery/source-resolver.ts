@@ -5,6 +5,7 @@ import type {
 } from '../../shared/background-result-delivery'
 import type { JobSummary } from '../../shared/compute'
 import type { NotebookRunRecord } from '../../shared/notebook'
+import { notebookDiagnosticPreview } from '../notebook/content-limits'
 import {
   isComputeJobCancelled,
   isComputeJobTrackingStopped,
@@ -37,8 +38,8 @@ type BackgroundResultSourceResolverDeps = Readonly<{
   ): Promise<ReadonlyMap<string, JobSummary>>
 }>
 
-const truncate = (value: string): string =>
-  value.length <= SUMMARY_LIMIT ? value : `${value.slice(0, SUMMARY_LIMIT - 1)}…`
+const truncate = (value: string, limit = SUMMARY_LIMIT): string =>
+  value.length <= limit ? value : `${value.slice(0, limit - 1)}…`
 
 const activityBase = (delivery: BackgroundResultDelivery): BackgroundResultActivityItem => ({
   id: delivery.id,
@@ -52,8 +53,26 @@ const activityBase = (delivery: BackgroundResultDelivery): BackgroundResultActiv
   updatedAt: delivery.updatedAt
 })
 
-const notebookSummary = (run: NotebookRunRecord): string =>
-  truncate(
+const notebookSummary = (run: NotebookRunRecord): string => {
+  const diagnostics = [
+    ['traceback', run.text.traceback.trim()],
+    ['stderr', run.text.stderr.trim()]
+  ].filter(([, text]) => text)
+  if (run.status !== 'completed' && diagnostics.length) {
+    const exit = run.exitCode === undefined ? '' : `exitCode: ${String(run.exitCode)}\n\n`
+    const perStream = Math.floor((SUMMARY_LIMIT - exit.length - 2) / diagnostics.length)
+    const summary =
+      exit +
+      diagnostics
+        .map(([label, text]) => notebookDiagnosticPreview(`${label}:\n${text}`, perStream))
+        .join('\n\n')
+    const remaining = SUMMARY_LIMIT - summary.length
+    const stdout = run.text.stdout.trim()
+    return stdout && remaining > 10
+      ? summary + '\n\n' + truncate(`stdout:\n${stdout}`, remaining - 2)
+      : summary
+  }
+  return truncate(
     [
       run.exitCode === undefined ? undefined : `exitCode: ${String(run.exitCode)}`,
       run.text.stdout.trim() ? `stdout:\n${run.text.stdout.trim()}` : undefined,
@@ -63,6 +82,7 @@ const notebookSummary = (run: NotebookRunRecord): string =>
       .filter((part): part is string => part !== undefined)
       .join('\n\n') || `Run ended with status ${run.status}.`
   )
+}
 
 const notebookErrorGuidance = (run: NotebookRunRecord): string | undefined => {
   if (run.status === 'completed') return undefined

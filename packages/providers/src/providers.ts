@@ -7,6 +7,7 @@ export {
   resolveVendorResponsesBaseUrl,
   resolveVendorApiKeyUrl,
   resolveVendorModelsUrl,
+  resolveVendorApiEndpoints,
   usesVendorMessagesApiKeyHeader,
   isVendorModelMultimodal,
   resolveVendorModelApiEndpoints
@@ -38,3 +39,12 @@ export {
 } from './providers/definitions'
 export type { ProviderDefinition } from './providers/definitions'
 export type { ModelCapability, ModelIdentity, ModelDefinition } from './models/types'
+
+export { resolveVendorModelCatalog } from './providers/lookup'
+export type {
+  CatalogModel,
+  CatalogSnapshot,
+  CatalogStatus,
+  CatalogErrorCode,
+  CatalogRequestOptions
+} from './protocols/catalog'

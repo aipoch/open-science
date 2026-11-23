@@ -246,7 +246,15 @@ describe('AcpSessionConfigurator', () => {
       failure: 'the required model is unavailable',
       configOptions: [selectOption('model', 'model', 'model-a', ['model-a'])],
       request: vi.fn(async () => ({})),
-      message: 'The selected model "model-b" is not available for this Codex account.'
+      message: 'The selected model "model-b" is not available for this account.'
+    },
+    {
+      failure: 'CodeBuddy acknowledges without switching the selected model',
+      configOptions: [selectOption('model', 'model', 'model-a', ['model-a', 'model-b'])],
+      request: vi.fn(async () => ({
+        configOptions: [selectOption('model', 'model', 'model-a', ['model-a', 'model-b'])]
+      })),
+      message: 'CodeBuddy did not confirm the requested model.'
     },
     {
       failure: 'the required model request is rejected',
@@ -270,7 +278,10 @@ describe('AcpSessionConfigurator', () => {
 
     await expect(
       configurator.configure({
-        backend: backendView({ model: 'model-b', modelRequired: true, effort: 'high' }),
+        backend: {
+          ...backendView({ model: 'model-b', modelRequired: true, effort: 'high' }),
+          modelRoute: 'codebuddy-subscription'
+        },
         connection,
         session,
         permissionProfile: 'ask'

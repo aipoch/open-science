@@ -217,6 +217,12 @@ const isProcessAlive = (pid: number): boolean => {
   }
 }
 
+// Read-only observers can ignore an unpublished write regardless of its creator's liveness.
+export const isDurableJsonTemporaryFileName = (filePath: string, name: string): boolean =>
+  name.startsWith(basename(filePath) + '.') &&
+  name.endsWith('.tmp') &&
+  recognizeTemporarySuffix(filePath, name) !== undefined
+
 export const isRecoverableDurableJsonTemporaryFile = (filePath: string, name: string): boolean => {
   const recognized = recognizeTemporarySuffix(filePath, name)
   return recognized !== undefined && !isProcessAlive(recognized.activeCreatorPid ?? 0)

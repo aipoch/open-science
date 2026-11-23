@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
 import { createChatCompletionsModel } from './chat-completions'
 import type { ChatCompletionsOptions } from './chat-completions'
@@ -55,6 +56,226 @@ async function collect(
 }
 
 describe('independent Chat Completions wire adapter', () => {
+  it.each([
+    ['repeated-stop', 'complete', 46, 4, 0],
+    ['repeated-tool-calls', 'tools', 223, 13, 192],
+    ['empty-choices', 'complete', 35, 5, 0]
+  ] as const)(
+    'accepts the captured %s stream with one final event',
+    async (name, reason, inputTokens, outputTokens, cacheReadTokens) => {
+      const wire = await readFile(
+        new URL(`./fixtures/chat-completions/${name}.sse`, import.meta.url),
+        'utf8'
+      )
+      const events = await collect(adapter(async () => response(wire)))
+      expect(events.filter((event) => event.type === 'finish')).toEqual([
+        expect.objectContaining({
+          reason,
+          content: reason === 'tools' ? [] : [{ type: 'text', text: 'PROBE_OK' }],
+          usage: { inputTokens, outputTokens, cacheReadTokens },
+          ...(reason === 'tools'
+            ? {
+                calls: [{ id: 'probe-id-007', name: 'protocol_probe', arguments: { value: 'OK' } }]
+              }
+            : {})
+        })
+      ])
+    }
+  )
+
+  it.each([
+    [{}, undefined],
+    [{ content: null, reasoning_content: null, role: null }, null],
+    [{ content: '', reasoning_content: '', role: '' }, ''],
+    [{ role: 'assistant', tool_calls: [], reasoning_details: [], function_call: null }, 'stop'],
+    [{ audio: null, video: '', image: null, extension: '' }, 'stop']
+  ])('accepts empty terminal deltas %j with finish %s', async (delta, finish_reason) => {
+    const usage = { prompt_tokens: 12, completion_tokens: 3 }
+    const events = await collect(
+      adapter(async () =>
+        response(
+          encode([
+            chunk({ content: 'done', reasoning_content: 'thinking' }, 'stop'),
+            { choices: [{ index: 0, delta, finish_reason }], usage },
+            { choices: [{ index: 0, delta: {}, finish_reason }], usage },
+            { choices: [{ index: 0, delta: {} }] }
+          ])
+        )
+      )
+    )
+    expect(events).toEqual([
+      { type: 'text-delta', text: 'done' },
+      { type: 'reasoning-delta', text: 'thinking' },
+      {
+        type: 'finish',
+        reason: 'complete',
+        content: [{ type: 'text', text: 'done' }],
+        providerState: { reasoning_content: 'thinking' },
+        usage: { inputTokens: 12, outputTokens: 3 }
+      }
+    ])
+  })
+
+  it.each([
+    ['new text', { delta: { content: 'late' } }],
+    ['whitespace', { delta: { content: ' ' } }],
+    ['new reasoning', { delta: { reasoning_content: '\n' } }],
+    ['wrong text type', { delta: { content: [] } }],
+    ['wrong reasoning type', { delta: { reasoning_content: 0 } }],
+    ['role change', { delta: { role: 'user' } }],
+    ['reasoning signature', { delta: { reasoning_details: [{ signature: 's' }] } }],
+    ['wrong reasoning details type', { delta: { reasoning_details: '' } }],
+    ['tool index', { delta: { tool_calls: [{ index: 0 }] } }],
+    [
+      'empty tool arguments',
+      { delta: { tool_calls: [{ index: 0, function: { arguments: '' } }] } }
+    ],
+    ['wrong tools type', { delta: { tool_calls: '' } }],
+    ['legacy function call', { delta: { function_call: {} } }],
+    ['empty legacy function call', { delta: { function_call: '' } }],
+    ['audio payload', { delta: { audio: { data: 'audio' } } }],
+    ['image payload', { delta: { image: 'image' } }],
+    ['unknown object', { delta: { extension: {} } }],
+    ['unknown array', { delta: { extension: [] } }],
+    ['unknown number', { delta: { extension: 0 } }],
+    ['unknown boolean', { delta: { extension: false } }],
+    ['conflicting finish', { finish_reason: 'length' }],
+    ['wrong finish type', { finish_reason: 0 }],
+    ['non-main choice', { index: 1 }],
+    ['missing index', { index: undefined }],
+    ['missing delta', { delta: undefined }],
+    ['null delta', { delta: null }],
+    ['array delta', { delta: [] }]
+  ])(
+    'rejects terminal trailer with %s, including after a valid choice in the same event',
+    async (_, invalid) => {
+      const events: ModelEvent[] = []
+      const model = adapter(async () =>
+        response(
+          encode([
+            chunk({ content: 'done' }, 'stop'),
+            {
+              choices: [
+                { index: 0, delta: {}, finish_reason: 'stop' },
+                { index: 0, delta: {}, finish_reason: 'stop', ...invalid }
+              ],
+              usage: { prompt_tokens: 12, completion_tokens: 3 }
+            }
+          ])
+        )
+      )
+      const run = async (): Promise<void> => {
+        for await (const event of model.stream(request(), new AbortController().signal))
+          events.push(event)
+      }
+      await expect(run()).rejects.toMatchObject({
+        code: 'protocol',
+        diagnostics: {
+          phase: 'choice',
+          finishReason: 'stop',
+          eventCount: 2,
+          receivedDone: false,
+          usage: { inputTokens: 12, outputTokens: 3 }
+        }
+      })
+      expect(events).toEqual([{ type: 'text-delta', text: 'done' }])
+    }
+  )
+
+  it('retains the latest usage and length outcome after repeated terminal choices', async () => {
+    const events = await collect(
+      adapter(async () =>
+        response(
+          encode([
+            chunk(
+              { tool_calls: [{ index: 0, id: 'a', function: { name: 'sum', arguments: '{' } }] },
+              'length'
+            ),
+            { ...chunk({}, 'length'), usage: { prompt_tokens: 1, completion_tokens: 1 } },
+            {
+              ...chunk({ role: 'assistant', content: '' }, 'length'),
+              usage: { prompt_tokens: 12, completion_tokens: 3 }
+            }
+          ])
+        )
+      )
+    )
+    expect(events.filter((event) => event.type === 'finish')).toEqual([
+      { type: 'finish', reason: 'length', content: [], usage: { inputTokens: 12, outputTokens: 3 } }
+    ])
+    const unknown = await collect(
+      adapter(async () => response(encode([chunk({}, 'stop'), chunk({}, 'stop')])))
+    )
+    expect(unknown.at(-1)).toEqual({ type: 'finish', reason: 'complete', content: [] })
+  })
+
+  it.each([
+    ['missing DONE', encode([chunk({}, 'stop'), chunk({}, 'stop')], false), 'missing-done'],
+    ['invalid first finish', encode([chunk({}, '')]), 'choice'],
+    [
+      'invalid usage on trailer',
+      encode([
+        chunk({}, 'stop'),
+        { ...chunk({}, 'stop'), usage: { prompt_tokens: 1, completion_tokens: -1 } }
+      ]),
+      'usage'
+    ],
+    [
+      'missing tool arguments',
+      encode([
+        chunk(
+          { tool_calls: [{ index: 0, id: 'a', function: { name: 'sum', arguments: '{' } }] },
+          'tool_calls'
+        ),
+        chunk({}, 'tool_calls')
+      ]),
+      'tool-arguments'
+    ]
+  ])('keeps %s strict after trailer compatibility', async (_, wire, phase) => {
+    await expect(collect(adapter(async () => response(wire)))).rejects.toMatchObject({
+      code: 'protocol',
+      diagnostics: { phase }
+    })
+  })
+
+  it('does not commit a terminal trailer on stream interruption or cancellation', async () => {
+    for (const cancel of [false, true]) {
+      const controller = new AbortController()
+      const events: ModelEvent[] = []
+      const model = adapter(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(stream) {
+                stream.enqueue(
+                  new TextEncoder().encode(
+                    encode([chunk({ content: 'done' }, 'stop'), chunk({}, 'stop')], false)
+                  )
+                )
+              },
+              pull(stream) {
+                if (cancel) controller.abort()
+                else stream.error(new Error('private transport failure'))
+              }
+            }),
+            { headers: { 'content-type': 'text/event-stream' } }
+          )
+      )
+      const run = async (): Promise<void> => {
+        for await (const event of model.stream(request(), controller.signal)) events.push(event)
+      }
+      await expect(run()).rejects.toMatchObject(
+        cancel
+          ? { name: 'AbortError' }
+          : {
+              code: 'network',
+              diagnostics: { phase: 'stream', finishReason: 'stop', eventCount: 2 }
+            }
+      )
+      expect(events.filter((event) => event.type === 'finish')).toEqual([])
+    }
+  })
+
   it('assembles byte-split UTF-8, CRLF, reasoning, tools and usage after finish', async () => {
     const cancel = vi.fn()
     const fetch = vi.fn(async () =>
@@ -179,23 +400,28 @@ describe('independent Chat Completions wire adapter', () => {
       ]),
       'usage'
     ]
-  ])('rejects %s without yielding a finish or leaking upstream text', async (_, wire, phase) => {
-    const events: ModelEvent[] = []
-    const fetch = vi.fn(async () => response(wire))
-    const run = async (): Promise<void> => {
-      for await (const event of adapter(fetch).stream(request(), new AbortController().signal))
-        events.push(event)
+  ])(
+    'rejects %s without yielding a finish or retaining non-error payloads',
+    async (scenario, wire, phase) => {
+      const events: ModelEvent[] = []
+      const fetch = vi.fn(async () => response(wire))
+      const run = async (): Promise<void> => {
+        for await (const event of adapter(fetch).stream(request(), new AbortController().signal))
+          events.push(event)
+      }
+      const error = await run().catch((error: unknown) => error)
+      expect(error).toMatchObject({
+        code: 'protocol',
+        ...(scenario === 'upstream error' || scenario === 'provider status error'
+          ? { status: 200 }
+          : { message: 'Chat Completions protocol error' }),
+        diagnostics: { phase }
+      })
+      expect(JSON.stringify(error)).not.toMatch(/secret|private|late/)
+      expect(events.some((event) => event.type === 'finish')).toBe(false)
+      expect(fetch).toHaveBeenCalledOnce()
     }
-    const error = await run().catch((error: unknown) => error)
-    expect(error).toMatchObject({
-      code: 'protocol',
-      message: 'Chat Completions protocol error',
-      diagnostics: { phase }
-    })
-    expect(JSON.stringify(error)).not.toMatch(/secret|private|late/)
-    expect(events.some((event) => event.type === 'finish')).toBe(false)
-    expect(fetch).toHaveBeenCalledOnce()
-  })
+  )
 
   it('keeps observed usage separate from completion on failure without retaining raw values', async () => {
     const model = adapter(async () =>

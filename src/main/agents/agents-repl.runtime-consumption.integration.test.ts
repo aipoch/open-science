@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
 import {
@@ -129,6 +130,7 @@ gate('host.agents repl runtime whitelist consumption', () => {
     const specialistService = createSpecialistService(profileStorage)
     const agentsService = new AgentsService({ specialistService, catalog: stubCatalog })
     const notebookService = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: runtimeStorage,
       dataRoot: runtimeStorage,
       projectId: 'default-project',

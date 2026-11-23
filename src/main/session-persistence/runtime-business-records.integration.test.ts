@@ -359,7 +359,12 @@ describe('Runtime business records through the real repository', () => {
       expect(appended).toHaveLength(1)
       expect(appended[0].type).toBe('session_update')
       expect(appended[0].revision).toBe(candidate.revision)
-      expect(Object.keys(appended[0]).sort()).toEqual(['records', 'revision', 'type'])
+      expect(Object.keys(appended[0]).sort()).toEqual([
+        'journalVersion',
+        'records',
+        'revision',
+        'type'
+      ])
       expect(appended[0]).not.toHaveProperty('operations')
       expect(appended[0]).not.toHaveProperty('resultDigest')
       expect(appended[0]).not.toHaveProperty('documentBytes')

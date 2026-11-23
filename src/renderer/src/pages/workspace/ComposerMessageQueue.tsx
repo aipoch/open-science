@@ -3,8 +3,18 @@
  * contrast: pass (existing application tokens)
  */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import { ChevronDown, GripVertical, ListOrdered, Loader2, Pencil, Send, Trash2 } from 'lucide-react'
+import {
+  CircleAlert,
+  ChevronDown,
+  GripVertical,
+  ListOrdered,
+  Loader2,
+  Pencil,
+  Send,
+  Trash2
+} from 'lucide-react'
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
@@ -12,6 +22,7 @@ import { cn } from '@/lib/utils'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { Button } from '@/components/ui/button'
 
+import type { MessageQueueError } from './composer-contract'
 import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import type { WorkspaceMessageQueueController } from './workspace-message-queue-controller'
 import { localizeImageAnnotationSourceError } from './annotations/image-annotation-source-validation'
@@ -40,25 +51,34 @@ const queueActionClassName =
 const queueTriggerClassName =
   'relative flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-text-100 transition-colors duration-150 ease-out hover:bg-bg-300 hover:text-text-000 active:translate-y-px focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 motion-reduce:active:translate-y-0 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11'
 
-const queueErrorText = (
+const describeQueueError = (
   t: TFunction,
-  error: { kind: 'branch' | 'send' | 'edit' | 'cancel'; detail?: string }
-): string => {
-  const detail = localizeImageAnnotationSourceError(error.detail, t) ?? error.detail ?? ''
-  if (error.kind === 'branch') {
-    return t(
-      'This queued message belongs to another message branch. Return to that branch to send it.'
-    )
+  error: MessageQueueError,
+  messageAppended: boolean | undefined
+): { message: string; detail?: string } => {
+  if (error.kind === 'branch')
+    return {
+      message: t(
+        'This queued message belongs to another message branch. Return to that branch to send it.'
+      )
+    }
+  if (error.kind === 'edit')
+    return { message: t('Clear the composer before editing this queued message.') }
+  if (error.kind === 'cancel')
+    return { message: t('Could not confirm that the run stopped.'), detail: error.detail }
+
+  if (error.detail === 'Authentication required')
+    return { message: t('Check your model sign-in or API key before sending this message.') }
+  const annotation = localizeImageAnnotationSourceError(error.detail, t)
+  if (annotation) return { message: annotation }
+  if (error.detail === undefined)
+    return { message: t('The conversation settings changed. Review this queued message.') }
+  if (!messageAppended && error.detail === 'The queued message was not admitted.')
+    return { message: t('This message is still in the queue and has not been sent.') }
+  return {
+    message: t('Could not confirm delivery. Check the conversation before sending again.'),
+    detail: error.detail
   }
-  if (error.kind === 'edit') return t('Clear the composer before editing this queued message.')
-  if (error.kind === 'cancel') {
-    return t('Could not stop the current run. {{detail}} Try again.', {
-      detail
-    })
-  }
-  return t('Could not send this queued message. {{detail}} Try again.', {
-    detail
-  })
 }
 
 const queueAnnouncementText = (t: TFunction, announcement: string): string => {
@@ -95,24 +115,25 @@ const ComposerMessageQueueTrigger = ({
   const { t } = useTranslation()
   const failedCount = items.filter((item) => item.phase === 'error').length
   if (items.length === 0) return null
+  const QueueIcon = failedCount && !expanded ? CircleAlert : ListOrdered
 
   return (
     <button
       type="button"
       className={cn(
         queueTriggerClassName,
-        failedCount > 0 && 'text-status-failure-foreground dark:text-status-failure-dark-foreground'
+        failedCount > 0 &&
+          !expanded &&
+          'text-status-warning-foreground dark:text-status-warning-dark-foreground'
       )}
       aria-expanded={expanded}
       aria-controls="composer-message-queue-list"
       onClick={() => onExpandedChange(!expanded)}
       data-testid="composer-queue-trigger"
     >
-      <ListOrdered className="size-3.5" strokeWidth={2} aria-hidden="true" />
-      {items.some((item) => !item.messageAppended)
-        ? t('Queue ({{count}}) · Not saved', { count: items.length })
-        : t('Message queue')}
-      <span role="status" aria-live="polite">
+      <QueueIcon className="size-3.5" strokeWidth={2} aria-hidden="true" />
+      {t('Queue ({{count}})', { count: items.length })}
+      <span className="sr-only" role="status" aria-live="polite">
         {failedCount > 0 ? t('Needs attention: {{number}}', { number: failedCount }) : ''}
       </span>
       <ChevronDown
@@ -238,15 +259,9 @@ const ComposerMessageQueueContent = ({
       ))}
       {expanded ? (
         <section className="border-b border-border-200" aria-label={t('Message queue')}>
-          {items.some((item) => !item.messageAppended) ? (
-            <p className="text-xs text-muted-foreground">
-              {t('Unsent messages: {{number}}. Leaving or reloading this page discards them.', {
-                number: items.filter((item) => !item.messageAppended).length
-              })}
-            </p>
-          ) : null}
           <ol ref={listRef} id="composer-message-queue-list" className="max-h-36 overflow-y-auto">
             {items.map((item, index) => {
+              const failure = item.error && describeQueueError(t, item.error, item.messageAppended)
               const busy = item.phase === 'interrupting' || item.phase === 'sending'
               const preview = item.text.trim() || t('Attachment message')
               const draggedIndex = items.findIndex((candidate) => candidate.id === draggedId)
@@ -275,7 +290,10 @@ const ComposerMessageQueueContent = ({
                 <li
                   key={item.id}
                   className={cn(
-                    'grid min-h-8 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-0.5 border-t border-border-200 first:border-t-0',
+                    'group grid min-h-9 min-w-0 items-center gap-1 border-t border-border-200 py-1 first:border-t-0',
+                    items.length > 1
+                      ? 'grid-cols-[auto_minmax(0,1fr)_auto]'
+                      : 'grid-cols-[minmax(0,1fr)_auto]',
                     draggedId &&
                       'transition-transform duration-150 ease-out motion-reduce:transition-none',
                     draggedId === item.id && 'opacity-25'
@@ -284,42 +302,44 @@ const ComposerMessageQueueContent = ({
                   data-queue-item-id={item.id}
                   data-testid="composer-queue-item"
                 >
-                  <button
-                    type="button"
-                    disabled={busy}
-                    className={cn(
-                      queueActionClassName,
-                      'w-7 touch-none cursor-grab px-0 select-none active:cursor-grabbing'
-                    )}
-                    aria-label={t('Reorder queued message {{index}}', { index: index + 1 })}
-                    title={t('Drag or use arrow keys to reorder')}
-                    onPointerCancel={finishDrag}
-                    onPointerDown={(event) => {
-                      if (event.isPrimary === false || event.button !== 0) return
-                      event.currentTarget.setPointerCapture?.(event.pointerId)
-                      pointerDragRef.current = {
-                        pointerId: event.pointerId,
-                        itemId: item.id,
-                        startY: event.clientY,
-                        height:
-                          event.currentTarget.closest('li')?.getBoundingClientRect().height ?? 0,
-                        active: false,
-                        target: undefined
-                      }
-                    }}
-                    onPointerMove={movePointerDrag}
-                    onPointerUp={endPointerDrag}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-                      event.preventDefault()
-                      actions.move(item.id, event.key === 'ArrowUp' ? 'up' : 'down')
-                    }}
-                  >
-                    <GripVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                  </button>
+                  {items.length > 1 ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      className={cn(
+                        queueActionClassName,
+                        'w-7 touch-none cursor-grab px-0 select-none active:cursor-grabbing'
+                      )}
+                      aria-label={t('Reorder queued message {{index}}', { index: index + 1 })}
+                      title={t('Drag or use arrow keys to reorder')}
+                      onPointerCancel={finishDrag}
+                      onPointerDown={(event) => {
+                        if (event.isPrimary === false || event.button !== 0) return
+                        event.currentTarget.setPointerCapture?.(event.pointerId)
+                        pointerDragRef.current = {
+                          pointerId: event.pointerId,
+                          itemId: item.id,
+                          startY: event.clientY,
+                          height:
+                            event.currentTarget.closest('li')?.getBoundingClientRect().height ?? 0,
+                          active: false,
+                          target: undefined
+                        }
+                      }}
+                      onPointerMove={movePointerDrag}
+                      onPointerUp={endPointerDrag}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+                        event.preventDefault()
+                        actions.move(item.id, event.key === 'ArrowUp' ? 'up' : 'down')
+                      }}
+                    >
+                      <GripVertical className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  ) : null}
 
                   <div className="min-w-0 overflow-hidden px-1">
-                    <p className="truncate text-[12px] leading-4 text-text-000" title={preview}>
+                    <p className="truncate text-[13px] leading-5 text-text-000" title={preview}>
                       {preview}
                     </p>
                     {item.attachmentCount > 0 ? (
@@ -327,13 +347,25 @@ const ComposerMessageQueueContent = ({
                         {t('Attachments: {{count}}', { count: item.attachmentCount })}
                       </p>
                     ) : null}
-                    {item.error ? (
-                      <p
-                        data-queue-error
-                        className="mt-0.5 text-[11px] leading-4 text-status-failure-foreground dark:text-status-failure-dark-foreground"
-                      >
-                        {queueErrorText(t, item.error)}
-                      </p>
+                    {failure ? (
+                      <div className="text-[11px] leading-4 text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                        {failure.detail ? (
+                          <details>
+                            <summary
+                              data-queue-error
+                              className="cursor-pointer"
+                              title={t('Error details')}
+                            >
+                              {failure.message}
+                            </summary>
+                            <p className="mt-1 whitespace-pre-wrap break-words text-text-300">
+                              {redactSensitiveText(failure.detail)}
+                            </p>
+                          </details>
+                        ) : (
+                          <p data-queue-error>{failure.message}</p>
+                        )}
+                      </div>
                     ) : item.deferredUntilIdle ? (
                       <p className="mt-0.5 text-[11px] leading-4 text-text-300">
                         {t('Queued message will send after the current run finishes.')}

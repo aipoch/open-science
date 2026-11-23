@@ -12,6 +12,12 @@ export type StoragePathCapabilities = {
 
 export function inspectPath(path: string): StoragePathCapabilities
 
+/** Request-scoped Windows directory binding. Never persisted or shared across workers. */
+export type DirectoryLease = { readonly __directoryLease: unique symbol }
+
+export function openDirectoryLease(path: string, dev: bigint, ino: bigint): DirectoryLease
+export function closeDirectoryLease(lease: DirectoryLease): void
+
 export function removeAnchoredFile(
   rootPath: string,
   relativeParentPath: string,

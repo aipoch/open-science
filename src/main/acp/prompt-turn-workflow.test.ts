@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import { NotebookExecutionIntent, withNotebookExecutionIntent } from '../notebook/execution-intent'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
 import { opencodeFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
@@ -51,6 +52,7 @@ type Harness = {
   }
   finalizer: Mock<AcpPromptOutcomeFinalizer['finalize']>
   interactions: {
+    isCancellationAccepted: Mock<AcpSessionInteractionOwner['isCancellationAccepted']>
     current: Mock<AcpSessionInteractionOwner['current']>
     reservePrompt: Mock<AcpSessionInteractionOwner['reservePrompt']>
     activatePrompt: Mock<AcpSessionInteractionOwner['activatePrompt']>
@@ -193,6 +195,7 @@ const createHarness = (
     }
   }))
   const interactions: Harness['interactions'] = {
+    isCancellationAccepted: vi.fn(owner.isCancellationAccepted.bind(owner)),
     current: vi.fn((sessionId: string) => owner.current(sessionId)),
     reservePrompt: vi.fn((request: Parameters<typeof owner.reservePrompt>[0]) => {
       journal.push('reserve')
@@ -824,7 +827,10 @@ describe('AcpPromptTurnWorkflow', () => {
       framework,
       providerSessionId: 'provider-1',
       cwd: '/session',
-      skillRuntimeAllowlist: ['mcp-pubmed']
+      skillRuntimeAllowlist: ['mcp-pubmed'],
+      request: expect.objectContaining({ sessionId: 's1' }),
+      signal: expect.any(AbortSignal),
+      assertCurrent: expect.any(Function)
     })
     expect(frameworkBeforePromptDispatch).toHaveBeenCalledWith({
       connection: {},
@@ -1193,6 +1199,36 @@ describe('AcpPromptTurnWorkflow', () => {
     await handles.disposeArtifact()
     expect(harness.artifacts.dispose).toHaveBeenCalledWith(expect.any(Object))
   })
+
+  it.each(
+    (['admission-error', 'preparation-cancelled'] as const).flatMap((phase) =>
+      [true, false].map((freshUserIntent) => ({ phase, freshUserIntent }))
+    )
+  )(
+    'retains authority only for an inherited context after $phase (fresh: $freshUserIntent)',
+    async ({ phase, freshUserIntent }) => {
+      const intent = new NotebookExecutionIntent({ projectId: 'project-1', sessionId: 's1' })
+      if (freshUserIntent) intent.prepareUserExecution()
+      const harness = createHarness(
+        phase === 'admission-error'
+          ? {
+              beginRuntimeSessionTurn: async () => {
+                throw new Error('durable admission failed')
+              }
+            }
+          : { cancellationCheckpoint: async () => 'cancelled' }
+      )
+      const run = harness.workflow.run(withNotebookExecutionIntent(request(), intent), {
+        kind: 'user'
+      })
+      if (phase === 'admission-error') await expect(run).rejects.toThrow('durable admission failed')
+      else await expect(run).resolves.toEqual({ stopReason: 'cancelled' })
+      expect(harness.executor).not.toHaveBeenCalled()
+      if (freshUserIntent)
+        expect(() => intent.assertExecutable()).toThrow('Execution was not started')
+      else expect(() => intent.assertExecutable()).not.toThrow()
+    }
+  )
 
   it('turns execution failure into one finalization outcome with pending Skill state', async () => {
     const failure = new Error('provider failed')

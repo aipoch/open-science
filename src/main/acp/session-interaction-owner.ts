@@ -76,6 +76,7 @@ export interface AcpSessionInteractionSnapshotEntry {
 }
 
 export interface AcpSessionInteractionCancellationRequest {
+  readonly userInitiated?: boolean
   readonly sessionId: string
   readonly notify: () => Promise<void>
   readonly onAccepted: () => void
@@ -107,12 +108,13 @@ interface ActiveSessionInteraction {
   readonly promptProvenance?: {
     value: AcpPromptRequest['provenanceContext']
   }
-  cancelled: boolean
+  cancelledBy?: 'user' | 'runtime'
   modelTurnCount: number
   readonly referencedSessionIds: Set<string>
 }
 
 interface TerminalSettlement {
+  readonly userStopped: boolean
   readonly kind: AcpSessionInteractionTerminalKind
   readonly timestamp: number
   readonly modelTurnCount: number
@@ -120,6 +122,7 @@ interface TerminalSettlement {
 }
 
 interface CancellationAttempt {
+  userInitiated: boolean
   readonly scope: AcpSessionInteractionScope | undefined
   readonly rejectUnconfirmed: (error: Error) => void
   readonly confirmTerminal: () => void
@@ -218,6 +221,7 @@ export class AcpSessionInteractionOwner {
     const active = this.activeInteractions.get(scope.sessionId)
     if (active?.scope !== scope) return false
     this.terminalSettlements.set(scope, {
+      userStopped: active.cancelledBy === 'user',
       kind,
       timestamp: this.now(),
       modelTurnCount: active.modelTurnCount,
@@ -273,9 +277,15 @@ export class AcpSessionInteractionOwner {
     return settled
   }
 
-  isCancellationAccepted(scope: AcpSessionInteractionScope): boolean {
+  isCancellationAccepted(scope: AcpSessionInteractionScope, source?: 'user'): boolean {
+    if (source && scope.kind === 'prompt') {
+      const terminal = this.terminalSettlements.get(scope)
+      if (terminal) return terminal.userStopped
+    }
     const active = this.activeInteractions.get(scope.sessionId)
-    return active?.scope === scope && active.cancelled
+    return (
+      active?.scope === scope && (source ? active.cancelledBy === source : !!active.cancelledBy)
+    )
   }
 
   async cancellationCheckpoint(scope: AcpSessionInteractionScope): Promise<'active' | 'cancelled'> {
@@ -295,6 +305,7 @@ export class AcpSessionInteractionOwner {
     // Repeated Stop requests share one notification and deadline for the captured interaction.
     const existing = this.pendingCancellations.get(request.sessionId)
     if (existing && existing.scope === scope) {
+      if (request.userInitiated) existing.userInitiated = true
       await existing.promise
       if ('error' in existing) throw existing.error
       return
@@ -315,6 +326,7 @@ export class AcpSessionInteractionOwner {
     let settle!: () => void
     const attempt: CancellationAttempt = {
       scope,
+      userInitiated: request.userInitiated === true,
       rejectUnconfirmed,
       confirmTerminal,
       promise: new Promise<void>((resolve) => {
@@ -354,7 +366,8 @@ export class AcpSessionInteractionOwner {
         (this.activeInteractions.get(request.sessionId) === active ||
           this.pendingPromptReservations.get(request.sessionId) === active)
       ) {
-        active.cancelled = true
+        if (attempt.userInitiated) active.cancelledBy = 'user'
+        else active.cancelledBy ??= 'runtime'
       }
       accepted = true
     } catch (error) {
@@ -433,7 +446,6 @@ export class AcpSessionInteractionOwner {
       scope,
       abortController,
       promptProvenance,
-      cancelled: false,
       modelTurnCount: 0,
       referencedSessionIds: new Set(request.referencedSessionIds ?? [])
     })
@@ -503,7 +515,6 @@ export class AcpSessionInteractionOwner {
       scope,
       abortController,
       ...(promptProvenance ? { promptProvenance } : {}),
-      cancelled: false,
       modelTurnCount: 0,
       referencedSessionIds: new Set(
         request.kind === 'prompt' ? (request.referencedSessionIds ?? []) : []

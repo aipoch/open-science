@@ -1,3 +1,8 @@
+import {
+  notebookExecutionIntent,
+  markNotebookExecutionIntent,
+  type NotebookExecutionIntent
+} from '../notebook/execution-intent'
 import { createHash } from 'node:crypto'
 
 import {
@@ -88,6 +93,7 @@ const questionContinuationMessage = (
 }
 
 class DelegatedUserQuestionOwner {
+  private readonly executionIntents = new Map<string, NotebookExecutionIntent>()
   constructor(private readonly options: DelegatedUserQuestionOwnerOptions) {}
 
   async request(
@@ -165,6 +171,8 @@ class DelegatedUserQuestionOwner {
       draftAnswers: [],
       draftQuestionIndex: 0
     })
+    const intent = notebookExecutionIntent(caller)
+    if (intent) this.executionIntents.set(requestId, intent)
     return { action: 'pending' }
   }
 
@@ -303,7 +311,11 @@ class DelegatedUserQuestionOwner {
           'delegated continuation changed before launch'
         )
       }
-      this.options.launchContinuation({ child: continued, session, reservation, message })
+      const launch = { child: continued, session, reservation, message }
+      const intent = this.executionIntents.get(request.requestId)
+      if (intent) markNotebookExecutionIntent(launch, intent)
+      this.executionIntents.delete(request.requestId)
+      this.options.launchContinuation(launch)
     } catch (error) {
       try {
         if (committed) {

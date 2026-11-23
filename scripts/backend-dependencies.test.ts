@@ -13,8 +13,13 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { externalAcpAvailable } from '../test/acp-agent-runtime'
+import { compactDesktopPackageModules } from './desktop-package-modules.mjs'
+import { shareDesktopPdfLibPako } from './desktop-pdf-lib.mjs'
 import {
   assertBackendImports,
   backendDependencyIncludes,
@@ -34,6 +39,65 @@ import {
 it('stages dynamically loaded connector providers in the desktop backend', () => {
   expect(desktopExternalClosure(process.cwd())).toContain('@aipoch/connector-builtins')
   expect(desktopExternalClosure(process.cwd())).toContain('diff')
+})
+
+it('bundles desktop JS while preserving incoming type references and ambient declarations', async () => {
+  const stage = await mkdtemp(join(tmpdir(), 'desktop-module-stage-'))
+  const pkg = join(stage, 'node_modules/@aipoch/pdf-translation')
+  const dist = join(pkg, 'dist')
+  try {
+    await mkdir(dist, { recursive: true })
+    await writeFile(
+      join(pkg, 'package.json'),
+      JSON.stringify({
+        name: '@aipoch/pdf-translation',
+        type: 'module',
+        exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } }
+      })
+    )
+    for (const [file, contents] of Object.entries({
+      'index.js': "export { answer } from './internal.js'",
+      'internal.js': 'export const answer = 42',
+      'checkpoint-store.js': 'export {}',
+      'local-contract.js': 'export {}',
+      'index.d.ts': "export type { Answer } from './public.js'",
+      'public.d.ts': 'export type Answer = number',
+      'internal.d.ts': 'export declare const answer: number',
+      'referenced.d.ts': 'export type External = string',
+      'ambient.d.ts': 'interface DesktopGlobal {}'
+    }))
+      await writeFile(join(dist, file), contents)
+    await writeFile(
+      join(stage, 'consumer.d.ts'),
+      "export type { External } from './node_modules/@aipoch/pdf-translation/dist/referenced.js'"
+    )
+    await compactDesktopPackageModules(stage, new Map([[pkg, '1']]))
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        "import { answer } from '@aipoch/pdf-translation'; console.log(answer)"
+      ],
+      { cwd: stage }
+    )
+    expect(stdout.trim()).toBe('42')
+    const files = await readdir(dist)
+    expect(files).toEqual(
+      expect.arrayContaining([
+        'index.d.ts',
+        'public.d.ts',
+        'referenced.d.ts',
+        'ambient.d.ts',
+        'local-contract.js',
+        'checkpoint-store.js'
+      ])
+    )
+    expect(files).not.toContain('internal.d.ts')
+    expect(files).not.toContain('internal.js')
+  } finally {
+    await rm(stage, { recursive: true, force: true })
+  }
 })
 
 describe('generated native Prisma payload', () => {
@@ -204,11 +268,61 @@ it('preserves unsupported and non-adjacent maps and untouched package versions',
 })
 
 describe('desktop-only dependency contents', () => {
+  it('shares identical PDF compression code without changing backend root resolution', async () => {
+    const stage = await realpath(await mkdtemp(join(tmpdir(), 'desktop-pako-')))
+    const modules = join(stage, 'node_modules')
+    const fonts = join(modules, '@pdf-lib/standard-fonts')
+    const upng = join(modules, '@pdf-lib/upng')
+    const copies = [fonts, upng].map((dir) => join(dir, 'node_modules/pako'))
+    const installed = new Map([
+      [fonts, '1.0.0'],
+      [upng, '1.0.1']
+    ])
+    const resolvePako = (dir: string): string =>
+      createRequire(join(dir, 'index.cjs')).resolve('pako')
+    try {
+      for (const dir of [...copies, join(modules, 'pako')]) {
+        await mkdir(dir, { recursive: true })
+        await writeFile(join(dir, 'index.js'), 'original')
+      }
+      for (const copy of copies) installed.set(copy, '1.0.11')
+      await writeFile(join(copies[1], 'index.js'), 'modified')
+      await shareDesktopPdfLibPako(stage, installed)
+      expect(await readFile(join(copies[1], 'index.js'), 'utf8')).toBe('modified')
+      await writeFile(join(copies[1], 'index.js'), 'original')
+      const sibling = join(modules, '@pdf-lib/another-consumer')
+      installed.set(sibling, '1')
+      await shareDesktopPdfLibPako(stage, installed)
+      expect(await stat(copies[1])).toBeDefined()
+      installed.delete(sibling)
+      await shareDesktopPdfLibPako(stage, installed)
+      const shared = join(modules, '@pdf-lib/node_modules/pako')
+      expect(installed.get(shared)).toBe('1.0.11')
+      for (const dir of [fonts, upng]) expect(resolvePako(dir)).toBe(join(shared, 'index.js'))
+      expect(resolvePako(stage)).toBe(join(modules, 'pako/index.js'))
+    } finally {
+      await rm(stage, { recursive: true, force: true })
+    }
+  })
+
   it.each(['/', '\\'])(
     'prunes audited unused distributions but preserves runtime assets (%s)',
     (separator) => {
       for (const [name, version, removed, retained] of [
+        ['@pdf-lib/standard-fonts', '1.0.0', 'es/Font.js', 'lib/Font.js'],
+        ['@pdf-lib/upng', '1.0.1', 'dist/UPNG.js', 'cjs/UPNG.js'],
+        ['@xmldom/xmldom', '0.8.15', 'lib/.eslintrc.yml', 'lib/dom.js'],
+        ['ajv', '8.20.0', '.runkit_example.js', 'dist/ajv.js'],
+        ['diff', '9.0.0', 'dist/diff.min.js', 'libesm/index.js'],
+        ['fast-uri', '3.1.9', 'benchmark/benchmark.mjs', 'lib/utils.js'],
+        ['is-url', '1.2.4', '.travis.yml', 'index.js'],
+        ['json-schema-traverse', '1.0.0', 'spec/fixtures/schema.js', 'index.js'],
+        ['papaparse', '5.7.0', 'player/player.js', 'papaparse.js'],
+        ['tesseract.js', '6.0.1', 'src/worker/browser/index.js', 'src/worker/node/index.js'],
+        ['tesseract.js', '6.0.1', 'dist/worker.min.js', 'dist/worker.min.js.LICENSE.txt'],
+        ['zlibjs', '0.3.1', 'bin/node-zlib.dev.js', 'bin/node-zlib.js'],
         ['openchemlib', '9.25.0', 'dist/openchemlib.debug.js', 'dist/openchemlib.js'],
+        ['tesseract.js-core', '6.1.2', 'tesseract-core.wasm.js', 'tesseract-core.wasm'],
         ['web-tree-sitter', '0.26.13', 'debug/web-tree-sitter.wasm', 'web-tree-sitter.wasm'],
         ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.js', 'dist/cpexcel.js'],
         ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.map', 'xlsx.js'],
@@ -338,7 +452,7 @@ describe('desktop-only dependency contents', () => {
     }
   }, 40_000)
 
-  it('rejects an external consumer of bundled i18next in the real staging command', async () => {
+  it('rejects optional agent runtimes and external consumers of bundled i18next during staging', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-bundle-consumer-'))
     const put = async (file: string, content: string): Promise<void> => {
       await mkdir(dirname(join(root, file)), { recursive: true })
@@ -350,11 +464,19 @@ describe('desktop-only dependency contents', () => {
         'scripts/backend-dependencies.mjs',
         'scripts/build-notebook-host.mjs',
         'scripts/desktop-pdf-lib.mjs',
+        'scripts/desktop-pdfjs.mjs',
+        'scripts/desktop-pdfjs-reader.mjs',
         'scripts/desktop-dependency-chains.mjs',
         'scripts/sync-file-evidence-codec.mjs',
-        'src/main/artifacts/file-evidence-codec.mjs'
+        'src/main/artifacts/file-evidence-codec.mjs',
+        'resources/claude-acp/@agentclientprotocol+claude-agent-acp+0.70.0.patch'
       ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
+      // These helpers take explicit staging roots and resolve their build tools from the checkout.
+      for (const name of ['pack-web-assets', 'desktop-film-compiler', 'desktop-package-modules']) {
+        const helper = pathToFileURL(join(process.cwd(), 'scripts', name + '.mjs')).href
+        await put(`scripts/${name}.mjs`, `export * from ${JSON.stringify(helper)}`)
+      }
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
       await put('packages/open-science/package.json', '{}')
       await put('out/backend/dependencies.json', '[]')
@@ -374,6 +496,26 @@ describe('desktop-only dependency contents', () => {
         code: 1,
         stderr: expect.stringContaining('desktop-backend-build')
       })
+      for (const [name, separator] of [
+        ['@agentclientprotocol/codex-acp', '\\'],
+        ['@earendil-works/pi-coding-agent', '/'],
+        ['@tencent-ai/codebuddy-code', '/'],
+        ['opencode-linux-x64-baseline', '/'],
+        ['@anthropic-ai/claude-code-darwin-arm64', '/']
+      ]) {
+        const input = `node_modules/consumer/node_modules/${name}/index.js`.replaceAll(
+          '/',
+          separator
+        )
+        await put(
+          'out/desktop-backend-build/dependencies.json',
+          JSON.stringify([{ inputs: { [input]: {} }, outputs: {} }])
+        )
+        await expect(stage()).rejects.toMatchObject({
+          code: 1,
+          stderr: expect.stringContaining('Optional agent runtime leaked into the backend: ' + name)
+        })
+      }
       await put(
         'out/desktop-backend-build/dependencies.json',
         JSON.stringify([
@@ -385,10 +527,12 @@ describe('desktop-only dependency contents', () => {
       )
       const platform = { win32: 'win', darwin: 'mac', linux: 'linux' }[process.platform]
       for (const file of [
+        'resources/claude-acp/package.json',
         'out/pi-bootstrap/bootstrap.mjs',
         'out/pi-bootstrap/permission-guard.mjs',
         'out/pi-bootstrap/package-lock.json',
         'out/web/index.html',
+        'out/web/assets/module.js',
         'LICENSE',
         'packages/open-science/README.md',
         'packages/open-science/CLI.md',
@@ -402,6 +546,16 @@ describe('desktop-only dependency contents', () => {
           : [])
       ])
         await put(file, 'synthetic fixture')
+      await put(
+        'node_modules/consumer/package.json',
+        JSON.stringify({ name: 'consumer', version: '1', dependencies: { '@openai/codex': '1' } })
+      )
+      await expect(stage()).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          'Optional agent runtime leaked into the backend: @openai/codex'
+        )
+      })
       await put(
         'node_modules/consumer/package.json',
         JSON.stringify({ name: 'consumer', version: '1', dependencies: { i18next: '1' } })
@@ -491,8 +645,10 @@ describe('desktop-only dependency contents', () => {
     ).toEqual(['@anthropic-ai/sdk'])
   })
 
-  it('runs Claude transcript and SDK MCP behavior with API SDK loading forbidden', async () => {
-    const script = `
+  it.runIf(externalAcpAvailable('claude'))(
+    'runs Claude transcript and SDK MCP behavior with API SDK loading forbidden',
+    async () => {
+      const script = `
       import assert from 'node:assert/strict'
       import { registerHooks } from 'node:module'
       registerHooks({ resolve(specifier, context, next) {
@@ -501,8 +657,17 @@ describe('desktop-only dependency contents', () => {
         return next(specifier, context)
       } })
       await assert.rejects(import('@anthropic-ai/sdk'), /Type-only API SDK/)
-      const sdk = await import('@anthropic-ai/claude-agent-sdk')
-      const acp = await import('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js')
+      const { createRequire } = await import('node:module')
+      const { pathToFileURL } = await import('node:url')
+      const require = createRequire(process.env.CLAUDE_ACP_PATH)
+      const sdk = await import(
+        pathToFileURL(require.resolve('@anthropic-ai/claude-agent-sdk')).href
+      )
+      const acp = await import(
+        pathToFileURL(
+          require.resolve('@agentclientprotocol/claude-agent-acp/dist/acp-agent.js')
+        ).href
+      )
       assert.equal(typeof acp.ClaudeAcpAgent, 'function')
       const sessionId = '11111111-1111-4111-8111-111111111111'
       const messages = await sdk.getSessionMessages(sessionId, {
@@ -537,13 +702,15 @@ describe('desktop-only dependency contents', () => {
       }
       console.log('Claude runtime without API SDK: PASS')
     `
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      ['--input-type=module', '--eval', script],
-      { timeout: 15_000 }
-    )
-    expect(stdout).toContain('Claude runtime without API SDK: PASS')
-  }, 20_000)
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        ['--input-type=module', '--eval', script],
+        { timeout: 15_000 }
+      )
+      expect(stdout).toContain('Claude runtime without API SDK: PASS')
+    },
+    20_000
+  )
 
   it('omits only audited renderer roots and keeps unclassified and dynamic runtime dependencies', () => {
     const dependencies = {
@@ -956,10 +1123,30 @@ describe('standalone dependency boundary', () => {
     'electron',
     'electron/main',
     'electron-updater',
+    'electron-to-chromium-extra',
     '@electron-toolkit/utils',
     '@electron/remote'
   ])('forbids %s in the package closure', (name) => {
     expect(isElectronPackage(name)).toBe(true)
+  })
+  it.each([
+    'electron-to-chromium',
+    'electron-to-chromium/versions',
+    'electron-to-chromium/versions.js'
+  ])('allows Babel version mapping data from %s without an Electron runtime', (name) => {
+    expect(isElectronPackage(name)).toBe(false)
+    expect(() =>
+      assertBackendImports(
+        [
+          {
+            inputs: { 'node_modules/browserslist/index.js': { imports: [{ path: name }] } },
+            outputs: { 'index.cjs': { imports: [{ path: name, external: true }] } }
+          }
+        ],
+        {},
+        new Set(['electron-to-chromium'])
+      )
+    ).not.toThrow()
   })
   it('rejects an Electron import in any reachable worker or transitive source', () => {
     expect(() =>

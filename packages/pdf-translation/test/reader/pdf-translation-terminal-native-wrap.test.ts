@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { it } from 'vitest'
 import {
   groupPdfTranslationPages,
+  type PdfLayoutPage,
   type PdfLayoutTextItem,
   type PdfTranslationLayout
 } from '../../src/reader/layout.js'
@@ -33,6 +34,302 @@ function translationUnits(items: PdfLayoutTextItem[]): PdfTranslationLayout['uni
     pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
   }).units
 }
+
+it.each([0, 3])('attaches a centered title identifier before the byline (shift=%s)', (shift) => {
+  const draft = { size: 8, hasEOL: false }
+  const title = { fontName: 'title' }
+  const author = { size: 9, hasEOL: false }
+  const line = item('', 0, 0, 0, { size: 0 })
+  const units = translationUnits([
+    item('Draft version April 5, 2025', 60, 733, 130, draft),
+    line,
+    item('Typeset using LATEX default style in ArticleTools', 60, 724, 141, {
+      ...draft,
+      fontName: 'small'
+    }),
+    line,
+    item('Where Does the Signal Peak? Examining Weak Contributions with', 80, 676, 452, title),
+    item('GridTOOLS-5b', 270 + shift, 663.5, 72, { ...title, hasEOL: false }),
+    line,
+    item('Ann Reader', 160, 643.5, 77, author),
+    item(',', 244, 643.5, 3, author),
+    item('1', 247, 647.3, 4, { ...author, size: 6 }),
+    item('and Rob Writer', 255, 643.5, 136, { ...author, hasEOL: true }),
+    line,
+    item('1 Institute of Field Measurements', 220, 614, 172, {
+      fontName: 'affiliation',
+      size: 8
+    }),
+    item('ABSTRACT', 277, 556, 58),
+    item('Our observations reveal a smooth response in the selected signal.', 85, 541, 441),
+    item('The reported measurements match the independent control experiment.', 85, 529, 441)
+  ])
+  const headline = units.find((unit) => unit.items.includes('1:4'))
+  assert.equal(headline?.source.endsWith('with GridTOOLS-5b'), shift === 0)
+  assert.equal(headline?.items.includes('1:5'), shift === 0)
+  assert.equal(headline?.items.includes('1:7'), false)
+})
+
+it.each([0, 4])(
+  'preserves a mixed native run that closes a mathematical interval (%s)',
+  (shift) => {
+    const roman = { hasEOL: false }
+    const math = { ...roman, fontName: 'symbol' }
+    const units = translationUnits([
+      item('We find that the map', 72, 475, 97, roman),
+      item('ψ', 173, 475, 6, math),
+      item(': [0', 183, 475, 14, roman),
+      item(',', 197, 475, 3, math),
+      item('1]', 202, 475, 8, roman),
+      item('→', 213, 475, 10, math),
+      item('', 72, 460.5, 0, { size: 0 }),
+      item('[0', 72, 460.5, 8, roman),
+      item(',', 80, 460.5, 3, math),
+      item('∞', 85, 460.5, 10, math),
+      item(') given by', 95 + shift, 460.5, 44, roman),
+      item('ψ(p) = p + 1.', 245, 448.5, 65, math)
+    ])
+    const tail = units.find((u) => u.items.includes('1:10'))
+    assert.equal(tail?.source, ') given by')
+    assert.equal(tail?.sourceOnly === true, shift === 0)
+    assert.equal(tail?.items.length, 1)
+  }
+)
+
+it.each([true, false])(
+  'keeps a repeated citation imprint and folio native (repeated=%s)',
+  (same) => {
+    const credit = { fontName: 'credit', size: 8, hasEOL: false }
+    const code = { ...credit, fontName: 'code' }
+    const pages = [1, 2, 3].map((page) => ({
+      page,
+      width: 595,
+      height: 842,
+      rotation: 0,
+      items: [
+        item('Several independent observations provide context for the experiment.', 150, 98, 390),
+        item(
+          same || page < 3 ? 'Example & Sample, (2025).' : 'Writer & Reader, (2025).',
+          22,
+          52,
+          96,
+          credit
+        ),
+        item('Study_Tools', 122, 52, 63, code),
+        item(': A quick,', 185, 52, 30, credit),
+        item('JIT', 217, 52, 13, code),
+        item('-based Python tool for the supported measurements of the', 230, 52, 312, {
+          ...credit,
+          hasEOL: true
+        }),
+        item('collection of measurements.', 22, 42.5, 179, credit),
+        item(String(page), 548, 52, 5, { fontName: 'folio' })
+      ]
+    }))
+    const { units } = groupPdfTranslationPages({ pages })
+    const furniture = units.filter((unit) =>
+      unit.items.some((key) => Number(key.split(':')[1]) > 0)
+    )
+    assert.equal(furniture.length, 6)
+    assert.ok(furniture.every((unit) => Boolean(unit.sourceOnly) === same))
+    assert.ok(units.filter((unit) => !furniture.includes(unit)).every((unit) => !unit.sourceOnly))
+  }
+)
+
+it.each([false, true])(
+  'holds a mixed fraction sentence with attached scripts (shifted=%s)',
+  (shifted) => {
+    const y = 730
+    const math = { fontName: 'math', hasEOL: false }
+    const script = { fontName: 'script', size: 7, hasEOL: false }
+    const number = { ...script, fontName: 'numeral' }
+    const items = [
+      item('2', 557, 756, 5),
+      item('with', 54, y, 19, { hasEOL: false }),
+      item('V', 76, y, 7.5, math),
+      item('q', 84, y + (shifted ? 1.4 : 3.6), 4.3, { ...script, hasEOL: true }),
+      item('r', 83.5, y - 2.6, 2.8, script),
+      item('=', 92, y, 7.6, { ...math, fontName: 'relation' }),
+      item('2', 103.5, y + 3.9, 4, { ...number, hasEOL: true }),
+      item('3', 103.5, y - 3.4, 4, number),
+      item('ε', 109, y, 4, math),
+      item('rmn', 113, y - 1.5, 10.5, script),
+      item('G', 124.2, y, 6.4, math),
+      item('q', 132, y + 3.6, 4.3, { ...script, hasEOL: true }),
+      item('mn', 130.6, y - 2.8, 7.9, script),
+      item('. The selected time', 139.1, y, 81, { hasEOL: false }),
+      item('t', 223, y, 5, math),
+      item('remains fixed throughout', 232, y, 67),
+      item('the experiment.', 54, 718, 78),
+      item('The choice of this parameter reduces the error at each step.', 64, 706, 235),
+      item('An independent check supplies the estimates in the other case.', 317, 710, 233)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 2, width: 612, height: 792, rotation: 0, items }],
+      pageCount: 2
+    })
+    const owner = units.find((unit) => unit.items.includes('2:1'))
+    assert.match(owner?.source ?? '', /2\/3 εrmnG qmn\. The selected time/u)
+    assert.equal(owner?.sourceOnly, shifted ? undefined : true)
+    assert.equal(units.find((unit) => unit.items.includes('2:17'))?.sourceOnly, undefined)
+  }
+)
+
+it.each([false, true])(
+  'keeps a hanging condition before its displayed clause (shifted=%s)',
+  (shifted) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      w: number,
+      fontName = 'body',
+      hasEOL = true
+    ): ReturnType<typeof item> => item(str, x, y, w, { fontName, hasEOL, size: 12 })
+    const units = translationUnits([
+      row('The prior observations independently inform our theoretical model.', 65, 586, 466),
+      row('Problem 2.', 65, 538, 64, 'heading', false),
+      row('Find a function', 135, 538, 85, 'italic', false),
+      row('g', 225, 538, 8, 'math', false),
+      row('such that every system', 238, 538, 126, 'italic', false),
+      row('S', 368, 538, 8, 'math', false),
+      row(' = (', 380, 538, 17, 'body', false),
+      row('X, Y', 397, 538, 30, 'math', false),
+      row(')', 427, 538, 4.5, 'body', false),
+      row('satisfying the', 436, 538, 95, 'italic'),
+      row('condition', 65, 524, 48, 'italic'),
+      row('(C2) every point of', shifted ? 70 : 65, 502, 91, 'italic', false),
+      row('S', 161, 502, 8, 'math', false),
+      row('is selected,', 174, 502, 98, 'italic'),
+      row('satisfies the required bound.', 65, 467, 147, 'italic')
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:1'))
+    assert.equal(owner?.source.endsWith('satisfying the condition'), !shifted)
+    assert.equal(owner?.items.includes('1:10'), !shifted)
+    assert.equal(owner?.items.includes('1:11'), false)
+  }
+)
+
+function variablePredicate(offset = 0): PdfTranslationLayout['units'] {
+  return translationUnits([
+    item('The first observations independently predict a smooth response', 64, 445, 235),
+    item('in the fitted data throughout the selected measurement range', 54, 433, 245),
+    item('under the same conditions, as shown in Fig. 3. We solve', 54, 421, 245),
+    item('for', 54, 409, 12, { hasEOL: false }),
+    item('λ', 69, 409 + offset, 6, { fontName: 'math', hasEOL: false }),
+    item('as a function of time to obtain', 79, 409, 158, { hasEOL: false }),
+    item('λ(t) = 2/A', 140, 397, 58, { fontName: 'math' })
+  ])
+}
+
+it('keeps a wrapped variable predicate together before its displayed equation', () => {
+  const [prose, display] = variablePredicate()
+  assert.match(prose.source, /We solve for λ as a function of time to obtain$/u)
+  assert.deepEqual(prose.items, ['1:0', '1:1', '1:2', '1:3', '1:4', '1:5'])
+  assert.equal(prose.fragments.length, 3)
+  assert.equal(display.source, 'λ(t) = 2/A')
+  assert.equal(display.preserve, 'formula')
+  assert.equal(display.sourceOnly, true)
+})
+
+it('keeps a variable on a different baseline outside the wrapped predicate', () => {
+  const units = variablePredicate(5)
+  assert.ok(units.every((unit) => !(unit.items.includes('1:2') && unit.items.includes('1:4'))))
+})
+
+function wrappedWordAfterMeasurement(witness: string): PdfTranslationLayout['units'] {
+  return translationUnits([
+    item('1.5 K', 54, 450, 23, { hasEOL: false }),
+    item('; Rose 2003). Unexpectedly, no trans-', 84, 450, 214),
+    item('mission through the material within the validated range', 54, 439.5, 244),
+    item('and repeated every measurement with the same settings.', 54, 429, 244),
+    item('Every monitored channel was included in the comparison.', 54, 418.5, 244),
+    item(`The only observed ${witness} matched the untreated control.`, 54, 386, 244)
+  ])
+}
+
+it('joins a native word wrap after a short measurement', () => {
+  const [joined, witness] = wrappedWordAfterMeasurement('transmission')
+  assert.match(joined.source, /Unexpectedly, no transmission through/u)
+  assert.deepEqual(joined.items, ['1:0', '1:1', '1:2', '1:3', '1:4'])
+  assert.equal(joined.fragments.length, 2)
+  assert.deepEqual(witness.items, ['1:5'])
+})
+
+it('keeps both rows separate without a witness for the joined word', () => {
+  const [lead, tail] = wrappedWordAfterMeasurement('signal')
+  assert.match(lead.source, /no trans-$/u)
+  assert.match(tail.source, /^mission through/u)
+})
+
+function quantifiedClause(displayX = 72): PdfTranslationLayout['units'] {
+  const math = { fontName: 'math', hasEOL: false },
+    script = { ...math, size: 8 },
+    body = { size: 12 },
+    open = { ...body, hasEOL: false }
+  return translationUnits([
+    item('there are', 72, 322, 45.6, open),
+    item('(', 122, 332, 5.5, { ...math, size: 12 }),
+    item('j+1', 127.5, 328, 14.6, { ...script, hasEOL: true }),
+    item('j', 132, 318, 5.2, script),
+    item(')', 142.1, 332, 5.5, { ...math, size: 12 }),
+    item('2', 149.3, 322, 5.9, open),
+    item('j−2', 155.2, 326, 25.5, script),
+    item('members in the family. This shows that the number of all subsets', 185, 322, 338, body),
+    item('of [3', 72, 308, 22.4, open),
+    item('m', 94.4, 308, 7, { ...math, size: 12 }),
+    item('] is', 101.4, 308, 15, body),
+    item('(7)', displayX, 274, 15, open),
+    item('F(m) = 1', 135, 274, 61, { ...math, size: 12 })
+  ])
+}
+
+it('keeps a quantified clause attached to its sentence before the display', () => {
+  const units = quantifiedClause()
+  const joined = units.find((unit) => unit.items.includes('1:7'))
+  assert.match(joined?.source ?? '', /the number of all subsets of \[3m\] is$/u)
+  assert.deepEqual(joined?.items, ['1:7', '1:8', '1:9', '1:10'])
+  assert.equal(joined?.fragments.length, 2)
+  assert.equal(units.find((unit) => unit.items.includes('1:11'))?.preserve, 'formula')
+})
+
+it('requires the display number on the same rail to attach the short clause', () => {
+  const units = quantifiedClause(100)
+  assert.ok(units.every((unit) => !(unit.items.includes('1:7') && unit.items.includes('1:8'))))
+})
+
+it.each([
+  ['(3.2)', true],
+  ['(3.3)', false]
+])('checks the equation witness %s before joining a proof conclusion', (equation, joins) => {
+  const body = { size: 11 },
+    open = { ...body, hasEOL: false },
+    math = { ...body, fontName: 'math' }
+  const units = translationUnits([
+    item('m = 2n + 1', 240, 578, 65, math),
+    item(equation, 464, 578, 22, body),
+    item('Every branch has an odd order and satisfies the assumed relation.', 126, 559, 360, body),
+    item('Any partition into even parts must therefore be impossible.', 126, 546, 360, body),
+    item('The sum of all sizes is', 126, 533, 106, open),
+    item('7', 236, 533, 6, { ...math, hasEOL: false }),
+    item('and hence odd. This proves Proposition 4.1', 246, 533, 240, body),
+    item('for', 126, 520, 13, open),
+    item('H', 143, 520, 8, { ...math, hasEOL: false }),
+    item('by (3.2).', 155, 520, 40, body),
+    item('6.', 197, 487, 9, open),
+    item('Further estimates', 211, 487, 195, { ...body, fontName: 'heading' }),
+    item('The next section considers an independent question.', 126, 468, 360, body)
+  ])
+  const proof = units.find((unit) => unit.source.includes('This proves Proposition'))
+  assert.ok(proof)
+  assert.equal(proof.source.endsWith('for H by (3.2).'), joins)
+  assert.equal(proof.fragments.length, joins ? 2 : 1)
+  assert.equal(units.find((unit) => unit.source === equation)?.preserve, 'formula')
+  assert.equal(
+    units.find((unit) => unit.source === '6. Further estimates')?.kind,
+    'heading-candidate'
+  )
+})
 
 const caption = 'Figure 2. Intensity profile after pulse shaping under the selected conditions.'
 const lastCaptionLine = 'A measured width of 110 fs corresponds to an effective pulse duration'
@@ -67,6 +364,44 @@ it.each([
       (unit) => !(unit.items.includes('1:1') && unit.items.includes('1:2'))
     )
   )
+})
+
+function captionRatio(detached: boolean): PdfTranslationLayout['units'] {
+  const body = { fontName: 'caption' }
+  const tight = { ...body, hasEOL: false }
+  return translationUnits([
+    item('Figure 3:', 71, 557, 45, { fontName: 'label', hasEOL: false }),
+    item(
+      'Comparison of the selected intervals in the two independent trials.',
+      121,
+      557,
+      403,
+      body
+    ),
+    item('For the second trial the magnitude of the pressure decreases as', 71, 545, 453, tight),
+    item('', 71, 533, 0, { size: 0 }),
+    item('2', 71, 533, 5, { fontName: 'symbol', hasEOL: false }),
+    item('/Q', 76, 533, 12.5, { fontName: 'math', hasEOL: false }),
+    item(
+      '. The independent measurement confirmed the same estimate.',
+      detached ? 104 : 88.6,
+      533,
+      435,
+      body
+    ),
+    item('Repeated measurements are shown with the lower line.', 71, 521, 453, body),
+    item('The upper line uses the control value.', 71, 509, 105, tight),
+    item('4 Further observations', 71, 474, 140, { fontName: 'heading', size: 14 })
+  ])
+}
+
+it.each([false, true])('keeps a wrapped native caption ratio (detached=%s)', (detached) => {
+  const units = captionRatio(detached)
+  const first = units.find((unit) => unit.items.includes('1:0'))
+  assert.equal(first?.source.includes('decreases as 2/Q. The independent'), !detached)
+  assert.equal(first?.items.includes('1:4'), !detached)
+  assert.equal(first?.items.includes('1:8'), !detached)
+  assert.ok(!first?.items.includes('1:9'))
 })
 
 function parentheticalWrap(
@@ -485,6 +820,27 @@ it.each(['different column', 'different font', 'closed caption', 'separate row']
     assert.ok(!caption?.items.includes('1:2'))
   }
 )
+
+it.each([0, 24])('attaches a repeated styled name to its caption (offset=%s)', (offset) => {
+  const styled = { fontName: 'emphasis', hasEOL: false }
+  const runs = [
+    item('Figure 4.', 45, 420, 41, { fontName: 'label', hasEOL: false }),
+    item('A calibration trial with', 92, 420, 95, { hasEOL: false }),
+    item('Acorn', 192, 420, 24, styled),
+    item('illustrates the response to an independent control setting.', 221, 420, 334),
+    item('This software supplies the plotted result for each completed test.', 45, 407.5, 510),
+    item('This panel shows the default result when samples are fitted with', 45, 395, 510, {
+      hasEOL: false
+    }),
+    item('', 45 + offset, 382.5, 0, { size: 0 }),
+    item('Acorn.', 45 + offset, 382.5, 28, styled)
+  ]
+  const units = translationUnits(runs)
+  const caption = units.find((unit) => unit.items.includes('1:0'))
+  assert.equal(caption?.source.endsWith('with Acorn.'), offset === 0)
+  assert.equal(caption?.items.includes('1:7'), offset === 0)
+  assert.equal(units.filter((unit) => unit.items.includes('1:7')).length, 1)
+})
 
 function chainedBoundInProse(
   fault?: 'different column' | 'open formula' | 'closed prior'
@@ -1293,6 +1649,54 @@ it.each(['none', 'foreign text', 'missing noun witness', 'no equation'] as const
   }
 )
 
+it.each([false, true])(
+  'joins the final acknowledgment around an independent column figure (foreign row=%s)',
+  (foreignRow) => {
+    const [left, right, width] = [54, 315, 243]
+    const lead = item(
+      'I thank my colleagues for their detailed feedback and',
+      left + 10,
+      78,
+      width - 10
+    )
+    const ending = item('research award of the Regional Envi-', left, 54, width, { hasEOL: false })
+    const tail = item('ronmental Research Board.', right, 432, 110, { hasEOL: false })
+    const units = translationUnits([
+      item('Environmental observations provide an independent estimate.', left, 730, width),
+      lead,
+      item('acknowledge support of the project through a regional', left, 66, width),
+      ending,
+      item('(a)', 381, 690, 13, { fontName: 'plot', hasEOL: false }),
+      item('z', 537, 650, 6, { fontName: 'plot', hasEOL: false }),
+      item('Fig. 1. The observed response of each controlled group.', right, 477, width),
+      item('The shaded range gives the measurement uncertainty.', right, 465, 205),
+      ...(foreignRow ? [item('An unrelated field note.', right, 446, 132)] : []),
+      tail,
+      item('References', right, 409, 54, { fontName: 'heading', hasEOL: false }),
+      item('1. A. Reader, A calibration guide, J. Meas. 4, 12 (2020).', right + 7, 392, 216),
+      item('2. B. Writer, Reference measurements, J. Tools 6, 9 (2021).', right + 7, 381, 225)
+    ])
+    const acknowledgment = units.find((unit) => unit.items.includes('1:3'))
+    const continuation = units.find((unit) => unit.items.includes(foreignRow ? '1:9' : '1:8'))
+    assert.ok(acknowledgment && continuation)
+    if (foreignRow) {
+      assert.notEqual(acknowledgment, continuation)
+    } else {
+      assert.equal(acknowledgment, continuation)
+      assert.ok(acknowledgment.source.endsWith('Regional Environmental Research Board.'))
+      assert.deepEqual(acknowledgment.originalStrings, [
+        lead.str,
+        'acknowledge support of the project through a regional',
+        ending.str,
+        tail.str
+      ])
+      assert.equal(acknowledgment.fragments.length, 2)
+    }
+    assert.ok(units.some((unit) => unit.source.startsWith('Fig. 1.')))
+    assert.ok(units.some((unit) => unit.source === 'References' && unit.sourceOnly))
+  }
+)
+
 function captionInfinitiveWrap(
   fault: 'none' | 'closed sentence' | 'intervening text' | 'different width'
 ): PdfTranslationLayout['units'] {
@@ -1778,5 +2182,3027 @@ it.each(['none', 'closed sentence', 'intervening body'])(
     }
     assert.notEqual(left, figure)
     assert.notEqual(right, figure)
+  }
+)
+
+it.each([0, 4])('groups a scanned diameter only when the micrometre suffix touches (%d)', (gap) => {
+  const items = [
+    item('The device records the signal across the surface while scanning', 54, 500, 245),
+    item('a 32', 54, 488, 19, { hasEOL: false }),
+    item('μ', 77, 488, 6, { fontName: 'greek', hasEOL: false }),
+    item('m diameter opening beside the calibrated reference mark.', 83 + gap, 488, 216 - gap)
+  ]
+  const units = translationUnits(items)
+  const owner = units.find((unit) => unit.items.includes('1:2'))!
+  if (gap === 0) {
+    assert.match(owner.source, /scanning a 32 μm diameter opening/u)
+    assert.equal(owner.sourceOnly, undefined)
+    assert.deepEqual(owner.items, ['1:0', '1:1', '1:2', '1:3'])
+  } else {
+    assert.ok(owner.sourceOnly)
+    assert.ok(!owner.items.includes('1:3'))
+  }
+  assert.deepEqual(units.flatMap((unit) => unit.items).sort(), ['1:0', '1:1', '1:2', '1:3'])
+})
+
+it.each(['attached', 'detached'] as const)(
+  'keeps a wrapped measurement with its native micro prefix and unit suffix (%s)',
+  (shape) => {
+    const x = shape === 'detached' ? 75 : 71
+    const units = translationUnits([
+      item('The first sensor was designed to measure wavelengths up to', 54, 500, 245),
+      item('16', 54, 489, 10, { hasEOL: false }),
+      item('μ', 65, 489, 6, { fontName: 'greek', hasEOL: false }),
+      item('m, while the other sensor measures around 25', x, 489, 251 - x, { hasEOL: false }),
+      item('μ', 252, 489, 6, { fontName: 'greek', hasEOL: false }),
+      item('m reliably.', 258, 489, 41)
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:2'))
+    assert.ok(owner)
+    if (shape === 'attached') {
+      assert.match(owner.source, /up to 16μm, .*25μm reliably\./u)
+      assert.deepEqual(owner.items, ['1:0', '1:1', '1:2', '1:3', '1:4', '1:5'])
+    } else {
+      assert.equal(owner.sourceOnly, true)
+      assert.deepEqual(owner.items, ['1:1', '1:2'])
+    }
+  }
+)
+
+function notationNote(followingX = 59.76): PdfTranslationLayout['units'] {
+  const math = { fontName: 'math', hasEOL: false },
+    upright = { hasEOL: false },
+    italic = { fontName: 'italic', hasEOL: false }
+  return translationUnits([
+    item(')', 148.95, 365.09, 3.89, math),
+    item('/', 156.72, 368.72, 3.88, { ...italic, size: 7.31 }),
+    item('4', 160.6, 368.72, 3.88, { fontName: 'script', size: 7.31, hasEOL: false }),
+    item('\u0001', 164.94, 373.19, 4.58, { fontName: 'delimiter', hasEOL: false }),
+    item('(for these estimates, the', 173.31, 365.09, 86.08, upright),
+    item('Q(q)', 263.18, 365.09, 11.11, math),
+    item(',', 280.95, 365.09, 2.76, upright),
+    item('R', 287.63, 365.09, 7.63, italic),
+    item('(r)', 302.2, 365.09, 3.89, math),
+    item(', and', 306.09, 365.09, 22.69, upright),
+    item('S(', 337.42, 365.09, 3.89, math),
+    item('s)', 344.09, 365.09, 3.89, math),
+    item('functions assume that', 351.77, 365.09, 97.25, upright),
+    item('n', 452.8, 365.09, 4.69, italic),
+    item('is a fixed', 461.28, 365.09, 39.96),
+    item('integer).', 59.76, 352.67, 43.42),
+    item(
+      'The estimates are compared against the adjustable measurements at the end of the experiment.',
+      75.29,
+      340.25,
+      425.95
+    ),
+    item(
+      'The resulting intervals agree with the mean reported in the observations.',
+      followingX,
+      327.83,
+      412.39,
+      upright
+    )
+  ])
+}
+
+it('keeps a notation note with its short closing line without including the preceding formula', () => {
+  const units = notationNote()
+  const note = units.find((unit) => unit.source.startsWith('(for these estimates'))
+  assert.match(note?.source ?? '', /is a fixed integer\)\.$/u)
+  assert.equal(note?.fragments.length, 2)
+  assert.equal(note?.items.at(0), '1:4')
+  assert.equal(note?.items.at(-1), '1:15')
+  assert.ok(units.some((unit) => unit.preserve === 'formula' && unit.items.includes('1:0')))
+})
+
+it('keeps the closing line separate when the following paragraph does not return to its rail', () => {
+  assert.ok(notationNote(69.76).some((unit) => unit.source === 'integer).'))
+})
+
+it.each([
+  [false, true],
+  [true, false]
+])('keeps a wrapped verb with its display introduction (staggered=%s)', (staggered, joins) => {
+  const body = { size: 10 },
+    math = { ...body, fontName: 'math', hasEOL: false }
+  const units = translationUnits([
+    item('K(s)', 444, 593, 22, math),
+    item('=', 436, 586, 8, { ...body, hasEOL: false }),
+    item('s', 449, 579, 9, math),
+    item('(6)', 545, 586, 17, body),
+    item('The constant K(s) depends solely on the chosen interval.', 317, 563, 245, body),
+    item('Then using the boundary estimate in Eq. (4) we', 317, 551.5, 245, body),
+    item('get,', 317 + (staggered ? 15 : 0), 540, 16, { ...body, hasEOL: false }),
+    item('', 0, 0, 0, { size: 0 }),
+    item('∂h', 368, 519, 11, math),
+    item('', 0, 0, 0, { size: 0 }),
+    item('∂s', 368, 506, 11, math),
+    item('= 0', 385, 512, 16, math),
+    item('(7)', 545, 512, 17, body)
+  ])
+  const prose = units.find((unit) => unit.source.includes('boundary estimate'))
+  assert.ok(prose)
+  assert.equal(prose.source.endsWith('we get,'), joins)
+  assert.equal(prose.items.includes('1:6'), joins)
+  assert.equal(units.find((unit) => unit.source === '∂h')?.preserve, 'formula')
+})
+
+it.each([false, true])(
+  'keeps a wrapped angle with its caption when native space is clear (%s)',
+  (overlap) => {
+    const caption = { size: 9, fontName: 'caption' }
+    const run = { ...caption, hasEOL: false }
+    const math = { ...run, fontName: 'math' }
+    const units = translationUnits([
+      {
+        ...item('φ', 402, overlap ? 173 : 333, 6, math),
+        fontAscent: undefined,
+        fontDescent: undefined
+      },
+      item(
+        'FIG. 1: (a) The diagram gives the geometry used for the comparison.',
+        317,
+        267.5,
+        245,
+        caption
+      ),
+      item('(b) Individual marks along the segment can be seen above.', 317, 257, 245, caption),
+      item('(c) This view gives the same marks at another scale.', 317, 246.5, 245, caption),
+      item(
+        '(d) One example showing the marks with the calculated profile.',
+        317,
+        236,
+        245,
+        caption
+      ),
+      item('The profile was obtained by fitting all the measurements.', 317, 225.5, 245, caption),
+      item('The reported width is shown together with its fitted range.', 317, 215, 245, caption),
+      item('All measurements use the same origin and reference scale.', 317, 204.5, 245, caption),
+      item('The fitted profile is used to give the following estimates.', 317, 194, 245, caption),
+      item('The procedure gives the length (2', 317, 183.5, 115.4, run),
+      item('a', 432.4, 183.5, 2.8, math),
+      item('), width (2', 435.2, 183.5, 43.3, run),
+      item('b', 478.5, 183.5, 6.6, math),
+      item('), orientation angle', 485.1, 183.5, 76.9, caption),
+      item('(', 317, 173, 3.6, run),
+      item('θ', 320.6, 173, 4.4, math),
+      item(') and position (', 325, 173, 63.2, run),
+      item('u, v', 388.2, 173, 14, math),
+      item(') for every particle.', 402.2, 173, 73, caption)
+    ])
+    const prose = units.find((unit) => unit.source.startsWith('FIG. 1:'))
+    assert.ok(prose)
+    assert.equal(
+      prose.source.endsWith('angle (θ) and position (u, v) for every particle.'),
+      !overlap
+    )
+    assert.equal(prose.items.includes('1:15'), !overlap)
+    assert.ok(units.some((unit) => unit.items.includes('1:0') && !unit.items.includes('1:15')))
+  }
+)
+
+it.each([false, true])(
+  'keeps a selected noun with its wrapped clause (short rail=%s)',
+  (shortRail) => {
+    const math = { fontName: 'math', hasEOL: false },
+      body = { hasEOL: false },
+      small = { ...math, size: 7 }
+    const units = translationUnits([
+      item('The contrast is bounded by the following quantity.', 72, 390, 483),
+      item('There are at least', 72, 377, 99, body),
+      item('1', 174, 381, 4, small),
+      item('', 0, 0, 0, { size: 0 }),
+      item('2', 174, 373, 4, small),
+      item('|R|', 181, 377, 16, math),
+      item('n', 197, 380.5, 5, small),
+      item('2', 202, 380, 3, { ...math, size: 5 }),
+      item('solutions', 322, 377, 61, body),
+      item('g', 389, 377, 5, math),
+      item('from A to B.', 400, 377, 83, body),
+      item('Pick one such', 487, 377, 68),
+      item('solution', 72, 364, 45, body),
+      item('g', 121, 364, 5, math),
+      item(', and let', 126, 364, 42, body),
+      item('f', 172, 364, 5, math),
+      item(
+        '(x) denote its value for every element of the same fixed domain.',
+        177,
+        364,
+        shortRail ? 360 : 378
+      )
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:11'))
+    assert.ok(owner)
+    assert.equal(owner.items.includes('1:12'), !shortRail)
+    assert.equal(owner.source.includes('Pick one such solution g, and let'), !shortRail)
+    assert.equal(owner.fragments.length, shortRail ? 1 : 2)
+    assert.ok(!owner.items.includes('1:2'))
+  }
+)
+
+it.each([false, true])(
+  'joins a wrapped word between native folios only on the same rail: %s',
+  (shifted) => {
+    const imprint = {
+      ...item('arXiv: draft imprint', 32, 229, 200, { size: 20, hasEOL: false }),
+      transform: [0, 20, -20, 0, 32, 229] as PdfLayoutTextItem['transform']
+    }
+    const { units } = groupPdfTranslationPages({
+      pages: [
+        {
+          page: 1,
+          width: 612,
+          height: 792,
+          rotation: 0,
+          items: [
+            imprint,
+            item('Calibration and measurement', 56, 650, 275, { size: 14, fontName: 'title' }),
+            item(
+              'The reviewed measurements agree with all the values reported earlier',
+              56,
+              162,
+              382
+            ),
+            item('in the experiment, after repeating the complete calibra-', 56, 150, 382),
+            item('1', 244.5, 132, 5, { hasEOL: false })
+          ]
+        },
+        {
+          page: 2,
+          width: 612,
+          height: 792,
+          rotation: 0,
+          items: [
+            item('2', shifted ? 65 : 56, 754, 5),
+            item(
+              'tion procedure across the entire operating range before comparing the',
+              56,
+              736,
+              382
+            ),
+            item('measurements with the previous estimates.', 56, 724, 195),
+            item('This second paragraph describes the equipment independently.', 66, 712, 372),
+            item('The recorded values agree with the stated measurement uncertainty.', 56, 700, 382)
+          ]
+        }
+      ]
+    })
+    const restored = units.find((unit) => unit.items.includes('1:3'))
+    assert.equal(restored?.source.includes('complete calibration procedure'), !shifted)
+    assert.deepEqual(
+      restored?.fragments.map((part) => part.page),
+      shifted ? [1] : [1, 2]
+    )
+    for (const key of ['1:4', '2:0'])
+      assert.equal(units.find((unit) => unit.items.includes(key))?.preserve, 'literal')
+    assert.ok(units.some((unit) => unit.items.includes('2:3') && !unit.sourceOnly))
+  }
+)
+
+it.each([false, true])(
+  'keeps parallel indexed values together without taking the preceding formula: %s',
+  (differentIndex) => {
+    const open = { hasEOL: false },
+      math = { ...open, fontName: 'math' },
+      script = { ...open, fontName: 'script', size: 7 }
+    const units = translationUnits([
+      item(
+        'Earlier calibration data identify the pressure scale and its physical units.',
+        54,
+        228,
+        245
+      ),
+      item('and', 54, 217, 16, open),
+      item('Y', 73, 217, 7.5, math),
+      item('0', 80.5, 215.5, 4, script),
+      item('= 7', 88, 217, 15.5, open),
+      item('×', 104.5, 217, 7.8, math),
+      item('10', 113.6, 217, 10, open),
+      item('−', 123.6, 220.6, 6.2, script),
+      item('3', 129.8, 220.6, 4, script),
+      item('m', 134.2, 217, 8.8, math),
+      item('2', 143, 220.6, 4, script),
+      item('. These are the typical values of', 147.5, 217, 138, open),
+      item('X', 288.2, 217, 6.4, math),
+      item('0', 294.6, 215.5, 4, script),
+      item('', 0, 0, 0, { size: 0 }),
+      item('and', 54, 205.5, 16, open),
+      item('Y', 73.3, 205.5, 7.5, math),
+      item(differentIndex ? '1' : '0', 80.8, 204, 4, script),
+      item('[2, 4] used in the measurements.', 88.7, 205.5, 153),
+      item('The following table reports the measurements from separate trials.', 64, 194, 235),
+      item('The results are listed with their uncertainty.', 54, 182.5, 245)
+    ])
+    const result = units.find((unit) => unit.items.includes('1:11'))
+    assert.equal(result?.source.includes('X0 and Y0 [2, 4]'), !differentIndex)
+    assert.equal(result?.fragments.length, differentIndex ? 1 : 2)
+    assert.equal(units.find((unit) => unit.items.includes('1:1'))?.preserve, 'formula')
+  }
+)
+
+it.each([false, true])(
+  'joins an open clause across the folio before a numbered display (skipped label=%s)',
+  (skipped) => {
+    const open = { hasEOL: false }
+    const math = { ...open, fontName: 'math' }
+    const imprint = {
+      ...item('arXiv: draft imprint', 32, 229, 200, { size: 20, hasEOL: false }),
+      transform: [0, 20, -20, 0, 32, 229] as PdfLayoutTextItem['transform']
+    }
+    const { units } = groupPdfTranslationPages({
+      pages: [
+        {
+          page: 1,
+          width: 612,
+          height: 792,
+          rotation: 0,
+          items: [
+            imprint,
+            item('Calibration of an elastic surface', 150, 690, 310, { size: 15 }),
+            item('The equipment monitors changes in the elastic material.', 54, 530, 245),
+            item('x + y = z', 130, 495, 60, math),
+            item('(1)', 286, 495, 13),
+            item('We measured the combined response with the same setup.', 54, 451, 245),
+            item('The selected range is adequate for the repeat measurements.', 317, 109, 245),
+            item('The threshold was determined by the fitted curve in the', 317, 97, 245),
+            item('prior test.', 317, 85, 39),
+            item('Under normal conditions,', 327, 68, 120, open),
+            item(' ', 447, 68, 7, open),
+            item('at the free surface the', 454, 68, 108, open)
+          ]
+        },
+        {
+          page: 2,
+          width: 612,
+          height: 792,
+          rotation: 0,
+          items: [
+            item('2', 557, 756, 5),
+            item('Shear stress is balanced by the additional restoring force', 54, 730, 245, open),
+            item('', 0, 0, 0, { size: 0 }),
+            item('x', 123, 706, 7, math),
+            item('=', 134, 706, 8, open),
+            item('y + z', 146, 706, 27, math),
+            item(skipped ? '(3)' : '(2)', 286, 706, 13),
+            item('The initial test shows the same trend in the observed data.', 54, 679, 245)
+          ]
+        }
+      ]
+    })
+    const proof = units.find((unit) => unit.items.includes('1:9'))
+    assert.ok(proof)
+    assert.equal(proof.items.includes('2:1'), !skipped)
+    assert.deepEqual(
+      proof.fragments.map((part) => part.page),
+      skipped ? [1] : [1, 2]
+    )
+    assert.equal(units.find((unit) => unit.items.includes('2:6'))?.preserve, 'formula')
+    assert.ok(units.find((unit) => unit.items.includes('2:0'))?.sourceOnly)
+  }
+)
+
+it.each([false, true])(
+  'returns a signed setting to its paragraph on the same native rail (shifted=%s)',
+  (shifted) => {
+    const units = translationUnits([
+      item('The cache is initialized before the first measurement has started.', 59, 621, 241),
+      item('The program can determine a threshold as it compares the stored', 49, 609, 251),
+      item('results with the new samples. It operates in automatic mode when', 49, 597, 251),
+      item('the parameter controlling the maximum delay is set', 49, 585, 251),
+      item('to -2.', shifted ? 56 : 49, 573, 22),
+      item('IV. MEASUREMENT LIMITS', 93, 549, 163),
+      item('The first new series is recorded at the same reference temperature.', 59, 527, 241),
+      item('Additional trials are needed for further comparisons.', 49, 515, 180)
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:3'))
+    assert.ok(owner)
+    assert.equal(owner.items.includes('1:4'), !shifted)
+    assert.equal(owner.items.includes('1:5'), false)
+  }
+)
+
+it.each([false, true])(
+  'keeps a wrapped numbered table locator with its prose (displaced marker=%s)',
+  (displaced) => {
+    const open = { hasEOL: false }
+    const units = translationUnits([
+      item('The first line introduces an ordinary explanatory paragraph.', 72, 690, 468),
+      item('The second line uses the same body font and pair of margins.', 72, 678, 468),
+      item('The third line ends the paragraph with punctuation.', 72, 666, 320),
+      item('Several earlier outcomes under this condition are summarized.', 72, 420, 468),
+      item('α = β − 1', 300, 408, 159, { ...open, fontName: 'math' }),
+      item('. Comparing the controls', 459, 408, 81),
+      item('keeps the response stable, so all six cases are illustrated in Table', 72, 396, 468),
+      item('3, right.', 72, 384, 35, open),
+      item(' ', 107, 384, 425, { ...open, size: 0 }),
+      item('\x03', displaced ? 517 : 532, 384, 8, { ...open, fontName: 'ending' }),
+      item('', 0, 0, 0, { size: 0 }),
+      item('Table 3. Measurements across the selected combinations.', 160, 225, 292, {
+        fontName: 'caption',
+        size: 8
+      }),
+      item('The final paragraph starts independently below the table.', 72, 175, 468)
+    ])
+    const paragraph = units.find((unit) => unit.source.startsWith('. Comparing the controls'))
+    assert.equal(paragraph?.source.endsWith('Table 3, right.'), !displaced)
+    assert.equal(paragraph?.items.includes('1:7'), !displaced)
+    assert.ok(units.some((unit) => unit.source === '\x03' && unit.preserve === 'formula'))
+  }
+)
+
+it.each([false, true])(
+  'keeps a wrapped set introduction before its native display (shifted=%s)',
+  (shifted) => {
+    const body = { size: 12 },
+      open = { ...body, hasEOL: false },
+      math = { ...open, fontName: 'math' },
+      script = { ...math, size: 8 },
+      offset = shifted ? 18 : 0
+    const units = translationUnits([
+      item(
+        'The observations are sorted before any measurements are calculated.',
+        72,
+        699,
+        468,
+        body
+      ),
+      item('The same sequence of comparisons is used for all recorded trials.', 72, 685, 468, body),
+      item('We retain the resulting records.', 72, 670, 178, body),
+      item('We define a planar set', 89, 650, 123, open),
+      item('F', 220, 650, 8, math),
+      item('β', 228, 648, 4, script),
+      item(
+        'of all measurement points in the experiment for the selected sequence',
+        238,
+        650,
+        283,
+        open
+      ),
+      item(', as', 521, 650, 19, body),
+      item('follows. Let', 72, 635.5, 59, open),
+      item('', 0, 0, 0, { size: 0 }),
+      item('F', 210 + offset, 621, 8, math),
+      item('β', 218 + offset, 619, 4, script),
+      item('= {β, 1 + β, 2 + β, …, k − 1 + β}.', 225 + offset, 621, 177, {
+        fontName: 'math',
+        size: 12
+      }),
+      item(
+        'If the tolerance is small enough, this construction covers the stated interval.',
+        90,
+        596,
+        425,
+        body
+      ),
+      item('This gives an independent bound for the number of test points.', 72, 580, 420, body)
+    ])
+    const introduction = units.find((unit) => unit.source.startsWith('We define a planar set'))
+    assert.equal(introduction?.source.endsWith('as follows. Let'), !shifted)
+    assert.equal(introduction?.fragments.length, shifted ? 1 : 2)
+    assert.ok(!introduction?.items.includes('1:10'))
+    assert.equal(units.find((unit) => unit.items.includes('1:10'))?.preserve, 'formula')
+  }
+)
+
+it.each([false, true])(
+  'keeps a short claim reference beside the proof ending (shifted=%s)',
+  (shifted) => {
+    const rail = shifted ? 87 : 72
+    const open = { hasEOL: false, size: 12 }
+    const items = [
+      item('The first line introduces an ordinary explanatory paragraph.', 72, 690, 468, {
+        size: 12
+      }),
+      item('The second line uses the same body font and pair of margins.', 72, 675.5, 468, {
+        size: 12
+      }),
+      item('The third line ends the paragraph with punctuation.', 72, 661, 320, { size: 12 }),
+      item(
+        'Comparing both proposed intervals, the new upper bound is negative, which contradicts',
+        72,
+        430,
+        468,
+        { size: 12 }
+      ),
+      item('Claim 4.', rail, 415.5, 44, open),
+      item(' ', rail + 44, 415.5, 5, { ...open, size: 0 }),
+      item('\x03', rail + 49, 415.5, 9, { ...open, fontName: 'ending' }),
+      item('', 0, 0, 0, { size: 0 }),
+      item(
+        'Claims 4 and 5 immediately imply that the observed interval is bounded.',
+        89,
+        395.7,
+        451,
+        { size: 12 }
+      ),
+      item('This final line ends the independent paragraph.', 72, 381.2, 275, { size: 12 })
+    ]
+    const units = translationUnits(items)
+    const paragraph = units.find((unit) => unit.source.startsWith('Comparing both'))
+    assert.equal(paragraph?.source.endsWith('which contradicts Claim 4.'), !shifted)
+    assert.equal(paragraph?.items.includes('1:4'), !shifted)
+    assert.ok(units.some((unit) => unit.source === '\x03' && unit.preserve === 'formula'))
+  }
+)
+
+it.each([false, true])('keeps a dated bullet on its own hanging margin (shifted=%s)', (shifted) => {
+  const open = { hasEOL: false }
+  const gap = { ...open, size: 0 }
+  const units = translationUnits([
+    item('The original contract applies to the archive and its staff.', 54, 622, 232),
+    item('The project proceeds through the following stages:', 329, 620, 206),
+    item('•', 329, 602, 3.5, open),
+    item(' ', 332.5, 602, 10.5, gap),
+    item('2047: audit the catalog and renew the con-', 343, 602, 204),
+    item('tract signed last summer;', 343, 589.5, 80),
+    item('•', 329, 577, 3.5, open),
+    item(' ', 332.5, 577, 10.5, gap),
+    item('2048–2049:', 343, 577, 52, open),
+    item(' ', 395, 577, 4, gap),
+    item('index the incoming records and', 399, 577, 148),
+    item('verify the metadata;', shifted ? 349 : 343, 564.5, 94),
+    item('•', 329, 552, 3.5, open),
+    item(' ', 332.5, 552, 10.5, gap),
+    item('from 2050 onward: provide access to the digital catalog', 343, 552, 204),
+    item('and publish regular usage reports for the staff', 343, 539.5, 204)
+  ])
+  const first = units.find((unit) => unit.items.includes('1:2'))
+  const second = units.find((unit) => unit.items.includes('1:6'))
+  const third = units.find((unit) => unit.items.includes('1:12'))
+  if (shifted) {
+    assert.deepEqual(units.find((unit) => unit.items.includes('1:11'))?.items, ['1:11'])
+  } else {
+    assert.equal(
+      first?.source,
+      '• 2047: audit the catalog and renew the contract signed last summer;'
+    )
+    assert.deepEqual(first?.items, ['1:2', '1:4', '1:5'])
+    assert.equal(second?.source, '• 2048–2049: index the incoming records and verify the metadata;')
+    assert.deepEqual(second?.items, ['1:6', '1:8', '1:10', '1:11'])
+  }
+  assert.deepEqual(third?.items, ['1:12', '1:14', '1:15'])
+})
+
+it.each([0, 4])(
+  'preserves paired extrema and their native under-limits (lowered by %s)',
+  (shift) => {
+    const open = { hasEOL: false }
+    const greek = { ...open, fontName: 'variable' }
+    const sub = { ...open, fontName: 'script', size: 7.3 }
+    const eol = (): PdfLayoutTextItem => item('', 0, 0, 0, { size: 0 })
+    const row = (
+      y: number,
+      v: string,
+      d: string,
+      bound: string,
+      offset = 0
+    ): PdfLayoutTextItem[] => {
+      const value = (x: number): PdfLayoutTextItem[] => [
+        item('φ', x, y, 5.7, greek),
+        item('(', x + 5.7, y, 3.9, open),
+        item(v, x + 9.6, y, 5, greek),
+        item(')', x + 14.8, y, 3.9, open)
+      ]
+      return [
+        item('max', 253, y, 18.6, open),
+        eol(),
+        item(v, 255, y - 6.66, 4, sub),
+        item('∈', 259.2, y - 6.66, 5.2, sub),
+        item(d, 264.4, y - 6.66, 5.3, sub),
+        ...value(273),
+        item('−', 294.8, y, 7.8, { ...open, fontName: 'symbol' }),
+        item('min', 305, y, 16.7, open),
+        eol(),
+        item(v, 306, y - 6.66 - offset, 4, sub),
+        item('∈', 310.2, y - 6.66 - offset, 5.2, sub),
+        item(d, 315.4, y - 6.66 - offset, 5.3, sub),
+        ...value(323),
+        item(bound, 345, y, 13)
+      ]
+    }
+    const units = translationUnits([
+      item('Under the stated assumptions the results satisfy', 72, 600, 432),
+      item('these estimates,', 72, 586, 85),
+      ...row(564, 'p', 'D', '< q'),
+      item('and', 72, 538, 16, { fontName: 'italic' }),
+      ...row(526, 'n', 'H', '< m.', shift),
+      item('Proof. This follows by applying the bound to each region.', 72, 503, 459),
+      item('The details appear in an independent calculation.', 72, 490, 252)
+    ])
+    const formulae = units.filter(({ source }) => /^(?:max|[pn]∈)/u.test(source))
+    assert.equal(formulae.length, 6)
+    for (const owner of formulae) {
+      assert.equal(owner.sourceOnly, shift ? undefined : true)
+      assert.equal(owner.preserve, shift ? undefined : 'formula')
+    }
+    assert.equal(units.find(({ source }) => source === 'and')?.sourceOnly, undefined)
+  }
+)
+
+it.each([0, 3])('keeps a wrapped product index beside its bracket (shifted by %s)', (shift) => {
+  const open = { size: 9, hasEOL: false }
+  const variable = { ...open, fontName: 'variable' }
+  const sub = { ...open, fontName: 'subscript', size: 6 }
+  const units = translationUnits([
+    item('Abstract', 286, 466.5, 40, { size: 9, fontName: 'bold' }),
+    item('The isolated region is a subset of [', 172.4, 451.6, 239.2, open),
+    item('r', 411.6, 451.6, 4.8, variable),
+    item('1', 416.4, 450.6, 3.65, sub),
+    item(']', 420.6, 451.6, 2.6, open),
+    item('× · · · ×', 424.6, 451.6, 28, { size: 9, fontName: 'operator' }),
+    item('[', 158.6, 440.7, 2.5, open),
+    item('r', 161.1, 440.7, 4.8, variable),
+    item('m', 165.9, 439.6 - shift, 3.8, sub),
+    item('], whose boundary belongs to the transformed space', 170.3, 440.7, 282.3, { size: 9 })
+  ])
+  const prose = units.find(({ source }) => source.startsWith('The isolated region'))
+  assert.equal(prose?.source.includes('× [rm], whose'), shift === 0)
+  assert.equal(prose?.items.includes('1:8'), shift === 0)
+  assert.equal(
+    units.some(({ source, preserve }) => source === '[rm' && preserve === 'formula'),
+    shift > 0
+  )
+})
+
+it.each(['matching front matter', 'different subject'] as const)(
+  'keeps the noun of the centered title with its designation: %s',
+  (variant) => {
+    const draft = { size: 8, hasEOL: false }
+    const title = { fontName: 'title' }
+    const author = { size: 9, hasEOL: false }
+    const line = item('', 0, 0, 0, { size: 0 })
+    const number = { size: 6, hasEOL: false }
+    const head = 'Independent tests reveal systematic noise in measurements made with class II'
+    const units = translationUnits([
+      item('Draft version April 5, 2025', 60, 733, 130, draft),
+      line,
+      item('Typeset using LATEX default style in ArticleTools', 60, 724, 141, {
+        ...draft,
+        fontName: 'small'
+      }),
+      line,
+      item(head, 68, 676, 476, title),
+      item('sensors', 278, 663.5, 56, { ...title, hasEOL: false }),
+      line,
+      item('Ann Reader', 267, 643.5, 61, author),
+      item('1', 337, 647.3, 3.5, number),
+      line,
+      item('1', 128, 629.5, 3.6, { ...number, fontName: 'affiliation-marker' }),
+      item('Institute of Field Measurements and Applied Instrumentation', 132, 626.5, 348, {
+        size: 8,
+        fontName: 'affiliation',
+        hasEOL: false
+      }),
+      line,
+      item('ABSTRACT', 278, 602, 56),
+      item(
+        variant === 'matching front matter'
+          ? 'The class II sensors record a repeatable response in all independent trials.'
+          : 'The selected instruments record a repeatable response in all independent trials.',
+        93,
+        586.5,
+        433
+      ),
+      item('The reported data agree closely with the independent control experiment.', 85, 574, 442)
+    ])
+    const joined = variant === 'matching front matter'
+    const headline = units.find((unit) => unit.items.includes('1:4'))
+    assert.equal(headline?.source, joined ? head + ' sensors' : head)
+    assert.deepEqual(headline?.items, joined ? ['1:4', '1:5'] : ['1:4'])
+    assert.equal(headline?.fragments.length, joined ? 2 : 1)
+    assert.ok(
+      units.some((unit) => unit.items.includes('1:7') && unit.source.startsWith('Ann Reader'))
+    )
+  }
+)
+
+it.each(['same catalog', 'different catalog'] as const)(
+  'joins a preprint title before its catalog designation: %s',
+  (variant) => {
+    const title = { fontName: 'title', size: 12 }
+    const author = { fontName: 'byline', size: 10.9, hasEOL: false }
+    const marker = { ...author, size: 8 }
+    const affiliation = { fontName: 'affiliation', size: 10, hasEOL: false }
+    const affiliationMarker = { ...affiliation, size: 7, fontName: 'affiliation-marker' }
+    const line = item('', 0, 0, 0, { size: 0 })
+    const head = 'Slow Gas Exchange Enriches Matter in a Galaxy Group Housing QSO'
+    const tail = 'OBJ1234−567 and Ambient Clouds'
+    const units = translationUnits([
+      item('Draft version April 5, 2025', 51, 728, 166, { hasEOL: false }),
+      line,
+      item('Typeset using LATEX preprint style in ArticleTools', 51, 714, 227, {
+        hasEOL: false
+      }),
+      line,
+      item(head, 60.3, 666, 492, title),
+      item('OBJ1234', 199, 651, 54, { ...title, hasEOL: false }),
+      item('−', 253, 651, 9.3, { ...title, fontName: 'symbol', hasEOL: false }),
+      item('567 and Ambient Clouds', 262.3, 651, 151.2, { ...title, hasEOL: false }),
+      line,
+      item('Ann M. Reader', 125.1, 632.4, 80.3, author),
+      item(',', 216.4, 632.4, 3.4, author),
+      item('1, 2', 219.8, 636.4, 12.8, marker),
+      item('Robin Q. Writer', 237.2, 632.4, 99, author),
+      item(',', 347.2, 632.4, 3.5, author),
+      item('2', 350.7, 636.4, 4.4, marker),
+      item('and Lee Editor', 359.7, 632.4, 106, author),
+      item('2', 476.5, 636.4, 4.4, marker),
+      line,
+      item('1', 140.6, 617, 4, affiliationMarker),
+      item('Department of Applied Studies, North Campus', 145.1, 613.4, 323, affiliation),
+      line,
+      item('2', 111.3, 603, 4, affiliationMarker),
+      item(
+        'Institute for Measurements and Instrumentation, Central Campus',
+        115.8,
+        599.4,
+        381.5,
+        affiliation
+      ),
+      line,
+      item('ABSTRACT', 273, 572, 66, { size: 12 }),
+      item(
+        'The experimental records around QSO ' +
+          (variant === 'same catalog' ? 'OBJ1234−567' : 'OBJ9876−123') +
+          ' show stable properties.',
+        93.6,
+        554.7,
+        433.4,
+        { size: 12 }
+      ),
+      item(
+        'Independent trials corroborated the main observation in all conditions.',
+        84.6,
+        539.7,
+        442.4,
+        { size: 12 }
+      )
+    ])
+    const merged = variant === 'same catalog'
+    const titleOwner = units.find((unit) => unit.items.includes('1:4'))
+    assert.equal(titleOwner?.source, merged ? head + ' ' + tail : head)
+    assert.equal(titleOwner?.fragments.length, merged ? 2 : 1)
+    assert.equal(titleOwner?.items.includes('1:9'), false)
+  }
+)
+
+it.each(['none', 'gap', 'closed', 'foreign run', 'unit suffix', 'new rail', 'baseline'] as const)(
+  'keeps a full-width paragraph with its compact closing measurement (%s)',
+  (fault) => {
+    const items = [
+      item('The instrument records a stable value through the calibration interval.', 52, 550, 504),
+      item(
+        'The detector samples the output until the reference level becomes stable.',
+        52,
+        537.5,
+        504
+      ),
+      item(
+        fault === 'closed'
+          ? 'The response is stable after the second pass.'
+          : 'At the final sampling point, the reference response is approximately',
+        52,
+        525,
+        504
+      ),
+      item('∼', fault === 'new rail' ? 72 : 52, 512.5, 8, {
+        fontName: 'relation',
+        hasEOL: false
+      }),
+      item('36', 63, 512.5, 10, { hasEOL: false }),
+      item('μ', 76, fault === 'baseline' ? 514.5 : 512.5, 6, {
+        fontName: 'greek',
+        hasEOL: false
+      }),
+      item(fault === 'unit suffix' ? 'x.' : 'V.', 82, 512.5, 11),
+      item('Further calibration uses a separate sensor and a reference standard.', 61, 500, 495),
+      item('The comparison is repeated once to confirm the response interval.', 52, 487.5, 504)
+    ]
+    if (fault === 'gap') for (const run of items.slice(3)) run.transform[5] -= 6
+    const quantity = items[3]
+    const newParagraph = items[7]
+    if (fault === 'foreign run') {
+      items.splice(3, 0, item('x = y', 310, 515, 25, { fontName: 'formula' }))
+    }
+    const units = translationUnits(items)
+    const before = units.find((unit) => unit.items.includes('1:2'))
+    const after = units.find((unit) => unit.items.includes('1:' + items.indexOf(quantity)))
+    const next = units.find((unit) => unit.items.includes('1:' + items.indexOf(newParagraph)))
+    assert.ok(before && after && next)
+    assert.notEqual(before, next)
+    if (fault === 'none') {
+      assert.equal(before, after)
+      assert.equal(before.sourceOnly, undefined)
+      assert.match(before.source, /approximately ∼ 36 μV\.$/u)
+      assert.deepEqual(before.items, ['1:0', '1:1', '1:2', '1:3', '1:4', '1:5', '1:6'])
+      assert.equal(before.fragments.length, 1)
+      assert.equal(before.fragments[0].rect.bottom, 282)
+    } else {
+      assert.notEqual(before, after)
+    }
+  }
+)
+
+it.each([false, true])(
+  'keeps a same-row decibel measurement with its wrapped prose word (detached=%s)',
+  (detached) => {
+    const run = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL = false,
+      fontName = 'body'
+    ): PdfLayoutTextItem => ({
+      ...item(text, x, y, width, { size: 9, hasEOL, fontName }),
+      fontAscent: 0,
+      fontDescent: 0
+    })
+    const units = translationUnits([
+      run('The baselines were established by independent calibration', 318, 249, 241, true),
+      run('and checked before the final sequence was measured.', 318, 238, 241, true),
+      run('The values were collected without a separate adjustment.', 318, 227, 241, true),
+      run('All supporting estimates were recorded.', 318, 216, 111, true),
+      run('The instrument improved on', 328, 205, 110),
+      run('9 of 9 samples', 441, 205, 51, false, 'bold'),
+      run('against both base-', 495, 205, 65, true),
+      run('lines (', 318, 194, 23),
+      run('+', 341, 194, 6, false, 'math'),
+      run('8', 347, 194, 4, false, 'digit'),
+      run('.', 351, 194, 2, false, 'dot'),
+      run('6', 353.2, 194, 4, false, 'digit'),
+      run('dB over the control,', detached ? 371 : 359, 194, 65),
+      run('+', 426, 194, 6, false, 'math'),
+      run('10', 432, 194, 8.5, false, 'digit'),
+      run('.', 440.5, 194, 2, false, 'dot'),
+      run('1', 442.5, 194, 4, false, 'digit'),
+      run('dB over the comparison) with a lower', 448, 194, 111, true),
+      run('measurement error. The independent estimate closely', 318, 183, 241, true),
+      run('agreed with the values from the longer setup and its', 318, 172, 241, true),
+      run('reference model after the data were pooled.', 318, 161, 168, true)
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:4'))!
+    assert.equal(owner.source.includes('baselines (+8.6 dB over the control'), !detached)
+    assert.equal(owner.items.includes('1:7'), !detached)
+    assert.equal(owner.items.includes('1:12'), !detached)
+    assert.equal(owner.fragments.length, detached ? 1 : 3)
+    assert.equal(
+      units.some((unit) => unit.sourceOnly && unit.items.includes('1:7')),
+      detached
+    )
+  }
+)
+
+it.each(['raised', 'flat', 'separate word'])(
+  'joins a spacing acute inside a cover name (%s)',
+  (shape) => {
+    const body = { size: 10, hasEOL: false }
+    const units = translationUnits([
+      item('AN ILLUSTRATIVE TEST OF AN INDEPENDENT RESULT', 88, 728, 420, {
+        fontName: 'title',
+        size: 12
+      }),
+      item('TEST READER AND SOL ', 168, 698, 117.2, body),
+      item('´', 285.2, shape === 'flat' ? 698 : 700.5, 5, body),
+      item('ARIA DE SILVA', shape === 'separate word' ? 289 : 283.75, 698, 143.3, body),
+      item('Abstract.', 108, 669, 51.2, { fontName: 'heading', size: 10 }),
+      item('The independent comparison confirms the stated result.', 108, 654, 295)
+    ])
+    const byline = units.find((unit) => unit.items.includes('1:1'))
+    assert.equal(byline?.source === 'TEST READER AND SOLÁRIA DE SILVA', shape === 'raised')
+    if (shape === 'raised') {
+      assert.deepEqual(
+        byline?.items
+          .map((key, index) => [key, byline.originalStrings[index]])
+          .sort(([a], [b]) => a.localeCompare(b)),
+        [
+          ['1:1', 'TEST READER AND SOL '],
+          ['1:2', '´'],
+          ['1:3', 'ARIA DE SILVA']
+        ]
+      )
+    }
+  }
+)
+
+it.each(['connected', 'unrelated transitions', 'reversed thresholds'])(
+  'keeps aligned threshold descriptions on separate bullet rows (%s)',
+  (shape) => {
+    const firstLabel = 'm: AB16 to CD8 transition.'
+    const secondLabel =
+      shape === 'unrelated transitions'
+        ? 'm: XY8 to EF4 per-channel transition.'
+        : 'm: CD8 to EF4 per-channel transition.'
+    const row = (index: number, y: number, value: string, label: string): PdfLayoutTextItem[] => {
+      const bullet = { size: 9, fontName: 'bullet', hasEOL: false }
+      const math = { ...bullet, fontName: 'math' }
+      const digits = { ...bullet, fontName: 'digits' }
+      const subscript = { ...digits, size: 6.6 }
+      const equals = { ...bullet, fontName: 'equals' }
+      return [
+        item('•', 334, y, 4.5, bullet),
+        { ...item(' ', 338.5, y, 3.5, bullet), height: 0 },
+        item('𝑟', 342, y, 4.4, math),
+        item(String(index), 346.7, y - 1.35, 3.05, subscript),
+        { ...item(' ', 349.75, y - 1.35, 2.95, subscript), height: 0 },
+        item('=', 352.7, y, 5.7, equals),
+        { ...item(' ', 358.4, y, 2.1, equals), height: 0 },
+        item(value, 360.5, y, 8.3, digits),
+        { ...item(' ', 368.8, y, 2.25, digits), height: 0 },
+        item(label, 371.05, y, index === 0 ? 98 : 140, { size: 9, hasEOL: index === 1 })
+      ]
+    }
+    const units = translationUnits([
+      item('Two optional modes are available for every test configuration.', 318, 625, 238, {
+        size: 9,
+        hasEOL: false
+      }),
+      item('Default measurement thresholds:', 328, 599, 111, { size: 9, hasEOL: false }),
+      ...row(0, 584.6, '20', firstLabel),
+      ...row(1, 573.6, shape === 'reversed thresholds' ? '10' : '60', secondLabel),
+      item('These bounds can be calibrated for the selected environment.', 328, 559, 230, {
+        size: 9
+      }),
+      item('Select a matching profile before checking the measurements.', 318, 548, 233, {
+        size: 9,
+        hasEOL: false
+      })
+    ])
+    const labels = units.filter(
+      (unit) => unit.items.includes('1:11') || unit.items.includes('1:21')
+    )
+    assert.deepEqual(
+      labels.map((unit) => unit.source),
+      shape === 'connected' ? [firstLabel, secondLabel] : [firstLabel + ' ' + secondLabel]
+    )
+    assert.deepEqual(
+      labels.flatMap((unit) => unit.items),
+      ['1:11', '1:21']
+    )
+    assert.equal(units.filter((unit) => unit.sourceOnly && unit.source.startsWith('• ')).length, 2)
+  }
+)
+
+it.each(['known journal', 'complete locator', 'year alone', 'number gap', 'off rail'])(
+  'retains a hanging reference tail with a witnessed journal name or locator (%s)',
+  (shape) => {
+    const base = { size: 8 }
+    const run = { ...base, hasEOL: false }
+    const journal = { ...run, fontName: 'journal' }
+    const indent = shape === 'off rail' ? 150 : 139.8
+    const { units } = groupPdfTranslationPages({
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          width: 612,
+          height: 792,
+          rotation: 0,
+          items: [
+            item(
+              'Several measurements support the claim when independently calibrated.',
+              126.7,
+              201.8,
+              350
+            ),
+            item('References', 277.1, 181.5, 57.8, { fontName: 'heading', hasEOL: false }),
+            item('[1] A. Reader. Methods for independent measurement.', 126.7, 165.6, 211, run),
+            item(
+              ['complete locator', 'year alone', 'number gap'].includes(shape)
+                ? 'Journal of Applied Methods'
+                : 'Journal of Applied Samples',
+              339.1,
+              165.6,
+              143.8,
+              journal
+            ),
+            item(',', 482.9, 165.6, 2.4, base),
+            item('12(1):8–32, 2004.', 139.8, 155.6, 79.8, base),
+            item('[2] D. Editor. Follow-up experiments.', 126.7, 145.6, 203.4, run),
+            item('Review of Experimental Examples', 332.2, 145.6, 150.6, journal),
+            item(',', 482.9, 145.6, 2.4, base),
+            item('2006.', 139.8, 135.6, 19.2, base),
+            item('[3] J. Writer. Further checks of observed results.', 126.7, 125.6, 253.7, run),
+            item('Journal of Applied', 380.4, 125.6, 104.8, { ...journal, hasEOL: true }),
+            item('Samples', indent, 115.6, 30.3, journal),
+            item(
+              shape === 'year alone' ? ', 2002.' : ', 65(3):81–94, 2002.',
+              indent + 30.3,
+              115.6,
+              85.2,
+              base
+            ),
+            item(
+              shape === 'number gap'
+                ? '[5] G. Reviewer. Extending the earlier approach.'
+                : '[4] G. Reviewer. Extending the earlier approach.',
+              126.7,
+              105.6,
+              237.4,
+              run
+            ),
+            item('Review of Experimental Exam-', 366.7, 105.6, 118.5, { ...journal, hasEOL: true }),
+            item('ples', 139.8, 95.6, 36.6, journal),
+            item(', 2009.', 176.4, 95.6, 24.4, base),
+            item('1', 304, 82, 4, { size: 7, hasEOL: false })
+          ]
+        }
+      ]
+    })
+    const wrap = units.find((unit) => unit.items.includes('1:12'))
+    assert.deepEqual(wrap?.items, ['1:12', '1:13'])
+    assert.equal(
+      Boolean(wrap?.sourceOnly),
+      shape === 'known journal' || shape === 'complete locator'
+    )
+    const hyphenated = units.find((unit) => unit.items.includes('1:16'))
+    assert.deepEqual(hyphenated?.items, ['1:16', '1:17'])
+    if (shape === 'known journal') assert.equal(hyphenated?.sourceOnly, true)
+  }
+)
+
+it.each([
+  { variable: '𝜑𝜑', fontName: 'math', joined: true },
+  { variable: '𝜑𝜒', fontName: 'math', joined: false },
+  { variable: '𝜑𝜑', fontName: 'body', joined: false }
+])(
+  'keeps a wrapped variable with its noun when the math run is unambiguous: $variable $fontName',
+  ({ variable, fontName, joined }) => {
+    const units = translationUnits([
+      item('The controller records the latest setting from the active sensor.', 58, 702, 267),
+      item('The reconstructed value of the sensor signal’s steady-state phase angle', 58, 690, 267),
+      item('(', 58, 676, 3.3, { hasEOL: false }),
+      item(variable, 63, 676, 5.6, { fontName, hasEOL: false }),
+      item(') is displayed in the overview panel for comparison with the', 70.7, 676, 254.3),
+      item('remaining readings. Results are saved at the end of the session.', 58, 664, 262)
+    ])
+    const prose = units.find((unit) => unit.items.includes('1:1'))
+    assert.equal(
+      [2, 3, 4].every((index) => prose?.items.includes(`1:${index}`)),
+      joined
+    )
+    if (joined) {
+      assert.equal(prose?.sourceOnly, undefined)
+      assert.ok(prose?.source.includes(`angle ( ${variable} ) is displayed`))
+    }
+    const owned = units.flatMap((unit) => unit.items)
+    assert.deepEqual(owned.sort(), ['1:0', '1:1', '1:2', '1:3', '1:4', '1:5'])
+  }
+)
+
+it.each(['aligned', 'different rail', 'loose pitch'])(
+  'joins a footnote conclusion after its native math (%s)',
+  (shape) => {
+    const body = { size: 8.73, hasEOL: false }
+    const formula = { ...body, fontName: 'math', size: 10.91 }
+    const delimiter = { ...formula, fontName: 'large' }
+    const script = { ...body, fontName: 'small', size: 7.636 }
+    const units = translationUnits([
+      item('The expressions agree when substituting the selected values.', 72, 145, 450, {
+        size: 11
+      }),
+      item('1', 61.7, 98.4, 4.35, script),
+      item('Compute', 72, 94.44, 34, body),
+      item('u + v =', 124, 94.44, 35, formula),
+      item('(', 355, 103.32, 5, delimiter),
+      item('k', 360, 99.36, 5.39, { ...script, hasEOL: true }),
+      item('s', 360.6, 90.72, 4.05, script),
+      item(')', 365.4, 103.32, 5, delimiter),
+      item('and then apply the counting', 421.2, 94.44, 118.73, {
+        ...body,
+        hasEOL: true
+      }),
+      item(
+        'lemma once.',
+        shape === 'different rail' ? 79 : 72,
+        shape === 'loose pitch' ? 75 : 79.2,
+        59.45,
+        body
+      ),
+      item('1', 303.8, 62, 5, script)
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:8'))!
+    const joined = shape === 'aligned'
+    assert.equal(
+      owner.source,
+      joined ? 'and then apply the counting lemma once.' : 'and then apply the counting'
+    )
+    assert.deepEqual(owner.items, joined ? ['1:8', '1:9'] : ['1:8'])
+    assert.equal(owner.fragments.length, joined ? 2 : 1)
+    assert.ok(units.find((unit) => unit.items.includes('1:6'))?.sourceOnly)
+  }
+)
+
+it.each(['same row', 'different baseline', 'large gap'])(
+  'joins a native condition to its upper bound in running prose (%s)',
+  (shape) => {
+    const body = { size: 10.91, hasEOL: false }
+    const units = translationUnits([
+      item('The preceding formula gives a reliable estimate.', 72, 524, 420, { size: 10.91 }),
+      item('The claim applies.', 72, 510.55, 83, { size: 10.91 }),
+      item('For', 88.94, 497, 15.94, body),
+      item('q', 108.25, 497, 6.55, { ...body, fontName: 'variable' }),
+      item('≤', 117.83, 497, 8.49, { ...body, fontName: 'operator' }),
+      item(
+        '6, the maximum value of ',
+        shape === 'large gap' ? 141 : 129.35,
+        shape === 'different baseline' ? 495 : 497,
+        124,
+        body
+      ),
+      item('Q', 253.35, 497, 7, { ...body, fontName: 'variable' }),
+      item('in the inspected region is attained when', 265, 497, 275, { size: 10.91 }),
+      item(
+        'the first condition holds for every selected observation. For the alternative',
+        72,
+        483.45,
+        463,
+        {
+          size: 10.91
+        }
+      ),
+      item('case the conclusion follows from the same comparison and yields 5.', 72, 469.9, 368, {
+        size: 10.91
+      }),
+      item('The recorded measurements agree at the reported resolution.', 89, 456.35, 327, {
+        size: 10.91
+      })
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:2'))!
+    const joined = shape === 'same row'
+    assert.equal(owner.source.startsWith('For q ≤ 6, the maximum value'), joined)
+    assert.deepEqual(
+      owner.items,
+      joined ? ['1:2', '1:3', '1:4', '1:5', '1:6', '1:7', '1:8', '1:9'] : ['1:2', '1:3', '1:4']
+    )
+    assert.equal(units.flatMap((unit) => unit.items).length, 11)
+    assert.equal(new Set(units.flatMap((unit) => unit.items)).size, 11)
+  }
+)
+
+it.each(['aligned', 'shifted'])(
+  'rejoins a split run-in acknowledgment before the next field (%s)',
+  (shape) => {
+    const label = { fontName: 'label', size: 12, hasEOL: false }
+    const units = translationUnits([
+      item('The sample data were obtained using an independent instrument.', 320, 530, 241),
+      item('A separate calibration confirms the instrument response.', 320, 517.5, 210),
+      item('Acknowledgments:', 320, 492, 92, label),
+      item('The test data were ob-', 421, 492, 140),
+      item(
+        'tained over two weeks with help from the survey team.',
+        shape === 'shifted' ? 326 : 320,
+        479.5,
+        shape === 'shifted' ? 235 : 241
+      ),
+      item('The equipment', 320, 467, 87, { hasEOL: false }),
+      item('was supplied by two research partners', 414, 467, 147),
+      item('under a shared grant.', 320, 454.5, 101),
+      item('Facilities:', 320, 436, 46, label),
+      item('Optical bench and a field sensor.', 371, 436, 155)
+    ])
+    const acknowledgment = units.find((unit) => unit.items.includes('1:2'))
+    const joins = shape === 'aligned'
+    assert.deepEqual(
+      acknowledgment?.items,
+      joins ? ['1:2', '1:3', '1:4', '1:5', '1:6', '1:7'] : ['1:2', '1:3']
+    )
+    assert.equal(acknowledgment?.source.includes('were obtained over two weeks'), joins)
+    assert.equal(acknowledgment?.items.includes('1:8'), false)
+  }
+)
+
+it.each([0, 8])('rejoins a wrapped keyword category on its native rail (offset=%s)', (offset) => {
+  const units = translationUnits([
+    item('Keywords:', 85, 567, 44, { fontName: 'label', hasEOL: false }),
+    item('imaging systems: test data, sensor calibration, tech-', 133, 567, 392),
+    item('niques: spectroscopic', 133 + offset, 555, 90),
+    item(
+      'The test records reveal smooth changes in the optical signal over each cycle.',
+      54,
+      540,
+      482
+    ),
+    item(
+      'The repeated measurements follow a similar distribution across all stations.',
+      54,
+      528,
+      482
+    )
+  ])
+  const keywords = units.find((unit) => unit.items.includes('1:0'))
+  assert.equal(keywords?.source.endsWith('techniques: spectroscopic'), offset === 0)
+  assert.equal(keywords?.items.includes('1:2'), offset === 0)
+  assert.equal(keywords?.items.includes('1:3'), false)
+  assert.deepEqual(units.flatMap((unit) => unit.items).sort(), ['1:0', '1:1', '1:2', '1:3', '1:4'])
+})
+
+it.each([0, 3])('keeps a wrapped year range and citation in prose (shift=%s)', (shift) => {
+  const inline = { hasEOL: false, size: 12 }
+  const units = translationUnits([
+    item('The measurements from several field stations were first recorded in the', 62, 614, 490, {
+      size: 12
+    }),
+    item('1986-1988', 62 + shift, 600, 51, inline),
+    item('separately', 119 + shift, 600, 51, inline),
+    item('from', 176 + shift, 600, 23, inline),
+    item('(', 205 + shift, 600, 4, inline),
+    item(
+      '3) using distinct sensors and the readings were logged each day.',
+      209 + shift,
+      600,
+      343 - shift,
+      { size: 12 }
+    ),
+    item('The resulting records are consistent with the independent controls.', 62, 586, 474, {
+      size: 12
+    })
+  ])
+  const owner = units.find((unit) => unit.items.includes('1:0'))
+  const indices = ['1:1', '1:2', '1:3', '1:4', '1:5']
+  assert.equal(
+    indices.every((index) => owner?.items.includes(index)),
+    shift === 0
+  )
+  if (!shift)
+    assert.match(owner?.source ?? '', /in the 1986-1988 separately from \(3\) using distinct/)
+  assert.deepEqual(units.flatMap((unit) => unit.items).sort(), ['1:0', ...indices, '1:6'])
+})
+
+it.each([0, 4])(
+  'joins a qualified year across an alternating opening folio (shift=%s)',
+  (shift) => {
+    const rotated = item('Height', 170, 436, 30, { fontName: 'axis' })
+    rotated.transform = [0, 10, -10, 0, 170, 436]
+    const result = groupPdfTranslationPages({
+      pages: [
+        {
+          page: 1,
+          width: 612,
+          height: 792,
+          rotation: 0,
+          items: [
+            item('1', 64, 740, 5),
+            rotated,
+            item(
+              'Reliable survey records are available from all the stations along the main branch.',
+              71,
+              124,
+              481
+            ),
+            item(
+              'They describe several separate campaigns documented in the regional collection.',
+              62,
+              111.5,
+              490
+            ),
+            item('The most complete observations were made near the lower station in', 62, 99, 490)
+          ]
+        },
+        {
+          page: 2,
+          width: 612,
+          height: 792,
+          rotation: 0,
+          items: [
+            item('2', 547, 740, 5),
+            item('1974', 62 + shift, 717, 20, { hasEOL: false }),
+            item('±', 82.2 + shift, 717, 7.8, { hasEOL: false, fontName: 'math' }),
+            item(
+              '4, having followed the earlier protocols approved for the whole region.',
+              90 + shift,
+              717,
+              462 - shift
+            ),
+            item('The records are available to other researchers on request.', 62, 704.5, 403)
+          ]
+        }
+      ]
+    })
+    const owner = result.units.find((unit) => unit.items.includes('1:4'))
+    assert.equal(owner?.items.includes('2:1'), shift === 0)
+    if (!shift) assert.match(owner?.source ?? '', /station in 1974±4, having followed/u)
+    assert.equal(result.units.find((unit) => unit.items.includes('2:0'))?.source, '2')
+    assert.equal(result.units.find((unit) => unit.items.includes('1:1'))?.source, 'Height')
+    assert.equal(owner?.items.includes('2:0'), false)
+  }
+)
+
+it.each([false, true])(
+  'keeps a terminal preposition with its quantifier (misaligned=%s)',
+  (misaligned) => {
+    const run = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      size: number,
+      hasEOL = false
+    ): PdfLayoutTextItem => item(str, x, y, width, { fontName, size, hasEOL })
+    const items = [
+      run('toward the marked zone [', 72, 214.019, 95.004, 'Body', 9.963),
+      run('j', 167.004, 214.019, 4.151, 'Variable', 9.963),
+      run(']', 171.156, 214.019, 2.768, 'Body', 9.963),
+      run('±', 173.926, 217.635, 6.227, 'Symbol', 6.974),
+      run(
+        '. We verify that the estimate from the experiment is stable conditional on the state Ψ',
+        180.65,
+        214.019,
+        298.903,
+        'Body',
+        9.963
+      ),
+      run('[', 479.551, 212.22, 2.255, 'Lower', 6.974),
+      run('j', 481.806, 212.22, 3.335, 'LowerVariable', 6.974),
+      run(']', 485.141, 212.22, 2.255, 'Lower', 6.974),
+      run('d', 487.397, 214.213, 3.235, 'Tiny', 4.981),
+      run(' ', 490.632, 214.213, 4.56, 'Tiny', 0),
+      run('=', 495.192, 214.019, 7.749, 'Body', 9.963),
+      run(' ', 502.941, 214.019, 3.567, 'Body', 0),
+      run('ω', 506.508, 214.019, 5.693, 'Variable', 9.963),
+      run('[', 512.197, 212.22, 2.255, 'Lower', 6.974),
+      run('j', 514.452, 212.22, 3.335, 'LowerVariable', 6.974),
+      run(']', 517.787, 212.22, 2.255, 'Lower', 6.974),
+      run('d', 520.043, 214.213, 3.235, 'Tiny', 4.981),
+      run(' ', 523.278, 214.213, 4.795, 'Tiny', 0),
+      run('for', 528.073, 214.019, 11.928, 'Body', 9.963, true),
+      run('any', misaligned ? 78 : 72, 202.064, 15.496, 'Body', 9.963),
+      run(' ', 87.496, 202.064, 2.959, 'Body', 0),
+      run('ω', 90.455, 202.064, 5.693, 'Variable', 9.963),
+      run('[', 96.148, 200.265, 2.255, 'Lower', 6.974),
+      run('j', 98.403, 200.265, 3.335, 'LowerVariable', 6.974),
+      run(']', 101.738, 200.265, 2.255, 'Lower', 6.974),
+      run('d', 103.994, 202.258, 3.235, 'Tiny', 4.981),
+      run(' ', 107.229, 202.258, 0.996, 'Tiny', 0),
+      run(
+        ', giving the expected quantity after averaging. For any',
+        108.225,
+        202.064,
+        332,
+        'Body',
+        9.963
+      ),
+      run(' ', 440.225, 202.064, 2.959, 'Body', 0),
+      run('ω', 443.184, 202.064, 5.693, 'Variable', 9.963),
+      run('[', 448.879, 200.265, 2.255, 'Lower', 6.974),
+      run('j', 451.134, 200.265, 3.335, 'LowerVariable', 6.974),
+      run(']', 454.469, 200.265, 2.255, 'Lower', 6.974),
+      run('d', 456.725, 202.258, 3.235, 'Tiny', 4.981),
+      run(' ', 459.96, 202.258, 0.996, 'Tiny', 0),
+      run(', we repeat the comparison', 460.956, 202.064, 79.042, 'Body', 9.963)
+    ]
+    const units = translationUnits(items)
+    const owner = units.find((unit) => unit.items.includes('1:18'))
+    assert.ok(owner)
+    if (misaligned) {
+      assert.ok(!owner?.items.includes('1:19'))
+      return
+    }
+    assert.equal(
+      owner?.source,
+      'for any ω[j]d, giving the expected quantity after averaging. For any ω[j]d, we repeat the comparison'
+    )
+    assert.equal(owner?.fragments.length, 2)
+    assert.ok(owner?.items.includes('1:19'))
+    assert.ok(!owner?.items.includes('1:16'))
+  }
+)
+
+it.each([
+  { shape: 'matching rows', titleWrap: true, footnoteWrap: true },
+  { shape: 'different abstract term', titleWrap: false, footnoteWrap: true },
+  { shape: 'shifted second title row', titleWrap: false, footnoteWrap: true },
+  { shape: 'different title marker', titleWrap: false, footnoteWrap: false },
+  { shape: 'shifted footnote word', titleWrap: true, footnoteWrap: false }
+])('reassembles the title and its footnote when native evidence agrees: $shape', (testCase) => {
+  const { shape, titleWrap, footnoteWrap } = testCase
+  const title = { fontName: 'title', size: 14.4 }
+  const footnote = { fontName: 'footnote', size: 9 }
+  const shift = shape === 'shifted second title row' ? 6 : 0
+  const term = shape === 'different abstract term' ? 'River Delta' : 'River Basin'
+  const units = translationUnits([
+    item('Field Notes - Learn about the River', 170, 666, 272, title),
+    item('Basin while exploring local records', 190 + shift, 648, 226, {
+      ...title,
+      hasEOL: false
+    }),
+    item(shape === 'different title marker' ? '†' : '⋆', 416 + shift, 653.2, 6, {
+      size: 10,
+      fontName: 'title-mark',
+      hasEOL: false
+    }),
+    item('', 0, 0, 0, { size: 0 }),
+    item('Example Author', 240, 613.5, 95, { hasEOL: false }),
+    item('1', 335, 617, 4, { size: 7, fontName: 'affiliation-mark' }),
+    item(
+      'Abstract. We compare records around the ' +
+        term +
+        ' with measurements from the previous year.',
+      135,
+      480,
+      340
+    ),
+    item(
+      'Each reader can review the full collection of measurements used for this summary.',
+      135,
+      468,
+      348
+    ),
+    item('The survey describes the regional differences in the annual series.', 135, 176, 345),
+    item('Our first observations show that several records changed during spring.', 135, 164, 345, {
+      hasEOL: false
+    }),
+    item('⋆', 137.5, 148.8, 4, { size: 6, fontName: 'footnote-mark', hasEOL: false }),
+    item(
+      'This summary was prepared for presentation at the Regional Climate Forum',
+      145,
+      145,
+      335,
+      footnote
+    ),
+    item('Workshop.', shape === 'shifted footnote word' ? 150 : 145, 134, 39, {
+      ...footnote,
+      hasEOL: false
+    })
+  ])
+  const titleOwner = units.find((unit) => unit.items.includes('1:0'))
+  const footnoteOwner = units.find((unit) => unit.items.includes('1:11'))
+  assert.equal(titleOwner?.items.includes('1:1'), titleWrap)
+  assert.equal(footnoteOwner?.items.includes('1:12'), footnoteWrap)
+  if (titleWrap) {
+    assert.match(titleOwner?.source ?? '', /River Basin while exploring local records⋆$/u)
+    assert.deepEqual(titleOwner?.items, ['1:0', '1:1', '1:2'])
+    assert.equal(titleOwner?.fragments.length, 2)
+  }
+  if (footnoteWrap) {
+    assert.match(footnoteOwner?.source ?? '', /Climate Forum Workshop\.$/u)
+    assert.deepEqual(footnoteOwner?.items, ['1:10', '1:11', '1:12'])
+    assert.equal(footnoteOwner?.fragments.length, 2)
+  }
+  const ownership = units.flatMap((unit) => unit.items)
+  assert.equal(ownership.length, 12)
+  assert.equal(new Set(ownership).size, 12)
+})
+
+it.each(['axis script', 'raised label word', 'mismatched variable'])(
+  'keeps the lowered word of a plotted difference native for %s',
+  (shape) => {
+    const axis = { fontName: 'axis', size: 9.2, hasEOL: false }
+    const ticks = Array.from({ length: 8 }, (_, i) => {
+      const x = 135 + 29.4 * i
+      const tick = item(String(2 * i - 2), x, 215.1, i === 0 ? 8 : 6, { ...axis, hasEOL: i === 7 })
+      return i === 7
+        ? [tick]
+        : [tick, item(' ', x + tick.width, 215.1, 29.4 - tick.width, { ...axis, size: 0 })]
+    }).flat()
+    const items = [
+      item('An overview of the measurements', 168, 655, 276),
+      item('The instrument records values throughout each observation.', 53, 609, 500),
+      ...ticks,
+      item('D', 242, 204, 6, axis),
+      item('−', 250, 204, 5, { ...axis, fontName: 'symbol' }),
+      item(shape === 'mismatched variable' ? 'H' : 'D', 258, 204, 6, axis),
+      item('low', 264, shape === 'raised label word' ? 202.5 : 200.3, 12, {
+        ...axis,
+        size: 6.5
+      }),
+      item('(hours)', 277.6, 204, 25, axis),
+      item('Figure 2. Values recorded during the calibration exercise.', 51, 145, 510),
+      item('The collected data are summarized along the horizontal axis.', 51, 133, 510)
+    ]
+    const units = translationUnits(items)
+    const key = items.findIndex((item) => item.str === 'low')
+    const label = units.find((unit) => unit.items.includes(`1:${key}`))
+    assert.ok(label, 'the lowered word belongs to a source unit')
+    assert.equal(label.preserve === 'formula' && !!label.sourceOnly, shape === 'axis script')
+    if (shape === 'axis script') assert.deepEqual(label.items, [`1:${key}`, `1:${key + 1}`])
+    const ownership = units.flatMap((unit) => unit.items)
+    const visibleCount = items.filter((item) => item.str.trim()).length
+    assert.equal(ownership.length, visibleCount)
+    assert.equal(new Set(ownership).size, visibleCount)
+  }
+)
+
+it('preserves the DOI rows missed between two-column references', () => {
+  const journal = { size: 8.9664, fontName: 'journal' }
+  const rows: [string, boolean, number][] = [
+    ['2014, R&R, 428, A89, doi: 10.5555/1234-5678/20140102', true, 231.14],
+    ['de Ver, R. S. T., Able, P., Baker, M., et al. 2016, R&R,', false, 236.93],
+    ['238, A52, doi: 10.5555/1234-5678/20160506', true, 180.46],
+    ['del’Mar, B., & Cruz, C. 2007, in Collected Proceedings', false, 194.19],
+    ['Publication, Vol. 238, The Three-Dimensional Model', true, 223.12],
+    ['with Examples, ed. M. Dale, H. Earl, & R. J. G.', true, 221.92],
+    ['Fenn, 428', true, 59.05],
+    ['Gale, P. T. 2002, Measurements from the Boreal Survey', false, 241.36],
+    ['Studies (London: Example Press), 215–228,', true, 208.21],
+    ['doi: 10.5555/123-45-6789-0 12', true, 139.45],
+    ['Survey Consortium, Hall, N., de Ver, R. S. T., et al.', false, 232.11],
+    ['2017, R&R, 349, A8, doi: 10.5555/1234-5678/20170206', true, 226.53],
+    ['Survey Consortium, Irons, P. W. T., Jones, J., et al.', false, 232.24],
+    ['2019a, R&R, 270, A6, doi: 10.5555/1234-5678/20190510', true, 231.14],
+    ['Survey Consortium, Keen, N., Lane, A., et al. 2019b,', false, 219.72],
+    ['R&R, 270, A18, doi: 10.5555/1234-5678/20190812', true, 207.07],
+    ['Survey Consortium, Irons, P. W. T., Jones, J., et al.', false, 232.24],
+    ['2022, R&R, 429, A8, doi: 10.5555/1234-5678/20220714', true, 226.53]
+  ]
+  const items = [
+    item('REFERENCES', 272.094, 445.235, 68.495, { size: 9.9626, hasEOL: false }),
+    ...rows.map(([str, hanging, width], i) =>
+      item(str, hanging ? 59.955 : 50.74, 413.852 - i * 12.9513, width, journal)
+    ),
+    item('Maruˇ', 50.74, 180.726, 25.6215, { ...journal, hasEOL: false }),
+    item('s, J., Peary, P., Rower, M., et al. 2019, R&R,', 72.2369, 180.726, 216.172, journal),
+    item('639, A62, doi: 10.5555/1234-5678/20190402', 59.956, 167.775, 180.455, journal),
+    item('Miraˇ', 320.579, 426.804, 25.6215, { ...journal, hasEOL: false })
+  ].map((row) => ({ ...row, fontFamily: 'sans-serif', fontAscent: 0.694, fontDescent: -0.194 }))
+  const { units } = groupPdfTranslationPages({
+    pageCount: 3,
+    pages: [[], [], items].map((pageItems, i) => ({
+      page: i + 1,
+      width: 612,
+      height: 792,
+      rotation: 0,
+      items: pageItems
+    }))
+  })
+  const mixed = units.find((unit) => unit.items.includes('3:3'))
+  const last = units.find((unit) => unit.items.includes('3:21'))
+  assert.deepEqual(mixed?.items, ['3:3', '3:4'])
+  assert.equal(mixed?.preserve, 'reference')
+  assert.equal(mixed?.sourceOnly, true)
+  assert.deepEqual(last?.items, ['3:21'])
+  assert.equal(last?.preserve, 'reference')
+  assert.equal(last?.sourceOnly, true)
+  const ownership = units.flatMap((unit) => unit.items)
+  assert.equal(ownership.length, items.length)
+  assert.equal(new Set(ownership).size, items.length)
+})
+
+it.each([true, false])(
+  'keeps the right-column bibliography native with a matching left-column entry (%s)',
+  (hasLeftDate) => {
+    const body = { size: 9 }
+    const inline = { ...body, hasEOL: false }
+    const items = [
+      item('References', 154.5, 273.75, 40, body),
+      item(
+        hasLeftDate
+          ? 'Field, J., García, R., & Lane, F. (2019).'
+          : 'Field, J., García, R., & Lane, F. (in preparation).',
+        54,
+        72.75,
+        241.19,
+        inline
+      ),
+      item('', 317.25, 591.75, 0, { size: 0 }),
+      item('“Results from the northern calibration campaign.”', 317.25, 591.75, 240.96, inline),
+      item('Measurement Reports', 317.25, 581.25, 78.99, { ...inline, fontName: 'italic' }),
+      item('52', 398.49, 581.25, 9, { ...inline, fontName: 'bold' }),
+      item(', 124-129.', 407.49, 581.25, 36.75, body),
+      item('Case,', 317.25, 564.75, 19.74, inline),
+      item('A.B.,', 342.99, 564.75, 18.25, inline),
+      item('Drake, S.A., & Evan, J.R. (2020). “A summary of early', 317.25, 554.25, 240.95, body),
+      item(
+        'measurements from the experiment.” Submitted for review.',
+        317.25,
+        543.75,
+        241.47,
+        body
+      ),
+      item('Green, B.D., Hill, A.W., Reed, P. (2008). “The Archive', 317.25, 516.75, 240.93, body),
+      item(
+        'of Instrument Records.” Data Notes 182, 64-76. Updated in May.',
+        317.25,
+        506.25,
+        241.43,
+        body
+      ),
+      item('https://example.test/records', 317.25, 495.75, 192.21, body),
+      item('Green. B.D. (2020). Data Catalog.', 317.25, 479.25, 241.4, body),
+      item('https://example.test/catalog', 317.25, 468.75, 92.75, inline),
+      item('Measurement Reports 52 (2020)', 247.5, 46.5, 115.99, inline)
+    ].map((row) => ({
+      ...row,
+      fontFamily: 'serif',
+      fontAscent: 0.8911,
+      fontDescent: -0.2163
+    }))
+    const { units } = groupPdfTranslationPages({
+      pageCount: 2,
+      pages: [[], items].map((pageItems, n) => ({
+        page: n + 1,
+        width: 612,
+        height: 792,
+        rotation: 0,
+        items: pageItems
+      }))
+    })
+    for (const index of [3, 7, 11, 14]) {
+      const owner = units.find((unit) => unit.items.includes(`2:${index}`))
+      assert.ok(owner)
+      assert.equal(owner.preserve === 'reference' && !!owner.sourceOnly, hasLeftDate)
+    }
+    const ownership = units.flatMap((unit) => unit.items)
+    assert.equal(ownership.length, items.length - 1)
+    assert.equal(new Set(ownership).size, items.length - 1)
+  }
+)
+
+it.each([0, 4])(
+  'keeps a wrapped calendar day with its preceding date and citation (shift=%s)',
+  (shift) => {
+    const body = { size: 9.9626 }
+    const inline = { ...body, hasEOL: false }
+    const author = 'North & Remy 2019'
+    const items = [
+      item('Observations from the Northern Ridge', 153, 699, 306, { size: 14 }),
+      item(
+        'The survey reviewed a set of reports from the same station during the previous year.',
+        59.76,
+        265,
+        502.24,
+        body
+      ),
+      item('An earlier sample was included (', 50.76, 252.55, 182.6, inline),
+      item(author, 233.36, 252.55, 214.26, inline),
+      item('). The records can be compared.', 447.62, 252.55, 114.38, body),
+      item(
+        'The recorded times remain provisional. A later observation was confirmed on 2021 October',
+        50.76,
+        240.1,
+        511.24,
+        body
+      ),
+      item('14 (', 50.76 + shift, 227.65, 17.19, inline),
+      item(author, 67.95 + shift, 227.65, 214.26, inline),
+      item(').', 282.21 + shift, 227.65, 6.6, body),
+      item(
+        'We thank the readers who helped to check the details of these records.',
+        59.76,
+        198.7,
+        405,
+        body
+      )
+    ]
+    const units = translationUnits(items)
+    const paragraph = units.find((unit) => unit.items.includes('1:5'))
+    assert.equal(paragraph?.items.includes('1:6'), shift === 0)
+    if (!shift) {
+      assert.match(paragraph?.source ?? '', /2021 October 14 \(North & Remy 2019\)\.$/u)
+      assert.deepEqual(paragraph?.items.slice(-3), ['1:6', '1:7', '1:8'])
+    }
+    const ownership = units.flatMap((unit) => unit.items)
+    assert.equal(ownership.length, items.length)
+    assert.equal(new Set(ownership).size, items.length)
+  }
+)
+
+it.each([true, false])(
+  'restores the deferred figure caption between proven reference lanes (%s)',
+  (twoPanels) => {
+    const body = { size: 8.9664, fontName: 'body' }
+    const inline = { ...body, hasEOL: false }
+    const rows: PdfLayoutTextItem[][] = [
+      [],
+      [
+        item('REFERENCES', 272.04, 154.08, 68.65, { hasEOL: false }),
+        item('Blair, C., & Grant, R. 2013,', 320.52, 135.6, 232.84, body),
+        item('Data Notes, 528, B46', 329.76, 118.68, 74.2, body),
+        item('Blair, C., & Grant, R. 2016,', 320.52, 97.68, 232.84, body),
+        item('Data Notes, 622, 3147', 329.76, 80.76, 77.56, inline)
+      ],
+      [
+        item('3', 556.92, 740.4, 4.98, { hasEOL: false }),
+        item('Figure 2.', 50.76, 214.32, 42.3, { ...inline, fontName: 'caption-label' }),
+        item(
+          'Changes in the measured intensity (top panel) during the first recording session and a comparison with the',
+          98.52,
+          214.32,
+          463.29,
+          body
+        ),
+        item(
+          twoPanels
+            ? 'calibrated response (bottom panel) as a function of time over the full period for the reference instrument'
+            : 'calibrated response as a function of time over the full observation period for the reference instrument',
+          50.76,
+          203.4,
+          511.12,
+          body
+        ),
+        item(
+          'and for the detector used in the parallel experiment. Additional labels correspond to the original ranges',
+          50.76,
+          192.48,
+          364.52,
+          inline
+        ),
+        item(
+          'shown in the appendix and in the description of the instrument. Our fitted curves and residuals are shown',
+          50.76,
+          181.44,
+          511.11,
+          body
+        ),
+        item('for each independent recording in the comparison.', 50.76, 170.52, 278.32, body),
+        item('Blair, C., Grant, R., & Hall, S.', 50.76, 146.4, 211.4, body),
+        item('Quinn, P., Reed, M. H., Stone, D., et al. 2014,', 320.52, 146.4, 226.35, body)
+      ]
+    ]
+    const { units } = groupPdfTranslationPages({
+      pageCount: rows.length,
+      pages: rows.map((items, i) => ({ page: i + 1, width: 612, height: 792, rotation: 0, items }))
+    })
+    const caption = units.find((unit) => unit.items.includes('3:1'))
+    assert.equal(!!caption?.sourceOnly, !twoPanels)
+    assert.equal(caption?.preserve, twoPanels ? undefined : 'reference')
+    assert.deepEqual(caption?.items, ['3:1', '3:2', '3:3', '3:4', '3:5', '3:6'])
+    for (const key of ['3:7', '3:8']) {
+      const citation = units.find((unit) => unit.items.includes(key))
+      assert.equal(citation?.preserve, 'reference')
+    }
+    const ownership = units.flatMap((unit) => unit.items)
+    const count = rows.flat().length
+    assert.equal(ownership.length, count)
+    assert.equal(new Set(ownership).size, count)
+  }
+)
+
+it.each([0, 12])('joins a dependent question across the front-page columns (shift=%s)', (shift) => {
+  const body = { size: 9 }
+  const inline = { ...body, hasEOL: false }
+  const gap = { ...inline, size: 0 }
+  const heading = { size: 9.5, fontName: 'heading', hasEOL: false }
+  const left = 'What remains unknown is an independent estimate of how'
+  const first = 'much variation the instrument must have.'
+  const lines = (x: number, y: number, count: number): PdfLayoutTextItem[] =>
+    Array.from({ length: count }, (_, i) =>
+      item(
+        'The observations remain consistent throughout the measurement procedure',
+        x,
+        y - 11 * i,
+        250,
+        body
+      )
+    )
+  const items = [
+    item('Report', 54, 760, 28, { size: 8 }),
+    item('1', 558, 760, 5, { size: 8 }),
+    item('Measuring Repeatability in a Shared Laboratory', 54, 665, 490, { size: 19 }),
+    item('A brief account of repeated observations collected during a shared test', 48, 530, 250),
+    item('and of the protocol used to compare the independent calibrations.', 48, 518, 250),
+    item('1. INTRODUCTION', 48, 278, 135, heading),
+    ...lines(48, 258, 7),
+    item('The earlier observations are available for comparison.', 48, 181, 170, body),
+    item('The consistent observations establish the limits of this procedure.', 60, 170, 238, body),
+    ...lines(48, 159, 8),
+    item('The individual observations are reported elsewhere.', 48, 71, 200, body),
+    item(left, 60, 60, 238, body),
+    item(first, 322, 528, 189, inline),
+    item(' ', 511, 528, 6, gap),
+    item('Earlier tests', 517, 528 + shift, 55, body),
+    ...lines(322, 517, 10),
+    item('The results were recorded for both instruments.', 322, 407, 190, inline),
+    item('', 322, 378, 0, { ...gap, hasEOL: true }),
+    item('2. MEASUREMENT METHOD', 322, 378, 175, heading),
+    ...lines(322, 359, 1),
+    item('The following observations were made on separate days.', 322, 73, 183, body)
+  ]
+  const units = translationUnits(items)
+  const owner = (source: string): string => `1:${items.findIndex((row) => row.str === source)}`
+  const question = units.find((unit) => unit.items.includes(owner(left)))
+  assert.equal(question?.source.startsWith(left + ' ' + first), shift === 0)
+  assert.equal(question?.items.includes(owner(first)), shift === 0)
+  assert.equal(question?.items.includes(owner('2. MEASUREMENT METHOD')), false)
+  if (!shift) assert.equal(question?.fragments.length, 2)
+})
+
+it.each(['K', 'M'])('joins a theorem lead to its matching native scope in %s', (scope) => {
+  const head = 'We prove the following theorem which completes the earlier result for graphs'
+  const body = { hasEOL: false }
+  const variable = { ...body, fontName: 'math' }
+  const items = [
+    item(
+      'Suppose that the graph is connected and that all the vertices are included.',
+      72,
+      659,
+      336
+    ),
+    item('Any two components are separated by the indicated boundary.', 72, 647, 336),
+    item(head, 87, 635, 321),
+    item('in', 72, 623, 8, body),
+    item(' ', 80, 623, 3.5, { ...body, size: 0 }),
+    item('K', 83.5, 623, 6, variable),
+    item('.', 90, 623, 2.8, body),
+    item('', 72, 604, 0, { size: 0 }),
+    item('Theorem 1', 72, 604, 55, { ...body, fontName: 'heading' }),
+    item('Let', 132, 604, 14, { ...body, fontName: 'italic' }),
+    item('H', 151, 604, 6, variable),
+    item('∈', 160, 604, 7, variable),
+    item(scope, 170, 604, 6, variable),
+    item('and suppose that every vertex has an incident edge.', 181, 604, 227, {
+      fontName: 'italic'
+    }),
+    item('Then the assigned components satisfy both conditions.', 72, 592, 260, {
+      fontName: 'italic'
+    })
+  ]
+  const units = groupPdfTranslationPages({
+    pages: [{ page: 1, width: 595, height: 842, rotation: 0, items }]
+  }).units
+  const lead = units.find((unit) => unit.items.includes('1:2'))
+  assert.equal(lead?.source, scope === 'K' ? `${head} in K.` : head)
+  assert.equal(lead?.fragments.length, 1)
+  assert.equal(
+    units.find((unit) => unit.items.includes('1:8'))?.source.startsWith('Theorem 1'),
+    true
+  )
+  assert.deepEqual(
+    units.flatMap((unit) => unit.items),
+    items.flatMap((item, i) => (item.str.trim() ? [`1:${i}`] : []))
+  )
+})
+
+it.each(['Total', 'Subtotal'])(
+  'joins a repeated noun phrase below a closed page-opening table (%s)',
+  (label) => {
+    const pages = [
+      {
+        page: 1,
+        width: 612,
+        height: 792,
+        rotation: 0,
+        items: [
+          item('The survey explains the field procedure and lists the samples used.', 40, 700, 250),
+          item('We monitored the river after an unusually dry season and measured', 322, 84, 250),
+          item('the changes in each section. The channel shifted as water slowed,', 322, 72, 250),
+          item('leaving a layer of loose sand and causing the sediment', 322, 60, 250, {
+            hasEOL: false
+          })
+        ]
+      },
+      {
+        page: 2,
+        width: 612,
+        height: 792,
+        rotation: 0,
+        items: [
+          item('Table 1.', 40, 730, 31, { fontName: 'table', hasEOL: false }),
+          item('Depth and length at each survey station.', 78, 730, 170),
+          ...['1.2', '2.3', '3.4', '4.5', '5.6', '6.7', '7.8', '8.9'].map((value, i) =>
+            item(value, i % 2 ? 180 : 70, 704 - Math.floor(i / 2) * 14, 15)
+          ),
+          item(label, 71, 645, 24, { hasEOL: false }),
+          item('23.7', 180, 645, 19, { hasEOL: false }),
+          item('1', 204, 649, 4, { size: 7 }),
+          item(
+            'layer to become uneven. This was consistent with our other readings,',
+            40,
+            605,
+            250
+          ),
+          item(
+            'which also showed a deeper sediment layer at the site near the bend.',
+            40,
+            593,
+            250
+          ),
+          item('All remaining stations showed comparable readings for the month.', 40, 581, 234)
+        ]
+      }
+    ]
+    const { units } = groupPdfTranslationPages({ pages })
+    const result = units.find((unit) => unit.items.includes('1:3'))
+    assert.equal(result?.source.includes('the sediment layer to become uneven'), label === 'Total')
+    assert.equal(result?.fragments.length, label === 'Total' ? 2 : 1)
+    assert.equal(result?.items.includes('2:0'), false)
+  }
+)
+
+it.each([0, 10])(
+  'continues an opening paragraph below the next page figure (shift=%s)',
+  (shift) => {
+    const head = 'The software library is designed to support'
+    const last = 'the processing of irregularly sampled'
+    const tail = 'time-series data in Julia and Python. Currently,'
+    const caption = 'Fig. 1. The measurements recorded by each of the instruments in the study.'
+    const heading = { fontName: 'heading' }
+    const inline = { hasEOL: false }
+    const page = (number: number, items: PdfLayoutTextItem[]): PdfLayoutPage => ({
+      page: number,
+      width: 595,
+      height: 842,
+      rotation: 0,
+      items
+    })
+    const pages = [
+      page(1, [
+        item('A short report on measurement procedures', 100, 681, 384, { ...heading, size: 15 }),
+        item('The method was evaluated across three independent recording stations.', 99, 264, 185),
+        item(
+          'The observations indicate consistent accuracy under realistic conditions.',
+          99,
+          228,
+          185
+        ),
+        item('Independent tests confirmed the results.', 296, 242, 185),
+        item('2. Data processing', 296, 210, 109, { ...heading, ...inline }),
+        item('', 296, 192, 0, { size: 0 }),
+        item(head, 296, 192, 185),
+        item(last, 296, 181, 185, inline)
+      ]),
+      page(2, [
+        item('Author: Report on measurement procedures', 170, 752, 260, { ...heading, size: 9 }),
+        item(caption, 99, 439, 382, { ...inline, size: 9.5 }),
+        item('', 99, 409 + shift, 0, { size: 0 }),
+        item(tail, 99, 409 + shift, 185),
+        item('the library includes several modules for processing', 99, 398 + shift, 185),
+        item('the samples collected at the three reference sites.', 99, 387 + shift, 185),
+        item('All calibration measurements can be compared.', 99, 376 + shift, 185, inline),
+        item('Experimental methods', 296, 362, 120, heading),
+        item('The secondary methods were evaluated separately.', 296, 348, 185)
+      ])
+    ]
+    const { units } = groupPdfTranslationPages({ pages })
+    const paragraph = units.find((unit) => unit.items.includes('1:6'))
+    assert.equal(paragraph?.source.includes(`${last} ${tail}`), shift === 0)
+    assert.deepEqual(
+      paragraph?.fragments.map(({ page }) => page),
+      shift ? [1] : [1, 2]
+    )
+    assert.deepEqual(units.find((unit) => unit.source === caption)?.items, ['2:1'])
+  }
+)
+
+it.each([85, 86])('joins a repeated split word across facing running folios (%s)', (next) => {
+  const small = { size: 9, hasEOL: false }
+  const open = { hasEOL: false }
+  const gap = { size: 0, hasEOL: false }
+  const title = 'Writer: Repeated sample measurements in a regional survey'
+  const pages = [
+    {
+      page: 1,
+      width: 595,
+      height: 842,
+      rotation: 0,
+      items: [
+        item('84', 98, 751, 13, small),
+        item(' ', 111, 751, 53, gap),
+        item(title, 164, 751, 250, small),
+        item('Fig. 2. Results for the regional monitoring stations.', 98, 236, 382),
+        item('and the performance of the sampling algorithm', 98, 190, 186, open),
+        item(' ', 284, 190, 11, gap),
+        item('can be seen, with a persistent effect on per-', 295, 190, 186, open)
+      ]
+    },
+    {
+      page: 2,
+      width: 595,
+      height: 842,
+      rotation: 0,
+      items: [
+        item(title, 164, 751, 250, small),
+        item(' ', 414, 751, 54, gap),
+        item(String(next), 468, 751, 13, small),
+        item('', 98, 729, 0, { size: 0 }),
+        item('formance when samples exceed the recommended', 98, 729, 186),
+        item('minimum. The independent checks revealed the', 98, 718, 186),
+        item('same difference last month.', 98, 707, 110)
+      ]
+    }
+  ]
+  const { units } = groupPdfTranslationPages({ pages })
+  const result = units.find((unit) => unit.items.includes('1:6'))
+  assert.equal(result?.source.includes('on performance when samples'), next === 85)
+  assert.equal(result?.fragments.length, next === 85 ? 2 : 1)
+  assert.equal(result?.items.includes('2:0'), false)
+})
+
+it.each([true, false])(
+  'joins a short numeric wrap when the following paragraph repeats it (repeated=%s)',
+  (repeated) => {
+    const units = translationUnits([
+      item('Proof.', 72, 405, 26, { fontName: 'label', hasEOL: false }),
+      item('Read the entries of the sequence in ascending order for each record.', 105, 405, 435),
+      item('To ensure consistent outcomes we count the available groups beginning', 72, 391.6, 468),
+      item('with 3.', 72, 378.2, 31),
+      item(
+        repeated
+          ? 'If the first group is beginning with 3, a matching order follows.'
+          : 'If the groups begin at the same point, a matching order follows.',
+        87,
+        364.8,
+        453
+      ),
+      item('The second comparison settles the result.', 72, 351.4, 152)
+    ])
+    const proof = units.find((unit) => unit.items.includes('1:2'))
+    assert.equal(proof?.source.endsWith('beginning with 3.'), repeated)
+    assert.equal(proof?.items.includes('1:3'), repeated)
+    assert.ok(units.some((unit) => unit.items.includes('1:4') && !unit.items.includes('1:2')))
+    assert.deepEqual(units.flatMap((unit) => unit.items).sort(), [
+      '1:0',
+      '1:1',
+      '1:2',
+      '1:3',
+      '1:4',
+      '1:5'
+    ])
+  }
+)
+
+it.each([false, true])(
+  'preserves a letter and attached period only below its native root (detached=%s)',
+  (detached) => {
+    const units = translationUnits([
+      item('The following equation gives the required analytical upper bound', 72, 699, 405),
+      item('√', 300, 680, 8.3, { fontName: 'root', hasEOL: false }),
+      item('v.', detached ? 312.1 : 308.3, 672.3, 8.75, {
+        fontName: 'italic',
+        hasEOL: false
+      }),
+      item('The upper bound is always valid for sufficiently large observations.', 72, 645, 468)
+    ])
+    const glyph = units.find((unit) => unit.items.includes('1:2'))
+    assert.equal(glyph?.source, 'v.')
+    assert.equal(glyph?.sourceOnly, detached ? undefined : true)
+    assert.equal(glyph?.preserve, detached ? undefined : 'formula')
+    assert.deepEqual(units.flatMap((unit) => unit.items).sort(), ['1:0', '1:1', '1:2', '1:3'])
+  }
+)
+
+it.each([false, true])(
+  'keeps a numeral and its shared text run below an aligned native radical (detached=%s)',
+  (detached) => {
+    const units = translationUnits([
+      item('The control gives the expected value on the left, but', 72, 404, 468, {
+        hasEOL: false
+      }),
+      item('√', 72, 400.2, 8.3, { fontName: 'radical', hasEOL: false }),
+      item('3 on the other side.', detached ? 85 : 80.3, 392, 95, { hasEOL: false }),
+      item('Independent observations confirm the measured response.', 86, 365, 391)
+    ])
+    const tail = units.find((unit) => unit.items.includes('1:2'))
+    const previous = units.find((unit) => unit.items.includes('1:0'))
+    assert.equal(tail?.source, '3 on the other side.')
+    assert.equal(tail?.sourceOnly, detached ? undefined : true)
+    assert.equal(tail?.preserve, detached ? undefined : 'formula')
+    assert.equal(previous?.sourceOnly, undefined)
+    assert.deepEqual(units.flatMap((unit) => unit.items).sort(), ['1:0', '1:1', '1:2', '1:3'])
+  }
+)
+
+it.each([false, true])(
+  'preserves prose that ends inside a native negated premise (detached=%s)',
+  (detached) => {
+    const plain = { hasEOL: false }
+    const italic = { ...plain, fontName: 'italic' }
+    const symbol = { ...plain, fontName: 'symbol' }
+    const units = translationUnits([
+      item('r', 72, 698, 4.9, italic),
+      item('and then', 104.5, 698, 44.7, plain),
+      item('r', 153.5, 698, 4.9, italic),
+      item('from (4), which is sufficient.', 196, 698, 159.1, plain),
+      item('Consider another possibility once', 362.3, 698, 177.8),
+      item('we evaluate the case assuming that', 72, 686.2, 182.9, plain),
+      item('V', 259.6, 686.2, 6.8, italic),
+      item('Q', 266.4, 684.7, 5.7, { ...italic, fontName: 'index', size: 7 }),
+      item('∗', 272.6, 686.6, 3.7, { ...italic, fontName: 'script', size: 5 }),
+      item(' ', 276.3, 686.6, 6.1, { ...plain, size: 0 }),
+      item('\u0338', detached ? 286 : 282.4, 686.2, 0, symbol),
+      item('=', 282.4, 686.2, 7.7, plain),
+      item('∅', 295.1, 686.2, 5, symbol)
+    ])
+    const premise = units.find((unit) => unit.items.includes('1:5'))
+    const relation = units.find((unit) => unit.items.includes('1:10'))
+    assert.equal(premise?.sourceOnly, detached ? undefined : true)
+    assert.equal(premise?.preserve, detached ? undefined : 'formula')
+    if (!detached) {
+      assert.ok(premise?.source.endsWith('assuming that VQ∗'))
+      assert.equal(relation?.source, '\u0338= ∅')
+      assert.equal(relation?.preserve, 'formula')
+      assert.notEqual(premise, relation)
+    }
+    assert.deepEqual(
+      units.flatMap((unit) => unit.items).sort(),
+      Array.from({ length: 13 }, (_, index) => index)
+        .filter((index) => index !== 9)
+        .map((index) => `1:${index}`)
+        .sort()
+    )
+  }
+)
+
+it.each([0, 8])('keeps a funded research group name on its native paragraph rail (%s)', (shift) => {
+  const continued = 'Marine Research Group on'
+  const units = translationUnits([
+    item('Earlier observations establish the baseline for this series.', 70, 244, 390),
+    item('Funding acknowledgement.', 70, 220, 150, {
+      fontName: 'heading',
+      size: 12,
+      hasEOL: false
+    }),
+    item('The authors received support within the Aurora', 226, 220, 312),
+    item(continued, 70 + shift, 208, 118, { hasEOL: false }),
+    item('Coastal Monitoring', 192 + shift, 208, 110, { fontName: 'italic', hasEOL: false }),
+    item('as part of a regional programme', 310 + shift, 208, 228 - shift),
+    item('for applied field sciences (grant no. A12/04).', 70, 196, 260),
+    item('3', 303, 72, 5)
+  ])
+  const funding = units.find((u) => u.items.includes('1:1'))
+  assert.equal(funding?.items.includes('1:3'), shift === 0)
+  if (shift === 0) {
+    assert.match(funding?.source ?? '', /the Aurora Marine Research Group on Coastal Monitoring/u)
+    assert.equal(funding?.fragments.length, 2)
+  }
+  assert.deepEqual(
+    units.flatMap((u) => u.items).filter((i) => i === '1:3'),
+    ['1:3']
+  )
+})
+
+it.each([0, 2])('keeps each centered native affiliation on its own row (%s)', (shift) => {
+  const name = { fontName: 'address', size: 8, hasEOL: false }
+  const marker = { fontName: 'marker', size: 6, hasEOL: false }
+  const lines = [
+    item('Ann M. Reader and Robin Writer', 171, 661, 270, { size: 9 }),
+    item('1', 69, 591, 4, marker),
+    item(
+      'Center for Field Research, Example University, 180 West Road, North City',
+      73,
+      588.2,
+      470,
+      name
+    ),
+    item('', 0, 0, 0, { size: 0 }),
+    item('2', 69 + shift, 579, 4, marker),
+    item(
+      'Centro de Estudios del Mar, Universidad Ejemplar, Avenida del Puerto, Villa Azul',
+      73 + shift,
+      576.2,
+      470,
+      name
+    )
+  ]
+  const units = translationUnits(lines)
+  const head = units.find((unit) => unit.items.includes('1:1'))
+  assert.equal(head?.items.includes('1:4'), shift > 0, JSON.stringify(units))
+  if (shift === 0)
+    assert.deepEqual(units.find((unit) => unit.items.includes('1:4'))?.items, ['1:4', '1:5'])
+})
+
+it.each(['centered row', 'shifted row', 'centered address'])(
+  'keeps a numbered institution independent from the byline (%s)',
+  (placement) => {
+    const shift = placement === 'shifted row' ? 3 : 0
+    const bodyCentered = placement === 'centered address'
+    const open = { hasEOL: false }
+    const author = { ...open, size: 10, fontName: 'name' }
+    const address = { ...open, size: 9, fontName: 'address' }
+    const marker = { ...open, size: 6, fontName: 'index' }
+    const lineBreak = item('', 0, 0, 0, { size: 0 })
+    const units = translationUnits([
+      item('Alex Reader and Casey Stone', 137, 676, 333, author),
+      item('2', 470, 679.6, 4, { ...marker, size: 7 }),
+      lineBreak,
+      item('1', 81, 664.4, 4, marker),
+      item('Science Network, Example Campus, North City', 85, 660.6, 446, address),
+      lineBreak,
+      item('2', (bodyCentered ? 128 : 132) + shift, 653.4, 4, marker),
+      item(
+        'Field Research Group, Example College, West City',
+        (bodyCentered ? 132 : 139) + shift,
+        649.6,
+        bodyCentered ? 348 : 341,
+        address
+      ),
+      lineBreak,
+      item('3', 72, 642.4, 4, marker),
+      item('Department of Applied Studies, Sample Campus, South City', 79, 638.6, 461, address)
+    ])
+    const owner = (index: number): PdfTranslationLayout['units'][number] | undefined =>
+      units.find((unit) => unit.items.includes(`1:${index}`))
+    assert.equal(owner(0)?.items.includes('1:6'), shift > 0, JSON.stringify(units))
+    if (!shift) assert.deepEqual(owner(6)?.items, ['1:6', '1:7'])
+    assert.deepEqual(owner(3)?.items, ['1:3', '1:4'])
+    assert.deepEqual(owner(9)?.items, ['1:9', '1:10'])
+  }
+)
+
+it.each([0, 6])('joins a measurement comparison across opposite page rails (shift=%s)', (shift) => {
+  const open = { hasEOL: false }
+  const gap = { ...open, size: 0 }
+  const header = { ...open, fontName: 'header' }
+  const page = (page: number, items: PdfLayoutTextItem[]): PdfLayoutPage => ({
+    page,
+    width: 612,
+    height: 792,
+    rotation: 0,
+    items
+  })
+  const { units } = groupPdfTranslationPages({
+    pageCount: 3,
+    pages: [
+      page(1, [item('Draft version April 8, 2025', 60, 733, 123, { ...header, size: 8 })]),
+      page(2, [
+        item('2', 51, 740, 5, open),
+        item(' ', 56, 740, 215, gap),
+        item('Walker et al.', 271, 740, 76, header),
+        item('the sample includes stars in the reference sequence', 321, 121.5, 241),
+        item('which were measured as part of the original survey.', 321, 109, 241),
+        item('For the remaining samples the amount of light', 321, 96.5, 241),
+        item('was estimated by comparing it to other stars in', 321, 84, 241, open)
+      ]),
+      page(3, [
+        item('Report on sample measurements', 232, 740, 147, header),
+        item(' ', 379, 740, 178, gap),
+        item('3', 557, 740, 5),
+        item('the reference sequence which covered B magnitudes', 51 + shift, 717.5, 241),
+        item('from 5 to 15.', 51 + shift, 705, 57, open),
+        item('', 142, 634, 0, { size: 0 }),
+        item('3.', 142, 634, 7, { ...open, size: 9, fontName: 'section' }),
+        item(' ', 149, 634, 6, gap),
+        item('FINDINGS', 155, 634, 45),
+        item('The amended measurements show a different trend.', 330, 692.5, 232),
+        item('No further samples were excluded from the analysis.', 321, 667.5, 241),
+        item('The additional checks passed.', 455, 655, 107)
+      ])
+    ]
+  })
+  const comparison = units.find((unit) => unit.items.includes('2:6'))
+  assert.equal(comparison?.items.includes('3:3'), shift === 0)
+  assert.equal(comparison?.fragments.length, shift ? 1 : 2)
+  assert.deepEqual(units.find((unit) => unit.items.includes('3:0'))?.items, ['3:0'])
+})
+
+it.each([0, 8])('keeps a terminal hanging bibliography on its native rows (shift=%s)', (shift) => {
+  const open = { hasEOL: false }
+  const citation = { fontName: 'citation', size: 9 }
+  const styled = { ...citation, fontName: 'journal', hasEOL: false }
+  const units = translationUnits([
+    ...Array.from({ length: 12 }, (_, n) =>
+      item('The observations agree with the independent control experiment.', 56, 435 - n * 12, 382)
+    ),
+    item('Acknowledgment', 56, 286, 90, { ...open, fontName: 'section' }),
+    item('', 66, 271, 0, { size: 0 }),
+    item('The project received research funding.', 66, 271, 371, open),
+    item('', 56, 239, 0, { size: 0 }),
+    item('References', 56, 239, 54, { ...open, fontName: 'section' }),
+    item('', 56, 225, 0, { size: 0 }),
+    item('Harper, I., and Reeves, B. 2001,', 56, 225, 134, { ...citation, ...open }),
+    item('Field Review', 193, 225, 49, styled),
+    item(', 12, 48', 242, 225, 28, citation),
+    item(
+      'Reeves, B., Bell, S., and Stone, K. 2004, in Field Methods Meeting, Research Methods Series',
+      56,
+      214,
+      381,
+      citation
+    ),
+    item('Annual Meeting, 271', 76 + shift, 204, 86, citation),
+    item('Bell, S. 2007, Field Review, 16, 289', 56, 193, 141, citation),
+    item('Raine, M. 2012, Field Review, 31, 78', 56, 182, 155, citation),
+    item('Stone, K. 2017, Research Reports, 8, A14', 56, 171, 165, citation),
+    item('Wells, J. 2020, Research Reports, 12, 159', 56, 160, 168, { ...citation, ...open })
+  ])
+  const bibliography = units.filter((unit) =>
+    unit.items.some((key) => Number(key.split(':')[1]) >= 16)
+  )
+  assert.equal(bibliography.length, shift ? 3 : 2)
+  assert.ok(bibliography.every((unit) => Boolean(unit.sourceOnly) === (shift === 0)))
+  if (shift === 0) {
+    assert.ok(bibliography.every((unit) => unit.preserve === 'reference'))
+  }
+  assert.deepEqual(
+    bibliography.flatMap((unit) => unit.items),
+    [16, 18, 19, 20, 21, 22, 23, 24, 25, 26].map((index) => `1:${index}`)
+  )
+  assert.ok(units.filter((unit) => !bibliography.includes(unit)).every((unit) => !unit.sourceOnly))
+})
+
+it.each([
+  { figure: 3, comparison: 'The fluctuating sensor shows many', joins: true },
+  { figure: 4, comparison: 'The fluctuating sensor shows many', joins: false },
+  {
+    figure: 3,
+    comparison: 'A second trace (top panel in Fig. 4). The sensor shows many',
+    joins: true
+  },
+  { figure: 3, comparison: 'shows many', joins: false }
+])('joins a panel comparison across pages (case $#)', ({ figure, comparison, joins }) => {
+  const open = { hasEOL: false }
+  const caption = { size: 9, fontName: 'caption' }
+  const gap = { size: 0 }
+  const first = [
+    item('Field notes on repeated sensor runs', 56, 682, 247, { fontName: 'title', size: 13 }),
+    item('Independent measurements suggest the peak was reproducible.', 56, 191, 382),
+    item('The steady sensor produced the same samples as the reference', 66, 162, 372),
+    item(`run (top panel in Fig. 3). ${comparison}`, 56, 150, 382),
+    item('1', 244.5, 132, 5, open)
+  ]
+  const second = [
+    item('2', 56, 754, 5, open),
+    item('Field notes', 221, 754, 50, open),
+    item(`Figure ${figure}.`, 56, 455, 44, { ...caption, ...open, fontName: 'label' }),
+    item(
+      'Signal traces. (top) The steady sensor confirms the reference response.',
+      104,
+      455,
+      334,
+      caption
+    ),
+    item(
+      '(bottom) The fluctuating sensor shows extra peaks at several positions.',
+      56,
+      445,
+      382,
+      caption
+    ),
+    item('Minute intervals were used.', 56, 435, 110, { ...caption, ...open }),
+    item('', 56, 412, 0, gap),
+    item('secondary peaks caused by the drift (bottom panel in', 56, 412, 382),
+    item('Fig. 3). The response pattern is consistent over the whole run.', 56, 400, 382),
+    item('All measurements were valid according to the original control procedure.', 56, 388, 382)
+  ]
+  const { units } = groupPdfTranslationPages({
+    pages: [first, second].map((items, i) => ({
+      width: 612,
+      height: 792,
+      rotation: 0,
+      page: i + 1,
+      items
+    }))
+  })
+  const head = units.find((unit) => unit.items.includes('1:3'))
+  assert.equal(head?.items.includes('2:7'), joins, JSON.stringify(units))
+  assert.equal(head?.fragments.length, joins ? 2 : 1)
+  assert.deepEqual(units.find((unit) => unit.items.includes('2:2'))?.items, [
+    '2:2',
+    '2:3',
+    '2:4',
+    '2:5'
+  ])
+  assert.equal(units.filter((unit) => unit.items.includes('2:7')).length, 1)
+})
+
+it.each([0, 5])('joins a native prose wrap after an inline sum (shift=%s)', (shift) => {
+  const body = { size: 11, hasEOL: false }
+  const glyph = { ...body, fontName: 'symbol' }
+  const subscript = { ...body, size: 8, fontName: 'script' }
+  const space = (x: number, y: number, width = 0): PdfLayoutTextItem =>
+    item(width ? ' ' : '', x, y, width, { size: 0, hasEOL: !width })
+  const lead = 'of batches omitted from the records. Failing to obtain one of the omitted'
+  const follow = 'batches under this rule ends the check.'
+  const units = groupPdfTranslationPages({
+    pages: [
+      ...[1, 2].map((page) => ({ page, width: 596, height: 842, rotation: 0, items: [] })),
+      {
+        page: 3,
+        width: 596,
+        height: 842,
+        rotation: 0,
+        items: [
+          item('COUNTS FOR INDEPENDENT SAMPLING', 186, 762, 224, { size: 8, hasEOL: false }),
+          space(410, 762, 108),
+          item('3', 518, 762, 4, { size: 8, hasEOL: false }),
+          space(72, 738),
+          item('total', 72, 738, 36, body),
+          space(108, 738, 4),
+          item('∑', 112, 746, 10, { ...glyph, size: 10 }),
+          space(122, 735),
+          item('j', 122, 735, 3, subscript),
+          item('∈', 125, 735, 6, { ...glyph, size: 8 }),
+          item('[', 131, 735, 2, { ...subscript, fontName: 'punctuation' }),
+          item('b', 133.5, 735, 3.5, subscript),
+          item(']', 137, 735, 2.5, { ...subscript, fontName: 'punctuation' }),
+          space(139.5, 735, 2.5),
+          item('y', 142, 738, 6, { ...body, fontName: 'math' }),
+          item('j', 148, 736.4, 3, subscript),
+          space(151, 736.4, 4),
+          item(lead, 155, 738, 367, { ...body, hasEOL: true }),
+          item(follow, 72 + shift, 724, 190, { ...body, hasEOL: true }),
+          item('The following estimate is obtained by a different argument.', 84, 711, 370, {
+            ...body,
+            hasEOL: true
+          })
+        ]
+      }
+    ],
+    pageCount: 3
+  }).units
+  const owner = units.find((unit) => unit.items.includes('3:17'))
+  assert.equal(owner?.source, shift ? lead : `${lead} ${follow}`)
+  assert.equal(owner?.sourceOnly, undefined)
+  assert.equal(owner?.fragments.length, shift ? 1 : 2)
+  assert.equal(units.find((unit) => unit.items.includes('3:6'))?.preserve, 'formula')
+  assert.equal(units.find((unit) => unit.items.includes('3:14'))?.preserve, 'formula')
+})
+
+it.each([0, 6])('joins a figure locator after a styled inline variable (shift=%s)', (shift) => {
+  const open = { hasEOL: false }
+  const units = translationUnits([
+    item('Before each trial, the samples are compared with the baseline.', 325, 664, 234),
+    item('The settings stay fixed during the repeat observations.', 315, 652, 244),
+    item('The measured', 315, 640, 77, open),
+    item(' ', 392, 640, 3, { ...open, size: 0 }),
+    item('R', 395, 640, 8, { ...open, fontName: 'math' }),
+    item(' ', 403, 640, 3, { ...open, size: 0 }),
+    item('for these samples is reported in', 406, 640, 153),
+    item('Fig. 2.', 315 + shift, 628, 29),
+    item('The next experiment used a separate set of benchmarks.', 325, 616, 234)
+  ])
+  const owner = units.find((unit) => unit.items.includes('1:6'))
+  assert.equal(owner?.items.includes('1:7'), shift === 0)
+  assert.equal(owner?.items.includes('1:8'), false)
+})
+
+it.each([0, 6])('joins the short centered end of a draft title (shift=%s)', (shift) => {
+  const open = { hasEOL: false }
+  const blank = item('', 0, 0, 0, { size: 0 })
+  const title = { fontName: 'title' }
+  const top = 'FORECAST METHODS FOR RECURRING CHANGES IN MULTIYEAR WATER LEVEL'
+  const tail = 'MEASUREMENTS'
+  const owners = translationUnits([
+    item('Draft version April 7, 2025', 60, 739, 115, { ...open, size: 8 }),
+    blank,
+    item('Preprint typeset using LATEX style ArticleTools', 60, 731, 200, {
+      ...open,
+      size: 7,
+      fontName: 'imprint'
+    }),
+    blank,
+    item(top, 56, 684, 500, title),
+    item(tail, 270 + shift, 673.4, 72, { ...title, ...open }),
+    blank,
+    item('J. Example', 281, 659, 50, { ...open, size: 9, fontName: 'authors' }),
+    blank,
+    item('Department of Field Studies, Example University', 121, 649, 370, {
+      ...open,
+      size: 8,
+      fontName: 'office'
+    }),
+    blank,
+    item('ABSTRACT', 278, 585, 56, title),
+    item('Several recordings establish the baseline measurement.', 86, 569, 440)
+  ])
+  const titleOwner = owners.find((u) => u.items.includes('1:4'))
+  assert.equal(titleOwner?.source, shift ? top : top + ' ' + tail, JSON.stringify(owners))
+  assert.equal(titleOwner?.fragments.length, shift ? 1 : 2)
+  assert.equal(
+    owners.some((u) => u.source === tail),
+    shift !== 0
+  )
+})
+
+it.each([0, 5])('joins a wrapped example after preserved inline math (shift=%s)', (shift) => {
+  const prose = { size: 11, hasEOL: false }
+  const script = { ...prose, size: 8, fontName: 'index' }
+  const symbol = { ...prose, fontName: 'operator' }
+  const lead = '. As another illustrative example'
+  const follow = 'the following equation appears in the appendix:'
+  const units = translationUnits([
+    item('j−1', 300, 523, 12, script),
+    item('∈', 320, 525, 7, symbol),
+    item('N', 330, 525, 8, symbol),
+    item(lead, 338, 525, 170, { ...prose, hasEOL: true }),
+    item(follow, 120, 512 - shift, 300, prose),
+    item('', 250, 492, 0, { size: 0 }),
+    item('n', 250, 492, 5, script),
+    item('∑', 245, 489, 16, symbol)
+  ])
+  const intro = units.find((unit) => unit.items.includes('1:3'))
+  assert.equal(intro?.source, shift ? lead : `${lead} ${follow}`, JSON.stringify(units))
+  assert.equal(intro?.fragments.length, shift ? 1 : 2)
+  assert.equal(units.find((unit) => unit.items.includes('1:2'))?.preserve, 'formula')
+  assert.equal(units.find((unit) => unit.items.includes('1:7'))?.preserve, 'formula')
+})
+
+it.each([0, 3])('retains a signed factor before a stacked binomial (shift=%s)', (shift) => {
+  const base = { size: 11, hasEOL: false }
+  const script = { ...base, size: 8, fontName: 'script' }
+  const large = { ...base, fontName: 'large-operator' }
+  const units = translationUnits([
+    item('1', 361.7, 637, 4.2, { ...script, fontName: 'index-number' }),
+    item('∑', 350.5, 633.7, 15.8, large),
+    item('i', 351.6, 610.2, 2.9, script),
+    item('=0', 354.5, 610.2, 10.8, { ...script, fontName: 'index-number' }),
+    item('(', 366.4, 623.3, 4.2, base),
+    item('−', 370.6, 623.3, 8.5, { ...base, fontName: 'operator' }),
+    item('1)', 379.1, 623.3, 9.6, base),
+    item('it', 388.7, 627.9, 8, script),
+    item('(', 397.2, 638.8, 8.1, large),
+    item('2', 405.3, 630.7, 5.4, base),
+    item('m', 410.7, 630.7, 4.9, { ...base, fontName: 'variable', hasEOL: true }),
+    item('i', 408.7 + shift, 615.8, 3.8, { ...base, fontName: 'variable' }),
+    item(')', 415.9, 638.8, 8, large)
+  ])
+  const factor = units.find((unit) => unit.items.includes('1:7'))
+  assert.equal(factor?.source, '(−1)it')
+  assert.deepEqual(factor?.items, ['1:4', '1:5', '1:6', '1:7'])
+  assert.equal(factor?.preserve, shift ? undefined : 'formula')
+  assert.equal(factor?.sourceOnly, shift ? undefined : true)
+})
+
+it.each([0, 5])('keeps linked authors above their numbered institutions (%s)', (shift) => {
+  const author = { hasEOL: false, size: 9, fontName: 'author' }
+  const index = { ...author, size: 6, fontName: 'index' }
+  const address = { ...author, size: 8, fontName: 'address' }
+  const units = translationUnits(
+    [
+      item('', 92, 656.3, 0, { size: 0 }),
+      item('Avery J. Carter,', 92, 656.3, 95, author),
+      item('1, 2', 187, 660.1, 11, index),
+      item('Jamie A. Reed,', 201, 656.3, 77, author),
+      item('1, 3', 278, 660.1, 11, index),
+      item('Ren M. Bell,', 292, 656.3, 97, author),
+      item('4', 389, 660.1, 4, index),
+      item('and Sam D. Brooks', 397, 656.3, 94, author),
+      item('1, 2, 5, 6', 491, 660.1, 25, { ...index, hasEOL: true }),
+      item('1', 82 + shift, 642.2, 4, index),
+      item(
+        'Northern Valley University, Field Studies, Meadow City, 10001',
+        86 + shift,
+        639.4,
+        445,
+        address
+      ),
+      item('', 156, 630.7, 0, { size: 0 }),
+      item('2', 156, 630.7, 4, index),
+      item('Lakeside Research Institute, Science Park, Elm City, 20003', 160, 627.9, 296, address),
+      item('River Monitoring Observatory, Willow Road, Bay City', 176, 605, 266, address)
+    ].map((row) => ({ ...row, fontAscent: 0.694, fontDescent: -0.194 }))
+  )
+  const byline = units.find((unit) => unit.items.includes('1:1'))
+  assert.ok(byline)
+  assert.equal(Boolean(byline.sourceOnly), shift === 0)
+  if (!shift) {
+    assert.equal(byline.items.includes('1:9'), false)
+    assert.deepEqual(units.find((unit) => unit.items.includes('1:9'))?.items, ['1:9', '1:10'])
+  }
+})
+
+it.each([0, 5])('joins a centered title confirmed by the abstract (shift=%s)', (shift) => {
+  const title = { fontName: 'title', size: 11 }
+  const names = { size: 9, fontName: 'name', hasEOL: false }
+  const blank = item('', 0, 0, 0, { size: 0 })
+  const head = 'A NOTE ON THE FORMULA IN ROWAN’S'
+  const tail = 'FINITE MATRIX HANDBOOK'
+  const units = translationUnits([
+    item(head, 113, 696, 386, title),
+    item(tail, 224 + shift, 682, 164, { ...title, hasEOL: false }),
+    blank,
+    item('JAMIE A. REED AND SAM BROOKS', 200, 652, 212, names),
+    blank,
+    item('Abstract.', 135, 623, 44, { size: 9, fontName: 'heading', hasEOL: false }),
+    item('A formula in Rowan’s finite matrix handbook is derived again.', 184, 623, 294, {
+      size: 9,
+      fontName: 'name'
+    })
+  ])
+  const owner = units.find((unit) => unit.items.includes('1:0'))
+  assert.equal(owner?.source, shift ? head : `${head} ${tail}`, JSON.stringify(units))
+  assert.equal(owner?.fragments.length, shift ? 1 : 2)
+  assert.equal(owner?.items.includes('1:3'), false)
+})
+
+it.each([0, 5])('rejoins justified numbered keywords at a multiword term (shift=%s)', (shift) => {
+  const units = translationUnits([
+    item('Keywords:', 85, 555, 44, { fontName: 'label', hasEOL: false }),
+    item('Optical sensors (1001), Field measurements (1002), Signal data', 133, 555, 390),
+    item(
+      'analysis (1003), Surface optics (1004), Calibration methods (1005)',
+      132 + shift,
+      542.5,
+      391,
+      {
+        hasEOL: false
+      }
+    ),
+    item('1.', 120, 507.5, 8, { hasEOL: false }),
+    item('INTRODUCTION', 132, 507.5, 90),
+    item('The measured signal varies across the range of sampling conditions.', 54, 495, 239)
+  ])
+  const keywords = units.find((unit) => unit.items.includes('1:0'))
+  assert.equal(keywords?.source.includes('Signal data analysis (1003)'), shift === 0)
+  assert.equal(keywords?.items.includes('1:2'), shift === 0)
+  assert.equal(keywords?.items.includes('1:3'), false)
+})
+
+it.each([0, 18])('keeps a terminal acronym after a styled possessive (shift=%s)', (shift) => {
+  const units = translationUnits([
+    item('Figure 2.', 45, 420, 36, { fontName: 'label', hasEOL: false }),
+    item('Each panel plots responses for a separate setting.', 85, 420, 190),
+    item('The vertical guides mark measurements across', 45, 408, 178, { hasEOL: false }),
+    item('Willow', 227, 408, 39, { fontName: 'emphasis', hasEOL: false }),
+    item('’s', 266, 408, 9),
+    item('LEDs.', 45 + shift, 396, 24)
+  ])
+  const caption = units.find((unit) => unit.items.includes('1:0'))
+  assert.ok(caption)
+  assert.equal(caption.source.endsWith('Willow’s LEDs.'), shift === 0)
+  assert.equal(caption.items.includes('1:5'), shift === 0)
+  assert.equal(units.filter((unit) => unit.items.includes('1:5')).length, 1)
+})
+
+it.each(['adjacent', 'shifted', 'display glyph'] as const)(
+  'continues a scientific caption through a lowercase figure reference (%s)',
+  (kind) => {
+    const dx = kind === 'shifted' ? 22 : 0
+    const units = translationUnits([
+      item('Figure 7.', 45, 420, 35, { fontName: 'label', hasEOL: false }),
+      item('The panels compare each sample with the corresponding control.', 83, 420, 202),
+      item('For each setting the solid segment shows the median response.', 45, 409, 240),
+      item('The right panel is calibrated against the function', 45, 398, 181, {
+        hasEOL: false
+      }),
+      item('T', 230, 398, 6, { fontName: 'math', hasEOL: false }),
+      item('(', 236, 398, 3, { hasEOL: false }),
+      item('θ', 239, 398, 5, { fontName: 'math', hasEOL: false }),
+      item(') shown in', 244, 398, 41),
+      item('figure 8. Values in this example are greater than 2', 45 + dx, 387, 190, {
+        hasEOL: false
+      }),
+      item('°', 235 + dx, kind === 'display glyph' ? 393 : 390, 3, {
+        fontName: 'symbol',
+        size: 7,
+        hasEOL: false
+      }),
+      item(' in either group.', 238 + dx, 387, 47)
+    ])
+    const caption = units.find((unit) => unit.items.includes('1:0'))
+    assert.equal(caption?.items.includes('1:8'), kind === 'adjacent')
+    assert.equal(units.filter((unit) => unit.items.includes('1:8')).length, 1)
+  }
+)
+
+it.each([true, false])('joins a short centered title above paired author marks (%s)', (witness) => {
+  const title = { size: 12, fontName: 'title' }
+  const name = { hasEOL: false }
+  const ordinal = { fontName: 'ordinal', size: 7, hasEOL: false }
+  const units = translationUnits([
+    item(
+      'Latency and Stability in Controlled Measurements for Multi-Channel Adaptive',
+      73,
+      730,
+      470,
+      title
+    ),
+    item('Sampling Systems', 236, 716, 144, title),
+    item('Mira Stone', 208, 692, 76, name),
+    item('1', 284, 696, 4, ordinal),
+    item('and Ellis Reed', 294, 692, 110, name),
+    item('2', 404, 696, 4, { ...ordinal, hasEOL: true }),
+    item(
+      witness
+        ? 'We compare adaptive sampling methods using independent controls.'
+        : 'We compare fixed intervals using independent controls.',
+      115,
+      639,
+      386,
+      { size: 9 }
+    ),
+    item('The recorded measurements show reproducible differences in both settings.', 54, 585, 470),
+    item('All parameters are reported in the accompanying analysis.', 54, 573, 400)
+  ])
+  const owner = units.find((unit) => unit.items.includes('1:0'))
+  assert.equal(owner?.items.includes('1:1'), witness)
+  assert.equal(units.filter((unit) => unit.items.includes('1:1')).length, 1)
+})
+
+it.each(['marked authors', 'unmarked author', 'off-center title'])(
+  'joins two centered title rows above an marked byline (%s)',
+  (shape) => {
+    const lead = 'Two Practical Schemes for Frequency Calibration without'
+    const tail = 'direct external field measurements'
+    const title = { fontName: 'title', size: 17 }
+    const author = { fontName: 'byline', size: 12, hasEOL: false }
+    const marker = { fontName: 'mark', size: 8, hasEOL: false }
+    const units = translationUnits([
+      item(lead, 167, 665, 278, title),
+      item(tail, shape === 'off-center title' ? 188 : 183, 643, 246, {
+        ...title,
+        hasEOL: false
+      }),
+      item('', 0, 0, 0, { size: 0 }),
+      item('A. B. Meadow', 210, 613, 86, author),
+      item('∗', 296, 617, 4, marker),
+      item('J. C. Vale', 326, 613, 67, author),
+      item(shape === 'unmarked author' ? '•' : '†', 393, 617, 5, marker),
+      item('', 0, 0, 0, { size: 0 }),
+      item('Abstract', 286, 561, 40, { fontName: 'heading' }),
+      item('The measured values remain stable across the selected operating range.', 91, 543, 420)
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:0'))
+    const merged = shape === 'marked authors'
+    assert.equal(owner?.source, merged ? lead + ' ' + tail : lead)
+    assert.equal(owner?.items.includes('1:1'), merged)
+    assert.equal(units.filter((unit) => unit.items.includes('1:1')).length, 1)
+  }
+)
+
+it.each(['aligned', 'shifted', 'no heading'] as const)(
+  'keeps the last numbered keyword on its hanging rail (%s)',
+  (kind) => {
+    const units = translationUnits([
+      item('Keywords:', 85, 498, 44, { fontName: 'label', hasEOL: false }),
+      item(
+        'Thermal flux (1201), Sensor data (1202), Remote imaging (1203), Wide field',
+        133,
+        498,
+        389
+      ),
+      item('imaging (1204)', kind === 'shifted' ? 141 : 133, 485.5, 76),
+      item(kind === 'no heading' ? 'OBSERVATIONS' : 'INTRODUCTION', 264, 450, 84),
+      item('We show the calibrated measurements for each source in the next section.', 50, 432, 510)
+    ])
+    const keywords = units.find((unit) => unit.items.includes('1:0'))
+    assert.equal(keywords?.source.endsWith('Wide field imaging (1204)'), kind === 'aligned')
+    assert.equal(keywords?.items.includes('1:2'), kind === 'aligned')
+    assert.equal(keywords?.items.includes('1:3'), false)
+  }
+)
+
+it.each(['centered address', 'shifted address', 'missing postal code'])(
+  'keeps a centered postal continuation with its numbered affiliation (%s)',
+  (placement) => {
+    const marker = { fontName: 'ordinal', size: 6, hasEOL: false }
+    const body = { fontName: 'address', size: 8 }
+    const breakLine = item('', 0, 0, 0, { size: 0 })
+    const units = translationUnits([
+      item('Department Affiliations', 215, 665, 182, { size: 13 }),
+      item('1', 126, 592, 4, marker),
+      item('Department of Field Studies, West Campus, Hill Town', 130, 589.2, 352, body),
+      item('2', 52, 580.6, 4, marker),
+      item(
+        'Example Observatory, Independent Research Foundation, P.O. Box 42,',
+        56,
+        577.8,
+        500,
+        body
+      ),
+      item(
+        placement === 'missing postal code'
+          ? 'Sample City, BC, Canada'
+          : 'Sample City, BC A1B 2C3, Canada',
+        placement === 'shifted address' ? 248 : 238,
+        568.3,
+        136,
+        { ...body, hasEOL: false }
+      ),
+      breakLine,
+      item('3', 121, 559.6, 4, marker),
+      item('Institute for Signal Analysis, North Campus, Lake City', 125, 556.8, 362, body)
+    ])
+    const affiliation = units.find((unit) => unit.items.includes('1:4'))
+    assert.equal(affiliation?.items.includes('1:5'), placement === 'centered address')
+    assert.equal(affiliation?.items.includes('1:7'), false)
+    assert.equal(units.filter((unit) => unit.items.includes('1:5')).length, 1)
+  }
+)
+
+it.each(['wrap', 'shifted', 'closed prose'] as const)(
+  'retains the terminal signed decibel list with its prose (%s)',
+  (kind) => {
+    const x = kind === 'shifted' ? 317 : 54
+    const continued = { hasEOL: false }
+    const sign = { ...continued, fontName: 'symbol' }
+    const digit = { ...continued, fontName: 'math' }
+    const units = translationUnits([
+      item('The experiment measured the response of each independent', 54, 451, 242),
+      item(
+        kind === 'closed prose'
+          ? 'sample before recording the results in its original form.'
+          : 'sample at the configured levels of [30, 15, 5,',
+        54,
+        439,
+        242
+      ),
+      item('0,', x, 427, 6, continued),
+      item('−', x + 9, 427, 6, sign),
+      item('5', x + 15, 427, 5, digit),
+      item(',', x + 20, 427, 2, continued),
+      item('−', x + 25, 427, 6, sign),
+      item('15', x + 31, 427, 9, digit),
+      item('] dB.', x + 40, 427, 18),
+      item('The next trial controls for the earlier measurements.', 64, 415, 232)
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:0'))
+    assert.equal(owner?.source.endsWith('[30, 15, 5, 0, −5, −15] dB.'), kind === 'wrap')
+    assert.equal(owner?.items.includes('1:8'), kind === 'wrap')
+    assert.equal(owner?.items.includes('1:9'), false)
+  }
+)
+
+it.each(['wrap', 'shifted', 'closed prose'] as const)(
+  'retains a confidence level at the end of its native prose (%s)',
+  (kind) => {
+    const units = translationUnits([
+      item(
+        'We evaluated each outcome in an independent replication before reporting the final',
+        54,
+        451,
+        401
+      ),
+      item('values. The adjusted estimate', 54, 438.5, 170, { hasEOL: false }),
+      item('μ', 230, 438.5, 6, { fontName: 'math', hasEOL: false }),
+      item(
+        kind === 'closed prose' ? 'is similar to our prior result.' : 'is significantly below the',
+        242,
+        438.5,
+        213
+      ),
+      item('90% CI.', kind === 'shifted' ? 317 : 54, 426, 31, { hasEOL: false })
+    ])
+    const body = units.find((unit) => unit.items.includes('1:0'))
+    assert.ok(body?.items.includes('1:3'))
+    assert.equal(body.items.includes('1:4'), kind === 'wrap')
+    assert.equal(body.source.endsWith('90% CI.'), kind === 'wrap')
+    assert.equal(units.filter((unit) => unit.items.includes('1:4')).length, 1)
+  }
+)
+
+it.each(['wrapped citation', 'shifted year', 'unopened citation'] as const)(
+  'keeps the closing year with its no-comma author citation (%s)',
+  (kind) => {
+    const units = translationUnits([
+      item(
+        'We fit the response independently before recording the final estimate for each',
+        54,
+        451,
+        400
+      ),
+      item('R', 54, 438.5, 9, { fontName: 'math', hasEOL: false }),
+      item('0', 63, 437, 5, { fontName: 'script', size: 7, hasEOL: false }),
+      item(
+        kind === 'unopened citation'
+          ? 'value with the published benchmark results of L. Q. Writer'
+          : 'value with the published benchmark for this instrument (L. Q. Writer',
+        73,
+        438.5,
+        381
+      ),
+      item('2018).', kind === 'shifted year' ? 300 : 54, 426, 28, { hasEOL: false })
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:0'))
+    assert.ok(owner?.items.includes('1:3'))
+    assert.equal(owner.items.includes('1:4'), kind === 'wrapped citation')
+    assert.equal(owner.source.endsWith('(L. Q. Writer 2018).'), kind === 'wrapped citation')
+    assert.equal(units.filter((unit) => unit.items.includes('1:4')).length, 1)
+  }
+)
+
+it.each(['continued', 'shifted', 'ordinary next row'] as const)(
+  'keeps a terminal predicate with its operator introduction (%s)',
+  (shape) => {
+    const open = { hasEOL: false }
+    const math = { ...open, fontName: 'math' }
+    const items = [
+      item('while the scale factor e', 54, 631, 94, open),
+      item('is independent of', 178, 631, 77, open),
+      item('Hence in Eq. (2) only the', 279.5, 631, 118, open),
+      item('Z', 402, 631, 6, math),
+      item('-dependent part of the operator', 410, 631, 152),
+      item('survives:', shape === 'shifted' ? 72 : 54, 619, 38, open),
+      item('', 190, 591, 0, { fontName: 'math' }),
+      item(
+        shape === 'ordinary next row' ? 'New material begins here.' : 'ψ',
+        190,
+        591,
+        shape === 'ordinary next row' ? 150 : 7,
+        math
+      )
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 2, width: 612, height: 792, rotation: 0, items }],
+      pageCount: 3
+    })
+    const prose = units.find((u) => u.items.includes('2:4'))
+    assert.equal(prose?.items.includes('2:5'), shape === 'continued')
+    assert.equal(prose?.source.endsWith('operator survives:'), shape === 'continued')
+    assert.equal(prose?.items.includes('2:7'), false)
+  }
+)
+
+it.each(['matched columns', 'closed first paragraph', 'intervening text'] as const)(
+  'keeps a role phrase with the continued paragraph below a floating caption (%s)',
+  (shape) => {
+    const body = { size: 9 }
+    const caption = { ...body, fontName: 'caption' }
+    const end =
+      shape === 'closed first paragraph'
+        ? 'We chose the apparatus after evaluating a different practical tool.'
+        : 'We considered several applications and ended up using it as'
+    const tail = 'a field calibration device. These trials demonstrate that the'
+    const items = [
+      item('We developed several aids for independent measurements.', 54, 129, 240, body),
+      item('The group evaluated them in a set of carefully matched sessions.', 54, 118, 240, body),
+      item('The findings helped the team plan the next round of tests.', 54, 107, 240, body),
+      item('This included exploring how a device might help other groups.', 54, 96, 240, body),
+      item(end, 54, 85, 240, { ...body, hasEOL: false }),
+      item('Figure 2. The comparison device used during the independent', 318, 594, 240, caption),
+      item('measurements at a second station with a different source and', 318, 583, 240, caption),
+      item('a measured reference profile.', 318, 572, 136, { ...caption, hasEOL: false }),
+      ...(shape === 'intervening text'
+        ? [item('A separate note appears below the drawing.', 318, 560, 170, body)]
+        : []),
+      item(tail, 318, 545, 240, body),
+      item(
+        'new equipment can be set up without changing the reference protocol.',
+        318,
+        534,
+        240,
+        body
+      ),
+      item('We report the remaining measurements in the next section.', 318, 523, 240, body),
+      item('The raw data are archived.', 318, 512, 92, body)
+    ]
+    const units = translationUnits(items)
+    const source = units.find((unit) => unit.items.includes('1:4'))
+    assert.equal(source?.source.includes(tail), shape === 'matched columns')
+    assert.ok(units.some((unit) => unit.items.join(',') === '1:5,1:6,1:7'))
+  }
+)
+
+it.each(['centered', 'shifted', 'no abstract witness'])(
+  'joins a plural noun phrase before a numbered byline (%s)',
+  (shape) => {
+    const title = {
+      fontName: 'title'
+    }
+    const draft = { size: 8, hasEOL: false }
+    const author = { size: 9, hasEOL: false }
+    const mark = { ...author, size: 6 }
+    const office = { size: 8 }
+    const line = item('', 0, 0, 0, { size: 0 })
+    const head =
+      'A revised approach to identifying weak measurements in field surveys through independent'
+    const tail = 'sensor readings'
+    const units = translationUnits([
+      item('Draft version May 8, 2025', 60, 733, 130, draft),
+      line,
+      item('Typeset using LATEX default style in ArticleTools', 60, 724, 141, {
+        ...draft,
+        fontName: 'small'
+      }),
+      line,
+      item(head, 59, 676, 494, title),
+      item(tail, shape === 'shifted' ? 286 : 269, 663.5, 74, { ...title, hasEOL: false }),
+      line,
+      item('Ann Reader,', 180, 647.5, 88, author),
+      item('1', 268, 651.3, 4, mark),
+      item('and Rob Writer', 280, 647.5, 148, author),
+      item('2', 428, 651.3, 4, mark),
+      line,
+      item('1', 145, 633.3, 4, { ...mark, fontName: 'affiliation' }),
+      item('Department of Measurement Science, North Institute', 150, 630.5, 317, office),
+      line,
+      item('2', 141, 621.8, 4, { ...mark, fontName: 'affiliation' }),
+      item('Centre for Independent Sampling, West University', 146, 619, 325, office),
+      line,
+      item('ABSTRACT', 279, 595, 54, { fontName: 'abstract' }),
+      item(
+        shape === 'no abstract witness'
+          ? 'We study independent measurements from two stations throughout the same survey.'
+          : 'We study independent sensor readings from two stations throughout the same survey.',
+        89,
+        580,
+        434,
+        { fontName: 'abstract' }
+      )
+    ])
+    const owner = units.find((unit) => unit.items.includes('1:4'))
+    assert.equal(owner?.source, shape === 'centered' ? head + ' ' + tail : head)
+    assert.equal(owner?.items.includes('1:5'), shape === 'centered')
+    assert.equal(owner?.items.includes('1:7'), false)
+  }
+)
+
+it.each(['aligned', 'shifted operand', 'unaligned relation'])(
+  'retains a word-shaped binomial coefficient within aligned display rows (%s)',
+  (shape) => {
+    const glyph = { size: 12, fontName: 'Variable', hasEOL: false }
+    const encoded = { ...glyph, fontName: 'Large operator' }
+    const relation = { ...glyph, fontName: 'Relation' }
+    const rows = [
+      item('An estimate follows from the next calculation.', 66, 576, 260),
+      item('≤', 237, 533, 9, relation),
+      item('\u0012', 250, 550, 9, encoded),
+      item('uv', shape === 'shifted operand' ? 277 : 272, 541, 14, { ...glyph, hasEOL: true }),
+      item('u', 261, 525, 8, glyph),
+      item('−', 273, 525, 10, relation),
+      item('v', 288, 525, 9, glyph),
+      item('\u0013', 299, 550, 9, encoded),
+      item('≤', shape === 'unaligned relation' ? 247 : 237, 497, 9, relation),
+      item('The preceding estimate remains valid.', 66, 467, 290)
+    ].map((row) =>
+      row.fontName === encoded.fontName ? { ...row, fontAscent: 0.04, fontDescent: -0.6 } : row
+    )
+    const units = translationUnits(rows)
+    const atom = units.find((unit) => unit.items.includes('1:3'))
+    assert.equal(atom?.source, 'uv')
+    assert.equal(atom?.sourceOnly === true && atom.preserve === 'formula', shape === 'aligned')
+    assert.equal(units.find((unit) => unit.items.includes('1:9'))?.sourceOnly, undefined)
   }
 )

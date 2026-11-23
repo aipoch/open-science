@@ -29,6 +29,10 @@ export class PackageFileOpenRelay {
     else this.overflow = true
   }
 
+  get pendingPaths(): readonly string[] {
+    return [...this.pending]
+  }
+
   bind(handler: (path: string) => void): void {
     this.handler = handler
     for (const path of this.pending) handler(path)

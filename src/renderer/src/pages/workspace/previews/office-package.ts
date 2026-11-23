@@ -3,7 +3,12 @@ import { SaxesParser } from 'saxes'
 import { OFFICE_PREVIEW_MAX_FILE_BYTES } from '../../../../../shared/office-preview'
 
 export type OfficeFileExtension = 'docx' | 'xls' | 'xlsx' | 'pptx'
-export type OfficePackageValidationErrorCode = 'INVALID_PACKAGE' | 'RESOURCE_LIMIT_EXCEEDED'
+export type OfficePackageValidationErrorCode =
+  | 'INVALID_PACKAGE'
+  | 'RESOURCE_LIMIT_EXCEEDED'
+  | 'ENCRYPTED_PACKAGE'
+  | 'EXTERNAL_RESOURCES'
+  | 'UNSUPPORTED_FORMAT'
 
 export class OfficePackageValidationError extends Error {
   constructor(
@@ -176,13 +181,19 @@ const inspectOoxmlPackage = (
     centralDirectorySize === 0xffffffff ||
     centralDirectoryOffset === 0xffffffff
   ) {
-    throw invalidPackage('ZIP64 Office packages are not supported for preview')
+    throw new OfficePackageValidationError(
+      'UNSUPPORTED_FORMAT',
+      'ZIP64 Office packages are not supported for preview'
+    )
   }
   if (entryCount > MAX_ZIP_ENTRIES) {
     throw resourceLimit('This Office package has too many entries to preview safely')
   }
   if (diskNumber !== 0 || centralDirectoryDisk !== 0 || entriesOnDisk !== entryCount) {
-    throw invalidPackage('Multi-disk Office packages are not supported for preview')
+    throw new OfficePackageValidationError(
+      'UNSUPPORTED_FORMAT',
+      'Multi-disk Office packages are not supported for preview'
+    )
   }
 
   const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize
@@ -218,14 +229,20 @@ const inspectOoxmlPackage = (
     const centralNameStart = offset + 46
 
     if ((flags & 0x0001) !== 0) {
-      throw invalidPackage('Encrypted Office packages cannot be previewed')
+      throw new OfficePackageValidationError(
+        'ENCRYPTED_PACKAGE',
+        'Encrypted Office packages cannot be previewed'
+      )
     }
     if (
       compressedSize === 0xffffffff ||
       uncompressedSize === 0xffffffff ||
       localEntryOffset === 0xffffffff
     ) {
-      throw invalidPackage('ZIP64 Office packages are not supported for preview')
+      throw new OfficePackageValidationError(
+        'UNSUPPORTED_FORMAT',
+        'ZIP64 Office packages are not supported for preview'
+      )
     }
     if (nextOffset > centralDirectoryEnd) throw invalidPackage()
     const name = decoder.decode(bytes.subarray(centralNameStart, centralNameStart + nameLength))
@@ -267,7 +284,10 @@ const inspectOoxmlPackage = (
       throw invalidPackage()
     }
     if (compressionMethod !== 0 && compressionMethod !== 8) {
-      throw invalidPackage('This Office package uses an unsupported compression method')
+      throw new OfficePackageValidationError(
+        'UNSUPPORTED_FORMAT',
+        'This Office package uses an unsupported compression method'
+      )
     }
 
     if (extension === 'pptx' && name.toLowerCase().startsWith('ppt/media/')) {
@@ -454,7 +474,10 @@ const assertNoExternalResources = (data: Uint8Array): void => {
         if (relationshipType && OOXML_EXTERNAL_HYPERLINK_TYPES.has(relationshipType)) {
           return
         }
-        throw invalidPackage('Office files with external resources cannot be previewed')
+        throw new OfficePackageValidationError(
+          'EXTERNAL_RESOURCES',
+          'Office files with external resources cannot be previewed'
+        )
       }
     })
   })

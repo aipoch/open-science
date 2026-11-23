@@ -81,6 +81,8 @@ export async function createBackendBuilder({
         ...(desktop ? {} : { packages: 'external' }),
         metafile: true,
         sourcemap: true,
+        // Installed backends need source locations for stack traces. Embed source text for local debugging.
+        sourcesContent: !desktop || development,
         loader: { '.md': 'text' },
         define: {
           'import.meta.url': '__entryUrl',

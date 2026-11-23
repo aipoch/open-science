@@ -33,7 +33,8 @@ describe('authorized directories through authenticated MCP', () => {
     const runtime = new Proxy(
       {},
       {
-        get() {
+        get(_target, property) {
+          if (property === 'currentExecutionIntent') return () => undefined
           throw new Error('must not touch the kernel')
         }
       }

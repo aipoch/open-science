@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookRunRepository } from './repository'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { NotebookRuntimeService } from './runtime-service'
+import { NotebookExecutionIntent } from './execution-intent'
 
 let storageRoot: string | undefined
 
@@ -35,6 +37,42 @@ afterEach(async () => {
 })
 
 describe('delegated Notebook lane capability', () => {
+  it('keeps a refreshed child credential alive when the initial session credential is released', async () => {
+    const beginCodeCell = vi.fn(async () => ({ writeId: 'write-1' }))
+    const shutdown = vi.fn(async () => undefined)
+    const server = new NotebookLocalRpcServer({ beginCodeCell, shutdown } as never)
+    const intent = new NotebookExecutionIntent({ projectId: 'project-1', sessionId: 'session-1' })
+    const child = await server.issueDelegatedNotebookConnection({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      rootFrameId: 'root-frame',
+      agentFrameId: 'child-frame',
+      attemptId: 'child-attempt',
+      messageBranchId: 'child-branch',
+      runtimeSegmentId: 'child-runtime',
+      promptMessageId: 'child-prompt',
+      workspaceCwd: '/workspace/child',
+      isAttemptWritable: () => true,
+      executionIntent: intent
+    })
+    try {
+      const refreshed = await child.refreshExecutionIntent(intent)
+      expect(child.release).toBeTypeOf('function')
+      child.release?.()
+      expect((await request(child, 'beginCodeCell', {})).status).toBe(401)
+      expect((await request(refreshed, 'beginCodeCell', {})).status).toBe(200)
+      expect(beginCodeCell).toHaveBeenCalledOnce()
+      expect(shutdown).not.toHaveBeenCalled()
+
+      await child.revoke()
+      expect((await request(refreshed, 'beginCodeCell', {})).status).toBe(401)
+      expect(shutdown).toHaveBeenCalledOnce()
+    } finally {
+      await child.revoke()
+      await server.close()
+    }
+  })
+
   it('keeps child code reception alive until its own capability is revoked', async () => {
     const beginCodeCell = vi.fn(async (_request: unknown, signal?: AbortSignal) => ({
       cancelled: signal?.aborted
@@ -117,6 +155,7 @@ describe('delegated Notebook lane capability', () => {
       return []
     })
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: storageRoot,
       dataRoot: storageRoot,
       projectId: 'project-1',
@@ -134,6 +173,10 @@ describe('delegated Notebook lane capability', () => {
         shutdown: async () => ({ reaped: true })
       })
     })
+    const executionIntent = service.createExecutionIntent({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
     const server = new NotebookLocalRpcServer(service, {
       delegatedWorkService: {
         delegate: vi.fn(),
@@ -144,6 +187,7 @@ describe('delegated Notebook lane capability', () => {
       }
     })
     const child = await server.issueDelegatedNotebookConnection({
+      executionIntent,
       projectId: 'project-1',
       sessionId: 'session-1',
       rootFrameId: 'root-frame',
@@ -247,6 +291,7 @@ describe('delegated Notebook lane capability', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'delegated-output-capability-'))
     const submitOutput = vi.fn(async () => ({ accepted: true as const }))
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: storageRoot,
       dataRoot: storageRoot,
       projectId: 'project-1',
@@ -264,11 +309,16 @@ describe('delegated Notebook lane capability', () => {
         shutdown: async () => ({ reaped: true })
       })
     })
+    const executionIntent = service.createExecutionIntent({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
     const server = new NotebookLocalRpcServer(service, {
       token: 'global-token',
       delegatedWorkService: { delegate: vi.fn(), submitOutput }
     })
     const child = await server.issueDelegatedNotebookConnection({
+      executionIntent,
       projectId: 'project-1',
       sessionId: 'session-1',
       rootFrameId: 'root-frame',
@@ -324,6 +374,7 @@ describe('delegated Notebook lane capability', () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'delegated-notebook-'))
     const invocationCounts = new WeakMap<object, number>()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: storageRoot,
       dataRoot: storageRoot,
       projectId: 'project-1',
@@ -348,8 +399,13 @@ describe('delegated Notebook lane capability', () => {
         return executor
       }
     })
+    const executionIntent = service.createExecutionIntent({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
     const server = new NotebookLocalRpcServer(service)
     const childOne = await server.issueDelegatedNotebookConnection({
+      executionIntent,
       projectId: 'project-1',
       sessionId: 'session-1',
       rootFrameId: 'root-frame-session-1',
@@ -362,6 +418,7 @@ describe('delegated Notebook lane capability', () => {
       isAttemptWritable: () => true
     })
     const childTwo = await server.issueDelegatedNotebookConnection({
+      executionIntent,
       projectId: 'project-1',
       sessionId: 'session-1',
       rootFrameId: 'root-frame-session-1',
@@ -439,6 +496,7 @@ describe('delegated Notebook lane capability', () => {
   it('fences stopped and superseded Attempts without revoking a sibling lane', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'delegated-notebook-fence-'))
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: storageRoot,
       dataRoot: storageRoot,
       projectId: 'project-1',
@@ -456,9 +514,14 @@ describe('delegated Notebook lane capability', () => {
         shutdown: async () => ({ reaped: true })
       })
     })
+    const executionIntent = service.createExecutionIntent({
+      projectId: 'project-1',
+      sessionId: 'session-1'
+    })
     const server = new NotebookLocalRpcServer(service)
     let firstWritable = true
     const first = await server.issueDelegatedNotebookConnection({
+      executionIntent,
       projectId: 'project-1',
       sessionId: 'session-1',
       rootFrameId: 'root-frame-session-1',
@@ -471,6 +534,7 @@ describe('delegated Notebook lane capability', () => {
       isAttemptWritable: () => firstWritable
     })
     const sibling = await server.issueDelegatedNotebookConnection({
+      executionIntent,
       projectId: 'project-1',
       sessionId: 'session-1',
       rootFrameId: 'root-frame-session-1',
@@ -501,6 +565,7 @@ describe('delegated Notebook lane capability', () => {
       expect(superseded.status).toBe(401)
 
       const restarted = await server.issueDelegatedNotebookConnection({
+        executionIntent,
         projectId: 'project-1',
         sessionId: 'session-1',
         rootFrameId: 'root-frame-session-1',

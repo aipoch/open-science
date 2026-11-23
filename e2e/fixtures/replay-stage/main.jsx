@@ -13,7 +13,7 @@ import { initI18n, prepareI18nLocale } from '../../../src/renderer/src/i18n'
 import '../../../src/renderer/src/assets/main.css'
 
 const params = new URLSearchParams(location.search)
-const locale = ['de', 'fr'].includes(params.get('locale')) ? params.get('locale') : 'en'
+const locale = ['de', 'fr', 'zh-Hans'].includes(params.get('locale')) ? params.get('locale') : 'en'
 await prepareI18nLocale(locale)
 initI18n(locale)
 export const svg =

@@ -52,6 +52,33 @@ their normal meaning; the selection is neither truncated nor expanded to the ful
 removes the temporary file after the command exits, including test or spawn failures. Forced parent
 termination can leave a file in the OS temporary directory; it contains test arguments only.
 
+### Packaged default Agent conversations
+
+The release suite selects eleven journeys using `@default-agent-release` from
+`e2e/default-agent-conversation.spec.ts`, `e2e/builtin-harness.spec.ts`, and
+`e2e/harness-provider-errors.spec.ts`. `scripts/ci/run-default-agent-conversation.mjs` requires a
+packaged executable and executes the production selection without retries. The exact inventory
+and first-attempt report validator live in `scripts/ci/default-agent-conversation.mjs`.
+See [the CI dry-run entry](ci.md#default-agent-conversation-release-certification) for all five
+native packages. Run the focused verifier, release workflow and certification evidence tests
+when changing selection or failure propagation. A source-only run does not certify installed bytes.
+
+### Built-in Web tool controls
+
+The `web_tools` module covers anonymous Exa, public fetch, invocation receipts,
+snapshot continuation and branch ownership. The Harness integration exercises search,
+fetch and citation through Chat Completions, Responses and Messages with deterministic
+fixtures. Run the host receipt, permission and renderer contract suites when changing
+the integration. A cancellation that wins before publication cannot promote a late
+success or grant snapshot ownership.
+
+Run `npm run test:e2e:web-tools` after building the Electron test application, or
+dispatch `web-tools-development.yml`. These
+manual journeys include a public Exa search-to-citation smoke test, fetch and
+cancellation, offline branches, and research package export/import. The smoke uses a
+local deterministic model fixture and real Web networking. Record the test network and
+proxy when evaluating a target environment.
+
 ### Dependency boundaries and explainable convergence
 
 `test:affected` refines a declared selection against immutable merge-base, head and actual checkout

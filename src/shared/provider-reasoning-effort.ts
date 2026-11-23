@@ -1,5 +1,8 @@
+import { resolveOfficialModelCatalog } from './provider-model-catalog'
+import type { CatalogSnapshot } from '@aipoch/providers'
 import {
   resolveVendorModelReasoningEffort,
+  reasoningProfileFromCapability,
   resolveReasoningEffortProfile,
   type ReasoningEffortPresetSetting,
   type ReasoningEffortProfile
@@ -11,13 +14,17 @@ import {
   isCodexSubscriptionProvider,
   type ProviderType
 } from './settings'
+import { readLabModelCapabilities, type LabModelCapabilities } from './lab'
 
 export type ProviderReasoningEffortSource = {
   type: ProviderType
   vendorId?: OfficialVendorId
   model?: string
   models?: readonly string[]
+  region?: string
+  modelCatalog?: CatalogSnapshot
   reasoningEffortPreset?: ReasoningEffortPresetSetting
+  modelCapabilities?: Readonly<Record<string, LabModelCapabilities>>
 }
 
 // Resolves the effective selection with the same rules in main and renderer. Subscription runtimes
@@ -30,6 +37,12 @@ export const resolveProviderEffectiveModel = (
   if (!provider) return undefined
 
   const availableModels = provider.models ?? []
+  if (
+    (provider.type === 'lab' || (provider.type === 'official' && provider.modelCatalog)) &&
+    availableModels.length === 0
+  ) {
+    return undefined
+  }
   if (
     requestedModel &&
     (availableModels.length === 0 || availableModels.includes(requestedModel))
@@ -70,18 +83,35 @@ export const resolveProviderReasoningEffortProfile = (
   const providerType = provider.type
 
   switch (providerType) {
-    case 'official':
+    case 'official': {
+      const capability = resolveOfficialModelCatalog(provider).find(
+        (entry) => entry.id === model
+      )?.reasoningEffort
+      if (capability) return reasoningProfileFromCapability(capability)
       return provider.vendorId
         ? resolveVendorModelReasoningEffort(provider.vendorId, model)
         : { supported: false }
+    }
     case 'codex-shared':
     case 'codex-isolated':
       return model ? resolveVendorModelReasoningEffort('openai', model) : { supported: false }
     case 'claude-shared':
     case 'claude-isolated':
       return model ? resolveVendorModelReasoningEffort('anthropic', model) : { supported: false }
+    case 'codebuddy-subscription':
+      return { supported: false }
     case 'xai-subscription':
       return resolveVendorModelReasoningEffort('xai', model)
+    case 'lab': {
+      const capabilities = readLabModelCapabilities(
+        model ? provider.modelCapabilities?.[model] : undefined
+      )
+      return reasoningProfileFromCapability({
+        supported: true,
+        values:
+          capabilities?.reasoningValues ?? (capabilities?.reasoningToggle ? ['none', 'high'] : [])
+      })
+    }
     case 'custom':
       return resolveReasoningEffortProfile(provider.reasoningEffortPreset)
   }

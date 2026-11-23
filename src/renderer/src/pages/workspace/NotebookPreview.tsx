@@ -11,6 +11,7 @@ import {
   useEffect,
   useEffectEvent,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type RefObject
@@ -29,6 +30,7 @@ import {
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { registerNotebookMemoryTerminal } from '@/stores/notebook-memory-notice-store'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import type { PreviewToolItem } from '@/stores/preview-workbench-contract'
@@ -43,6 +45,9 @@ import type {
   NotebookNamespaceSnapshot,
   NotebookNamespaceVariable,
   NotebookRunRecord,
+  NotebookRunEvidenceSnapshot,
+  NotebookRunPage,
+  NotebookRunCursor,
   NotebookRunStaleness,
   NotebookSessionReference,
   NotebookSessionState
@@ -50,7 +55,7 @@ import type {
 import type { NotebookLanguage } from '../../../../shared/notebook-language-contract'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { EnvProvisionOverlay } from './EnvProvisionOverlay'
-import { isCurrentSessionNotebookView } from './follow-notebook-scroll'
+import { isCurrentSessionNotebookView, prependAnchoredScrollTop } from './follow-notebook-scroll'
 import { shouldProvisionR } from './lazy-r'
 import {
   resolveRunErrorLine,
@@ -70,6 +75,8 @@ import {
   createNotebookFrameFilterOptions,
   normalizeNotebookRootFrameRuns,
   notebookFrameLabels,
+  notebookAgentSummariesForSession,
+  notebookHistorySummaries,
   pendingNotebookCode,
   projectNotebookRunsForFrame,
   type NotebookFrameFilterValue
@@ -108,6 +115,7 @@ export type NotebookPreviewItem = PreviewToolItem & {
 
 type NotebookPreviewProps = {
   item: NotebookPreviewItem
+  isActive?: boolean
 }
 
 type NotebookNamespaceViewStatus =
@@ -227,13 +235,15 @@ const NotebookRunCell = ({
   index,
   staleness,
   causedByRunIndex,
-  allowFolderAccess
+  allowFolderAccess,
+  loadRun
 }: {
   run: NotebookRunRecord
   index: number
   staleness?: NotebookRunStaleness
   causedByRunIndex?: number
   allowFolderAccess?: boolean
+  loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -301,7 +311,7 @@ const NotebookRunCell = ({
         highlightLine={errorLine}
       />
       <NotebookRunOutputs run={run} allowFolderAccess={allowFolderAccess} />
-      <NotebookRunEvidence run={run} />
+      <NotebookRunEvidence run={run} loadRun={loadRun} />
     </div>
   )
 }
@@ -530,7 +540,7 @@ const TerminalInput = ({
 }
 
 // Renders the notebook preview and keeps it synchronized with main-process runtime events.
-const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
+const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React.JSX.Element => {
   const recoveryEpoch = useDesktopRuntimeRecoveryStore((state) => state.epoch)
   const recoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
   const { t } = useTranslation()
@@ -548,6 +558,17 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const restartTrigger = useRef<HTMLButtonElement>(null)
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [frameFilter, setFrameFilter] = useState<NotebookFrameFilterValue>()
+  const [extraHistory, setExtraHistory] = useState<{
+    scope: string
+    runs: NotebookRunRecord[]
+    page?: NotebookRunPage
+    loading: boolean
+    error?: string
+    failedRunId?: string
+  }>()
+  const historyReadInFlight = useRef<string | undefined>(undefined)
+  const historyGeneration = useRef(0)
+  const prependSnapshot = useRef<{ scrollTop: number; scrollHeight: number } | undefined>(undefined)
   const viewSelectionVersion = useRef(0)
   const [showVariables, setShowVariables] = useState(false)
   const [showPrivateVariables, setShowPrivateVariables] = useState(false)
@@ -567,6 +588,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const notebookItemInWorkbench = usePreviewWorkbenchStore((state) =>
     state.items.some((entry) => entry.id === item.id)
   )
+  const notebookRequest = createNotebookRequest(item.notebook)
+  const notebookRequestKey = JSON.stringify(notebookRequest)
+  const historyScope = JSON.stringify([notebookRequestKey, recoveryEpoch])
+  const history = extraHistory?.scope === historyScope ? extraHistory : undefined
+  // Do not resurrect an invalidated pending request when navigation returns from A -> B -> A.
+  if (extraHistory && extraHistory.scope !== historyScope) setExtraHistory(undefined)
   const followEnabled = isCurrentSessionNotebookView({
     notebookSessionId: item.notebook.sessionId,
     selectedSessionId,
@@ -575,27 +602,40 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     previewActiveItemId,
     notebookItemInWorkbench
   })
-  const cellsViewportRef = useFollowScrollBottom(followEnabled)
   const terminalViewportRef = useFollowScrollBottom(followEnabled)
-  // Selected environment within the active python/r pane; undefined lets the effective-env
-  // computation below default to the first (canonical-default-first) environment.
+  // An explicit environment selection wins; otherwise show the latest historical environment.
   const [activeEnv, setActiveEnv] = useState<string | undefined>(undefined)
   const latestNotebookState = useRef<NotebookSessionState | undefined>(undefined)
   const stateLoadInFlight = useRef<Promise<boolean> | undefined>(undefined)
-  const stateReloadQueued = useRef(false)
+  const lastFullStateScope = useRef<string | undefined>(undefined)
+  const queuedStateRead = useRef<'full' | 'write-lock' | undefined>(undefined)
   const lastFocusedRunRequest = useRef<string | undefined>(undefined)
   const lastRevealedRunRequest = useRef<string | undefined>(undefined)
-  const notebookRequest = createNotebookRequest(item.notebook)
-  const notebookRequestKey = JSON.stringify(notebookRequest)
-  const latestNotebookRequest = useRef({ request: notebookRequest, key: notebookRequestKey })
+  const rootFrameId =
+    session?.conversationGraph?.rootFrameId ?? `root-frame-${item.notebook.sessionId}`
+  const latestNotebookRequest = useRef({
+    request: notebookRequest,
+    key: notebookRequestKey,
+    rootFrameId
+  })
+
+  useLayoutEffect(() => {
+    historyGeneration.current += 1
+    historyReadInFlight.current = undefined
+    prependSnapshot.current = undefined
+  }, [historyScope])
 
   useEffect(() => {
     if (latestNotebookRequest.current.key !== notebookRequestKey) {
       lastRevealedRunRequest.current = undefined
       viewSelectionVersion.current += 1
     }
-    latestNotebookRequest.current = { request: notebookRequest, key: notebookRequestKey }
-  }, [notebookRequest, notebookRequestKey])
+    latestNotebookRequest.current = {
+      request: notebookRequest,
+      key: notebookRequestKey,
+      rootFrameId
+    }
+  }, [notebookRequest, notebookRequestKey, rootFrameId])
 
   // Greys the pane while python is unavailable or an upgrade is running (spec §6.5).
   const envStatus = useNotebookEnvStore((s) => s.status)
@@ -619,72 +659,124 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
   // Keeps state assignment isolated so load paths and event paths share the same update hook.
   const applyNotebookState = useCallback((nextState: NotebookSessionState): void => {
+    const previousRuns = latestNotebookState.current?.runs ?? []
+    const scope = JSON.stringify([latestNotebookRequest.current.key, getDesktopRuntimeEpoch()])
+    lastFullStateScope.current = scope
+    setExtraHistory((previous) =>
+      previous?.scope === scope
+        ? {
+            ...previous,
+            runs: [
+              ...new Map(
+                [...previous.runs, ...previousRuns, ...nextState.runs].map((run) => [
+                  run.runId,
+                  run
+                ])
+              ).values()
+            ]
+          }
+        : previous
+    )
     latestNotebookState.current = nextState
     setNotebookState(nextState)
   }, [])
 
   // Reads the latest notebook state from main, including its bounded recent run window.
-  const loadNotebookState = useCallback(async (): Promise<boolean> => {
-    if (!['connected', 'reconciling'].includes(useDesktopRuntimeRecoveryStore.getState().phase))
-      return false
-    if (stateLoadInFlight.current) {
-      stateReloadQueued.current = true
-      return stateLoadInFlight.current
-    }
-    const load = (async (): Promise<boolean> => {
-      let succeeded = false
-      setIsLoading(true)
-      try {
-        do {
-          stateReloadQueued.current = false
-          const requested = latestNotebookRequest.current
-          const epoch = getDesktopRuntimeEpoch()
-          try {
-            const nextState = await window.api.notebook.state(requested.request)
+  const loadNotebookState = useCallback(
+    async (read: 'full' | 'write-lock' = 'full'): Promise<boolean> => {
+      if (!isActive) return false
+      if (!['connected', 'reconciling'].includes(useDesktopRuntimeRecoveryStore.getState().phase))
+        return false
+      if (queuedStateRead.current !== 'full') queuedStateRead.current = read
+      if (stateLoadInFlight.current) {
+        return stateLoadInFlight.current
+      }
+      const load = (async (): Promise<boolean> => {
+        let succeeded = false
+        setIsLoading(true)
+        try {
+          do {
+            const nextRead = queuedStateRead.current
+            queuedStateRead.current = undefined
+            const requested = latestNotebookRequest.current
+            const epoch = getDesktopRuntimeEpoch()
+            const scope = JSON.stringify([requested.key, epoch])
+            const lockOnly =
+              nextRead === 'write-lock' &&
+              lastFullStateScope.current === scope &&
+              latestNotebookState.current !== undefined
+            try {
+              const nextState = await window.api.notebook.state(
+                lockOnly
+                  ? { ...requested.request, historySummaryFrameId: requested.rootFrameId }
+                  : { ...requested.request, previewHistory: true }
+              )
 
-            if (epoch !== getDesktopRuntimeEpoch()) continue
-            if (latestNotebookRequest.current.key === requested.key) {
-              applyNotebookState(nextState)
-              setActionError(null)
+              if (epoch !== getDesktopRuntimeEpoch()) continue
+              if (latestNotebookRequest.current.key !== requested.key) {
+                queuedStateRead.current = 'full'
+                continue
+              }
+              if (lockOnly) {
+                const current = latestNotebookState.current
+                if (!current || lastFullStateScope.current !== scope) {
+                  queuedStateRead.current = 'full'
+                  continue
+                }
+                // Sparse reads omit cells and history. Retain all previously loaded Run data.
+                const updated = { ...current, activeWrite: nextState.activeWrite }
+                latestNotebookState.current = updated
+                setNotebookState(updated)
+              } else {
+                applyNotebookState(nextState)
+                setActionError(null)
+              }
               succeeded = true
-            } else {
-              stateReloadQueued.current = true
-            }
-          } catch (error) {
-            if (epoch !== getDesktopRuntimeEpoch()) continue
-            if (latestNotebookRequest.current.key === requested.key) {
+            } catch (error) {
+              if (epoch !== getDesktopRuntimeEpoch()) continue
+              if (lockOnly || latestNotebookRequest.current.key !== requested.key) {
+                queuedStateRead.current = 'full'
+                continue
+              }
+              lastFullStateScope.current = undefined
               setActionError(getErrorMessage(error))
               succeeded = false
-            } else {
-              stateReloadQueued.current = true
             }
-          }
-        } while (stateReloadQueued.current)
-        return succeeded
+          } while (queuedStateRead.current)
+          return succeeded
+        } finally {
+          setIsLoading(false)
+        }
+      })()
+      stateLoadInFlight.current = load
+      try {
+        return await load
       } finally {
-        setIsLoading(false)
+        if (isCurrentInFlight(stateLoadInFlight.current, load)) {
+          stateLoadInFlight.current = undefined
+        }
       }
-    })()
-    stateLoadInFlight.current = load
-    try {
-      return await load
-    } finally {
-      if (isCurrentInFlight(stateLoadInFlight.current, load)) {
-        stateLoadInFlight.current = undefined
-      }
-    }
-  }, [applyNotebookState])
+    },
+    [applyNotebookState, isActive]
+  )
+
+  const loadNotebookRunEvidence = useCallback(
+    (runId: string) =>
+      window.api.notebook.runEvidence({ ...latestNotebookRequest.current.request, runId }),
+    []
+  )
 
   useEffect(
     () =>
       registerDesktopRecoveryReader(async () => {
+        if (!isActive) return
         if (!(await loadNotebookState())) {
           // Content-local failures must not invalidate a healthy replacement attachment.
           latestNotebookState.current = undefined
           setNotebookState(undefined)
         }
       }),
-    [loadNotebookState]
+    [isActive, loadNotebookState]
   )
 
   // Defer the initial state load until after the component has mounted.
@@ -701,19 +793,32 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // Reload whenever the shared runtime publishes a change for this notebook session.
   useEffect(() => {
     return window.api.notebook.onChanged((event) => {
-      if (event.sessionId === item.notebook.sessionId) {
-        void loadNotebookState()
+      if (
+        !event.codeAppendOnly &&
+        event.sessionId === item.notebook.sessionId &&
+        resolveProjectId(event) === latestNotebookRequest.current.request.projectId
+      ) {
+        void loadNotebookState(event.codeWriteOnly ? 'write-lock' : 'full')
       }
     })
   }, [item.notebook.sessionId, loadNotebookState])
 
-  const runs = notebookState?.runs ?? notebookState?.recentRuns ?? []
-  const frameRuns = session ? normalizeNotebookRootFrameRuns(runs, session) : runs
+  const recentRuns = notebookState?.runs ?? notebookState?.recentRuns ?? []
+  const runs = [
+    ...new Map([...(history?.runs ?? []), ...recentRuns].map((run) => [run.runId, run])).values()
+  ].sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
+  const notebookSession = session ?? { id: item.notebook.sessionId }
+  const frameRuns = normalizeNotebookRootFrameRuns(runs, notebookSession)
+  const agentSummaries = notebookAgentSummariesForSession(
+    notebookSession,
+    runs,
+    notebookState?.agentSummaries ?? []
+  )
   const pendingCode = pendingNotebookCode(session, frameRuns)
   const frameOptions = createNotebookFrameFilterOptions(
     frameRuns,
-    session ? notebookFrameLabels(session, t) : {},
-    undefined,
+    notebookFrameLabels(notebookSession, t, frameRuns, agentSummaries),
+    notebookHistorySummaries(agentSummaries),
     false,
     pendingCode[0]?.frameId
   )
@@ -723,6 +828,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const projectedRuns = effectiveFrameFilter
     ? projectNotebookRunsForFrame(frameRuns, effectiveFrameFilter)
     : []
+  const agentHistory = agentSummaries.find(
+    (agent) => `frame:${agent.agentFrameId}` === effectiveFrameFilter
+  )
 
   const framePendingCode = pendingCode.filter(
     (entry) => `frame:${entry.frameId}` === effectiveFrameFilter
@@ -737,6 +845,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           : 'python'
   // Received code can make a kernel tab visible before its first Run is admitted.
   const kindsWithRuns = new Set([
+    ...(agentHistory?.views.map((view) => view.kernelKind) ?? []),
     ...projectedRuns.map(resolveRunKernelKind),
     ...framePendingCode.map((entry) => pendingKernelKind(entry.code.language))
   ])
@@ -790,6 +899,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         new Set(
           [
             ...kindRuns.map(resolveRunEnvironment),
+            ...(agentHistory?.views
+              .filter((view) => view.kernelKind === activeDataLanguage)
+              .map((view) => view.environment) ?? []),
             ...(notebookState?.environments.flatMap((entry) =>
               entry.kind === activeDataLanguage && entry.environment ? [entry.environment] : []
             ) ?? []),
@@ -810,7 +922,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const effectiveActiveEnv = activeDataLanguage
     ? envNames.includes(activeEnv ?? '')
       ? (activeEnv as string)
-      : (executionEnvironment ?? envNames[0])
+      : (agentHistory?.views.find((view) => view.kernelKind === activeDataLanguage)?.environment ??
+        executionEnvironment ??
+        envNames[0])
     : undefined
   const visibleRuns = activeDataLanguage
     ? kindRuns.filter((run) => resolveRunEnvironment(run) === effectiveActiveEnv)
@@ -818,6 +932,127 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const focusedRun = item.notebookRunId
     ? frameRuns.find((run) => run.runId === item.notebookRunId)
     : undefined
+
+  const cellsViewportRef = useFollowScrollBottom(followEnabled && !history?.loading, {
+    resetKey: focusedRun && JSON.stringify([focusedRun.runId, item.notebookRunFocusRequest ?? 0]),
+    followOnReset: !focusedRun
+  })
+
+  const loadHistory = useCallback(
+    async (target: { cursor?: NotebookRunCursor; runId?: string }): Promise<void> => {
+      if (
+        !isActive ||
+        !['connected', 'reconciling'].includes(useDesktopRuntimeRecoveryStore.getState().phase)
+      )
+        return
+      const requested = latestNotebookRequest.current
+      const epoch = getDesktopRuntimeEpoch()
+      const scope = JSON.stringify([requested.key, epoch])
+      const generation = historyGeneration.current
+      if (historyReadInFlight.current === scope) return
+      historyReadInFlight.current = scope
+      const current = (): boolean =>
+        latestNotebookRequest.current.key === requested.key &&
+        getDesktopRuntimeEpoch() === epoch &&
+        historyGeneration.current === generation
+      setExtraHistory((previous) => ({
+        ...(previous?.scope === scope ? previous : { scope, runs: [] }),
+        loading: true,
+        error: undefined
+      }))
+      try {
+        const loaded = await window.api.notebook.state({
+          ...requested.request,
+          ...(target.cursor ? { historyBefore: target.cursor } : {}),
+          ...(target.runId ? { runIds: [target.runId] } : {})
+        })
+        if (!current()) return
+        if (target.runId && !loaded.runs.some((run) => run.runId === target.runId)) {
+          throw new Error(t('Notebook run not found.'))
+        }
+        const viewport = cellsViewportRef.current
+        if (target.cursor && viewport)
+          prependSnapshot.current = {
+            scrollTop: viewport.scrollTop,
+            scrollHeight: viewport.scrollHeight
+          }
+        setExtraHistory((previous) => ({
+          scope,
+          runs: [
+            ...new Map(
+              [
+                ...(previous?.scope === scope ? previous.runs : []),
+                ...(latestNotebookState.current?.runs ?? []),
+                ...loaded.runs
+              ].map((run) => [run.runId, run])
+            ).values()
+          ],
+          page: target.cursor
+            ? loaded.historyPage
+            : previous?.scope === scope
+              ? previous.page
+              : undefined,
+          loading: false
+        }))
+      } catch (error) {
+        if (current())
+          setExtraHistory((previous) => ({
+            ...(previous?.scope === scope ? previous : { scope, runs: [] }),
+            loading: false,
+            failedRunId: target.runId,
+            error: getErrorMessage(error)
+          }))
+      } finally {
+        if (current() && historyReadInFlight.current === scope)
+          historyReadInFlight.current = undefined
+      }
+    },
+    [cellsViewportRef, isActive, t]
+  )
+
+  const historyPage =
+    history?.page ??
+    (notebookState?.sessionId === item.notebook.sessionId ? notebookState.historyPage : undefined)
+  const selectedView = agentHistory?.views.find(
+    (view) => view.kernelKind === effectiveActiveKind && view.environment === effectiveActiveEnv
+  )
+  const requestedRunId =
+    item.notebookRunId && !focusedRun
+      ? item.notebookRunId
+      : visibleRuns.length === 0
+        ? selectedView?.latestRunId
+        : undefined
+  useEffect(() => {
+    if (
+      !notebookState ||
+      notebookState.sessionId !== item.notebook.sessionId ||
+      !requestedRunId ||
+      history?.loading ||
+      (history?.error && history.failedRunId === requestedRunId) ||
+      runs.some((run) => run.runId === requestedRunId)
+    )
+      return
+    const timer = window.setTimeout(() => {
+      void loadHistory({ runId: requestedRunId })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [
+    notebookState,
+    item.notebook.sessionId,
+    requestedRunId,
+    history?.loading,
+    history?.error,
+    history?.failedRunId,
+    runs,
+    loadHistory
+  ])
+
+  useLayoutEffect(() => {
+    const viewport = cellsViewportRef.current
+    if (!viewport || !prependSnapshot.current) return
+    viewport.scrollTop = prependAnchoredScrollTop(prependSnapshot.current, viewport.scrollHeight)
+    prependSnapshot.current = undefined
+  }, [cellsViewportRef, history?.runs])
 
   useEffect(() => {
     if (!focusedRun?.agentFrameId) return
@@ -834,7 +1069,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
     return () => window.clearTimeout(timer)
   }, [focusedRun, item.notebookRunFocusRequest, notebookRequestKey])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!item.notebookRunId || !visibleRuns.some((run) => run.runId === item.notebookRunId)) return
     const requestKey = `${item.notebookRunId}:${item.notebookRunFocusRequest ?? 0}`
     if (lastFocusedRunRequest.current === requestKey) return
@@ -1049,7 +1284,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   useEffect(() => {
     if (!showVariables && !terminalInputFocused) return
     return window.api.notebook.onChanged((event) => {
-      if (event.sessionId !== item.notebook.sessionId) return
+      if (
+        event.codeAppendOnly ||
+        event.codeWriteOnly ||
+        event.sessionId !== item.notebook.sessionId
+      )
+        return
       namespaceRefreshQueued.current = true
       setNamespaceStatus((status) => (status === 'ready' ? 'stale' : status))
     })
@@ -1105,7 +1345,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   // Sends terminal code through the same notebook interpreter and history path as agent code.
   const submitTerminalCode = async (): Promise<void> => {
     const epoch = getDesktopRuntimeEpoch()
-    const code = terminalCode.trim()
+    const draft = terminalCode
+    const code = draft.trim()
 
     if (!code || !activeDataLanguage || !activeEnvName || isHistoricalEnvironmentView) {
       return
@@ -1123,14 +1364,19 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       const executionState = latestNotebookState.current
       if (executionState?.activeWrite || executionState?.activeRunId) return
 
-      setTerminalCode('')
-      await window.api.notebook.execute({
+      const result = await window.api.notebook.execute({
         ...createNotebookRequest(item.notebook),
         code,
         source: 'user',
         inputKind: 'terminal',
         language: activeDataLanguage
       })
+
+      if (result.recovery?.execution === 'not-started' || result.kernelDispatched === false) {
+        await loadNotebookState()
+        return
+      }
+      setTerminalCode((current) => (current === draft ? '' : current))
 
       // Manual commands produce root-lane history. Reveal the result only if this view still owns
       // the submission; failed admission and later navigation retain their original context.
@@ -1144,12 +1390,46 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       }
       await loadNotebookState()
     } catch (error) {
-      setTerminalCode(code)
       setActionError(getErrorMessage(error))
     } finally {
       setSubmittingTarget(undefined)
     }
   }
+
+  const terminalRetryOwner = useId()
+  const latestTerminalSubmit = useRef(submitTerminalCode)
+  useEffect(() => {
+    latestTerminalSubmit.current = submitTerminalCode
+  })
+  const terminalRetryId = `${terminalRetryOwner}:${selectedTarget}:${recoveryEpoch}`
+  const terminalRetryEnabled = !isTerminalLocked && Boolean(terminalCode.trim())
+  useEffect(() => {
+    if (
+      !isActive ||
+      isNamespaceLost ||
+      isHistoricalEnvironmentView ||
+      !selectedTarget ||
+      recoveryPhase !== 'connected'
+    )
+      return
+    return registerNotebookMemoryTerminal({
+      id: terminalRetryId,
+      projectId: resolveProjectId(item.notebook),
+      sessionId: item.notebook.sessionId,
+      target: selectedTarget,
+      enabled: terminalRetryEnabled,
+      retry: () => latestTerminalSubmit.current()
+    })
+  }, [
+    terminalRetryId,
+    isActive,
+    isNamespaceLost,
+    isHistoricalEnvironmentView,
+    selectedTarget,
+    recoveryPhase,
+    item.notebook,
+    terminalRetryEnabled
+  ])
 
   const handleAbortWrite = async (): Promise<void> => {
     const write = notebookState?.activeWrite
@@ -1162,7 +1442,11 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         cellId: write.cellId,
         writeId: write.writeId
       })
-      await loadNotebookState()
+      // The change notification normally owns the read. Recover if it has not arrived.
+      await stateLoadInFlight.current
+      if (latestNotebookState.current?.activeWrite?.writeId === write.writeId) {
+        await loadNotebookState('write-lock')
+      }
     } catch (error) {
       await loadNotebookState()
       setActionError(getErrorMessage(error))
@@ -1202,6 +1486,29 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
       data-testid="notebook-cells"
     >
       <div className="divide-y divide-border-100">
+        {historyPage?.hasEarlierRuns && historyPage.oldestCursor ? (
+          <button
+            type="button"
+            className="w-full px-3 py-2 text-xs text-text-300 hover:bg-bg-200"
+            disabled={history?.loading}
+            onClick={() => void loadHistory({ cursor: historyPage.oldestCursor })}
+          >
+            {history?.loading ? t('Loading earlier runs…') : t('Load earlier runs')}
+          </button>
+        ) : null}
+        {history?.error ? (
+          <ErrorNotice
+            inline
+            description={history.error}
+            primaryButton={{
+              label: t('Retry'),
+              onClick: () =>
+                void loadHistory(
+                  requestedRunId ? { runId: requestedRunId } : { cursor: historyPage?.oldestCursor }
+                )
+            }}
+          />
+        ) : null}
         {visibleRuns.map((run, index) => {
           const staleness = visibleStalenessForRun(run)
           return (
@@ -1212,6 +1519,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
                   session && session.contentLoaded !== false && !session.packageOrigin
                 )}
                 index={index}
+                loadRun={loadNotebookRunEvidence}
                 staleness={staleness}
                 causedByRunIndex={
                   staleness?.state === 'stale'
@@ -1240,7 +1548,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
         ))}
         {visibleRuns.length === 0 && visiblePendingCode.length === 0 ? (
           <div role="status" className="px-4 py-6 text-sm text-text-300">
-            {isLoading ? t('Loading notebook…') : t('No code has run in this view yet.')}
+            {isLoading || history?.loading
+              ? t('Loading notebook…')
+              : t('No code has run in this view yet.')}
           </div>
         ) : null}
       </div>
@@ -1476,6 +1786,7 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
               onValueChange={(value) => {
                 viewSelectionVersion.current += 1
                 setFrameFilter(value as NotebookFrameFilterValue)
+                setActiveEnv(undefined)
               }}
             >
               <SelectTrigger
@@ -1771,7 +2082,9 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             <div
               className={cn(
                 'min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
-                showVariables && activeDataLanguage ? 'hidden @min-[55rem]/notebook:flex' : 'flex'
+                showVariables && activeDataLanguage
+                  ? 'hidden [--notebook-output-pane-share:0.6] @min-[55rem]/notebook:flex'
+                  : 'flex'
               )}
               data-testid="notebook-primary-view"
             >

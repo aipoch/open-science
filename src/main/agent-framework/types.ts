@@ -1,3 +1,4 @@
+import type { CodeBuddySite } from '../../shared/codebuddy-subscription'
 import type { AgentProcessSpawner } from '../node-process-host'
 import type { ClientConnection, McpServer, SessionModeState } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -265,6 +266,7 @@ export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
   // Some ACP servers keep process-global current-session state. When present, the prompt workflow
   // calls this immediately before session.prompt() for the target provider session.
   beforePromptDispatch?(input: {
+    codeBuddySharedSite?: CodeBuddySite
     connection: ClientConnection
     providerSessionId: string
     cwd: string
@@ -295,10 +297,11 @@ export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
   // certification ticket passes every shared journey and closes native delegation bypasses.
   readonly supportsDelegatedWork: boolean
 
-  // Whether the framework accepts stdio MCP servers via ACP session mcpServers. opencode advertises
-  // http/sse only, so stdio servers must not be handed to it — the app's artifact/notebook tooling
-  // (currently stdio) is gated off for such frameworks until it is exposed over http/sse.
+  // Whether the framework can launch stdio MCP servers supplied via ACP session mcpServers.
   readonly acceptsStdioMcp: boolean
+
+  // Whether its ACP HTTP MCP client understands the private Reviewer socket extension.
+  readonly acceptsReviewerMcpSocket?: true
 
   // Whether a reasoning-effort change can be applied LIVE to open sessions via the ACP thought_level
   // configOption, without a respawn. True where the adapter advertises that option (verified live:
@@ -320,6 +323,7 @@ export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
 // inputs (executable + env + args). Produced by the settings layer at connect time so a framework or
 // provider switch takes effect on reconnect.
 export type ResolvedAgentBackend = {
+  codeBuddySharedSite?: CodeBuddySite
   framework: AgentFramework
   // Stable app provider/account identity used for usage attribution. This remains separate from
   // backendId because a framework may normalize provider selections onto one session store.

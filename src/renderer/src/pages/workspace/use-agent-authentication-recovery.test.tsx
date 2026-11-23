@@ -109,6 +109,31 @@ it('retains recovery through cancellation/failure and restores only after succes
   hook.error('Authentication required')
   expect(hook.result.required).toBe(true)
 })
+it('routes Lab authentication recovery to the Lab settings panel', () => {
+  const hook = mount()
+  const lab: ProviderView = {
+    ...provider,
+    id: 'builtin-lab',
+    type: 'lab',
+    name: 'Lab',
+    models: ['lab:research-default'],
+    modelCapabilities: {
+      'lab:research-default': { modalities: { input: ['text'] } }
+    }
+  }
+  hook.providers([lab])
+  hook.select('builtin-lab', 'lab:research-default')
+  hook.session(failedSession('builtin-lab'))
+  expect(hook.result.provider?.id).toBe('builtin-lab')
+  expect(hook.result.required).toBe(true)
+
+  act(() => hook.result.openSettings())
+  expect(useSettingsStore.getState().pendingSettingsIntent?.route).toMatchObject({ panel: 'lab' })
+
+  hook.providers([{ ...lab, lastValidatedAt: 30 }])
+  expect(hook.result.required).toBe(false)
+})
+
 it('keeps failures scoped to their provider and accepts recovery while another provider is selected', () => {
   const hook = mount()
   const other = { ...provider, id: 'other' }
@@ -199,6 +224,29 @@ it('uses the active branch and ignores an old login completion on a clean branch
     )
   })
   expect(hook.result.required).toBe(false)
+  hook.providers([{ ...provider, lastValidatedAt: 30 }])
+  expect(hook.result.required).toBe(false)
+})
+it('keeps structured provider authentication visible until matching credentials are validated', () => {
+  const hook = mount()
+  hook.error(null)
+  const failed = failedSession()
+  const failure = {
+    category: 'configuration' as const,
+    reason: 'configuration/auth-failed' as const,
+    diagnostics: {
+      protocol: 'chat-completions' as const,
+      status: 401,
+      code: 'authentication_error'
+    }
+  }
+  failed.error = 'Invalid API key'
+  failed.failure = failure
+  const outcome = { kind: 'failed' as const, settledAt: 20, error: 'Invalid API key', failure }
+  failed.messages[0].turnOutcome = outcome
+  failed.conversationGraph!.messages[0].turnOutcome = outcome
+  hook.session(failed)
+  expect(hook.result.required).toBe(true)
   hook.providers([{ ...provider, lastValidatedAt: 30 }])
   expect(hook.result.required).toBe(false)
 })

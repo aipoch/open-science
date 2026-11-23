@@ -121,6 +121,7 @@ test('opens imported research, asks about a recorded step and restores the ordin
     .getByRole('region', { name: 'Projects', exact: true })
     .getByRole('button', { name: 'Replay research', exact: true })
     .click()
+  await page.locator(`[data-session-id="${source.id}"] [data-slot="session-open-button"]`).click()
   const replay = page.getByTestId('replay-panel')
   await expect(replay).toHaveCount(0)
   await page
@@ -587,8 +588,13 @@ test('previews recorded DOCX inside replay and routes its iframe menu at non-def
   await expect(office.locator('.docx-review-counter')).toHaveText('1 / 1')
   await expect(office.locator('.docx-review-toolbar')).toHaveCSS('font-size', '14px')
   await expect(office.locator('.docx-review-toolbar')).toHaveCSS('height', '36px')
+  const documentText = office.getByText('Preview context menu Office fixture', { exact: true })
+  const initialPixelRatio = await documentText.evaluate(() => window.devicePixelRatio)
   await app.setMainWindowZoomFactor(1.25)
-  await office.locator('body').click({ button: 'right', position: { x: 40, y: 40 } })
+  await expect
+    .poll(() => documentText.evaluate(() => window.devicePixelRatio))
+    .toBeCloseTo(initialPixelRatio * 1.25)
+  await documentText.click({ button: 'right' })
   const menu = page.getByTestId('replay-preview-context-menu')
   await expect(menu).toBeVisible()
   await expect(menu.getByText('Close', { exact: true })).toBeVisible()

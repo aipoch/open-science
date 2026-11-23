@@ -33,7 +33,10 @@ export const useImageModelSettings = (): {
       if (token !== generation.current) return false
       if (request)
         setSaved({
-          appliesNextTurn: request.kind === 'bind' || snapshot?.imageModel?.serviceId === request.id
+          appliesNextTurn:
+            request.kind === 'bind' ||
+            snapshot?.imageModel?.serviceId === request.id ||
+            useImageModelSettingsStore.getState().snapshot?.imageModel?.serviceId === request.id
         })
       return true
     } catch {

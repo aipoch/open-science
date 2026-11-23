@@ -60,4 +60,35 @@ describe('ImagePreviewRenderer', () => {
       imagePreview: true
     })
   })
+
+  it('keeps the image-generation session scope for an explicit generated Version', async () => {
+    await act(async () => {
+      root.render(
+        <ImagePreviewRenderer
+          item={{
+            id: 'artifact-1',
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            title: 'edited-chart.png',
+            type: 'file',
+            source: 'artifact',
+            path: '/stale/projection/edited-chart.png',
+            name: 'edited-chart.png',
+            format: 'image',
+            managedFileId: 'artifact-1',
+            selectedVersionId: 'version-2'
+          }}
+        />
+      )
+    })
+
+    expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+      source: 'artifact',
+      projectId: 'project-1',
+      fileId: 'artifact-1',
+      versionId: 'version-2',
+      imageGenerationSessionId: 'session-1',
+      imagePreview: true
+    })
+  })
 })

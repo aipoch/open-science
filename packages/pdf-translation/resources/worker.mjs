@@ -111,6 +111,16 @@ const sourceMatches = (expected, actual, verifiedHyphens = false) => {
 // 5,6, A0), then its occurrence. A bare digit search can select an unrelated
 // measurement or the same reference in an earlier sentence.
 const inlineTargetOffset = (source, translation, label, offset, identifier = false) => {
+  if (label === '∼ −') {
+    const approximations = (text) => [
+      ...text.matchAll(/∼ −\d+(?:\.\d+)?(?!\d|\.\d|[Ee][+−-]?\d)/gu)
+    ]
+    const amount = approximations(source).find(({ index }) => index === offset)?.[0]
+    if (!amount) return -1
+    const from = approximations(source).filter((match) => match[0] === amount)
+    const to = approximations(translation).filter((match) => match[0] === amount)
+    return from.length === 1 && to.length === 1 ? to[0].index : -1
+  }
   // An approximation may become prose ("about") while a numeric range keeps
   // the same tilde. Match its complete, unique range before counting bare signs.
   if (label === '∼') {
@@ -323,6 +333,73 @@ const regionsOverlap = (
         (second.collisionBoxes ?? [second.collisionRect ?? second.rect]).some((b) => overlaps(a, b))
       ))
   )
+}
+
+// When PDFium promotes an inline image to an XObject, it can retain the
+// page's palette name without its definition. Image XObjects need the actual
+// Indexed color space, even if the name was valid in the inline image.
+async function restoreIndexedImagePalettes(metadata, output, selectedPages) {
+  const colorSpace = PDFName.of('ColorSpace'),
+    xObject = PDFName.of('XObject'),
+    subtype = PDFName.of('Subtype'),
+    imageSubtype = PDFName.of('Image'),
+    indexed = PDFName.of('Indexed'),
+    candidates = metadata.getPages().flatMap(({ node }, index) => {
+      if (selectedPages && !selectedPages.has(index + 1)) return []
+      const resources = node.Resources(),
+        palettes = resources?.lookup(colorSpace)
+      return palettes instanceof PDFDict &&
+        palettes.entries().some(([key]) => {
+          const palette = palettes.lookup(key)
+          return palette instanceof PDFArray && palette.get(0) === indexed
+        })
+        ? [{ index, resources, palettes }]
+        : []
+    })
+  if (!candidates.length) return output
+
+  const generated = await PDFDocument.load(output, { updateMetadata: false }),
+    pages = generated.getPages(),
+    copier = PDFObjectCopier.for(metadata.context, generated.context)
+  let repaired = false
+  for (const { index, resources, palettes } of candidates) {
+    const node = pages[index]?.node
+    if (!node) continue
+    const generatedResources = node.Resources(),
+      generatedPalettes = generatedResources?.lookup(colorSpace),
+      originalObjects = resources.lookup(xObject),
+      objects = generatedResources?.lookup(xObject)
+    if (!(objects instanceof PDFDict)) continue
+    let localObjects
+    for (const [key] of objects.entries()) {
+      if (originalObjects instanceof PDFDict && originalObjects.has(key)) continue
+      const image = objects.lookup(key)
+      if (!(image instanceof PDFRawStream) || image.dict.get(subtype) !== imageSubtype) continue
+      const name = image.dict.get(colorSpace)
+      if (
+        !(name instanceof PDFName) ||
+        (generatedPalettes instanceof PDFDict && generatedPalettes.has(name))
+      )
+        continue
+      const palette = palettes.lookup(name)
+      if (!(palette instanceof PDFArray) || palette.size() !== 4 || palette.get(0) !== indexed)
+        continue
+
+      localObjects ??= objects.clone(generated.context)
+      const localImage = image.clone(generated.context)
+      localImage.dict.set(colorSpace, copier.copy(palette))
+      localObjects.set(key, generated.context.register(localImage))
+    }
+    if (localObjects) {
+      const localResources = generatedResources.clone(generated.context)
+      localResources.set(xObject, localObjects)
+      node.set(PDFName.of('Resources'), localResources)
+      repaired = true
+    }
+  }
+  return repaired
+    ? generated.save({ addDefaultPage: false, updateFieldAppearances: false })
+    : output
 }
 
 // This worker owns all engine/font memory and has no filesystem input supplied by the renderer.
@@ -1394,6 +1471,7 @@ async function generate({
       let sourceSize, sourcePoint, sourceColor, sourceBaseline, cos, sin
       let mixedSizes = false
       const proseColors = new Map()
+      const nativePoints = new Map()
       {
         let selected = objects.filter(
           (o) =>
@@ -1616,6 +1694,68 @@ async function generate({
           }
         } finally {
           e.free(metrics)
+        }
+        // PDF.js may omit a painted solar subscript. Retain its native mass
+        // when unsupported translation would remove the mark from the page.
+        if (!unchanged && horizontalSource) {
+          for (const mass of selected) {
+            const solar = objects[mass.i + 1]
+            if (solar?.type !== 1 || !/^\f *$/u.test(solar.text)) continue
+            const massText = mass.text.trim(),
+              point = sizes.get(mass.i),
+              baseline = objectBaselines.get(mass.i),
+              [left, bottom, right, top] = solar.bounds,
+              width = right - left,
+              massFont = nativeFontName(mass),
+              terminal =
+                mass === selected.at(-1) &&
+                massText === 'M' &&
+                / M\s*$/u.test(unit.source) &&
+                /^(?:[A-Z]{6}\+)?CMMI10$/u.test(massFont) &&
+                !selected.includes(solar),
+              following = objects[mass.i + 2],
+              compact = /^(?:[A-Z]{6}\+)?CMR8$/u.test(massFont),
+              ratio =
+                massText === 'm/M' &&
+                /\bm\/M *\)/u.test(unit.source) &&
+                /^(?:[A-Z]{6}\+)?CMMI10$/u.test(massFont) &&
+                /^(?:[A-Z]{6}\+)?CMR10$/u.test(following ? nativeFontName(following) : ''),
+              numeric =
+                /(?:^| )\d+(?:\.\d+)? M$/u.test(massText) &&
+                /\b\d+(?:\.\d+)? M *(?:[;,:.)]|stars?\b|\([A-Z][a-z]+ +(?:18|19|20)\d{2}\))/u.test(
+                  unit.source
+                ) &&
+                /^(?:[A-Z]{6}\+)?CMR(?:8|10)$/u.test(massFont),
+              tail = following?.text ?? '',
+              spacedTail = /^(?:stars?\b|\([A-Z][a-z]+ +(?:18|19|20)\d{2}\))/u.test(tail),
+              followingGap = (following?.bounds[0] ?? right) - right,
+              inline =
+                (ratio || numeric) &&
+                selected.includes(solar) &&
+                selected.includes(following) &&
+                (ratio ? tail === ')' : spacedTail || /^[;,:.)]/u.test(tail)) &&
+                (ratio || nativeFontName(following) === massFont) &&
+                Math.abs(objectBaselines.get(following.i) - baseline) < point * 0.03 &&
+                (spacedTail
+                  ? solar.text.endsWith(' ') &&
+                    followingGap > point * 0.32 &&
+                    followingGap < point * 0.6
+                  : followingGap > 0 && followingGap < point * 0.25),
+              solarFont = nativeFontName(solar)
+            check(
+              !(
+                (terminal || inline) &&
+                (compact ? /^(?:[A-Z]{6}\+)?CMSY6$/u : /^(?:[A-Z]{6}\+)?CMSY7$/u).test(solarFont) &&
+                Math.abs(left - mass.bounds[2]) < point * (inline ? 0.15 : 0.08) &&
+                bottom > baseline - point * 0.35 &&
+                bottom < baseline - point * 0.1 &&
+                width > point * 0.4 &&
+                width < point * 0.65 &&
+                Math.abs(top - bottom - width) < point * 0.08
+              ),
+              'unsupported-layout'
+            )
+          }
         }
         // Some fonts encode a small raised registration glyph in a much larger
         // em. Its ink, not that em, identifies the mark beside an unchanged brand.
@@ -1958,7 +2098,12 @@ async function generate({
                 (object) =>
                   [2, 3].includes(object.type) &&
                   object.bounds[3] - object.bounds[1] > 0 &&
-                  object.bounds[3] - object.bounds[1] < bodySize * 0.1 &&
+                  object.bounds[3] - object.bounds[1] <
+                    bodySize * (fraction.enclosure ? 0.12 : 0.1) &&
+                  (!fraction.enclosure ||
+                    (object.type === 2 &&
+                      p.FPDFPath_CountSegments(object.obj) === 2 &&
+                      p.FPDFPageObj_GetDashCount(object.obj) === 0)) &&
                   object.bounds[1] > Math.max(...denominator.map((item) => item.bounds[3])) &&
                   object.bounds[3] < numerator.bounds[1] &&
                   Math.abs(object.bounds[0] - fraction.bounds[0]) < bodySize * 0.15 &&
@@ -1973,6 +2118,15 @@ async function generate({
                 Math.max(fraction.bounds[2], bars[0].bounds[2]),
                 fraction.bounds[3]
               ]
+            if (fraction.enclosure) {
+              const [open, close] = fraction.enclosure
+              bounds = [
+                open.bounds[0],
+                Math.min(bounds[1], open.bounds[1], close.bounds[1]),
+                close.bounds[2],
+                Math.max(bounds[3], open.bounds[3], close.bounds[3])
+              ]
+            }
             // Computer Modern's extensible floor delimiters occupy legacy j/k
             // slots. Only retain the paired, tall delimiters immediately enclosing
             // this independently verified fraction; ordinary j/k remain letters.
@@ -2126,10 +2280,29 @@ async function generate({
               unit.source
             )
           : []
+        const allowsLegacySlash = unit.source.includes('\u0338')
+        const negatedEqualities = selected.some(
+          (object) =>
+            object.text.trim() === '\u0338' || (allowsLegacySlash && object.text.trim() === '6')
+        )
+          ? resolveNativeNegatedEqualities(
+              selected.map((object) => ({
+                ...object,
+                fontName: nativeFontName(object),
+                size: sizes.get(object.i),
+                baseline: objectBaselines.get(object.i)
+              })),
+              allowsLegacySlash
+            )
+          : []
         const expectsPlanckSymbol = unit.source.includes('ℏ') && !unit.source.includes('~')
         const matchingObjects = selected.map((native) => {
           const fontName = nativeFontName(native)
-          const mathText = nativeMathSymbolText(native, fontName, expectsPlanckSymbol)
+          const mathText =
+            native.text.trim() === '6' &&
+            negatedEqualities.some(({ indices }) => indices[0] === native.i)
+              ? '\u0338'
+              : nativeMathSymbolText(native, fontName, expectsPlanckSymbol)
           // A numeric glyph name proves the reader's spelling, not the glyph's
           // meaning. Preserve the complete unit instead of repainting an alias.
           check(unchanged || !native.numericGlyphSource, 'unsupported-layout')
@@ -3535,16 +3708,6 @@ async function generate({
         }
         // Superscript references and scientific subscripts are original inline
         // glyphs, not a reason to leave the surrounding translated prose untouched.
-        const negatedEqualities = selected.some((object) => object.text.trim() === '\u0338')
-          ? resolveNativeNegatedEqualities(
-              selected.map((object) => ({
-                ...object,
-                fontName: nativeFontName(object),
-                size: sizes.get(object.i),
-                baseline: objectBaselines.get(object.i)
-              }))
-            )
-          : []
         for (const accent of [...accents, ...fractions, ...radicals, ...negatedEqualities]) {
           const sourceOffset = offsets.get((accent.textIndices ?? accent.indices)[0]),
             label = accent.label,
@@ -3586,6 +3749,7 @@ async function generate({
             indices: accent.indices,
             textIndices: accent.textIndices ?? accent.indices,
             graphicIndices: accent.graphicIndices ?? [],
+            enclosedFraction: Boolean(accent.enclosure),
             sourceOffset,
             targetOffset: to[occurrence].index,
             label: to[occurrence][0],
@@ -3699,7 +3863,7 @@ async function generate({
             sourceOffset: scriptOnly ? start : power.index,
             targetOffset: target.index + (scriptOnly ? power[0].length - power[1].length : 0),
             label: scriptOnly ? power[1] : power[0],
-            scriptOnlyPower: scriptOnly,
+            needsInlineReflow: scriptOnly,
             baseline: objectBaselines.get(base.sourceIndices[0]),
             link: {
               left: Math.min(...objects.map((object) => object.bounds[0])),
@@ -3724,7 +3888,9 @@ async function generate({
             sourceOffset: group.sourceOffset,
             targetOffset: group.targetOffset,
             label: group.label,
+            sourceLabel: group.sourceLabel,
             baseline: objectBaselines.get(group.baselineIndex ?? group.sourceIndices[0]),
+            needsInlineReflow: group.needsInlineReflow,
             link: {
               left: Math.min(...objects.map((object) => object.bounds[0])),
               bottom: Math.min(...objects.map((object) => object.bounds[1])),
@@ -3975,15 +4141,35 @@ async function generate({
               /^\u0338[∼∈]$/u.test(label) &&
               object.bounds[2] > object.bounds[0] &&
               object.bounds[3] > object.bounds[1],
+            // CMMI10 can expose a standalone rho glyph as a combining code point.
+            // Keep its original painter when the same function call survives.
+            legacyRhoArgument =
+              label === '\u033a' &&
+              sourceOffset !== undefined &&
+              /^(?:[A-Z]{6}\+)?CMMI10$/u.test(nativeFontName(object)) &&
+              object.bounds[2] > object.bounds[0] &&
+              object.bounds[3] > object.bounds[1] &&
+              !/[\p{L}\p{N}\p{M}]/u.test(unit.source[sourceOffset - 1] ?? '')
+                ? /^\s*\(([A-Za-z][A-Za-z0-9]*)\)/u.exec(
+                    unit.source.slice(sourceOffset + label.length)
+                  )?.[1]
+                : undefined,
             nativeSymbol =
+              Boolean(legacyRhoArgument) ||
               nativeNegatedRelation ||
+              // Some math fonts paint approximation and minus together in one
+              // text object. Keep that object with the same signed magnitude.
+              (label === '∼ −' &&
+                /^(?:[A-Z]{6}\+)?(?:CMSY(?:5|6|7|8|9|10|12)|Symbol(?:MT)?)$/u.test(
+                  nativeFontName(object)
+                )) ||
               nativeAlphabet ||
               mathematicalRun ||
               loweredIndexOperator ||
               nativeEncodedSymbol ||
               nativePrivateSymbol ||
               registeredMarks.has(object.i) ||
-              ((/^[\p{L}\p{Sm}\p{So}⟨⟩]$/u.test(label) ||
+              ((/^[\p{L}\p{Sm}\p{So}⟨⟩⌈⌉⌊⌋]$/u.test(label) ||
                 /^[\p{Sm}]\s*[A-Za-z\p{Script=Greek}]$/u.test(label)) &&
                 (!face.hasGlyphForCodePoint(label.codePointAt(0)) ||
                   // A raised standalone symbol keeps its original glyph even if
@@ -4038,6 +4224,7 @@ async function generate({
           if (
             targetOffset < 0 &&
             nativeSymbol &&
+            label !== '∼ −' &&
             !(label === '∼' && /\d%?\s*∼\s*\d/u.test(unit.source))
           ) {
             // Identical unsupported relation signs can occur in several formulas.
@@ -4046,15 +4233,31 @@ async function generate({
             const occurrences = (text) => [
               ...text.matchAll(new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gu'))
             ]
-            const from = occurrences(unit.source).filter((match) =>
-                completeSymbol(unit.source, match.index)
-              ),
-              to = occurrences(unit.translation).filter((match) =>
-                completeSymbol(unit.translation, match.index)
+            const unclaimed = (text, target) =>
+              occurrences(text).filter(
+                ({ index }) =>
+                  completeSymbol(text, index) &&
+                  !region.anchors.some((anchor) => {
+                    if (!anchor.enclosedFraction) return false
+                    const start = target ? anchor.targetOffset : anchor.sourceOffset
+                    const length = target ? anchor.label.length : anchor.sourceLabel.length
+                    return index >= start && index < start + length
+                  })
               )
+            const from = unclaimed(unit.source, false),
+              to = unclaimed(unit.translation, true)
             const occurrence = from.findIndex((match) => match.index === sourceOffset)
             if (occurrence >= 0 && from.length === to.length) targetOffset = to[occurrence].index
           }
+          if (legacyRhoArgument)
+            check(
+              targetOffset >= 0 &&
+                !/[\p{L}\p{N}\p{M}]/u.test(unit.translation[targetOffset - 1] ?? '') &&
+                /^\s*[（(]([A-Za-z][A-Za-z0-9]*)[）)]/u.exec(
+                  unit.translation.slice(targetOffset + label.length)
+                )?.[1] === legacyRhoArgument,
+              'annotations'
+            )
           // Publisher-encoded glyphs require exact source identity. If the target
           // changes or ambiguously duplicates them, retain the verified paragraph.
           if (nativePrivateSymbol) {
@@ -4128,6 +4331,12 @@ async function generate({
             targetOffset,
             label: targetLabel,
             registeredBrand: registeredMarks.has(object.i),
+            needsInlineReflow:
+              /^[°◦]$/u.test(label) &&
+              marker?.scale < 0.9 &&
+              marker.rise > bodySize * 0.2 &&
+              /\d/u.test(unit.source[sourceOffset - 1] ?? '') &&
+              /\d/u.test(unit.translation[targetOffset - 1] ?? ''),
             nativeAlphabet
           })
         }
@@ -4407,6 +4616,7 @@ async function generate({
             check(p.FPDFTextObj_GetFontSize(o.obj, at))
             const point = explicitPowers.has(o.i) ? bodySize : e.m.HEAPF32[at / 4] * verticalScale
             check(point > 0 && point <= 100)
+            nativePoints.set(o.i, point)
             mixedSizes ||= sourcePoint !== undefined && Math.abs(point - sourcePoint) >= 0.01
             sourcePoint = Math.min(sourcePoint ?? point, point)
             sourceSize = Math.max(8, sourcePoint)
@@ -4527,6 +4737,19 @@ async function generate({
             // publisher rounding into a second overlapping line or a script.
             const proseRows = []
             const tolerance = Math.min(0.1, bodySize * 0.01)
+            const retainedScripts = region.anchors
+              .filter((anchor) => anchor.mathGroup)
+              .flatMap((anchor) =>
+                selected
+                  .filter(
+                    (object) =>
+                      anchor.indices.includes(object.i) &&
+                      sizes.get(object.i) < bodySize * 0.9 &&
+                      Math.abs(objectBaselines.get(object.i) - anchor.baseline) >
+                        sizes.get(object.i) * 0.1
+                  )
+                  .map((object) => ({ anchor, object }))
+              )
             // The metrics pass already maps proven explicit powers to their
             // body row. Their raised native baselines are not separate prose
             // rows; keep that admission policy before clustering body jitter.
@@ -4535,11 +4758,29 @@ async function generate({
                 (baseline) => Math.abs(objectBaselines.get(object.i) - baseline) < 0.01
               )
             )
-            for (const object of admittedProse.sort(
-              (a, b) => objectBaselines.get(b.i) - objectBaselines.get(a.i)
+            const positionedProse = admittedProse.map((object) => {
+              // An adjacent script operator can remain generated while its
+              // operand is retained. Only that native continuation belongs on
+              // the anchor's body row; unrelated prose keeps its own baseline.
+              const scriptOwner = retainedScripts.find(
+                ({ object: script }) =>
+                  object.i === script.i + 1 &&
+                  /^[+−-]$/u.test(object.text.trim()) &&
+                  Math.abs(sizes.get(object.i) - sizes.get(script.i)) < 0.01 &&
+                  Math.abs(objectBaselines.get(object.i) - objectBaselines.get(script.i)) <
+                    tolerance &&
+                  object.bounds[0] >= script.bounds[2] &&
+                  object.bounds[0] - script.bounds[2] < sizes.get(script.i) * 0.3
+              )
+              return {
+                object,
+                baseline: scriptOwner?.anchor.baseline ?? objectBaselines.get(object.i)
+              }
+            })
+            for (const { object, baseline } of positionedProse.sort(
+              (a, b) => b.baseline - a.baseline
             )) {
-              const baseline = objectBaselines.get(object.i),
-                previous = proseRows.at(-1)
+              const previous = proseRows.at(-1)
               if (previous && previous.top - baseline <= tolerance) {
                 previous.bottom = baseline
                 previous.objects.push(object)
@@ -4550,7 +4791,13 @@ async function generate({
               (row, i) =>
                 !i ||
                 (proseRows[i - 1].bottom - row.top >=
-                  (mixedSizes ? bodySize * 0.8 : sourcePoint) - 0.01 &&
+                  (mixedSizes
+                    ? Math.max(
+                        ...proseRows[i - 1].objects.map((object) => nativePoints.get(object.i)),
+                        ...row.objects.map((object) => nativePoints.get(object.i))
+                      ) * 0.8
+                    : sourcePoint) -
+                    0.01 &&
                   Math.min(
                     ...proseRows[i - 1].objects.map((o) =>
                       Math.min(
@@ -4568,12 +4815,7 @@ async function generate({
                       )
                     ))
             )
-            // A linked formula may leave a smaller native script on its own
-            // baseline. Final glyph collision and annotation bounds still prove
-            // the replacement; do not discard the surrounding prose solely for
-            // this intermediate baseline envelope.
-            if (!baselinesFit && !/(?:[=√∑βθ]|\u0302)/u.test(unit.source))
-              check(false, 'annotations')
+            check(baselinesFit, 'annotations')
           }
           // A full-size URL on its own native row is ordinary text. Since
           // anchor objects are excluded from prose baselines, their line spacing
@@ -4813,7 +5055,7 @@ async function generate({
         (anchor) =>
           anchor.generated ||
           anchor.registeredBrand ||
-          anchor.scriptOnlyPower ||
+          anchor.needsInlineReflow ||
           (!anchor.prose && /^[\d⁰¹²³⁴⁵⁶⁷⁸⁹,.;:–−-]+$/u.test(anchor.label))
       )
       for (let i = 1; i < anchors.length; i++) {
@@ -7119,10 +7361,101 @@ async function generate({
             if (p.FPDFPage_GetObject(page, index) === object) return index
           return -1
         }
+        // Earlier insertion can hide new lines behind the source's interleaved row backgrounds.
+        const backdropAnchor = (plan, first) => {
+          if (
+            plan.anchors.length ||
+            plan.lines.length < 2 ||
+            plan.selected.length < 2 ||
+            plan.sin !== 0
+          )
+            return
+          const selected = new Set(plan.selected.map(({ obj }) => obj))
+          if (
+            !selected.has(p.FPDFPage_GetObject(plan.page, first)) ||
+            selected.size !== plan.selected.length ||
+            plan.selected.some(({ obj }) => p.FPDFPageObj_GetType(obj) !== 1) ||
+            plan.lines.some(({ object }) => !object)
+          )
+            return
+          const ink = plan.lines.map(({ object }) => e.bounds(object))
+          const at = e.alloc(24)
+          try {
+            const count = p.FPDFPage_CountObjects(plan.page)
+            let last
+            const pending = new Set(selected)
+            pending.delete(p.FPDFPage_GetObject(plan.page, first))
+            for (let i = first + 1; i < count && (pending.size || last); i++) {
+              const obj = p.FPDFPage_GetObject(plan.page, i)
+              if (pending.delete(obj)) continue
+              if (!p.FPDFPageObj_GetBounds(obj, at, at + 4, at + 8, at + 12)) return
+              const [l, b, r, t] = e.m.HEAPF32.slice(at / 4, at / 4 + 4)
+              if (!ink.some(([x, y, right, top]) => x < r && right > l && y < t && top > b))
+                continue
+              if (
+                !pending.size ||
+                p.FPDFPageObj_GetType(obj) !== 2 ||
+                p.FPDFPath_CountSegments(obj) !== 5 ||
+                p.FPDFPageObj_HasTransparency(obj) ||
+                !p.FPDFPageObj_GetIsActive(obj, at) ||
+                !e.m.HEAP32[at / 4]
+              )
+                return
+              const clip = p.FPDFPageObj_GetClipPath(obj)
+              if (!clip || p.FPDFClipPath_CountPaths(clip) !== -1) return
+              if (
+                !p.FPDFPageObj_GetMatrix(obj, at) ||
+                ![1, 0, 0, 1, 0, 0].every((v, n) => e.m.HEAPF32[at / 4 + n] === v) ||
+                !p.FPDFPath_GetDrawMode(obj, at, at + 4) ||
+                e.m.HEAP32[at / 4] !== 1 ||
+                e.m.HEAP32[at / 4 + 1] !== 0 ||
+                !p.FPDFPageObj_GetFillColor(obj, at, at + 4, at + 8, at + 12) ||
+                !e.m.HEAPU32.slice(at / 4, at / 4 + 4).every((v) => v === 255)
+              )
+                return
+              const corners = [
+                [l, b],
+                [r, b],
+                [r, t],
+                [l, t],
+                [l, b]
+              ]
+              if (
+                !corners.every(([x, y], n) => {
+                  const segment = p.FPDFPath_GetPathSegment(obj, n)
+                  return (
+                    p.FPDFPathSegment_GetType(segment) === (n ? 0 : 2) &&
+                    p.FPDFPathSegment_GetClose(segment) === (n === 4) &&
+                    p.FPDFPathSegment_GetPoint(segment, at, at + 4) &&
+                    e.m.HEAPF32[at / 4] === x &&
+                    e.m.HEAPF32[at / 4 + 1] === y
+                  )
+                })
+              )
+                return
+              // Each rectangle is behind a selected source row and covers no earlier selected ink.
+              let supportsLaterText = false
+              for (const source of selected) {
+                const [x, y, right, top] = e.bounds(source)
+                if (pending.has(source)) {
+                  supportsLaterText ||= x >= l && y >= b && right <= r && top <= t
+                } else if (x < r && right > l && y < t && top > b) {
+                  return
+                }
+              }
+              if (!supportsLaterText) return
+              last = obj
+            }
+            return last
+          } finally {
+            e.free(at)
+          }
+        }
         for (const plan of replacements.filter((plan) => !plan.unchanged)) {
           pageNumber = plan.fragment.pageNumber
           const insertAt = objectIndex(plan.page, plan.selected[0].obj)
           check(insertAt >= 0)
+          const background = backdropAnchor(plan, insertAt)
           const reordered =
             plan.reflowed &&
             (plan.anchors.some((anchor) => anchor.generated) ||
@@ -7179,10 +7512,11 @@ async function generate({
           }
           const anchorPosition = (index) =>
             objectIndex(plan.page, plan.selected.find((selected) => selected.i === index)?.obj)
-          let insertion =
-            plan.anchors.length && !reordered
-              ? anchorPosition(plan.anchors[0].indices[0])
-              : insertAt
+          const backdropIndex = background ? objectIndex(plan.page, background) : undefined
+          check(backdropIndex === undefined || backdropIndex >= 0)
+          let insertion = backdropIndex === undefined ? insertAt : backdropIndex + 1
+          if (plan.anchors.length && !reordered)
+            insertion = anchorPosition(plan.anchors[0].indices[0])
           check(insertion >= 0)
           for (const line of plan.lines) {
             if (line.indices) {
@@ -7254,7 +7588,7 @@ async function generate({
       for (const page of borrowedPages.values()) p.FPDF_ClosePage(page)
     }
     const saveStarted = performance.now()
-    const output = e.save(input.doc)
+    const output = await restoreIndexedImagePalettes(metadata, e.save(input.doc), selectedPages)
     timings.pdfiumSaveMs += performance.now() - saveStarted
     check(output.length <= 64 * 1024 ** 2)
     return output

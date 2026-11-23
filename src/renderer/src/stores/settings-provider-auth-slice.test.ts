@@ -20,8 +20,10 @@ type ProviderCommands = Pick<
   | 'setAgentFramework'
   | 'validateProvider'
   | 'saveValidatedProvider'
+  | 'addOnboardingKiloProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
+  | 'codeBuddyAccount'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
   | 'loginSharedClaude'
@@ -102,9 +104,11 @@ const createCommands = (): CommandMocks => ({
   setActiveProvider: vi.fn().mockResolvedValue(snapshot()),
   setAgentFramework: vi.fn().mockResolvedValue(snapshot()),
   saveValidatedProvider: vi.fn(),
+  addOnboardingKiloProvider: vi.fn(),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
   cancelClaudeLogin: vi.fn().mockResolvedValue(undefined),
+  codeBuddyAccount: vi.fn(),
   loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   logoutIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   loginSharedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
@@ -316,16 +320,16 @@ describe('provider auth slice: persistence and validation', () => {
     expect(refreshPreflight).not.toHaveBeenCalled()
   })
 
-  it('activates a saved provider even when its connectivity probe is advisory-failed', async () => {
+  it('keeps the active model when the manual onboarding connection fails', async () => {
     const validation = { ok: false, category: 'network' } satisfies ValidateProviderResult
-    const saveProvider = vi.fn().mockResolvedValue({ providerId: 'new', validation })
+    const saveValidatedProvider = vi.fn().mockResolvedValue({ validation })
     const setActiveProvider = vi.fn().mockResolvedValue(undefined)
-    store.setState({ saveProvider, setActiveProvider })
+    store.setState({ saveValidatedProvider, setActiveProvider })
 
     await expect(
       store.getState().saveAndActivateProvider({ type: 'custom', name: 'new', model: ' model-a ' })
-    ).resolves.toEqual({ providerId: 'new', validation })
-    expect(setActiveProvider).toHaveBeenCalledWith('new', 'model-a')
+    ).resolves.toEqual({ providerId: '', validation })
+    expect(setActiveProvider).not.toHaveBeenCalled()
   })
 
   it('refreshes saved validation outcomes but leaves draft validation projection untouched', async () => {
@@ -425,6 +429,20 @@ describe('provider auth slice: authentication and catalogs', () => {
     await store.getState().refreshProviderModels('saved')
     expect(commands.getSettings).toHaveBeenCalledTimes(2)
     expect(reconcileSnapshot).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns a successful preview without reading settings and preserves a committed refresh on read failure', async () => {
+    const result = { ok: true, category: 'ok' as const, models: ['new'] }
+    commands.refreshProviderModels.mockResolvedValue(result)
+    commands.getSettings.mockRejectedValue(new Error('settings unavailable'))
+    await expect(
+      store.getState().refreshProviderModels({ draft: { type: 'official', vendorId: 'anthropic' } })
+    ).resolves.toEqual(result)
+    expect(commands.getSettings).not.toHaveBeenCalled()
+    await expect(store.getState().refreshProviderModels('saved')).resolves.toEqual({
+      ...result,
+      refreshFailed: true
+    })
   })
 
   it('preserves a discarded model refresh error when snapshot reconciliation fails', async () => {

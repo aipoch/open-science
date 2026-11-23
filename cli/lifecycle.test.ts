@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
-import { closeSync } from 'node:fs'
+import { closeSync, openSync, existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -38,6 +38,8 @@ import {
   TOKEN_FILE
 } from './config-root.mjs'
 import { connectToOpenScience } from '../packages/open-science/index.mjs'
+
+import { startLaunchLogReader } from '../packages/open-science/launch-log.mjs'
 
 // A running daemon's on-disk state, as findServiceState would return it.
 const RUNNING_STATE = { pid: 4242, port: 44100, configRoot: '/tmp/os-config' }
@@ -409,6 +411,44 @@ describe('terminateDaemon', () => {
 })
 
 describe('headless startup', () => {
+  it('pins the reader bootstrap at launch and ignores executable paths in control messages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'launch-log-bootstrap-'))
+    const entry = join(root, 'out/backend/index.cjs')
+    const injected = join(root, 'injected.cjs')
+    const marker = join(root, 'executed')
+    await writeFile(
+      join(root, 'installation-startup.cjs'),
+      "exports.protectInstallationStartup=()=>{throw Error('invalid owner')}"
+    )
+    await writeFile(
+      injected,
+      `require('node:fs').writeFileSync(${JSON.stringify(marker)},'executed')`
+    )
+    const fd = openSync(join(root, 'log'), 'w')
+    const reader = await startLaunchLogReader(process.execPath, fd, {
+      entryPath: entry,
+      packaged: true
+    })
+    try {
+      const reply = once(reader.control, 'data')
+      reader.control.write(
+        JSON.stringify({ bootstrapPath: injected, entryPath: injected, owner: {} }) + '\n'
+      )
+      expect(String((await reply)[0])).toBe('failed\n')
+      expect(existsSync(marker)).toBe(false)
+      reader.input.write('diagnostics survive rejected ownership')
+    } finally {
+      reader.input.end()
+      reader.control.destroy()
+      await reader.closed
+      expect(await readFile(join(root, 'log'), 'utf8')).toContain(
+        'diagnostics survive rejected ownership'
+      )
+      closeSync(fd)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('caps combined native output and drains the writer after its launcher exits', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'open-science-detached-log-'))
     const path = join(directory, 'launch.log')
@@ -440,13 +480,14 @@ describe('headless startup', () => {
         import { closeSync, openSync } from 'node:fs'
         import { startLaunchLogReader } from ${JSON.stringify(moduleUrl)}
         const fd = openSync('launch.log', 'wx', 0o600)
-        const capture = await startLaunchLogReader(process.execPath, fd)
+        const capture = await startLaunchLogReader(process.execPath, fd, {entryPath: 'writer.cjs', packaged: true})
         closeSync(fd)
         const child = spawn(process.execPath, ['writer.cjs'], {
           detached: true, windowsHide: true, stdio: ['ignore', capture.input, capture.input]
         })
         child.unref()
         capture.input.destroy()
+        capture.control.destroy()
       `
         ],
         { cwd: directory, stdio: 'ignore', windowsHide: true }

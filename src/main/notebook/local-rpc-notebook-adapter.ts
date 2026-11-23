@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import {
+  NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   notebookLanguageSchema,
   type AbortNotebookCodeCellRequest,
   type AppendNotebookCodeCellRequest,
@@ -12,6 +13,7 @@ import {
   type NotebookBackgroundRunLookupRequest,
   type NotebookRestartRequest,
   type NotebookSessionRequest,
+  type NotebookSessionStateRequest,
   type RequestNotebookNetworkAccessRequest,
   type RunNotebookCellRequest
 } from '../../shared/notebook'
@@ -23,6 +25,7 @@ import type {
 } from '../../shared/notebook-env'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { shellRuntimeBindingSchema } from './shell-runtime'
+import type { NotebookExecutionIntent, NotebookExecutionIntentScope } from './execution-intent'
 
 const provenanceContextSchema = z
   .object({
@@ -145,7 +148,9 @@ const notebookLocalRpcRequestSchemas = {
       reason: z.string().trim().min(1).max(1_000)
     })
     .transform((request) => ({ ...request, hostname: '' })),
-  state: notebookSessionRequestSchema,
+  state: notebookSessionRequestSchema.extend({
+    historyLimit: z.number().int().min(1).max(NOTEBOOK_STATE_HISTORY_PAGE_LIMIT).optional()
+  }),
   restart: z.union([
     notebookSessionRequestSchema,
     notebookSessionRequestSchema.extend({ kernel: z.literal('repl') }),
@@ -226,6 +231,19 @@ type NotebookRuntimeBindingRequest = NotebookSessionRequest & {
 }
 
 type NotebookLocalRpcCapability = {
+  createExecutionIntent?(scope: NotebookExecutionIntentScope): NotebookExecutionIntent
+  currentExecutionIntent?(scope: NotebookExecutionIntentScope): NotebookExecutionIntent | undefined
+  bindExecutionIntent?(scope: NotebookExecutionIntentScope, intent: NotebookExecutionIntent): void
+  adoptExecutionIntentScope?(scope: NotebookExecutionIntentScope, sessionId: string): void
+  rememberExecutionIntent?(
+    scope: NotebookExecutionIntentScope,
+    promptId: string,
+    intent: NotebookExecutionIntent
+  ): void
+  resolveExecutionIntent?(
+    scope: NotebookExecutionIntentScope,
+    promptId: string
+  ): NotebookExecutionIntent | undefined
   manualKernelTerminations?: (
     projectId: string,
     sessionId: string
@@ -261,7 +279,7 @@ type NotebookLocalRpcCapability = {
     request: RequestNotebookNetworkAccessRequest,
     signal?: AbortSignal
   ): Promise<unknown>
-  state(request: NotebookSessionRequest): Promise<unknown>
+  state(request: NotebookSessionStateRequest): Promise<unknown>
   restart(request: NotebookRestartRequest): Promise<unknown>
   shutdown(request: NotebookSessionRequest): Promise<unknown>
   inspectPackages(request: InspectPackagesRequest): Promise<unknown>
