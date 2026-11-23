@@ -120,6 +120,16 @@ describe('registerUpdateIpcHandlers', () => {
     expect(strategy.cancel).toHaveBeenCalledTimes(1)
     expect(strategy.apply).toHaveBeenCalledTimes(1)
   })
+
+  it('uses the desktop opener supplied by the direct Electron entrypoint', async () => {
+    const strategy = createStrategy()
+    const openProcessManager = vi.fn(async () => true)
+
+    registerUpdateIpcHandlers(strategy, undefined, undefined, openProcessManager)
+
+    await expect(handlers.get('update:open-process-manager')?.()).resolves.toBe(true)
+    expect(openProcessManager).toHaveBeenCalledOnce()
+  })
 })
 
 await (
