@@ -27,7 +27,7 @@ export function resolveCloudflareGateway(
   }
 }
 
-/** 仅向与已选账号和模式匹配的 Cloudflare 出站请求写入凭据。 */
+/** Attach credentials only to Cloudflare requests for the configured account and mode. */
 export function cloudflareGatewayFetch(
   fetchImpl: typeof fetch,
   target: { cloudflare?: CloudflareGateway; key?: string }
@@ -38,7 +38,7 @@ export function cloudflareGatewayFetch(
   const messages = `${base.pathname}/v1/messages`
   return (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input)
-    // Claude 的 beta 客户端会在 Messages 和 count_tokens 路径后加查询参数。
+    // Claude's beta client adds a query parameter to Messages and count_tokens.
     const expectedRequest =
       cloudflare.mode === 'rest'
         ? url.pathname === `${base.pathname}/chat/completions` && !url.search
@@ -51,7 +51,7 @@ export function cloudflareGatewayFetch(
     const headers = new Headers(
       init?.headers ?? (input instanceof Request ? input.headers : undefined)
     )
-    // 本地客户端可以生成通用认证头，实际网关和凭据一律由主进程确定。
+    // Clients can send generic auth headers. Main controls the gateway and its credentials.
     for (const name of [...headers.keys()]) {
       if (name.startsWith('cf-aig-') || name === 'authorization' || name === 'x-api-key') {
         headers.delete(name)

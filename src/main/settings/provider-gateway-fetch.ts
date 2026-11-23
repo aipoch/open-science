@@ -1,7 +1,7 @@
 import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
 import { cloudflareGatewayFetch } from './cloudflare-gateway-transport'
 
-/** 在请求发出前写入网关认证头，只向已配置的 Azure 数据面发送资源密钥。 */
+/** Set the gateway auth headers and send Azure keys only to the configured inference endpoint. */
 export function providerGatewayFetch(
   fetchImpl: typeof fetch,
   target: { cloudflare?: CloudflareGateway; azureChatBaseUrl?: string; key?: string }

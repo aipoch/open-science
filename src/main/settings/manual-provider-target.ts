@@ -2,7 +2,7 @@ import type { OfficialVendorId } from '@aipoch/providers'
 import { resolveManualProviderConnection } from '../../shared/manual-provider'
 import type { ResolvedProvider } from './provider-env'
 
-/** 让草稿探测和已保存的模型使用同一套地址和协议规则。 */
+/** Use the same endpoint and protocol rules for draft probes and saved models. */
 export function resolveManualProviderTarget(
   vendorId: OfficialVendorId,
   connection: unknown,

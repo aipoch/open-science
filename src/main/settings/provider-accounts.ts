@@ -26,6 +26,7 @@ import {
 import { hasWorkBuddyProfile } from './codebuddy-profile'
 import { runCodeBuddyAuth } from './codebuddy-auth'
 import { isDeepStrictEqual } from 'node:util'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
 import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
@@ -48,6 +49,7 @@ import type {
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult,
+  ValidationCategory,
   XaiOAuthLoginResult,
   XaiOAuthDeviceAuthorization
 } from '../../shared/settings'
@@ -144,6 +146,8 @@ type PreparedProvider = {
   settings: StoredSettings
   catalogBaseline?: ProviderCatalogState
 }
+
+const log = createLogger('settings:provider-connection')
 
 const LAB_PROVIDER_MANAGED_MESSAGE = 'The Lab provider is managed in Settings → Lab.'
 
@@ -690,6 +694,14 @@ class ProviderAccountsModule {
         }
       )
     })
+    log.info('Validated provider configuration saved', {
+      providerType: provider.type,
+      vendorId: provider.vendorId,
+      localPresetId: provider.localPresetId,
+      cloudflareMode: provider.cloudflare?.mode,
+      endpoint: validation.testedTarget.endpoint,
+      updated: prepared.requireExisting
+    })
     return { validation, providerId: provider.id }
   }
 
@@ -971,12 +983,16 @@ class ProviderAccountsModule {
         (settings.activeProviderId === stored.id ? settings.activeModel : undefined)
       return this.validateResolvedProvider(request, settings, {
         provider: this.resolveProvider(stored, model),
-        storedId: stored.id
+        storedId: stored.id,
+        localPresetId: stored.localPresetId
       })
     }
     if (request.draft) {
       return this.validateResolvedProvider(request, settings, {
-        provider: this.resolveDraft(request.draft)
+        provider: this.resolveDraft(request.draft),
+        localPresetId: isLocalProviderPresetId(request.draft.localPresetId)
+          ? request.draft.localPresetId
+          : undefined
       })
     }
     return { ok: false, category: 'unknown', message: 'No provider to validate.' }
@@ -997,7 +1013,7 @@ class ProviderAccountsModule {
     const result = await this.validateResolvedProvider(
       { model: provider.model },
       settings,
-      { provider, storedId },
+      { provider, storedId, localPresetId: candidate.localPresetId },
       'definitive-failures'
     )
     return {
@@ -1032,9 +1048,14 @@ class ProviderAccountsModule {
   private async validateResolvedProvider(
     request: ValidateProviderRequest,
     settings: StoredSettings,
-    resolved: { provider: ResolvedProvider; storedId?: string },
+    resolved: {
+      provider: ResolvedProvider
+      storedId?: string
+      localPresetId?: StoredProvider['localPresetId']
+    },
     healthPolicy: 'all' | 'definitive-failures' = 'all'
   ): Promise<ValidateProviderResult> {
+    const startedAt = performance.now()
     const storedValidationTarget = resolved.storedId
       ? settings.providers.find((provider) => provider.id === resolved.storedId)
       : undefined
@@ -1093,7 +1114,7 @@ class ProviderAccountsModule {
       resolved.provider,
       settings
     )
-    let probeResult =
+    const initialResult =
       xaiAuthResult ??
       localResult ??
       (await validateProviderTarget(validationProvider, {
@@ -1104,8 +1125,9 @@ class ProviderAccountsModule {
           requiresNativeResponsesCompatibility(resolved.provider, framework),
         frameworkEndpoints: validationFrameworkEndpoints
       }))
-    // HTTP is the fast path. Every failed request gets one native attempt, without interpreting
-    // upstream status codes or messages. Subscription authentication keeps its existing owner.
+    let probeResult = initialResult
+    let nativeCategory: ValidationCategory | undefined
+    // Compatible API-key providers can fall back to one tool-less ACP probe after HTTP fails.
     if (
       !probeResult.ok &&
       !incompatibility &&
@@ -1115,6 +1137,7 @@ class ProviderAccountsModule {
       this.options.runAcpValidation
     ) {
       const native = await this.options.runAcpValidation(validationProvider, settings)
+      nativeCategory = native.category
       probeResult = native.ok
         ? {
             ...native,
@@ -1141,6 +1164,30 @@ class ProviderAccountsModule {
           ...(probeResult.ok ? { message: incompatibility } : {})
         }
       : probeResult
+
+    // Upstream messages can contain credentials or URLs. Record only the classified outcome.
+    const usedHttp = !xaiAuthResult && !localResult
+    const fields = {
+      vendorId: resolved.provider.vendorId,
+      localPresetId: resolved.localPresetId,
+      cloudflareMode: resolved.provider.cloudflare?.mode,
+      frameworkId: framework.id,
+      endpoint:
+        result.testedTarget?.endpoint ??
+        preferredEndpoint(
+          resolved.provider.apiEndpoints ?? ['messages'],
+          validationFrameworkEndpoints ?? DEFAULT_ENDPOINT_ORDER
+        ),
+      check: usedHttp ? 'http' : 'local',
+      initialCategory: initialResult.category,
+      httpStatus: usedHttp ? initialResult.status : undefined,
+      nativeCategory,
+      category: result.category,
+      frameworkIncompatible: Boolean(result.frameworkIncompatible),
+      durationMs: Math.round(performance.now() - startedAt)
+    }
+    if (result.ok) log.info('Provider connection probe succeeded', fields)
+    else log.warn('Provider connection probe failed', fields)
 
     if ((await this.repository.getSettings()).agentFrameworkId !== settings.agentFrameworkId)
       return { ...result, applied: false }

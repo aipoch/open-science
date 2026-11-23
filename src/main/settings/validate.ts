@@ -44,7 +44,7 @@ const ANTHROPIC_PROBE_MAX_TOKENS = 16
 // the upstream fetch, but that must not intercept the request from the validator into 127.0.0.1.
 const loopbackFetch = globalThis.fetch.bind(globalThis)
 
-// A minimal, cheap Messages request used only to confirm the endpoint + credentials + model work.
+// A short probe checks endpoint reachability, credentials, and the selected model route.
 type ValidationHttpRequest = {
   url: string
   headers: Record<string, string>
@@ -99,14 +99,8 @@ const nativeResponsesCompatibilityProbeBody = (model: string): Record<string, un
   stream: true
 })
 
-// Builds the probe request for a custom provider against the endpoint it actually speaks: an
-// OpenAI-compatible gateway gets a `/v1/chat/completions` request, an Anthropic one `/v1/messages`.
-// The endpoint is chosen from the provider's apiType (OpenAI wins when it offers both), matching how
-// the model is driven. Throws on an unusable base URL so the caller can classify it as bad-url.
-// The endpoint preference to intersect the provider against when no active framework is supplied. A
-// direct caller (or unit test) that doesn't care about a specific framework probes the provider's own
-// best route: Responses > Chat Completions > Messages.
-
+// Prefer a declared route shared with the active framework. Without a framework constraint,
+// the route order is Responses, Chat Completions, then Messages.
 const buildValidationRequest = (
   provider: ResolvedProvider,
   requireBridgeToolCall = false,
@@ -267,7 +261,7 @@ const hasValidMessagesResponse = (bodyText: string): boolean => {
   }
 }
 
-/** 验证响应包含一条可读的聊天回复。 */
+/** Check for a usable Chat Completions reply. */
 const hasValidChatResponse = (bodyText: string): boolean => {
   try {
     const { choices } = JSON.parse(bodyText) as {
@@ -285,7 +279,7 @@ const hasValidChatResponse = (bodyText: string): boolean => {
   }
 }
 
-/** Responses 探测需要一条已完成的文本回复。 */
+/** Require a completed text reply from the Responses API. */
 const hasValidResponsesReply = (bodyText: string): boolean => {
   try {
     const { status, output } = JSON.parse(bodyText) as {
@@ -817,7 +811,7 @@ const validateCustomProvider = async (
             message: error.message
           })
         }
-        // 返回体无法读取时，不能确认模型接口已接通。
+        // An unreadable body cannot prove that the model endpoint is working.
       }
       const hasExpectedResponse = isMessagesProbe
         ? hasValidMessagesResponse(bodyText)
