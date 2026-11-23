@@ -181,6 +181,7 @@ export class AcpProviderSessionResumer {
             providerSessionId: attachment.providerSessionId,
             cwd: input.cwd,
             mcpServers: input.mcpServers,
+            ...(backend.session.model ? { sessionModel: backend.session.model } : {}),
             ...(input.skillRuntimeAllowlist
               ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist }
               : {})

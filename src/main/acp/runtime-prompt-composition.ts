@@ -249,6 +249,9 @@ const composeAcpRuntimePromptOwners = (
         providerSessionId: input.providerSessionId,
         cwd: input.cwd,
         mcpServers: base.sessionCapabilities.mcpServersFor(input.appSessionId),
+        ...(base.backendGeneration.current.session.model
+          ? { sessionModel: base.backendGeneration.current.session.model }
+          : {}),
         ...(input.skillRuntimeAllowlist
           ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist }
           : {})
