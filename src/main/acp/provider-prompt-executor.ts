@@ -301,7 +301,7 @@ class AcpProviderPromptExecutor {
           input.routeNotification(message.notification)
           continue
         }
-        const providerError = adapter.getPromptError?.(message.response)
+        const providerError = adapter.getPromptError?.(message.response, providerSessionId)
         if (providerError) throw providerError
         if (!input.captureStop(message.response)) {
           await cancelProbe()

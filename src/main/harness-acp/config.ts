@@ -5,6 +5,7 @@ export const HARNESS_AUTH_METHOD = 'open-science-agent'
 export const HARNESS_INSTRUCTIONS = 'open-science-agent/instructions'
 export const HARNESS_TOOL_LESS = 'open-science-agent/tool-less'
 export const HARNESS_OWNER = 'open-science-agent/owner'
+export const HARNESS_CONTEXT_BUDGET = 'open-science-agent/context-budget'
 export const harnessOwnerSchema = z
   .object({
     projectId: z.string().min(1).max(512),
