@@ -255,7 +255,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 89 desktop request channels in their existing capability groups', () => {
+  it('defines the exact 88 desktop request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -303,7 +303,7 @@ describe('Host application commands', () => {
       .find(({ capability }) => capability === 'notifications')!
       .channels.push('notifications:get-desktop-availability', 'notifications:send-test')
     for (const group of expected) group.channels.sort()
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(89)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(88)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -319,7 +319,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(89)
+    expect(router.dispatcher.commandNames()).toHaveLength(88)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -719,7 +719,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(46)
+    expect(localOnlyChannels).toHaveLength(45)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(
