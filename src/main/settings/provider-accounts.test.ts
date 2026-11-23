@@ -55,6 +55,50 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it('resolves Vectrust context defaults for the selected protocol and retains a saved override', async () => {
+    const provider = {
+      id: 'vectrust',
+      type: 'official',
+      vendorId: 'vectrust',
+      model: 'gpt-6.2-sol',
+      key: 'test-vectrust-key'
+    } as const
+    const location = 'api.openai-next.com'
+    const read = async () => {
+      const { providers } = await new SettingsRepository(dir).getSettings()
+      return module.resolveProvider(providers.find(({ id }) => id === provider.id)!)
+    }
+
+    await module.upsertProvider({
+      ...provider,
+      manualConnection: { location, protocol: 'chat-completions' }
+    })
+    expect(await read()).toMatchObject({
+      contextWindow: 1_050_000,
+      apiEndpoints: ['chat-completions']
+    })
+    await module.upsertProvider({
+      ...provider,
+      manualConnection: { location, protocol: 'responses' }
+    })
+    expect(await read()).toMatchObject({ contextWindow: 1_050_000, apiEndpoints: ['responses'] })
+    const messages = {
+      ...provider,
+      model: 'claude-sonnet-5-5',
+      manualConnection: { location, protocol: 'messages' }
+    } as const
+    await module.upsertProvider(messages)
+    expect(await read()).toMatchObject({ contextWindow: 1_000_000, apiEndpoints: ['messages'] })
+    await module.upsertProvider({ ...messages, contextWindow: 200_000 })
+    expect((await read()).contextWindow).toBe(200_000)
+    await module.upsertProvider({ ...messages, model: 'constructor' })
+    expect((await read()).contextWindow).toBe(32_768)
+    expect(await module.refreshProviderModels({ providerId: provider.id })).toMatchObject({
+      ok: false,
+      code: 'unsupported'
+    })
+  })
+
   it.each([undefined, '', '   ', 'not-a-url'])(
     'rejects local invalid base URL %s without either probe',
     async (baseUrl) => {

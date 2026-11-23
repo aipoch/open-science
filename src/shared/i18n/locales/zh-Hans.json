@@ -220,7 +220,6 @@
     "Could not upload the Session package to Lab. Check your connection and try again.": "无法将会话包上传到 Lab。请检查网络连接后重试。"
   },
   "renderer": {
-    "Third-party platforms": "第三方平台",
     "Deployment name": "部署名称",
     "Azure resource name or endpoint": "Azure 资源名称或端点",
     "Enter a valid provider endpoint.": "请输入有效的服务商端点。",

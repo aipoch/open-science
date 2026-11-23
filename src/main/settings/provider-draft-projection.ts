@@ -1,4 +1,7 @@
-import { manualProviderDefinition } from '../../shared/manual-provider'
+import {
+  manualProviderDefaultContextWindow,
+  manualProviderDefinition
+} from '../../shared/manual-provider'
 import { resolveManualProviderTarget } from './manual-provider-target'
 import { resolveCloudflareGateway } from './cloudflare-gateway-transport'
 import type { ProviderDraft } from '../../shared/settings'
@@ -22,12 +25,22 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
       return resolveCloudflareGateway(draft.cloudflare, draft.model, draft.key?.trim())
     }
     if (manualProviderDefinition(draft.vendorId)) {
-      return resolveManualProviderTarget(
+      const target = resolveManualProviderTarget(
         draft.vendorId,
         draft.manualConnection,
         draft.model,
         draft.key
       )
+      if (draft.vendorId !== 'vectrust') return target
+      const { contextWindow } = resolveCustomTokenLimits({
+        type: draft.type,
+        contextWindow: draft.contextWindow
+      })
+      return {
+        ...target,
+        contextWindow:
+          contextWindow ?? manualProviderDefaultContextWindow(draft.vendorId, target.model ?? '')
+      }
     }
     const draftModel = draft.model ?? defaultVendorModel(draft.vendorId, draft.region)
     return {

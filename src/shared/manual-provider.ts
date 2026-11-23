@@ -10,7 +10,9 @@ type ManualProviderDefinition = Readonly<{
   protocols: readonly ModelProtocol[]
   locations?: readonly string[]
   sharedCredential?: true
-  modelExamples?: Partial<Record<ModelProtocol, string>>
+  models?: Partial<Record<ModelProtocol, readonly string[]>>
+  fallbackContextWindow?: number
+  defaultContextWindows?: Readonly<Partial<Record<string, number>>>
   parseLocation: (location: string, protocol: ModelProtocol) => string | undefined
   baseUrl: (location: string, protocol: ModelProtocol) => string
 }>
@@ -51,11 +53,90 @@ const definitions: Partial<Record<OfficialVendorId, ManualProviderDefinition>> =
     defaultConnection: { location: vectrustLocations[0], protocol: 'chat-completions' },
     protocols: ['messages', 'chat-completions', 'responses'],
     locations: vectrustLocations,
+    // The same credential can follow the user between the two allowlisted Vectrust nodes.
     sharedCredential: true,
-    modelExamples: {
-      messages: 'claude-opus-5-5',
-      'chat-completions': 'gpt-6.1-sol',
-      responses: 'gpt-6.1-sol'
+    // Keep the shortlist scoped to the protocols documented on NextLabs model pages.
+    models: {
+      messages: [
+        'claude-sonnet-5-5',
+        'claude-opus-5-5',
+        'claude-fable-5-2',
+        'claude-haiku-5-5',
+        'claude-haiku-4-5'
+      ],
+      'chat-completions': [
+        'gpt-6.2-sol',
+        'gpt-6.2-astra',
+        'gpt-6.1-sol',
+        'gpt-6.1-terra',
+        'claude-sonnet-5-5',
+        'claude-opus-5-5',
+        'claude-fable-5-2',
+        'claude-haiku-5-5',
+        'claude-haiku-4-5',
+        'gemini-4-hydrogen',
+        'gemini-4-neon',
+        'gemini-3.8-flash',
+        'gemini-3.1-pro-preview',
+        'deepseek-v4-pro',
+        'deepseek-v4.1-flash',
+        'deepseek-v4-1-flash-260910',
+        'grok-4.7',
+        'qwen3.5-plus',
+        'qwen3-coder-flash',
+        'qwen-plus-latest',
+        'glm-5.3',
+        'glm-5.3-flash',
+        'glm-5.2',
+        'kimi-k3.1-pro',
+        'kimi-k3',
+        'MiniMax-M3',
+        'MiniMax-M3.1-Flash'
+      ],
+      responses: [
+        'gpt-6.2-sol',
+        'gpt-6.1-sol',
+        'gpt-6.2-astra',
+        'gpt-6-sol',
+        'gpt-6-astra',
+        'gpt-6-luna'
+      ]
+    },
+    // NextLabs documents model windows in the playground and release notes.
+    fallbackContextWindow: 32_768,
+    defaultContextWindows: {
+      'gpt-6.2-sol': 1_050_000,
+      'gpt-6.2-astra': 1_050_000,
+      'gpt-6.1-sol': 1_050_000,
+      'gpt-6.1-terra': 1_050_000,
+      'gpt-6-sol': 1_050_000,
+      'gpt-6-astra': 1_050_000,
+      'gpt-6-luna': 1_050_000,
+      'gpt-5.5': 1_050_000,
+      'gpt-5.4': 1_050_000,
+      'claude-sonnet-5-5': 1_000_000,
+      'claude-opus-5-5': 1_000_000,
+      'claude-fable-5-2': 1_000_000,
+      'claude-haiku-5-5': 1_000_000,
+      'claude-haiku-4-5': 200_000,
+      'gemini-4-hydrogen': 1_048_576,
+      'gemini-4-neon': 1_048_576,
+      'gemini-3.8-flash': 1_048_576,
+      'gemini-3.1-pro-preview': 1_048_576,
+      'deepseek-v4-pro': 1_000_000,
+      'deepseek-v4.1-flash': 1_000_000,
+      'deepseek-v4-1-flash-260910': 1_000_000,
+      'grok-4.7': 500_000,
+      'qwen3.5-plus': 1_000_000,
+      'qwen3-coder-flash': 1_000_000,
+      'qwen-plus-latest': 1_000_000,
+      'glm-5.3': 1_000_000,
+      'glm-5.3-flash': 1_000_000,
+      'glm-5.2': 1_000_000,
+      'kimi-k3.1-pro': 1_048_576,
+      'kimi-k3': 1_048_576,
+      'MiniMax-M3': 1_000_000,
+      'MiniMax-M3.1-Flash': 1_000_000
     },
     parseLocation: (location) => vectrustLocations.find((endpoint) => location === endpoint),
     baseUrl: (hostname, protocol) => `https://${hostname}${protocol === 'messages' ? '' : '/v1'}`
@@ -81,6 +162,23 @@ const definitions: Partial<Record<OfficialVendorId, ManualProviderDefinition>> =
 export const manualProviderDefinition = (
   vendorId: OfficialVendorId | undefined
 ): ManualProviderDefinition | undefined => (vendorId ? definitions[vendorId] : undefined)
+
+export function manualProviderDefaultContextWindow(
+  vendorId: OfficialVendorId | undefined,
+  model: string
+): number | undefined {
+  const provider = manualProviderDefinition(vendorId)
+  const windows = provider?.defaultContextWindows
+  return windows && Object.hasOwn(windows, model) ? windows[model] : provider?.fallbackContextWindow
+}
+
+export function manualProviderPresetModels(
+  vendorId: OfficialVendorId | undefined,
+  connection: ManualProviderConnection
+): readonly string[] {
+  const definition = manualProviderDefinition(vendorId)
+  return definition?.models?.[connection.protocol] ?? []
+}
 
 /** 从供应商规则解析地址，持久化数据只保存公共定位字段和协议。 */
 export function resolveManualProviderConnection(vendorId: OfficialVendorId, value: unknown) {

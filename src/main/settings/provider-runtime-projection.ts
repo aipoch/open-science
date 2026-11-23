@@ -476,7 +476,10 @@ class ProviderRuntimeProjectionOwner {
     }
     if (manualProviderDefinition(vendorId)) {
       if (!descriptor) return { type: 'custom', vendorId, model, apiEndpoints: [] }
-      return resolveManualProviderTarget(vendorId, provider.manualConnection, model, key)
+      return {
+        ...resolveManualProviderTarget(vendorId, provider.manualConnection, model, key),
+        contextWindow: descriptor.contextWindow
+      }
     }
     const contextWindow = descriptor?.contextWindow
     const routes = descriptor?.routes

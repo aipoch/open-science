@@ -1,5 +1,7 @@
 import {
+  manualProviderDefaultContextWindow,
   manualProviderDefinition,
+  manualProviderPresetModels,
   resolveManualProviderConnection,
   type ManualProviderConnection
 } from './manual-provider'
@@ -36,6 +38,7 @@ export type OfficialCatalogSource = {
   cloudflare?: CloudflareGateway
   manualConnection?: ManualProviderConnection
   model?: string
+  contextWindow?: number
   fetchedModels?: readonly string[]
   // ProviderView already contains the region and legacy discovery policy applied by main.
   models?: readonly string[]
@@ -89,11 +92,22 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
       }
     ]
   }
-  if (manualProviderDefinition(vendorId)) {
+  const manualProvider = manualProviderDefinition(vendorId)
+  if (manualProvider) {
     const resolved = resolveManualProviderConnection(vendorId, source.manualConnection)
-    return resolved && source.model
-      ? [{ id: source.model, routes: { [resolved.connection.protocol]: resolved.baseUrl } }]
-      : []
+    if (!resolved || !source.model) return []
+
+    const { protocol } = resolved.connection
+    const presetModels = manualProviderPresetModels(vendorId, resolved.connection)
+    // Keep saved model IDs available for existing configurations and pinned sessions.
+    const ids = new Set([source.model, ...presetModels])
+    return Array.from(ids, (id) => ({
+      id,
+      contextWindow:
+        (id === source.model ? source.contextWindow : undefined) ??
+        manualProviderDefaultContextWindow(vendorId, id),
+      routes: { [protocol]: resolved.baseUrl }
+    }))
   }
   const vendor = getOfficialVendor(vendorId)
   if (!vendor) return []

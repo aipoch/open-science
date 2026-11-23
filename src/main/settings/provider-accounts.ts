@@ -488,6 +488,24 @@ class ProviderAccountsModule {
         provider.manualConnection = resolved.connection
         provider.model = model
       }
+      if (vendorId === 'vectrust') {
+        // The override belongs to the selected model and deployment, even when a key is reusable.
+        const priorContextWindow =
+          vendorId === existing?.vendorId &&
+          provider.model === existing.model &&
+          sameManualProviderConnection(provider.manualConnection, existing.manualConnection)
+            ? existing.contextWindow
+            : undefined
+        Object.assign(
+          provider,
+          resolveCustomTokenLimits(
+            { type: request.type, contextWindow: request.contextWindow },
+            {
+              contextWindow: priorContextWindow
+            }
+          )
+        )
+      }
       provider.catalogParameters =
         request.catalogParameters === undefined
           ? vendorId === existing?.vendorId && region === existing.region

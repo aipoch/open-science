@@ -1565,7 +1565,7 @@ const definitions: readonly OfficialVendor[] = [
       ]
     }
   },
-  // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
+  // OpenRouter is an aggregation gateway with many vendors behind one key.
   {
     id: 'openrouter',
     label: 'OpenRouter',
@@ -1876,7 +1876,16 @@ const definitions: readonly OfficialVendor[] = [
       ]
     }
   },
-  // Requesty is also a multi-vendor gateway, so it follows OpenRouter at the end of the picker.
+  {
+    id: 'vectrust',
+    label: 'Vectrust',
+    requiresConnectionConfiguration: true,
+    apiEndpoints: ['messages', 'chat-completions', 'responses'],
+    apiKeyUrl: 'https://api.openai-next.com/console/token',
+    models: [],
+    reasoningEffort: { supported: false }
+  },
+  // Requesty is another multi-vendor gateway.
   {
     id: 'requesty',
     label: 'Requesty',
@@ -2072,16 +2081,6 @@ const definitions: readonly OfficialVendor[] = [
     apiEndpoints: ['messages', 'chat-completions'],
     messagesApiKeyHeader: true,
     apiKeyUrl: 'https://ai.azure.com/',
-    models: [],
-    reasoningEffort: { supported: false }
-  },
-  {
-    id: 'vectrust',
-    label: 'Vectrust',
-    thirdPartyPlatform: true,
-    requiresConnectionConfiguration: true,
-    apiEndpoints: ['messages', 'chat-completions', 'responses'],
-    apiKeyUrl: 'https://api.openai-next.com/console/token',
     models: [],
     reasoningEffort: { supported: false }
   },

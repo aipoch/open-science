@@ -419,13 +419,18 @@ class SettingsRepository {
             ? { ...provider, codexAutoUseHttps: true }
             : provider
       } else providers.push(provider)
+      const keepActiveVectrustModel =
+        provider.vendorId === 'vectrust' &&
+        settings.providers[index]?.model === provider.model &&
+        resolveOfficialModelCatalog(provider).some(({ id }) => id === settings.activeModel)
       return {
         ...settings,
         providers,
-        // 单模型连接保存新模型时，同步更新主模型，避免继续验证已替换的模型。
+        // Keep the active selection valid when the configured model or the route changes.
         ...(configEdit &&
         (provider.type === 'custom' || provider.cloudflare || provider.manualConnection) &&
-        settings.activeProviderId === provider.id
+        settings.activeProviderId === provider.id &&
+        !keepActiveVectrustModel
           ? { activeModel: provider.model }
           : {}),
         ...(isClaudeSubscriptionProvider(provider.type) &&

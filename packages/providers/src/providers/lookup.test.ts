@@ -787,7 +787,9 @@ describe('provider registry', () => {
   it('routes Requesty through both APIs after OpenRouter with a curated catalog', () => {
     const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
 
-    expect(OFFICIAL_VENDORS[openRouterIndex + 1]?.id).toBe('requesty')
+    expect(
+      OFFICIAL_VENDORS.slice(openRouterIndex + 1, openRouterIndex + 3).map(({ id }) => id)
+    ).toEqual(['vectrust', 'requesty'])
     expect(resolveVendorApiEndpoints('requesty')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('requesty')).toBe('https://router.requesty.ai')
     expect(resolveVendorChatCompletionsBaseUrl('requesty')).toBe('https://router.requesty.ai/v1')

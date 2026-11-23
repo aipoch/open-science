@@ -82,7 +82,6 @@ export type OfficialVendor = {
   // Human-readable name shown in the provider-type picker and composer group headings.
   readonly label: string
   readonly cloudProvider?: true
-  readonly thirdPartyPlatform?: true
   // Which chat APIs this vendor serves; drives per-framework availability. Absent ⇒ ['messages']
   // for legacy Anthropic-compatible vendor entries. A dual-endpoint vendor lists both, e.g.
   // ['messages', 'chat-completions'].

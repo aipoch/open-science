@@ -1,6 +1,7 @@
 import { sameLocalProviderCredentialScope } from '../../../../shared/local-provider-preset'
 import {
   manualProviderDefinition,
+  manualProviderPresetModels,
   sameManualProviderCredentialScope
 } from '../../../../shared/manual-provider'
 import { DEFAULT_CLOUDFLARE_GATEWAY } from '../../../../shared/cloudflare-gateway'
@@ -11,6 +12,7 @@ import {
 } from '../../../../shared/provider-model-catalog'
 import {
   resolveVendorModelCatalog,
+  type CatalogModel,
   type CatalogSnapshot,
   type CatalogStatus
 } from '@aipoch/providers'
@@ -147,6 +149,56 @@ const RequiredMark = (): React.JSX.Element => (
     *
   </span>
 )
+
+function SupportedModelTags({
+  models,
+  selectedModel,
+  onSelect,
+  disabled
+}: {
+  models: readonly CatalogModel[]
+  selectedModel?: string
+  onSelect?: (id: string) => void
+  disabled?: boolean
+}): React.JSX.Element {
+  const tagClassName = 'rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs'
+  return (
+    <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
+      {models.map((model) =>
+        onSelect ? (
+          <button
+            key={model.id}
+            type="button"
+            aria-pressed={model.id === selectedModel}
+            disabled={disabled}
+            onClick={() => onSelect(model.id)}
+            className={cn(
+              tagClassName,
+              'text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50',
+              model.id === selectedModel && 'border-primary/50 bg-primary/10 text-foreground'
+            )}
+          >
+            {model.id}
+          </button>
+        ) : (
+          <span
+            key={model.id}
+            title={[
+              ...Object.keys(model.routes ?? {}),
+              model.contextWindow,
+              model.reasoningEffort?.supported ? model.reasoningEffort.values.join(' / ') : ''
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            className={cn(tagClassName, 'text-muted-foreground')}
+          >
+            {model.id}
+          </span>
+        )
+      )}
+    </div>
+  )
+}
 
 type SettingsDisclosureProps = {
   expanded: boolean
@@ -333,6 +385,7 @@ const ProviderForm = ({
       ? (value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY)
       : undefined
   const isFoundry = vendor?.id === 'microsoft-foundry'
+  const isVectrust = vendor?.id === 'vectrust'
   const modelLabel = isFoundry ? t('Deployment name') : t('Model')
   const manualProvider = manualProviderDefinition(vendor?.id)
   const manualLocationLabel = isFoundry
@@ -341,6 +394,14 @@ const ProviderForm = ({
       ? t('Endpoint')
       : t('Region')
   const manualConnection = value.manualConnection ?? manualProvider?.defaultConnection
+  const presetModels = manualConnection
+    ? manualProviderPresetModels(vendor?.id, manualConnection)
+    : []
+  const configuredModel = value.model.trim()
+  const visibleModelIds =
+    configuredModel && !presetModels.includes(configuredModel)
+      ? [configuredModel, ...presetModels]
+      : presetModels
   const keyLabel = cloudflare
     ? cloudflare.mode === 'rest'
       ? t('Cloudflare API token')
@@ -423,8 +484,8 @@ const ProviderForm = ({
             ? cloudflare.mode === 'rest'
               ? 'openai/gpt-4.1'
               : 'claude-sonnet-4-5'
-            : manualProvider && manualConnection
-              ? manualProvider.modelExamples?.[manualConnection.protocol]
+            : manualProvider
+              ? undefined
               : t('e.g. deepseek-v4-flash')
         }
         onChange={(event) => onChange({ model: event.target.value })}
@@ -531,6 +592,132 @@ const ProviderForm = ({
     </div>
   )
 
+  const changeVectrustModel = (model: string): void =>
+    onChange({ model, ...(model !== configuredModel && { contextWindow: '' }) })
+
+  const presetModelList = visibleModelIds.length ? (
+    <div className="space-y-1.5">
+      <span className={fieldLabelClassName}>{t('Supported models')}</span>
+      <SupportedModelTags
+        models={visibleModelIds.map((id) => ({ id }))}
+        selectedModel={configuredModel}
+        onSelect={changeVectrustModel}
+        disabled={disabled}
+      />
+      {errors.model ? (
+        <p className={fieldErrorClassName} role="alert">
+          {t(errors.model)}
+        </p>
+      ) : null}
+    </div>
+  ) : null
+
+  const manualLocationField =
+    manualProvider && manualConnection ? (
+      <div className="space-y-1.5">
+        <label className={fieldLabelClassName} htmlFor="provider-manual-location">
+          {manualLocationLabel}
+          <RequiredMark />
+        </label>
+        {manualProvider.locations ? (
+          <Select
+            value={manualConnection.location}
+            disabled={disabled}
+            onValueChange={(location) =>
+              onChange({ manualConnection: { ...manualConnection, location } })
+            }
+          >
+            <SelectTrigger id="provider-manual-location" aria-label={manualLocationLabel}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {manualProvider.locations.map((location) => (
+                <SelectItem key={location} value={location}>
+                  {location}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Input
+            id="provider-manual-location"
+            aria-label={manualLocationLabel}
+            aria-required="true"
+            aria-invalid={Boolean(errors.location) || undefined}
+            aria-describedby={errors.location ? 'provider-manual-location-error' : undefined}
+            value={manualConnection.location}
+            disabled={disabled}
+            onChange={(event) => {
+              const next = { ...manualConnection, location: event.target.value }
+              onChange({
+                manualConnection: next,
+                ...(!sameManualProviderCredentialScope(value.vendorId, manualConnection, next) && {
+                  key: ''
+                })
+              })
+            }}
+          />
+        )}
+        {errors.location ? (
+          <p id="provider-manual-location-error" className={fieldErrorClassName} role="alert">
+            {t(errors.location)}
+          </p>
+        ) : null}
+      </div>
+    ) : null
+
+  const manualFormatField =
+    manualProvider && manualConnection ? (
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1">
+          <label className={fieldLabelClassName} htmlFor="provider-manual-format">
+            {t('API format')}
+          </label>
+          {isVectrust ? (
+            <FieldHelp
+              label={t('API format')}
+              content={t(
+                'Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.'
+              )}
+            />
+          ) : null}
+        </div>
+        <Select
+          value={manualConnection.protocol}
+          disabled={disabled}
+          onValueChange={(nextProtocol) => {
+            const protocol = manualProvider.protocols.find((option) => option === nextProtocol)
+            if (!protocol) return
+            const next = { ...manualConnection, protocol }
+            if (!isVectrust) {
+              onChange({ manualConnection: next, model: '' })
+              return
+            }
+            const models = manualProviderPresetModels(value.vendorId, next)
+            const keepModel =
+              models.includes(configuredModel) ||
+              (configuredModel && !presetModels.includes(configuredModel))
+            onChange({
+              manualConnection: next,
+              ...(!keepModel && { contextWindow: '' }),
+              model: keepModel ? value.model : (models[0] ?? '')
+            })
+          }}
+        >
+          <SelectTrigger id="provider-manual-format" aria-label={t('API format')}>
+            <span>{API_FORMAT_LABELS[manualConnection.protocol]}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {manualProvider.protocols.map((protocol) => (
+              <SelectItem key={protocol} value={protocol}>
+                {API_FORMAT_LABELS[protocol]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    ) : null
+
   return (
     <div className="space-y-4">
       {fileCredentialNotice &&
@@ -551,7 +738,9 @@ const ProviderForm = ({
         <Select
           value={selectedKey}
           disabled={disabled || (isCodeBuddySubscription && !codeBuddyProviders)}
-          onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
+          onValueChange={(key) =>
+            onChange(providerKindPatch(key, defaultCustomApiEndpoint, framework?.supportedApiTypes))
+          }
         >
           <SelectTrigger aria-label={t('Provider type')}>
             <span className="flex items-center gap-2">
@@ -1222,85 +1411,17 @@ const ProviderForm = ({
           {modelField}
           {keyField}
         </>
+      ) : isVectrust ? (
+        <>
+          {manualFormatField}
+          {manualLocationField}
+          {keyField}
+          {presetModelList}
+        </>
       ) : manualProvider && manualConnection ? (
         <>
-          <div className="space-y-1.5">
-            <label className={fieldLabelClassName} htmlFor="provider-manual-location">
-              {manualLocationLabel}
-              <RequiredMark />
-            </label>
-            {manualProvider.locations ? (
-              <Select
-                value={manualConnection.location}
-                disabled={disabled}
-                onValueChange={(location) =>
-                  onChange({ manualConnection: { ...manualConnection, location } })
-                }
-              >
-                <SelectTrigger id="provider-manual-location" aria-label={manualLocationLabel}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {manualProvider.locations.map((location) => (
-                    <SelectItem key={location} value={location}>
-                      {location}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <Input
-                id="provider-manual-location"
-                aria-label={manualLocationLabel}
-                aria-required="true"
-                aria-invalid={Boolean(errors.location) || undefined}
-                aria-describedby={errors.location ? 'provider-manual-location-error' : undefined}
-                value={manualConnection.location}
-                disabled={disabled}
-                onChange={(event) => {
-                  const next = { ...manualConnection, location: event.target.value }
-                  onChange({
-                    manualConnection: next,
-                    ...(!sameManualProviderCredentialScope(
-                      value.vendorId,
-                      manualConnection,
-                      next
-                    ) && { key: '' })
-                  })
-                }}
-              />
-            )}
-            {errors.location ? (
-              <p id="provider-manual-location-error" className={fieldErrorClassName} role="alert">
-                {t(errors.location)}
-              </p>
-            ) : null}
-          </div>
-          <div className="space-y-1.5">
-            <label className={fieldLabelClassName} htmlFor="provider-manual-format">
-              {t('API format')}
-            </label>
-            <Select
-              value={manualConnection.protocol}
-              disabled={disabled}
-              onValueChange={(value) => {
-                const protocol = manualProvider.protocols.find((option) => option === value)
-                if (protocol)
-                  onChange({ manualConnection: { ...manualConnection, protocol }, model: '' })
-              }}
-            >
-              <SelectTrigger id="provider-manual-format" aria-label={t('API format')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {manualProvider.protocols.map((protocol) => (
-                  <SelectItem key={protocol} value={protocol}>
-                    {API_FORMAT_LABELS[protocol]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {manualLocationField}
+          {manualFormatField}
           {modelField}
           {keyField}
         </>
@@ -1461,25 +1582,7 @@ const ProviderForm = ({
                     {t('Save to apply the refreshed model list.')}
                   </p>
                 ) : null}
-                <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
-                  {models.map((model) => (
-                    <span
-                      key={model.id}
-                      title={[
-                        ...Object.keys(model.routes ?? {}),
-                        model.contextWindow,
-                        model.reasoningEffort?.supported
-                          ? model.reasoningEffort.values.join(' / ')
-                          : ''
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                      className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
-                    >
-                      {model.id}
-                    </span>
-                  ))}
-                </div>
+                <SupportedModelTags models={models} />
               </div>
             )
           })()}

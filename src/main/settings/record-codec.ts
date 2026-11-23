@@ -381,6 +381,8 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     if (maxInputTokens !== undefined) provider.maxInputTokens = maxInputTokens
     if (maxOutputTokens !== undefined) provider.maxOutputTokens = maxOutputTokens
   }
+  if (vendorId === 'vectrust' && provider.manualConnection && contextWindow !== undefined)
+    provider.contextWindow = contextWindow
   if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
   if (reasoningEffortPreset !== undefined && type === 'custom') {
     provider.reasoningEffortPreset = reasoningEffortPreset

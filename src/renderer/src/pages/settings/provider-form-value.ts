@@ -4,6 +4,7 @@ import {
 } from '../../../../shared/local-provider-preset'
 import {
   manualProviderDefinition,
+  manualProviderPresetModels,
   resolveManualProviderConnection,
   type ManualProviderConnection
 } from '../../../../shared/manual-provider'
@@ -164,16 +165,18 @@ export const localModelPresetPatch = (
   }
 }
 
-// Both Settings and onboarding persist this shared form. Keep optional-number conversion here so a
-// blank custom value explicitly clears a saved override while non-custom requests omit the fields.
-export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormTokenLimits =>
-  value.type === 'custom'
+// An explicit null clears a saved override.
+export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormTokenLimits => {
+  const contextWindow = value.contextWindow.trim() ? Number(value.contextWindow) : null
+  if (value.type === 'official' && value.vendorId === 'vectrust') return { contextWindow }
+  return value.type === 'custom'
     ? {
-        contextWindow: value.contextWindow.trim() ? Number(value.contextWindow) : null,
+        contextWindow,
         maxInputTokens: value.maxInputTokens.trim() ? Number(value.maxInputTokens) : null,
         maxOutputTokens: value.maxOutputTokens.trim() ? Number(value.maxOutputTokens) : null
       }
     : {}
+}
 
 // Chooses the framework's preferred wire protocol for a new custom gateway. This mirrors runtime
 // endpoint selection: Responses wins when available, then Chat Completions, then Messages. The
@@ -350,7 +353,7 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
 // sign-in, surfaced as its own section (only one is shown at a time, gated on the active
 // framework). Cloud providers are shown in their own section.
 export type ProviderKindGroup =
-  'codex' | 'claude' | 'subscription' | 'api' | 'cloud' | 'third-party' | 'local' | 'other'
+  'codex' | 'claude' | 'subscription' | 'api' | 'cloud' | 'local' | 'other'
 
 export type ProviderKindGroupLabelKey =
   | 'Codex subscription'
@@ -358,7 +361,6 @@ export type ProviderKindGroupLabelKey =
   | 'Subscription'
   | 'Official API'
   | 'Cloud providers'
-  | 'Third-party platforms'
   | 'Local'
   | 'Other'
 
@@ -384,7 +386,6 @@ export const PROVIDER_KIND_GROUPS: {
   { id: 'subscription', labelKey: 'Subscription' },
   { id: 'api', labelKey: 'Official API' },
   { id: 'cloud', labelKey: 'Cloud providers' },
-  { id: 'third-party', labelKey: 'Third-party platforms' },
   { id: 'local', labelKey: 'Local' },
   { id: 'other', labelKey: 'Other' }
 ]
@@ -442,7 +443,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
       : vendor.supportsAnonymousAccess
         ? 'Free models work without an API key.'
         : 'API key — models provided',
-    group: vendor.cloudProvider ? 'cloud' : vendor.thirdPartyPlatform ? 'third-party' : 'api'
+    group: vendor.cloudProvider ? 'cloud' : 'api'
   })),
   ...LOCAL_MODEL_PRESETS.filter(({ id }) => isLocalProviderPresetId(id)).map(
     ({ id, label }): ProviderKind => ({ key: `local:${id}`, label, group: 'local' })
@@ -460,7 +461,8 @@ export const PROVIDER_KINDS: ProviderKind[] = [
 // active framework's preferred endpoint.
 export const providerKindPatch = (
   key: string,
-  customApiEndpoint: ModelProtocol = 'messages'
+  customApiEndpoint: ModelProtocol = 'messages',
+  supportedApiTypes?: readonly ModelProtocol[]
 ): Partial<ProviderFormValue> => {
   const reset = {
     codeBuddySite: undefined,
@@ -538,6 +540,17 @@ export const providerKindPatch = (
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)
     const manualProvider = manualProviderDefinition(vendorId)
+    const manualConnection =
+      vendorId === 'vectrust' && manualProvider
+        ? {
+            ...manualProvider.defaultConnection,
+            protocol: supportedApiTypes?.includes(manualProvider.defaultConnection.protocol)
+              ? manualProvider.defaultConnection.protocol
+              : (manualProvider.protocols.find((protocol) =>
+                  supportedApiTypes?.includes(protocol)
+                ) ?? manualProvider.defaultConnection.protocol)
+          }
+        : manualProvider?.defaultConnection
 
     return {
       ...reset,
@@ -546,7 +559,11 @@ export const providerKindPatch = (
       vendorId,
       region: vendor?.regions?.[0]?.id,
       ...(vendorId === 'cloudflare-ai-gateway' && { cloudflare: DEFAULT_CLOUDFLARE_GATEWAY }),
-      ...(manualProvider && { manualConnection: manualProvider.defaultConnection })
+      ...(manualConnection && { manualConnection }),
+      ...(vendorId === 'vectrust' &&
+        manualConnection && {
+          model: manualProviderPresetModels(vendorId, manualConnection)[0] ?? ''
+        })
     }
   }
 
