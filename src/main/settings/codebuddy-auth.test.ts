@@ -75,6 +75,7 @@ vi.mock('node:child_process', async (original) => {
                   ],
                   models: { currentModelId: 'model', availableModels: [
                     { modelId: 'model' },
+                    null,
                     { modelId: 'other', _meta: { effortOptions: ['medium', 'max'] } }
                   ] }
                 }

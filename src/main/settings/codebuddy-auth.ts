@@ -73,12 +73,14 @@ const readEffortValues = (value: unknown): ModelReasoningEffort[] => {
   ]
 }
 
-const readModelReasoningEfforts = (option: Record<string, unknown>): ModelReasoningEffort[] => {
-  const metadata = option._meta
+const readModelReasoningEfforts = (option: unknown): ModelReasoningEffort[] => {
+  if (!option || typeof option !== 'object' || Array.isArray(option)) return []
+  const optionRecord = option as Record<string, unknown>
+  const metadata = optionRecord._meta
   const metadataRecord =
     metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : undefined
   const candidates = [
-    option.effortOptions,
+    optionRecord.effortOptions,
     metadataRecord?.effortOptions,
     metadataRecord?.['codebuddy.ai/effortOptions'],
     metadataRecord?.supportedEfforts,
@@ -209,7 +211,7 @@ export async function runCodeBuddyAuth(
           acp.NewSessionResponse & {
             models?: {
               currentModelId?: string
-              availableModels?: Array<{ modelId?: unknown; _meta?: unknown }>
+              availableModels?: unknown[]
             }
           }
         >('session/new', { cwd, mcpServers: [] }),
@@ -251,7 +253,10 @@ export async function runCodeBuddyAuth(
         if (typeof modelId === 'string' && efforts.length) modelReasoningEfforts[modelId] = efforts
       }
       for (const entry of session.models?.availableModels ?? []) {
-        const modelId = entry.modelId
+        const modelId =
+          entry && typeof entry === 'object' && !Array.isArray(entry)
+            ? (entry as Record<string, unknown>).modelId
+            : undefined
         const efforts = readModelReasoningEfforts(entry)
         if (
           typeof modelId === 'string' &&
