@@ -402,6 +402,29 @@ describe('NotificationInboxDbRepository', () => {
     expect(snapshot.items.find((item) => item.kind === 'task.failed')?.readAt).toBeUndefined()
   })
 
+  it('keeps a research film notification unread until it is acknowledged explicitly', async () => {
+    const repository = await createRepository()
+    await record(repository, 'visible')
+    await repository.record({
+      id: 'film-ready',
+      dedupeKey: 'research-film:run-1',
+      kind: 'task.completed',
+      sessionId: 'session-visible',
+      originId: 'run-1',
+      title: 'Research film ready',
+      summary: 'A task completed.'
+    })
+
+    await repository.markSessionCompletionsRead(['session-visible'], 2500)
+    await repository.markVisibleSessionsRead(['session-visible'], 2750)
+    expect(await repository.snapshot()).toMatchObject({
+      unreadCount: 1,
+      items: expect.arrayContaining([expect.objectContaining({ id: 'film-ready' })])
+    })
+    await repository.markRead(['film-ready'], 3000)
+    expect((await repository.snapshot()).unreadCount).toBe(0)
+  })
+
   it('migrates legacy unread sessions exactly once and clears the old projection', async () => {
     const repository = await createRepository()
     await client!.unreadTaskSession.create({ data: { sessionId: 'legacy-session' } })

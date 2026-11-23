@@ -5,8 +5,10 @@ import { createRoot } from 'react-dom/client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
+import type { ResearchVideoActiveSession } from '../../../../shared/research-video-presentation'
 import type { SessionHistoryPage } from '../../../../shared/session-history'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import type { ChatSession } from '@/stores/session-store'
@@ -18,16 +20,21 @@ vi.mock('./WorkspaceSidebar', () => ({
     onPreviewSession,
     otherProjects = [],
     onOpenProject,
-    credentialPendingSessionIds
+    credentialPendingSessionIds,
+    activeFilmSessionIds
   }: {
     onPreviewSession?: (sessionId: string) => Promise<void> | void
     otherProjects?: Array<Pick<Project, 'id' | 'name' | 'description'>>
     onOpenProject?: (projectId: string) => void
     credentialPendingSessionIds?: ReadonlySet<string>
+    activeFilmSessionIds?: ReadonlySet<string>
   }) => (
     <div>
       <span data-testid="credential-waiting-sessions">
         {[...(credentialPendingSessionIds ?? [])].join(',')}
+      </span>
+      <span data-testid="active-film-sessions">
+        {[...(activeFilmSessionIds ?? [])].sort().join(',')}
       </span>
       <button type="button" onClick={() => void onPreviewSession?.('lazy-session')}>
         Preview Session
@@ -293,6 +300,68 @@ describe('WorkspaceSidebarContainer Session previews', () => {
       expect(loadOne).not.toHaveBeenCalled()
     } finally {
       act(() => root.unmount())
+    }
+  })
+
+  it('projects only this project’s generating films and clears them when generation settles', async () => {
+    const recoveryState = useDesktopRuntimeRecoveryStore.getState()
+    const filmSession = { projectId: 'project-1', sessionId: 'lazy-session' }
+    let listener: ((sessions: readonly ResearchVideoActiveSession[]) => void) | undefined
+    const activeSessions = vi
+      .fn<() => Promise<readonly ResearchVideoActiveSession[]>>()
+      .mockResolvedValueOnce([filmSession, { projectId: 'project-2', sessionId: 'other' }])
+      .mockResolvedValue([])
+    const onActivityChanged = vi.fn(
+      (next: (sessions: readonly ResearchVideoActiveSession[]) => void) => {
+        listener = next
+        return () => undefined
+      }
+    )
+    window.api = {
+      researchVideo: { activeSessions, onActivityChanged }
+    } as unknown as Window['api']
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const displayedActivity = (): string | null | undefined =>
+      container.querySelector('[data-testid="active-film-sessions"]')?.textContent
+
+    try {
+      await act(async () => {
+        root.render(
+          <WorkspaceSidebarContainer
+            {...({
+              projectId: 'project-1',
+              isProjectArchived: false
+            } as ComponentProps<typeof WorkspaceSidebarContainer>)}
+          />
+        )
+        await Promise.resolve()
+      })
+
+      expect(displayedActivity()).toBe('lazy-session')
+      expect(activeSessions).toHaveBeenCalledOnce()
+      expect(onActivityChanged).toHaveBeenCalledOnce()
+
+      await act(async () => listener?.([]))
+      expect(displayedActivity()).toBe('')
+
+      await act(async () => listener?.([filmSession]))
+      expect(displayedActivity()).toBe('lazy-session')
+      await act(async () => {
+        useDesktopRuntimeRecoveryStore.setState({
+          epoch: recoveryState.epoch + 1,
+          phase: 'reconnecting'
+        })
+      })
+      expect(displayedActivity()).toBe('')
+      await act(async () => {
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+      })
+      expect(activeSessions).toHaveBeenCalledTimes(2)
+      expect(displayedActivity()).toBe('')
+    } finally {
+      act(() => root.unmount())
+      useDesktopRuntimeRecoveryStore.setState(recoveryState, true)
     }
   })
 })

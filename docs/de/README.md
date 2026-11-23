@@ -53,18 +53,17 @@
 
 > Dieses Dokument ist eine Übersetzung der englischen `README.md`. Bei Abweichungen ist die [englische Version](../../README.md) maßgeblich.
 
-### 💡 AIPOCH Open-Science v1.3.3 — Neuerungen
+### 💡 AIPOCH Open-Science v1.3.4 — Neuerungen
 
-_21. November 2026_
+_22. November 2026_
 
-- **Automatische Updates**: Unter macOS kann sich ein geeignetes Update beim Beenden der App selbst installieren; unter Windows und Linux kann ein Update für den nächsten Start vorbereitet werden, während Sie arbeiten — Hintergrund-Downloads erfordern ein uneingeschränktes Netzwerk und ausreichend Speicherplatz, und der manuelle Pfad bleibt verfügbar.
-- **Integrierter Agent als Standard**: Neue Projekte und Sitzungen starten überall mit dem integrierten Open-Science-Agenten, einschließlich sauberer CLI- und SDK-Installationen; externe Agent-Laufzeiten werden nur auf Wunsch bei Bedarf installiert.
-- **Eine schlankere App**: Die installierte Desktop-App ist unter macOS und Windows kleiner, und die gebündelte Offline-npm-Laufzeit wird für Node 22 kompiliert, statt über tausend lose Paketdateien mitzuliefern.
-- **Einheitliche Bildbearbeitung**: Bearbeitungsanweisungen befinden sich im Gesprächskomponisten, und Aktionen per Mauszeiger oder Tastatur starten die Bearbeitung in jeder Vorschau — mit Versionsnavigation währenddessen.
-- **Fehler erklären sich selbst**: Anfrage-, Lade-, Import- und Notebook-Fehler nennen nun, was tatsächlich passiert ist, und unterscheiden gestoppte Läufe von Arbeit, die nie geantwortet hat.
-- **Verknüpfungen in den Einstellungen wiederhergestellt**: Fähigkeiten, Spezialisten und Konnektoren sind in den Einstellungen zurück; jede öffnet ihre Kategorie und kehrt zu Ihrer vorherigen Position zurück.
+- **Blick in den integrierten Agenten**: Projekte können die Agenten-Ablaufverfolgung aktivieren und korrelierte Bereiche für Turns, Modellanfragen und Werkzeugausführungen an einen selbst gehosteten OTLP/HTTP-Empfänger exportieren — die erfasste Detailtiefe liegt dabei in Ihrer Hand.
+- **Windows-Updates ohne Hürden**: Ein In-App-Update bleibt nicht mehr stehen, solange der integrierte Agent läuft, und stabile Windows-Updates werden wieder als kompakte Installer-Deltas angewendet.
+- **Lange Notebook-Verläufe bleiben flott**: Beim Starten und Abschließen von Läufen, beim Auswählen von Ergebnissen und beim Öffnen von Vorschauen wird der gesamte Verlauf nicht mehr erneut gelesen.
+- **Speicheranzeigen, denen Sie vertrauen können**: Die Compute-Zusammenfassung stimmt unter macOS nun mit der Aktivitätsanzeige überein und zeigt unter Windows den zugesicherten Speicher im Verhältnis zu seinem Limit.
+- **CodeBuddy-Reasoning-Aufwände**: Die Auswahl bietet nur noch die Stufen an, die das gewählte CodeBuddy-Modell tatsächlich unterstützt.
 
-[Vollständige Versionshinweise v1.3.3](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
+[Vollständige Versionshinweise v1.3.4](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 

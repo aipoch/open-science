@@ -22,7 +22,9 @@ import { toRuntimeUploadedAttachment } from '../../shared/uploads'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 
 const INTERRUPTED_TURN_CONTINUATION_PROMPT =
-  'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request.'
+  'Continue the interrupted turn from where it stopped. Do not repeat completed work or completed tool calls unless needed to finish the original request. ' +
+  'If any operations were denied permission in this turn, continue only with independent work that is already permitted. ' +
+  'Do not retry the denied operations or use another tool or route to perform them. Explain what could not be completed.'
 const SAVE_AS_SKILL_PROMPT = `[System] Distill this session into a reusable Skill.
 
 Review the active conversation branch: what was the goal, which agents and tools were used, what were the key steps, and what steering or corrections did the user provide along the way? Capture the reusable pattern, not a verbatim transcript.

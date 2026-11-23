@@ -385,6 +385,7 @@ describe('application command composition', () => {
       'preview-resources:export-research-video',
       'preview-resources:cancel-research-video-export',
       'preview-resources:research-video-progress',
+      'research-video:active-sessions',
       'research-video:start',
       'research-video:status',
       'research-video:remove',

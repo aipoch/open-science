@@ -1,7 +1,7 @@
 import { expect, type Locator, type Page, type TestInfo } from '@playwright/test'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { createProject, sendPrompt } from './certification/helpers'
-import { test } from './fixtures/electron-app'
+import { test, type ElectronApp } from './fixtures/electron-app'
 import {
   installSessionOutcomeFault,
   holdOutcomeAdmission,
@@ -1011,5 +1011,123 @@ test('keeps a prepared message after a real pre-admission crash without inventin
     expect(outcomeFor(await sessionForPrompt(page, prompt), prompt)).toBeUndefined()
   } finally {
     await gate.restore()
+  }
+})
+
+const openMemoryProject = async (app: ElectronApp): Promise<Page> => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await page.evaluate(async () => {
+    await window.api.memory.setEnabled({ enabled: true })
+    await window.api.settings.setDefaultPermissionProfile({ profile: 'ask' })
+  })
+  await createProject(page, '授权拒绝测试')
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
+  return page
+}
+
+test('explains a denied save in the original turn when the agent stops without a reply', async ({
+  app
+}, testInfo) => {
+  const page = await openMemoryProject(app)
+  const composer = page.getByRole('textbox', { name: '输入任何内容' })
+  const send = page.getByRole('button', { name: '发送消息', exact: true })
+  const memoryBefore = await page.evaluate(() => window.api.memory.snapshot())
+  const card = page.getByTestId('permission-card')
+  const denySavingMemory = async (): Promise<void> => {
+    await composer.fill('请把测试用的周报格式保存到项目记忆里。')
+    await send.click()
+    await expect(card).toBeVisible()
+    await card.getByTestId('deny-button').click()
+    await expect(card).toHaveCount(0)
+  }
+
+  await denySavingMemory()
+  const notice = page.getByText('授权已被拒绝，相关操作未执行。', { exact: true })
+  await expect(notice).toBeVisible()
+  await expect(page.getByText('已保存周报格式。', { exact: true })).toHaveCount(0)
+  expect(await page.evaluate(() => window.api.memory.snapshot())).toEqual(memoryBefore)
+  await page.screenshot({ path: testInfo.outputPath('memory-denied.png'), animations: 'disabled' })
+
+  await composer.fill('你好')
+  await send.click()
+  await expect(
+    page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
+  ).toBeVisible()
+  await expect(notice).toBeVisible()
+  expect(await page.evaluate(() => window.api.memory.snapshot())).toEqual(memoryBefore)
+  await page.screenshot({
+    path: testInfo.outputPath('after-follow-up.png'),
+    animations: 'disabled'
+  })
+
+  await denySavingMemory()
+  await expect(notice).toHaveCount(2)
+  await page.getByRole('button', { name: '恢复会话', exact: true }).click()
+  await expect(
+    page.getByText('保存记忆的授权被拒绝，这次没有保存。', { exact: true })
+  ).toBeVisible()
+  await expect(card).toHaveCount(0)
+  await expect(notice).toHaveCount(1)
+  expect(await page.evaluate(() => window.api.memory.snapshot())).toEqual(memoryBefore)
+})
+
+test('keeps both tool results when a read succeeds and a save is refused', async ({
+  app
+}, testInfo) => {
+  const page = await openMemoryProject(app)
+  const composer = page.getByRole('textbox', { name: '输入任何内容' })
+  const send = page.getByRole('button', { name: '发送消息', exact: true })
+  const card = page.getByTestId('permission-card')
+  const notice = page.getByText('授权已被拒绝，相关操作未执行。', { exact: true })
+  const memoryBefore = await page.evaluate(() => window.api.memory.snapshot())
+
+  for (const partialReply of [false, true]) {
+    await composer.fill(
+      '请先读取记忆分类，再把测试用的周报格式保存到项目记忆里。' +
+        (partialReply ? '测试情形：只回复已读部分。' : '')
+    )
+    await send.click()
+    await expect(card).toBeVisible()
+    await card.getByTestId('deny-button').click()
+    await expect(card).toHaveCount(0)
+
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const { sessions } = await window.api.sessions.loadAll()
+          return sessions
+            .flatMap((session) => session.activities ?? [])
+            .filter((activity) => /^e2e-(memory-categories|save-memory)-/.test(activity.id))
+            .map(({ status, toolDisposition }) => ({
+              status,
+              disposition: toolDisposition ?? null
+            }))
+        })
+      )
+      .toEqual(
+        Array.from({ length: partialReply ? 2 : 1 }, () => [
+          { status: 'completed', disposition: null },
+          { status: 'completed', disposition: 'declined' }
+        ]).flat()
+      )
+
+    if (partialReply) {
+      await expect(page.getByText('已读取记忆分类。', { exact: true })).toBeVisible()
+    } else {
+      await expect(notice).toBeVisible()
+    }
+    expect(await page.evaluate(() => window.api.memory.snapshot())).toEqual(memoryBefore)
+    const group = page.getByTestId('tool-group').last()
+    const header = group.getByTestId('tool-group-header')
+    await expect(header).toHaveAttribute('aria-expanded', 'false')
+    await expect(header).toContainText('工具活动')
+    await expect(header).toContainText('1 项完成 · 1 项因授权被拒绝而未执行')
+    await page.screenshot({
+      path: testInfo.outputPath(partialReply ? 'partial-reply.png' : 'partial-no-reply.png'),
+      animations: 'disabled'
+    })
+    await header.click()
+    await expect(group.getByText('已被你拒绝', { exact: true })).toBeInViewport({ ratio: 1 })
   }
 })

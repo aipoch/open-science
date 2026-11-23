@@ -51,18 +51,17 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-### 💡 AIPOCH Open-Science v1.3.3 updates
+### 💡 AIPOCH Open-Science v1.3.4 updates
 
-_November 21, 2026_
+_November 22, 2026_
 
-- **Automatic updates**: On macOS, an eligible update can install itself when you quit the app; on Windows and Linux, an update can be prepared for the next launch while you work — background downloads require an unrestricted network and storage room, and the manual path stays available.
-- **Built-in Agent by default**: New projects and sessions start with the built-in Open-Science Agent everywhere, including clean CLI and SDK installs; external agent runtimes install on demand only when you choose them.
-- **A leaner app**: The installed desktop is smaller on macOS and Windows, and the bundled offline npm runtime is compiled for Node 22 instead of shipping over a thousand loose package files.
-- **Unified image editing**: Editing instructions live in the conversation composer, and hover or keyboard actions enter editing from any preview with version navigation throughout.
-- **Failures explain themselves**: Request, loading, import, and notebook failures now name what actually happened, and stopped runs are distinguished from work that never answered.
-- **Settings shortcuts restored**: Skills, Specialists, and Connectors are back in Settings, each opening its category and returning to where you were.
+- **See inside the built-in Agent**: Projects can opt in to Agent tracing, exporting correlated spans for turns, model requests, and tool executions to an OTLP/HTTP receiver you host, with capture detail you control.
+- **Windows updates, unblocked**: An in-app update no longer stalls when the built-in Agent is running, and stable Windows updates apply as compact installer deltas again.
+- **Long Notebook histories stay fast**: Starting and finishing Runs, selecting results, and opening previews no longer re-read the whole history.
+- **Memory readings you can trust**: The Compute summary now matches Activity Monitor on macOS and shows committed memory against its limit on Windows.
+- **CodeBuddy reasoning efforts**: The effort picker now offers only the levels the selected CodeBuddy model actually supports.
 
-[View the full v1.3.3 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
+[View the full v1.3.4 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 

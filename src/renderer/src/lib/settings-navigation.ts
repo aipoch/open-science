@@ -91,7 +91,8 @@ export type ModelView =
   | ImageServicesView
   | { kind: 'list'; recoveryProviderId?: string; recoveryModel?: string }
   | { kind: 'local-models' }
-  | { kind: 'create' }
+  // Without a provider kind the Add provider picker is shown; picking one opens the seeded form.
+  | { kind: 'create'; providerKindKey?: string }
   | { kind: 'edit'; providerId: string }
 
 export type SkillMarketplaceView =
