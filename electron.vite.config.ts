@@ -50,6 +50,8 @@ export default defineConfig(({ command }) => ({
   preload: {
     plugins: [electronHostDependencyGuard(process.cwd())],
     build: {
+      // Sandboxed preloads cannot load the shared error redactor with require() at runtime.
+      externalizeDeps: { exclude: ['@aipoch/diagnostics'] },
       // Local npm packages resolve outside node_modules through their file: links.
       commonjsOptions: {
         include: [

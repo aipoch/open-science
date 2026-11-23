@@ -309,6 +309,7 @@ describe('production delegated framework runtime bridge', () => {
         const frameworks = createProductionDelegatedFrameworkRuntime({
           capacity: 1,
           dataRoot,
+          codexRuntime: CODEX_DELEGATION_AUDITED_RUNTIME,
           runtime: {
             settingsService: settings,
             specialistService: {

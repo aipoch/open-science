@@ -9,6 +9,7 @@ import * as Dialog from '@/components/ui/dialog'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import { APP } from '../../../../shared/app-config'
+import { MANAGED_CODEX_VERSION } from '../../../../shared/codex-runtime'
 import { MINIMUM_CLAUDE_CLI_VERSION } from '../../../../shared/claude-runtime'
 import type { ProviderView } from '../../../../shared/settings'
 import { i18next } from '@/i18n'
@@ -4502,11 +4503,11 @@ describe('SettingsPage Codex framework', () => {
   it.each([
     [true, '0.144.6', true],
     [false, '0.144.6', true],
-    [true, '0.157.1', false],
-    [true, '0.158.0', false],
+    [true, '0.157.1', true],
+    [true, MANAGED_CODEX_VERSION, false],
     [true, undefined, true]
   ])(
-    'requires a native update for unsupported managed or external CLIs (%s, %s)',
+    'offers the applicable native update for managed or external CLIs (%s, %s)',
     async (nativeManaged, nativeVersion, expected) => {
       const api = window.api.settings
       const snapshot = {

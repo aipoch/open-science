@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { MANAGED_CODEX_VERSION } from '../../shared/codex-runtime'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
 import type { ClaudeDetectResult } from '../../shared/settings'
 import {
@@ -3376,7 +3377,7 @@ describe('SettingsService: preflight & spawn config', () => {
         path: adapterPath,
         version: 'codex-acp 1.6.2',
         nativePath,
-        nativeVersion: 'codex-cli 0.157.1'
+        nativeVersion: `codex-cli ${MANAGED_CODEX_VERSION}`
       }
     })
     await repository.setCodexInfo({
@@ -3420,7 +3421,7 @@ describe('SettingsService: preflight & spawn config', () => {
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: MANAGED_CODEX_VERSION
     })
     const provider = (
       await service.upsertProvider({
