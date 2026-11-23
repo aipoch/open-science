@@ -3,9 +3,11 @@ import { BaseSequencer, type TestSpecification } from 'vitest/node'
 
 export const WINDOWS_TEST_SHARD_COUNT = 8
 
-// Keep each module together. The last group owns all remaining application and tooling
-// tests, including new directories, so this routing never limits Vitest's discovery. Groups are
-// sized from measured scheduled-run durations so each serial shard stays inside the job timeout.
+// Keep each module together by default. A small measured exact-file table spreads the slowest
+// files across the existing serial shards. The last group owns all remaining application and
+// tooling tests, including new directories, so this routing never limits Vitest's discovery.
+// Groups are sized from measured scheduled-run durations so each serial shard stays inside the
+// job timeout.
 export const WINDOWS_TEST_MODULE_GROUPS = [
   // 1: Session packages and PDF packages. Run 38471659827 left this shard at 18 minutes
   // while the catch-all exceeded 60; PDF writer alone used over six minutes there.
@@ -66,10 +68,50 @@ export const WINDOWS_TEST_MODULE_GROUPS = [
   ]
 ] as const
 
+// Run 44954000512 showed two slow groups at roughly 55 minutes and two spare groups
+// below 25 minutes. Move only the measured outliers, keeping their complete files and project
+// identities together while reducing the maximum shard wall time.
+export const WINDOWS_TEST_EXACT_SHARDS: Readonly<Record<string, number>> = {
+  'src/main/database/migration-service.test.ts': 5,
+  'src/main/session-package/service.test.ts': 5,
+  'src/main/session-package/deletion.test.ts': 7,
+  'src/main/session-package/literature.test.ts': 6,
+  'src/main/session-package/fork.test.ts': 6,
+  'src/main/session-package/export-validation.test.ts': 7,
+  'src/main/session-package/ro-crate.integration.test.ts': 7,
+  'src/main/session-package/web-evidence.integration.test.ts': 6,
+  'src/main/session-package/desktop.test.ts': 6,
+  'src/main/schedules/dispatcher.test.ts': 5,
+  'scripts/ci/host-owner-split.test.ts': 7,
+  'scripts/ci/module-graph/retirement.test.ts': 6,
+  'src/main/pdf-annotations/sharing.integration.test.ts': 2,
+  'src/main/pdf-annotations/repository.integration.test.ts': 2,
+  'src/main/notifications/notification-inbox-repository.test.ts': 3,
+  'scripts/ci/package-host-test-impact.test.ts': 3,
+  'scripts/ci/module-graph/consumer-coverage.test.ts': 3,
+  'scripts/ci/package-boundaries.test.ts': 3,
+  'scripts/ci/module-graph/derived-consumers.test.ts': 3,
+  'src/main/settings/service.test.ts': 3,
+  'src/main/session-replay/service.test.ts': 2,
+  'scripts/ci/e2e-execution-ownership.test.ts': 2,
+  'scripts/ci/full-owner-split.test.ts': 7,
+  'packages/agent-harness/src/long-session-benchmark.test.ts': 7,
+  'scripts/ci/audit-module-ownership.test.ts': 7,
+  'scripts/ci/pr-gate-workflow.test.ts': 7,
+  'scripts/ci/host-test-impact.test.ts': 7,
+  'scripts/windows-data-reset.test.ts': 2,
+  'scripts/database-migration-ledger-smoke.test.ts': 2,
+  'src/main/host-layer-dependencies.architecture.test.ts': 2,
+  'scripts/ci/module-impact-inputs.test.ts': 2,
+  'scripts/ci/windows-e2e-regression.test.ts': 7,
+  'scripts/ci/module-test-impact.test.ts': 3,
+  'src/main/settings/classification-usage.test.ts': 3
+}
+
 export function windowsTestShard(path: string): number {
   const normalized = path.replaceAll('\\', '/')
-  // Run 38536308322: this 14-minute suite pushed shard 2 past 60 minutes; shard 5 used 16.
-  if (normalized === 'src/main/database/migration-service.test.ts') return 5
+  const exactShard = WINDOWS_TEST_EXACT_SHARDS[normalized]
+  if (exactShard) return exactShard
   const group = WINDOWS_TEST_MODULE_GROUPS.findIndex((prefixes) =>
     prefixes.some((prefix) => normalized.startsWith(prefix))
   )

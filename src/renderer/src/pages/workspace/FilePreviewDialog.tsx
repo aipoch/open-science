@@ -229,6 +229,7 @@ const FilePreviewDialog = ({
                     leaveGuardScope={dialogPreviewGuardScope(dialogItem.projectId, dialogItem.id)}
                     retryResolutionEnabled={open}
                     {...annotationPort}
+                    imageEditPresentation="dialog"
                   />
                 ) : null}
               </div>

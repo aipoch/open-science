@@ -42,7 +42,7 @@ const suites = [
 ] as const
 
 it.each([
-  ['PR mainlines', pr.jobs.windows_e2e, 'Run mainline journeys'],
+  ['PR mainlines', pr.jobs.windows_e2e_setup, 'Pack E2E setup'],
   ['scheduled regression', workflow.jobs.windows_e2e_setup, 'Pack E2E setup']
 ])('builds the candidate native sandbox after staging dependencies for %s', (_, job, consumer) => {
   const build = step(job, 'Build Windows sandbox native host')
@@ -57,7 +57,7 @@ it.each([
 })
 
 it('schedules independent complete Windows E2E and keeps the manual full entry point', () => {
-  expect(workflow.on.schedule).toEqual([{ cron: '17 18 * * *' }])
+  expect(workflow.on.schedule).toEqual([{ cron: '17 15 * * *' }])
   expect(workflow.on.workflow_dispatch).toEqual({
     inputs: {
       workspace_test_pattern: {
@@ -88,10 +88,10 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
   })
   expect(preparation.if).toContain("needs.plan.outputs.should_test == 'true'")
   for (const name of ['Install dependencies', 'Build Electron application']) {
-    expect(step(preparation, name)).toEqual(step(pr.jobs.windows_e2e, name))
+    expect(step(preparation, name)).toEqual(step(pr.jobs.windows_e2e_setup, name))
   }
   expect(step(preparation, 'Download Windows Notebook runtime').with).toEqual(
-    step(pr.jobs.windows_e2e, 'Download Windows Notebook runtime').with
+    step(pr.jobs.windows_e2e_setup, 'Download Windows Notebook runtime').with
   )
   expect(step(preparation, 'Pack E2E setup').run).toContain('e2e-setup-snapshot.mjs pack')
   const execution = workflow.jobs.windows_e2e

@@ -267,7 +267,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
       }}
       className={cn(
         noticeSurfaceClassName,
-        'pointer-events-auto fixed z-toast shadow-dialog motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 motion-reduce:animate-none',
+        'pointer-events-auto fixed z-toast shadow-notice motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 motion-reduce:animate-none',
         !position && 'invisible'
       )}
     >

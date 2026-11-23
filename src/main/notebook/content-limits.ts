@@ -27,6 +27,18 @@ export const NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_ENV =
 
 type LimitedText = { text: string; truncated: boolean }
 
+// Diagnostics often put the failing expression first and the exception or exit reason last.
+export const notebookDiagnosticPreview = (text: string, limit: number): string => {
+  if (text.length <= limit) return text
+  const marker = '\n…\n'
+  const available = limit - marker.length
+  const head = Math.ceil(available / 2)
+  // Drop a split surrogate at either cut rather than returning half a character.
+  const prefix = text.slice(0, head).replace(/[\uD800-\uDBFF]$/u, '')
+  const suffix = text.slice(text.length - (available - head)).replace(/^[\uDC00-\uDFFF]/u, '')
+  return prefix + marker + suffix
+}
+
 // Takes a UTF-8 prefix without leaving an invalid partial code point at the boundary.
 export const limitUtf8 = (value: string, limitBytes: number): LimitedText => {
   const encoded = Buffer.from(value, 'utf8')

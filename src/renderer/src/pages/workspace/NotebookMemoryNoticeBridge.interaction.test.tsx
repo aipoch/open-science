@@ -33,6 +33,7 @@ beforeEach(() => {
   unsubscribeMemoryPolicy.mockReset()
   useNotebookMemoryNoticeStore.setState({
     rejection: undefined,
+    latestCheck: undefined,
     terminal: undefined,
     dismissedRefusalIds: [],
     dismissedPressureScopes: [],
@@ -154,9 +155,11 @@ it('updates recovery without running and opens the existing Compute preview on M
       refusalId: 'r',
       memory: {
         status: 'pressured',
-        reason: 'low',
-        source: 'linux-procfs',
-        executionScope: 'linux:host',
+        reason: 'linux-cgroup-high',
+        source: 'linux-proc-cgroup-v2',
+        executionScope: 'linux:cgroup-v2:/tenant/child',
+        limitingCgroupPath: '/tenant',
+        cgroupConstraints: [{ path: '/tenant', currentBytes: 1024 ** 3, highBytes: 1024 ** 3 }],
         checkedAt: 1
       }
     })
@@ -166,13 +169,23 @@ it('updates recovery without running and opens the existing Compute preview on M
       hasLiveResources: true,
       memory: {
         status: 'healthy',
-        reason: 'recovered',
-        source: 'linux-procfs',
-        executionScope: 'linux:host',
+        reason: 'healthy',
+        source: 'linux-proc-cgroup-v2',
+        executionScope: 'linux:cgroup-v2:/tenant/child',
+        cgroupConstraints: [
+          { path: '/tenant/child', currentBytes: 42, highBytes: 100 },
+          { path: '/tenant', currentBytes: 512 * 1024 ** 2, highBytes: 1024 ** 3 }
+        ],
         checkedAt: 2
       }
     })
   )
+  await act(async () => fireEvent.click(screen.getByText('Memory check details')))
+  expect(
+    screen.getByRole('row', {
+      name: 'cgroup usage / throttling limit 1 GiB / 1 GiB 512 MiB / 1 GiB'
+    })
+  ).toBeTruthy()
   expect(
     screen.getByText('Memory has recovered. Execution still requires your choice.')
   ).toBeTruthy()
@@ -185,6 +198,33 @@ it('updates recovery without running and opens the existing Compute preview on M
   expect(screen.queryByRole('dialog')).toBeNull()
   expect(continueExecution).not.toHaveBeenCalled()
   expect(execute).not.toHaveBeenCalled()
+})
+
+it('shows macOS pressure and the remaining recovery window in separate readings', async () => {
+  const memory = {
+    status: 'pressured',
+    reason: 'mac-memory-critical',
+    pressureLevel: 'critical',
+    source: 'darwin-sysctl-dispatch',
+    executionScope: 'darwin:host',
+    checkedAt: 1
+  } as const
+  window.api.notebook.getMemoryPolicyState = vi.fn(async () => ({
+    ...memory,
+    checkedAt: 2,
+    reason: 'mac-memory-recovering',
+    pressureLevel: 'normal' as const,
+    recoveryRemainingMs: 15_000
+  }))
+  await act(async () => root.render(<NotebookMemoryNoticeBridge projectId="project" />))
+  await act(async () => rejected({ projectId: 'project', sessionId: 'session', memory }))
+  await act(async () => fireEvent.click(screen.getByText('Memory check details')))
+  expect(
+    screen.getByRole('row', {
+      name: 'Status Critical memory pressure Waiting for stable memory pressure'
+    })
+  ).toBeTruthy()
+  expect(screen.getByRole('row', { name: /Recovery time remaining.*15/ })).toBeTruthy()
 })
 
 it.each(['warning', 'critical'] as const)(
@@ -271,7 +311,9 @@ it('refreshes visible policy with one request in flight and stops polling after 
         source: 'agent',
         memory: {
           status: 'pressured',
-          reason: 'low',
+          availableBytes: 512 * 1024 ** 2,
+          totalBytes: 8 * 1024 ** 3,
+          reason: 'linux-memory-low',
           source: 'linux-procfs',
           executionScope: 'linux:host',
           checkedAt: 1
@@ -285,6 +327,8 @@ it('refreshes visible policy with one request in flight and stops polling after 
       finish({
         status: 'healthy',
         reason: 'recovered',
+        availableBytes: 3 * 1024 ** 3,
+        totalBytes: 8 * 1024 ** 3,
         source: 'linux-procfs',
         executionScope: 'linux:host',
         checkedAt: 2
@@ -292,6 +336,10 @@ it('refreshes visible policy with one request in flight and stops polling after 
     )
     expect(
       screen.getByText('Memory has recovered. Execution still requires your choice.')
+    ).toBeTruthy()
+    await act(async () => fireEvent.click(screen.getByText('Memory check details')))
+    expect(
+      screen.getByRole('row', { name: 'Available RAM / total 512 MiB / 8 GiB 3 GiB / 8 GiB' })
     ).toBeTruthy()
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
     await act(async () => vi.advanceTimersByTimeAsync(20_000))

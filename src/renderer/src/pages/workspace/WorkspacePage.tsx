@@ -159,6 +159,20 @@ const planProjectionRecoveryPorts = {
   finishRun: (sessionId: string) => useSessionStore.getState().finishRun(sessionId)
 }
 
+const persistBookmarkSessionTextSource = async (
+  projectId: string,
+  sessionId: string
+): Promise<void> => {
+  const state = useSessionStore.getState()
+  const session = state.sessions.find(
+    (candidate) => candidate.id === sessionId && candidate.projectId === projectId
+  )
+  if (!session || session.isPending || session.packageOrigin) {
+    throw new Error('Bookmark Session is not available.')
+  }
+  await saveSessionInOrder(toPersistedSession(session, state.streamingMessages))
+}
+
 const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
@@ -1709,16 +1723,7 @@ const WorkspacePage = ({
         projectId={bookmarkSession?.projectId}
         sessionId={bookmarkSession?.id}
         writable={bookmarksWritable}
-        persistSessionTextSource={async (projectId, sessionId) => {
-          const state = useSessionStore.getState()
-          const session = state.sessions.find(
-            (candidate) => candidate.id === sessionId && candidate.projectId === projectId
-          )
-          if (!session || session.isPending || session.packageOrigin) {
-            throw new Error('Bookmark Session is not available.')
-          }
-          await saveSessionInOrder(toPersistedSession(session, state.streamingMessages))
-        }}
+        persistSessionTextSource={persistBookmarkSessionTextSource}
       >
         <PdfAnnotationsProvider
           loadAnnotations={false}

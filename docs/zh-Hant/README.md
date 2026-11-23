@@ -53,18 +53,18 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-### 💡 AIPOCH Open-Science v1.3.2 更新
+### 💡 AIPOCH Open-Science v1.3.3 更新
 
-_2026 年 11 月 19 日_
+_2026 年 11 月 21 日_
 
-- **更輕量的長對話**：串流回覆不再累積隱藏項目，未在檢視中的對話內容也會在妥善儲存後回收——大型工作階段保持回應靈敏，且不會遺失你的位置。
-- **Kilo Gateway**：新增 Kilo 為官方服務商，無論有無 API 金鑰皆可使用——匿名目錄重新整理會顯示你的連線可使用的免費模型，入門流程也可略過服務商步驟，稍後再決定。
-- **圖像模型目錄**：在儲存前重新整理內建的 OpenAI、MiniMax、Bailian 與 Volcengine Ark 圖像服務模型清單，當目前使用的模型仍可使用時會予以保留。
-- **更可靠的第一則代理訊息**：全新的預設 Agent、Claude Code 與 Codex 對話不再於首次模型請求前失敗，內建 Agent 也會以預期的提示啟動已排程的工作階段。
-- **PDF 翻譯保留版面配置**：換行的標題、圖說、定義與數學敘述會依閱讀順序還原，公式、連結與圖形也維持在原始位置。
-- **更清楚的下載失敗訊息**：首頁會指出使用案例下載失敗的具體原因——缺少清單檔、套件無法使用、逾時、網路、伺服器、驗證、磁碟空間不足或儲存問題。
+- **自動更新**：在 macOS 上，符合條件的更新可在你退出應用程式時自行安裝；在 Windows 和 Linux 上，更新可在你的工作過程中為下次啟動預備——背景下載需要不受限制的網路與儲存空間，手動更新路徑依然保留。
+- **內建 Agent 成為預設**：新專案與新工作階段在任何地方（包含全新安裝的 CLI 與 SDK）皆以內建 Open-Science Agent 啟動；外部 Agent 執行環境只在你選用時才按需安裝。
+- **更精簡的應用程式**：macOS 與 Windows 上的安裝檔案更小，內建離線 npm 執行環境改為以 Node 22 編譯，不再隨附一千多個鬆散的套件檔案。
+- **統一的圖像編輯**：編輯指令位於對話輸入列中，從任何預覽皆可透過滑鼠停駐或鍵盤操作進入編輯，全程支援版本瀏覽。
+- **失敗會說明原因**：請求、載入、匯入與 Notebook 失敗現在會指明實際發生的狀況，並區分已停止的執行與從未回應的工作。
+- **設定捷徑回來了**：Skills、Specialists 與 Connectors 重新回到「設定」中，各自開啟所屬類別，並返回你原先所在的位置。
 
-[查看 v1.3.2 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.3.2)
+[查看 v1.3.3 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +89,14 @@ _2026 年 11 月 19 日_
 | Linux ARM64                             | Linux ARM64 AppImage 或 Debian 套件       |
 
 安裝前的驗證方法見[驗證下載](../../SECURITY.md#verifying-your-download)。
+
+在 Windows 10/11 x64 上，可以從 [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) 安裝桌面應用程式，也可以在 PowerShell 中使用 WinGet 安裝。
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+各發行管道提供的版本可能不同。詳情請參閱[安裝與更新指南](https://aipoch.com/docs/guides/installation/)。
 
 macOS 使用者也可以透過 [Homebrew](https://brew.sh) 安裝：
 

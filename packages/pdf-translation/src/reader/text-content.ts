@@ -309,26 +309,39 @@ async function hasUnownedUnicodeGlyph(
   }
 }
 
+const noUnreliableText = { indexes: [], mathIndexes: [] } as const
+
+function countCharacters(text: string): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const character of text) counts.set(character, (counts.get(character) ?? 0) + 1)
+  return counts
+}
+
 // Flag a CID, nonblank simple-font control, or embedded symbolic render slot
 // that fell back to its numeric code despite an available Unicode map. A private
 // render slot proves paint availability, never the intended Unicode character.
-// Preserve the literal source and eligibility; missing metadata is not proof.
+// Keep the literal source; missing metadata alone cannot prove a fallback.
 async function unreliableTextItems(
   page: PDFPageProxy,
   content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>
-): Promise<readonly number[]> {
+): Promise<{ indexes: readonly number[]; mathIndexes: readonly number[] }> {
   if (
     !page.commonObjs ||
     typeof page.getOperatorList !== 'function' ||
     !content.items.some((item) => 'str' in item && item.str.trim())
   )
-    return []
+    return noUnreliableText
   try {
     const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
     const operators = await page.getOperatorList()
     const streams = new Map<
       string,
-      { text: string; missing: { start: number; end: number }[]; complete: boolean }
+      {
+        text: string
+        missing: { start: number; end: number }[]
+        complete: boolean
+        mathFallback: string
+      }
     >()
     const stack: (string | undefined)[] = []
     let current: string | undefined
@@ -353,7 +366,8 @@ async function unreliableTextItems(
       ) {
         const font = page.commonObjs.get(current),
           map = font?.toUnicode?._map
-        if (!streams.has(current)) streams.set(current, { text: '', missing: [], complete: true })
+        if (!streams.has(current))
+          streams.set(current, { text: '', missing: [], complete: true, mathFallback: '' })
         const stream = streams.get(current)!
         for (const glyph of args.flat()) {
           if (!glyph || typeof glyph !== 'object') continue
@@ -408,6 +422,14 @@ async function unreliableTextItems(
           )
             continue
           stream.missing.push({ start, end: stream.text.length })
+          if (
+            font.composite === true &&
+            font.type === 'CIDFontType2' &&
+            /^(?:[A-Z]{6}\+)?CambriaMath$/u.test(font.name ?? '') &&
+            privateRenderSlot &&
+            glyph.originalCharCode > 0x7f
+          )
+            stream.mathFallback += text
         }
       }
     }
@@ -426,21 +448,46 @@ async function unreliableTextItems(
         .get(item.fontName)!
         .push({ index, start: previous.length, end: previous.length + text.length })
     }
-    return [...streams]
-      .flatMap(([name, stream]) => {
-        if (!stream.complete || textByFont.get(name) !== stream.text) return []
-        let rangeIndex = 0
-        return (itemsByFont.get(name) ?? []).flatMap((item) => {
-          while (rangeIndex < stream.missing.length && stream.missing[rangeIndex].end <= item.start)
-            rangeIndex++
-          const range = stream.missing[rangeIndex]
-          return range && item.start < item.end && item.end > range.start ? [item.index] : []
-        })
+    const mathIndexes: number[] = []
+    const indexes = [...streams].flatMap(([name, stream]) => {
+      const literal = textByFont.get(name)
+      if (!stream.complete || literal === undefined) return []
+      const items = itemsByFont.get(name) ?? []
+      if (stream.mathFallback) {
+        // Bidi can reorder misdecoded math glyphs. A character must have the
+        // same count in both streams and no mapped occurrence in this face.
+        const rendered = countCharacters(stream.text)
+        const extracted = countCharacters(literal)
+        if (
+          rendered.size === extracted.size &&
+          [...rendered].every(([character, count]) => extracted.get(character) === count)
+        ) {
+          const fallback = countCharacters(stream.mathFallback)
+          for (const { index, start, end } of items)
+            if (
+              [...literal.slice(start, end)].some(
+                (c) => fallback.has(c) && fallback.get(c) === rendered.get(c)
+              )
+            )
+              mathIndexes.push(index)
+        }
+      }
+      if (literal !== stream.text) return []
+      let rangeIndex = 0
+      return items.flatMap((item) => {
+        while (rangeIndex < stream.missing.length && stream.missing[rangeIndex].end <= item.start)
+          rangeIndex++
+        const range = stream.missing[rangeIndex]
+        return range && item.start < item.end && item.end > range.start ? [item.index] : []
       })
-      .sort((a, b) => a - b)
+    })
+    return {
+      indexes: [...new Set([...indexes, ...mathIndexes])].sort((a, b) => a - b),
+      mathIndexes: mathIndexes.sort((a, b) => a - b)
+    }
   } catch {
     // An optional font audit must not discard otherwise readable source text.
-    return []
+    return noUnreliableText
   }
 }
 
@@ -451,22 +498,24 @@ async function unreliableTextItems(
 // distinguish it from unrelated control-code encodings in other math fonts.
 export async function getPdfTranslationTextContent(
   page: PDFPageProxy,
-  onUnreliableItems?: (indexes: readonly number[]) => void,
+  onUnreliableItems?: (indexes: readonly number[], mathIndexes: readonly number[]) => void,
   onUnownedUnicodeGlyph?: (proved: boolean) => void
 ): ReturnType<PDFPageProxy['getTextContent']> {
   const content = await page.getTextContent()
-  const unreliable = onUnreliableItems ? await unreliableTextItems(page, content) : []
+  const unreliable = onUnreliableItems ? await unreliableTextItems(page, content) : noUnreliableText
   const finish = (
     result: Awaited<ReturnType<PDFPageProxy['getTextContent']>>
   ): Awaited<ReturnType<PDFPageProxy['getTextContent']>> => {
     // A proven native repair below resolves that item's fallback. Do not retain
     // an encoding warning for a slot whose literal was actually repaired.
+    const unchanged = (index: number): boolean => {
+      const before = content.items[index],
+        after = result.items[index]
+      return 'str' in before && 'str' in after && before.str === after.str
+    }
     onUnreliableItems?.(
-      unreliable.filter((index) => {
-        const before = content.items[index],
-          after = result.items[index]
-        return 'str' in before && 'str' in after && before.str === after.str
-      })
+      unreliable.indexes.filter(unchanged),
+      unreliable.mathIndexes.filter(unchanged)
     )
     return result
   }
@@ -493,7 +542,10 @@ export async function getPdfTranslationTextContent(
       mark.transform[1] === 0 &&
       mark.transform[2] === 0 &&
       mark.transform[3] > 0 &&
-      mark.transform.every((value, i) => value === base.transform[i]) &&
+      // PDFium serialization can shift coincident text origins by a fraction of a point.
+      mark.transform.every((value, i) =>
+        i < 4 ? value === base.transform[i] : Math.abs(value - base.transform[i]) <= 0.001
+      ) &&
       Math.abs(base.width / mark.transform[0] - 0.777) < 0.005
     )
       pairedSlashes.set(index, base.fontName)
@@ -502,7 +554,7 @@ export async function getPdfTranslationTextContent(
     ...pairedSlashes.values(),
     ...content.items.flatMap((item, index) =>
       'str' in item &&
-      (/^[37]$/u.test(item.str) || item.str === '\u0002' || pairedSlashes.has(index))
+      (/^[37XZ]$/u.test(item.str) || item.str === '\u0002' || pairedSlashes.has(index))
         ? [item.fontName]
         : []
     )
@@ -529,6 +581,22 @@ export async function getPdfTranslationTextContent(
         /^(?:[A-Z]{6}\+)?CMR10$/u.test(page.commonObjs.get(base)?.name ?? '')
       )
         return { ...item, str: '\u0338' }
+      // CMEX10 display operators can be exposed as their original slots X and Z.
+      const summation = item.str === 'X'
+      const operatorFont =
+        (summation || item.str === 'Z') && page.commonObjs.has(item.fontName)
+          ? page.commonObjs.get(item.fontName)
+          : undefined
+      if (
+        operatorFont?.type === 'Type1' &&
+        operatorFont.missingFile === false &&
+        item.transform[0] > 0 &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0 &&
+        Math.abs(item.width / item.transform[0] - (summation ? 1.4444 : 0.5556)) < 0.0001 &&
+        /^(?:[A-Z]{6}\+)?CMEX10$/u.test(operatorFont.name ?? '')
+      )
+        return { ...item, str: summation ? '∑' : '∫' }
       if (dingbats.has(item.fontName) && /^[37]$/u.test(item.str))
         return { ...item, str: item.str === '3' ? '✓' : '✗' }
       if (

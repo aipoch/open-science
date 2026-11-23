@@ -4,6 +4,10 @@
 import { act } from 'react'
 import { vi } from 'vitest'
 
+import {
+  DEFAULT_AGENT_FRAMEWORK_ID,
+  type AgentFrameworkId
+} from '../../../../shared/agent-framework-id'
 import type { EnvironmentCheckResult } from '../../../../shared/settings'
 import type { StorageInfo } from '../../../../shared/storage'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -44,22 +48,22 @@ const environment = (ready: boolean): EnvironmentCheckResult => ({
   ]
 })
 
-// A ready Claude environment with the preflight + claude info to match, so the Agent step's
-// Continue gate (environmentReady) opens and the flow can walk forward.
-const readyClaudeState = (): void => {
-  useSettingsStore.setState({
+const readyBuiltInState = (): void => {
+  useSettingsStore.setState((state) => ({
+    agentFrameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
     preflight: {
-      claudeReady: true,
-      opencodeReady: false,
-      codexReady: false,
-      codebuddyReady: false,
-      agentFrameworkId: 'claude-code',
-      agentReady: true,
-      activeProviderReady: false
+      ...state.preflight,
+      openScienceAgentReady: true,
+      agentFrameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
+      agentReady: true
     },
-    claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
-    environmentCheck: environment(true)
-  })
+    environmentCheck: {
+      ...environment(true),
+      agentFrameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
+      runtime: { found: true },
+      checks: [{ id: 'agent', label: 'Open Science Agent', status: 'passed', summary: 'Ready.' }]
+    }
+  }))
 }
 
 // A Codex-ready environment so the wizard/steps open straight onto Codex-aware surfaces.
@@ -146,13 +150,15 @@ const selectOption = async (triggerLabel: string, optionText: string): Promise<v
 // by the other render tests (e.g. SettingsPage.render.test.tsx), since a full replace would need
 // every SettingsStore action stubbed, not just the ones onboarding touches. The notebook-env store
 // gets a full replace (needs every action typed) so a stray real bridge call can never sneak in.
-const resetOnboardingStores = (): {
+const resetOnboardingStores = (
+  agentFrameworkId: AgentFrameworkId = DEFAULT_AGENT_FRAMEWORK_ID
+): {
   envInit: ReturnType<typeof vi.fn>
   envProvision: ReturnType<typeof vi.fn>
 } => {
   useSettingsStore.setState({
     ...createInitialSettingsState(),
-    agentFrameworkId: 'claude-code',
+    agentFrameworkId,
     checkEnvironment: vi.fn().mockResolvedValue(undefined),
     detectClaude: vi.fn().mockResolvedValue({ found: false }),
     detectCodeBuddy: vi.fn().mockResolvedValue(undefined),
@@ -221,7 +227,7 @@ export {
   environment,
   fillRequiredProviderFields,
   findButton,
-  readyClaudeState,
+  readyBuiltInState,
   resetOnboardingStores,
   selectOption,
   storageInfo,

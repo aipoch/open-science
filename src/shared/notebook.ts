@@ -27,7 +27,7 @@ export const NOTEBOOK_RUN_FILE = 'run.json'
 // Execution authorization canonicalizes omitted control/shell deadlines to the same defaults used
 // by the MCP schema and process owner. These are runtime constants, not persisted schema fields.
 export const NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000 + 15_000
-export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 120_000
+export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 300_000
 
 export type ShellRuntimeBinding =
   | Readonly<{
@@ -622,6 +622,22 @@ export type NotebookProjectBackgroundRunActivity = ProjectIdScope & {
   acceptedAt: number
 }
 
+// Display fields for the Session background-task list. Large code and output stay in Notebook.
+export type NotebookBackgroundTask = Pick<
+  NotebookRunRecord,
+  | 'runId'
+  | 'agentFrameId'
+  | 'status'
+  | 'kernelKind'
+  | 'environment'
+  | 'startedAt'
+  | 'endedAt'
+  | 'cancellationRequestedAt'
+  | 'shellConcurrency'
+> & { title: string }
+
+export type NotebookBackgroundTaskSnapshot = { runs: NotebookBackgroundTask[] }
+
 export type NotebookProjectActivityRequest = ProjectIdScope
 
 export type NotebookProjectActivity = Readonly<{
@@ -768,7 +784,12 @@ export type NotebookSessionReference = ProjectIdScope & {
 }
 
 export type NotebookAvailableEvent = NotebookSessionReference
-export type NotebookChangedEvent = NotebookSessionReference
+export type NotebookChangedEvent = NotebookSessionReference & {
+  // A successful append changes only the draft cell code within an existing write lock.
+  codeAppendOnly?: true
+  // A draft acquired or released its write lock without changing Run history.
+  codeWriteOnly?: true
+}
 
 // Extends a run record with workspace roots so the agent can decide what to do next.
 export type NotebookRunSummary = Omit<
@@ -834,6 +855,18 @@ export const isNotebookRunCursor = (value: unknown): value is NotebookRunCursor 
     cursor.runId.length <= NOTEBOOK_STATE_HISTORY_CURSOR_RUN_ID_LIMIT
   )
 }
+
+export type NotebookRunEvidenceRequest = NotebookSessionRequest & { runId: string }
+
+export type NotebookRunEvidenceSnapshot = Pick<
+  NotebookRunRecord,
+  | 'runId'
+  | 'kernelEpochId'
+  | 'environmentCapture'
+  | 'environmentManifestChecksum'
+  | 'environmentManifest'
+  | 'helperEvidenceStatus'
+>
 
 export type NotebookSessionStateRequest = NotebookSessionRequest & {
   runIds?: string[]

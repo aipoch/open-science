@@ -298,7 +298,12 @@ describe('notebook shell process behavior', () => {
       errorCode: 'shell-cleanup-incomplete',
       recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
     })
-    expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
+    expect(await adapter.execute(request)).toMatchObject({
+      errorCode: 'shell-cleanup-incomplete',
+      stderr: expect.stringContaining('did not start'),
+      executionStarted: false,
+      recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
+    })
     expect(wrap).toHaveBeenCalledTimes(1)
     expect(await adapter.shutdown()).toEqual({ reaped: false })
     expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
@@ -1104,56 +1109,62 @@ describe('notebook shell process behavior', () => {
     }
   )
 
-  it('returns a stable failure instead of trusting an exit when sandbox cleanup is incomplete', async () => {
-    const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-incomplete-cleanup-'))
-    const cleanup = vi.fn(async () => ({
-      processesTerminated: false,
-      networkClosed: true,
-      temporaryResourcesRemoved: false
-    }))
-    const processSandbox: NotebookProcessSandbox = {
-      wrap: vi.fn(async (invocation) => ({
-        memoryProbe: fixtureProbe,
-        executable: process.execPath,
-        args: ['-e', 'process.stdout.write("finished")'],
-        env: invocation.env,
-        annotateStderr: (stderr: string) => stderr,
-        confirmProcessState: async () => 'started-and-reaped' as const,
-        cleanup
+  it.each([false, true])(
+    'returns a stable failure instead of trusting an exit when sandbox cleanup is incomplete (processes terminated: %s)',
+    async (processesTerminated) => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-incomplete-cleanup-'))
+      const cleanup = vi.fn(async () => ({
+        processesTerminated,
+        networkClosed: true,
+        temporaryResourcesRemoved: false
       }))
-    }
+      const processSandbox: NotebookProcessSandbox = {
+        wrap: vi.fn(async (invocation) => ({
+          memoryProbe: fixtureProbe,
+          executable: process.execPath,
+          args: ['-e', 'process.stdout.write("finished")'],
+          env: invocation.env,
+          annotateStderr: (stderr: string) => stderr,
+          confirmProcessState: async () => 'started-and-reaped' as const,
+          cleanup
+        }))
+      }
 
-    try {
-      await expect(
-        runShellCommand({
-          executionAdmission: fixtureAdmission(),
-          command: 'echo finished',
-          cwd: process.cwd(),
-          handoffDir: process.cwd(),
-          runtimeRoot,
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          platform: process.platform,
-          processSandbox,
-          terminateTree: async () => ({ reaped: true })
+      try {
+        await expect(
+          runShellCommand({
+            executionAdmission: fixtureAdmission(),
+            command: 'echo finished',
+            cwd: process.cwd(),
+            handoffDir: process.cwd(),
+            runtimeRoot,
+            sessionId: 'session-1',
+            projectId: 'project-1',
+            platform: process.platform,
+            processSandbox,
+            terminateTree: async () => ({ reaped: true })
+          })
+        ).resolves.toEqual({
+          stdout: 'finished',
+          stderr:
+            'SHELL_CLEANUP_INCOMPLETE: Shell execution cleanup did not complete; the result is not trusted.' +
+            (processesTerminated
+              ? ' Managed processes stopped and the network closed. Temporary resources could not be removed.'
+              : ''),
+          exitCode: null,
+          errorCode: 'shell-cleanup-incomplete',
+          recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
         })
-      ).resolves.toEqual({
-        stdout: 'finished',
-        stderr:
-          'SHELL_CLEANUP_INCOMPLETE: Shell execution cleanup did not complete; the result is not trusted.',
-        exitCode: null,
-        errorCode: 'shell-cleanup-incomplete',
-        recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
-      })
-      expect(cleanup).toHaveBeenCalledOnce()
-      expect(cleanup).toHaveBeenCalledWith('exit', {
-        processesTerminated: true,
-        processState: 'started-and-reaped'
-      })
-    } finally {
-      await rm(runtimeRoot, { recursive: true, force: true })
+        expect(cleanup).toHaveBeenCalledOnce()
+        expect(cleanup).toHaveBeenCalledWith('exit', {
+          processesTerminated: true,
+          processState: 'started-and-reaped'
+        })
+      } finally {
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
     }
-  })
+  )
 
   it('retries an incomplete WSL cleanup once before reporting the shell result', async () => {
     vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
@@ -1218,14 +1229,20 @@ describe('notebook shell process behavior', () => {
     }
   })
 
-  it('settles a WSL launcher that closes its command pipe after signalling readiness', async () => {
+  it('settles a WSL launcher whose command pipe closes at dispatch', async () => {
     vi.stubEnv('OPEN_SCIENCE_ENABLE_WSL2_BASH', '1')
     const cleanup = vi.fn(async () => ({
       processesTerminated: true,
       networkClosed: true,
       temporaryResourcesRemoved: true
     }))
-    const beginExecution = vi.fn(() => () => undefined)
+    let commandPipe: import('node:stream').Writable
+    const beginExecution = vi.fn(() => {
+      // Closing fd 0 in the child does not reliably break a Windows named pipe.
+      // End the parent stream before dispatch there to exercise the same async error handler.
+      if (process.platform === 'win32') commandPipe.end()
+      return () => undefined
+    })
     const result = await runShellCommand({
       executionAdmission: fixtureAdmission(),
       command: 'printf finished',
@@ -1242,7 +1259,11 @@ describe('notebook shell process behavior', () => {
         user: 'fixture-user'
       },
       previewAvailable,
-      timeoutMs: 1_000,
+      timeoutMs: 5_000,
+      claimProcess: (child) => {
+        commandPipe = child.stdin!
+        return () => undefined
+      },
       terminateTree: async (child) => {
         const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
         child.kill()
@@ -1267,7 +1288,7 @@ describe('notebook shell process behavior', () => {
     })
     expect(beginExecution).toHaveBeenCalledOnce()
     expect(result.exitCode).toBeNull()
-    expect(result.stderr).toMatch(/EPIPE|EOF|ECONNRESET|broken pipe/i)
+    expect(result.stderr).toMatch(/EPIPE|EOF|ECONNRESET|broken pipe|write after end/i)
     expect(result.stderr).not.toContain('Shell command timed out')
     expect(cleanup).toHaveBeenCalledExactlyOnceWith('spawn-failed', {
       processesTerminated: true,
@@ -2016,6 +2037,7 @@ describe('notebook shell process behavior', () => {
       await expect(execute("printf 'before timeout' >&2; sleep 5", 50)).resolves.toEqual({
         stdout: '',
         stderr: 'before timeout\nShell command timed out after 50ms and was killed.',
+        timedOut: true,
         exitCode: null
       })
     })

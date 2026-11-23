@@ -13,14 +13,19 @@ import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotat
 import { parseSideChatAnnotationText, type Annotation } from '../../../../shared/annotations'
 import { SideChatPanel } from './SideChatPanel'
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
+import {
+  ImageComposerBridgeProvider,
+  useImageComposerTarget
+} from './image-edit/image-composer-bridge'
+import { imageEditorScope } from './image-edit/image-editor-state'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { forkSessionMock, scrollerProps } = vi.hoisted(() => ({
   forkSessionMock: vi.fn(async () => undefined),
-  scrollerProps: { turnOutcomeActions: undefined as unknown }
+  scrollerProps: { turnOutcomeActions: undefined as unknown, onStartResearch: undefined as unknown }
 }))
 vi.mock('@/lib/session-fork', () => ({
   forkSession: forkSessionMock,
@@ -257,6 +262,7 @@ vi.mock('./WorkspaceMessageScroller', () => ({
     onStartResearch?: (prompt: string) => void
   }): React.JSX.Element => {
     scrollerProps.turnOutcomeActions = turnOutcomeActions
+    scrollerProps.onStartResearch = onStartResearch
     return (
       <>
         {forkSourceContent}
@@ -1590,6 +1596,53 @@ describe('ConversationPanel composer errors', () => {
     }
   )
 
+  it('keeps the message viewport and its research action stable under the image editor', () => {
+    const activeSession: ChatSession = {
+      id: 'image-session',
+      cwd: '/workspace',
+      projectId: 'project-a',
+      title: 'Image session',
+      status: 'idle',
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    function Editor(): React.JSX.Element {
+      const [viewport, attach] = useState<HTMLDivElement | null>(null)
+      useImageComposerTarget(imageEditorScope(activeSession)!, viewport)
+      return <div ref={attach} />
+    }
+    const props = mergePanelProps(createPanelDefaults(), {
+      view: { activeSession, canEditDraft: true }
+    })
+    const panel = <PanelHarness {...props} />
+    const render = (editing: boolean): void => {
+      act(() =>
+        root.render(
+          <ImageComposerBridgeProvider>
+            {panel}
+            {editing && <Editor />}
+          </ImageComposerBridgeProvider>
+        )
+      )
+    }
+    render(false)
+    const form = getComposerForm()
+    const research = scrollerProps.onStartResearch
+    expect(research).toEqual(expect.any(Function))
+    render(true)
+    const host = container.querySelector('[data-testid="conversation-image-composer"]')!
+    expect(host.hasAttribute('hidden')).toBe(false)
+    expect(host.classList.contains('absolute')).toBe(true)
+    expect(form.hasAttribute('inert')).toBe(true)
+    expect(form.classList.contains('invisible')).toBe(true)
+    expect(form.classList.contains('hidden')).toBe(false)
+    expect(scrollerProps.onStartResearch).toBe(research)
+    render(false)
+    expect(getComposerForm()).toBe(form)
+    expect(form.hasAttribute('inert')).toBe(false)
+  })
+
   it('keeps Turn Outcome actions stable across draft edits but never calls stale handlers', () => {
     const firstRequest = vi.fn()
     const nextRequest = vi.fn()
@@ -1936,6 +1989,7 @@ beforeEach(() => {
   window.api = {
     notebook: {
       state: vi.fn().mockResolvedValue({ runs: [] }),
+      backgroundTasks: vi.fn().mockResolvedValue({ runs: [] }),
       onChanged: vi.fn(() => vi.fn()),
       cancelBackgroundRun: vi.fn()
     }
@@ -3784,6 +3838,62 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent).not.toContain('Choose a foreign option')
   })
 
+  it.each([true, false])('ignores a question owned by another branch (live: %s)', (live) => {
+    const original = materializeSessionConversationGraph({
+      id: 'question-branch',
+      cwd: '/workspace',
+      projectId: 'project',
+      title: 'Branch question',
+      status: 'waiting-for-user',
+      messages: [planOriginMessages()[0]],
+      createdAt: 1,
+      updatedAt: 2,
+      activities: [
+        {
+          id: 'ask',
+          kind: 'tool',
+          title: 'Other branch',
+          status: 'in_progress',
+          promptMessageId: planOriginMessages()[0].id,
+          sortIndex: 1,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'Other branch question',
+            fields: [],
+            state: 'pending',
+            durable: { kind: 'agent-user-choice', requestId: 'ask' }
+          }
+        }
+      ]
+    })
+    const graph = original.conversationGraph!
+    const sibling = { ...graph.branches[0], id: 'other-branch' }
+    const activeSession = hydrateSession({
+      ...original,
+      conversationGraph: {
+        ...graph,
+        branches: [...graph.branches, sibling],
+        frames: graph.frames.map((frame) => ({ ...frame, activeBranchId: sibling.id }))
+      }
+    })
+    const request = {
+      requestId: 'ask',
+      toolCallId: 'ask',
+      sessionId: original.id,
+      message: 'Other branch question',
+      fields: [],
+      durable: { kind: 'agent-user-choice' as const, requestId: 'ask' }
+    }
+    renderPanel({ view: { activeSession }, elicitation: { requests: live ? [request] : [] } })
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="ordinary-composer-form"]')?.hasAttribute('inert')
+    ).toBe(false)
+    expect(pendingWorkspaceElicitations(activeSession)).toEqual([])
+  })
+
   it('does not block the composer for an orphaned non-durable Ask-User activity', () => {
     const activeSession: ChatSession = {
       id: 'session-orphaned-choice',
@@ -4411,8 +4521,12 @@ describe('ConversationPanel composer intake', () => {
       errorDetail: 'disk full'
     }
     renderPanel({
+      view: { actionError: failed.error },
       composer: {
         view: {
+          error: failed.error,
+          errorDetail: failed.errorDetail,
+          attachmentNotice: { title: failed.error },
           transfers: [
             failed,
             { ...failed, transferId: 'restored', name: 'restored.csv', canRetry: false }
@@ -4424,9 +4538,15 @@ describe('ConversationPanel composer intake', () => {
     const retry = container.querySelector<HTMLButtonElement>(
       '[aria-label="Retry attachment failed.csv"]'
     )
+    expect(
+      container.querySelector('[data-notice-operation="attachment"] h2')?.textContent
+    ).toContain(failed.error)
+    expect(container.querySelector('[data-notice-operation="action"]')).toBeNull()
     expect(retry).not.toBeNull()
     expect(container.querySelector('[aria-label="Retry attachment restored.csv"]')).toBeNull()
-    expect(container.querySelector('[title="disk full"]')).not.toBeNull()
+    expect(container.querySelector('[title$="disk full"]')?.getAttribute('title')).toBe(
+      'Upload failed\ndisk full'
+    )
     act(() => retry?.click())
     expect(retryTransfer).toHaveBeenCalledExactlyOnceWith(failed)
   })
@@ -5705,7 +5825,8 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent?.match(/"items"/g)).toHaveLength(2)
   })
 
-  it('keeps Side chat provider diagnostics in the notice above the composer', () => {
+  it('keeps a restored Side chat error without source metadata in Details', () => {
+    const error = 'Upstream returned a private diagnostic'
     renderSidePanel({
       sideChat: {
         view: {
@@ -5714,31 +5835,76 @@ describe('ConversationPanel composer intake', () => {
           projectId: 'project-a',
           sideSessionId: 'side-1',
           entries: [],
-          draft: 'my follow-up',
+          draft: '',
           running: false,
-          error: 'Invalid credentials',
-          errorDetails: {
-            message: 'Invalid credentials',
-            failure: {
-              category: 'configuration',
-              reason: 'configuration/auth-failed',
-              responseMessage: 'Invalid credentials',
-              diagnostics: { status: 401, provider: 'Test provider', model: 'test-model' }
-            }
-          }
+          error
         }
       }
     })
     const notice = container.querySelector('[data-testid="composer-notice-slot"]')
-    expect(notice?.textContent).toContain('Model provider error')
-    expect(notice?.textContent).toContain('status: 401')
-    expect(notice?.textContent).toContain('provider: Test provider')
-    expect(notice?.textContent).toContain('model: test-model')
-    expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
-      'side-chat-composer'
-    )
-    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('my follow-up')
+    expect(notice?.querySelector('h2')?.textContent).toBe('Request failed')
+    expect(notice?.querySelector('details pre')?.textContent).toContain(error)
   })
+
+  it.each([
+    ['Invalid credentials', 'configuration/auth-failed', 'Model provider error', 401, undefined],
+    [
+      "Unsupported parameter: 'temperature'",
+      'configuration/request-invalid',
+      'Request parameters need attention',
+      400,
+      undefined
+    ],
+    [
+      'Maximum call stack size exceeded',
+      'service/provider-error',
+      'Model request failed',
+      400,
+      'responses'
+    ]
+  ] as const)(
+    'shows the provider detail %s above the composer',
+    (message, reason, title, status, protocol) => {
+      renderSidePanel({
+        sideChat: {
+          view: {
+            generation: 1,
+            parentSessionId: 'session-existing',
+            projectId: 'project-a',
+            sideSessionId: 'side-1',
+            entries: [],
+            draft: 'my follow-up',
+            running: false,
+            error: message,
+            errorDetails: {
+              message,
+              failure: {
+                category: protocol ? 'service' : 'configuration',
+                reason,
+                ...(protocol ? {} : { responseMessage: message }),
+                diagnostics: {
+                  ...(protocol ? { protocol, providerExcerpt: message } : {}),
+                  status,
+                  provider: 'Test provider',
+                  model: 'test-model'
+                }
+              }
+            }
+          }
+        }
+      })
+      const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+      expect(notice?.textContent).toContain(title)
+      expect(notice?.textContent).toContain(message)
+      expect(notice?.textContent).toContain(`status: ${status}`)
+      expect(notice?.textContent).toContain('provider: Test provider')
+      expect(notice?.textContent).toContain('model: test-model')
+      expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
+        'side-chat-composer'
+      )
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('my follow-up')
+    }
+  )
 
   it('paces only the live Side chat turn and keeps its tool behind visible text', async () => {
     vi.useFakeTimers()
@@ -6872,9 +7038,13 @@ describe('ConversationPanel interrupted Session recovery', () => {
     }
   })
 
-  it.each(['cancelled', 'connection-lost', 'app-restart'] as const)(
+  it.each([
+    ['cancelled', 'This turn was interrupted. Resume to continue.'],
+    ['connection-lost', 'Connection lost — Resume to reconnect and continue.'],
+    ['app-restart', 'Session was interrupted before the app closed.']
+  ] as const)(
     'retains the original Resume action after routed user messages and %s',
-    async (cause) => {
+    async (cause, expectedMessage) => {
       const onResumeSession = vi.fn().mockResolvedValue(undefined)
       const prompt = planOriginMessages()[0]
       const activeSession: ChatSession = {
@@ -6883,6 +7053,10 @@ describe('ConversationPanel interrupted Session recovery', () => {
         title: 'Interrupted session with steering',
         cwd: '/workspace',
         status: cause === 'cancelled' ? 'idle' : 'error',
+        error:
+          cause === 'cancelled'
+            ? 'Stale provider error'
+            : 'This turn was interrupted. Resume to continue.',
         resumeRecovery: { kind: 'resume-required', promptMessageId: prompt.id, cause },
         messages: [
           {
@@ -6915,6 +7089,13 @@ describe('ConversationPanel interrupted Session recovery', () => {
       )
       expect(resumeButton).not.toBeNull()
       expect(resumeButton?.disabled).toBe(false)
+      const banner = container.querySelector('[data-slot="session-recovery-notice"]')
+      expect(banner?.querySelector('[role="status"]')?.textContent).toBe(expectedMessage)
+      if (cause === 'cancelled') {
+        expect(banner?.querySelectorAll('button')).toHaveLength(1)
+        expect(resumeButton?.textContent).toBe('Resume')
+        expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
+      }
       await act(async () => resumeButton?.click())
       expect(onResumeSession).toHaveBeenCalledTimes(1)
     }
@@ -9114,9 +9295,30 @@ describe('ConversationPanel fix loop lock', () => {
 
     const retry = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
     expect(retry.disabled).toBe(false)
-    const stopAlert = container.querySelector('[role="alert"]') as HTMLElement
-    expect(stopAlert.textContent).toContain('detached cascade unavailable')
+    const stopAlert = container.querySelector(
+      '[data-notice-operation="stop"] [role="status"]'
+    ) as HTMLElement
+    expect(stopAlert.textContent).toContain('Could not confirm that all subagents stopped.')
     expect(stopAlert.classList.contains('sr-only')).toBe(false)
+    const graph = detachedChildSession.conversationGraph!
+    renderPanel({
+      view: {
+        activeSession: {
+          ...detachedChildSession,
+          conversationGraph: {
+            ...graph,
+            frames: graph.frames.map((frame) =>
+              frame.id === graph.rootFrameId ? { ...frame, activeBranchId: 'sibling' } : frame
+            ),
+            branches: [
+              ...graph.branches,
+              { id: 'sibling', agentFrameId: graph.rootFrameId, createdAt: 3, updatedAt: 3 }
+            ]
+          }
+        }
+      }
+    })
+    expect(container.querySelector('[data-notice-operation="stop"]')).toBeNull()
   })
 
   it('uses the same disabled gate for mouse and Enter while branch Stop is pending', () => {
@@ -9164,7 +9366,7 @@ describe('ConversationPanel fix loop lock', () => {
         })
     )
     const runningSession: ChatSession = {
-      ...idleSession,
+      ...detachedChildSession,
       status: 'running',
       activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
     }
@@ -9217,6 +9419,18 @@ describe('ConversationPanel fix loop lock', () => {
     expect(retry.disabled).toBe(false)
     expect(queue.disabled).toBe(false)
     expect(container.textContent).toContain('cascade unavailable')
+    renderPanel({
+      view: {
+        activeSession: {
+          ...runningSession,
+          status: 'idle',
+          activeRun: undefined,
+          resumeRecovery: { kind: 'resume-required', cause: 'cancelled', promptMessageId: 'msg-1' }
+        }
+      }
+    })
+    expect(container.querySelector('[data-notice-operation="stop"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
   })
 
   it('does not carry a pending Stop state or its failure into another Session', async () => {
@@ -10146,8 +10360,9 @@ describe('ConversationPanel unified failure notices', () => {
 it.each(['legacy', 'turn'] as const)(
   'keeps an imported %s failure out of the live error area',
   (surface) => {
-    const error =
-      'Internal error: stream disconnected before completion: Transport error: network error: error decoding response body'
+    const response =
+      'stream disconnected before completion: Transport error: network error: error decoding response body'
+    const error = 'Internal error: ' + response
     const activeSession: ChatSession = {
       id: 'imported-session',
       projectId: 'project-a',
@@ -10192,7 +10407,8 @@ it.each(['legacy', 'turn'] as const)(
     )
     if (surface === 'turn') {
       expect(history?.open).toBe(false)
-      expect(history?.textContent).toContain(error)
+      expect(history?.querySelector('pre')?.textContent).toBe('Info: ' + response)
+      expect(history?.textContent).not.toContain('Internal error:')
       act(() => history?.querySelector('summary')?.click())
       expect(history?.open).toBe(true)
     } else {

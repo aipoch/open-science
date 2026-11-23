@@ -258,16 +258,17 @@ const SideChatPanel = ({
   const sideNotice = view.notice || view.error === t('Side chat prompt cancelled.')
   const notices: ComposerNotice[] = []
   if (view.error && !sideNotice && presentationBarrierIndex < 0) {
-    const failure =
-      view.errorDetails?.message === view.error
-        ? view.errorDetails.failure
-        : classifyFailure({ origin: 'operation', text: view.error })
+    const recordedFailure =
+      view.errorDetails?.message === view.error ? view.errorDetails.failure : undefined
+    const failure = recordedFailure ?? classifyFailure({ origin: 'operation', text: view.error })
     notices.push({
       id: `side-chat-${view.generation}-${view.error}`,
       source: 'operation',
       occurredAt: 0,
       failure,
-      ...(failure.responseMessage ? {} : { summary: { title: view.error } })
+      ...(!recordedFailure && failure.category === 'internal' && !failure.reason
+        ? { summary: { title: t('Request failed') } }
+        : {})
     })
   }
   if (view.persistenceError)

@@ -48,7 +48,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, sep } from 'node:path'
+import { basename, dirname, join, sep } from 'node:path'
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -97,6 +97,10 @@ import {
 } from '../bounded-file-io'
 import { paceFileIo } from '../file-io-pacing'
 import { encodeRunDocumentDataPaths } from '../notebook/run-document-data-path-codec'
+import {
+  environmentManifestChecksumForRun,
+  environmentManifestStorageKey
+} from '../notebook/repository'
 import { ensureWorkingFileEvidenceProject } from '../notebook/working-file-observer'
 import type { PublishedSessionHandoff } from '../session-persistence/coordinator'
 import { SessionProjectionRepository } from '../session-persistence/projection'
@@ -194,6 +198,8 @@ import {
 } from './web-evidence'
 
 const activeLogImports = new Set<string>()
+const ENVIRONMENT_MANIFEST_STORAGE_KEY =
+  /^runtime\/provenance\/environment-manifests\/[a-f0-9]{64}\.json$/u
 const importJournalSchema = sessionPackageRequestSchema
   .extend({
     schemaVersion: z.literal(1),
@@ -1273,6 +1279,19 @@ export class SessionPackageService {
     }
     const notebookKeys = await readNotebookKeys()
     const notebooks = await readPackageNotebooks(this.options.storageRoot, notebookKeys)
+    const environmentManifestKeys = [
+      ...new Set(
+        notebooks.flatMap((document) =>
+          document.runs.flatMap((run) => {
+            if (run.environmentManifest) return []
+            const checksum = environmentManifestChecksumForRun(run)
+            return checksum && /^[a-f0-9]{64}$/u.test(checksum)
+              ? [environmentManifestStorageKey(checksum)]
+              : []
+          })
+        )
+      )
+    ]
     const portableNotebooks = new Map<string, NotebookRunDocument>()
     let notebookIndex = 0
     for (const key of notebookKeys) {
@@ -1393,10 +1412,12 @@ export class SessionPackageService {
       string,
       { observation: FileObservation; integrity: { checksum: string; sizeBytes: number } }
     >()
+    const measuredSources = new Map<string, { checksum: string; sizeBytes: number }>()
     diagnostic.phase('measure-content')
     for (const key of new Set([
       ...nativeStorageKeys(records),
       ...notebookKeys,
+      ...environmentManifestKeys,
       ...executionKeys,
       ...packageReproducibilityKeys(records)
     ])) {
@@ -1426,6 +1447,7 @@ export class SessionPackageService {
       if (!sameFileObservation(observation, observeFile(await lstat(original, { bigint: true }))))
         throw new Error('The Session changed during export. Try again.')
       measuredContent.set(identity, integrity)
+      measuredSources.set(key, integrity)
       if (immutableVersions.has(key) && observation.inode !== '0')
         sourceObservations.set(key, { observation, integrity })
       retainedFiles.push({ storageKey: key, filename: key, ...integrity })
@@ -1434,7 +1456,10 @@ export class SessionPackageService {
     let publicRecords = projectWebRecords(records, webProjection)
     let recordsJson = JSON.stringify(publicRecords)
     const fixedMetadataBytes = Buffer.byteLength(sessionJson) + Buffer.byteLength(PACKAGE_README)
-    diagnostic.phase('select-files')
+    diagnostic.phase('select-files', {
+      selectableFiles: selectable.length,
+      retainedFiles: retainedFiles.length
+    })
     const plannedFiles = markRequiredPackageFiles(records, selectable, [
       ...retainedFiles,
       ...[sessionJson, recordsJson, PACKAGE_README].map((content) => ({
@@ -1524,6 +1549,7 @@ export class SessionPackageService {
           ...new Set([
             ...nativeStorageKeys(records),
             ...notebookKeys,
+            ...environmentManifestKeys,
             ...executionKeys,
             ...packageReproducibilityKeys(records)
           ])
@@ -1553,8 +1579,12 @@ export class SessionPackageService {
             }
           }
           sizes.set(key, size)
+          const measured = measuredSources.get(key)
           const integrity =
-            observed?.integrity ?? (await digestFileWithinBudget(original, size, this.signal))
+            observed?.integrity ??
+            (measured?.sizeBytes === size
+              ? measured
+              : await digestFileWithinBudget(original, size, this.signal))
           if (
             integrity.sizeBytes !== size ||
             (!observed &&
@@ -2213,6 +2243,25 @@ export class SessionPackageService {
         onProgress,
         retryPlan
       )
+      for (const entry of manifest.inventory) {
+        if (!entry.storageKey || !ENVIRONMENT_MANIFEST_STORAGE_KEY.test(entry.storageKey)) continue
+        const source = resolveStorageKey(
+          destinationRoot,
+          remapStorageKey(entry.storageKey, native.identities)
+        )
+        const contents = await readFile(source)
+        if (sha256(contents) !== entry.checksum)
+          throw new Error('Session package environment manifest checksum mismatch.')
+        const targetPath = resolveStorageKey(this.options.storageRoot, entry.storageKey)
+        await mkdir(dirname(targetPath), { recursive: true })
+        const existing = await readFile(targetPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return undefined
+          throw error
+        })
+        if (existing && !existing.equals(contents))
+          throw new Error('Session package environment manifest conflict.')
+        if (!existing) await writeFile(targetPath, contents, { flag: 'wx' })
+      }
       const bookmarkIdentities = { ...native.identities }
       let forkWebEvidence: PackageRecords['webEvidence']
       if (forkSource?.packageOrigin) {

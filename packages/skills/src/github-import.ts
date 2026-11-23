@@ -59,6 +59,44 @@ const combineSignals = (...signals: Array<AbortSignal | undefined>): AbortSignal
   return active.length === 1 ? active[0] : AbortSignal.any(active)
 }
 
+// Classify failures while Node's cause and Chromium's network codes are still available.
+const throwGitHubNetworkError = (error: unknown): never => {
+  if (!(error instanceof Error) || error.name === 'AbortError') throw error
+  const cause = error.cause instanceof Error ? error.cause : error
+  const code = 'code' in cause ? cause.code : cause.message.replace(/^net::/, '')
+  let message: string
+  if (
+    error.name === 'TimeoutError' ||
+    [
+      'ETIMEDOUT',
+      'UND_ERR_CONNECT_TIMEOUT',
+      'UND_ERR_HEADERS_TIMEOUT',
+      'UND_ERR_BODY_TIMEOUT',
+      'ERR_TIMED_OUT',
+      'ERR_CONNECTION_TIMED_OUT'
+    ].includes(String(code))
+  ) {
+    throw Object.assign(new Error('GitHub request timed out.', { cause: error }), {
+      name: 'TimeoutError'
+    })
+  } else if (['ENOTFOUND', 'EAI_AGAIN', 'ERR_NAME_NOT_RESOLVED'].includes(String(code))) {
+    message = 'GitHub request failed during DNS lookup.'
+  } else if (
+    ['ERR_PROXY_CONNECTION_FAILED', 'ERR_TUNNEL_CONNECTION_FAILED'].includes(String(code))
+  ) {
+    message = 'GitHub proxy connection failed.'
+  } else if (
+    /^(?:fetch failed|failed to fetch)$/i.test(error.message) ||
+    error.message === 'terminated' ||
+    /^net::ERR_/.test(error.message)
+  ) {
+    message = 'Could not reach GitHub.'
+  } else {
+    throw error
+  }
+  throw new Error(message, { cause: error })
+}
+
 // Gives every GitHub operation one overall deadline and every individual request its own deadline.
 // The request signal stays alive after headers arrive, so stalled response-body reads are aborted too.
 const createGitHubFlowFetch = (
@@ -77,7 +115,7 @@ const createGitHubFlowFetch = (
         flowSignal,
         AbortSignal.timeout(options.requestTimeoutMs ?? GITHUB_REQUEST_TIMEOUT_MS)
       )
-    })
+    }).catch(throwGitHubNetworkError)
 }
 
 // Adds a token only for exact HTTPS GitHub hosts used by this module. GitHub-controlled download
@@ -124,16 +162,28 @@ const isGitHubRateLimitResponse = (response: GitHubResponseMetadata): boolean =>
 const githubRequestError = (
   response: GitHubResponseMetadata,
   context = 'GitHub API request'
-): Error =>
-  isGitHubRateLimitResponse(response)
-    ? new Error(
-        'GitHub request was rate-limited. Configure or update the GitHub token on this page, then try again.'
-      )
-    : response.status === 403
-      ? new Error(
-          `${context} was forbidden (403). Check repository access and token permissions, then try again.`
-        )
-      : new Error(`${context} failed (${response.status}).`)
+): Error => {
+  if (isGitHubRateLimitResponse(response)) {
+    const seconds = response.headers?.get('retry-after')?.trim()
+    return new Error(
+      seconds && /^\d{1,10}$/.test(seconds)
+        ? `GitHub rate limit reached. Retry after ${Number(seconds)} seconds.`
+        : 'GitHub rate limit reached.'
+    )
+  }
+  switch (response.status) {
+    case 401:
+      return new Error('GitHub rejected the credentials.')
+    case 403:
+      return new Error('GitHub denied access.')
+    case 404:
+      return new Error('GitHub repository or path not found.')
+    case 407:
+      return new Error('GitHub proxy authentication required.')
+    default:
+      return new Error(`${context} failed (${response.status}).`)
+  }
+}
 
 // Reads a download body into a Buffer, stopping as soon as the running total crosses `limit` (so an
 // oversized/endless body is never drained). Prefers the streaming reader; falls back to arrayBuffer()
@@ -246,7 +296,8 @@ const fetchSkillPreview = async (
       throw githubRequestError(response, `GitHub API request for ${path || 'repo root'}`)
     }
 
-    const payload = (await response.json()) as ContentsEntry | ContentsEntry[]
+    const payload = (await response.json().catch(throwGitHubNetworkError)) as
+      ContentsEntry | ContentsEntry[]
     const entries = Array.isArray(payload) ? payload : [payload]
     for (const entry of entries) {
       const relativePath = entry.path.startsWith(rootPrefix)
@@ -277,7 +328,11 @@ const fetchSkillPreview = async (
       if (Number.isFinite(declared) && declared > SKILL_IMPORT_LIMITS.maxPreviewContentBytes) {
         previewTooLarge()
       }
-      skillMd = await readBounded(raw, SKILL_IMPORT_LIMITS.maxPreviewContentBytes, previewTooLarge)
+      skillMd = await readBounded(
+        raw,
+        SKILL_IMPORT_LIMITS.maxPreviewContentBytes,
+        previewTooLarge
+      ).catch(throwGitHubNetworkError)
     }
   }
 
@@ -323,7 +378,8 @@ const fetchSkillFiles = async (
       throw githubRequestError(response, `GitHub API request for ${path || 'repo root'}`)
     }
 
-    const payload = (await response.json()) as ContentsEntry | ContentsEntry[]
+    const payload = (await response.json().catch(throwGitHubNetworkError)) as
+      ContentsEntry | ContentsEntry[]
     const entries = Array.isArray(payload) ? payload : [payload]
     const files: FetchedSkillFile[] = []
 
@@ -362,7 +418,9 @@ const fetchSkillFiles = async (
         const declared = Number(raw.headers?.get('content-length') ?? '')
         if (Number.isFinite(declared) && declared > perFileLimit) tooLarge()
 
-        const content = await readBounded(raw, perFileLimit, tooLarge)
+        const content = await readBounded(raw, perFileLimit, tooLarge).catch(
+          throwGitHubNetworkError
+        )
         totalBytes += content.length
         fileCount += 1
         files.push({ relativePath, content })
@@ -425,8 +483,9 @@ const searchGitHubSkillRepositories = async (
 
   let payload: unknown
   try {
-    payload = await response.json()
-  } catch {
+    payload = await response.json().catch(throwGitHubNetworkError)
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error
     throw new Error('GitHub returned an invalid repository search response.')
   }
   if (
@@ -473,7 +532,9 @@ const scanRepoForSkills = async (
       headers: GITHUB_HEADERS
     })
     if (!meta.ok) throw githubRequestError(meta)
-    ref = ((await meta.json()) as { default_branch?: string }).default_branch ?? 'main'
+    ref =
+      ((await meta.json().catch(throwGitHubNetworkError)) as { default_branch?: string })
+        .default_branch ?? 'main'
   }
 
   const commitResponse = await flowFetch(
@@ -481,7 +542,9 @@ const scanRepoForSkills = async (
     { headers: GITHUB_HEADERS }
   )
   if (!commitResponse.ok) throw githubRequestError(commitResponse)
-  const commitSha = ((await commitResponse.json()) as { sha?: string }).sha
+  const commitSha = (
+    (await commitResponse.json().catch(throwGitHubNetworkError)) as { sha?: string }
+  ).sha
   if (!commitSha) throw new Error('GitHub did not return a commit SHA for that ref.')
 
   const treeResponse = await flowFetch(
@@ -490,7 +553,7 @@ const scanRepoForSkills = async (
   )
   if (!treeResponse.ok) throw githubRequestError(treeResponse)
 
-  const tree = (await treeResponse.json()) as {
+  const tree = (await treeResponse.json().catch(throwGitHubNetworkError)) as {
     tree?: { path: string; type: string }[]
     truncated?: boolean
   }

@@ -477,6 +477,31 @@ it.each(
 })
 
 it.each([
+  ['ASSESSING MODELING SKILLS', '评估建模技能', true],
+  ['EXAMINING COMMON ERRORS', '分析常见错误', true],
+  ['CLOSING REMARKS', '结束语', true],
+  ['RESULTS AND DISCUSSION', '结果与讨论', true],
+  ['BOUNDARY CONDITIONS', '边界条件', true],
+  ['CONCLUSIONS AND SCOPE', '结论与适用范围', true],
+  ['Sampling Positions', '采样位置', true],
+  ['Boundary Conditions Studio', '边界条件工作室', false],
+  ['Sampling Positions Foundation', '采样位置基金会', false],
+  ['Meadow Modeling Skills Institute', '草原建模技能研究所', false],
+  ['Common Errors Foundation', '常见错误基金会', false]
+])('distinguishes complete academic headings from names: %s', (source, translation, accepted) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, translation)).toBe(!accepted)
+  const checkpoint = {
+    ...saved,
+    sources: [source],
+    translatedSourceIndices: [0],
+    translations: [translation]
+  }
+  expect(reconcilePdfTranslationCheckpoint(checkpoint, 'fp', [source])?.translations).toEqual(
+    accepted ? [translation] : []
+  )
+})
+
+it.each([
   ['Denoising Diffusion Probabilistic Models', '去噪扩散概率模型', true],
   ['Denoising Diffusion Models', '去噪扩散模型', true],
   ['Broader Impact', '更广泛的影响', true],

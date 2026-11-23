@@ -260,11 +260,13 @@ jobs:
         timeout-minutes: 15
         shell: bash
         run: |
-          npx vitest run scripts/deb-cli-launcher.test.ts
+          npx vitest run scripts/deb-cli-launcher.test.ts src/main/update/linux-background-download.test.ts \
+            src/main/update/electron-updater-provider-regressions.test.ts src/main/update/scheduler.test.ts
           trap 'sudo apt-get remove --yes open-science || true' EXIT
           sudo "$(command -v node)" scripts/deb-package-lifecycle-smoke.mjs ./dist/*.deb
           sudo apt-get update
           sudo apt-get install --yes gnome-keyring dbus-user-session libfuse2t64 zlib1g-dev ./dist/*.deb
+          grep -Fx deb /opt/Open-Science/resources/package-type
           xvfb-run -a node scripts/linux-package-smoke.mjs \
             --artifact-dir dist \
             --installed-executable "/opt/Open-Science/open-science" \

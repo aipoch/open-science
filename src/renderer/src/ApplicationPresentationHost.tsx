@@ -1,4 +1,7 @@
-import { RuntimeUpdateOutcomeNotice } from '@/components/runtime-update-outcome-notice'
+import {
+  InterruptedUpdateOpenNotice,
+  RuntimeUpdateOutcomeNotice
+} from '@/components/runtime-update-outcome-notice'
 import { SideChatProvider } from './pages/workspace/use-side-chat-controller'
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
 import { lazy, memo, Suspense, useCallback, useRef, useState } from 'react'
@@ -424,6 +427,7 @@ const ApplicationPresentationContent = ({
                 )}
               </Suspense>
               <ActionToastStack>
+                <InterruptedUpdateOpenNotice platform="darwin" />
                 {sessions.catalogRecovery.kind !== 'ready' ? null : sessions.loadError ? (
                   <SessionPersistenceAlert
                     title={t('Saved conversations could not be loaded')}
@@ -470,6 +474,7 @@ const ApplicationPresentationContent = ({
                 inert={!isBasePresentationActive}
                 aria-hidden={isBasePresentationActive ? undefined : true}
               >
+                <InterruptedUpdateOpenNotice platform="linux" />
                 <EnvStatusBanner
                   ui={startup.environment.ui}
                   onRetry={startup.environment.retry}

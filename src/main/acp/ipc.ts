@@ -198,7 +198,7 @@ const registerAcpIpcHandlerSet = (
     stateCommand(workflows.saveAsSkill(request))
   )
   ipcMainHandle('acp:cancel', (_event, request: AcpCancelPromptRequest) =>
-    stateCommand(runtime.cancelPrompt(request))
+    stateCommand(runtime.cancelPrompt({ ...request, userInitiated: true }))
   )
   ipcMainHandle('acp:delete-session', async (_event, request: AcpDeleteSessionRequest) => {
     // The coordinator owns session disappearance notifications for delete, connection loss, and

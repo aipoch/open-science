@@ -89,6 +89,16 @@ describe('classifyFailure', () => {
       'input/context-overflow'
     ],
     [{ origin: 'provider', status: 429, code: 'insufficient_quota' }, 'configuration/billing'],
+    [
+      { origin: 'provider', status: 402, responseMessage: 'Insufficient Balance' },
+      'configuration/billing'
+    ],
+    [{ origin: 'provider', protocol: 'chat-completions', status: 402 }, 'configuration/billing'],
+    [
+      { origin: 'provider', protocol: 'chat-completions', status: 400, code: 'model_not_found' },
+      'configuration/model-unavailable'
+    ],
+    [{ origin: 'provider', responseMessage: 'Insufficient Balance' }, 'configuration/billing'],
     [{ origin: 'provider', code: 'overloaded_error' }, 'service/unavailable'],
     [
       {

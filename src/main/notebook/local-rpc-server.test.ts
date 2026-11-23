@@ -2123,7 +2123,7 @@ describe('notebook local RPC server', () => {
               sessionId: 'shell-default',
               workspaceCwd: '/workspace',
               command: 'echo hi',
-              timeoutMs: 120_000
+              timeoutMs: 300_000
             }
           })
         },
@@ -2147,7 +2147,7 @@ describe('notebook local RPC server', () => {
               sessionId: 'shell-default',
               workspaceCwd: '/workspace',
               command: 'echo hi',
-              timeoutMs: 120_000
+              timeoutMs: 300_000
             }
           })
         },

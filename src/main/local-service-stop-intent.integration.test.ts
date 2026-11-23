@@ -101,7 +101,9 @@ it('never accepts App B after stop publication even when old authorization compl
       expect(await readServiceLifetime(configRoot)).toMatchObject({ stopping: true })
     )
     await expect(attach()).rejects.toThrow()
-    await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce())
+    // app-exit may await its 2-second acknowledgement timeout while compensation is held.
+    // Vitest's default 1-second polling budget can expire before stop confirmation begins.
+    await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce(), { timeout: 5000 })
     const captured = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
     releaseOldRead = release.resolve

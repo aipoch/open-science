@@ -1,3 +1,4 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
 import { createHash, randomUUID } from 'node:crypto'
@@ -551,6 +552,7 @@ export function createHarnessAcpAgent(directory: string): {
             ? target.modelIdentity
             : `${target.protocol}:${target.modelIdentity}`,
         apiKey: async () => target.token,
+        summarizeProviderError: providerErrorExcerpt,
         fetch: async (url, init) => {
           const headers = new Headers(init?.headers)
           headers.set('user-agent', 'open-science-agent/0.1.0')
@@ -833,6 +835,9 @@ export function createHarnessAcpAgent(directory: string): {
                     protocol,
                     adapterCode: error.code,
                     ...(error.status === undefined ? {} : { status: error.status }),
+                    ...(diagnostics.providerExcerpt
+                      ? { providerExcerpt: diagnostics.providerExcerpt }
+                      : {}),
                     ...(diagnostics.reason ? { code: diagnostics.reason } : {}),
                     ...(diagnostics.requestId ? { requestId: diagnostics.requestId } : {}),
                     phase

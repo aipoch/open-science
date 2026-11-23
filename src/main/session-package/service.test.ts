@@ -20,7 +20,7 @@ import { parseNativeRecords, remapStorageKey } from './native-snapshot'
 import { validatePackageRecords } from './validation'
 import { ProjectRepository } from '../projects/repository'
 import { migrateApplicationDatabase } from '../projects/prisma-client'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import {
   createArtifactVersionRequest,
   createProvenanceTestFixture
@@ -29,6 +29,8 @@ import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { ReviewRepository } from '../reviewer/repository'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { createRootNotebookLane } from '../notebook/lane-identity'
+import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import { sha256 } from '../artifacts/provenance-canonical'
 import { createPngBytes } from '../artifacts/artifact-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
@@ -160,6 +162,118 @@ it('round-trips a compaction activity and its conversation through a science pac
       }
     ])
     expect(session?.conversationGraph?.activities).toHaveLength(1)
+  } finally {
+    await Promise.all([exporter.close(), importer.close()])
+  }
+})
+
+it('round-trips Notebook environment manifest sidecars through a science package', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Notebook evidence',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const lane = createRootNotebookLane('project-1', 'session-1', 'root-frame-session-1')
+  await source.notebookRepository.loadOrCreate({
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    lane,
+    workspaceCwd: source.storageRoot
+  })
+  const manifest: NotebookEnvironmentManifest = {
+    schemaVersion: 1,
+    captureKind: 'completed-run',
+    capturedAt: '2026-09-02T00:00:00.000Z',
+    installedInventory: {
+      capturedAt: '2026-09-02T00:00:00.000Z',
+      source: 'full-scan',
+      validation: 'full-scan'
+    },
+    kernelKind: 'python',
+    environmentName: 'default-python',
+    runtimeSource: 'managed',
+    inventorySources: ['kernel-native'],
+    packages: [],
+    complete: true,
+    captureStatus: 'complete'
+  }
+  const checksum = sha256(`${JSON.stringify(manifest, null, 2)}\n`)
+  await source.notebookRepository.appendRun({
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    lane,
+    run: {
+      runId: 'run-1',
+      cellId: 'cell-1',
+      source: 'user',
+      kernelKind: 'python',
+      status: 'completed',
+      startedAt: 1,
+      endedAt: 2,
+      script: 'print(1)',
+      text: { stdout: '1', stderr: '', traceback: '', plain: [] },
+      outputs: [],
+      workingFiles: [],
+      environmentCapture: { state: 'available', manifestChecksum: checksum },
+      environmentManifestChecksum: checksum,
+      environmentManifest: manifest
+    }
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  try {
+    const archive = join(source.storageRoot, 'notebook-evidence.science')
+    await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+    initDataRoot(target.storageRoot)
+    const imported = await importer.importFrom(archive)
+    const targetRaw = JSON.parse(
+      await readFile(
+        join(target.storageRoot, 'notebooks', imported.projectId, imported.sessionId, 'run.json'),
+        'utf8'
+      )
+    )
+    expect(targetRaw.runs[0].environmentManifestChecksum).toBe(checksum)
+    expect(
+      await readFile(
+        join(target.storageRoot, 'runtime/provenance/environment-manifests', `${checksum}.json`),
+        'utf8'
+      )
+    ).toBe(`${JSON.stringify(manifest, null, 2)}\n`)
+    const hydratedRuns = await target.notebookRepository.readSessionRuns(
+      imported.projectId,
+      imported.sessionId,
+      { includeEnvironmentManifests: true }
+    )
+    expect(hydratedRuns[0]?.environmentManifest).toEqual(manifest)
+    const selected = await target.notebookRepository.readSessionRunWindow(
+      imported.projectId,
+      imported.sessionId,
+      0,
+      [hydratedRuns[0]!.runId]
+    )
+    expect(selected.runs[0]?.environmentManifest).toEqual(manifest)
+    expect(
+      await readFile(
+        join(target.storageRoot, 'runtime/provenance/environment-manifests', `${checksum}.json`),
+        'utf8'
+      )
+    ).toBe(`${JSON.stringify(manifest, null, 2)}\n`)
   } finally {
     await Promise.all([exporter.close(), importer.close()])
   }
@@ -4733,8 +4847,198 @@ it('still aborts processing after the budget expires while copying', async () =>
   expect((await stat(join(source.storageRoot, key))).size).toBe(1024 * 1024)
 })
 
-// Each lifecycle scenario starts from its own imported package. Do not accumulate all
-// migrations and archive round trips under one 60-second Windows test budget.
+type ReproducibilityCase = {
+  source: Awaited<ReturnType<typeof createProvenanceTestFixture>>
+  archive: string
+  version: { artifactId: string; versionId: string }
+  row: { contentStorageKey: string; checksum: string | null }
+  request: { projectId: string; appSessionId: string; artifactId: string; versionId: string }
+  store: InstanceType<
+    typeof import('../artifacts/artifact-reproducibility-receipts').ArtifactReproducibilityReceiptStore
+  >
+  originalReceipt: { receiptChecksum: string }
+  failedAttempt: { attemptId: string }
+  batch: unknown
+  lock: string
+  lockChecksum: string
+  output: Buffer
+  listArtifactReproducibilityReceipts: typeof import('../artifacts/artifact-reproducibility-receipts').listArtifactReproducibilityReceipts
+  getArtifactReproducibilityCheckLog: typeof import('../artifacts/artifact-reproducibility-receipts').getArtifactReproducibilityCheckLog
+  getArtifactReproducibilityOutput: typeof import('../artifacts/artifact-reproducibility-receipts').getArtifactReproducibilityOutput
+}
+
+async function createReproducibilityCase(omitOutput: boolean): Promise<ReproducibilityCase> {
+  const {
+    ArtifactReproducibilityReceiptStore,
+    listArtifactReproducibilityReceipts,
+    getArtifactReproducibilityCheckLog,
+    getArtifactReproducibilityOutput
+  } = await import('../artifacts/artifact-reproducibility-receipts')
+  const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Probe' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Probe',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: []
+  })
+  await source.stagePng('probe')
+  const version = await source.repository.createVersion(createArtifactVersionRequest())
+  const row = await source.client.artifactVersion.findUniqueOrThrow({
+    where: { id: version.versionId }
+  })
+  const request = {
+    projectId: 'project-1',
+    appSessionId: 'session-1',
+    artifactId: version.artifactId,
+    versionId: version.versionId
+  }
+  const store = new ArtifactReproducibilityReceiptStore({
+    resolveVersionDirectory: async () => dirname(join(source.storageRoot, row.contentStorageKey))
+  })
+  const lock = JSON.stringify({
+    schemaVersion: 1,
+    format: 'environment-lock-bundle',
+    kernelKind: 'python',
+    environmentName: 'default-python',
+    components: [
+      {
+        ecosystem: 'conda',
+        format: 'conda-explicit-md5',
+        resolution: 'locked',
+        explicitLock:
+          '@EXPLICIT\nhttps://repo.example.test/python-3.12.conda#0123456789abcdef0123456789abcdef\n',
+        packages: ['python']
+      }
+    ]
+  })
+  const lockChecksum = sha256(lock)
+  await mkdir(join(source.storageRoot, 'runtime/provenance/environment-locks'), {
+    recursive: true
+  })
+  await writeFile(
+    join(source.storageRoot, 'runtime/provenance/environment-locks', `${lockChecksum}.json`),
+    lock
+  )
+  const output = Buffer.from('source result\n')
+  expect(await store.retainOutput(request, output)).toBe(true)
+  const originalReceipt = await store.append(request, {
+    schemaVersion: 1,
+    receiptId: 'probe-check',
+    startedAt: '2026-09-02T00:00:00.000Z',
+    completedAt: '2026-09-02T00:01:00.000Z',
+    outcome: 'different',
+    artifactVersion: { ...request, targetChecksum: row.checksum! },
+    frontier: { frontierId: 'original-inputs', claimScope: 'end-to-end' },
+    recipe: { recipeId: 'b'.repeat(64), graphChecksum: 'c'.repeat(64) },
+    environmentLocks: [
+      {
+        requirementId: 'python:analysis',
+        kernelKind: 'python',
+        environmentName: 'default-python',
+        lockChecksum
+      }
+    ],
+    completedStepIds: ['notebook:run-1'],
+    comparisons: [
+      {
+        stepId: 'notebook:run-1',
+        entityId: 'file-1',
+        relativePath: 'result.csv',
+        expectedChecksum: 'e'.repeat(64),
+        expectedSizeBytes: output.length,
+        actualChecksum: sha256(output),
+        actualSizeBytes: output.length,
+        status: 'different',
+        reason: 'checksum-mismatch',
+        outputCaptured: true
+      }
+    ]
+  })
+  const failedAttempt = await store.recordFailure(
+    request,
+    {
+      attemptId: 'failed-source-check',
+      startedAt: '2026-09-02T00:04:00.000Z',
+      completedAt: '2026-09-02T00:05:00.000Z',
+      artifactVersion: request,
+      frontierId: 'original-inputs',
+      phase: 'restoring-environments'
+    },
+    { entries: [], truncated: false }
+  )
+  expect((await store.list(request)).receipts).toHaveLength(1)
+  const { SessionReproducibilityStore } = await import('../artifacts/session-reproducibility-store')
+  const batch = {
+    batchId: 'source-batch',
+    projectId: request.projectId,
+    appSessionId: request.appSessionId,
+    createdAt: '2026-09-02T00:00:00.000Z',
+    status: 'completed' as const,
+    targets: [
+      {
+        artifactId: request.artifactId,
+        versionId: request.versionId,
+        name: 'probe.png',
+        status: 'different' as const,
+        receiptChecksum: originalReceipt.receiptChecksum
+      }
+    ]
+  }
+  await new SessionReproducibilityStore(source.storageRoot).save(batch)
+  const archive = join(source.storageRoot, `probe-${omitOutput ? 'omitted' : 'complete'}.science`)
+  await new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive, {
+    selectFiles: async (files) => {
+      const reproduced = files.filter((file) => file.source === 'reproducibility')
+      expect(reproduced).toHaveLength(1)
+      return omitOutput ? reproduced.map((file) => file.storageKey) : []
+    }
+  })
+  return {
+    source,
+    archive,
+    version,
+    row,
+    request,
+    store,
+    originalReceipt,
+    failedAttempt,
+    batch,
+    lock,
+    lockChecksum,
+    output,
+    listArtifactReproducibilityReceipts,
+    getArtifactReproducibilityCheckLog,
+    getArtifactReproducibilityOutput
+  }
+}
+
+const reproducibilityCases = new Map<boolean, ReturnType<typeof createReproducibilityCase>>()
+const getReproducibilityCase = (
+  omitOutput: boolean
+): ReturnType<typeof createReproducibilityCase> => {
+  const existing = reproducibilityCases.get(omitOutput)
+  if (existing) return existing
+  const created = createReproducibilityCase(omitOutput)
+  reproducibilityCases.set(omitOutput, created)
+  return created
+}
+
+afterAll(async () => {
+  const cases = await Promise.all(reproducibilityCases.values())
+  await Promise.all(cases.map(({ source }) => source.dispose()))
+})
+
+// Each lifecycle scenario starts from a shared immutable package for each selection mode. The
+// target fixture remains isolated so rollback, reuse and deletion assertions stay independent.
 it.each(
   [false, true].flatMap((omitOutput) =>
     (['reuse', 'rollback', 'forward-and-delete'] as const).map((scenario) => ({
@@ -4746,144 +5050,25 @@ it.each(
   'preserves source reproducibility receipts and logs with omitted outputs=$omitOutput ($scenario)',
   async ({ omitOutput, scenario }) => {
     const {
-      ArtifactReproducibilityReceiptStore,
+      source,
+      archive,
+      version,
+      request,
+      store,
+      originalReceipt,
+      failedAttempt,
+      batch,
+      lock,
+      lockChecksum,
+      output,
       listArtifactReproducibilityReceipts,
       getArtifactReproducibilityCheckLog,
       getArtifactReproducibilityOutput
-    } = await import('../artifacts/artifact-reproducibility-receipts')
-    const source = await createProvenanceTestFixture()
-    initDataRoot(source.storageRoot)
+    } = await getReproducibilityCase(omitOutput)
     const target = await createProvenanceTestFixture()
     initDataRoot(target.storageRoot)
-    fixtures.push(source, target)
-    await source.client.project.create({ data: { id: 'project-1', name: 'Probe' } })
-    await new SessionRepository(source.storageRoot).saveSession({
-      id: 'session-1',
-      projectId: 'project-1',
-      title: 'Probe',
-      cwd: '',
-      status: 'idle',
-      messages: [],
-      createdAt: 1,
-      updatedAt: 2
-    })
-    await source.stagePng('probe')
-    const version = await source.repository.createVersion(createArtifactVersionRequest())
-    const row = await source.client.artifactVersion.findUniqueOrThrow({
-      where: { id: version.versionId }
-    })
-    const request = {
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactId: version.artifactId,
-      versionId: version.versionId
-    }
-    const store = new ArtifactReproducibilityReceiptStore({
-      resolveVersionDirectory: async () => dirname(join(source.storageRoot, row.contentStorageKey))
-    })
-    const lock = JSON.stringify({
-      schemaVersion: 1,
-      format: 'environment-lock-bundle',
-      kernelKind: 'python',
-      environmentName: 'default-python',
-      components: [
-        {
-          ecosystem: 'conda',
-          format: 'conda-explicit-md5',
-          resolution: 'locked',
-          explicitLock:
-            '@EXPLICIT\nhttps://repo.example.test/python-3.12.conda#0123456789abcdef0123456789abcdef\n',
-          packages: ['python']
-        }
-      ]
-    })
-    const lockChecksum = sha256(lock)
-    await mkdir(join(source.storageRoot, 'runtime/provenance/environment-locks'), {
-      recursive: true
-    })
-    await writeFile(
-      join(source.storageRoot, 'runtime/provenance/environment-locks', `${lockChecksum}.json`),
-      lock
-    )
-    const output = Buffer.from('source result\n')
-    expect(await store.retainOutput(request, output)).toBe(true)
-    const originalReceipt = await store.append(request, {
-      schemaVersion: 1,
-      receiptId: 'probe-check',
-      startedAt: '2026-09-02T00:00:00.000Z',
-      completedAt: '2026-09-02T00:01:00.000Z',
-      outcome: 'different',
-      artifactVersion: { ...request, targetChecksum: row.checksum! },
-      frontier: { frontierId: 'original-inputs', claimScope: 'end-to-end' },
-      recipe: { recipeId: 'b'.repeat(64), graphChecksum: 'c'.repeat(64) },
-      environmentLocks: [
-        {
-          requirementId: 'python:analysis',
-          kernelKind: 'python',
-          environmentName: 'default-python',
-          lockChecksum
-        }
-      ],
-      completedStepIds: ['notebook:run-1'],
-      comparisons: [
-        {
-          stepId: 'notebook:run-1',
-          entityId: 'file-1',
-          relativePath: 'result.csv',
-          expectedChecksum: 'e'.repeat(64),
-          expectedSizeBytes: output.length,
-          actualChecksum: sha256(output),
-          actualSizeBytes: output.length,
-          status: 'different',
-          reason: 'checksum-mismatch',
-          outputCaptured: true
-        }
-      ]
-    })
-    const failedAttempt = await store.recordFailure(
-      request,
-      {
-        attemptId: 'failed-source-check',
-        startedAt: '2026-09-02T00:04:00.000Z',
-        completedAt: '2026-09-02T00:05:00.000Z',
-        artifactVersion: request,
-        frontierId: 'original-inputs',
-        phase: 'restoring-environments'
-      },
-      { entries: [], truncated: false }
-    )
-    expect((await store.list(request)).receipts).toHaveLength(1)
-    const { SessionReproducibilityStore } =
-      await import('../artifacts/session-reproducibility-store')
-    const batch = {
-      batchId: 'source-batch',
-      projectId: request.projectId,
-      appSessionId: request.appSessionId,
-      createdAt: '2026-09-02T00:00:00.000Z',
-      status: 'completed' as const,
-      targets: [
-        {
-          artifactId: request.artifactId,
-          versionId: request.versionId,
-          name: 'probe.png',
-          status: 'different' as const,
-          receiptChecksum: originalReceipt.receiptChecksum
-        }
-      ]
-    }
-    await new SessionReproducibilityStore(source.storageRoot).save(batch)
-    const archive = join(source.storageRoot, 'probe.science')
-    await new SessionPackageService({
-      storageRoot: source.storageRoot,
-      getClient: async () => source.client
-    }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive, {
-      selectFiles: async (files) => {
-        const reproduced = files.filter((file) => file.source === 'reproducibility')
-        expect(reproduced).toHaveLength(1)
-        return omitOutput ? reproduced.map((file) => file.storageKey) : []
-      }
-    })
-    const extracted = join(source.storageRoot, 'extracted')
+    fixtures.push(target)
+    const extracted = join(source.storageRoot, `extracted-${scenario}`)
     await mkdir(extracted)
     await extractTar({ file: archive, cwd: extracted })
     const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))

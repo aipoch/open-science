@@ -55,7 +55,7 @@ const EnvironmentErrorBanner = ({
     <div
       data-testid="env-status-banner"
       data-bottom-notice
-      className="pointer-events-auto fixed right-3 bottom-3 z-toast w-[min(420px,calc(100vw-24px))] rounded-2xl bg-card text-left shadow-dialog"
+      className="pointer-events-auto fixed right-3 bottom-3 z-toast w-[min(420px,calc(100vw-24px))] rounded-2xl bg-card text-left shadow-notice"
     >
       <ErrorNotice
         role="alert"
@@ -161,7 +161,7 @@ const EnvStatusBanner = ({
         data-bottom-notice
         role="status"
         aria-live="polite"
-        className="pointer-events-auto fixed right-3 bottom-3 z-toast flex w-[min(420px,calc(100vw-24px))] items-center justify-center gap-2 rounded-3xl border border-border bg-card px-4 py-2 text-center text-xs text-foreground shadow-dialog"
+        className="pointer-events-auto fixed right-3 bottom-3 z-toast flex w-[min(420px,calc(100vw-24px))] items-center justify-center gap-2 rounded-3xl border border-border bg-card px-4 py-2 text-center text-xs text-foreground shadow-notice"
       >
         {ui.download ? (
           // Task 8: keep the existing overall provision phase text (with its percent), and render the

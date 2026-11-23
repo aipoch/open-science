@@ -109,3 +109,58 @@ for (const [name, mutate] of controls)
       name === 'rotated first label' ? 60 : name === 'foreign native interval' ? 125 : 210
     )
   })
+
+it.each(['aligned', 'shifted scores', 'independent values'])(
+  'keeps compact metric headers on their individual rails (%s)',
+  (shape) => {
+    const names = ['Group', 'Method', 'Near-hit', 'Far-hit']
+    const header = names.map((name, index) =>
+      word(name, [70, 120, 220, 260][index], 600, [28, 30, 32, 34][index])
+    )
+    const rows = [583, 565.5, 554.25].flatMap((y, index) => [
+      ...(index === 0 ? [word('Sample', 70, y, 32, false, 'metrics')] : []),
+      word(
+        index === 0 && shape !== 'independent values' ? 'Sample' : 'Probe',
+        120,
+        y,
+        38,
+        false,
+        'metrics'
+      ),
+      word(['15.5', '19.9', '40.0'][index], 230, y, 12, false, 'metrics'),
+      word(
+        ['16.2', '26.3', '41.1'][index],
+        271 + (index > 0 && shape === 'shifted scores' ? 5 : 0),
+        y,
+        12,
+        true,
+        'metrics'
+      )
+    ])
+    const other = word(
+      'The adjacent explanation concerns a separate experiment.',
+      320,
+      600,
+      240,
+      true,
+      'prose'
+    )
+    other.transform[0] = other.transform[3] = other.height = 11.25
+    const items = [...header, blank(), ...rows, other]
+    const { units, pages } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+    const headerCells = pages[0].blocks
+      .filter((block) => block.tableCell && block.items.some((id) => /^1:[0-3]$/.test(id)))
+      .map((block) => block.source)
+    expect(headerCells).toEqual(
+      shape === 'aligned' ? names : shape === 'shifted scores' ? [] : ['Method', 'Near-hit Far-hit']
+    )
+    expect(units.find((unit) => unit.source === other.str)?.items).toHaveLength(1)
+    for (const index of [7, 8, 10, 11, 13, 14]) {
+      const key = '1:' + index
+      const owner = units.find((unit) => unit.items.includes(key))
+      expect(owner?.sourceOnly, key).toBe(true)
+    }
+  }
+)

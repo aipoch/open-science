@@ -20,6 +20,12 @@ import {
   type ProcessTreeKillResult
 } from '../process-tree'
 import { windowsProcessCommandLine, windowsProcessIsAlive } from '../windows-process-query'
+import {
+  hasSystemRestarted,
+  isStableBootIdentity,
+  readWindowsBootObservation,
+  type WindowsBootObservation
+} from '../system-boot-identity'
 import { reapWindowsOwnedJob } from '../process-tree-windows'
 import {
   createDarwinKernelRecovery,
@@ -61,6 +67,7 @@ type KernelProcessRecord = KernelProcessSpawnScope & {
   bootToken?: string
   windowsProcessTreeProof?: WindowsProcessTreeProof
   windowsJobName?: string
+  windowsBootObservation?: WindowsBootObservation
   darwinRecoveryProcesses?: DarwinRecoveryIdentity[]
 }
 
@@ -101,10 +108,22 @@ type KernelProcessLifecycleOwnerOptions = Readonly<{
   platform?: NodeJS.Platform
   controller?: KernelProcessRecoveryController
   readBootToken?: () => string | undefined
+  readWindowsBootObservation?: typeof readWindowsBootObservation
 }>
 
 const isPositivePid = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+
+const isWindowsBootObservation = (value: unknown): value is WindowsBootObservation => {
+  if (!value || typeof value !== 'object') return false
+  const observation = value as Partial<WindowsBootObservation>
+  return (
+    typeof observation.hostHash === 'string' &&
+    /^[0-9a-f]{64}$/.test(observation.hostHash) &&
+    isStableBootIdentity(observation.bootIdentity) &&
+    observation.bootIdentity.startsWith('windows-boot:')
+  )
+}
 
 const isWindowsProcessTreeProof = (value: unknown): value is WindowsProcessTreeProof => {
   if (typeof value !== 'object' || value === null) return false
@@ -183,7 +202,9 @@ const decodeRecord = (contents: string): KernelProcessRecord | undefined => {
             value.receiptId
           ) ||
           value.windowsJobName !== `Local\\OpenScience.Notebook.${value.receiptId}`)) ||
-      (value.bootToken !== undefined && !isValidBootToken(value.bootToken))
+      (value.bootToken !== undefined && !isValidBootToken(value.bootToken)) ||
+      (value.windowsBootObservation !== undefined &&
+        (value.platform !== 'win32' || !isWindowsBootObservation(value.windowsBootObservation)))
     ) {
       return undefined
     }
@@ -377,6 +398,7 @@ class KernelProcessLifecycleOwner {
   private readonly platform: NodeJS.Platform
   private readonly controller: KernelProcessRecoveryController
   private readonly readBootToken: () => string | undefined
+  private readonly readWindowsBootObservation: typeof readWindowsBootObservation
   private readonly pendingReceiptIds = new Set<string>()
   private recovery: Promise<void> | undefined
   private scopedRecoveryTail: Promise<void> = Promise.resolve()
@@ -387,6 +409,8 @@ class KernelProcessLifecycleOwner {
     this.directory = join(options.storageRoot, 'runtime', 'kernel-processes')
     this.platform = options.platform ?? process.platform
     this.readBootToken = options.readBootToken ?? readBootToken
+    this.readWindowsBootObservation =
+      options.readWindowsBootObservation ?? readWindowsBootObservation
     this.controller = options.controller ?? defaultController(this.platform, this.readBootToken)
   }
 
@@ -554,6 +578,9 @@ class KernelProcessLifecycleOwner {
       throw error
     }
     const blocked: string[] = []
+    let bootObservation: ReturnType<typeof readWindowsBootObservation> | undefined
+    const currentWindowsBoot = (): ReturnType<typeof readWindowsBootObservation> =>
+      (bootObservation ??= this.readWindowsBootObservation())
     for (const name of names) {
       const path = join(this.directory, name)
       if (name.includes('.pending.')) {
@@ -614,6 +641,19 @@ class KernelProcessLifecycleOwner {
         continue
       }
       if (record.ownerInstanceId === this.ownerInstanceId) continue
+      const legacyWindows =
+        this.platform === 'win32' && record.platform === 'win32' && !record.windowsJobName
+      if (legacyWindows && record.windowsBootObservation) {
+        const current = await currentWindowsBoot()
+        if (
+          current?.hostHash === record.windowsBootObservation.hostHash &&
+          hasSystemRestarted(record.windowsBootObservation.bootIdentity, current.bootIdentity)
+        ) {
+          if (this.removeIfOwned(path, record.receiptId))
+            removeWindowsProcessTreeProof(record.windowsProcessTreeProof)
+          continue
+        }
+      }
       if (!record.pid) {
         const encodedPid = name.match(/\.active\.(\d+)\./)?.[1]
         if (encodedPid && isPositivePid(Number(encodedPid))) record.pid = Number(encodedPid)
@@ -630,18 +670,13 @@ class KernelProcessLifecycleOwner {
       const probe = await (this.platform === 'darwin'
         ? this.controller.probe(record, checkpoint)
         : this.controller.probe(record))
-      if (probe === 'dead' || probe === 'reused') {
-        if (
-          probe === 'reused' &&
-          record.platform === 'win32' &&
-          record.windowsProcessTreeProof &&
-          !(await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
-        ) {
-          if (!options.allowUnverifiedReceipts) {
-            blocked.push(`${record.laneKey}:${record.processKey}`)
-          }
-          continue
-        }
+      if (
+        probe === 'dead' ||
+        (probe === 'reused' &&
+          (record.platform !== 'win32' ||
+            !record.windowsProcessTreeProof ||
+            (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))))
+      ) {
         if (this.removeIfOwned(path, record.receiptId)) {
           removeWindowsProcessTreeProof(record.windowsProcessTreeProof)
         }
@@ -658,12 +693,38 @@ class KernelProcessLifecycleOwner {
           continue
         }
       }
+      if (legacyWindows && !record.windowsBootObservation) {
+        const current = await currentWindowsBoot()
+        if (current) this.checkpointWindowsBoot(path, record, current)
+      }
       if (!options.allowUnverifiedReceipts) blocked.push(`${record.laneKey}:${record.processKey}`)
     }
     if (blocked.length > 0) {
       throw new Error(
         `KERNEL_STARTUP_FENCE: could not prove old persistent process ownership was cleared (${blocked.join(', ')}).`
       )
+    }
+  }
+
+  private checkpointWindowsBoot(
+    path: string,
+    record: KernelProcessRecord,
+    observation: WindowsBootObservation
+  ): void {
+    // A concurrent scan can settle or update the receipt while the OS query is in flight.
+    // Preserve the first observation and never recreate a removed record.
+    try {
+      const latest = decodeRecord(readFileSync(path, 'utf8'))
+      if (
+        latest?.receiptId === record.receiptId &&
+        latest.ownerToken === record.ownerToken &&
+        !latest.windowsJobName &&
+        !latest.windowsBootObservation
+      ) {
+        writeRecordSync(path, { ...latest, windowsBootObservation: observation })
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
   }
 

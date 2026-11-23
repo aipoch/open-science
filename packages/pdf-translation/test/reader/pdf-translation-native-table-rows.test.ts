@@ -1131,3 +1131,206 @@ test.each([0, 4])(
     )
   }
 )
+
+test.each(['table', 'ordinary caption', 'shifted column'])(
+  'keeps centered table wraps inside their own record (%s)',
+  (variant) => {
+    const caption =
+      variant === 'ordinary caption'
+        ? 'Device settings are listed below.'
+        : 'Table I. Device settings.'
+    const centered = (
+      str: string,
+      center: number,
+      y: number,
+      width: number,
+      hasEOL = false
+    ): PdfLayoutTextItem => item(str, center - width / 2, y, width, 9, hasEOL)
+    const runs = [
+      centered(caption, 306, 68, 162, true),
+      centered('Maker', 106, 85, 31),
+      centered('Module', 299, 85, 35),
+      centered('Purpose', 501, 85, 36, true),
+      centered('Alpha', 106, 102, 36),
+      centered('Unheated', 299, 97, 86, true),
+      centered('control module', 299, 107, 67),
+      centered('Signal tracking.', 501, 102, 87, true),
+      centered('Beta', 106, 118, 36),
+      centered('Optical module', variant === 'shifted column' ? 306 : 299, 118, 90),
+      centered('Image calibration.', 501, 118, 87, true),
+      centered('Gamma', 106, 134, 36),
+      centered('Programmable', 299, 129, 86, true),
+      centered('power module', 299, 139, 67),
+      centered('Optical detection.', 501, 134, 87, true),
+      item('A separate acquisition sampled the remaining channels.', 55, 172, 224, 10, true)
+    ].map((run) => ({ ...run, fontVertical: false }))
+    const blocks = extract(runs)
+    const cells = blocks.filter((block) => block.tableCell)
+    if (variant !== 'table') {
+      assert.equal(cells.length, 0)
+      return
+    }
+    assert.deepEqual(
+      blocks
+        .filter((block) => block.items.some((key) => ['1:5', '1:9', '1:12'].includes(key)))
+        .map((block) => [block.source, block.items]),
+      [
+        ['Unheated control module', ['1:5', '1:6']],
+        ['Optical module', ['1:9']],
+        ['Programmable power module', ['1:12', '1:13']]
+      ]
+    )
+    assert.ok(
+      blocks.some((block) => block.source.startsWith('A separate acquisition') && !block.tableCell)
+    )
+  }
+)
+
+test.each([true, false])(
+  'keeps marked measurements with their own table cells (caption=%s)',
+  (caption) => {
+    const separator = (y: number): PdfLayoutTextItem => ({
+      ...item('', 65, y, 0, 10, true),
+      height: 0
+    })
+    const items = [
+      item(
+        'The following results summarize the observations across repeated trials.',
+        52,
+        374,
+        251,
+        10,
+        true
+      ),
+      item('Metric', 65, 400, 31, 10, false, 'heading'),
+      item('Set One', 135, 400, 42, 10, false, 'heading'),
+      item('Set Two', 187, 400, 60, 10, false, 'heading'),
+      item('p-value', 255, 400, 31, 10, false, 'heading'),
+      separator(412),
+      ...['Repeatability', 'Precision', 'Consistency'].flatMap((label, row) => {
+        const y = 412 + row * 12
+        return [
+          item(label, 65, y, 58, 10),
+          item(['2.18', '2.93', '3.18'][row], 146, y, 17, 10),
+          item(['5.82', '3.36', '4.96'][row], 207, y, 17, 10),
+          item(['7e-05', '0.012', '0.063'][row], 255, y, 22, 10),
+          ...(row < 2 ? [item('∗', 277, y - 3.6, 4, 7, false, 'symbol')] : []),
+          separator(y + 12)
+        ]
+      }),
+      item(
+        caption ? 'TABLE III: Measurements across independent trials.' : 'Independent readings.',
+        51,
+        454,
+        250,
+        8,
+        true
+      )
+    ].map((part) => ({ ...part, fontAscent: 0.76, fontDescent: -0.2, fontVertical: false }))
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+    const owner = (source: string): (typeof units)[number] | undefined =>
+      units.find(({ items: keys }) =>
+        keys.includes(`1:${items.findIndex((part) => part.str === source)}`)
+      )
+    assert.equal(
+      ['Set One', 'Set Two', 'Precision', 'Consistency'].every(
+        (source) => owner(source)?.source === source
+      ),
+      caption
+    )
+    if (caption) {
+      assert.equal(owner('7e-05')?.source, '7e-05∗')
+      assert.equal(owner('7e-05')?.sourceOnly, true)
+      assert.equal(owner('2.93')?.sourceOnly, true)
+      assert.equal(owner('0.063')?.sourceOnly, true)
+    }
+    assert.deepEqual(
+      units.flatMap(({ items: keys }) => keys).sort(),
+      items.flatMap((part, index) => (part.str ? [`1:${index}`] : [])).sort()
+    )
+  }
+)
+
+test('centered measurement headings follow independently aligned value columns', () => {
+  const labels = ['Observed Signal (S)', 'De-reddened Signal (I)']
+  const specimen = (shift = 0): PdfLayoutTextItem[] => {
+    const row = (
+      values: string[],
+      y: number,
+      face: string,
+      widths: number[],
+      shiftedColumn = -1
+    ): PdfLayoutTextItem[] => [
+      { ...item('', 108, y, 0, 8.5, true, face), height: 0 },
+      ...values.map((value, column) => {
+        const x = 108 + column * 98 + (column === shiftedColumn ? shift : 0)
+        return item(value, x - widths[column] / 2, y, widths[column], 8.5, false, face)
+      })
+    ]
+    return [
+      { ...item('', 125, 45, 0, 8.5, true, 'head'), height: 0 },
+      item('Table 1.', 125, 45, 46, 10, false, 'head'),
+      item('Instrument readings by trial', 174, 45, 211, 10, false, 'body'),
+      ...row(
+        ['Emission channel', 'Position (m)', ...labels, 'Abundance'],
+        62,
+        'head',
+        [58, 62, 72, 82, 46]
+      ),
+      ...[
+        ['H I', '1205', '2.370', '3.516', '-'],
+        ['[Ne III]', '1350', '5.800', '81.244', '1.22E-02'],
+        ['He I', '1438', '16.500', '17.896', '1.91E-03']
+      ].flatMap((values, index) =>
+        row(
+          values,
+          81 + index * 19,
+          'data',
+          values.map((value) => value.length * 4.2),
+          index === 1 ? 3 : -1
+        )
+      )
+    ]
+  }
+  const aligned = extract(specimen())
+  for (const label of labels) {
+    assert.ok(aligned.some((block) => block.tableCell && block.source === label))
+  }
+
+  const displaced = extract(specimen(12))
+  assert.ok(displaced.some((block) => labels.every((label) => block.source.includes(label))))
+})
+
+test.each([true, false])(
+  'retains catalog keys and method codes only in complete coordinate rows (%s)',
+  (matched) => {
+    const runs = [
+      item('Table 3', 210, 91, 34, 9),
+      item('. Measurements for the selected objects', 244, 91, 150, 9, true),
+      ...['Name', 'α', 'δ', 'P', 'T', 'Method'].map((label, n) =>
+        item(label, [156, 240, 290, 358, 420, 461][n], 115, 16, 8, n === 5)
+      ),
+      ...['Object Z7', 'Object Y6', 'Object X5', 'Object W4'].flatMap((name, n) => {
+        const y = 155 + n * 12.4
+        return [
+          item(name, 115, y, 46, 8),
+          item('01 02 03.4', 229, y, 41, 8),
+          item('+05 06 07.8', 280, y, 44, 8),
+          item(n === 3 && !matched ? 'unrated' : '0.125(2)', 334, y, 35, 8),
+          item(n % 2 === 0 ? 'emn' : 'abs', 461, y, 17, 8, true)
+        ]
+      }),
+      item('The observations use a separate reference scale.', 112, 215, 200, 8, true)
+    ].map((run) => ({ ...run, fontVertical: false, fontAscent: 0.75, fontDescent: -0.22 }))
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 800, rotation: 0, items: runs }]
+    })
+    const data = units.filter(({ source }) => /^(?:Object [A-Z]\d|emn|abs)$/u.test(source))
+    assert.equal(data.length, 8)
+    assert.ok(data.every((unit) => Boolean(unit.sourceOnly) === matched))
+    assert.ok(units.some((unit) => unit.source.startsWith('Table 3') && !unit.sourceOnly))
+    assert.ok(units.some((unit) => unit.source.startsWith('The observations') && !unit.sourceOnly))
+  }
+)

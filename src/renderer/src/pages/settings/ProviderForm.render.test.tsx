@@ -425,7 +425,11 @@ describe('ProviderForm field switching', () => {
     expect(icon?.getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
     expect(decodeURIComponent(icon?.getAttribute('src') ?? '')).toContain('<title>BaiLian</title>')
     expect(container.querySelector('[aria-label="Endpoint"]')?.textContent).toContain('China')
+    expect(container.textContent).toContain('qwen4-max-preview')
     expect(container.textContent).toContain('qwen3.8-max')
+    expect(container.textContent).toContain('qwen4-max')
+    const text = container.textContent ?? ''
+    expect(text.indexOf('Workspace ID')).toBeLessThan(text.indexOf('Supported models'))
   })
 
   it('reuses the bundled Bailian brand mark for Bailian for Plan', () => {

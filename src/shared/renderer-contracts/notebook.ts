@@ -26,6 +26,9 @@ import type {
   FinishNotebookCodeCellRequest,
   NotebookAvailableEvent,
   NotebookBackgroundRunLookupRequest,
+  NotebookBackgroundTaskSnapshot,
+  NotebookRunEvidenceRequest,
+  NotebookRunEvidenceSnapshot,
   NotebookBackgroundRunResult,
   NotebookChangedEvent,
   NotebookNamespaceRequest,
@@ -97,6 +100,9 @@ export const contracts = {
   'notebook.execute': callable<
     (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
   >()('notebook', ['notebook:execute']),
+  'notebook.backgroundTasks': callable<
+    (request: NotebookSessionRequest) => Promise<NotebookBackgroundTaskSnapshot>
+  >()('notebook', ['notebook:background-tasks']),
   'notebook.getBackgroundRun': callable<
     (request: NotebookBackgroundRunLookupRequest) => Promise<NotebookBackgroundRunResult>
   >()('notebook', ['notebook:background-run']),
@@ -163,6 +169,9 @@ export const contracts = {
   'notebook.shutdown': callable<
     (request: NotebookSessionRequest) => Promise<{ sessionId: string; status: 'shutdown' }>
   >()('notebook', ['notebook:shutdown']),
+  'notebook.runEvidence': callable<
+    (request: NotebookRunEvidenceRequest) => Promise<NotebookRunEvidenceSnapshot | null>
+  >()('notebook', ['notebook:run-evidence']),
   'notebook.runIndex': callable<(request: NotebookSessionRequest) => Promise<ReplayRunIndex[]>>()(
     'notebook',
     ['notebook:run-index']

@@ -6,6 +6,7 @@ import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/t
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { executionRecoveryContext } from './execution-recovery'
+import { notebookDiagnosticPreview } from './content-limits'
 import type { NotebookExecutionIntent } from './execution-intent'
 
 import {
@@ -62,7 +63,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
-  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
+  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. executionStarted reports whether user code began, when known. After kernel failure/timeout, check possible side effects before retrying.',
   NOTEBOOK_REJECTION_GUIDANCE,
   'For a network block record, call `request_network_access` with its recordId and reason. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
   'Never bypass protection/TLS. Check settings for setup failures.',
@@ -336,7 +337,7 @@ const buildShellExecuteDoc = (
     `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, launch-context change or idle reclamation resets state; earlier commands are never replayed. Data-kernel cwd; TEMP/TMP may vanish. Handoff: ${handoffVariable}, never relative to cwd.`,
     exitCodeContract,
     NOTEBOOK_TOOL_REJECTION_GUIDANCE,
-    'Follow recovery retry prerequisites/guidance. Recovery describes that attempt, not current health; exitCode:null never authorizes repetition.',
+    'For exitCode:null inspect status and recovery. Follow recovery retry prerequisites/guidance. Recovery describes that attempt, not current health; exitCode:null never authorizes repetition.',
     'Foreground for needed results; background:true for independent work. Accepted background Runs survive Turn end/MCP disconnect; explicitly cancel with background_run.',
     'Keep commands application-managed: background:true, never &, nohup, setsid, disown, Start-Process, Start-Job or equivalent detachment.',
     'Do NOT copy a generated notebook output into the workspace here. Publish with `write_artifact_file`, using the same relative filename you saved with; it resolves against session data across platforms.',
@@ -829,10 +830,13 @@ const compactExecutionOutputs = (
 
     if (record.type === 'error') {
       const error = pickDefined(record, ['type', 'name', 'message', 'line'])
+      if (typeof record.message === 'string') {
+        error.message = notebookDiagnosticPreview(record.message, MIME_INLINE_LIMIT)
+        truncated ||= error.message !== record.message
+      }
       if (typeof record.traceback === 'string' && record.traceback !== canonicalTraceback) {
-        const clipped = clipAgentText(record.traceback, MIME_INLINE_LIMIT)
-        error.traceback = clipped.text
-        truncated = truncated || clipped.clipped
+        error.traceback = notebookDiagnosticPreview(record.traceback, MIME_INLINE_LIMIT)
+        truncated ||= error.traceback !== record.traceback
       }
       outputs.push(error)
       continue
@@ -865,8 +869,11 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     return typeof value === 'string' ? value : ''
   }
   const stdout = clipAgentText(stream('stdout'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
-  const stderr = clipAgentText(stream('stderr'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
-  const traceback = clipAgentText(stream('traceback'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const stderr = notebookDiagnosticPreview(stream('stderr'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const traceback = notebookDiagnosticPreview(
+    stream('traceback'),
+    NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT
+  )
   const compactOutputs = compactExecutionOutputs(record.outputs, stream('traceback'))
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const artifacts = compactArtifacts(record.artifacts)
@@ -877,8 +884,8 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     (Array.isArray(record.artifacts) && record.artifacts.length > artifacts.length)
   const resultCompacted =
     stdout.clipped ||
-    stderr.clipped ||
-    traceback.clipped ||
+    stderr !== stream('stderr') ||
+    traceback !== stream('traceback') ||
     compactOutputs.truncated ||
     filesOmitted ||
     staleness.truncated
@@ -927,6 +934,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'cellId',
       'kernelKind',
       'kernelDispatched',
+      'executionStarted',
       'status',
       'executionCount',
       'environment',
@@ -936,12 +944,14 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'runtimeStatus',
       'errorCode'
     ]),
+    ...(record.shellErrorCode ? { errorCode: record.shellErrorCode } : {}),
+    ...(record.shellRuntimeStatus ? { runtimeStatus: record.shellRuntimeStatus } : {}),
     ...(recovery ? { recovery } : {}),
     ...(staleness.value ? { staleness: staleness.value } : {}),
     ...(invalidatedRuns.length ? { invalidatedRuns } : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
-    ...(stderr.text ? { stderr: stderr.text } : {}),
-    ...(traceback.text ? { traceback: traceback.text } : {}),
+    ...(stderr ? { stderr } : {}),
+    ...(traceback ? { traceback } : {}),
     ...(hint ? { hint } : {}),
     ...(compactOutputs.outputs.length ? { outputs: compactOutputs.outputs } : {}),
     ...(compactOutputs.omitted > 0 ? { omittedOutputCount: compactOutputs.omitted } : {}),
@@ -1078,7 +1088,9 @@ const compactStateRun = (
   const output = diagnosticOutput ?? displayOutput
   const outputPreview =
     includeOutputPreview && typeof output === 'string'
-      ? clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
+      ? text?.stderr || traceback
+        ? notebookDiagnosticPreview(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT)
+        : clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
       : undefined
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const compactedStaleness = compactStaleness(staleness, STATE_STALENESS_LIMITS)
@@ -1090,6 +1102,7 @@ const compactStateRun = (
       'cellId',
       'kernelKind',
       'kernelDispatched',
+      'executionStarted',
       'status',
       'executionCount',
       'environment',
@@ -1178,6 +1191,10 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
     'executionInvocationId',
     'sessionId',
     'kernelStatus',
+    'errorCode',
+    'runtimeStatus',
+    'kernelDispatched',
+    'executionStarted',
     'exitCode',
     'offset',
     'nextOffset',
@@ -1186,6 +1203,19 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
   ])
   for (const [key, fieldValue] of Object.entries(identity)) {
     if (typeof fieldValue === 'string') identity[key] = clipAgentText(fieldValue, 256).text
+  }
+  // Reserve bounded space for the cause even when an unrelated field exhausts the JSON budget.
+  for (const field of ['traceback', 'stderr'] as const) {
+    const diagnostic = record[field]
+    if (typeof diagnostic === 'string' && diagnostic)
+      identity[field] = notebookDiagnosticPreview(diagnostic, 512)
+  }
+  const recovery = executionRecoveryContext(record.recovery)
+  if (recovery) {
+    identity.recovery =
+      JSON.stringify(recovery).length <= 2000
+        ? recovery
+        : { execution: recovery.execution, retryAfter: recovery.retryAfter }
   }
   const base = {
     ...identity,
@@ -1270,14 +1300,27 @@ const buildNotebookToolContent = (
   return content
 }
 
-// A failed foreground Python/R cell and a queried background Run that failed are tool failures,
-// like a non-zero foreground shell exit. Receipts, cancellation and other statuses are not.
+// A submission receipt acknowledges admission. Only foreground results and single-Run queries
+// report terminal failures to the tool caller.
 const notebookRunFailed = (rpcMethod: string, input: unknown, raw: unknown): boolean => {
-  if (rpcMethod === 'execute')
-    return asRecord(input)?.background !== true && asRecord(raw)?.status === 'failed'
-  if (rpcMethod !== 'getBackgroundRun') return false
-  const run = asRecord(asRecord(raw)?.run)
-  return run?.status === 'failed' || (typeof run?.exitCode === 'number' && run.exitCode !== 0)
+  const query = rpcMethod === 'getBackgroundRun'
+  if (
+    !query &&
+    (!['execute', 'executeControl', 'executeShell'].includes(rpcMethod) ||
+      asRecord(input)?.background === true)
+  )
+    return false
+  const run = asRecord(query ? asRecord(raw)?.run : raw)
+  if (!run || run.status === 'cancelled' || run.status === 'running' || run.status === 'queued')
+    return false
+  return (
+    run.status === 'failed' ||
+    run.status === 'timeout' ||
+    run.status === 'interrupted' ||
+    ((query || rpcMethod === 'executeShell') &&
+      typeof run.exitCode === 'number' &&
+      run.exitCode !== 0)
+  )
 }
 
 // Registers one MCP tool that forwards its validated input to a matching notebook RPC method.
@@ -1330,18 +1373,10 @@ const registerNotebookRpcTool = (
         )
         const rejected =
           definition.method === 'memoryRemember' && asRecord(raw)?.status === 'rejected'
-        const exitCode = asRecord(raw)?.exitCode
-        const shellFailed =
-          rpcMethod === 'executeShell' &&
-          asRecord(input)?.background !== true &&
-          typeof exitCode === 'number' &&
-          exitCode !== 0
         return {
           content: buildNotebookToolContent(raw, definition, input),
           ...(definition.outputSchema && asRecord(raw) ? { structuredContent: asRecord(raw) } : {}),
-          ...(rejected || shellFailed || notebookRunFailed(rpcMethod, input, raw)
-            ? { isError: true }
-            : {})
+          ...(rejected || notebookRunFailed(rpcMethod, input, raw) ? { isError: true } : {})
         }
       } finally {
         if (heartbeat) clearInterval(heartbeat)

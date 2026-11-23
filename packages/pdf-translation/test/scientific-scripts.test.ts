@@ -3295,3 +3295,60 @@ it.each(['raised', 'flat', 'changed exponent'] as const)(
     )
   }
 )
+
+it.each(['native', 'other face', 'separate row', 'ambiguous target'] as const)(
+  'keeps proven lowered small-cap indices as complete native groups (%s)',
+  (variant) => {
+    const token = 'uA b'
+    const source = 'Compare ' + token + ' with the control.'
+    const target = variant === 'ambiguous target' ? '比较uA b和uA b。' : '比较uA b与基准。'
+    const start = source.indexOf(token)
+    const markers: ScientificScriptMarker[] = [
+      {
+        label: 'u',
+        sourceOffset: start,
+        fontName: 'CMMI10',
+        baseline: 100,
+        scale: 1,
+        rise: 0,
+        bounds: [50, 98, 56, 107],
+        sourceIndices: [3]
+      },
+      {
+        label: 'A',
+        sourceOffset: start + 1,
+        fontName: 'CMR7',
+        baseline: 98.4,
+        scale: 0.7,
+        rise: 0,
+        bounds: [56, 98.4, 61, 103],
+        sourceIndices: [4]
+      },
+      {
+        label: 'b',
+        sourceOffset: start + 3,
+        fontName: variant === 'other face' ? 'CMR10' : 'CMCSC10',
+        baseline: variant === 'separate row' ? 94 : 98.4,
+        scale: 1,
+        rise: 0,
+        bounds: [63, 98.4, 66, 103.4],
+        sourceIndices: [5]
+      }
+    ]
+    expect(resolveNestedScriptGroups(source, target, markers)).toEqual(
+      variant === 'native'
+        ? [
+            {
+              sourceOffset: start,
+              targetOffset: target.indexOf(token),
+              label: token,
+              sourceIndices: [3, 4, 5],
+              baselineIndex: 3,
+              nativeScriptGroup: true,
+              needsInlineReflow: true
+            }
+          ]
+        : []
+    )
+  }
+)

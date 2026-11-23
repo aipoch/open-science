@@ -17,6 +17,12 @@ import type { OpencodeDetectDeps } from './opencode-detect'
 import type { ProviderPreflightAccess } from './agent-runtime-manager'
 import type { SkillCatalogModule } from '../skills/catalog'
 
+vi.mock('../acp/agent-process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../acp/agent-process')>()),
+  isClaudeAgentAcpAvailable: () => true,
+  resolveClaudeAgentAcpEntry: () => '/fixture/claude-acp'
+}))
+
 vi.mock('electron', () => ({
   safeStorage: {
     isEncryptionAvailable: () => true,
@@ -577,6 +583,7 @@ describe('AgentRuntimeManager', () => {
       repository,
       configRoot: storageRoot,
       userClaudeDir: join(storageRoot, 'user-claude'),
+      installManagedClaudeAcpImpl: vi.fn(async () => undefined),
       skills,
       connectors,
       allocateSettingsIdSequence: vi.fn().mockReturnValue(1),
@@ -1684,7 +1691,7 @@ describe('AgentRuntimeManager', () => {
     )
   })
 
-  it('guards unmanaged uninstall and selects the first actually runnable fallback', async () => {
+  it('preserves unmanaged runtimes and falls back to the built-in Agent on uninstall', async () => {
     const unmanagedClaude = join(storageRoot, 'external', 'claude')
     await repository.setClaudeInfo({ resolvedPath: unmanagedClaude, version: '2.1.0' })
 
@@ -1711,52 +1718,11 @@ describe('AgentRuntimeManager', () => {
     await expect(manager.uninstallOpencode()).resolves.toEqual({ activeBackendAffected: true })
 
     expect(await repository.getSettings()).toMatchObject({
-      agentFrameworkId: 'codex',
+      agentFrameworkId: 'open-science-agent',
       claude: { resolvedPath: unmanagedClaude },
       codex: { resolvedPath: managedAdapterPath }
     })
     expect((await repository.getSettings()).opencodePath).toBeUndefined()
-  })
-
-  it('does not select an unsupported Codex adapter after uninstalling the active runtime', async () => {
-    const opencodePath = join(managedOpencodeDir(storageRoot), 'opencode')
-    await mkdir(dirname(opencodePath), { recursive: true })
-    await writeFile(opencodePath, '#!/bin/sh\n')
-    await chmod(opencodePath, 0o755)
-    await repository.setOpencodeInfo(opencodePath, '1.19.0')
-    await repository.setCodexInfo({
-      resolvedPath: managedAdapterPath,
-      version: '1.1.4',
-      nativePath: managedCodexPath,
-      nativeVersion: '0.157.1'
-    })
-    await repository.setAgentFramework('opencode')
-    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.1.4')
-    inventory.codexNative.set(managedCodexPath, 'codex-cli 0.157.1')
-
-    await manager.uninstallOpencode()
-
-    expect((await repository.getSettings()).agentFrameworkId).toBe('opencode')
-  })
-
-  it('does not select Codex after uninstalling the active runtime when its native CLI is unusable', async () => {
-    const opencodePath = join(managedOpencodeDir(storageRoot), 'opencode')
-    await mkdir(dirname(opencodePath), { recursive: true })
-    await writeFile(opencodePath, '#!/bin/sh\n')
-    await chmod(opencodePath, 0o755)
-    await repository.setOpencodeInfo(opencodePath, '1.19.0')
-    await repository.setCodexInfo({
-      resolvedPath: managedAdapterPath,
-      version: '1.6.2',
-      nativePath: managedCodexPath,
-      nativeVersion: '0.157.1'
-    })
-    await repository.setAgentFramework('opencode')
-    inventory.codexAdapter.set(managedAdapterPath, 'codex-acp 1.6.2')
-
-    await manager.uninstallOpencode()
-
-    expect((await repository.getSettings()).agentFrameworkId).toBe('opencode')
   })
 
   it('mounts the Skill projection for shared, isolated, and custom Claude probes', async () => {

@@ -1,3 +1,8 @@
+import {
+  ArchiveAvailabilityError,
+  SessionExportBlockedError,
+  sessionExportBlockerMessage
+} from '../archive/availability-error'
 import { downloadUseCase, UseCaseDownloadError } from './use-case-download'
 import type { UseCaseSource } from '../../shared/use-cases'
 import { desktopShellInteraction, desktopFileInteraction } from '../desktop-interaction'
@@ -28,7 +33,7 @@ import { PACKAGE_MAX_BYTES } from '../../shared/session-package'
 import { PackageImportRecoveryRequiredError, type SessionPackageService } from './service'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { copyFileWithinBudget } from '../bounded-file-io'
-import { SessionPackageOperation } from './operation'
+import { PackageExportBlockedError, SessionPackageOperation } from './operation'
 import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
 import { assertPackageCapacity, PackageCapacityError } from './capacity'
 import { withPackageTransfer } from './transfer'
@@ -142,7 +147,10 @@ class PackageSourceUnavailableError extends Error {}
 // Exact application-owned messages only: parser and filesystem errors can contain research data.
 const safeFailureMessages = new Set([
   'Legacy file references must have immutable Versions before packaging.',
-  'Session or Notebook references missing file evidence.'
+  'Session or Notebook references missing file evidence.',
+  'Session package exceeds the file count limit.',
+  'Session package contains too many files.',
+  'Execution file evidence exceeds the package limit.'
 ])
 
 // Native pickers and the preload File bridge supply filesystem paths. A private archive freezes
@@ -703,9 +711,20 @@ export class SessionPackageDesktop {
       operationId: snapshot?.id,
       phase: snapshot?.progress.phase,
       importStage: snapshot?.progress.importStage,
+      ...(error instanceof SessionExportBlockedError ? { reason: error.reason } : {}),
       ...(safeFailureMessages.has(detail) ? { error: { message: detail } } : {})
     })
     const translate = this.options.translate
+    const blocked = (message: string): PackageExportBlockedError =>
+      new PackageExportBlockedError(message, { cause: error })
+    if (error instanceof SessionExportBlockedError)
+      throw blocked(sessionExportBlockerMessage(error.reason, translate))
+    if (request && error instanceof ArchiveAvailabilityError)
+      throw blocked(
+        error.code === 'project-archived'
+          ? translate('Restore the archived project, then export again.')
+          : translate('Restore the archived session, then export again.')
+      )
     if (detail === PACKAGE_REQUIRES_UPDATE)
       throw new Error(
         translate(
@@ -804,11 +823,13 @@ export class SessionPackageDesktop {
           )
       }
     }
-    if (detail === 'Wait for the application handoff to finish before transferring research.')
-      throw new Error(
-        translate('Wait for the application handoff to finish before transferring research.'),
-        { cause: error }
+    if (detail === 'Wait for the application handoff to finish before transferring research.') {
+      const message = translate(
+        'Wait for the application handoff to finish before transferring research.'
       )
+      if (request) throw blocked(message)
+      throw new Error(message, { cause: error })
+    }
     if (detail.startsWith('An excluded file also exists'))
       throw new Error(
         translate(
@@ -842,6 +863,79 @@ export class SessionPackageDesktop {
         translate('Sensitive content detected. Remove it before exporting the Session package.'),
         { cause: error }
       )
+    if (request) {
+      let message: string | undefined
+      switch (detail) {
+        case 'Legacy file references must have immutable Versions before packaging.':
+        case 'Legacy attachments must have immutable Versions before packaging.':
+          throw blocked(
+            translate(
+              'A historical file reference in this session has no immutable version. Use Export conversation to save the messages.'
+            )
+          )
+        case 'Session package references a missing immutable Version.':
+        case 'Session or Notebook references missing file evidence.':
+          throw blocked(
+            translate(
+              'This session refers to a file version that is unavailable. Restore the original file version from a backup, or export the conversation to save the messages.'
+            )
+          )
+        case 'Wait for the scheduled task to finish before exporting.':
+          throw blocked(translate('A scheduled task is running. Export again after it finishes.'))
+        case 'Wait for the compute job to finish before exporting.':
+          throw blocked(sessionExportBlockerMessage('compute', translate))
+        case 'Wait for Notebook runs to finish before exporting.':
+          throw blocked(sessionExportBlockerMessage('notebook', translate))
+        case 'Wait for image tasks to finish before exporting this Session.':
+          throw blocked(sessionExportBlockerMessage('image', translate))
+        case 'Wait for file writes to finish before exporting.':
+          throw blocked(
+            translate(
+              'A file is still being saved. Wait for the save to finish, then export again.'
+            )
+          )
+        case 'Wait for Reviews to finish before exporting.':
+          throw blocked(
+            translate('A review is in progress. Export again after the review finishes.')
+          )
+        case 'The Session is still active.':
+        case 'Wait for the Session to finish before exporting it.':
+          throw blocked(sessionExportBlockerMessage('pending', translate))
+        case 'Session package exceeds the file count limit.':
+        case 'Session package contains too many files.':
+        case 'Execution file evidence exceeds the package limit.':
+          throw blocked(
+            translate(
+              'This session exceeds the 10,000-file package limit. Use Export conversation to save a copy of the messages.'
+            )
+          )
+        case 'The Session changed during export. Try again.':
+        case 'Research film changed during export.':
+          message = translate(
+            'The source files or session changed during export. Retry when edits have finished.'
+          )
+          break
+      }
+      const code = (error as NodeJS.ErrnoException | null)?.code
+      if (code === 'ENOSPC' || code === 'EDQUOT')
+        message = translate(
+          'There is not enough space to write the package. Free up disk space and export again.'
+        )
+      if (
+        snapshot?.progress.phase === 'saving' &&
+        (code === 'EACCES' || code === 'EPERM' || code === 'EROFS')
+      )
+        message = translate(
+          'The package could not be saved in this folder. Choose a writable folder and export again.'
+        )
+      throw new Error(
+        message ??
+          translate(
+            'Could not export this session. Try again. If the problem persists, export a diagnostic package from the session menu.'
+          ),
+        { cause: error }
+      )
+    }
     if (detail.startsWith('Wait for') || detail.includes('changed during export'))
       throw new Error(
         translate('Wait for all research activity to finish, then try exporting again.'),
@@ -919,7 +1013,9 @@ export class SessionPackageDesktop {
           }
           const detail = redactSensitiveText(error instanceof Error ? error.message : String(error))
           const reason =
-            detail.startsWith('Wait for') || detail === 'The Session is still active.'
+            error instanceof SessionExportBlockedError ||
+            detail.startsWith('Wait for') ||
+            detail === 'The Session is still active.'
               ? this.options.translate(
                   'Wait for all Session activity and pending approvals to finish before forking.'
                 )
@@ -981,17 +1077,22 @@ export class SessionPackageDesktop {
         async (signal) => {
           operationSignal = signal
           this.stageDownloadForRetries = stage
-          this.options.assertCanStart?.()
-          if (destinationPath || uploadOrgCase)
-            this.lastExport = {
-              operationId: this.operations.snapshot!.id,
-              ...(destinationPath ? { filePath: destinationPath } : {}),
-              ...(uploadOrgCase ? { orgCase: uploadOrgCase } : {}),
-              ...(initialTitle !== undefined ? { sessionTitle: initialTitle } : {}),
-              selection
-            }
-          this.operations.setCleanupPending(this.pendingCleanup.size > 0)
-          const release = await this.options.reserveExport?.(request, signal)
+          let release: (() => void) | undefined
+          try {
+            this.options.assertCanStart?.()
+            if (destinationPath || uploadOrgCase)
+              this.lastExport = {
+                operationId: this.operations.snapshot!.id,
+                ...(destinationPath ? { filePath: destinationPath } : {}),
+                ...(uploadOrgCase ? { orgCase: uploadOrgCase } : {}),
+                ...(initialTitle !== undefined ? { sessionTitle: initialTitle } : {}),
+                selection
+              }
+            this.operations.setCleanupPending(this.pendingCleanup.size > 0)
+            release = await this.options.reserveExport?.(request, signal)
+          } catch (error) {
+            this.failOperation(error, request)
+          }
           try {
             return await this.staged(async (directory) => {
               const archive = join(directory, 'session.science')

@@ -2,6 +2,7 @@ import { mediaCapabilities, nativeMedia, requestBody, type InputCapabilities } f
 import { ChatCompletionsError, dataEvents } from './chat-completions'
 import {
   normalizeProviderError,
+  type SummarizeProviderError,
   normalizeUpstreamError,
   responseErrorDiagnostics,
   type UpstreamErrorDiagnostics
@@ -22,6 +23,7 @@ export type MessagesModelOptions = {
   id?: string
   apiKey(signal: AbortSignal): string | Promise<string>
   fetch?: typeof globalThis.fetch
+  summarizeProviderError?: SummarizeProviderError
   anthropicVersion?: string
   parameters?: Readonly<Record<string, Json>>
   maxResponseBytes?: number
@@ -186,7 +188,11 @@ export function createMessagesModel(input: MessagesModelOptions): AgentModel {
         !response.ok ||
         !response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')
       ) {
-        const diagnostics = await normalizeUpstreamError(response, signal)
+        const diagnostics = await normalizeUpstreamError(
+          response,
+          signal,
+          input.summarizeProviderError
+        )
         throw new MessagesError(response.ok ? 'protocol' : 'http', response.status, {
           ...diagnostics,
           phase: 'response'
@@ -310,7 +316,11 @@ export function createMessagesModel(input: MessagesModelOptions): AgentModel {
           }
           if (type === 'message_stop') break
           if (type === 'error') {
-            const diagnostics = normalizeProviderError(event)
+            const diagnostics = normalizeProviderError(
+              event,
+              undefined,
+              input.summarizeProviderError
+            )
             throw new MessagesError('protocol', response.status, diagnostics)
           }
         }

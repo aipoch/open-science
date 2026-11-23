@@ -1207,6 +1207,10 @@ test('built-in harness reloads an edited Skill in the same conversation', async 
         body: 'SKILL_REVISION_TWO'
       })
     }, skill.id)
+    // The settings command returns before the previous Skill catalog's runtime retires.
+    await expect
+      .poll(() => host.page.evaluate(async () => (await window.api.acp.getState()).sessionIds))
+      .toEqual([])
     await submitPromptViaUi(host.page, 'Reload harness-reload after the edit.')
     await expect(host.page.getByText('HARNESS_SKILL_TWO', { exact: true })).toBeVisible({
       timeout: 30000
@@ -1875,7 +1879,13 @@ test('built-in harness reaps a crashed running child before explicit continuatio
     host.page = await app.restartAfterCrash({ force: true })
     recovering = true
     await openProjectSession(host.page, 'Harness running child crash', prompt)
-    await host.page.getByRole('button', { name: 'Resume session', exact: true }).click()
+    await expect(
+      host.page.getByRole('button', { name: 'Resume session', exact: true })
+    ).toBeVisible()
+    await submitPromptViaUi(
+      host.page,
+      'Use the Notebook to continue the cancelled Cold child and collect its result.'
+    )
     await expect(host.page.getByText('COLD_PARENT_COMPLETE', { exact: true })).toBeVisible({
       timeout: 90000
     })

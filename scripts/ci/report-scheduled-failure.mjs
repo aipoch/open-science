@@ -40,6 +40,17 @@ async function ensureLabel({ github, repo, label }) {
   }
 }
 
+async function hasNewerCompletedRun({ github, repo, workflowFile, runId }) {
+  const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+    ...repo,
+    workflow_id: workflowFile,
+    event: 'schedule',
+    status: 'completed',
+    per_page: 100
+  })
+  return runs.some((run) => Number(run.id) > Number(runId))
+}
+
 // A re-run keeps its run id; only the newest entry decides whether it was already recorded.
 async function alreadyRecorded({ github, repo, issue, runId }) {
   const comments = await github.paginate(github.rest.issues.listComments, {
@@ -65,10 +76,15 @@ export async function reportScheduledOutcome({
   conclusion,
   failureDetails,
   label = DEFAULT_LABEL,
+  ignoreStaleRuns = false,
   log = console.log
 }) {
   if (!['success', 'failure'].includes(conclusion)) {
     throw new Error(`Unsupported conclusion: ${conclusion}`)
+  }
+  if (ignoreStaleRuns && (await hasNewerCompletedRun({ github, repo, workflowFile, runId }))) {
+    log(`Ignoring stale scheduled run ${runId} for ${workflowName}`)
+    return { action: 'none' }
   }
   const marker = trackingMarker(workflowFile)
   const existing = await findTrackingIssue({ github, repo, label, marker })

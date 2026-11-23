@@ -44,7 +44,7 @@ describe('format extraction contracts', () => {
       inspectDebUpdateArtifact('/verified/update.deb', '2.0.0', '/opt/Open-Science')
     ).rejects.toThrow('package version')
   })
-  it('hashes the entire stable-name AppImage and rejects unsafe identity renaming', async () => {
+  it('verifies both fixed and versioned AppImage installation paths', async () => {
     const root = await mkdtemp(join(tmpdir(), 'appimage-fixture-'))
     roots.push(root)
     const installed = join(root, 'Open-Science.AppImage'),
@@ -61,9 +61,7 @@ describe('format extraction contracts', () => {
     expect(Object.keys(manifest.files)).toEqual(['@image'])
     const versioned = join(root, 'Open-Science-1.0.0.AppImage')
     await writeFile(versioned, 'old')
-    await expect(inspectAppImageUpdateArtifact(archive, '2.0.0', versioned)).rejects.toThrow(
-      'stable application filename'
-    )
+    expect(await inspectAppImageUpdateArtifact(archive, '2.0.0', versioned)).toEqual(manifest)
   })
 })
 

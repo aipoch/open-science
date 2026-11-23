@@ -16,7 +16,7 @@ describe('WindowsMemoryPolicyAdapter', () => {
   it('uses the same native physical and commit snapshot, including boundary hysteresis', async () => {
     let current = windowsSample({
       totalPhysicalBytes: 1000,
-      availableBytes: 100,
+      availableBytes: 50,
       commitLimitBytes: 1000,
       committedBytes: 300
     })
@@ -27,26 +27,68 @@ describe('WindowsMemoryPolicyAdapter', () => {
     })
     await expect(service.getState()).resolves.toMatchObject({
       status: 'pressured',
-      reason: { code: 'windows-physical-low' }
+      reason: { code: 'windows-physical-low', remainingThresholdRatio: 0.05 }
     })
     expect(sampleWindowsResources).toHaveBeenCalledWith(false, [])
     current = windowsSample({
       totalPhysicalBytes: 1000,
       availableBytes: 201,
       commitLimitBytes: 1000,
-      committedBytes: 800
+      committedBytes: 900
     })
     await expect(service.getState({ force: true })).resolves.toMatchObject({
       status: 'pressured',
-      reason: { code: 'windows-commit-low' }
+      reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.1 }
     })
     current = windowsSample({
       totalPhysicalBytes: 1000,
       availableBytes: 201,
       commitLimitBytes: 1000,
-      committedBytes: 799
+      committedBytes: 899
     })
     await expect(service.getState({ force: true })).resolves.toMatchObject({ status: 'healthy' })
+  })
+
+  it('caps only default Windows physical entry and recovery on large hosts', async () => {
+    const MiB = 1024 ** 2
+    const total = 64 * 1024 * MiB
+    const system = {
+      totalPhysicalBytes: total,
+      availableBytes: 400 * MiB + 1,
+      commitLimitBytes: 64_000 * MiB,
+      committedBytes: 32_000 * MiB
+    }
+    const service = new MemoryPolicyService({
+      adapter: new WindowsMemoryPolicyAdapter({
+        sampleWindowsResources: async () => windowsSample(system)
+      })
+    })
+    const fresh = { force: true }
+    await expect(service.getState(fresh)).resolves.toMatchObject({ status: 'healthy' })
+    system.availableBytes -= 1
+    await expect(service.getState(fresh)).resolves.toMatchObject({
+      status: 'pressured',
+      reason: { code: 'windows-physical-low', remainingThresholdRatio: (400 * MiB) / total }
+    })
+    system.availableBytes = 800 * MiB
+    await expect(service.getState(fresh)).resolves.toMatchObject({
+      status: 'pressured',
+      reason: { code: 'windows-physical-low', remainingThresholdRatio: (800 * MiB) / total }
+    })
+    system.availableBytes += 1
+    await expect(service.getState(fresh)).resolves.toMatchObject({ status: 'healthy' })
+    system.committedBytes = 60_800 * MiB
+    await expect(service.getState(fresh)).resolves.toMatchObject({
+      status: 'pressured',
+      reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.05 }
+    })
+    system.committedBytes = 57_600 * MiB
+    await expect(service.getState(fresh)).resolves.toMatchObject({
+      status: 'pressured',
+      reason: { code: 'windows-commit-low', remainingThresholdRatio: 0.1 }
+    })
+    system.committedBytes -= 1
+    await expect(service.getState(fresh)).resolves.toMatchObject({ status: 'healthy' })
   })
 
   it('distinguishes an old native component and refuses an unknown execution domain', async () => {

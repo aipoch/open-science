@@ -39,11 +39,9 @@ import {
   type ElectronContentTraceArtifact
 } from '../../scripts/performance/electron-content-trace'
 import { terminateProcessTree } from '../../src/main/process-tree'
-import {
-  readProcessTable,
-  readProcessTree,
-  selectProcessTree
-} from '../../scripts/performance/process-snapshot'
+import { listWindowsProcesses, windowsProcessIsAlive } from '../../src/main/windows-process-query'
+import { terminateWindowsProcessesByIdentity } from '../../src/main/process-tree-windows'
+import { processBirthIdentity } from '../../src/main/process-birth-identity'
 import { createProjectDbClient } from '../../src/main/projects/prisma-client'
 import { NotebookRunRepository } from '../../src/main/notebook/repository'
 import { createRootNotebookLane } from '../../src/main/notebook/lane-identity'
@@ -64,6 +62,26 @@ const APP_ROOT = resolve(process.cwd())
 const FAKE_AGENT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-opencode.mjs')
 const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.cjs')
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
+const WINDOWS_PROCESS_BIRTH_PREFIX = 'windows-creation-time:'
+
+const windowsProcessBirth = (pid: number): string | undefined => {
+  const identity = processBirthIdentity(pid)
+  return identity?.startsWith(WINDOWS_PROCESS_BIRTH_PREFIX)
+    ? identity.slice(WINDOWS_PROCESS_BIRTH_PREFIX.length)
+    : undefined
+}
+
+const windowsProcessBirthIfLive = (pid: number): string | undefined => {
+  if (!windowsProcessIsAlive(pid)) return undefined
+  const birth = windowsProcessBirth(pid)
+  if (birth !== undefined) return birth
+  if (!windowsProcessIsAlive(pid)) return undefined
+  throw new Error(`Electron crash simulation cannot read the birth identity for PID ${pid}.`)
+}
+
+const windowsProcessIdentityMatches = (pid: number, birth: string): boolean => {
+  return windowsProcessBirthIfLive(pid) === birth
+}
 type E2eWindowMode = 'hidden' | 'normal'
 
 const assertPackagedElectronIdentity = (
@@ -430,6 +448,7 @@ type ElectronApp = {
   readFakeAgentPrompts: () => Promise<
     readonly Readonly<{ sessionId: string; role: 'main' | 'delegate'; prompt: string }>[]
   >
+  close: (gracefulTimeoutMs?: number) => Promise<void>
   requestMainWindowClose: () => Promise<void>
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
   emitPreviewContextMenuAtCssPoint: (point: { x: number; y: number }) => Promise<void>
@@ -1297,14 +1316,17 @@ class ElectronAppHarness implements ElectronApp {
     settingsPath: string,
     model: string,
     credentialProfile?: string,
-    framework: AgentFrameworkId = 'opencode'
+    framework: AgentFrameworkId = 'open-science-agent'
   ): Promise<Page> {
     const source = JSON.parse(await readFile(settingsPath, 'utf8'))
     const provider = source.providers?.find(
       (candidate: { id: string }) => candidate.id === source.activeProviderId
     )
-    if (!provider?.keyRef || source.activeModel !== model || !source.opencodePath) {
-      throw new Error('The requested live model and OpenCode must already be configured.')
+    if (!provider?.keyRef || source.activeModel !== model) {
+      throw new Error('The requested live model must already be configured.')
+    }
+    if (framework === 'opencode' && !source.opencodePath) {
+      throw new Error('OpenCode must already be configured for the OpenCode fixture.')
     }
     if (process.platform === 'win32' && provider.keyRef.startsWith('enc:') && !credentialProfile) {
       throw new Error('Encrypted Windows credentials require the source Electron profile.')
@@ -1727,11 +1749,8 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async setMainWindowZoomFactor(factor: number): Promise<void> {
-    await this.runningApplication.evaluate(({ BrowserWindow }, nextFactor) => {
-      const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open-Science main window was not found.')
-      mainWindow.webContents.setZoomFactor(nextFactor)
-    }, factor)
+    const window = await this.runningApplication.browserWindow(this.page)
+    await window.evaluate((window, zoom) => window.webContents.setZoomFactor(zoom), factor)
   }
 
   async launchSecondInstance(): Promise<Page> {
@@ -1935,29 +1954,91 @@ class ElectronAppHarness implements ElectronApp {
     if (!application) throw new Error('No Electron process is available to terminate.')
     const child = this.applicationProcess
     if (!child) throw new Error('No captured Electron child is available to terminate.')
-    const before =
-      process.platform === 'win32' && child.pid !== undefined
-        ? await readProcessTree(child.pid)
-        : undefined
+    if (process.platform === 'win32' && !child.pid)
+      throw new Error('Electron crash simulation has no launcher PID.')
+    const launcherBirth =
+      process.platform === 'win32' && child.pid ? windowsProcessBirthIfLive(child.pid) : undefined
+    if (
+      process.platform === 'win32' &&
+      child.pid &&
+      launcherBirth === undefined &&
+      windowsProcessIsAlive(child.pid)
+    )
+      throw new Error(
+        `Electron crash simulation cannot capture the launcher birth identity for PID ${child.pid}.`
+      )
     await this.stopElectronTrace(application)
+    const windowsProcesses =
+      process.platform === 'win32'
+        ? await application.evaluate(({ app }) => {
+            const { createRequire } = process.getBuiltinModule('node:module')
+            const { join } = process.getBuiltinModule('node:path')
+            const binding = createRequire(join(app.getAppPath(), 'package.json'))(
+              '@aipoch/process-tree-native'
+            ) as typeof import('@aipoch/process-tree-native')
+            // Capture the fixture app's live tree from inside its root before killing the launcher.
+            const members = (): number[] => [
+              process.pid,
+              ...binding.windowsCurrentProcessDescendants()
+            ]
+            const births = members().map(
+              (pid) => [pid, binding.getWindowsProcessCreationTime(pid)] as const
+            )
+            const current = new Set(members())
+            return births.filter(
+              (entry): entry is readonly [number, string] =>
+                entry[1] !== null &&
+                current.has(entry[0]) &&
+                binding.getWindowsProcessCreationTime(entry[0]) === entry[1]
+            )
+          })
+        : undefined
     const result = await terminateProcessTree(child, options.force ? 'SIGKILL' : undefined)
     let reaped = result.reaped
     // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
     // a shell, so wait for the observed Electron descendants too before reusing the profile lock.
-    if (process.platform === 'win32') {
-      reaped = false
-      if (before?.complete) {
-        const deadline = Date.now() + 10_000
-        do {
-          const after = await readProcessTable()
-          reaped =
-            after.complete &&
-            before.processes.every(
-              ({ pid }) => selectProcessTree(after.processes, pid).length === 0
-            )
-          if (reaped || Date.now() >= deadline) break
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        } while (Date.now() < deadline)
+    if (windowsProcesses) {
+      const owned = new Map(windowsProcesses)
+      if (child.pid && launcherBirth !== undefined) owned.set(child.pid, launcherBirth)
+      const deadline = Date.now() + 10_000
+      // An intermediate launcher can exit before taskkill reaches every captured descendant.
+      await terminateWindowsProcessesByIdentity(new Map(owned), deadline)
+      for (;;) {
+        const observed = listWindowsProcesses()
+        const liveOwned = new Set<number>()
+        for (const [pid, birth] of owned) {
+          if (windowsProcessIdentityMatches(pid, birth)) liveOwned.add(pid)
+        }
+        const discovered = new Map<number, string>()
+        for (const { pid, ppid } of observed) {
+          if (owned.has(pid) || !liveOwned.has(ppid)) continue
+          const birth = windowsProcessBirthIfLive(pid)
+          if (birth === undefined) continue
+          const current = listWindowsProcesses().find(
+            (candidate) => candidate.pid === pid && candidate.ppid === ppid
+          )
+          if (!current) continue
+          const parentBirth = owned.get(ppid)
+          if (parentBirth === undefined || !windowsProcessIdentityMatches(ppid, parentBirth))
+            continue
+          if (!windowsProcessIdentityMatches(pid, birth)) continue
+          owned.set(pid, birth)
+          discovered.set(pid, birth)
+        }
+        if (discovered.size) await terminateWindowsProcessesByIdentity(discovered, deadline)
+        const remaining = observed.filter(({ pid }) => {
+          const birth = owned.get(pid)
+          return birth !== undefined && windowsProcessIdentityMatches(pid, birth)
+        })
+        if (remaining.length === 0) {
+          reaped = true
+          break
+        }
+        if (Date.now() >= deadline)
+          throw new Error(
+            `Electron crash simulation still observes PIDs ${remaining.map(({ pid, ppid, executablePath }) => JSON.stringify({ pid, ppid, executablePath })).join(', ')}.`
+          )
+        await new Promise((resolve) => setTimeout(resolve, 100))
       }
     }
     if (!reaped) throw new Error('Electron crash simulation did not reap the process tree.')
@@ -2270,8 +2351,8 @@ class ElectronAppHarness implements ElectronApp {
     return handoffPath
   }
 
-  private async close(): Promise<void> {
-    await this.closeForCleanup(true)
+  async close(gracefulTimeoutMs?: number): Promise<void> {
+    await this.closeForCleanup(true, gracefulTimeoutMs)
   }
 
   private async closeForCleanup(

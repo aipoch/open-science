@@ -158,6 +158,13 @@ export const RuntimeUpdateDialog = ({
       }
     })()
   }
+  const dismissUpdate = (): void => {
+    if (status.backgroundDownload && !status.recovery && status.state === 'downloading') {
+      useUpdateStore.setState({ isDialogOpen: false })
+    } else {
+      cancelUpdate()
+    }
+  }
   const cancelConfirmation = (): void => {
     setLegacyToken(undefined)
     if (cliOpen && cli) {
@@ -197,7 +204,7 @@ export const RuntimeUpdateDialog = ({
           manual.closeGuide()
           return
         }
-        if (!next && !recovery && !cliOpen) cancelUpdate()
+        if (!next && !recovery && !cliOpen) dismissUpdate()
       }}
     >
       <Dialog.Portal>
@@ -237,7 +244,7 @@ export const RuntimeUpdateDialog = ({
               cancelConfirmation()
               return
             }
-            if (!recovery) cancelUpdate()
+            if (!recovery) dismissUpdate()
           }}
         >
           {manual.guideOpen ? <ManualUpdateGuide manual={manual} status={status} /> : null}

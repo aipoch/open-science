@@ -103,6 +103,33 @@ const harness = async (
   return { root, client, repository, coordinator, projection, initial, events }
 }
 
+it.each([false, true])(
+  'settles an unowned idle run on disk and in the catalog (completed=%s)',
+  async (completed) => {
+    let active = true
+    const h = await harness({ hasActiveRuntimePrompt: () => active })
+    const initial = session()
+    if (completed) initial.messages[0].turnOutcome = { kind: 'completed', settledAt: 2 }
+    await h.repository.saveSession({ ...initial, status: 'idle' }, h.initial.revision)
+    expect(await h.projection.list()).toMatchObject([{ presentedStatus: 'running' }])
+
+    await h.coordinator.prepareRuntimeResume('project', 'session')
+    const live = await h.coordinator.recoverStartupSession('project', 'session')
+    expect(live?.activeRun).toEqual(initial.activeRun)
+    active = false
+    await h.coordinator.recoverStartupSession('project', 'session')
+    const loaded = await loadSessionMutationAuthority(h.repository, 'project', 'session')
+    if (loaded.status !== 'found') throw new Error('Missing recovered session')
+    expect(loaded.session.activeRun).toBeUndefined()
+    expect(loaded.session.messages[0].turnOutcome?.kind).toBe(
+      completed ? 'completed' : 'interrupted'
+    )
+    expect(await h.projection.list()).toMatchObject([
+      { presentedStatus: completed ? 'idle' : 'error', needsStartupRecovery: false }
+    ])
+  }
+)
+
 it('rejects deferred recovery after a newer save and preserves its messages and metadata', async () => {
   const h = await harness()
   const prepared = await h.coordinator.prepareSessionRecovery('project', 'session')

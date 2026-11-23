@@ -1,8 +1,10 @@
 import { readHarnessErrorDiagnostics } from '../../shared/failure/contract'
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 
 import { classifyFailure } from '../../shared/failure/classify'
 import {
+  CALL_STACK_LIMIT_MESSAGE,
   PROVIDER_CONNECTION_FAILED_PREFIX,
   PROVIDER_RESOURCE_NOT_FOUND_PREFIX
 } from '../../shared/failure/messages'
@@ -397,10 +399,17 @@ export const collectPromptFailureFacts = (
     !data.errorName &&
     !codexKind &&
     (!data.errorKind || data.errorKind === 'unknown')
+  const bareEnvelope = untaggedRequest && /^Internal error:\s*\{/i.test(text)
+  const summarizedUpstream =
+    bareEnvelope && upstream?.type === 'upstream_error' && providerErrorExcerpt(upstream.text)
+  const typedUpstreamStatus = upstream?.type === 'upstream_error' && upstream.status !== undefined
   const providerWrapper =
     untaggedRequest &&
     (apiWrapper ||
       isClaudeProviderApiError(error) ||
+      summarizedUpstream ||
+      typedUpstreamStatus ||
+      (bareEnvelope && upstream?.type === 'invalid_upstream_response') ||
       (upstream?.type && NOT_FOUND_PATTERN.test(upstream.type)))
   const authenticationFailure = isAgentAuthenticationFailure(error)
   const origin = isOpenCodeSessionServiceFailure(error)
@@ -411,7 +420,10 @@ export const collectPromptFailureFacts = (
   // Our compatibility bridge deliberately transports deterministic upstream failures as HTTP 400.
   // Only its typed envelope, inside a confirmed provider failure, can restore the original status.
   const status =
-    origin === 'provider' && transportStatus === 400 && upstream?.status !== undefined
+    origin === 'provider' &&
+    (transportStatus === 400 ||
+      (transportStatus === undefined && (summarizedUpstream || typedUpstreamStatus))) &&
+    upstream?.status !== undefined
       ? upstream.status
       : transportStatus
   const providerResponse =
@@ -422,10 +434,13 @@ export const collectPromptFailureFacts = (
   const responseText =
     upstream?.text ??
     ((typeof data.message === 'string' && data.message.trim()) || stripWrapperPrefixes(text))
+  const excerpt = providerResponse ? providerErrorExcerpt(responseText) : undefined
   const responseMessage =
     providerResponse && !/^internal error[.:]?$/i.test(responseText.trim())
-      ? safeProviderErrorDetail(responseText)
+      ? (excerpt ?? safeProviderErrorDetail(responseText))
       : undefined
+  // `upstream_error` only identifies the bridge wrapper. The nested HTTP status and bounded message
+  // carry the actionable provider facts, so do not persist the generic wrapper as the error code.
   const code =
     origin === 'agent-runtime' && top.code === -32002
       ? top.code
@@ -437,7 +452,7 @@ export const collectPromptFailureFacts = (
             ? 'quota_exceeded'
             : data.codexErrorInfo === 'serverOverloaded'
               ? 'overloaded_error'
-              : (upstream?.type ??
+              : ((upstream?.type === 'upstream_error' ? undefined : upstream?.type) ??
                 (!isProviderErrorKind(error) && data.errorKind !== 'unknown'
                   ? data.errorKind
                   : undefined) ??
@@ -446,6 +461,12 @@ export const collectPromptFailureFacts = (
   const provider =
     (responseMessage && context.providerName) ||
     (typeof data.provider === 'string' ? data.provider : undefined)
+  // ACP reports this signature without identifying the component that exhausted its stack.
+  const reportedStackOverflow =
+    untaggedRequest &&
+    /^Internal error:\s*\{/i.test(text) &&
+    (upstream?.type === 'invalid_request_error' || upstream?.type === 'upstream_error') &&
+    upstream.text === CALL_STACK_LIMIT_MESSAGE
   return {
     origin,
     ...(responseMessage ? { responseMessage } : {}),
@@ -454,6 +475,8 @@ export const collectPromptFailureFacts = (
     ...(provider ? { provider } : {}),
     ...(context.model ? { model: context.model } : {}),
     ...(typeof data.requestId === 'string' ? { requestId: data.requestId } : {}),
-    text: responseMessage ? redactSensitiveText(text) : text
+    text: reportedStackOverflow
+      ? CALL_STACK_LIMIT_MESSAGE
+      : (excerpt ?? (responseMessage ? redactSensitiveText(text) : text))
   }
 }

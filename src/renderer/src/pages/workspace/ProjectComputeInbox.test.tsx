@@ -528,7 +528,10 @@ describe('Project Compute inbox', () => {
     expect(navigationButtons).toHaveLength(2)
     expect(navigationButtons.every((button) => button.title === 'Go to Session')).toBe(true)
     expect(navigationButtons.every((button) => button.textContent === '')).toBe(true)
-    const jobDetails = container.querySelector('details')
+    const jobDetails = container
+      .querySelector('[role="columnheader"]')
+      ?.closest('section')
+      ?.querySelector('details')
     expect(jobDetails?.open).toBe(false)
     act(() => jobDetails?.querySelector('summary')?.click())
     expect(jobDetails?.open).toBe(true)

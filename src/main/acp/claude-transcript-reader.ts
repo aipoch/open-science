@@ -2,14 +2,26 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 
-import type { SessionKey, SessionStore, SessionStoreEntry } from '@anthropic-ai/claude-agent-sdk'
-
+import { resolveClaudeAgentAcpEntry } from './agent-process'
 import type { ClaudeTranscriptReader } from './claude-turn-adapter'
 
-const nodeRequire = createRequire(import.meta.url)
-const { getSessionMessages } = nodeRequire(
-  '@anthropic-ai/claude-agent-sdk'
-) as typeof import('@anthropic-ai/claude-agent-sdk')
+type ClaudeSessionKey = {
+  projectKey: string
+  sessionId: string
+  subpath?: string
+}
+
+type ClaudeSessionStoreEntry = Record<string, unknown> & { type: string }
+
+type ClaudeSessionStore = {
+  append: (...entries: readonly unknown[]) => Promise<void>
+  load: (key: ClaudeSessionKey) => Promise<readonly ClaudeSessionStoreEntry[] | null>
+}
+
+type GetSessionMessages = (
+  sessionId: string,
+  options: { dir: string; sessionStore: ClaudeSessionStore }
+) => Promise<readonly unknown[]>
 
 const isMissingFile = (error: unknown): boolean =>
   typeof error === 'object' &&
@@ -17,7 +29,7 @@ const isMissingFile = (error: unknown): boolean =>
   'code' in error &&
   (error as { code?: unknown }).code === 'ENOENT'
 
-const transcriptPath = (configDir: string, key: SessionKey): string => {
+const transcriptPath = (configDir: string, key: ClaudeSessionKey): string => {
   if (key.subpath) throw new Error('Claude subagent transcripts are not model-call sources.')
   const projectsRoot = resolve(configDir, 'projects')
   const path = resolve(projectsRoot, key.projectKey, `${key.sessionId}.jsonl`)
@@ -32,7 +44,7 @@ const transcriptPath = (configDir: string, key: SessionKey): string => {
   return path
 }
 
-const parseTranscriptEntries = (text: string): SessionStoreEntry[] =>
+const parseTranscriptEntries = (text: string): ClaudeSessionStoreEntry[] =>
   text
     .split(/\r?\n/u)
     .filter((line) => line.trim().length > 0)
@@ -46,10 +58,10 @@ const parseTranscriptEntries = (text: string): SessionStoreEntry[] =>
       ) {
         throw new Error('Claude transcript contains a malformed entry.')
       }
-      return value as SessionStoreEntry
+      return value as ClaudeSessionStoreEntry
     })
 
-const createReadOnlyClaudeSessionStore = (configDir: string): SessionStore => ({
+const createReadOnlyClaudeSessionStore = (configDir: string): ClaudeSessionStore => ({
   append: async () => {
     throw new Error('Claude transcript recovery is read-only.')
   },
@@ -63,13 +75,25 @@ const createReadOnlyClaudeSessionStore = (configDir: string): SessionStore => ({
   }
 })
 
-const createClaudeTranscriptReader = (configDir: string): ClaudeTranscriptReader => {
-  const sessionStore = createReadOnlyClaudeSessionStore(configDir)
-  return ({ providerSessionId, cwd }) =>
-    getSessionMessages(providerSessionId, {
-      dir: cwd,
-      sessionStore
-    })
+const resolveGetSessionMessages = (): GetSessionMessages => {
+  const sdk = createRequire(resolveClaudeAgentAcpEntry())('@anthropic-ai/claude-agent-sdk') as {
+    getSessionMessages?: GetSessionMessages
+  }
+  if (!sdk.getSessionMessages) throw new Error('Claude Agent SDK transcript API is unavailable.')
+  return sdk.getSessionMessages
 }
 
+const createClaudeTranscriptReader = (
+  configDir: string,
+  getSessionMessages?: GetSessionMessages
+): ClaudeTranscriptReader => {
+  const sessionStore = createReadOnlyClaudeSessionStore(configDir)
+  let resolvedGetSessionMessages = getSessionMessages
+  return ({ providerSessionId, cwd }) => {
+    resolvedGetSessionMessages ??= resolveGetSessionMessages()
+    return resolvedGetSessionMessages(providerSessionId, { dir: cwd, sessionStore })
+  }
+}
+
+export type { GetSessionMessages, ClaudeSessionKey, ClaudeSessionStore }
 export { createClaudeTranscriptReader }

@@ -211,18 +211,10 @@ export async function inspectAppImageUpdateArtifact(
   installationRoot: string,
   signal?: AbortSignal
 ): Promise<InstallationManifest> {
-  const { basename } = await import('node:path')
-  const { stat } = installationFs.promises
-  const existingName = basename(installationRoot)
-  // electron-updater renames versioned images. A stable/custom filename is the supported channel
-  // until cross-filename aliases can remain atomic across old and new launchers.
-  if (
-    !(await stat(installationRoot)).isFile() ||
-    (existingName !== basename(archive) && /\d+\.\d+\.\d+/.test(existingName))
-  )
+  if (!(await installationFs.promises.lstat(installationRoot)).isFile())
     throw new UpdateLifecycleError(
       'installation-busy',
-      'Automatic AppImage verification requires a stable application filename. Rename the closed image without a version number, then reopen it, or use the original installation channel.'
+      'The installed AppImage is not a regular file.'
     )
   const directory = await mkdtemp(join(tmpdir(), 'open-science-appimage-'))
   try {

@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../src/shared/agent-framework-id'
 import type { SessionNotification } from '@agentclientprotocol/sdk'
 import { toAcpRuntimeEvent } from '../../src/main/acp/runtime-events'
 import { AcpRuntimeSnapshotOwner } from '../../src/main/acp/runtime-snapshot-owner'
@@ -240,7 +241,7 @@ export const createOfficialScienceFollowup = (
         )
         const runtimeGraph = ensureConversationRuntimeSegment(current, {
           id: `${prefix}runtime`,
-          frameworkId: session.agentFrameworkId ?? 'claude-code',
+          frameworkId: session.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
           providerId: session.agentConfiguration?.providerId,
           backendId: session.agentBackendId,
           model: session.agentModel,

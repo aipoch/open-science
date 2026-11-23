@@ -120,7 +120,7 @@ jobs:
           if (Test-Path -LiteralPath $map -PathType Leaf) {
             Move-Item -LiteralPath $map -Destination "$env:RUNNER_TEMP/upgrade-b-prior.blockmap"
           }
-          node scripts/windows-updater-certification.mjs --previous-dir "$env:RUNNER_TEMP/upgrade-b" --current-dir "$env:RUNNER_TEMP/upgrade-c" --output forward.json
+          node scripts/windows-updater-certification.mjs --previous-dir "$env:RUNNER_TEMP/upgrade-b" --current-dir "$env:RUNNER_TEMP/upgrade-c" --cold-launch --output forward.json
 
       - name: Remove test signing identity
         if: always() && env.TEST_SIGNER != ''

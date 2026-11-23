@@ -46,6 +46,12 @@ import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 // Unit service tests do not start installed coding agents; the native probe has its own coverage.
+vi.mock('../acp/agent-process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../acp/agent-process')>()),
+  isClaudeAgentAcpAvailable: () => true,
+  resolveClaudeAgentAcpEntry: () => '/fixture/claude-acp'
+}))
+
 vi.mock('./provider-acp-validation', () => ({
   ProviderAcpValidator: class {
     validate = vi.fn(async () => ({
@@ -245,6 +251,7 @@ const createService = (
     userAgentsDir: options.userAgentsDir ?? join(storageRoot, 'no-user-agents'),
     userSkills: options.userSkills,
     executeClaudeProbe: options.executeClaudeProbe,
+    installManagedClaudeAcpImpl: vi.fn(async () => undefined),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedClaudeImpl: options.installManagedClaudeImpl as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -6287,7 +6294,7 @@ describe('SettingsService: managed-runtime flags', () => {
 })
 
 describe('SettingsService: uninstall managed runtime', () => {
-  it('uninstalls app-managed Codex and falls back to ready Claude', async () => {
+  it('uninstalls app-managed Codex and falls back to the built-in Agent', async () => {
     const { managedCodexAdapterEntry } = await import('./managed-codex')
     const adapterPath = managedCodexAdapterEntry(storageRoot)
     await mkdir(dirname(adapterPath), { recursive: true })
@@ -6302,7 +6309,7 @@ describe('SettingsService: uninstall managed runtime', () => {
 
     await expect(readFile(adapterPath)).rejects.toThrow()
     expect(snapshot.codex).toEqual({})
-    expect(snapshot.agentFrameworkId).toBe('claude-code')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
     expect(activeBackendAffected).toBe(true)
   })
 
@@ -6318,14 +6325,14 @@ describe('SettingsService: uninstall managed runtime', () => {
     expect(activeBackendAffected).toBe(false)
   })
 
-  it('uninstallOpencode removes the managed install, clears the record, and auto-switches to Claude when it was active', async () => {
+  it('uninstallOpencode removes the managed install, clears the record, and switches to the built-in Agent when it was active', async () => {
     // A real managed opencode binary on disk, recorded and selected as the active backend.
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     await mkdir(managedOpencodeDir(storageRoot), { recursive: true })
     await writeFile(opencodeBin, '', 'utf8')
     await chmod(opencodeBin, 0o755)
     await repository.setOpencodeInfo(opencodeBin, '1.18.3')
-    // A separate Claude still present on disk, so the active framework can fall back to it.
+    // A separate Claude still present on disk, which must remain available for explicit selection.
     const claudeBin = join(storageRoot, 'fake-claude', 'claude')
     await mkdir(dirname(claudeBin), { recursive: true })
     await writeFile(claudeBin, '', 'utf8')
@@ -6340,7 +6347,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     await expect(readFile(opencodeBin)).rejects.toThrow()
     expect(snapshot.opencode).toEqual({})
     expect(snapshot.opencodeManaged).toBe(false)
-    expect(snapshot.agentFrameworkId).toBe('claude-code')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
     // OpenCode was the active backend, so the caller must reconnect.
     expect(activeBackendAffected).toBe(true)
   })
@@ -6360,7 +6367,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     expect(activeBackendAffected).toBe(false)
   })
 
-  it('does not auto-switch to the other runtime when it exists but cannot report a version (not ready)', async () => {
+  it('falls back to the built-in Agent when the other external runtime is broken', async () => {
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     await mkdir(managedOpencodeDir(storageRoot), { recursive: true })
     await writeFile(opencodeBin, '', 'utf8')
@@ -6377,10 +6384,10 @@ describe('SettingsService: uninstall managed runtime', () => {
     const { snapshot } = await service.uninstallOpencode()
 
     // A broken runtime is never auto-selected: the selection stays put and the gate will flag it.
-    expect(snapshot.agentFrameworkId).toBe('opencode')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
   })
 
-  it('falls through to ready Codex when earlier fallback runtimes are unavailable', async () => {
+  it('falls back to the built-in Agent even when Codex is ready', async () => {
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     const codexAdapter = join(storageRoot, 'fallback', 'codex-acp')
     const nativePath = join(storageRoot, 'fallback', 'codex')
@@ -6411,7 +6418,7 @@ describe('SettingsService: uninstall managed runtime', () => {
 
     const { snapshot } = await service.uninstallOpencode()
 
-    expect(snapshot.agentFrameworkId).toBe('codex')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
   })
 })
 

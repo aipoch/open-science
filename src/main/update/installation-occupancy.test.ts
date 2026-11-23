@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -961,6 +961,20 @@ describe('AppImage runtime parent ownership', () => {
   it('allows only the direct launcher of this extracted application', () => {
     expect(inspectOwnedLinuxAppImageLauncher()).toEqual([process.ppid])
     expect(mocks.readlink).toHaveBeenCalledWith(`/proc/${process.ppid}/exe`)
+  })
+  it('recognizes an unlinked payload only while its direct parent runs the original image', () => {
+    vi.stubEnv('APPDIR', dirname(process.execPath))
+    mocks.realpath.mockImplementation((path: string) => {
+      if (path === process.env.APPIMAGE) return path
+      throw Object.assign(new Error('removed extraction'), { code: 'ENOENT' })
+    })
+    let parent = process.env.APPIMAGE
+    mocks.readlink.mockImplementation((path: string) =>
+      path === '/proc/self/exe' ? process.execPath + ' (deleted)' : parent
+    )
+    expect(inspectOwnedLinuxAppImageLauncher()).toEqual([process.ppid])
+    parent = '/another/image'
+    expect(inspectOwnedLinuxAppImageLauncher()).toEqual([])
   })
   it.each([
     'owned',

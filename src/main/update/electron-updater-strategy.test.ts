@@ -1,6 +1,10 @@
 import type { WindowsUpdateHandoff } from './windows-update-handoff'
 import { UPDATE_INSTALLATION_REQUIRED, UpdateLifecycleError } from '../../shared/update'
 import { EventEmitter } from 'node:events'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { windowsDownloadPreference } from './windows-background-download'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -110,6 +114,59 @@ const createStrategy = (deps: ElectronUpdaterDeps): ElectronUpdaterStrategy =>
   new ElectronUpdaterStrategy({ platform: 'darwin', arch: 'arm64', ...deps })
 
 describe('ElectronUpdaterStrategy', () => {
+  it('honors persisted opt-out, cancels an owned transfer, and keeps manual download available', async ({
+    onTestFinished
+  }) => {
+    const updater = new FakeUpdater()
+    const profile = await mkdtemp(join(tmpdir(), 'update-preference-'))
+    onTestFinished(() => rm(profile, { recursive: true, force: true }))
+    const preference = windowsDownloadPreference(profile)
+    expect(preference.enabled).toBe(true)
+    preference.setEnabled(false)
+    const strategy = createStrategy({
+      updater,
+      downloadPreference: Promise.resolve(windowsDownloadPreference(profile)),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+    await strategy.downloadInBackground('0.3.0')
+    expect(updater.downloadUpdate).not.toHaveBeenCalled()
+    await strategy.setAutomaticDownloads(true)
+    expect(windowsDownloadPreference(profile).enabled).toBe(true)
+    const transfer = Promise.withResolvers<void>()
+    updater.runDownload = () => transfer.promise
+    const pending = strategy.downloadInBackground('0.3.0')
+    expect(strategy.getStatus()).toMatchObject({ state: 'downloading', backgroundDownload: true })
+    expect(await strategy.setAutomaticDownloads(false)).toMatchObject({
+      state: 'available',
+      automaticDownloads: false
+    })
+    expect(updater.downloadUpdate.mock.calls[0][0]?.cancelled).toBe(true)
+    transfer.resolve()
+    await pending
+    await strategy.setAutomaticDownloads(true)
+    await strategy.check()
+    expect(strategy.getBackgroundDownloadOffer()).toBeUndefined()
+    await strategy.download()
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a failed background transfer after a fresh check offers the same version', async () => {
+    const updater = new FakeUpdater()
+    updater.downloadUpdate.mockRejectedValueOnce(new Error('Connection interrupted'))
+    const strategy = createStrategy({
+      updater,
+      downloadPreference: Promise.resolve({ enabled: true, setEnabled: vi.fn() }),
+      fetchImpl: offlineFetch()
+    })
+    await strategy.check()
+    expect((await strategy.downloadInBackground('0.3.0')).state).toBe('error')
+    expect(strategy.getBackgroundDownloadOffer()).toBeUndefined()
+    await strategy.check()
+    expect((await strategy.downloadInBackground('0.3.0')).state).toBe('ready')
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(2)
+  })
+
   it.each(['up-to-date', 'error'])(
     'releases a waiting download after a provider check returns %s',
     async (outcome) => {

@@ -1,3 +1,4 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { readHarnessErrorDiagnostics } from '../failure/contract'
 import type {
   ClassifiedFailure,
@@ -52,13 +53,18 @@ export const readPersistedFailure = (value: Record<string, unknown>): Classified
       for (const key of ['code', 'requestId', 'raw', 'adapterCode', 'phase'] as const)
         if (typeof source[key] === 'string') diagnostics[key] = source[key]
     }
+    const excerpt =
+      !harness && (category === 'service' || category === 'configuration')
+        ? providerErrorExcerpt(failure.responseMessage)
+        : undefined
+    if (excerpt && diagnostics.raw) diagnostics.raw = excerpt
     return {
       category,
       ...(!harness &&
       (category === 'service' || category === 'configuration') &&
       typeof failure.responseMessage === 'string' &&
       failure.responseMessage.trim()
-        ? { responseMessage: failure.responseMessage }
+        ? { responseMessage: excerpt ?? failure.responseMessage }
         : {}),
       ...(typeof failure.reason === 'string' &&
       failure.reason.startsWith(`${category}/`) &&

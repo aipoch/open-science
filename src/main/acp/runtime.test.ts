@@ -42,7 +42,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
-import { AcpRuntime, shortenIdleReleaseWindow } from './runtime.test-utils'
+import {
+  ClaudeProtocolFixtureRuntime as AcpRuntime,
+  shortenIdleReleaseWindow
+} from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 import { createAcpDelegateExecution } from '../delegation/acp-execution'
@@ -632,6 +635,13 @@ const createModes = (
 ): SessionModeState => ({
   currentModeId,
   availableModes: ids.map((id) => ({ id, name: id }))
+})
+
+it('uses Open Science Agent when the runtime has no framework selection', () => {
+  const options = { appVersion: '0.1.0', defaultCwd: '/workspace' }
+  expect(composeAcpRuntimeBaseOwners(options).backendGeneration.current.framework.id).toBe(
+    'open-science-agent'
+  )
 })
 
 const startPendingReviewerRace = async (
@@ -14074,6 +14084,53 @@ describe('ACP runtime session management', () => {
     expect(getRpcConnection).toHaveBeenCalledTimes(2)
   })
 
+  it.each(listAgentFrameworks())(
+    'settles an accepted user Stop before late $id output and end_turn',
+    async (framework) => {
+      const process = new FakeAgentProcess()
+      const release = createDeferred()
+      const dataHome = await mkdtemp(join(tmpdir(), 'acp-user-stop-'))
+      const agent = startFakeAgent(process, ['stop-session'], {
+        onPrompt: () => release.promise,
+        modes: createModes(['agent', 'read-only', 'agent-full-access']),
+        replyForPrompt: () => 'late assistant reply'
+      })
+      const events: AcpRuntimeEvent[] = []
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        framework,
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/test-agent',
+          env: { XDG_DATA_HOME: dataHome },
+          ...(framework.id === 'opencode' ? { opencodeMajorVersion: 1 as const } : {})
+        }),
+        callbacks: { onEvent: (event) => events.push(event) }
+      })
+      try {
+        const { sessionId } = await runtime.createSession({ cwd: '/workspace' })
+        const prompt = runtime.sendPrompt({ sessionId, text: 'hold this turn' })
+        const result = expect(prompt).resolves.toMatchObject({ stopReason: 'cancelled' })
+        await vi.waitFor(() => expect(agent.prompts).toHaveLength(1))
+        await runtime.cancelPrompt({ sessionId, userInitiated: true })
+        await vi.waitFor(() => expect(agent.cancelledSessions).toEqual([sessionId]))
+        expect(events.some((event) => event.kind === 'stop')).toBe(false)
+        release.resolve()
+        await result
+        expect(events.filter((event) => event.kind === 'stop')).toMatchObject([
+          { text: 'cancelled' }
+        ])
+        expect(events.some((event) => event.title === ACP_PROMPT_FAILED_EVENT_TITLE)).toBe(false)
+        expect(events.some((event) => event.text?.includes('late assistant reply'))).toBe(false)
+      } finally {
+        release.resolve()
+        await runtime.disconnect()
+        await rm(dataHome, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.each(
     [opencodeFramework, codeBuddyFramework, claudeCodeFramework, codexFramework].flatMap(
       (framework) =>
@@ -27272,6 +27329,30 @@ describe('ACP runtime session management', () => {
     expect(errorEvent?.category).toBe('internal')
   })
 
+  it('keeps unrecognized provider wording out of the prompt failure log', async () => {
+    errorLogSpy.mockClear()
+    const process = new FakeAgentProcess()
+    const message = 'Private account private@example.test echoed PRIVATE_PROMPT'
+    startFakeAgent(process, ['remote-session-1'], {
+      onPrompt: () => {
+        throw acp.RequestError.internalError({ service: 'provider', status: 503 }, message)
+      }
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    await expect(
+      runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
+    ).rejects.toThrow()
+    const calls = errorLogSpy.mock.calls.filter(([event]) => event === 'prompt failed')
+    expect(calls).toHaveLength(1)
+    expect(JSON.stringify(calls)).not.toMatch(/private@example|PRIVATE_PROMPT/)
+    expect(calls[0]?.[1]).toMatchObject({ reason: 'service/unavailable', error: { status: 503 } })
+  })
+
   it('logs the provider rejection reason (message/code/data) when a prompt fails', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['remote-session-1'], {
@@ -27746,7 +27827,11 @@ describe('ACP runtime session management', () => {
           }
         }
       })
-      const sessions = new SessionPersistenceCoordinator(new SessionRepository(root), {
+      const repository = new SessionRepository(root, {
+        hasLiveRuntimeSession: (projectId, sessionId) =>
+          runtime.hasLiveSession(projectId, sessionId)
+      })
+      const sessions = new SessionPersistenceCoordinator(repository, {
         syncSession: async () => [],
         softDeleteSession: async () => 'deleted',
         restoreSession: async () => undefined,
@@ -27795,8 +27880,21 @@ describe('ACP runtime session management', () => {
                   return { providers: [], agentFrameworkId: framework.id, agentFrameworks: [] }
                 case 'sessions:load-all':
                   return sessions.loadAllReadOnly()
-                case 'sessions:save-session':
-                  return sessions.saveSession(arg as PersistedChatSession)
+                case 'sessions:save-session': {
+                  const candidate = arg as PersistedChatSession
+                  const saved = await sessions.saveSession(
+                    candidate,
+                    {},
+                    { taskRunCommit: invocation.callerContext.surface === 'task' }
+                  )
+                  // Recover after the first Task save, before the provider receives its prompt.
+                  const recovered = await sessions.recoverStartupSession(saved.projectId, saved.id)
+                  expect(recovered).toMatchObject({
+                    activeRun: candidate.activeRun,
+                    revision: saved.revision
+                  })
+                  return saved
+                }
                 case 'sessions:stage-task-completion':
                   return sessions.stageTaskCompletion(
                     arg as Parameters<typeof sessions.stageTaskCompletion>[0]

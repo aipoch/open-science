@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   defaultController,
-  KernelProcessLifecycleOwner
+  KernelProcessLifecycleOwner,
+  type KernelProcessSpawnIntent
 } from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from '@aipoch/environment'
 import {
@@ -496,6 +497,33 @@ describe('KernelProcessLifecycleOwner', () => {
     await expect(controller.probe(record)).resolves.toBe('unknown')
     await expect(controller.terminate(record)).resolves.toEqual({ reaped: false })
     expect(kill).not.toHaveBeenCalled()
+  })
+
+  it('admits the original Windows kernel only after observing a later boot on the same host', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-windows-reboot-'))
+    const options = { storageRoot: root, platform: 'win32' as const }
+    const previous = new KernelProcessLifecycleOwner(options)
+    const scope = {
+      laneKey: 'old-session',
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch'
+    }
+    previous.recordSpawned(previous.beginSpawn(scope), { pid: 4242 })
+    const host = 'a'.repeat(64)
+    const recover = (hostHash?: string, boot = bootA): Promise<KernelProcessSpawnIntent> => {
+      const owner = new KernelProcessLifecycleOwner({
+        ...options,
+        readWindowsBootObservation: async () =>
+          hostHash ? { hostHash, bootIdentity: `windows-boot:${boot}` } : undefined
+      })
+      return owner.ensureReady().then(() => owner.beginSpawn(scope))
+    }
+
+    await expect(recover(host)).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover(host)).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover('b'.repeat(64), bootB)).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover(host, bootB)).resolves.toMatchObject({ record: scope })
   })
 
   it.each(['started-and-reaped', 'never-started'] as const)(

@@ -1,0 +1,25 @@
+name: PR automation preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful PR Automation Signal run to inspect without writes
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  preview:
+    # Reusable job names receive this prefix. A preview must never satisfy the
+    # required CI Integrity check on the dispatch revision.
+    name: Preview
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      checks: write
+    uses: ./.github/workflows/ci-integrity.yml
+    with:
+      run_id: ${{ inputs.run_id }}

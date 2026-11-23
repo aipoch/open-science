@@ -158,7 +158,7 @@ describe('Compute Notebook resource controls', () => {
     vi.mocked(window.api.notebook.getProjectActivity).mockRejectedValue(
       new Error('activity offline')
     )
-    await act(async () => button('Refresh').click())
+    await act(async () => button('Refresh Notebook resources').click())
     expect(container.textContent).toContain('Research analysis')
     expect(container.textContent).not.toContain('Could not refresh Notebook resources')
     getProjectResources.mockRejectedValueOnce(new Error('resources offline'))
@@ -167,7 +167,7 @@ describe('Compute Notebook resource controls', () => {
     expect(container.textContent).toContain('Research analysis')
 
     view = { groups: [], pendingDecisions: [], releases: [] }
-    await act(async () => button('Refresh').click())
+    await act(async () => button('Refresh Notebook resources').click())
     expect(container.textContent).toContain('No running Notebooks')
     expect(container.textContent).not.toContain('Could not refresh Notebook resources')
   })
@@ -199,7 +199,7 @@ describe('Compute Notebook resource controls', () => {
     expect(sendMessage).not.toHaveBeenCalled()
   })
 
-  it('shows every resource and separates interpreter counts from pending work and diagnostic memory', async () => {
+  it('summarizes each resource and keeps its memory diagnostics in an independent disclosure', async () => {
     const original = group()
     view.groups = [
       {
@@ -239,24 +239,43 @@ describe('Compute Notebook resource controls', () => {
       }
     ]
     await render()
-    expect(container.textContent).toContain('Python · research')
-    expect(container.textContent).toContain('R · statistics')
-    expect(container.textContent).toContain('Shell')
-    expect(container.textContent).toContain('Pending operation')
-    expect(container.textContent).toContain('Interpreters: 3')
-    expect(container.textContent).toContain('Resources: 4')
-    expect(container.textContent).toContain('delegate-1')
-    expect(container.textContent).toContain('Starting')
-    expect(container.textContent).toContain('Ready')
-    expect(container.textContent).toContain('RSS: 1.0 MB')
-    expect(container.textContent).toContain('Private Bytes: 2.0 MB')
-    expect(container.textContent).toContain('Working Set: 1.0 MB')
-    expect(container.textContent).toContain('Partial data')
-    expect(container.textContent).toContain('Sampled:')
-    expect(container.textContent).toContain('Runtime: Unknown')
-    expect(container.textContent).toContain(
-      'RSS may include shared pages and does not predict how much memory will be released.'
-    )
+    const rows = [
+      ...container.querySelectorAll<HTMLDetailsElement>(
+        'section[aria-label="Research analysis"] details'
+      )
+    ]
+    expect(rows).toHaveLength(4)
+    expect(rows.every((row) => !row.open)).toBe(true)
+    const summaries = rows.map((row) => row.querySelector('summary')!)
+    expect(summaries[0].textContent).toContain('Python · research')
+    expect(summaries[0].textContent).toContain('Running')
+    expect(summaries[0].textContent).toContain('Elapsed time')
+    expect(summaries[0].textContent).not.toContain('Memory usage')
+    expect(summaries[1].textContent).toContain('R · statistics')
+    expect(summaries[1].textContent).toContain('1.0 MB')
+    expect(summaries[1].textContent).toContain('Partial data')
+    expect(summaries[2].textContent).toContain('Shell')
+    expect(summaries[2].textContent).toContain('Starting')
+    expect(summaries[2].textContent).toContain('1.0 MB')
+    expect(summaries[2].textContent).not.toContain('2.0 MB')
+    expect(summaries[3].textContent).toContain('Pending operation')
+    expect(summaries[3].textContent).toContain('Ready')
+    expect(summaries[3].textContent).not.toContain('Unknown')
+    for (const summary of summaries) {
+      expect(summary.textContent).not.toMatch(/Lane:|Sampled:|RSS:|Complete data/)
+    }
+    await act(async () => summaries[1].click())
+    expect(rows.map((row) => row.open)).toEqual([false, true, false, false])
+    expect(rows[1].textContent).toContain('Lane: delegate-1')
+    expect(rows[1].textContent).toContain('RSS: 1.0 MB')
+    expect(rows[1].textContent).toContain('Sampled:')
+    expect(rows[1].textContent).toContain('RSS may include shared pages')
+    expect(rows[2].textContent).toContain('Private Bytes: 2.0 MB')
+    expect(rows[2].textContent).toContain('Working Set: 1.0 MB')
+    await act(async () => changed())
+    expect(rows[1].open).toBe(true)
+    await act(async () => summaries[1].click())
+    expect(rows[1].open).toBe(false)
     expect(button('Stop and release Notebook').disabled).toBe(false)
   })
 

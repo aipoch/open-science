@@ -309,17 +309,20 @@ describe('release and scheduled workflow topology', () => {
       }
     })
     expect(step(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(step(dependencies, 'Verify generated test dependencies').run).toBe(
+      'node scripts/check-prisma-client.mjs'
+    )
     expect(step(dependencies, 'Pack dependencies').run).toContain('pack-dependencies')
     expect(step(dependencies, 'Pack dependencies').shell).toBe('bash')
     expect(step(job, 'Restore dependencies').shell).toBe('bash')
     expect(step(windows.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
     expect(step(dependencies, 'Upload dependencies').with?.['compression-level']).toBe(0)
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/8')
+    expect(test.run).toContain('npx vitest run --shard=${{ matrix.shard }}/8')
     expect(test.run).toContain('--maxWorkers=1')
     expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '47 16 * * *' }])
+    expect(schedule).toEqual([{ cron: '47 13 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
       options: [
@@ -443,7 +446,7 @@ describe('release and scheduled workflow topology', () => {
     const profile = step(soak, 'Record runtime resource profile')
     const upload = step(soak, 'Upload runtime resource evidence')
 
-    expect(schedule).toEqual([{ cron: '23 19 * * *' }])
+    expect(schedule).toEqual([{ cron: '53 16 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'smoke',
       options: ['smoke', 'soak', 'package-macos-arm64']
@@ -501,7 +504,7 @@ describe('release and scheduled workflow topology', () => {
     const prepare = nightly.jobs.prepare
 
     expect(nightly.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '17 15 * * *' }])
+    expect(schedule).toEqual([{ cron: '17 12 * * *' }])
     expect(nightly.on).toHaveProperty('workflow_dispatch')
     expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({
@@ -1113,7 +1116,10 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(report).toMatchObject({
       'runs-on': 'ubuntu-latest',
       'timeout-minutes': 5,
-      permissions: { contents: 'read', issues: 'write' }
+      permissions:
+        name === 'source-regression.yml'
+          ? { actions: 'read', contents: 'read', issues: 'write' }
+          : { contents: 'read', issues: 'write' }
     })
     expect(document.permissions).toEqual({ actions: 'read', contents: 'read' })
     const scheduledJobIds: string[] = []

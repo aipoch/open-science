@@ -6,7 +6,7 @@ import { isPdfTranslationCaption } from './layout.js'
 import { createPdfTranslationSource, type PdfTranslationFragment } from './source.js'
 import type { PdfTranslationSourceIdentity } from './table-source.js'
 import { verifiedPdfStructureRegions } from './structure-regions.js'
-import { nativeLabelRegion } from './native-source-geometry.js'
+import { nativeLabelRegion, nativeRectangularPath } from './native-source-geometry.js'
 import {
   retainPdfWholeRegionSources,
   isCurrentCaptionedMathBodyRetention
@@ -22,6 +22,7 @@ import {
 
 type Rect = PdfTranslationFragment['rect']
 type Matrix = readonly number[]
+type PaintedPath = Rect & { frame: boolean; rounded: boolean }
 type Document = { getPage: (number: number) => Promise<PDFPageProxy> }
 type Source = PdfTranslationExtraction['source']
 const multiply = (a: Matrix, b: Matrix): number[] => [
@@ -52,6 +53,419 @@ const contains = (outer: Rect, inner: Rect): boolean =>
 const isFigureCaption = (text: string): boolean =>
   /^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s*\d/iu.test(text)
 
+// A full-width caption may follow the last reference when it belongs to a separate image.
+async function terminalReferenceCaption(
+  page: PDFPageProxy,
+  units: Source['units'],
+  images: Rect[],
+  previous: Source['units'][number] | undefined,
+  signal: AbortSignal
+): Promise<string | undefined> {
+  const unit = units.at(-1)
+  const [fragment] = unit?.fragments ?? []
+  if (
+    !unit?.sourceOnly ||
+    unit.preserve !== 'reference' ||
+    unit.fragments.length !== 1 ||
+    page.rotate !== 0
+  )
+    return
+  const { rect } = fragment
+  const image = images[0]
+  const gap = image && rect.y - image.y - image.height
+  // A standalone last page can carry a photograph and one caption after the bibliography.
+  if (
+    units.length === 1 &&
+    images.length === 1 &&
+    previous?.sourceOnly &&
+    previous.preserve === 'reference' &&
+    previous.fragments.at(-1)?.pageNumber === fragment.pageNumber - 1 &&
+    /^Figure [1-9]\d*: \p{Lu}.{24,}\.$/u.test(unit.source) &&
+    image.width >= 0.3 &&
+    image.height >= 0.25 &&
+    gap > 0.004 &&
+    gap < 0.03 &&
+    Math.abs(2 * image.x + image.width - 1) < 0.01 &&
+    Math.abs(2 * rect.x + rect.width - 1) < 0.01
+  ) {
+    const { items } = await page.getTextContent()
+    signal.throwIfAborted()
+    const native = items.flatMap((item, index) =>
+      'str' in item && item.str.trim() ? [{ item, index }] : []
+    )
+    if (native.length === 0 || native.length !== fragment.items.length) return
+    const { width, height } = page.getViewport({ scale: 1 })
+    if (![width, height].every((size) => Number.isFinite(size) && size > 0)) return
+    const first = native[0].item
+    const last = native.at(-1)!.item
+    if (
+      Math.abs(first.transform[4] / width - rect.x) > 0.005 ||
+      Math.abs((last.transform[4] + last.width) / width - rect.x - rect.width) > 0.005 ||
+      Math.abs(1 - first.transform[5] / height - rect.y - rect.height) > 0.008 ||
+      native
+        .map(({ item }) => item.str)
+        .join('')
+        .replace(/\s+/gu, '') !== unit.source.replace(/\s+/gu, '')
+    )
+      return
+    return native.every(({ item, index }, i) => {
+      const [a, b, c, d, x, y] = item.transform
+      const prior = native[i - 1]?.item
+      const separation = prior ? x - prior.transform[4] - prior.width : 0
+      return (
+        index === fragment.items[i].index &&
+        item.str === fragment.items[i].text &&
+        item.dir === 'ltr' &&
+        [a, b, c, d, x, y, item.width, item.height].every(Number.isFinite) &&
+        a > 0 &&
+        b === 0 &&
+        c === 0 &&
+        d > 0 &&
+        item.width > 0 &&
+        item.height === first.height &&
+        first.height > 0 &&
+        y === first.transform[5] &&
+        separation >= -first.height * 0.05 &&
+        separation <= first.height * 0.5
+      )
+    })
+      ? unit.id
+      : undefined
+  }
+  if (
+    !/^Figure [1-9]\d*\. \S.{120,}\.$/u.test(unit.source) ||
+    fragment.items.length < 4 ||
+    rect.width < 0.7 ||
+    rect.y < 0.6
+  )
+    return
+  const headingIndex = units.findLastIndex((u) => /^References$/iu.test(u.source))
+  if (headingIndex < 0) return
+  const [heading, ...citations] = units.slice(headingIndex, -1)
+  if (
+    citations.length < 2 ||
+    ![heading, ...citations].every(
+      (u) =>
+        u.sourceOnly &&
+        u.preserve === 'reference' &&
+        u.fragments.length === 1 &&
+        u.fragments[0].rect.x > rect.x + rect.width / 2
+    ) ||
+    !citations.every((u) =>
+      /^\p{Lu}[\p{L}'’ -]+, .+, (?:19|20)\d{2}, [\p{L}&. ]+, \d+, [A-Z]?\d+$/u.test(u.source)
+    )
+  )
+    return
+  const lastCitation = citations.at(-1)!.fragments[0].rect
+  const anchors = images.filter((r) => {
+    const gap = rect.y - r.y - r.height
+    return (
+      Math.abs(r.x - rect.x) < 0.005 &&
+      Math.abs(r.x + r.width - rect.x - rect.width) < 0.005 &&
+      r.y > lastCitation.y + lastCitation.height &&
+      gap > 0.002 &&
+      gap < 0.04
+    )
+  })
+  if (anchors.length !== 1) return
+
+  const { items } = await page.getTextContent()
+  signal.throwIfAborted()
+  const native = items
+    .slice(fragment.items[0].index)
+    .flatMap((item, i) =>
+      'str' in item && item.str.trim() ? [{ item, index: fragment.items[0].index + i }] : []
+    )
+  if (native.length !== fragment.items.length) return
+  const baselines = new Set<number>()
+  for (const [i, { item, index }] of native.entries()) {
+    const [a, b, c, d] = item.transform
+    if (
+      index !== fragment.items[i].index ||
+      item.str !== fragment.items[i].text ||
+      a <= 0 ||
+      b !== 0 ||
+      c !== 0 ||
+      d <= 0 ||
+      item.height <= 0
+    )
+      return
+    baselines.add(item.transform[5])
+  }
+  if (baselines.size < 2 || baselines.size > 5) return
+  return unit.id
+}
+
+// Deferred raster plots can interrupt a bibliography. Prove the plot and the
+// two independent reference columns below its caption.
+async function interleavedRasterCaption(
+  page: PDFPageProxy,
+  source: Source,
+  units: Source['units'],
+  images: readonly Rect[],
+  pageNumber: number,
+  signal: AbortSignal
+): Promise<string | undefined> {
+  if (page.rotate !== 0 || pageNumber <= 1) return
+  const terminal = pageNumber === source.pages.length && images.length === 1
+  if (!terminal && (pageNumber >= source.pages.length || images.length !== 2)) return
+  const [top, secondImage] = images.toSorted((a, b) => a.y - b.y)
+  const bottom = secondImage ?? top
+  const stackGap = bottom.y - top.y - top.height
+  if (
+    top.y > 0.12 ||
+    Math.abs(2 * top.x + top.width - 1) > 0.01 ||
+    (terminal
+      ? top.width < 0.6 || top.height < 0.25
+      : top.width < 0.4 ||
+        bottom.width < 0.4 ||
+        top.height + bottom.height < 0.55 ||
+        Math.abs(2 * bottom.x + bottom.width - 1) > 0.01 ||
+        stackGap < -0.002 ||
+        stackGap > 0.005)
+  )
+    return
+  const head = terminal ? units[0] : undefined
+  const folio = units[terminal ? 1 : 0]
+  const caption = units[terminal ? 2 : 1]
+  if (terminal) {
+    const headRect = head?.fragments[0]?.rect
+    const folioRect = folio?.fragments[0]?.rect
+    if (
+      !head?.sourceOnly ||
+      head.preserve !== 'reference' ||
+      head.fragments.length !== 1 ||
+      head.fragments[0].items.length !== 1 ||
+      !headRect ||
+      !folioRect ||
+      Math.abs(2 * headRect.x + headRect.width - 1) > 0.01 ||
+      Math.abs(headRect.y - folioRect.y) > 0.002 ||
+      headRect.y + headRect.height >= top.y ||
+      folioRect.x < 0.85
+    )
+      return
+  }
+  if (
+    folio?.source !== String(pageNumber) ||
+    folio.fragments.length !== 1 ||
+    folio.fragments[0].rect.y > 0.07 ||
+    !caption?.sourceOnly ||
+    caption.preserve !== 'reference' ||
+    caption.fragments.length !== 1 ||
+    !/^Figure [1-9]\d*\. \p{Lu}.{80,}\.$/u.test(caption.source)
+  )
+    return
+  const [fragment] = caption.fragments
+  const cap = fragment.rect
+  const gap = cap.y - bottom.y - bottom.height
+  if (
+    cap.width < 0.75 ||
+    Math.abs(2 * cap.x + cap.width - 1) > 0.02 ||
+    gap < 0.004 ||
+    gap > 0.025 ||
+    fragment.items.length < (terminal ? 3 : 4) ||
+    !source.units.some(
+      (u) =>
+        u.sourceOnly &&
+        u.preserve === 'reference' &&
+        /^References$/iu.test(u.source) &&
+        u.fragments.length === 1 &&
+        u.fragments[0].pageNumber === pageNumber - 1
+    ) ||
+    (!terminal &&
+      !source.units.some(
+        (u) =>
+          u.sourceOnly &&
+          u.preserve === 'reference' &&
+          u.fragments[0]?.pageNumber === pageNumber + 1 &&
+          /(?:19|20)\d{2}, [\p{L}.& ]+, \d+, [A-Z]?\d+$/u.test(u.source)
+      ))
+  )
+    return
+  const lower = units.slice(terminal ? 3 : 2)
+  if (
+    lower.some(
+      (u) =>
+        !u.sourceOnly ||
+        u.preserve !== 'reference' ||
+        u.fragments.length !== 1 ||
+        u.fragments[0].rect.y <= cap.y + cap.height ||
+        u.fragments[0].rect.width > 0.45
+    )
+  )
+    return
+  const lanes = [
+    lower.filter((u) => u.fragments[0].rect.x < 0.5),
+    lower.filter((u) => u.fragments[0].rect.x >= 0.5)
+  ]
+  if (
+    !lanes.every(
+      (lane) =>
+        lane.length >= 2 &&
+        /^\p{L}.+, (?:\p{Lu}\.[ ]*)+/u.test(lane[0].source) &&
+        (terminal
+          ? lane.filter((u) => /\bdoi:\s*10\.\d{4,9}\/\S+/iu.test(u.source)).length >= 2
+          : /(?:19|20)\d{2}, [\p{L}.& ]+, \d+, [A-Z]?\d+$/u.test(
+              lane.map((u) => u.source).join(' ')
+            ))
+    ) ||
+    Math.abs(lanes[0][0].fragments[0].rect.y - lanes[1][0].fragments[0].rect.y) > 0.001
+  )
+    return
+  const { items } = await page.getTextContent()
+  signal.throwIfAborted()
+  const start = fragment.items[0].index
+  const end = fragment.items.at(-1)!.index
+  const native = items
+    .slice(start, end + 1)
+    .flatMap((item, offset) =>
+      'str' in item && item.str.trim() ? [{ item, index: start + offset }] : []
+    )
+  if (native.length !== fragment.items.length) return
+  const lead = native[0].item
+  const next = native[1].item
+  if (
+    !/^Figure [1-9]\d*\.$/u.test(lead.str) ||
+    lead.fontName === next.fontName ||
+    lead.height !== next.height ||
+    lead.transform[5] !== next.transform[5] ||
+    !native.every(({ item, index }, at) => {
+      const [a, b, c, d] = item.transform
+      return (
+        index === fragment.items[at].index &&
+        item.str === fragment.items[at].text &&
+        item.dir === 'ltr' &&
+        [...item.transform, item.width, item.height].every(Number.isFinite) &&
+        a > 0 &&
+        b === 0 &&
+        c === 0 &&
+        d > 0 &&
+        item.width > 0 &&
+        item.height > 0
+      )
+    })
+  )
+    return
+  return caption.id
+}
+
+// A bibliography can be followed by a final page of full-width figures.
+function referencePageCaptions(
+  source: Source,
+  units: Source['units'],
+  vectors: readonly Rect[],
+  pageNumber: number
+): string[] {
+  if (
+    vectors.length < 2 ||
+    !units.every(
+      (unit) => unit.fragments.length === 1 && unit.fragments[0].pageNumber === pageNumber
+    )
+  )
+    return []
+  const previous = source.units.filter(
+    (unit) => unit.fragments.at(-1)?.pageNumber === pageNumber - 1
+  )
+  if (
+    !previous.some(
+      (unit) => unit.preserve === 'reference' && /^(?:References|Bibliography)$/iu.test(unit.source)
+    )
+  )
+    return []
+  const folio = new RegExp(`\\bpage ${pageNumber} of ${pageNumber}$`, 'iu')
+  const captions = units.filter(
+    (unit) =>
+      unit.sourceOnly &&
+      unit.preserve === 'reference' &&
+      /^(?:Figure|Fig\.) [1-9]\d*[.:] \p{Lu}.{80,}\.$/u.test(unit.source) &&
+      isPdfTranslationCaption(unit.source)
+  )
+  if (captions.length < 2) return []
+  const figures = captions.map(({ fragments: [{ rect }] }) => {
+    if (rect.width < 0.7 || Math.abs(2 * rect.x + rect.width - 1) >= 0.02) return
+    const candidates = vectors.filter((graphic) => {
+      const gap = rect.y - graphic.y - graphic.height
+      return (
+        graphic.height >= 0.12 &&
+        graphic.width >= 0.5 &&
+        gap > 0.002 &&
+        gap < 0.025 &&
+        graphic.x >= rect.x &&
+        graphic.x + graphic.width <= rect.x + rect.width
+      )
+    })
+    return candidates.length === 1 ? candidates[0] : undefined
+  })
+  if (
+    figures.some((graphic, index) => {
+      const previous = captions[index - 1]?.fragments[0].rect
+      return !graphic || (previous && graphic.y <= previous.y + previous.height)
+    }) ||
+    units.some((unit) => {
+      const [{ rect }] = unit.fragments
+      return (
+        !captions.includes(unit) &&
+        !figures.some((graphic) => graphic && contains(graphic, rect)) &&
+        !(
+          rect.y + rect.height < 0.055 &&
+          source.units.some(
+            (earlier) =>
+              earlier.source === unit.source &&
+              earlier.fragments[0].pageNumber < pageNumber &&
+              earlier.fragments[0].rect.y + earlier.fragments[0].rect.height < 0.055
+          )
+        ) &&
+        !(rect.y > 0.88 && folio.test(unit.source))
+      )
+    })
+  )
+    return []
+  return captions.map(({ id }) => id)
+}
+
+function legendFrame(paths: ArrayLike<number>[] | undefined, bounds: readonly number[]): boolean {
+  if (paths?.length !== 1 || !ArrayBuffer.isView(paths[0])) return false
+  const rectangle = nativeRectangularPath(paths)
+  if (rectangle) return rectangle.every((value, i) => value === bounds[i])
+  const p = Array.from(paths[0])
+  // Some plots paint a rounded box with alternating straight edges and corner cubics.
+  if (p.length !== 44 || p[0] !== 0 || p[43] !== 4 || !p.every(Number.isFinite)) return false
+  const [left, bottom, right, top] = bounds
+  const rx = p[1] - left,
+    ry = p[12] - bottom
+  if (
+    rx <= 0 ||
+    rx > (right - left) * 0.1 ||
+    ry <= 0 ||
+    ry > (top - bottom) * 0.1 ||
+    p[2] !== bottom
+  )
+    return false
+  const corners = [
+    [right - rx, bottom, right, bottom + ry],
+    [right, top - ry, right - rx, top],
+    [left + rx, top, left, top - ry],
+    [left, bottom + ry, left + rx, bottom]
+  ]
+  const near = (a: number, b: number): boolean => Math.abs(a - b) < 0.001
+  return corners.every(([x0, y0, x1, y1], n) => {
+    const [line, x, y, curve, ax, ay, bx, by, ex, ey] = p.slice(3 + 10 * n, 13 + 10 * n)
+    const within = (v: number, a: number, b: number): boolean =>
+      v >= Math.min(a, b) && v <= Math.max(a, b)
+    return (
+      line === 1 &&
+      curve === 2 &&
+      near(x, x0) &&
+      near(y, y0) &&
+      near(ex, x1) &&
+      near(ey, y1) &&
+      (n % 2 === 0
+        ? near(ay, y0) && near(bx, x1) && within(ax, x0, x1) && within(by, y0, y1)
+        : near(ax, x0) && near(by, y1) && within(ay, y0, y1) && within(bx, x0, x1))
+    )
+  })
+}
+
 /** Conservative graphic anchors, not regions authorized for PDF text replacement. */
 async function graphicRegions(
   page: PDFPageProxy,
@@ -61,9 +475,11 @@ async function graphicRegions(
   images: Rect[]
   vectors: Rect[]
   rules?: Rect[]
+  painted?: PaintedPath[]
 }> {
   const images: Rect[] = [],
-    vectors: Rect[] = []
+    vectors: Rect[] = [],
+    painted: PaintedPath[] = []
   // Older embedders may provide only the text extraction subset of PDFPageProxy.
   if (typeof page.getOperatorList !== 'function') return { images, vectors }
   const viewport = page.getViewport({ scale: 1 })
@@ -117,8 +533,14 @@ async function graphicRegions(
       if (!stack.length) return { images: [], vectors: [] }
       matrix = stack.pop()!
     } else if (op === ops.transform) matrix = multiply(matrix, args)
-    else if (op === ops.constructPath && args[2]) add(args[2], vectors)
-    else if (op === ops.paintImageXObjectRepeat && args[3]?.length <= 10000) {
+    else if (op === ops.constructPath && args[2]) {
+      const count = vectors.length
+      add(args[2], vectors)
+      if (vectors.length !== count && (args[0] === ops.stroke || args[0] === ops.fillStroke)) {
+        const frame = args[0] === ops.fillStroke && legendFrame(args[1], args[2])
+        painted.push({ ...vectors.at(-1)!, frame, rounded: frame && args[1]?.[0]?.length === 44 })
+      }
+    } else if (op === ops.paintImageXObjectRepeat && args[3]?.length <= 10000) {
       const base = matrix
       for (let at = 0; at < args[3].length; at += 2) {
         matrix = multiply(base, [args[1], 0, 0, args[2], args[3][at], args[3][at + 1]])
@@ -149,8 +571,147 @@ async function graphicRegions(
   return {
     images,
     vectors: grouped.filter((rect) => rect.width >= 0.006 && rect.height >= 0.006),
+    painted,
     rules: vectors.filter((rect) => rect.width >= 0.18 && rect.height < 0.006)
   }
+}
+
+// A single paragraph replacement would detach the labels from their swatches.
+async function nativeLegendOwners(
+  page: PDFPageProxy,
+  units: Source['units'],
+  paths: readonly PaintedPath[],
+  signal: AbortSignal
+): Promise<string[]> {
+  if (
+    page.rotate !== 0 ||
+    !paths.some((path) => path.frame) ||
+    typeof page.getTextContent !== 'function'
+  )
+    return []
+  const candidates = units.filter(
+    ({ fragments, sourceOnly }) =>
+      !sourceOnly &&
+      fragments.length === 1 &&
+      fragments[0].items.length >= 2 &&
+      fragments[0].items.length <= 8
+  )
+  if (!candidates.length) return []
+  const { items } = await page.getTextContent()
+  signal.throwIfAborted()
+  const viewport = page.getViewport({ scale: 1 })
+  const [sx, skewY, skewX, sy, tx, ty] = viewport.transform
+  if (
+    !viewport.transform.every(Number.isFinite) ||
+    sx <= 0 ||
+    sy >= 0 ||
+    skewX !== 0 ||
+    skewY !== 0 ||
+    viewport.width <= 0 ||
+    viewport.height <= 0
+  )
+    return []
+  return candidates.flatMap(({ id, fragments: [fragment] }) => {
+    const paired = fragment.items.length === 2
+    const rows = fragment.items.map(({ index, text }) => {
+      const row = items[index]
+      return row &&
+        'str' in row &&
+        row.str === text &&
+        row.dir === 'ltr' &&
+        row.transform.every(Number.isFinite) &&
+        row.transform[0] > 0 &&
+        row.transform[3] > 0 &&
+        row.transform[1] === 0 &&
+        row.transform[2] === 0 &&
+        row.width > 0 &&
+        row.height > 0 &&
+        /^[\p{L}][\p{L} ()+-]{2,45}$/u.test(text) &&
+        (paired || !text.includes('+'))
+        ? row
+        : undefined
+    })
+    if (!rows.every((row) => row !== undefined)) return []
+    const labels = [...Map.groupBy(rows, (row) => row.transform[5]).values()]
+    const starts = labels.map(([row]) => row)
+    const split = starts.length !== rows.length
+    const [first, second] = starts
+    if (!first || !second) return []
+    // With only two labels, also require their shared multiword series name.
+    const name = paired && /^([\p{L}]+ [\p{L}]+) /u.exec(first.str)?.[1]
+    const pointPair = paired && (!name || !second.str.startsWith(name + ' '))
+    const em = first.height
+    const left = (sx * first.transform[4] + tx) / viewport.width
+    const pitch = first.transform[5] - second.transform[5]
+    const face = labels[0].at(-1)!.fontName
+    if (
+      pitch < em * 1.25 ||
+      pitch > em * 1.8 ||
+      (split && labels.length < 3) ||
+      labels.some((parts, n) => {
+        const row = starts[n]
+        const tail = parts[1]
+        const rowPitch = n ? starts[n - 1].transform[5] - row.transform[5] : pitch
+        const gap = tail ? tail.transform[4] - row.transform[4] - row.width : 0
+        return (
+          parts.length > 2 ||
+          parts.at(-1)!.fontName !== face ||
+          parts.some((part) => Math.abs(part.height - em) > em * 0.05) ||
+          (tail && (gap < -em * 0.05 || gap > em * 0.65)) ||
+          Math.abs(row.transform[4] - first.transform[4]) > em * 0.05 ||
+          (split
+            ? rowPitch < em * 1.25 || rowPitch > em * 1.8
+            : Math.abs(first.transform[5] - row.transform[5] - n * pitch) > em * 0.05)
+        )
+      })
+    )
+      return []
+    const width = (sx * em) / viewport.width,
+      height = (-sy * em) / viewport.height
+    const isFramedLegend = paths.some((frame) => {
+      if (
+        !frame.frame ||
+        (pointPair && (!frame.rounded || first.str === second.str)) ||
+        !contains(frame, fragment.rect) ||
+        left - frame.x < width * 2 ||
+        left - frame.x > width * 4 ||
+        frame.x + frame.width - fragment.rect.x - fragment.rect.width > width
+      )
+        return false
+      const matches = (mark: PaintedPath, baseline: number): boolean => {
+        const center = (sy * baseline + ty) / viewport.height - height * 0.35
+        return (
+          mark !== frame &&
+          contains(frame, mark) &&
+          mark.x + mark.width < left - width * 0.35 &&
+          mark.width <= width * 2.2 &&
+          mark.height <= height * 1.1 &&
+          Math.abs(mark.y + mark.height / 2 - center) < height * 0.25
+        )
+      }
+      if (!pointPair)
+        return starts.every((row) => paths.some((mark) => matches(mark, row.transform[5])))
+      const marks = starts.map((row) =>
+        paths.filter(
+          (mark) =>
+            matches(mark, row.transform[5]) &&
+            !mark.frame &&
+            mark.width > width * 0.45 &&
+            mark.width < width &&
+            Math.abs(mark.width / width - mark.height / height) < 0.05
+        )
+      )
+      // Two unrelated labels need unique, co-sized point markers in the same column.
+      const [[top], [bottom]] = marks
+      return (
+        marks.every((row) => row.length === 1) &&
+        Math.abs(top.x - bottom.x) < width * 0.05 &&
+        Math.abs(top.width - bottom.width) < width * 0.05 &&
+        Math.abs(top.height - bottom.height) < height * 0.05
+      )
+    })
+    return isFramedLegend ? [id] : []
+  })
 }
 
 // Three-line academic tables often have no vertical rules. A caption plus
@@ -242,7 +803,9 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
   skipTranslation?: boolean
 }): Promise<T> {
   const source = extraction.source,
-    preserved = new Set<string>()
+    preserved = new Set<string>(),
+    nativeLiterals = new Set<string>()
+  const restoredCaptions = new Set<string>()
   const originalRegions: NonNullable<Source['originalRegions']>[number][] = [
     ...(source.originalRegions ?? [])
   ]
@@ -254,23 +817,47 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
     try {
       page = await document.getPage(number)
       signal.throwIfAborted()
-      const { images, vectors, rules = [] } = await graphicRegions(page, operators, signal)
+      const {
+        images,
+        vectors,
+        rules = [],
+        painted = []
+      } = await graphicRegions(page, operators, signal)
+      if (number === source.pages.length && source.units.at(-1) === units.at(-1)) {
+        const restored = await terminalReferenceCaption(
+          page,
+          units,
+          images,
+          source.units.at(-2),
+          signal
+        )
+        if (restored) restoredCaptions.add(restored)
+        if (page.rotate === 0)
+          for (const id of referencePageCaptions(source, units, vectors, number))
+            restoredCaptions.add(id)
+      }
+      const interleaved = await interleavedRasterCaption(
+        page,
+        source,
+        units,
+        images,
+        number,
+        signal
+      )
+      if (interleaved) restoredCaptions.add(interleaved)
       const captions = units
         .filter((unit) => isFigureCaption(unit.source) && isPdfTranslationCaption(unit.source))
         .flatMap((unit) => unit.fragments.filter((f) => f.pageNumber === number))
-      const regions = [
-        ...images,
-        ...tableRegions(units, rules, number),
-        ...vectors.filter((rect) =>
-          captions.some(
-            ({ rect: caption }) =>
-              caption.y >= rect.y + rect.height - 0.003 &&
-              caption.y - rect.y - rect.height < 0.14 &&
-              caption.x < rect.x + rect.width &&
-              caption.x + caption.width > rect.x
-          )
+      const captionedVectors = vectors.filter((rect) =>
+        captions.some(
+          ({ rect: caption }) =>
+            caption.y >= rect.y + rect.height - 0.003 &&
+            caption.y - rect.y - rect.height < 0.14 &&
+            caption.x < rect.x + rect.width &&
+            caption.x + caption.width > rect.x
         )
-      ]
+      )
+      const regions = [...images, ...tableRegions(units, rules, number), ...captionedVectors]
       for (const rect of regions)
         if (
           !originalRegions.some(
@@ -287,6 +874,74 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
           unit.fragments.every((fragment) => regions.some((rect) => contains(rect, fragment.rect)))
         )
           preserved.add(unit.id)
+      // A column of unspaced feature keys keeps the native names used by the data.
+      const keys = units.filter((unit) => {
+        if (!preserved.has(unit.id) || unit.sourceOnly || unit.fragments.length !== 1) return false
+        const [{ items }] = unit.fragments
+        return (
+          items.length === 1 &&
+          items[0].text === unit.source &&
+          /^[A-Z][a-z\d]+(?:[A-Z][a-z\d]*)+$/u.test(unit.source)
+        )
+      })
+      const figureRegions = [...images, ...captionedVectors]
+      const legendCandidates = units.filter(
+        (unit) =>
+          preserved.has(unit.id) &&
+          unit.fragments.length === 1 &&
+          captionedVectors.some((region) => contains(region, unit.fragments[0].rect))
+      )
+      for (const id of await nativeLegendOwners(page, legendCandidates, painted, signal))
+        nativeLiterals.add(id)
+
+      for (const key of keys) {
+        const { rect } = key.fragments[0]
+        for (const region of figureRegions.filter((region) => contains(region, rect))) {
+          const left = new Set<number>()
+          const right = new Set<number>()
+          for (const peer of keys) {
+            const other = peer.fragments[0].rect
+            if (
+              !contains(region, other) ||
+              Math.abs(rect.height - other.height) >= rect.height * 0.05
+            )
+              continue
+            if (Math.abs(rect.x - other.x) < 0.001) left.add(other.y)
+            if (Math.abs(rect.x + rect.width - other.x - other.width) < 0.001) right.add(other.y)
+          }
+          if (left.size >= 3 || right.size >= 3) nativeLiterals.add(key.id)
+        }
+      }
+      // A legacy plot may draw data points with the built-in Dingbats font.
+      // PDF.js can expose those marks as letter l even though they are not labels.
+      const markerUnits = units.filter(
+        (unit) =>
+          preserved.has(unit.id) &&
+          !unit.sourceOnly &&
+          unit.fragments.length === 1 &&
+          unit.fragments[0].items.length > 0 &&
+          /^l+(?:\s+l+)*$/u.test(unit.source)
+      )
+      const fonts = page.commonObjs
+      if (markerUnits.length && typeof fonts?.has === 'function') {
+        const content = await page.getTextContent()
+        signal.throwIfAborted()
+        const dingbats = new Set(
+          Object.keys(content.styles).filter((name) => {
+            const font = fonts.has(name) ? fonts.get(name) : undefined
+            return font?.name === 'ZapfDingbats' && font.missingFile === true
+          })
+        )
+        for (const unit of markerUnits) {
+          if (
+            unit.fragments[0].items.every(({ index, text }) => {
+              const item = content.items[index]
+              return item && 'str' in item && item.str === text && dingbats.has(item.fontName)
+            })
+          )
+            nativeLiterals.add(unit.id)
+        }
+      }
     } catch {
       // Missing/unusual graphics must not prevent ordinary text translation.
       signal.throwIfAborted()
@@ -296,7 +951,7 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
   }
-  if (!preserved.size && !originalRegions.length) return extraction
+  if (!preserved.size && !originalRegions.length && !restoredCaptions.size) return extraction
   return Object.freeze({
     ...extraction,
     source: carryNativeCaptionEligibility(
@@ -304,11 +959,24 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
       createPdfTranslationSource({
         ...source,
         originalRegions,
-        units: source.units.map((unit) =>
-          preserved.has(unit.id)
-            ? { ...unit, ...(skipTranslation ? { sourceOnly: true as const } : {}), figure: true }
+        units: source.units.map((unit) => {
+          if (restoredCaptions.has(unit.id)) {
+            const restored = { ...unit }
+            delete restored.sourceOnly
+            delete restored.preserve
+            return restored
+          }
+          return preserved.has(unit.id)
+            ? {
+                ...unit,
+                ...(skipTranslation || nativeLiterals.has(unit.id)
+                  ? { sourceOnly: true as const }
+                  : {}),
+                ...(nativeLiterals.has(unit.id) ? { preserve: 'literal' as const } : {}),
+                figure: true
+              }
             : unit
-        )
+        })
       })
     )
   })

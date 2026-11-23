@@ -37,7 +37,9 @@ const WorkspaceDelegatedQuestionCard = ({
   const [answers, setAnswers] = useState<DelegatedQuestionAnswer[]>(() => [...request.draftAnswers])
   const [questionIndex, setQuestionIndex] = useState(request.draftQuestionIndex)
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string>()
+  const [error, setError] = useState<{ detail: string; draft: boolean }>()
+  const confirming = useRef(false)
+  const confirmationCount = useRef(0)
   const mounted = useRef(true)
   const draftInFlight = useRef(false)
   const pendingDraft = useRef<ElicitationResponse | undefined>(undefined)
@@ -47,9 +49,9 @@ const WorkspaceDelegatedQuestionCard = ({
   const question = request.questions[questionIndex]
   const currentAnswer = answers.find((answer) => answer.questionIndex === questionIndex)?.value
 
-  const responseError = (caught: unknown): void => {
-    if (mounted.current) {
-      setError(caught instanceof Error ? caught.message : t('Could not save the response.'))
+  const responseError = (caught: unknown, draft: boolean): void => {
+    if (mounted.current && !(draft && confirming.current)) {
+      setError({ detail: caught instanceof Error ? caught.message : String(caught), draft })
     }
   }
 
@@ -59,9 +61,12 @@ const WorkspaceDelegatedQuestionCard = ({
     pendingDraft.current = undefined
     draftInFlight.current = true
     if (mounted.current) setError(undefined)
+    const generation = confirmationCount.current
     void Promise.resolve()
       .then(() => onRespond(response))
-      .catch(responseError)
+      .catch((error: unknown) => {
+        if (generation === confirmationCount.current) responseError(error, true)
+      })
       .finally(() => {
         draftInFlight.current = false
         drainDrafts()
@@ -130,8 +135,7 @@ const WorkspaceDelegatedQuestionCard = ({
     try {
       await onRespond(response)
     } catch (caught) {
-      responseError(caught)
-      throw caught
+      responseError(caught, false)
     }
   }
 
@@ -159,12 +163,15 @@ const WorkspaceDelegatedQuestionCard = ({
   }
 
   const confirm = async (): Promise<void> => {
-    if (submitting || answers.length !== request.questions.length) return
+    if (confirming.current || answers.length !== request.questions.length) return
+    confirmationCount.current++
+    confirming.current = true
     setSubmitting(true)
     cancelScheduledDraft()
     try {
       await send('confirm', answers)
     } finally {
+      confirming.current = false
       setSubmitting(false)
     }
   }
@@ -295,9 +302,17 @@ const WorkspaceDelegatedQuestionCard = ({
         ) : null}
       </div>
       {error ? (
-        <p className="mt-2 text-sm text-destructive" role="alert">
-          {error}
-        </p>
+        <div className="mt-2 text-sm">
+          <p role="alert">
+            {error.draft
+              ? t('Could not save the response.')
+              : t('Could not confirm that your response was submitted.')}
+          </p>
+          <details className="text-xs text-muted-foreground">
+            <summary>{t('Error details')}</summary>
+            {error.detail}
+          </details>
+        </div>
       ) : null}
     </section>
   )

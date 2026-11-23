@@ -261,12 +261,18 @@ jobs:
       - name: Merge mac update feed
         run: node scripts/merge-mac-feed.mjs artifacts
 
+      # A capable installed updater uses this pair; older clients still read the same feed.
+      - name: Generate verified Windows version-pair patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash build/windows-delta/release.sh artifacts
+
       # One SHA256SUMS.txt covering all installers so users can verify downloads.
       - name: Generate checksums
         working-directory: artifacts
         run: |
           shopt -s nullglob
-          files=(*.dmg *.zip *.exe *.AppImage *.deb *.rpm *.tar.gz)
+          files=(*.dmg *.zip *.exe *.wex *.AppImage *.deb *.rpm *.tar.gz)
           if [ ${#files[@]} -gt 0 ]; then
             sha256sum "${files[@]}" > SHA256SUMS.txt
             cat SHA256SUMS.txt
@@ -284,6 +290,7 @@ jobs:
             artifacts/*.dmg
             artifacts/*.zip
             artifacts/*.exe
+            artifacts/*.wex
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/*.rpm
@@ -316,6 +323,7 @@ jobs:
             artifacts/*.dmg
             artifacts/*.zip
             artifacts/*.exe
+            artifacts/*.wex
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/*.rpm
