@@ -6,7 +6,7 @@ import type { LabConnectionState, LabErrorCode } from '../../../../shared/lab'
 const LAB_STATUS_LABEL_KEYS: Record<LabConnectionState, string> = {
   unconfigured: 'Not configured',
   signedOut: 'Not signed in',
-  signingIn: 'Signing in…',
+  signingIn: 'Waiting for browser confirmation…',
   authenticated: 'Signed in',
   expired: 'Session expired — sign in again',
   unreachable: 'Lab server unreachable',
@@ -14,20 +14,6 @@ const LAB_STATUS_LABEL_KEYS: Record<LabConnectionState, string> = {
 }
 
 export const labStatusLabelKey = (state: LabConnectionState): string => LAB_STATUS_LABEL_KEYS[state]
-
-export type LabStatusTone = 'neutral' | 'success' | 'warning' | 'error'
-
-const LAB_STATUS_TONES: Record<LabConnectionState, LabStatusTone> = {
-  unconfigured: 'neutral',
-  signedOut: 'warning',
-  signingIn: 'neutral',
-  authenticated: 'success',
-  expired: 'warning',
-  unreachable: 'error',
-  blocked: 'error'
-}
-
-export const labStatusTone = (state: LabConnectionState): LabStatusTone => LAB_STATUS_TONES[state]
 
 const LAB_ERROR_COPY_KEYS: Record<LabErrorCode, string> = {
   'server-url-missing': 'Enter a Lab server address.',

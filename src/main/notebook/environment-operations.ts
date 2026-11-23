@@ -175,13 +175,17 @@ export class NotebookEnvironmentOperations {
     if (!provisioner) return
     if (input.environment !== DEFAULT_PY_ENV && input.environment !== DEFAULT_R_ENV) return
 
-    await input.ensureRecovered()
     input.assertRecoverable()
-    const ready =
+    const isReady = (): boolean =>
       input.language === 'r'
         ? rReady(input.runtimeRoot, DEFAULT_ENV_VERSION)
         : pythonReady(input.runtimeRoot, DEFAULT_ENV_VERSION)
-    if (ready) return
+    if (isReady()) return
+    // Lane admission already reconciled this execution. Only creating the prefix needs the
+    // stricter global check. Recovery can change both quarantine and readiness while we wait.
+    await input.ensureRecovered()
+    input.assertRecoverable()
+    if (isReady()) return
     await input.assertCreationAllowed?.()
 
     const report = (progress: ProvisionProgress): void => {

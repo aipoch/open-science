@@ -10,6 +10,7 @@ import type {
 } from '../../../../shared/acp'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
+import { isCurrentQuestionBranch } from '../../stores/session-actionability'
 import { useSessionStore } from '../../stores/session-store'
 import type { ChatSession } from '../../stores/session-store-contract'
 import type { WorkspaceSessionRuntimeSelection } from './useWorkspaceAgentRuntime'
@@ -40,7 +41,8 @@ const pendingWorkspaceElicitations = (
         elicitation.continuationRecovery ||
         (elicitation.continuationPending &&
           (elicitation.state === 'answered' || elicitation.state === 'declined'))) &&
-      elicitation.durable
+      elicitation.durable &&
+      isCurrentQuestionBranch(session, activity.id, elicitation.durable)
       ? [
           {
             requestId: elicitation.durable.requestId,
@@ -119,15 +121,10 @@ const useWorkspaceElicitation = (
         ? useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
         : undefined
       const selected = session ? resolveSessionRuntimeSelection(session.id) : undefined
-      if (sessionId) {
-        useWorkspaceElicitationFailures.setState(({ failures }) => {
-          if (!failures[sessionId]) return {}
-          const next = { ...failures }
-          delete next[sessionId]
-          return { failures: next }
-        })
-      }
 
+      const previousFailure = sessionId
+        ? useWorkspaceElicitationFailures.getState().failures[sessionId]
+        : undefined
       try {
         await respondToWorkspaceElicitation(await createWorkspaceElicitationRuntime(), response, {
           supportsImageInput: selected
@@ -139,6 +136,14 @@ const useWorkspaceElicitation = (
           agentTarget: selected?.agentTarget,
           historyReplayDescriptor: selected?.historyReplayDescriptor
         })
+        if (sessionId && previousFailure?.requestId === response.requestId) {
+          useWorkspaceElicitationFailures.setState(({ failures }) => {
+            if (failures[sessionId] !== previousFailure) return {}
+            const next = { ...failures }
+            delete next[sessionId]
+            return { failures: next }
+          })
+        }
       } catch (error) {
         const saved = useSessionStore
           .getState()
@@ -148,6 +153,7 @@ const useWorkspaceElicitation = (
           )?.elicitation
         if (
           sessionId &&
+          response.action !== 'cancel' &&
           saved?.continuationPending &&
           !saved.continuationRecovery &&
           (saved.state === 'answered' || saved.state === 'declined')

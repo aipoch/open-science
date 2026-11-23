@@ -1,4 +1,7 @@
-import { RuntimeUpdateOutcomeNotice } from '@/components/runtime-update-outcome-notice'
+import {
+  InterruptedUpdateOpenNotice,
+  RuntimeUpdateOutcomeNotice
+} from '@/components/runtime-update-outcome-notice'
 import { SideChatProvider } from './pages/workspace/use-side-chat-controller'
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
 import { lazy, memo, Suspense, useCallback, useRef, useState } from 'react'
@@ -30,6 +33,7 @@ import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRe
 import { HomePage } from '@/pages/home/HomePage'
 import { SharingMarketplacePage } from '@/pages/marketplace/SharingMarketplacePage'
 import type { SettingsPageHandle } from '@/pages/settings/SettingsPage'
+import { NotebookMemoryPressureNotice } from '@/pages/workspace/NotebookMemoryNoticeBridge'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import {
   WorkspaceMessageQueueProvider,
@@ -435,6 +439,7 @@ const ApplicationPresentationContent = ({
                 )}
               </Suspense>
               <ActionToastStack>
+                <InterruptedUpdateOpenNotice platform="darwin" />
                 {sessions.catalogRecovery.kind !== 'ready' ? null : sessions.loadError ? (
                   <SessionPersistenceAlert
                     title={t('Saved conversations could not be loaded')}
@@ -481,6 +486,7 @@ const ApplicationPresentationContent = ({
                 inert={!isBasePresentationActive}
                 aria-hidden={isBasePresentationActive ? undefined : true}
               >
+                <InterruptedUpdateOpenNotice platform="linux" />
                 <EnvStatusBanner
                   ui={startup.environment.ui}
                   onRetry={startup.environment.retry}
@@ -495,6 +501,7 @@ const ApplicationPresentationContent = ({
                     onDeleteRecoveryFile={window.api.sessions.deleteRecoveryFile}
                   />
                 ) : null}
+                <NotebookMemoryPressureNotice />
                 <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />
                 <NotificationLiveToast />
               </div>

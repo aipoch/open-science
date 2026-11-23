@@ -20,24 +20,33 @@ name: AI PR Review (Single)
 # are eligible when ready. Manual mode permits workflow_dispatch reviews of forks; automatic mode also reviews
 # fork PRs on opened, synchronize, reopened, and ready_for_review events. Disabled mode blocks both fork paths.
 # Set CODEX_REVIEW_MAX_ROUNDS to the maximum successful comments per PR (default: 20,
-# 0 means unlimited). Rapid updates use concurrency cancellation so only the latest surviving run
-# publishes a review and consumes a round.
+# 0 means unlimited). Duplicate reviews of one revision share a concurrency group.
+# Older revisions cannot cancel newer reviews; publication rejects stale heads.
 #
 # The reviewer does not post comments directly. It writes one schema-validated verdict covering
 # correctness and architecture to a job output, and a separate trusted workflow publishes it.
 on:
-  pull_request_target:
-    branches:
-      - main
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  workflow_call:
+    inputs:
+      pull_request_number:
+        required: true
+        type: string
+      expected_head_sha:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       pull_request_number:
         description: Pull request number to review
         required: true
+        type: string
+      dry_run:
+        description: Resolve review policy without using the model or publishing feedback
+        type: boolean
+        default: false
 
 concurrency:
-  group: ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}
+  group: ai-pr-review-${{ inputs.pull_request_number }}-${{ inputs.expected_head_sha || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -67,7 +76,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           DISPATCH_PR_NUMBER: ${{ github.event.inputs.pull_request_number }}
-          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_PR_NUMBER: ${{ inputs.pull_request_number }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
           FORK_REVIEW_MODE: ${{ vars.FORK_REVIEW_MODE || 'manual' }}
           CODEX_REVIEW_AUTH_MODE: ${{ vars.CODEX_REVIEW_AUTH_MODE || 'subscription' }}
           CODEX_REVIEW_MODE: ${{ vars.CODEX_REVIEW_MODE || 'correctness' }}
@@ -123,6 +133,10 @@ jobs:
             > pr.json
           state="$(jq -r '.state' pr.json)"
           head_sha="$(jq -r '.headRefOid' pr.json)"
+          if [[ -n "$EXPECTED_HEAD_SHA" && ( "$state" != "OPEN" || "$head_sha" != "$EXPECTED_HEAD_SHA" ) ]]; then
+            echo "Pull request changed after signal resolution." >&2
+            exit 1
+          fi
           review_sha="$head_sha"
           if [[ "$state" == "MERGED" ]]; then
             review_sha="$(jq -r '.mergeCommit.oid // empty' pr.json)"
@@ -184,7 +198,7 @@ jobs:
     name: Check Codex review limits
     needs: review_target
     if: >-
-      ${{ needs.review_target.outputs.review_allowed == 'true' &&
+      ${{ !inputs.dry_run && needs.review_target.outputs.review_allowed == 'true' &&
           needs.review_target.outputs.review_enabled == 'true' }}
     runs-on: ubuntu-latest
     permissions:
@@ -281,7 +295,7 @@ jobs:
 
   apply_review_outcome:
     name: Apply review outcome label
-    if: ${{ always() && needs.review_target.result == 'success' }}
+    if: ${{ always() && !inputs.dry_run && needs.review_target.result == 'success' }}
     needs:
       - review_target
       - codex_review

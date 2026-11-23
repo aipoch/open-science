@@ -373,9 +373,8 @@ const ProviderForm = ({
     key: string
   }>()
   const keyVisible = revealedKeyDraft?.kind === selectedKey && revealedKeyDraft.key === value.key
-  // A loopback custom gateway (local model server) serves without a key, so the key field reads as
-  // optional and the required-field guard below stays quiet for it.
-  const keyRequired = !loopbackCustomGateway && (needsKey || !hasStoredKey)
+  const keyOptional = loopbackCustomGateway || vendor?.supportsAnonymousAccess === true
+  const keyRequired = needsKey || (!keyOptional && !hasStoredKey)
   // Whether the active framework can drive this draft as configured. Undefined while the caller
   // supplies no framework context, or before the framework list has loaded (compatibility
   // feedback stays hidden then).
@@ -405,7 +404,7 @@ const ProviderForm = ({
         <div className="flex items-center gap-1">
           <label className={fieldLabelClassName} htmlFor="provider-key">
             {t('API key')}
-            {loopbackCustomGateway ? (
+            {keyOptional ? (
               <span className="ml-0.5 font-normal text-muted-foreground">{t('(optional)')}</span>
             ) : (
               <RequiredMark />
@@ -451,7 +450,9 @@ const ProviderForm = ({
                 })
               : loopbackCustomGateway
                 ? t('Leave blank for a local server')
-                : t('Paste API key')
+                : vendor?.supportsAnonymousAccess
+                  ? t('Free models work without an API key.')
+                  : t('Paste API key')
           }
           className="pe-9"
           onChange={(event) => {
@@ -1160,10 +1161,14 @@ const ProviderForm = ({
               vendorId: value.vendorId,
               region: value.region,
               modelCatalog,
+              hasKey: Boolean(value.key.trim() || (catalogHasStoredKey && !needsKey)),
               fetchedModels: supportedModels
             }).filter(isCatalogModelAvailable)
+            const catalogAuth = catalog?.options.auth
             const missingKey =
-              catalog?.options.auth !== 'none' &&
+              catalogAuth &&
+              catalogAuth !== 'none' &&
+              catalogAuth.required !== false &&
               !value.key.trim() &&
               (!catalogHasStoredKey || needsKey)
             const missingParameter = catalog?.options.inputs?.some(
@@ -1179,6 +1184,26 @@ const ProviderForm = ({
 
             return (
               <div className="space-y-1.5">
+                {catalog?.options.inputs?.map((input) => (
+                  <div key={input.id} className="space-y-1.5">
+                    <label className={fieldLabelClassName} htmlFor={`catalog-${input.id}`}>
+                      {t('Workspace ID')}
+                    </label>
+                    <Input
+                      id={`catalog-${input.id}`}
+                      value={value.catalogParameters?.[input.id] ?? ''}
+                      disabled={disabled || isRefreshingModels}
+                      onChange={(event) =>
+                        onChange({
+                          catalogParameters: {
+                            ...value.catalogParameters,
+                            [input.id]: event.target.value
+                          }
+                        })
+                      }
+                    />
+                  </div>
+                ))}
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1">
                     <span className={fieldLabelClassName}>{t('Supported models')}</span>
@@ -1213,26 +1238,6 @@ const ProviderForm = ({
                     </button>
                   ) : null}
                 </div>
-                {catalog?.options.inputs?.map((input) => (
-                  <div key={input.id} className="space-y-1.5">
-                    <label className={fieldLabelClassName} htmlFor={`catalog-${input.id}`}>
-                      {t('Workspace ID')}
-                    </label>
-                    <Input
-                      id={`catalog-${input.id}`}
-                      value={value.catalogParameters?.[input.id] ?? ''}
-                      disabled={disabled || isRefreshingModels}
-                      onChange={(event) =>
-                        onChange({
-                          catalogParameters: {
-                            ...value.catalogParameters,
-                            [input.id]: event.target.value
-                          }
-                        })
-                      }
-                    />
-                  </div>
-                ))}
                 {disabledReason ? (
                   <p className="text-xs text-muted-foreground">{disabledReason}</p>
                 ) : null}

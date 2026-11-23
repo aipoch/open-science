@@ -1,3 +1,5 @@
+export const CALL_STACK_LIMIT_MESSAGE = 'Maximum call stack size exceeded'
+
 export const INTERRUPTED_TURN_ERROR = 'This turn was interrupted. Resume to continue.'
 
 export { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../claude-runtime'
@@ -39,6 +41,9 @@ export const VISION_EVIDENCE_INVALID_MESSAGE = 'The Vision model returned invali
 
 export const NO_ACTIVE_PROVIDER_MESSAGE =
   'No active model provider is configured. Configure one in settings.'
+
+export const CLAUDE_ACP_MISSING_MESSAGE =
+  'Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.'
 
 export const CLAUDE_EXECUTABLE_MISSING_MESSAGE =
   'Claude executable is not configured. Complete onboarding in settings.'

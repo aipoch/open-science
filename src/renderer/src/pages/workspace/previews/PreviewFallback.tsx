@@ -231,7 +231,15 @@ const getPreviewFailureMessage = (error: unknown, t: TFunction): string | undefi
       'The file changed while its preview was being prepared. Retry to load the latest version.'
     )
   }
-  if (/Image preview request failed with status/.test(message)) {
+  if (message === 'Managed preview request failed with status 401.') {
+    return t(
+      'Access to this preview requires an authenticated connection. Reconnect to Open-Science and try again.'
+    )
+  }
+  if (/^Managed preview request failed with status 5\d\d\.$/u.test(message)) {
+    return t('The preview server returned an error. Try again later.')
+  }
+  if (/(?:Image|Managed) preview request failed with status/.test(message)) {
     return t('The preview resource could not be loaded. Retry to request it again.')
   }
   if (/EACCES|EPERM|permission denied/i.test(message)) {

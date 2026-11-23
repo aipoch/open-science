@@ -20,6 +20,7 @@ import { NotebookStep } from './NotebookStep'
 import { OnboardingReadyStep, OnboardingWelcome } from './OnboardingEntry'
 import { onboardingErrorMessage } from './onboarding-error'
 import { ProviderStep } from './ProviderStep'
+import { useProviderStepOperation } from './use-provider-step-operation'
 
 type WizardStep = 'environment' | 'agent' | 'provider' | 'notebook' | 'location'
 type OnboardingWizardProps = {
@@ -215,6 +216,7 @@ const OnboardingWizard = ({
   const [skipError, setSkipError] = useState<string | undefined>(undefined)
   const dialogRef = useRef<HTMLDivElement>(null)
   const previousDialogFocus = useRef<HTMLElement | null>(null)
+  const providerOperation = useProviderStepOperation()
   const stepCard = useRef<HTMLDivElement>(null)
   const previousStep = useRef(step)
   useEffect(() => {
@@ -501,6 +503,7 @@ const OnboardingWizard = ({
       ) : step === 'provider' ? (
         <>
           <ProviderStep
+            operation={providerOperation}
             formValue={providerDraft.value}
             setFormValue={setFormValue}
             providerId={providerDraft.providerId}
@@ -564,6 +567,7 @@ const OnboardingWizard = ({
             />
           ) : entryPhase === 'connect' ? (
             <ProviderStep
+              operation={providerOperation}
               variant="quick"
               formValue={providerDraft.value}
               setFormValue={setFormValue}

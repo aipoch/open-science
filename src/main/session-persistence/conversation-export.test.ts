@@ -1,3 +1,4 @@
+import { SessionExportBlockedError } from '../archive/availability-error'
 import { printConversationPdf } from './conversation-pdf-electron'
 import { join } from 'node:path'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -175,6 +176,14 @@ describe('conversation export service', () => {
           format
         })
       ).rejects.toThrow('retained terminal write failed')
+      reserveExport.mockRejectedValueOnce(new SessionExportBlockedError('compute'))
+      await expect(
+        createService({ reserveExport, translate: () => '计算作业仍在进行。' }).exportConversation({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          format
+        })
+      ).rejects.toThrow('计算作业仍在进行。')
       expect(reserveExport).toHaveBeenCalledWith('project-1', 'session-1')
       expect(loadSession).not.toHaveBeenCalled()
       expect(showSaveDialog).not.toHaveBeenCalled()

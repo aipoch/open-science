@@ -1,0 +1,19 @@
+name: PR Automation Signal
+run-name: PR automation (${{ github.event.action }})
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
+
+permissions: {}
+
+jobs:
+  signal:
+    name: Signal PR automation
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # No checkout, credentials, artifacts or contributor commands. The completion
+      # listeners use GitHub API metadata and code from the default branch.
+      - run: 'true'

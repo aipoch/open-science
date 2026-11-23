@@ -379,7 +379,7 @@ describe('ArchiveCoordinator', () => {
 
   it('uses export activity independently from auxiliary activity that blocks archive', async () => {
     const isSessionBusy = vi.fn().mockReturnValue(true)
-    const isSessionExportBusy = vi.fn().mockReturnValue(false)
+    const getSessionExportBlocker = vi.fn().mockResolvedValue(undefined)
     const coordinator = new ArchiveCoordinator(
       { get: async () => project, updateArchive: vi.fn() },
       {
@@ -390,7 +390,7 @@ describe('ArchiveCoordinator', () => {
       },
       {
         isSessionBusy,
-        isSessionExportBusy,
+        getSessionExportBlocker,
         isProjectBusy: () => false,
         liveSessionProjectId: () => project.id
       }
@@ -402,7 +402,7 @@ describe('ArchiveCoordinator', () => {
       async () => undefined
     )
 
-    expect(isSessionExportBusy).toHaveBeenCalledTimes(2)
+    expect(getSessionExportBlocker).toHaveBeenCalledTimes(2)
     expect(isSessionBusy).not.toHaveBeenCalled()
     release()
   })
@@ -451,7 +451,9 @@ describe('ArchiveCoordinator', () => {
         expect(() => coordinator.admitSessionWork(project.id, session.id)).toThrow('locked')
         release()
       } else {
-        await expect(reserve).rejects.toThrow(result === 'busy' ? 'idle' : 'Activity lookup failed')
+        await expect(reserve).rejects.toThrow(
+          result === 'busy' ? 'settling' : 'Activity lookup failed'
+        )
       }
       const releaseWork = coordinator.admitSessionWork(project.id, session.id)
       releaseWork()
@@ -488,14 +490,21 @@ describe('ArchiveCoordinator', () => {
     await admitted
     await expect(
       coordinator.reserveSessionExport(project.id, session.id, async () => undefined)
-    ).rejects.toThrow('idle')
+    ).rejects.toThrow('settling')
     finish()
     await dispatch
-    const release = await coordinator.reserveSessionExport(
-      project.id,
-      session.id,
-      async () => undefined
+
+    // The Notebook panel can still be finishing a history refresh when export is clicked.
+    const releaseRead = coordinator.admitSessionWork(project.id, session.id, 'observation')
+    const exportAfterRead = coordinator.reserveSessionExport(project.id, session.id, async () => {})
+    await vi.waitFor(() =>
+      expect(coordinator.isSessionExporting(project.id, session.id)).toBe(true)
     )
+    expect(() => coordinator.admitSessionWork(project.id, session.id, 'observation')).toThrow(
+      'locked'
+    )
+    releaseRead()
+    const release = await exportAfterRead
     release()
   })
 

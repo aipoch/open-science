@@ -42,6 +42,53 @@ beforeEach(() => {
   vi.stubEnv('https_proxy', undefined)
 })
 afterEach(() => vi.unstubAllEnvs())
+it('falls back on a corrupt Windows patch and propagates cancellation without staging an installer', async () => {
+  const { applyWindowsDelta } = requireRepo('./build/windows-delta/apply.cjs')
+  const dir = await mkdtemp(join(tmpdir(), 'windows-delta-'))
+  try {
+    const oldFile = join(dir, 'old.exe')
+    await writeFile(oldFile, 'old')
+    const hash = (data: string): string => createHash('sha512').update(data).digest('base64')
+    const token = new CancellationToken()
+    const fetch = vi.fn(async () => new Response('corrupt'))
+    const destination = join(dir, 'pending.exe')
+    const options = {
+      fileInfo: {
+        url: new URL('https://cdn.example.test/releases/2.0.0/app-win-x64-setup.exe'),
+        info: {
+          size: 100,
+          sha512: hash('new'),
+          windowsDelta: {
+            format: 1,
+            from: '1.0.0',
+            sourceSha512: hash('old'),
+            sha512: hash('correct'),
+            size: 7,
+            oldViewSize: 8,
+            newViewSize: 8
+          }
+        }
+      },
+      from: '1.0.0',
+      target: '2.0.0',
+      oldFile,
+      destination,
+      token,
+      fetch,
+      logger: log,
+      executable: process.execPath
+    }
+    expect(await applyWindowsDelta(options)).toBe(false)
+    expect(fetch.mock.calls).toHaveLength(1)
+    token.cancel()
+    await expect(applyWindowsDelta(options)).rejects.toThrow()
+    expect(fetch.mock.calls).toHaveLength(1)
+    await expect(readFile(destination)).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 const offline = async (): Promise<never> => {
   throw new Error('No network in audit')
 }

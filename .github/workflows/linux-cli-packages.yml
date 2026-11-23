@@ -126,7 +126,8 @@ jobs:
           '
       - name: Build and verify RPM in native Fedora
         run: |
-          docker run --rm --privileged -v "$PWD:/workspace" -w /workspace \
+          # Notebook memory checks need to see limits imposed by ancestor cgroups.
+          docker run --rm --privileged --cgroupns=host -v "$PWD:/workspace" -w /workspace \
             -e OPEN_SCIENCE_TEST_FAKE_AGENT=/workspace/e2e/fixtures/fake-opencode.mjs \
             -e OPEN_SCIENCE_TEST_PYTHON=/usr/bin/python3 \
             -e OPEN_SCIENCE_PACKAGE_PAYLOAD=/workspace/out/cli-prepared/payload \

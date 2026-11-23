@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process'
 import { resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import {
@@ -8,7 +10,7 @@ import {
   type ElectronApplication,
   type TestInfo
 } from '@playwright/test'
-import { build, preview, type PreviewServer } from 'vite'
+import { preview, type PreviewServer } from 'vite'
 import {
   citationGraphPath,
   openCitationGraph,
@@ -70,14 +72,19 @@ const test = base.extend<{ graphApp: ElectronApplication }>({
 test.beforeAll(async () => {
   // Fixture bundling shares the browser suite's startup budget; interactions keep their own timeout.
   test.setTimeout(300_000)
-  await build({
+  await promisify(execFile)(process.execPath, [
+    '--max-old-space-size=4096',
+    resolve('node_modules/vite/bin/vite.js'),
+    'build',
+    '--config',
     configFile,
-    logLevel: 'warn',
-    build: {
-      outDir,
-      rollupOptions: { input: [resolve('e2e/browser/fixture/literature-recovery.html')] }
-    }
-  })
+    '--mode',
+    'citation-graph',
+    '--outDir',
+    outDir,
+    '--logLevel',
+    'warn'
+  ])
   server = await preview({
     configFile,
     build: { outDir },

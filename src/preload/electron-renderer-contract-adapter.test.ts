@@ -214,6 +214,34 @@ describe('electron renderer contract adapter', () => {
     expect(parseLiteratureDeletionError(result)).toEqual(diagnostic)
   })
 
+  it.each(['sessions.loadOne', 'sessions.loadHistoryPage'])(
+    'preserves the read failure across the Electron bridge for %s',
+    async (name) => {
+      const port = createPort()
+      const error = { code: 'response-too-large', message: 'Response exceeds the limit.' }
+      port.invoke.mockResolvedValue({ ok: false, error })
+      await expect(
+        createElectronRendererContractAdapter(port).invoke(name, { projectId: 'p', sessionId: 's' })
+      ).rejects.toEqual(error)
+    }
+  )
+
+  it('preserves package import contention across the Electron context bridge', async () => {
+    const error = toApplicationCommandErrorEnvelope(
+      new ApplicationCommandError(
+        'session-package-busy',
+        'A Session package operation is already in progress.'
+      )
+    )
+    const port = createPort()
+    port.invoke.mockResolvedValue({ ok: false, error })
+    const adapter = createElectronRendererContractAdapter(port)
+
+    await expect(
+      adapter.invoke('sessions.importPackage', {}, { useCase: 'research' })
+    ).rejects.toEqual(error)
+  })
+
   it('rejects lifecycle-managed contracts from generic send and subscribe paths', () => {
     const port = createPort()
     const adapter = createElectronRendererContractAdapter(port)

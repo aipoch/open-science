@@ -135,7 +135,11 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
           case 'sessions:load-all':
             return sessions.loadAll()
           case 'sessions:save-session':
-            return coordinator.saveSession(args[0] as Parameters<typeof coordinator.saveSession>[0])
+            return coordinator.saveSession(
+              args[0] as Parameters<typeof coordinator.saveSession>[0],
+              {},
+              { taskRunCommit: invocation.callerContext.surface === 'task' }
+            )
           case 'sessions:stage-task-completion':
             return coordinator.stageTaskCompletion(
               args[0] as Parameters<typeof coordinator.stageTaskCompletion>[0]

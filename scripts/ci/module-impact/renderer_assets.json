@@ -19,6 +19,7 @@
     "src/renderer/src/assets/provider-icons/codebuddy.svg",
     "src/renderer/src/assets/provider-icons/deepseek.svg",
     "src/renderer/src/assets/provider-icons/grok.svg",
+    "src/renderer/src/assets/provider-icons/kilo.svg",
     "src/renderer/src/assets/provider-icons/kimi.svg",
     "src/renderer/src/assets/provider-icons/minimax.svg",
     "src/renderer/src/assets/provider-icons/openai.svg",
@@ -117,5 +118,5 @@
   },
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "The onboarding flow adds reviewed renderer assets, including an SVG logo and binary/JSON animation resources, that intentionally extend the package asset boundary without changing its existing packaging contract."
+  "fullTestReason": "The onboarding flow adds reviewed SVG, binary, JSON, and Kilo provider icon assets beyond the existing renderer asset boundary. Retain full validation for asset resolution and packaging."
 }

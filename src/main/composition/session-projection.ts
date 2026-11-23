@@ -311,7 +311,7 @@ export function composeSessionProjection({
       await settingsService.classification.flushUsage()
       return sessionRepository.loadSessionUsageProjection()
     },
-    loadOne: async ({ projectId, sessionId }) => {
+    loadOne: async ({ projectId, sessionId, reportReadFailure }) => {
       const recovery = await recoverProjectDeletionsForSessionRead(
         projectDeletionCoordinator,
         sessionPersistenceCoordinator
@@ -322,7 +322,7 @@ export function composeSessionProjection({
         )
         return session && sessionPersistenceCoordinator.projectRuntimeSession(session)
       }
-      const session = await sessionRepository.loadSession(projectId, sessionId)
+      const session = await sessionRepository.loadSession(projectId, sessionId, reportReadFailure)
       const reconciled =
         session && sessionEnabledComputeHostsOwnerRef.current
           ? await sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
@@ -340,7 +340,7 @@ export function composeSessionProjection({
         sessionPersistenceCoordinator
       )
       if (!recovery.isComplete) return undefined
-      return sessionRepository.loadSessionHistoryPage(request)
+      return sessionRepository.loadSessionHistoryPage(request, true)
     },
     saveSession: async (session, options, authority) => {
       const created =

@@ -101,6 +101,9 @@
         "scripts/windows-signing-policy.mjs",
         "scripts/windows-signing-policy.test.ts",
         "scripts/stage-backend.mjs",
+        "scripts/desktop-film-compiler.mjs",
+        "scripts/desktop-package-modules.mjs",
+        "scripts/pack-web-assets.mjs",
         "scripts/stage-npm-release.mjs",
         "scripts/stage-npm-release.test.ts",
         "scripts/pack-npm-release.mjs",
@@ -126,7 +129,10 @@
         "scripts/test-backend-installed.mjs",
         "scripts/stage-node-runtime.mjs",
         "build/node-runtime.json",
-        "build/macos-service-launcher.c"
+        "build/macos-service-launcher.c",
+        "build/mac-open-after-update.m",
+        "build/mac-quit-handoff.cjs",
+        "build/mac-update-network.c"
       ],
       "mode": "full",
       "capabilities": []
@@ -221,6 +227,7 @@
         "src/main/agent-framework/codex.ts",
         "src/main/agent-framework/opencode.ts",
         "src/main/agent-framework/pi-runtime.ts",
+        "src/main/agent-framework/reviewer-mcp-transport.ts",
         "src/main/agent-framework/types.ts",
         "src/main/app-lifecycle.ts",
         "packages/reproducibility/**",
@@ -581,6 +588,7 @@
         "e2e/notebook-network-modes.spec.ts",
         "e2e/pi-harness.spec.ts",
         "e2e/builtin-harness.spec.ts",
+        "e2e/default-agent-conversation.spec.ts",
         "e2e/harness-provider-errors.spec.ts",
         "e2e/harness-provider-error-matrix.spec.ts",
         "e2e/fixtures/provider-error-cases.ts",

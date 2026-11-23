@@ -150,6 +150,7 @@ type AcpPromptTurnEnvironment = Readonly<{
     signal?: AbortSignal
     assertCurrent?: () => void
   }) => Promise<void>
+  commitNotebookDispatch?: (appSessionId: string) => void
   prepareNotebookIntent?: (request: AcpPromptRequest, mode: AcpPromptTurnMode) => void
   observeNotebookExecutionLoop?: (input: {
     appSessionId: string
@@ -227,6 +228,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     AcpSessionInteractionOwner,
     | 'activatePrompt'
     | 'cancellationCheckpoint'
+    | 'isCancellationAccepted'
     | 'captureTerminal'
     | 'current'
     | 'release'
@@ -248,6 +250,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   finalization: AcpPromptTurnFinalization
   currentCwd: () => string
   resolveProjectId: (sessionId: string) => string
+  resolveProjectTracing?: (projectId: string) => Promise<boolean>
   prepareContinuationReplay: (
     request: AcpPromptRequest
   ) => Promise<AcpPromptRequest['resumeFallback']>
@@ -635,6 +638,11 @@ class AcpPromptTurnWorkflow {
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
       const backend = env.backend()
       promptBackend = backend
+      const visibleUserPrompt =
+        turn.mode.kind === 'user' &&
+        turn.mode.runtimeReviewOwner !== 'task' &&
+        !request.continuation &&
+        !request.suppressUserMessage
       const planContext =
         turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       // Only an explicit user send carries the notice; continuations never consume it.
@@ -644,11 +652,8 @@ class AcpPromptTurnWorkflow {
           : undefined
       prepared = await preparation.prepare({
         request: preparationRequest,
-        classificationEnabled:
-          turn.mode.kind === 'user' &&
-          turn.mode.runtimeReviewOwner !== 'task' &&
-          !request.continuation &&
-          !request.suppressUserMessage,
+        classificationEnabled: visibleUserPrompt,
+        markUserPromptText: visibleUserPrompt,
         connectionGeneration: turn.connectionGeneration,
         backend,
         tooling: env.tooling(),
@@ -741,6 +746,8 @@ class AcpPromptTurnWorkflow {
       let providerDispatched = false
       let accumulatedFacts: AcpProviderTurnResult | undefined
       let releaseNotebookBranch: (() => void) | undefined
+      const frameworkId = promptSnapshot?.frameworkId ?? framework.id
+      const resolveProjectTracing = this.options.resolveProjectTracing
       const executeProviderTurn = (): Promise<ProviderPromptOutcome> =>
         executor.execute({
           session,
@@ -759,11 +766,22 @@ class AcpPromptTurnWorkflow {
               ]
             : providerContent,
           cwd,
-          frameworkId: promptSnapshot?.frameworkId ?? framework.id,
+          frameworkId,
+          signal: interaction.signal,
+          cancellationCheckpoint: () => this.checkpoint(interaction),
+          ...(frameworkId === 'open-science-agent' && resolveProjectTracing
+            ? {
+                authorizeHarnessTracing: async (): Promise<boolean> => {
+                  const projectId = registry.lookup(sessionId)?.aggregate.snapshot().projectId
+                  return projectId ? resolveProjectTracing(projectId) : false
+                }
+              }
+            : {}),
           ...(!accumulatedFacts && readyPrepared.preDispatchModelCalls
             ? { preDispatchModelCalls: readyPrepared.preDispatchModelCalls }
             : {}),
           isCurrent: () => this.isCurrent(turn),
+          isUserStopped: () => interactions.isCancellationAccepted(interaction, 'user'),
           beforeDispatch: async () => {
             if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
             if (publicationPrompt && artifact) {
@@ -817,29 +835,28 @@ class AcpPromptTurnWorkflow {
               await resumeDispatch()
               deliveryClaimed = true
             }
-            const dispatch = await this.checkpoint(interaction)
-            if (dispatch !== 'cancelled') {
-              releaseNotebookBranch = env.observeNotebookExecutionLoop?.({
-                appSessionId: sessionId,
-                providerSessionId: session.sessionId,
-                request,
-                signal: interaction.signal,
-                assertCurrent: () => {
-                  interaction.signal.throwIfAborted()
-                  if (!this.isCurrent(turn)) throw new Error('Notebook Provider dispatch ended.')
-                }
-              })
-            }
-            // Mark the boundary before calling the adapter: a synchronous throw from
-            // session.prompt cannot prove that no request left the process.
-            if (dispatch !== 'cancelled' && turn.mode.kind === 'app-continuation') {
+            return this.checkpoint(interaction)
+          },
+          onDispatchAttempt: () => {
+            releaseNotebookBranch = env.observeNotebookExecutionLoop?.({
+              appSessionId: sessionId,
+              providerSessionId: session.sessionId,
+              request,
+              signal: interaction.signal,
+              assertCurrent: () => {
+                interaction.signal.throwIfAborted()
+                if (!this.isCurrent(turn)) throw new Error('Notebook Provider dispatch ended.')
+              }
+            })
+            // A synchronous throw from session.prompt cannot prove that no request left.
+            if (turn.mode.kind === 'app-continuation') {
               turn.mode.onProviderDispatched?.()
             }
-            return dispatch
           },
           onDispatched: () => {
             providerDispatched = true
             notebookProviderDispatched = true
+            env.commitNotebookDispatch?.(sessionId)
             notebookExecutionIntent(request)?.commitUserExecution()
           },
           captureStop: (response) => {

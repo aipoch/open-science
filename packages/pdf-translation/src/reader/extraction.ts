@@ -85,6 +85,257 @@ export type PdfTranslationExtraction = Readonly<{
   }>
 }>
 
+// The first-page email can otherwise force its linked abstract to stay untranslated.
+function splitCorrespondenceFromAbstract(
+  unit: PdfTranslationSource['units'][number],
+  page: PdfLayoutPage
+): readonly PdfTranslationSource['units'][number][] | undefined {
+  if (
+    page?.rotation !== 0 ||
+    unit.sourceOnly ||
+    unit.preserve ||
+    unit.figure ||
+    unit.referenceBoundary ||
+    unit.fragments.length < 5 ||
+    unit.fragments.some((part) => part.pageNumber !== 1)
+  )
+    return
+  const [affiliation, contact, ...body] = unit.fragments,
+    [number, ...address] = affiliation.items.map(({ index }) => page.items[index]),
+    [label, email] = contact.items.map(({ index }) => page.items[index]),
+    first = page.items[body[0].items[0]?.index],
+    em = label?.height
+  if (
+    !number ||
+    !label ||
+    !email ||
+    !first ||
+    !em ||
+    !address.length ||
+    !/^\d+$/u.test(number.str) ||
+    !/^(?:School|Department|Institute|University|Faculty|Laboratory|Centre|Center)\b/u.test(
+      address[0].str
+    ) ||
+    !/\.$/u.test(address.at(-1)!.str.trim()) ||
+    contact.items.length !== 2 ||
+    !/^\*Corresponding authors?:$/iu.test(label.str.trim()) ||
+    !/^[^\s@]+@[^\s@][^\s@.]*\.[^\s@]+$/u.test(email.str.trim()) ||
+    ![number, ...address, email, label, first].every(
+      (item) =>
+        item.dir === 'ltr' &&
+        item.transform[0] > 0 &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0 &&
+        item.transform[3] > 0
+    ) ||
+    !label.fontName ||
+    [number, ...address, email].some((item) => item.fontName !== label.fontName) ||
+    first.fontName === label.fontName ||
+    number.height >= em * 0.8 ||
+    number.transform[5] - label.transform[5] <= em * 2 ||
+    number.transform[5] - label.transform[5] >= em * 3 ||
+    label.transform[5] - first.transform[5] <= em * 1.5 ||
+    label.transform[5] - first.transform[5] >= em * 2 ||
+    affiliation.rect.y >= 0.31 ||
+    affiliation.rect.x + affiliation.rect.width <= 0.5 ||
+    Math.abs(contact.rect.x - affiliation.rect.x) > (em * 0.1) / page.width ||
+    body.some(
+      ({ rect }) =>
+        rect.x + rect.width >= 0.5 ||
+        Math.abs(rect.x - affiliation.rect.x) > (em * 0.1) / page.width
+    )
+  )
+    return
+  const affiliationText = affiliation.items.map(({ text }) => text).join(' '),
+    contactText = `${label.str.trim()} ${email.str.trim()}`,
+    prefix = `${affiliationText} ${contactText} `
+  if (
+    !unit.source.startsWith(prefix) ||
+    !/^\p{Lu}[a-z]{2,} /u.test(unit.source.slice(prefix.length))
+  )
+    return
+  return [
+    { ...unit, id: `${unit.id}-affiliation`, source: affiliationText, fragments: [affiliation] },
+    { ...unit, id: `${unit.id}-contact`, source: contactText, fragments: [contact] },
+    { ...unit, source: unit.source.slice(prefix.length), fragments: body }
+  ]
+}
+
+// Keep a closing relation on the native row of its protected opening.
+function splitAcrossProtectedRelation(
+  unit: PdfTranslationSource['units'][number] | undefined,
+  prefix: PdfTranslationSource['units'][number],
+  pages: readonly PdfLayoutPage[]
+): readonly PdfTranslationSource['units'][number][] | undefined {
+  if (
+    !unit ||
+    unit.sourceOnly ||
+    unit.preserve ||
+    unit.figure ||
+    unit.referenceBoundary ||
+    unit.fragments.length !== 2 ||
+    !unit.source.startsWith(') ') ||
+    !prefix.sourceOnly ||
+    prefix.preserve !== 'formula' ||
+    prefix.fragments.length !== 1 ||
+    !/^\(for [a-z]$/u.test(prefix.source)
+  )
+    return
+  const [head, tail] = unit.fragments,
+    [protectedRow] = prefix.fragments,
+    page = pages[head.pageNumber - 1]
+  if (
+    page?.rotation !== 0 ||
+    head.pageNumber !== tail.pageNumber ||
+    tail.pageNumber !== protectedRow.pageNumber ||
+    tail.items.length !== 1 ||
+    protectedRow.items.length !== 2
+  )
+    return
+  const [close] = tail.items,
+    [lead, variable] = protectedRow.items,
+    preceding = head.items.at(-1),
+    [before, opening, symbol, after] = [
+      preceding?.index ?? -1,
+      lead.index,
+      variable.index,
+      close.index
+    ].map((index) => page.items[index])
+  if (
+    !before ||
+    !opening ||
+    !symbol ||
+    !after ||
+    !/^=\s*[1-9]\d?\) and [A-Za-z]/u.test(close.text) ||
+    !unit.source.endsWith(' ' + close.text.trim()) ||
+    opening.str !== '(for' ||
+    symbol.str !== prefix.source.at(-1) ||
+    !opening.fontName ||
+    [before, after].some((item) => item.fontName !== opening.fontName) ||
+    symbol.fontName === opening.fontName ||
+    !symbol.fontName ||
+    ![before, opening, symbol, after].every(
+      (item) =>
+        item.dir === 'ltr' &&
+        item.transform[0] > 0 &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0 &&
+        item.transform[3] > 0 &&
+        Math.abs(item.height - opening.height) < opening.height * 0.05
+    ) ||
+    !before.hasEOL ||
+    opening.hasEOL ||
+    symbol.hasEOL ||
+    (!after.hasEOL &&
+      !(!page.items[close.index + 1]?.str.trim() && page.items[close.index + 1]?.hasEOL)) ||
+    Math.abs(symbol.transform[5] - opening.transform[5]) >= opening.height * 0.05 ||
+    Math.abs(after.transform[5] - opening.transform[5]) >= opening.height * 0.05 ||
+    before.transform[5] - opening.transform[5] <= opening.height ||
+    before.transform[5] - opening.transform[5] >= opening.height * 1.5 ||
+    after.transform[4] - symbol.transform[4] - symbol.width < 0 ||
+    after.transform[4] - symbol.transform[4] - symbol.width >= opening.height * 0.5 ||
+    ![preceding!.index, lead.index, variable.index, close.index].every(
+      (index, position, all) =>
+        !position ||
+        (index > all[position - 1] &&
+          page.items.slice(all[position - 1] + 1, index).every((item) => !item.str.trim()))
+    )
+  )
+    return
+  const source = close.text.trim()
+  return [
+    { ...unit, source: unit.source.slice(0, -(source.length + 1)), fragments: [head] },
+    prefix,
+    { ...unit, id: unit.id + '-relation-tail', source, fragments: [tail] }
+  ]
+}
+
+// A split conditional after a protected formula can lose its governing negation.
+function retainFragmentedMathCondition(
+  units: readonly PdfTranslationSource['units'][number][],
+  page: PdfLayoutPage
+): readonly PdfTranslationSource['units'][number][] {
+  if (page.rotation !== 0) return units
+  const retained = new Set<string>()
+  for (let i = 0; i + 4 < units.length; i++) {
+    const [before, start, condition, constant, end] = units.slice(i, i + 5)
+    if (
+      !before.sourceOnly ||
+      before.preserve !== 'formula' ||
+      !constant.sourceOnly ||
+      constant.preserve !== 'formula' ||
+      !/\p{L}\(\p{L}$/u.test(before.source) ||
+      !/^\)\. This$/u.test(start.source) ||
+      !/^\p{Ll}{2,16} does not (?:\p{Ll}+ ){2,6}if (?:\p{Ll}+ ){1,5}constant$/u.test(
+        condition.source
+      ) ||
+      !/^by any number (?:smaller|larger) than .+\.$/u.test(end.source) ||
+      [start, condition, end].some((unit) => unit.sourceOnly || unit.preserve || unit.figure) ||
+      [before, start, condition, constant, end].some(
+        (unit) => unit.fragments.length !== 1 || unit.fragments[0].pageNumber !== 1
+      )
+    )
+      continue
+    const fragments = [before, start, condition, constant, end].map((unit) => unit.fragments[0])
+    const native = fragments.map((fragment) => fragment.items.map(({ index }) => page.items[index]))
+    const [tail, [head], [body], fraction, [close]] = native
+    const preceding = tail.at(-1)
+    if (
+      !preceding ||
+      !head ||
+      !body ||
+      !close ||
+      native[1].length !== 1 ||
+      native[2].length !== 1 ||
+      fraction.length < 5 ||
+      !head.hasEOL ||
+      !head.fontName ||
+      [head, body, close].some(
+        (item) =>
+          item.dir !== 'ltr' ||
+          item.fontName !== head.fontName ||
+          item.height !== head.height ||
+          item.transform[0] <= 0 ||
+          item.transform[1] !== 0 ||
+          item.transform[2] !== 0 ||
+          item.transform[3] <= 0
+      )
+    )
+      continue
+    const em = head.height
+    const [hx, hy] = head.transform.slice(4)
+    const [bx, by] = body.transform.slice(4)
+    const [cx, cy] = close.transform.slice(4)
+    if (
+      Math.abs(preceding.transform[5] - hy) > em * 0.05 ||
+      Math.abs(preceding.transform[4] + preceding.width - hx) > em * 0.15 ||
+      hy - by <= em ||
+      hy - by >= em * 1.5 ||
+      hx - bx < em * 15 ||
+      Math.abs(cy - by) > em * 0.05 ||
+      cx <= bx + body.width ||
+      !fraction.some((item) => item.transform[5] > by + em * 0.2) ||
+      !fraction.some((item) => item.transform[5] < by - em * 0.2) ||
+      fraction.some(
+        (item) => item.transform[4] < bx + body.width || item.transform[4] + item.width > cx
+      ) ||
+      fragments.some((fragment, n) => {
+        if (n === 0) return false
+        const last = fragments[n - 1].items.at(-1)!.index
+        const first = fragment.items[0].index
+        return first <= last || page.items.slice(last + 1, first).some((item) => item.str.trim())
+      })
+    )
+      continue
+    for (const unit of [start, condition, end]) retained.add(unit.id)
+  }
+  return retained.size
+    ? units.map((unit) =>
+        retained.has(unit.id) ? { ...unit, sourceOnly: true, preserve: 'literal' } : unit
+      )
+    : units
+}
+
 type TextStyle = { vertical?: boolean; ascent?: number; descent?: number }
 
 // Text-run navigation bounds, not glyph outlines or regions safe to paint over.
@@ -240,6 +491,7 @@ async function readPdfTranslationSource({
   const pagesWithoutText: number[] = []
   const exclusions: PdfTranslationExtraction['coverage']['exclusions'][number][] = []
   const unreliableItems = new Set<string>()
+  const unreliableMathItems = new Set<string>()
   const outlierNavigation = new Map<string, NonNullable<ReturnType<typeof independentRect>>>()
   const navigationPageCount = document.numPages
   const type3Navigation: NonNullable<Awaited<ReturnType<typeof readNativeType3Navigation>>>[] = []
@@ -270,8 +522,9 @@ async function readPdfTranslationSource({
       throw new Error('Invalid PDF page geometry')
     const content = await getPdfTranslationTextContent(
       page,
-      (indexes) => {
+      (indexes, mathIndexes) => {
         for (const index of indexes) unreliableItems.add(`${pageNumber}:${index}`)
+        for (const index of mathIndexes) unreliableMathItems.add(`${pageNumber}:${index}`)
       },
       (proved) => {
         if (proved)
@@ -670,8 +923,58 @@ async function readPdfTranslationSource({
         unit.originalStrings.every((text) => /^[\p{Cc}\s]*$/u.test(text))
       // Keep a proved missing-Unicode symbol on its existing original navigation.
       // Ordinary words and mixed prose retain their established admission.
+      const opaqueMathRun =
+        unreliable &&
+        !unit.figure &&
+        !unit.referenceBoundary &&
+        fragments.length > 0 &&
+        fragments.every(
+          (fragment) =>
+            fragment.pageNumber === fragments[0].pageNumber &&
+            fragment.items.length > 0 &&
+            fragment.items.every(
+              ({ index, text }) =>
+                unreliableMathItems.has(`${fragment.pageNumber}:${index}`) &&
+                pages[fragment.pageNumber - 1].items[index].str === text
+            )
+        )
+      // A damaged formula can leave the same unfinished clause at the end
+      // of adjacent rows. That repeated tail has no independent translation.
+      const [head, tail] = fragments
+      const repeatedMathTail =
+        unreliable &&
+        !unit.figure &&
+        !unit.referenceBoundary &&
+        fragments.length === 2 &&
+        head.pageNumber === tail.pageNumber &&
+        head.rect.width < 0.14 &&
+        tail.rect.width < 0.14 &&
+        Math.abs(head.rect.x + head.rect.width - tail.rect.x - tail.rect.width) <
+          head.rect.height * 0.3 &&
+        tail.rect.y - head.rect.y > head.rect.height * 0.7 &&
+        tail.rect.y - head.rect.y < head.rect.height * 1.45 &&
+        (() => {
+          const suffixes = [head, tail].map(({ pageNumber, items }) => {
+            const [first, ...words] = items
+            if (
+              !first ||
+              !unreliableMathItems.has(`${pageNumber}:${first.index}`) ||
+              pages[pageNumber - 1].items[first.index].str !== first.text
+            )
+              return ''
+            return words
+              .map(({ text }) => text)
+              .join(' ')
+              .replace(/^[)\] ]+/u, '')
+              .trim()
+          })
+          return suffixes[0] === suffixes[1] && /^\p{Ll}{2,12} (?:no|the|a|an)$/u.test(suffixes[0])
+        })()
+      const preserve = unit.preserve ?? (opaqueMathRun ? 'formula' : undefined)
       const sourceOnly =
         unit.sourceOnly ||
+        opaqueMathRun ||
+        repeatedMathTail ||
         opaqueControlRun ||
         (unreliable &&
           [...unit.source].length <= 32 &&
@@ -697,16 +1000,23 @@ async function readPdfTranslationSource({
                 )
               })
           ))
-      units.push({
+      const extracted = {
         id: unit.id,
         source: unit.source,
         ...(sourceOnly ? { sourceOnly: true as const } : {}),
-        ...(unit.preserve ? { preserve: unit.preserve } : {}),
+        ...(preserve ? { preserve } : {}),
         ...(unit.figure ? { figure: true as const } : {}),
         ...(unit.referenceBoundary ? { referenceBoundary: true as const } : {}),
         fragments
-      })
-      terminalSource?.observe(unit, units.at(-1)!)
+      }
+      terminalSource?.observe(unit, extracted)
+      const split =
+        !unreliable &&
+        unit.risks.length === 0 &&
+        splitCorrespondenceFromAbstract(extracted, pages[0])
+      const relation = !unreliable && splitAcrossProtectedRelation(units.at(-1), extracted, pages)
+      if (relation) units.splice(-1, 1, ...relation)
+      else units.push(...(split || [extracted]))
       const reasons = [...unit.risks]
       if (unreliable || opaqueControlRun) reasons.push('unreliable-font-unicode')
       if (reasons.length)
@@ -722,11 +1032,9 @@ async function readPdfTranslationSource({
   )
   warnings.push(...independentWarnings)
   const excludedItemCount = exclusions.reduce((count, entry) => count + entry.items.length, 0)
-  let finalUnits = terminalContactSources(
-    [...units, ...independent],
-    layout,
-    pages,
-    document.numPages
+  let finalUnits = retainFragmentedMathCondition(
+    terminalContactSources([...units, ...independent], layout, pages, document.numPages),
+    pages[0]
   )
   for (const context of shortMathPages) {
     signal.throwIfAborted()

@@ -1,12 +1,15 @@
 import { resolve } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { harnessFramework } from './harness'
+import * as runtimeMetadata from '../runtime-metadata'
 import { harnessConfigSchema, HARNESS_ACP_ARG } from '../harness-acp/config'
 import { isRuntimeHelper } from '../runtime-helper'
 import { isProviderUsableByFramework } from '../../shared/settings-runtime'
 import type { AgentSpawnInput } from './types'
 
 describe('built-in Agent host boundary', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
   it('keeps credentials in ACP authentication and uses the runtime helper', () => {
     const config = harnessFramework.prepareModelConfig(
       {
@@ -36,17 +39,86 @@ describe('built-in Agent host boundary', () => {
     const spawnProcess = vi.fn(() => ({})) as unknown as NonNullable<
       AgentSpawnInput['spawnProcess']
     >
-    harnessFramework.spawn({
-      executablePath: resolve('out/backend/index.cjs'),
-      args: config.args!,
-      env: { API_KEY: 'do-not-inherit' },
-      spawnProcess
-    })
-    expect(JSON.stringify(vi.mocked(spawnProcess).mock.calls)).not.toMatch(
-      /do-not-inherit|upstream-secret|revocable-local-token/
-    )
-    expect(vi.mocked(spawnProcess).mock.calls[0][1]).toContain(HARNESS_ACP_ARG)
+    const previousOwner = process.env.OPEN_SCIENCE_INSTALLATION_OWNER
+    process.env.OPEN_SCIENCE_INSTALLATION_OWNER = 'installation-owner'
+    try {
+      harnessFramework.spawn({
+        executablePath: resolve('out/backend/index.cjs'),
+        args: config.args!,
+        env: { API_KEY: 'do-not-inherit' },
+        spawnProcess
+      })
+      expect(JSON.stringify(vi.mocked(spawnProcess).mock.calls)).not.toMatch(
+        /do-not-inherit|upstream-secret|revocable-local-token/
+      )
+      expect(vi.mocked(spawnProcess).mock.calls[0][1]).toContain(HARNESS_ACP_ARG)
+      expect(vi.mocked(spawnProcess).mock.calls[0][2].env).toMatchObject({
+        OPEN_SCIENCE_INSTALLATION_OWNER: 'installation-owner'
+      })
+    } finally {
+      if (previousOwner === undefined) delete process.env.OPEN_SCIENCE_INSTALLATION_OWNER
+      else process.env.OPEN_SCIENCE_INSTALLATION_OWNER = previousOwner
+    }
   })
+
+  it.each([undefined, 'http://127.0.0.1:4318/v1/traces'])(
+    'uses only host trace configuration (%s)',
+    (endpoint) => {
+      const headersFile = endpoint ? resolve('private', 'otel-headers.json') : undefined
+      vi.stubEnv('OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT', endpoint)
+      vi.stubEnv('OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE', headersFile)
+      vi.stubEnv('OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT', '0')
+      vi.stubEnv('OTEL_EXPORTER_OTLP_HEADERS', 'authorization=private')
+      const spawnProcess = vi.fn<NonNullable<AgentSpawnInput['spawnProcess']>>()
+      harnessFramework.spawn({
+        executablePath: resolve('out/backend/index.cjs'),
+        args: [HARNESS_ACP_ARG, resolve('data', 'sessions')],
+        env: {
+          OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT: 'https://untrusted.example/v1/traces',
+          OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE: resolve('untrusted', 'headers.json'),
+          OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT: '1'
+        },
+        spawnProcess
+      })
+      const childEnv = spawnProcess.mock.calls[0][2]?.env
+      expect(childEnv).toBeDefined()
+      expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT).toBe(endpoint)
+      expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_TRACES_HEADERS_FILE).toBe(headersFile)
+      expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT).toBe('0')
+      expect(childEnv?.OPEN_SCIENCE_AGENT_OTLP_ENV_FILE).toBe(resolve('.env'))
+      expect(childEnv).not.toHaveProperty('OTEL_EXPORTER_OTLP_HEADERS')
+    }
+  )
+
+  it('locates installed trace configuration under the active config root', () => {
+    const configRoot = resolve('profile')
+    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', undefined)
+    vi.stubEnv('OPEN_SCIENCE_CONFIG_ROOT', configRoot)
+    const metadata = vi.spyOn(runtimeMetadata, 'runtimeMetadataIfConfigured').mockReturnValue({
+      version: '1.0.0',
+      locale: 'en',
+      packaged: true,
+      applicationPath: resolve('installed'),
+      homePath: resolve('home'),
+      downloadsPath: resolve('home', 'Downloads'),
+      resourcesPath: resolve('installed', 'resources')
+    })
+    try {
+      const spawnProcess = vi.fn<NonNullable<AgentSpawnInput['spawnProcess']>>()
+      harnessFramework.spawn({
+        executablePath: resolve('installed/backend/out/backend/index.cjs'),
+        args: [HARNESS_ACP_ARG, resolve('data', 'sessions')],
+        env: {},
+        spawnProcess
+      })
+      expect(spawnProcess.mock.calls[0][2]?.env?.OPEN_SCIENCE_AGENT_OTLP_ENV_FILE).toBe(
+        resolve(configRoot, '.env')
+      )
+    } finally {
+      metadata.mockRestore()
+    }
+  })
+
   it('rejects remote model credentials and unsupported subscription routes', () => {
     expect(
       harnessConfigSchema.safeParse({

@@ -1330,6 +1330,8 @@ const createAcpRuntime = ({
             }
           : undefined,
         resolveProjectAgentContext: createProjectAgentContextResolver(projectRepository),
+        resolveProjectTracing: async (projectId) =>
+          (await projectRepository.get(projectId))?.sessionDefaults?.agentTracingEnabled === true,
         ...(resolveComputeExecutionTargetIds ? { resolveComputeExecutionTargetIds } : {})
       }
       const baseOwners = composeAcpRuntimeBaseOwners(runtimeOptions)

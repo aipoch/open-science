@@ -1506,8 +1506,12 @@ test('stops only the active branch and exposes a retryable partial failure', asy
   await expectDurableChildStatus(page, BRANCH_B_CHILD, 'cancelled')
   await expectDurableChildStatus(page, BRANCH_B_CHILD_TWO, 'running')
   await expect(
-    page.getByRole('alert', { name: /One or more Subagent Attempts could not be stopped/ })
-  ).toContainText('One or more Subagent Attempts could not be stopped.')
+    page.getByRole('status').filter({
+      has: page.getByRole('heading', {
+        name: 'Could not confirm that all subagents stopped.'
+      })
+    })
+  ).toContainText('Could not confirm that all subagents stopped.')
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Send gate restored after Stop.')
   await expect(page.getByRole('button', { name: 'Send message' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Stop subagents' })).toBeEnabled()

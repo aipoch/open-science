@@ -53,18 +53,18 @@
 
 > Ce document est une traduction de `README.md` en anglais. En cas de divergence, la [version anglaise](../../README.md) fait foi.
 
-### 💡 AIPOCH Open-Science v1.3.0 — Nouveautés
+### 💡 AIPOCH Open-Science v1.3.3 — Nouveautés
 
-_18 novembre 2026_
+_21 novembre 2026_
 
-- **Tâches de recherche planifiées**: Configurez des plannings récurrents ou ponctuels qui lancent des sessions et des tâches Notebook par eux-mêmes — chaque exécution s’ouvre dans l’espace de travail avec sa propre trace.
-- **Génération et édition d’images**: Générez des images avec votre fournisseur configuré et itérez avec des modifications suivantes ; chaque variante est une nouvelle version à comparer, revisiter et réutiliser.
-- **Présentations modifiables**: Les fichiers PowerPoint s’ouvrent pour une édition de texte sur place — polices, tailles, couleurs et alignement — tout en conservant la structure des diapositives.
-- **Films relus**: Rejouez les opérations d’un film sur de nouvelles branches avec des sorties indépendantes, ouvrez les films directement depuis le menu de session et voyez la consommation de jetons avant de générer.
-- **Questions d’agent plus judicieuses**: Quand l’agent demande une entrée, les options exposent désormais leurs compromis pour décider en connaissance de cause.
-- **Fiabilité et rapidité**: Les longs historiques de session persistent de façon incrémentale, les films et transferts de paquets bloqués se récupèrent seuls, les installations et mises à jour Windows sont allégées, et l’application atteint votre projet plus tôt au démarrage.
+- **Mises à jour automatiques**: Sur macOS, une mise à jour éligible peut s’installer quand vous quittez l’application ; sur Windows et Linux, une mise à jour peut être préparée pour le prochain lancement pendant que vous travaillez — les téléchargements en arrière-plan exigent un réseau sans restriction et de l’espace de stockage, et le chemin manuel reste disponible.
+- **Agent intégré par défaut**: Les nouveaux projets et les nouvelles sessions démarrent partout avec l’Agent Open-Science intégré, y compris sur des installations propres de la CLI et du SDK ; les environnements d’exécution d’agent externes ne s’installent à la demande que lorsque vous les choisissez.
+- **Une application plus légère**: L’application installée est plus légère sur macOS et Windows, et l’environnement npm hors ligne fourni est compilé pour Node 22 au lieu d’embarquer plus d’un millier de fichiers de paquets individuels.
+- **Édition d’image unifiée**: Les instructions d’édition se trouvent dans le compositeur de conversation, et les actions au survol ou au clavier lancent l’édition depuis n’importe quelle prévisualisation, avec navigation entre les versions à tout moment.
+- **Des échecs qui s’expliquent**: Les échecs de requête, de chargement, d’importation et de notebook indiquent désormais ce qui s’est réellement passé, et les exécutions interrompues sont distinguées des travaux qui n’ont jamais répondu.
+- **Raccourcis des paramètres restaurés**: Skills, Specialists et Connectors sont de retour dans les paramètres, chacun ouvrant sa catégorie et vous ramenant à l’endroit où vous étiez.
 
-[Notes complètes v1.3.0](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
+[Notes complètes v1.3.3](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +89,14 @@ Ouvrez la [page officielle de téléchargement](https://aipoch.com/open-science/
 | Linux ARM64                                   | AppImage ou paquet Debian Linux ARM64    |
 
 Consultez la [vérification du téléchargement](../../SECURITY.md#verifying-your-download) pour les contrôles avant installation.
+
+Sous Windows 10/11 x64, vous pouvez installer l’application de bureau depuis le [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) ou utiliser WinGet dans PowerShell.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+La version disponible peut varier selon le canal de distribution. Consultez le [guide d’installation et de mise à jour](https://aipoch.com/docs/guides/installation/) pour en savoir plus.
 
 Les archives de la CLI autonome pour macOS, Linux et Windows incluent Node.js et s’utilisent sans Homebrew ni npm.
 
@@ -172,6 +180,7 @@ AIPOCH a évalué AIPOCH Open-Science sur des tâches allant de la recherche d�
 | Répondre à partir de la littérature         | LitQA2-FullText        | Lors d’un essai distinct sur LitQA2-FullText, Open-Science a répondu correctement à **70 questions sur 75** (**93.33% d’exactitude**, deepseek-flash avec raisonnement Max).                                |
 | Produire une synthèse avec citations        | ScholarQA-CS2          | Sur 100 questions de validation de ScholarQA-CS2, Open-Science a obtenu un **score composite de qualité de 0.9289/1** avec deepseek-v4-flash. Les références du test officiel utilisent d’autres questions. |
 | Exécuter des workflows de recherche         | ASI-Bench              | Lors d’essais locaux ASI-Bench avec le même modèle, Open-Science a obtenu **59.46** en B4 et Codex **55.45**. Les scores B2 étaient presque identiques (**56.11** et **56.09**).                            |
+| Reproduire des expériences ML/NLP           | AstaBench SUPER-Expert | **46.30%** sur output_match/mean lors d’un essai local de 45 tâches avec DeepSeek Flash/Max.                                                                                                                |
 | Exécuter des tâches scientifiques           | TB-Science 0.1         | Sur 70 tâches, **145/210** essais locaux réussis (**69.05%**) avec GPT-6 Astra/max. Ni rang officiel ni relevés individuels publics.                                                                        |
 | Analyser des données biomédicales           | BiomniBench-DA         | Sur BiomniBench-DA Public 50, deux modèles juges ont attribué **81.04** et **77.06** aux résultats. Leur moyenne à poids égaux était de **79.05**.                                                          |
 | Reproduire des résultats publiés            | CORE-Bench-Hard        | CORE-Bench-Hard — 36 tâches de test sur 37 réussies en local (97,30 %), nouveaux essais compris.                                                                                                            |
@@ -182,7 +191,7 @@ AIPOCH a évalué AIPOCH Open-Science sur des tâches allant de la recherche d�
 
 **Périmètre de l’évaluation :** ces rapports couvrent des essais locaux ou internes d’août à novembre 2026, avec les modèles et partitions indiqués ; ils n’ont pas été réexécutés pour la version actuelle. Les références sont des instantanés historiques, pas des classements en direct. Les scores de familles de benchmarks différentes ne sont pas directement comparables, et les écarts numériques ne prouvent pas une significativité statistique.
 
-Consultez le [rapport AstaBench et ASI-Bench](https://aipoch.com/benchmark/open-science) et le [rapport BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) pour les détails. Voir aussi le [résultat local TB-Science 0.1](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result).
+Consultez le [rapport AstaBench et ASI-Bench](https://aipoch.com/benchmark/open-science) et le [rapport BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) pour les détails. Voir aussi le [résultat local TB-Science 0.1](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result). Voir aussi le [résultat local SUPER-Expert](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result).
 
 [CORE-Bench-Hard · Rapport de reproductibilité](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

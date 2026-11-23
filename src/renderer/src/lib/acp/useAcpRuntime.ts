@@ -543,8 +543,8 @@ const useAcpRuntime = (): {
 
   // Requests cancellation for one session without assuming the stop has arrived.
   const cancel = useCallback(
-    (sessionId: string) => runSnapshotAction(undefined, () => window.api.acp.cancel({ sessionId })),
-    [runSnapshotAction]
+    (sessionId: string) => runPromptAction(() => window.api.acp.cancel({ sessionId })),
+    [runPromptAction]
   )
 
   const steerFollowUp = useCallback(

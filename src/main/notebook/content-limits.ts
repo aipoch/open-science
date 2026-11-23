@@ -10,6 +10,8 @@ export const NOTEBOOK_FIGURE_LIMIT_BYTES = Math.floor(3.5 * MIB)
 export const NOTEBOOK_FIGURE_COUNT_LIMIT = 12
 export const NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES = 8 * MIB
 export const NOTEBOOK_RENDERER_RUN_LIMIT = 100
+// Leave room for cells and metadata under the 8 MiB inline response threshold.
+export const NOTEBOOK_PREVIEW_HISTORY_BYTES = 7 * MIB
 export const NOTEBOOK_NAMESPACE_VARIABLE_LIMIT = 500
 export const NOTEBOOK_NAMESPACE_PREVIEW_LIMIT_BYTES = 512
 export const NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_BYTES = 256 * 1024
@@ -26,6 +28,18 @@ export const NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_ENV =
   'OPEN_SCIENCE_NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_BYTES'
 
 type LimitedText = { text: string; truncated: boolean }
+
+// Diagnostics often put the failing expression first and the exception or exit reason last.
+export const notebookDiagnosticPreview = (text: string, limit: number): string => {
+  if (text.length <= limit) return text
+  const marker = '\n…\n'
+  const available = limit - marker.length
+  const head = Math.ceil(available / 2)
+  // Drop a split surrogate at either cut rather than returning half a character.
+  const prefix = text.slice(0, head).replace(/[\uD800-\uDBFF]$/u, '')
+  const suffix = text.slice(text.length - (available - head)).replace(/^[\uDC00-\uDFFF]/u, '')
+  return prefix + marker + suffix
+}
 
 // Takes a UTF-8 prefix without leaving an invalid partial code point at the boundary.
 export const limitUtf8 = (value: string, limitBytes: number): LimitedText => {

@@ -71,7 +71,7 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
           found.push(at)
       return found
     },
-    nativeParts = (start, end, count) => {
+    nativeParts = (start, end, count, raisedDigits = false) => {
       const parts = markers
         .filter((part) => part.sourceOffset < end && part.sourceOffset + part.label.length > start)
         .sort((a, b) => a.sourceOffset - b.sourceOffset)
@@ -81,7 +81,18 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
             Number.isInteger(part.sourceOffset) &&
             part.sourceOffset >= start &&
             part.sourceOffset + part.label.length <= end &&
-            source.slice(part.sourceOffset, part.sourceOffset + part.label.length) === part.label &&
+            (() => {
+              const spelling = source.slice(
+                part.sourceOffset,
+                part.sourceOffset + part.label.length
+              )
+              return (
+                spelling === part.label ||
+                (raisedDigits &&
+                  /^[⁰¹²³⁴⁵⁶⁷⁸⁹]+$/u.test(spelling) &&
+                  spelling.normalize('NFKC') === part.label)
+              )
+            })() &&
             Number.isFinite(part.scale) &&
             Number.isFinite(part.rise) &&
             part.sourceIndices.length === 1 &&
@@ -99,24 +110,227 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
     body = (part) => part.scale >= 0.9 && part.scale <= 1.1 && Math.abs(part.rise) < 0.01,
     small = (part) => part.scale >= 0.5 && part.scale < 0.85,
     center = (part) => (part.bounds[1] + part.bounds[3]) / 2,
-    pushNativeGroup = (start, end, parts, baseline, targetOffset) => {
+    pushNativeGroup = (start, end, parts, baseline, targetOffset, needsInlineReflow) => {
       groups.push({
         sourceOffset: start,
         targetOffset,
         label: source.slice(start, end),
         sourceIndices: parts.flatMap((part) => part.sourceIndices),
         baselineIndex: baseline.sourceIndices[0],
-        nativeScriptGroup: true
+        nativeScriptGroup: true,
+        ...(needsInlineReflow ? { needsInlineReflow: true } : {})
       })
     },
-    addNativeGroup = (start, end, parts, baseline) => {
+    addNativeGroup = (start, end, parts, baseline, needsInlineReflow) => {
       const label = source.slice(start, end),
         from = occurrences(source, label),
         to = occurrences(translation, label),
         ordinal = from.indexOf(start)
       if (ordinal < 0 || from.length !== to.length) return
-      pushNativeGroup(start, end, parts, baseline, to[ordinal])
+      pushNativeGroup(start, end, parts, baseline, to[ordinal], needsInlineReflow)
     }
+  // A native mathematical capital can carry a smaller TeX index even when
+  // extracted text spells both as a flat token. Its native run may begin with
+  // a membership symbol, and the capital may overhang the lowered index.
+  for (const match of source.matchAll(
+    /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}_])(?:∈ )?[A-Z][a-z](?![\p{Script=Latin}\p{Script=Greek}\p{N}_])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length
+    const parts = nativeParts(start, end, 2)
+    if (!parts) continue
+    const [base, index] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      gap = index.bounds[0] - base.bounds[2]
+    if (
+      !/^(?:[A-Z]{6}\+)?CMSY10$/u.test(base.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMMI[78]$/u.test(index.fontName) ||
+      !body(base) ||
+      index.scale < 0.7 ||
+      index.scale > 0.77 ||
+      index.rise > -height * 0.13 ||
+      index.rise < -height * 0.35 ||
+      !Number.isFinite(base.baseline) ||
+      !Number.isFinite(index.baseline) ||
+      Math.abs(index.baseline - base.baseline - index.rise) > 0.01 ||
+      index.bounds[0] <= base.bounds[0] ||
+      gap < -height * 0.35 ||
+      gap > height * 0.16 ||
+      center(index) >= center(base)
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+  // A bracketed subscript can carry its own raised letter without appearing
+  // raised above the body line. Keep the complete native index and base.
+  for (const match of source.matchAll(
+    /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}_])\p{Script=Greek}\[\p{Ll}\][a-z](?![\p{Script=Latin}\p{Script=Greek}\p{N}_])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length
+    const parts = nativeParts(start, end, 5)
+    if (!parts) continue
+    const [base, opening, letter, closing, suffix] = parts,
+      height = (opening.bounds[3] - opening.bounds[1]) / opening.scale
+    if (
+      !/^(?:[A-Z]{6}\+)?CMMI10$/u.test(base.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMR7$/u.test(opening.fontName) ||
+      closing.fontName !== opening.fontName ||
+      !/^(?:[A-Z]{6}\+)?CMMI7$/u.test(letter.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMMI5$/u.test(suffix.fontName) ||
+      !body(base) ||
+      opening.scale < 0.68 ||
+      opening.scale > 0.73 ||
+      ![letter, closing].every((part) => sameStyle(part, opening)) ||
+      opening.rise > -height * 0.12 ||
+      opening.rise < -height * 0.25 ||
+      suffix.scale < 0.48 ||
+      suffix.scale > 0.53 ||
+      Math.abs(suffix.rise) > height * 0.06 ||
+      ![base, opening, letter, closing, suffix].every(
+        (part) =>
+          Number.isFinite(part.baseline) &&
+          Math.abs(part.baseline - base.baseline - part.rise) < 0.01
+      ) ||
+      parts.slice(1).some((part, index) => {
+        const gap = part.bounds[0] - parts[index].bounds[2]
+        return gap < -height * 0.06 || gap > height * 0.2
+      })
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+  // A logarithm may share its text object with prose. Move the complete native
+  // base and scripted ratio together while regenerating the prose and “log”.
+  const logarithmicMassRatio = /\blog((\d{1,2})M⋆\/M⊙)[.。]$/gu
+  for (const match of source.matchAll(logarithmicMassRatio)) {
+    const start = match.index + 3,
+      end = start + match[1].length,
+      parts = nativeParts(start, end, 5)
+    if (!parts) continue
+    const [logBase, numerator, star, slashMass, sun] = parts,
+      h = numerator.bounds[3] - numerator.bounds[1],
+      roman = /^(?:[A-Z]{6}\+)?CMR\d{1,2}$/u,
+      italic = /^(?:[A-Z]{6}\+)?CMMI\d{1,2}$/u,
+      symbol = /^(?:[A-Z]{6}\+)?CMSY\d{1,2}$/u,
+      operators = markers.filter(
+        (part) => part.sourceOffset + part.label.length === start && part.label.endsWith('log')
+      ),
+      [preceding] = operators
+    if (
+      operators.length !== 1 ||
+      !body(preceding) ||
+      !roman.test(preceding.fontName) ||
+      ![preceding, ...parts].every(
+        (part) =>
+          Number.isFinite(part.baseline) &&
+          Math.abs(part.baseline - numerator.baseline - part.rise) < 0.01
+      ) ||
+      logBase.sourceIndices[0] !== preceding.sourceIndices[0] + 1 ||
+      logBase.label !== match[2] ||
+      !roman.test(logBase.fontName) ||
+      !italic.test(numerator.fontName) ||
+      !italic.test(star.fontName) ||
+      slashMass.fontName !== numerator.fontName ||
+      !symbol.test(sun.fontName) ||
+      [numerator.label, star.label, slashMass.label, sun.label].join('|') !== 'M|⋆|/M|⊙' ||
+      !body(numerator) ||
+      !body(slashMass) ||
+      ![logBase, star, sun].every((part) => small(part)) ||
+      !sameStyle(star, sun) ||
+      star.rise > -h * 0.08 ||
+      star.rise < -h * 0.35 ||
+      logBase.rise > star.rise - h * 0.05 ||
+      logBase.rise < -h * 0.5 ||
+      parts.some((part, index) => {
+        const previous = index ? parts[index - 1] : preceding,
+          gap = part.bounds[0] - previous.bounds[2]
+        return gap < -h * 0.12 || gap > h * 0.26
+      })
+    )
+      continue
+    const [target] = translation.matchAll(logarithmicMassRatio)
+    if (target?.[1] !== match[1]) continue
+    groups.push({
+      sourceOffset: start,
+      targetOffset: target.index + 3,
+      label: match[1],
+      sourceIndices: parts.flatMap((part) => part.sourceIndices),
+      baselineIndex: numerator.sourceIndices[0],
+      nativeScriptGroup: true,
+      needsInlineReflow: true
+    })
+  }
+  // Keep both lowered mass markers and the raised power as one native expression.
+  const massAssignment =
+    /(?<![\p{L}\p{N}])M⋆ = (\d{1,3}) × 10([⁰¹²³⁴⁵⁶⁷⁸⁹]{1,2})M⊙(?![\p{L}\p{N}])/gu
+  for (const match of source.matchAll(massAssignment)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 8, true)
+    if (!parts) continue
+    const [mass, star, coefficient, times, decimal, power, unit, sun] = parts,
+      h = mass.bounds[3] - mass.bounds[1],
+      roman = /^(?:[A-Z]{6}\+)?CMR\d{1,2}$/u,
+      italic = /^(?:[A-Z]{6}\+)?CMMI\d{1,2}$/u,
+      symbol = /^(?:[A-Z]{6}\+)?CMSY\d{1,2}$/u
+    if (
+      ![mass, coefficient, times, decimal, unit].every(body) ||
+      ![star, power, sun].every(small) ||
+      !sameStyle(star, sun) ||
+      Math.abs(power.scale - star.scale) > 0.01 ||
+      !italic.test(mass.fontName) ||
+      !italic.test(star.fontName) ||
+      unit.fontName !== mass.fontName ||
+      !roman.test(coefficient.fontName) ||
+      decimal.fontName !== coefficient.fontName ||
+      !roman.test(power.fontName) ||
+      !symbol.test(times.fontName) ||
+      !symbol.test(sun.fontName) ||
+      [
+        mass.label,
+        star.label,
+        coefficient.label,
+        times.label,
+        decimal.label,
+        unit.label,
+        sun.label
+      ].join('|') !== ['M', '⋆', '= ' + match[1], '×', '10', 'M', '⊙'].join('|') ||
+      power.label !== match[2].normalize('NFKC') ||
+      star.rise < -h * 0.35 ||
+      star.rise > -h * 0.1 ||
+      power.rise < h * 0.3 ||
+      power.rise > h * 0.65 ||
+      parts.some((part, index) => {
+        if (
+          !Number.isFinite(part.baseline) ||
+          Math.abs(part.baseline - mass.baseline - part.rise) > 0.01
+        )
+          return true
+        if (index === 0) return false
+        const gap = part.bounds[0] - parts[index - 1].bounds[2]
+        return gap < -h * 0.09 || gap > h * ([1, 5, 7].includes(index) ? 0.24 : 0.8)
+      })
+    )
+      continue
+    const written = match[0].replace(match[2], '^' + power.label),
+      originalOffsets = occurrences(source, match[0]),
+      exactTargets = occurrences(translation, match[0]),
+      caretTargets = occurrences(translation, written)
+    if (originalOffsets.length !== 1 || exactTargets.length + caretTargets.length !== 1) continue
+    const label = exactTargets.length ? match[0] : written
+    groups.push({
+      sourceOffset: start,
+      targetOffset: exactTargets[0] ?? caretTargets[0],
+      label,
+      sourceLabel: match[0],
+      sourceIndices: parts.flatMap((part) => part.sourceIndices),
+      baselineIndex: mass.sourceIndices[0],
+      nativeScriptGroup: true,
+      needsInlineReflow: true
+    })
+  }
+
   // Extraction flattens a blackboard capital and its raised dimensions.
   // Move the entire native group only for unchanged set relations and dimensions.
   const dimensions =
@@ -889,6 +1103,81 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
       label,
       sourceIndices: parts.flatMap((part) => part.sourceIndices)
     })
+  }
+
+  // Computer Modern small-cap text can be lowered inside a math index without
+  // changing its nominal size. Prove the full original run against the base row.
+  const loweredIdentifier =
+    /(?<![\p{Script=Latin}\p{Script=Greek}\d_])[A-Za-z](?:[A-Z] [a-z](?:,[A-Z]{1,3})?|[A-Z]{2},[a-z]{2,6}|[a-z])(?![\p{Script=Latin}\p{Script=Greek}\d_])/gu
+  const smallCapAtom = /^[A-Za-z][A-Z] [a-z](?:,[A-Z]{1,3})?$/u
+  const proved = []
+  for (const match of source.matchAll(loweredIdentifier)) {
+    const label = match[0],
+      end = match.index + label.length,
+      smallCaps = smallCapAtom.test(label),
+      comma = label.includes(','),
+      count = smallCaps ? 3 + (comma ? 2 : 0) : comma ? 4 : 2,
+      parts = nativeParts(match.index, end, count)
+    if (!parts) continue
+    const [base, ...index] = parts,
+      smallCapPart = smallCaps ? index[1] : undefined
+    if (
+      base.sourceOffset !== match.index ||
+      !/^[A-Za-z]$/u.test(base.label) ||
+      !/^CMMI\d{1,2}$/u.test(base.fontName ?? '') ||
+      !body(base) ||
+      parts.at(-1).sourceOffset + parts.at(-1).label.length !== end ||
+      parts.some(
+        (part, i) =>
+          !Number.isFinite(part.baseline) ||
+          (i > 0 &&
+            parts[i - 1].sourceOffset +
+              parts[i - 1].label.length +
+              (part === smallCapPart ? 1 : 0) !==
+              part.sourceOffset)
+      )
+    )
+      continue
+    const height = base.bounds[3] - base.bounds[1],
+      drop = base.baseline - index[0].baseline,
+      indexScale = index[0].scale
+    if (
+      drop < height * 0.1 ||
+      drop > height * 0.32 ||
+      !Number.isFinite(indexScale) ||
+      indexScale < base.scale * 0.6 ||
+      indexScale >= base.scale * 0.85 ||
+      index.some((part, i) => {
+        const previous = parts[i]
+        if (
+          Math.abs(part.baseline - index[0].baseline) > 0.03 ||
+          part.bounds[0] < previous.bounds[2] - height * 0.04 ||
+          part.bounds[0] > previous.bounds[2] + height * 0.4 ||
+          part.bounds[3] <= base.bounds[1] ||
+          part.bounds[3] > base.bounds[3]
+        )
+          return true
+        return part === smallCapPart
+          ? !/^CMCSC\d{1,2}$/u.test(part.fontName ?? '') ||
+              Math.abs(part.scale - base.scale) > 0.02 ||
+              part.bounds[3] - part.bounds[1] >= height * 0.72
+          : Math.abs(part.scale - indexScale) > 0.02 ||
+              !(part.label === ',' ? /^CMMI\d{1,2}$/u : /^CMR\d{1,2}$/u).test(part.fontName ?? '')
+      })
+    )
+      continue
+    proved.push({ match, parts, end, smallCaps })
+  }
+  if (proved.some(({ smallCaps }) => smallCaps)) {
+    for (const { match, parts, end } of proved) {
+      if (
+        groups.some((group) =>
+          group.sourceIndices.some((i) => parts.some((part) => part.sourceIndices[0] === i))
+        )
+      )
+        continue
+      addNativeGroup(match.index, end, parts, parts[0], true)
+    }
   }
   return groups
 }

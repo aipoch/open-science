@@ -39,6 +39,7 @@ export const projectSessionDefaultsSchema = z
     permissionProfile: permissionProfileIdSchema.optional(),
     autoReviewEnabled: z.boolean().optional(),
     memoryEnabled: z.boolean().optional(),
+    agentTracingEnabled: z.boolean().optional(),
     delegationPolicy: delegationPolicySchema.optional(),
     specialistId: nonEmptyStringSchema.optional(),
     computeHosts: sessionComputeHostsSchema.optional()

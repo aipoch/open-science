@@ -73,9 +73,13 @@ test('downloads from details, retries and cancels on the card, then imports thro
   await card.getByRole('button', { name: 'Example 4', exact: true }).click()
   const details = page.getByRole('dialog', { name: 'Case details', exact: true })
   await details.getByRole('button', { name: 'Import', exact: true }).click()
-  await expect(details.getByRole('alert')).toContainText('Could not download this example.')
+  await expect(details.getByRole('alert')).toContainText(
+    'The example server returned an error. Try again shortly.'
+  )
   await details.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(card.getByRole('alert')).toContainText('Could not download this example.')
+  await expect(card.getByRole('alert')).toContainText(
+    'The example server returned an error. Try again shortly.'
+  )
   expect(await cardSizes()).toEqual(initialSizes)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await rm(`${info.outputPath('download-continue')}.fail`)

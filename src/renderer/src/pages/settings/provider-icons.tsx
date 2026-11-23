@@ -25,6 +25,8 @@ import minimaxLogo from '@/assets/provider-icons/minimax.svg'
 import stepfunLogo from '@/assets/provider-icons/stepfun.svg'
 import openaiLogo from '@/assets/provider-icons/openai.svg'
 import zhipuLogo from '@/assets/provider-icons/zhipu.svg'
+// Official Kilo icon from https://kilo.ai/favicon/favicon.svg
+import kiloLogo from '@/assets/provider-icons/kilo.svg'
 import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import openrouterLogo from '@/assets/provider-icons/openrouter.svg'
 import requestyLogo from '@/assets/provider-icons/requesty.svg'
@@ -78,6 +80,7 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   stepplan: stepfunLogo,
   zhipu: zhipuLogo,
   glmcodingplan: zhipuLogo,
+  kilo: kiloLogo,
   kimi: kimiLogo,
   kimiforcode: kimiLogo,
   openrouter: openrouterLogo,

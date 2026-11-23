@@ -53,18 +53,18 @@
 
 > 이 문서는 영어 `README.md`의 번역본입니다. 내용이 다르면 [영문 원본](../../README.md)을 기준으로 합니다.
 
-### 💡 AIPOCH Open-Science v1.3.0 업데이트
+### 💡 AIPOCH Open-Science v1.3.3 업데이트
 
-_2026년 11월 18일_
+_2026년 11월 21일_
 
-- **예약된 연구 작업**: 반복 또는 일회성 일정을 설정하면 세션과 Notebook 작업이 자동으로 시작됩니다. 모든 실행은 작업 공간에서 자체 기록과 함께 열립니다.
-- **이미지 생성 및 편집**: 구성된 공급자로 이미지를 생성하고 후속 편집으로 반복 개선하세요. 모든 버전은 비교하고 되돌리고 재사용할 수 있습니다.
-- **편집 가능한 프레젠테이션**: PowerPoint 파일을 그 자리에서 텍스트 편집(글꼴, 크기, 색상, 정렬)할 수 있고 슬라이드 구조는 유지됩니다.
-- **영상 재생**: 영상 작업을 새 브랜치에 재생하여 독립적인 출력을 얻고, 세션 메뉴에서 바로 영상을 열고, 생성 전에 토큰 사용량을 확인할 수 있습니다.
-- **더 똑똑한 에이전트 질문**: 에이전트가 입력을 요청할 때 각 옵션의 장단점이 표시되어 결과를 알고 결정할 수 있습니다.
-- **안정성과 속도**: 긴 세션 기록이 증분 방식으로 저장되고, 중단된 영상과 패키지 전송이 자동으로 복구되며, Windows 설치 및 업데이트가 간소화되고, 시작 시 프로젝트에 더 빨리 도달합니다.
+- **방해하지 않는 업데이트**: macOS에서는 자격을 갖춘 업데이트가 앱을 종료할 때 스스로 설치될 수 있고, Windows와 Linux에서는 작업하는 동안 다음 실행을 위한 업데이트를 준비할 수 있습니다. 백그라운드 다운로드는 제한 없는 네트워크와 충분한 저장 공간이 필요하며, 수동 경로는 계속 사용할 수 있습니다.
+- **어디에서나 내장 Agent 기본값**: 새 프로젝트와 세션은 내장 Open-Science Agent로 시작합니다 — 깨끗한 CLI와 SDK 설치도 포함하며, 더 이상 외부 에이전트 SDK가 없을 때 시작에 실패하지 않습니다. 외부 런타임 설치는 필요할 때만 내리는 명시적인 선택으로 남습니다.
+- **더 가벼운 앱**: 설치된 데스크톱은 macOS와 Windows에서 더 작아졌고, 번들된 오프라인 npm 런타임은 천 개가 넘는 개별 패키지 파일을 싣는 대신 이제 Node 22용으로 컴파일됩니다.
+- **통합된 이미지 편집**: 편집 지시는 대화 입력기에 있고, 마우스를 올리거나 키보드 동작으로 어떤 미리보기에서든 편집에 들어가며, 버전 탐색과 비교는 계속 사용할 수 있습니다.
+- **실패가 스스로 설명됩니다**: 앱 전반에서 불투명한 오류는 실제로 일어난 일을 이제 알립니다 — 요청 실패, 로딩과 가져오기 문제, Notebook 실행 오류, 사용자가 멈춘 작업과 응답이 없는 작업의 차이입니다.
+- **설정 바로가기 복원**: 설정에서 Skills, Specialists, Connectors 바로가기를 복원합니다. 각각 설치된 카테고리를 열고 설정의 원래 위치로 돌아옵니다.
 
-[v1.3.0 전체 릴리스 노트 보기](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
+[v1.3.3 전체 릴리스 노트 보기](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +89,14 @@ _2026년 11월 18일_
 | Linux ARM64                        | Linux ARM64 AppImage 또는 Debian 패키지 |
 
 설치 전 확인 사항은 [다운로드 검증](../../SECURITY.md#verifying-your-download)을 참고하세요.
+
+Windows 10/11 x64에서는 [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X)에서 데스크톱 앱을 설치하거나 PowerShell에서 WinGet을 사용할 수 있습니다.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+배포 채널에 따라 제공되는 버전이 다를 수 있습니다. 자세한 내용은 [설치 및 업데이트 가이드](https://aipoch.com/docs/guides/installation/)를 참고하세요.
 
 macOS에서는 [Homebrew](https://brew.sh)로도 설치할 수 있습니다:
 
@@ -172,6 +180,7 @@ AIPOCH는 논문 찾기부터 논문 내용에 대한 답변, 연구 계획 실�
 | 문헌을 바탕으로 답변하기    | LitQA2-FullText        | 별도의 LitQA2-FullText 평가에서 Open-Science는 **75문항 중 70문항에 정답**을 제시했습니다(**정확도 93.33%**, deepseek-flash, Max 추론).                |
 | 인용을 포함한 답변 종합하기 | ScholarQA-CS2          | ScholarQA-CS2 검증 100문항에서 deepseek-v4-flash로 **종합 품질 점수 0.9289/1**을 기록했습니다. 공식 테스트 참고 결과는 다른 문항을 사용합니다.         |
 | 연구 워크플로 실행하기      | ASI-Bench              | 동일 모델을 사용한 로컬 ASI-Bench 평가에서 B4 점수는 Open-Science **59.46**, Codex **55.45**였습니다. B2 점수는 거의 같았습니다(**56.11**, **56.09**). |
+| ML·NLP 실험 재현하기        | AstaBench SUPER-Expert | DeepSeek Flash/Max로 45개 과제를 로컬 평가해 output_match/mean **46.30%**를 기록했습니다.                                                              |
 | 과학 연구 과제 수행         | TB-Science 0.1         | 70개 과제에서 GPT-6 Astra/max: 로컬 실행 210회 중 **145회 통과**(**69.05%**). 공식 순위가 아니며 개별 실행 기록은 공개되지 않았습니다.                 |
 | 생의학 데이터 분석하기      | BiomniBench-DA         | BiomniBench-DA Public 50에서 두 평가 모델의 점수는 **81.04**, **77.06**이었으며 동일 가중치 평균은 **79.05**였습니다.                                  |
 | 발표된 결과 재현            | CORE-Bench-Hard        | CORE-Bench-Hard — 로컬 평가에서 테스트 과제 37개 중 36개 정답(97.30%). 최종 집계에는 재시험이 포함됩니다.                                              |
@@ -182,7 +191,7 @@ AIPOCH는 논문 찾기부터 논문 내용에 대한 답변, 연구 계획 실�
 
 **평가 범위:** 보고서는 명시된 모델과 데이터 분할을 사용한 2026년 8월부터 11월까지의 로컬·내부 실행을 다루며, 현재 릴리스를 위해 다시 실행한 결과가 아닙니다. 참고 점수는 과거 스냅샷으로 실시간 셜위가 아닙니다. 서로 다른 벤치마크 계열의 점수는 직접 비교할 수 없으며 수치 차이가 통계적 유의성을 입증하지 않습니다.
 
-자세한 평가 내용은 [AstaBench 및 ASI-Bench 보고서](https://aipoch.com/benchmark/open-science), [BiomniBench-DA 보고서](https://aipoch.com/blog/open-science-biomnibench-da), [TB-Science 0.1 로컬 결과](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)를 참고하세요.
+자세한 평가 내용은 [AstaBench 및 ASI-Bench 보고서](https://aipoch.com/benchmark/open-science), [BiomniBench-DA 보고서](https://aipoch.com/blog/open-science-biomnibench-da), [TB-Science 0.1 로컬 결과](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)를 참고하세요. [SUPER-Expert 로컬 결과](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)도 참고하세요.
 
 [CORE-Bench-Hard · 재현성 평가 보고서](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

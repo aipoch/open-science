@@ -319,8 +319,12 @@ afterEach(() => {
 
 describe('settings store: saveAndActivateProvider', () => {
   it('creates, validates, then activates a new provider on success', async () => {
-    api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
-    api.validateProvider.mockResolvedValue({ ok: true, category: 'ok' } as ValidateProviderResult)
+    const apiSaveValidatedProvider = vi.fn().mockResolvedValue({
+      providerId: 'p_new',
+      validation: { ok: true, category: 'ok' },
+      snapshot: snapshot([providerView('p_new')])
+    })
+    Object.assign(api, { saveValidatedProvider: apiSaveValidatedProvider })
     api.setActiveProvider.mockResolvedValue({
       ...snapshot([providerView('p_new')]),
       activeProviderId: 'p_new'
@@ -335,17 +339,19 @@ describe('settings store: saveAndActivateProvider', () => {
     })
 
     expect(result).toEqual({ providerId: 'p_new', validation: { ok: true, category: 'ok' } })
-    expect(api.validateProvider).toHaveBeenCalledWith({ providerId: 'p_new', model: 'model-a' })
+    expect(apiSaveValidatedProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'model-a' })
+    )
     expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p_new', model: 'model-a' })
     expect(useSettingsStore.getState().activeProviderId).toBe('p_new')
   })
 
-  it('activates even when validation fails (probe is advisory, not a gate)', async () => {
-    api.upsertProvider.mockResolvedValue(snapshot([providerView('p_new')]))
-    api.validateProvider.mockResolvedValue({
-      ok: false,
-      category: 'network'
-    } as ValidateProviderResult)
+  it('keeps the active model when onboarding validation fails', async () => {
+    Object.assign(api, {
+      saveValidatedProvider: vi.fn().mockResolvedValue({
+        validation: { ok: false, category: 'network' }
+      })
+    })
 
     const result = await useSettingsStore.getState().saveAndActivateProvider({
       type: 'custom',
@@ -355,9 +361,8 @@ describe('settings store: saveAndActivateProvider', () => {
     })
 
     expect(result.validation.ok).toBe(false)
-    // A failed probe no longer blocks activation — the provider is configured in and can be tested
-    // live; it is still kept (flagged as unverified), not rolled back.
-    expect(api.setActiveProvider).toHaveBeenCalledWith({ id: 'p_new', model: undefined })
+    expect(api.setActiveProvider).not.toHaveBeenCalled()
+    expect(api.upsertProvider).not.toHaveBeenCalled()
     expect(api.deleteProvider).not.toHaveBeenCalled()
   })
 

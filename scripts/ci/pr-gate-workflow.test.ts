@@ -753,6 +753,7 @@ describe('PR Gate workflow', () => {
       lanes: '${{ steps.classify.outputs.lanes }}',
       plan: '${{ steps.classify.outputs.plan }}',
       windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}',
+      windows_e2e_groups: '${{ steps.windows_mainline.outputs.groups }}',
       portable_matrix: '${{ steps.portable_matrix.outputs.matrix }}',
       package_sources: '${{ steps.portable_matrix.outputs.package_sources }}'
     })
@@ -849,7 +850,16 @@ describe('PR Gate workflow', () => {
             }
           })
           expect(result.status, result.stderr).toBe(0)
-          const selected = readFileSync(output, 'utf8').trim().split('\n').at(-1)!.slice(5)
+          const selected = readFileSync(output, 'utf8')
+            .split('\n')
+            .find((line) => line.startsWith('grep='))!
+            .slice(5)
+          const groups = JSON.parse(
+            readFileSync(output, 'utf8')
+              .split('\n')
+              .find((line) => line.startsWith('groups='))!
+              .slice(7)
+          ) as string[]
           if (grep) expect(selected).toBe(grep)
           else {
             const pattern = new RegExp(selected)
@@ -860,6 +870,11 @@ describe('PR Gate workflow', () => {
             expect(pattern.test('extended regression case')).toBe(false)
             expect(pattern.test('journey @pr-mainline-notebook-extra')).toBe(false)
           }
+          expect(groups).toEqual(
+            grep
+              ? [grep.match(/@pr-mainline-([a-z]+)/)?.[1]]
+              : ['projects', 'conversation', 'files', 'notebook', 'windows']
+          )
         }
       } finally {
         rmSync(cwd, { recursive: true, force: true })
@@ -1070,6 +1085,7 @@ describe('PR Gate workflow', () => {
       lanes: '${{ steps.classify.outputs.lanes }}',
       plan: '${{ steps.classify.outputs.plan }}',
       windows_e2e_grep: '${{ steps.windows_mainline.outputs.grep }}',
+      windows_e2e_groups: '${{ steps.windows_mainline.outputs.groups }}',
       portable_matrix: '${{ steps.portable_matrix.outputs.matrix }}',
       package_sources: '${{ steps.portable_matrix.outputs.package_sources }}'
     })
@@ -1478,6 +1494,15 @@ describe('PR Gate workflow', () => {
     expect(steps.indexOf(generate!)).toBe(steps.indexOf(guard!) - 1)
   })
 
+  it('runs runtime helper registration before the unconditional registration suite', () => {
+    const job = workflow.jobs.registration
+    const guard = job.steps?.find(({ name }) => name === 'Check runtime helper registration')
+    const install = job.steps?.find(({ name }) => name === 'Install registration toolchain')
+    expect(guard?.run).toBe('node scripts/ci/check-installation-helper-registration.mjs')
+    expect(job.needs).toBeUndefined()
+    expect(job.steps?.indexOf(guard!)).toBeLessThan(job.steps?.indexOf(install!))
+  })
+
   it('runs manifest-reading contracts as a blocking check for registration and full plans', () => {
     const step = workflow.jobs.static.steps?.find(
       ({ name }) => name === 'Check module registration policy and architecture contracts'
@@ -1660,7 +1685,7 @@ describe('PR Gate workflow', () => {
     })
   })
 
-  it.each(['macos'])(
+  it.each(['macos', 'windows'])(
     'prepares %s E2E once and restores its exact artifact in every consumer',
     (platform) => {
       const bundle = `${platform}_e2e`
@@ -1698,6 +1723,7 @@ describe('PR Gate workflow', () => {
       })
       expect(producer.steps?.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
       expect(producer.steps?.some(({ run }) => /npm run build:web\b/.test(run ?? ''))).toBe(false)
+      const pack = producer.steps?.find(({ name }) => name === 'Pack E2E setup')
       const upload = producer.steps?.find(({ id }) => id === 'upload')
       expect(upload?.['continue-on-error']).not.toBe(true)
       expect(upload?.with).toMatchObject({
@@ -1730,6 +1756,10 @@ describe('PR Gate workflow', () => {
       const restore = consumer.steps?.find(({ id }) => id === 'setup')
       expect(restore?.run).toContain('e2e-setup-snapshot.mjs restore')
       expect(restore?.['continue-on-error']).not.toBe(true)
+      if (platform === 'windows') {
+        expect(pack?.shell).toBe('bash')
+        expect(restore?.shell).toBe('bash')
+      }
       expect(
         consumer.steps?.some(
           ({ run, if: condition }) =>
@@ -1786,7 +1816,7 @@ describe('PR Gate workflow', () => {
       )
     ).toHaveLength(2)
     expect(
-      workflow.jobs.windows_e2e.steps?.filter(({ name }) => name === 'Install dependencies')
+      workflow.jobs.windows_e2e_setup.steps?.filter(({ name }) => name === 'Install dependencies')
     ).toEqual([
       expect.objectContaining({
         run: 'node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false'
@@ -1805,7 +1835,10 @@ describe('PR Gate workflow', () => {
     )
 
     const windowsRuns = workflow.jobs.windows_e2e.steps?.map(({ run }) => run).filter(Boolean)
-    expect(windowsRuns?.filter((run) => run === 'npm run build:e2e')).toHaveLength(1)
+    expect(windowsRuns?.some((run) => run?.includes('npm run build:e2e'))).toBe(false)
+    expect(
+      workflow.jobs.windows_e2e_setup.steps?.filter(({ run }) => run === 'npm run build:e2e')
+    ).toHaveLength(1)
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
@@ -1818,12 +1851,15 @@ describe('PR Gate workflow', () => {
 
   it('selects Windows mainline groups with trusted base policy on every entry point', () => {
     const job = workflow.jobs.windows_e2e
-    expect(job.env!.E2E_GREP).toBe('${{ needs.preflight.outputs.windows_e2e_grep }}')
-    expect(job.strategy).toBeUndefined()
-    expect(workflow.jobs.windows_e2e_setup).toBeUndefined()
-    expect(job.needs).toEqual(['preflight', 'windows_notebook_runtime'])
-    expect(job.steps?.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
-    expect(job.steps?.some(({ run }) => run?.includes('e2e-setup-snapshot'))).toBe(false)
+    expect(job.env!.E2E_GREP).toBe('@pr-mainline-${{ matrix.group }}(?:\\s|$)')
+    expect(job.strategy).toEqual({
+      'fail-fast': false,
+      matrix: { group: '${{ fromJSON(needs.preflight.outputs.windows_e2e_groups) }}' }
+    })
+    expect(workflow.jobs.windows_e2e_setup).toBeDefined()
+    expect(job.needs).toEqual(['preflight', 'windows_e2e_setup'])
+    expect(job.steps?.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(0)
+    expect(job.steps?.some(({ run }) => run?.includes('e2e-setup-snapshot.mjs restore'))).toBe(true)
     const selector = workflow.jobs.preflight.steps!.find(({ id }) => id === 'windows_mainline')!
     expect(selector.run).toContain('git show "$TRUSTED_BASE_SHA:$selector"')
     expect(selector.run).toContain('node "$TRUSTED_DIR/windows-e2e-mainline.mjs"')
@@ -1858,7 +1894,8 @@ describe('PR Gate workflow', () => {
   })
 
   it('budgets the complete Windows E2E path beyond dependency and build setup', () => {
-    expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(35)
+    expect(workflow.jobs.windows_e2e_setup['timeout-minutes']).toBe(20)
+    expect(workflow.jobs.windows_e2e['timeout-minutes']).toBe(20)
   })
 
   it('budgets the combined macOS builds and all four E2E groups', () => {
@@ -1867,11 +1904,11 @@ describe('PR Gate workflow', () => {
 
   it('runs affected Windows mainlines on one isolated desktop with the stable aggregate gate', () => {
     const job = workflow.jobs.windows_e2e
-    expect(job.strategy).toBeUndefined()
-    expect(workflow.jobs.windows_e2e_setup).toBeUndefined()
-    expect(job.needs).toEqual(['preflight', 'windows_notebook_runtime'])
-    expect(job.steps?.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
-    expect(job.steps?.some(({ run }) => run?.includes('e2e-setup-snapshot'))).toBe(false)
+    expect(job.strategy).toBeDefined()
+    expect(workflow.jobs.windows_e2e_setup).toBeDefined()
+    expect(job.needs).toEqual(['preflight', 'windows_e2e_setup'])
+    expect(job.steps?.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(0)
+    expect(job.steps?.some(({ run }) => run?.includes('e2e-setup-snapshot.mjs restore'))).toBe(true)
     expect(job.steps?.find(({ id }) => id === 'e2e_functional_windows')).toMatchObject({
       if: "${{ steps.setup.outcome == 'success' }}",
       run: expect.stringContaining(
@@ -1880,6 +1917,7 @@ describe('PR Gate workflow', () => {
     })
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toBeUndefined()
     expect(job.steps?.find(({ id }) => id === 'e2e_workspace_windows')).toBeUndefined()
+    expect(workflow.jobs.gate.needs).toContain('windows_e2e_setup')
     expect(workflow.jobs.gate.needs).toContain('windows_e2e')
   })
 
@@ -1974,12 +2012,15 @@ describe('PR Gate workflow', () => {
   it('runs the native typechecker on Windows without expanding the process dry-run', () => {
     const steps = workflow.jobs.windows_core.steps ?? []
     const install = steps.find(({ name }) => name === 'Install dependencies')
+    const verify = steps.find(({ name }) => name === 'Verify generated test dependencies')
     const typecheck = steps.find(({ name }) => name === 'Typecheck sandbox on Windows')
 
+    expect(verify?.run).toBe('node scripts/check-prisma-client.mjs')
     expect(typecheck?.run).toBe('npm run typecheck:sandbox')
     expect(typecheck?.if).toBe("${{ inputs.dry_run != 'windows-process' }}")
     expect(typecheck?.['continue-on-error']).not.toBe(true)
-    expect(steps.indexOf(install!)).toBeLessThan(steps.indexOf(typecheck!))
+    expect(steps.indexOf(install!)).toBeLessThan(steps.indexOf(verify!))
+    expect(steps.indexOf(verify!)).toBeLessThan(steps.indexOf(typecheck!))
   })
 
   it('rebuilds the Windows sandbox host before the native lifecycle smoke', () => {
@@ -2202,7 +2243,15 @@ describe('PR Gate workflow', () => {
     const runtime = workflow.jobs.windows_core.steps?.find(
       ({ name }) => name === 'Test Windows-specific behavior'
     )
+    const regressions = workflow.jobs.windows_core.steps?.find(
+      ({ name }) => name === 'Test scheduled Windows validation regressions'
+    )
+    const wheelEvidenceRun = workflow.jobs.windows_core.steps?.find(
+      ({ name }) => name === 'Test Windows wheel evidence recovery'
+    )
     expect(runtime?.run).not.toContain('\n')
+    expect(regressions?.run).toContain('npx vitest run')
+    expect(wheelEvidenceRun?.run).toContain('npx vitest run')
     for (const testFile of [
       'scripts/windows-updater-certification.test.ts',
       'src/main/windows.test.ts',

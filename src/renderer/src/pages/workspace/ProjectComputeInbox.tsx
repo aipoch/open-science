@@ -385,11 +385,6 @@ const ProjectComputeInbox = ({ isActive = true }: { isActive?: boolean }): React
         <h1 id="project-compute-title" className="text-lg font-semibold">
           {t('Compute')}
         </h1>
-        <p className="mt-1 text-xs text-text-100">
-          {t(
-            'Local Notebook resources, active Compute Jobs, and Compute Jobs completed in the last 48 hours.'
-          )}
-        </p>
       </header>
 
       <ScrollArea className="min-h-0 flex-1">

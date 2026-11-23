@@ -1,3 +1,5 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
+
 export type FailureCategory =
   'configuration' | 'service' | 'environment' | 'input' | 'session' | 'internal'
 
@@ -11,6 +13,7 @@ export type FailureDiagnostics = Readonly<{
   phase?: string
   provider?: string
   model?: string
+  providerExcerpt?: string
   requestId?: string
   providerCode?: string
   parameter?: string
@@ -34,6 +37,7 @@ export type FailureFacts = Readonly<{
   phase?: string
   provider?: string
   model?: string
+  providerExcerpt?: string
   requestId?: string
   text?: string
 }>
@@ -61,7 +65,8 @@ export const readProviderErrorCode = (value: unknown): ProviderErrorCode | undef
 // Decode the same bounded diagnostics on the wire and when restoring a saved turn.
 export const readHarnessErrorDiagnostics = (
   data: Record<string, unknown>
-): Pick<FailureDiagnostics, 'code' | 'adapterCode' | 'phase' | 'requestId'> => {
+): Pick<FailureDiagnostics, 'code' | 'adapterCode' | 'phase' | 'requestId' | 'providerExcerpt'> => {
+  const excerpt = providerErrorExcerpt(data.providerExcerpt)
   const code = readProviderErrorCode(data.code)
   const adapterCode =
     typeof data.adapterCode === 'string' &&
@@ -98,6 +103,7 @@ export const readHarnessErrorDiagnostics = (
       ? data.requestId
       : undefined
   return {
+    ...(excerpt && excerpt === data.providerExcerpt ? { providerExcerpt: excerpt } : {}),
     ...(code ? { code } : {}),
     ...(adapterCode ? { adapterCode } : {}),
     ...(phase ? { phase } : {}),

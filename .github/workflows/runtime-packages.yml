@@ -107,7 +107,6 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           node scripts/prepare-shadcn-patch.mjs
           node node_modules/patch-package/index.js --error-on-fail
-          node scripts/check-claude-acp-patch.mjs
           node node_modules/prisma/build/index.js generate
           npm rebuild @aipoch/process-tree-native @aipoch/safe-file-publisher-native
       - name: Build Windows protection helper

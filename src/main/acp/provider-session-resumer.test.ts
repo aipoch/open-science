@@ -7,7 +7,12 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
-import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  codexFramework,
+  getAgentFramework,
+  opencodeFramework
+} from '../agent-framework'
 import { createPiFramework } from '../agent-framework/pi'
 import {
   shellRuntimeAgentContract,
@@ -460,30 +465,63 @@ describe('AcpProviderSessionResumer', () => {
     )
   })
 
-  it('refreshes only a Codex writer with new Notebook credentials without reprovisioning capabilities or replacing history', async () => {
-    const harness = createHarness({ attached: true, initialBackend: codexResponsesBackend })
-    const attachment = harness.registry.lookup('stable-app-session')?.attachment
-    await harness.refreshNotebookConnection({
-      sessionId: 'stable-app-session',
-      cwd: '/workspace',
-      mcpServers: [
-        {
-          name: 'open-science-notebook',
-          command: '/node',
-          args: [],
-          env: [{ name: 'TOKEN', value: 'fresh' }]
-        }
-      ],
-      assertCurrent: () => undefined
+  it.each([
+    codexResponsesBackend,
+    {
+      ...backend,
+      backendId: 'open-science-agent',
+      framework: getAgentFramework('open-science-agent')
+    }
+  ])(
+    'refreshes the $backendId writer with new Notebook credentials without replacing history',
+    async (initialBackend) => {
+      const harness = createHarness({ attached: true, initialBackend })
+      const attachment = harness.registry.lookup('stable-app-session')?.attachment
+      await harness.refreshNotebookConnection({
+        sessionId: 'stable-app-session',
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            name: 'open-science-notebook',
+            command: '/node',
+            args: [],
+            env: [{ name: 'TOKEN', value: 'fresh' }]
+          }
+        ],
+        assertCurrent: () => undefined
+      })
+      expect(harness.request.mock.calls.map(([method]) => method)).toEqual([
+        acp.methods.agent.session.close,
+        acp.methods.agent.session.resume
+      ])
+      expect(harness.registry.lookup('stable-app-session')?.attachment).toBe(attachment)
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.adopt).not.toHaveBeenCalled()
+      expect(harness.providerSession.dispose).not.toHaveBeenCalled()
+    }
+  )
+  it('detaches a closed writer when Notebook resume fails so retry can recover it', async () => {
+    const harness = createHarness({
+      attached: true,
+      initialBackend: {
+        ...backend,
+        backendId: 'open-science-agent',
+        framework: getAgentFramework('open-science-agent')
+      }
     })
-    expect(harness.request.mock.calls.map(([method]) => method)).toEqual([
-      acp.methods.agent.session.close,
-      acp.methods.agent.session.resume
-    ])
-    expect(harness.registry.lookup('stable-app-session')?.attachment).toBe(attachment)
-    expect(harness.provision).not.toHaveBeenCalled()
-    expect(harness.adopt).not.toHaveBeenCalled()
-    expect(harness.providerSession.dispose).not.toHaveBeenCalled()
+    harness.request
+      .mockResolvedValueOnce({ sessionId: harness.providerSession.sessionId })
+      .mockRejectedValueOnce(new Error('resume failed'))
+    await expect(
+      harness.refreshNotebookConnection({
+        sessionId: 'stable-app-session',
+        cwd: '/workspace',
+        mcpServers: [],
+        assertCurrent: () => undefined
+      })
+    ).rejects.toThrow('resume failed')
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+    expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
   })
   it.each([undefined, 'native-missing'])(
     'adopts Pi history after missing native session (persisted id: %s)',

@@ -13,7 +13,11 @@ import {
   PROJECT_COMPUTE_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { NotebookMemoryNoticeBridge } from './NotebookMemoryNoticeBridge'
+import { BottomNoticeStack } from '@/components/ActionToast'
+import {
+  NotebookMemoryNoticeBridge,
+  NotebookMemoryPressureNotice
+} from './NotebookMemoryNoticeBridge'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -22,15 +26,17 @@ let container: HTMLDivElement
 let changed: (event: NotebookMemoryPolicyChangedEvent) => void
 let rejected: (event: NotebookMemoryRejectedEvent) => void
 const execute = vi.fn()
+const unsubscribeMemoryPolicy = vi.fn()
 
 beforeEach(() => {
   execute.mockReset()
+  unsubscribeMemoryPolicy.mockReset()
   useNotebookMemoryNoticeStore.setState({
     rejection: undefined,
-    warning: undefined,
+    latestCheck: undefined,
     terminal: undefined,
     dismissedRefusalIds: [],
-    criticalScopes: [],
+    dismissedPressureScopes: [],
     pressure: undefined
   })
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
@@ -42,7 +48,7 @@ beforeEach(() => {
       }),
       onMemoryPolicyChanged: vi.fn((listener) => {
         changed = listener
-        return vi.fn()
+        return unsubscribeMemoryPolicy
       }),
       execute
     }
@@ -134,7 +140,12 @@ it('keeps a failed explicit continuation visible and dismisses only after a succ
 it('updates recovery without running and opens the existing Compute preview on Manage', async () => {
   const continueExecution = vi.fn()
   await act(async () =>
-    root.render(<NotebookMemoryNoticeBridge projectId="project" onContinue={continueExecution} />)
+    root.render(
+      <>
+        <NotebookMemoryNoticeBridge projectId="project" onContinue={continueExecution} />
+        <NotebookMemoryPressureNotice />
+      </>
+    )
   )
   await act(async () =>
     rejected({
@@ -144,9 +155,11 @@ it('updates recovery without running and opens the existing Compute preview on M
       refusalId: 'r',
       memory: {
         status: 'pressured',
-        reason: 'low',
-        source: 'linux-procfs',
-        executionScope: 'linux:host',
+        reason: 'linux-cgroup-high',
+        source: 'linux-proc-cgroup-v2',
+        executionScope: 'linux:cgroup-v2:/tenant/child',
+        limitingCgroupPath: '/tenant',
+        cgroupConstraints: [{ path: '/tenant', currentBytes: 1024 ** 3, highBytes: 1024 ** 3 }],
         checkedAt: 1
       }
     })
@@ -156,13 +169,23 @@ it('updates recovery without running and opens the existing Compute preview on M
       hasLiveResources: true,
       memory: {
         status: 'healthy',
-        reason: 'recovered',
-        source: 'linux-procfs',
-        executionScope: 'linux:host',
+        reason: 'healthy',
+        source: 'linux-proc-cgroup-v2',
+        executionScope: 'linux:cgroup-v2:/tenant/child',
+        cgroupConstraints: [
+          { path: '/tenant/child', currentBytes: 42, highBytes: 100 },
+          { path: '/tenant', currentBytes: 512 * 1024 ** 2, highBytes: 1024 ** 3 }
+        ],
         checkedAt: 2
       }
     })
   )
+  await act(async () => fireEvent.click(screen.getByText('Memory check details')))
+  expect(
+    screen.getByRole('row', {
+      name: 'cgroup usage / throttling limit 1 GiB / 1 GiB 512 MiB / 1 GiB'
+    })
+  ).toBeTruthy()
   expect(
     screen.getByText('Memory has recovered. Execution still requires your choice.')
   ).toBeTruthy()
@@ -177,42 +200,93 @@ it('updates recovery without running and opens the existing Compute preview on M
   expect(execute).not.toHaveBeenCalled()
 })
 
-it('warns once for a live macOS critical episode and never describes it as an unstarted request', async () => {
+it('shows macOS pressure and the remaining recovery window in separate readings', async () => {
+  const memory = {
+    status: 'pressured',
+    reason: 'mac-memory-critical',
+    pressureLevel: 'critical',
+    source: 'darwin-sysctl-dispatch',
+    executionScope: 'darwin:host',
+    checkedAt: 1
+  } as const
+  window.api.notebook.getMemoryPolicyState = vi.fn(async () => ({
+    ...memory,
+    checkedAt: 2,
+    reason: 'mac-memory-recovering',
+    pressureLevel: 'normal' as const,
+    recoveryRemainingMs: 15_000
+  }))
   await act(async () => root.render(<NotebookMemoryNoticeBridge projectId="project" />))
-  const critical: NotebookMemoryPolicyChangedEvent = {
-    hasLiveResources: true,
-    memory: {
-      status: 'pressured',
-      reason: 'macos-critical',
-      source: 'darwin-sysctl-dispatch',
-      executionScope: 'darwin:host',
-      checkedAt: 1,
-      pressureLevel: 'critical'
+  await act(async () => rejected({ projectId: 'project', sessionId: 'session', memory }))
+  await act(async () => fireEvent.click(screen.getByText('Memory check details')))
+  expect(
+    screen.getByRole('row', {
+      name: 'Status Critical memory pressure Waiting for stable memory pressure'
+    })
+  ).toBeTruthy()
+  expect(screen.getByRole('row', { name: /Recovery time remaining.*15/ })).toBeTruthy()
+})
+
+it.each(['warning', 'critical'] as const)(
+  'dismisses background %s pressure outside the workspace without repeated notices',
+  async (pressureLevel) => {
+    vi.useFakeTimers()
+    try {
+      await act(async () =>
+        root.render(
+          <BottomNoticeStack>
+            <NotebookMemoryPressureNotice />
+          </BottomNoticeStack>
+        )
+      )
+      expect(window.api.notebook.onMemoryPolicyChanged).toHaveBeenCalledOnce()
+      const pressure: NotebookMemoryPolicyChangedEvent = {
+        hasLiveResources: true,
+        memory: {
+          status: 'pressured',
+          reason: `mac-memory-${pressureLevel}`,
+          source: 'darwin-sysctl-dispatch',
+          executionScope: 'darwin:host',
+          checkedAt: 1,
+          pressureLevel
+        }
+      }
+      await act(async () => changed({ ...pressure, hasLiveResources: false }))
+      expect(screen.queryByRole('status')).toBeNull()
+      await act(async () => changed(pressure))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.getByRole('status').closest('[data-bottom-notice-stack]')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+      if (pressureLevel === 'warning') {
+        await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close' })))
+      } else {
+        await act(async () => vi.advanceTimersByTime(3000))
+        await act(async () =>
+          changed({ ...pressure, memory: { ...pressure.memory, checkedAt: 2 } })
+        )
+        await act(async () => vi.advanceTimersByTime(3000))
+      }
+      expect(screen.queryByRole('status')).toBeNull()
+      await act(async () => changed(pressure))
+      expect(screen.queryByRole('status')).toBeNull()
+      await act(async () =>
+        changed({
+          ...pressure,
+          memory: { ...pressure.memory, status: 'healthy', pressureLevel: 'normal' }
+        })
+      )
+      await act(async () => changed(pressure))
+      expect(screen.getByRole('status')).toBeTruthy()
+      await act(async () => changed({ ...pressure, hasLiveResources: false }))
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(execute).not.toHaveBeenCalled()
+      await act(async () => root.render(null))
+      expect(unsubscribeMemoryPolicy).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
     }
   }
-  await act(async () => changed({ ...critical, hasLiveResources: false }))
-  expect(screen.queryByRole('dialog')).toBeNull()
-  await act(async () => changed(critical))
-  expect(screen.getByRole('dialog', { name: 'System memory is under pressure' })).toBeTruthy()
-  expect(
-    screen.queryByText(
-      'This code did not run. Choose whether to retry or manage Notebook resources.'
-    )
-  ).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Recheck and retry' })).toBeNull()
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
-  await act(async () => changed(critical))
-  expect(screen.queryByRole('dialog')).toBeNull()
-  await act(async () =>
-    changed({
-      ...critical,
-      memory: { ...critical.memory, status: 'healthy', pressureLevel: 'normal' }
-    })
-  )
-  await act(async () => changed(critical))
-  expect(screen.getByRole('dialog')).toBeTruthy()
-  expect(execute).not.toHaveBeenCalled()
-})
+)
 
 it('refreshes visible policy with one request in flight and stops polling after dismissal', async () => {
   let finish!: (value: NotebookMemoryPolicyChangedEvent['memory']) => void
@@ -237,7 +311,9 @@ it('refreshes visible policy with one request in flight and stops polling after 
         source: 'agent',
         memory: {
           status: 'pressured',
-          reason: 'low',
+          availableBytes: 512 * 1024 ** 2,
+          totalBytes: 8 * 1024 ** 3,
+          reason: 'linux-memory-low',
           source: 'linux-procfs',
           executionScope: 'linux:host',
           checkedAt: 1
@@ -251,6 +327,8 @@ it('refreshes visible policy with one request in flight and stops polling after 
       finish({
         status: 'healthy',
         reason: 'recovered',
+        availableBytes: 3 * 1024 ** 3,
+        totalBytes: 8 * 1024 ** 3,
         source: 'linux-procfs',
         executionScope: 'linux:host',
         checkedAt: 2
@@ -258,6 +336,10 @@ it('refreshes visible policy with one request in flight and stops polling after 
     )
     expect(
       screen.getByText('Memory has recovered. Execution still requires your choice.')
+    ).toBeTruthy()
+    await act(async () => fireEvent.click(screen.getByText('Memory check details')))
+    expect(
+      screen.getByRole('row', { name: 'Available RAM / total 512 MiB / 8 GiB 3 GiB / 8 GiB' })
     ).toBeTruthy()
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
     await act(async () => vi.advanceTimersByTimeAsync(20_000))

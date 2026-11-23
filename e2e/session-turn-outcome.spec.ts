@@ -340,12 +340,7 @@ for (const latestKind of ['cancelled', 'interrupted', 'legacy-failed'] as const)
     await expect
       .poll(async () => outcomeFor(await sessionForPrompt(page, early), early))
       .toMatchObject({ kind: 'completed' })
-    const latest =
-      latestKind === 'cancelled'
-        ? HOLD_PROMPT
-        : latestKind === 'interrupted'
-          ? 'Stream the long scroll journey.'
-          : FAILURE_PROMPT
+    const latest = latestKind === 'legacy-failed' ? FAILURE_PROMPT : HOLD_PROMPT
     await submit(page, latest)
     if (latestKind === 'cancelled') {
       await expect(
@@ -356,11 +351,12 @@ for (const latestKind of ['cancelled', 'interrupted', 'legacy-failed'] as const)
         .poll(async () => outcomeFor(await sessionForPrompt(page, latest), latest))
         .toMatchObject({ kind: 'cancelled' })
     } else if (latestKind === 'interrupted') {
-      await expect(page.getByText('Segment 1 paragraph 0.', { exact: false })).toBeVisible()
+      await expect(
+        page.getByText('Turn outcome cancellation checkpoint.', { exact: true })
+      ).toBeVisible()
       const snapshot = await sessionForPrompt(page, latest)
       expect(snapshot.status).toBe('running')
-      await expect.poll(async () => (await sessionForPrompt(page, latest)).status).toBe('idle')
-      page = await app.restartWithSessionFixture(snapshot)
+      page = await app.restartAfterCrash({ force: true })
       await page
         .getByRole('region', { name: 'Recent sessions' })
         .getByRole('button', { name: snapshot.title })
@@ -628,13 +624,13 @@ test('interrupted recovery keeps exact Resume during a new prompt preparation', 
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await createProject(page, 'Interrupted new prompt preparation')
-  const prompt = 'Stream the long scroll journey.'
+  const prompt = HOLD_PROMPT
   await submit(page, prompt)
-  await expect(page.getByText('Segment 1 paragraph 0.', { exact: false })).toBeVisible()
-  const snapshot = await sessionForPrompt(page, prompt)
-  expect(snapshot.status).toBe('running')
-  await expect.poll(async () => (await sessionForPrompt(page, prompt)).status).toBe('idle')
-  page = await app.restartWithSessionFixture(snapshot)
+  await expect(
+    page.getByText('Turn outcome cancellation checkpoint.', { exact: true })
+  ).toBeVisible()
+  expect((await sessionForPrompt(page, prompt)).status).toBe('running')
+  page = await app.restartAfterCrash({ force: true })
   await page
     .getByRole('region', { name: 'Recent sessions' })
     .getByRole('button', { name: prompt })

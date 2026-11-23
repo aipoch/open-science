@@ -15,6 +15,7 @@ import { ProviderStep } from './ProviderStep'
 vi.mock('@/components/react-bits/Silk', () => ({
   default: () => <div data-testid="silk" />
 }))
+import { useProviderStepOperation } from './use-provider-step-operation'
 import {
   clickButton,
   codexReadyState,
@@ -71,8 +72,10 @@ const Harness = ({
   const [value, setValue] = useState<ProviderFormValue>(
     () => initialValue ?? createEmptyProviderFormValue()
   )
+  const operation = useProviderStepOperation()
   return (
     <ProviderStep
+      operation={operation}
       formValue={value}
       setFormValue={setValue}
       onBack={onBack}
@@ -90,6 +93,7 @@ const renderStep = async (props: HarnessProps = {}): Promise<void> => {
 
 const readyClaudeEnvironment = (): void => {
   useSettingsStore.setState({
+    agentFrameworkId: 'claude-code',
     preflight: {
       claudeReady: true,
       opencodeReady: false,
@@ -195,7 +199,7 @@ describe('ProviderStep', () => {
     })
     await renderStep({ variant: 'quick' })
     await clickButton(/Continue with Anthropic/)
-    const message = () =>
+    const message = (): string | undefined =>
       container.querySelector('.onboarding-quick-feedback [role="alert"]')?.textContent
     expect(message()).toContain('Installation interrupted')
     const input = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!

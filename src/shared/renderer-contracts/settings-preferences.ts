@@ -81,6 +81,9 @@ export const settingsListAppIconsContracts = {
 } as const
 
 export const settingsMarkOnboardingCompleteContracts = {
+  'settings.addOnboardingKiloProvider': callable<() => Promise<SettingsSnapshot>>()('settings', [
+    'settings:add-onboarding-kilo-provider'
+  ]),
   'settings.markOnboardingComplete': callable<() => Promise<SettingsSnapshot>>()('settings', [
     'settings:mark-onboarding-complete'
   ]),

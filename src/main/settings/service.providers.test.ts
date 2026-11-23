@@ -5,6 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 // Unit service tests do not start installed coding agents; the native probe has its own coverage.
+vi.mock('../acp/agent-process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../acp/agent-process')>()),
+  isClaudeAgentAcpAvailable: () => true,
+  resolveClaudeAgentAcpEntry: () => '/fixture/claude-acp'
+}))
+
 vi.mock('./provider-acp-validation', () => ({
   ProviderAcpValidator: class {
     validate = vi.fn(async () => ({
@@ -207,6 +213,15 @@ describe('SettingsService provider facade', () => {
     return async () => {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('does not suggest installing Codex in a fresh built-in profile', async () => {
+    const before = await repository.getSettings()
+    expect(await service.bootstrap({ action: 'status' }, () => {})).toEqual({
+      ok: true,
+      next: {}
+    })
+    expect(await repository.getSettings()).toEqual(before)
   })
 
   it('builds read-only bootstrap recovery for the selected active model', async () => {

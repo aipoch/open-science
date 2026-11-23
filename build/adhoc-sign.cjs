@@ -46,6 +46,35 @@ exports.default = async function adhocSign(context) {
     `darwin-${arch}`
   )
 
+  execFileSync('/usr/bin/xcrun', [
+    'clang',
+    '-Os',
+    '-fblocks',
+    '-arch',
+    arch === 'x64' ? 'x86_64' : arch,
+    '-mmacosx-version-min=12.0',
+    '-framework',
+    'Network',
+    path.join(__dirname, 'mac-update-network.c'),
+    '-o',
+    path.join(appPath, 'Contents/MacOS/mac-update-network')
+  ])
+
+  execFileSync('/usr/bin/xcrun', [
+    'clang',
+    '-Os',
+    '-fobjc-arc',
+    '-fblocks',
+    '-arch',
+    arch === 'x64' ? 'x86_64' : arch,
+    '-mmacosx-version-min=12.0',
+    '-framework',
+    'AppKit',
+    path.join(__dirname, 'mac-open-after-update.m'),
+    '-o',
+    path.join(appPath, 'Contents/MacOS/mac-open-after-update')
+  ])
+
   const entitlements = path.join(__dirname, 'entitlements.mac.plist')
 
   const macho = new Set(['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe', 'bebafeca'])

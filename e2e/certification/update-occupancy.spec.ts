@@ -16,6 +16,10 @@ import {
   type InstallationRuntime
 } from '../../src/main/update/installation-protection'
 
+// Recovery evidence includes a screenshot; hidden windows can stop producing compositor frames.
+// Keep the window presented across the harness restart as well as the initial launch.
+test.use({ windowMode: 'normal' })
+
 const enabled = process.env.OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT === '1'
 test.skip(!enabled, 'Enabled by packaged update certification.')
 

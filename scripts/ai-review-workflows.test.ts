@@ -96,8 +96,9 @@ function simpleOutputs(path: string): Record<string, string> {
 }
 
 type TargetOptions = {
+  expectedHeadSha?: string
   authMode?: 'api-key' | 'subscription'
-  event?: 'pull_request_target' | 'workflow_dispatch'
+  event?: 'workflow_run' | 'workflow_dispatch'
   enabled?: string
   isDraft?: boolean
   isFork?: boolean
@@ -126,7 +127,7 @@ set -euo pipefail
 printf '%s' "$PR_JSON"
 `
   )
-  const event = options.event ?? 'pull_request_target'
+  const event = options.event ?? 'workflow_run'
   const credentialPairs = options.credentialPairs ?? ['shared']
   const credentialKeys = options.credentialKeys ?? credentialPairs
   const credentialBaseUrls = options.credentialBaseUrls ?? credentialPairs
@@ -152,7 +153,8 @@ printf '%s' "$PR_JSON"
         }),
         GH_REPO: 'aipoch/open-science',
         DISPATCH_PR_NUMBER: event === 'workflow_dispatch' ? '392' : '',
-        EVENT_PR_NUMBER: event === 'pull_request_target' ? '392' : '',
+        EVENT_PR_NUMBER: event === 'workflow_run' ? '392' : '',
+        EXPECTED_HEAD_SHA: options.expectedHeadSha ?? '',
         FORK_REVIEW_MODE: options.forkMode ?? 'manual',
         CODEX_REVIEW_AUTH_MODE: options.authMode ?? 'subscription',
         CODEX_REVIEW_MODE: options.reviewMode ?? 'correctness',
@@ -181,7 +183,7 @@ type AuthOptions = {
   authJson?: string
   authMode?: 'api-key' | 'subscription'
   baseUrl?: string
-  event?: 'pull_request_target' | 'workflow_dispatch'
+  event?: 'workflow_run' | 'workflow_dispatch'
   installAvailable?: boolean
   isFork?: boolean
   openAiApiKey?: string
@@ -441,14 +443,43 @@ async function runPublisher({
 }
 
 describe('single Codex workflow contract', () => {
-  it('listens for ready transitions and subsequent commits', () => {
-    expect(
-      (load(mainText) as { on: { pull_request_target: { types: string[] } } }).on
-        .pull_request_target.types
-    ).toEqual(['opened', 'synchronize', 'reopened', 'ready_for_review', 'converted_to_draft'])
+  it('rejects a head changed after signal resolution before using reviewer credentials', () => {
+    const result = runTarget({ expectedHeadSha: 'stale-head' })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('Pull request changed after signal resolution')
   })
 
-  pit.each(['pull_request_target', 'workflow_dispatch'] as const)(
+  it('keeps manual previews out of model execution and label publication', () => {
+    expect(mainWorkflow.jobs.codex_review_gate.if).toContain('!inputs.dry_run')
+    expect(mainWorkflow.jobs.apply_review_outcome.if).toContain('!inputs.dry_run')
+    const trigger = load(
+      readFileSync('.github/workflows/ai-review-trigger.yml', 'utf8')
+    ) as Workflow
+    expect(trigger.jobs.review.needs).toBe('resolve')
+    expect(trigger.jobs.review.if).toContain("needs.resolve.outputs.action != 'edited'")
+    expect(trigger.jobs.review.with?.expected_head_sha).toBe(
+      '${{ needs.resolve.outputs.head_sha }}'
+    )
+  })
+
+  it('listens for ready transitions and subsequent commits', () => {
+    expect(
+      (
+        load(readFileSync('.github/workflows/pr-automation-signal.yml', 'utf8')) as {
+          on: { pull_request: { types: string[] } }
+        }
+      ).on.pull_request.types
+    ).toEqual([
+      'opened',
+      'edited',
+      'synchronize',
+      'reopened',
+      'ready_for_review',
+      'converted_to_draft'
+    ])
+  })
+
+  pit.each(['workflow_run', 'workflow_dispatch'] as const)(
     'skips draft reviews for %s and permits ready PRs',
     (event) => {
       for (const isDraft of [true, false]) {
@@ -638,14 +669,25 @@ describe('single Codex workflow contract', () => {
     })
   })
 
-  it('opts authorized fork reviews into checkout while keeping the review job read-only', () => {
-    const checkout = getStep(codexWorkflow, 'review', 'Checkout pull request review commit')
+  it('builds a trusted merge context from the resolved base and head', () => {
+    const checkout = getStep(codexWorkflow, 'review', 'Checkout trusted review base')
     expect(checkout.with).toMatchObject({
-      'allow-unsafe-pr-checkout':
-        "${{ inputs.is_fork && inputs.review_event == 'pull_request_target' }}",
+      ref: "${{ inputs.review_state == 'MERGED' && inputs.review_sha || inputs.base_sha }}",
       'persist-credentials': false
     })
+    expect(checkout.with).not.toHaveProperty('allow-unsafe-pr-checkout')
     expect(codexWorkflow.jobs.review.permissions).toEqual({ contents: 'read' })
+
+    const snapshot = getStep(codexWorkflow, 'review', 'Prepare review merge context')
+    expect(snapshot.id).toBe('review_snapshot')
+    expect(snapshot.run).toContain('refs/pull/${PR_NUMBER}/head')
+    expect(snapshot.run).toContain('fetched_head')
+    expect(snapshot.run).toContain('git merge-tree --write-tree "$PR_BASE_SHA" "$PR_HEAD_SHA"')
+    expect(snapshot.run).toContain(
+      'git commit-tree "$merge_tree" -p "$PR_BASE_SHA" -p "$PR_HEAD_SHA"'
+    )
+    expect(snapshot.run).toContain('git reset --hard "$merge_sha"')
+    expect(snapshot.run).toContain('Pull request head changed while preparing the merge context.')
   })
 
   pit('bootstraps managed subscription auth on a GitHub-hosted runner', () => {
@@ -759,7 +801,7 @@ describe('single Codex workflow contract', () => {
     const automatic = runAuth({
       authJson: seed,
       authMode: 'subscription',
-      event: 'pull_request_target'
+      event: 'workflow_run'
     })
     expect(automatic.status, automatic.stderr).toBe(0)
     expect(automatic.outputs.auth_mode).toBe('subscription')
@@ -812,7 +854,7 @@ describe('single Codex workflow contract', () => {
       stepNames.indexOf('Prepare Codex authentication')
     )
     expect(stepNames.indexOf('Prepare Codex authentication')).toBeLessThan(
-      stepNames.indexOf('Checkout pull request review commit')
+      stepNames.indexOf('Checkout trusted review base')
     )
   })
 
@@ -1091,11 +1133,11 @@ printf '%s\n' \\
   it('serializes duplicate runs of the single reviewer for each pull request', () => {
     expect(mainWorkflow.concurrency).toEqual({
       group:
-        'ai-pr-review-${{ github.event.inputs.pull_request_number || github.event.pull_request.number }}',
+        'ai-pr-review-${{ inputs.pull_request_number }}-${{ inputs.expected_head_sha || github.run_id }}',
       'cancel-in-progress': true
     })
     expect(codexWorkflow.jobs.review.concurrency).toEqual({
-      group: "${{ format('codex-review-{0}', inputs.pull_request_number) }}",
+      group: "${{ format('codex-review-{0}-{1}', inputs.pull_request_number, inputs.head_sha) }}",
       'cancel-in-progress': true
     })
     expect(mainWorkflow.jobs.codex_review.needs).toEqual(['review_target', 'codex_review_gate'])

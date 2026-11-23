@@ -32,12 +32,60 @@ const getFailureCode = (
   state: Extract<SourcePreviewLoadState, { phase: 'failed' }>
 ): string | undefined => {
   if (state.failure === 'http' && state.httpStatusCode !== undefined) {
-    return `HTTP ${state.httpStatusCode}${state.httpStatusText ? ` ${state.httpStatusText}` : ''}`
+    return `HTTP ${state.httpStatusCode}`
   }
-  if (state.errorDescription) {
+  if (state.errorDescription && /^ERR_[A-Z0-9_]{1,80}$/u.test(state.errorDescription)) {
     return `${state.errorDescription}${state.errorCode === undefined ? '' : ` (${state.errorCode})`}`
   }
   return state.errorCode === undefined ? undefined : String(state.errorCode)
+}
+
+const getFailureDescription = (
+  state: Extract<SourcePreviewLoadState, { phase: 'failed' }>,
+  t: ReturnType<typeof useTranslation>['t']
+): string => {
+  switch (state.failure) {
+    case 'navigation-blocked':
+      return t('The link leads to an address that cannot be opened in the sidebar.')
+    case 'process-gone':
+      return t('The page preview stopped unexpectedly. Try opening it again.')
+    case 'blocked':
+      return t('A security policy blocked this page in the sidebar.')
+    case 'certificate':
+      return t('A secure connection to this source could not be established.')
+    case 'http':
+      switch (state.httpStatusCode) {
+        case 401:
+          return t('Sign in to the site in your browser to view this page.')
+        case 403:
+          return t('The site denied access to this page.')
+        case 404:
+        case 410:
+          return t('This page was not found. Check the link.')
+        case 429:
+          return t('This source is limiting requests. Wait before retrying.')
+        default:
+          return state.httpStatusCode !== undefined &&
+            state.httpStatusCode >= 500 &&
+            state.httpStatusCode < 600
+            ? t('The site returned a server error. Try again later.')
+            : t('The source returned an HTTP error.')
+      }
+    case 'network':
+      switch (state.errorCode) {
+        case -7:
+        case -118:
+          return t('The connection timed out. Try again later.')
+        case -102:
+          return t('The site refused the connection.')
+        case -105:
+          return t('The site address could not be resolved. Check the link and your connection.')
+        case -106:
+          return t('You are offline. Reconnect and try again.')
+        default:
+          return t('The source could not be reached.')
+      }
+  }
 }
 
 const SourcePreviewSkeleton = (): React.JSX.Element => {
@@ -82,6 +130,7 @@ const SourceWebPreviewContent = ({
   const closeLabel = t('Close preview of {{title}}', { title: item.title })
   const [nativeView] = useState(() => Boolean(window.api?.getRuntimeVersions?.().electron))
   const webviewRef = useRef<WebviewTag | null>(null)
+  const [guestStartUrl, setGuestStartUrl] = useState(sourceUrl.href)
   const [frameAttempt, setFrameAttempt] = useState(0)
   const [progressRun, setProgressRun] = useState(0)
   const [loadState, setLoadState] = useState<SourcePreviewLoadState>({
@@ -143,31 +192,35 @@ const SourceWebPreviewContent = ({
   }, [progressRun])
 
   const handleFrameLoad = (): void => {
-    // Browser-only development has no guest navigation events.
+    // Cross-origin iframe load events do not expose the HTTP response.
     setLoadState({
       navigationId: 0,
       sourceUrl: sourceUrl.href,
       currentUrl: sourceUrl.href,
-      phase: 'loaded',
-      httpStatusCode: 200,
-      httpStatusText: 'OK'
+      phase: 'loaded'
     })
     finishProgress()
-  }
-
-  const retry = (): void => {
-    setLoadState((current) => ({ ...current, phase: 'loading' }))
-    setProgress(INITIAL_PROGRESS)
-    setIsProgressVisible(true)
-    setProgressRun((current) => current + 1)
-    if (nativeView) webviewRef.current?.reload()
-    else setFrameAttempt((current) => current + 1)
   }
 
   const displayedUrl =
     'currentUrl' in loadState
       ? (parseHttpsSourceUrl(loadState.currentUrl)?.href ?? sourceUrl.href)
       : sourceUrl.href
+
+  const retry = (): void => {
+    setLoadState((current) => ({ ...current, phase: 'loading' }))
+    setProgress(INITIAL_PROGRESS)
+    setIsProgressVisible(true)
+    setProgressRun((current) => current + 1)
+    if (nativeView && !(loadState.phase === 'failed' && loadState.failure === 'process-gone'))
+      webviewRef.current?.reload()
+    else {
+      if (nativeView) setGuestStartUrl(displayedUrl)
+      webviewRef.current = null
+      setFrameAttempt((current) => current + 1)
+    }
+  }
+
   const restoreSourceFocus = useCallback(
     (restoreDefault: () => void): void => {
       if (!nativeView) {
@@ -184,16 +237,6 @@ const SourceWebPreviewContent = ({
     },
     [nativeView]
   )
-  const failureDescription =
-    loadState.phase !== 'failed'
-      ? undefined
-      : loadState.failure === 'blocked'
-        ? t('This source does not allow embedded previews.')
-        : loadState.failure === 'certificate'
-          ? t('A secure connection to this source could not be established.')
-          : loadState.failure === 'http'
-            ? t('The source returned an HTTP error.')
-            : t('The source could not be reached.')
 
   return (
     <ActionMenuTarget
@@ -292,7 +335,8 @@ const SourceWebPreviewContent = ({
           {nativeView ? (
             <PreviewActionMenuAdapterProvider targetId={`source-content:${item.id}`}>
               <SourceWebview
-                sourceUrl={sourceUrl.href}
+                key={frameAttempt}
+                sourceUrl={guestStartUrl}
                 title={t('Source preview: {{title}}', { title: item.title })}
                 webviewRef={webviewRef}
                 onState={handleState}
@@ -332,7 +376,7 @@ const SourceWebPreviewContent = ({
                   role="alert"
                   diagnosticsLabel={t('Diagnostics')}
                   title={t('Could not load this source')}
-                  description={failureDescription}
+                  description={getFailureDescription(loadState, t)}
                   errorCode={getFailureCode(loadState)}
                   secondaryButton={{
                     label: t('Open source in browser'),

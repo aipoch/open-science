@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Eye, EyeOff, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { Input } from '@/components/ui/input'
@@ -25,6 +25,8 @@ import {
   isQwenWorkspaceBaseUrl,
   type ImageVendorId,
   type ImageAdapterKind,
+  type ImageModelCatalogRequest,
+  type ImageModelCatalogResult,
   type ImageModelPresetId,
   type ImageModelSettingsSnapshot,
   type ImageServiceConfiguration,
@@ -43,6 +45,7 @@ import {
 import { useImageModelSettings } from './use-image-model-settings'
 import { ImageServiceTest } from './ImageServiceTest'
 import { ProviderKindIcon } from './provider-icons'
+import { modelCatalogErrorMessage } from './model-catalog-feedback'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 
@@ -355,7 +358,7 @@ const ImageServiceEditor = ({
   onCancel: () => void
   onRemove?: () => Promise<void>
 }): React.JSX.Element => {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [id] = useState(() => service?.id ?? crypto.randomUUID())
   const [name, setName] = useState(service?.name ?? '')
   const [vendorId, setVendorId] = useState<ImageVendorId | 'custom'>(
@@ -385,6 +388,11 @@ const ImageServiceEditor = ({
     ]
   )
   const [apiKey, setApiKey] = useState('')
+  const [catalog, setCatalog] = useState<Extract<ImageModelCatalogResult, { ok: true }>>()
+  const [catalogError, setCatalogError] =
+    useState<Extract<ImageModelCatalogResult, { ok: false }>['code']>()
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshInFlight = useRef(false)
   const [keyVisible, setKeyVisible] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const provider = snapshot.availableProviders.find((provider) => provider.id === providerId)
@@ -403,35 +411,125 @@ const ImageServiceEditor = ({
   const keyRequired = !providerId && customProviderRequiresKey(selectedBaseUrl) && !reuseKey
   const endpointError = selectedBaseUrl ? getCustomProviderBaseUrlError(selectedBaseUrl) : undefined
   const invalidWorkspace = !!workspace && !isQwenWorkspaceBaseUrl(workspace)
-  const invalid =
+  const invalidConnection =
     invalidWorkspace ||
     (providerId
       ? !provider
-      : !selectedBaseUrl ||
-        Boolean(endpointError) ||
-        (keyRequired && !apiKey.trim()) ||
-        (!vendor && models.some((model) => !/^[a-zA-Z0-9._:/-]+$/.test(model.wireModelId.trim()))))
-  const draft: ImageServiceConfiguration = {
+      : !selectedBaseUrl || Boolean(endpointError) || (keyRequired && !apiKey.trim()))
+  const invalid =
+    invalidConnection ||
+    (!vendor && models.some((model) => !/^[a-zA-Z0-9._:/-]+$/.test(model.wireModelId.trim())))
+  const target: ImageModelCatalogRequest = {
     id,
-    name: name.trim() || vendor?.label || t('Custom HTTP service'),
     adapter: selectedAdapter,
     ...(vendor ? { vendorId: vendor.id } : {}),
     ...(providerId ? { providerId } : {}),
     ...(!providerId || workspace ? { baseUrl: selectedBaseUrl } : {}),
-    models: vendor?.models ?? models
+    ...(!providerId ? { apiKey } : {})
   }
+  const savedVendorId =
+    service?.vendorId ??
+    snapshot.availableProviders.find((entry) => entry.id === service?.providerId)?.vendorId
+  const savedModels =
+    service &&
+    savedVendorId === target.vendorId &&
+    service.providerId === target.providerId &&
+    service.baseUrl === target.baseUrl &&
+    service.adapter === target.adapter
+      ? service.models
+      : undefined
+  const activeId =
+    savedModels && snapshot.imageModel?.serviceId === id ? snapshot.imageModel.modelId : undefined
+  const officialModels =
+    vendor &&
+    (catalog
+      ? vendor.models
+          .map((model) => {
+            const matches = savedModels?.filter((saved) => saved.wireModelId === model.wireModelId)
+            return matches?.find((saved) => saved.id === activeId) ?? matches?.[0] ?? model
+          })
+          .filter((model) => catalog.modelIds.includes(model.wireModelId) || model.id === activeId)
+      : (savedModels ?? vendor.models))
+  const { apiKey: draftKey, ...serviceTarget } = target
+  const draft: ImageServiceConfiguration = {
+    ...serviceTarget,
+    name: name.trim() || vendor?.label || t('Custom HTTP service'),
+    models: officialModels ?? models
+  }
+  const testModel = catalog
+    ? draft.models.find((model) => catalog.modelIds.includes(model.wireModelId))
+    : undefined
   const updateModel = (index: number, patch: Partial<ImageServiceModel>): void =>
     setModels((models) => models.map((model, i) => (i === index ? { ...model, ...patch } : model)))
+  const resetCatalog = (): void => {
+    setCatalog(undefined)
+    setCatalogError(undefined)
+  }
+  const refreshCatalog = async (): Promise<void> => {
+    if (!vendor?.supportsCatalogRefresh || refreshInFlight.current || invalidConnection || busy)
+      return
+    refreshInFlight.current = true
+    setRefreshing(true)
+    setCatalogError(undefined)
+    try {
+      const result = await window.api.settings.refreshImageModelCatalog(target)
+      if (result.ok) setCatalog(result)
+      else setCatalogError(result.code)
+    } catch {
+      setCatalogError('network')
+    } finally {
+      refreshInFlight.current = false
+      setRefreshing(false)
+    }
+  }
+  const refreshButton = vendor?.supportsCatalogRefresh && (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={busy || refreshing || Boolean(invalidConnection)}
+      onClick={() => void refreshCatalog()}
+    >
+      <RefreshCw aria-hidden="true" className={refreshing ? 'animate-spin' : undefined} />
+      {refreshing ? t('Refreshing…') : t('Refresh model list')}
+    </Button>
+  )
+  const catalogNotice = (
+    <>
+      {catalog && (
+        <p role="status" className="text-xs text-muted-foreground">
+          {t('Last updated: {{time}}', {
+            time: new Date(catalog.fetchedAt).toLocaleString(i18n.language)
+          })}
+        </p>
+      )}
+      {catalogError && (
+        <ErrorNotice
+          inline
+          role="alert"
+          title={t('Model refresh failed. The previous list is kept.')}
+          description={
+            qwen && catalogError === 'missing-parameter'
+              ? t('Enter a Bailian workspace URL.')
+              : modelCatalogErrorMessage(catalogError, t)
+          }
+        />
+      )}
+    </>
+  )
   return (
     <form
       className="flex min-h-0 flex-1 flex-col"
       onSubmit={(event) => {
         event.preventDefault()
-        if (busy || invalid) return
-        void onSave(draft, providerId ? undefined : apiKey)
+        if (busy || invalid || refreshInFlight.current) return
+        void onSave(draft, draftKey)
       }}
     >
-      <fieldset disabled={busy} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+      <fieldset
+        disabled={busy || refreshing}
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5"
+      >
         <div className="space-y-1.5">
           <Label className={fieldLabelClassName} htmlFor="image-service-account">
             {t('Provider type')}
@@ -440,6 +538,7 @@ const ImageServiceEditor = ({
             value={vendorId}
             disabled={busy}
             onValueChange={(value: ImageVendorId | 'custom') => {
+              resetCatalog()
               setVendorId(value)
               const next = IMAGE_VENDOR_CATALOG.find((entry) => entry.id === value)
               setProviderId(
@@ -500,6 +599,7 @@ const ImageServiceEditor = ({
               value={providerId ?? 'separate'}
               disabled={busy}
               onValueChange={(value) => {
+                resetCatalog()
                 setProviderId(value === 'separate' ? undefined : value)
                 setApiKey('')
                 setKeyVisible(false)
@@ -528,6 +628,7 @@ const ImageServiceEditor = ({
               value={officialBaseUrl}
               disabled={busy}
               onValueChange={(value) => {
+                resetCatalog()
                 setOfficialBaseUrl(value)
                 setApiKey('')
                 setKeyVisible(false)
@@ -561,6 +662,7 @@ const ImageServiceEditor = ({
               }
               maxLength={2048}
               onChange={(event) => {
+                resetCatalog()
                 if (qwen) setWorkspaceUrl(event.target.value)
                 else setBaseUrl(event.target.value)
                 setApiKey('')
@@ -604,7 +706,10 @@ const ImageServiceEditor = ({
                     : t('Leave blank for a local server')
               }
               required={keyRequired}
-              onChange={(event) => setApiKey(event.target.value)}
+              onChange={(event) => {
+                resetCatalog()
+                setApiKey(event.target.value)
+              }}
             />
             {!providerId && (
               <button
@@ -623,17 +728,29 @@ const ImageServiceEditor = ({
             )}
           </div>
         </div>
-        {vendor ? (
+        {officialModels ? (
           <div className="space-y-1.5">
-            <span className={fieldLabelClassName}>{t('Supported models')}</span>
+            <div className="flex items-center justify-between gap-2">
+              <span className={fieldLabelClassName}>{t('Supported models')}</span>
+              {refreshButton}
+            </div>
+            {catalogNotice}
+            {catalog && (
+              <p className="text-xs text-muted-foreground">
+                {t('Save to apply the refreshed model list.')}
+              </p>
+            )}
             <div className="flex flex-wrap gap-1.5">
-              {vendor.models.map((model) => (
+              {officialModels.map((model) => (
                 <span
                   key={model.id}
                   title={model.wireModelId}
                   className="max-w-full truncate rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
                 >
                   {model.label ?? model.wireModelId}
+                  {catalog && !catalog.modelIds.includes(model.wireModelId) && (
+                    <> · {t('Current default omitted from the catalog')}</>
+                  )}
                 </span>
               ))}
             </div>
@@ -753,8 +870,13 @@ const ImageServiceEditor = ({
         )}
       </fieldset>
       <ImageServiceTest
-        request={{ kind: 'save', ...draft, ...(!providerId ? { apiKey } : {}) }}
-        disabled={busy || Boolean(invalid)}
+        request={{
+          kind: 'save',
+          ...draft,
+          models: testModel ? [testModel] : draft.models,
+          apiKey: draftKey
+        }}
+        disabled={busy || refreshing || Boolean(invalid) || (!!catalog && !testModel)}
       />
       <SettingsFormFooter>
         <div className="flex items-center gap-2">
@@ -763,7 +885,7 @@ const ImageServiceEditor = ({
               <Button
                 type="button"
                 variant="destructive"
-                disabled={busy}
+                disabled={busy || refreshing}
                 onClick={() => void onRemove()}
               >
                 {t('Confirm removal')}
@@ -772,7 +894,7 @@ const ImageServiceEditor = ({
               <Button
                 type="button"
                 variant="ghost"
-                disabled={busy}
+                disabled={busy || refreshing}
                 onClick={() => setConfirmRemove(true)}
               >
                 {t('Remove service')}
@@ -787,7 +909,7 @@ const ImageServiceEditor = ({
           >
             {t('Cancel')}
           </Button>
-          <Button type="submit" disabled={busy || Boolean(invalid)}>
+          <Button type="submit" disabled={busy || refreshing || Boolean(invalid)}>
             {busy ? t('Saving…') : t('Save')}
           </Button>
         </div>

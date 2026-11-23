@@ -1884,7 +1884,9 @@ it('quotes a completed card from the displayed branch only on explicit Ask', () 
   const card = container.querySelector<HTMLElement>('[data-replay-step="b2"]')!
   fireEvent.wheel(card, { deltaY: -100 })
   expect(props.onAskStep).not.toHaveBeenCalled()
-  fireEvent.click(within(card).getByRole('button', { name: 'Ask' }))
+  const ask = within(card).getByRole('button', { name: 'Ask' })
+  expect(ask.textContent).toBe('')
+  fireEvent.click(ask)
   expect(props.onAskStep).toHaveBeenCalledWith(
     expect.objectContaining({
       stepNumber: 3,
@@ -1895,4 +1897,32 @@ it('quotes a completed card from the displayed branch only on explicit Ask', () 
     })
   )
   expect(screen.getByTestId('replay-current-step').textContent).toContain('11')
+})
+
+it('quotes only the selected Notebook run through its icon action', async () => {
+  const doc = makeDocument()
+  doc.branches[0].steps[2].evidence.push({
+    kind: 'notebook-run',
+    id: 'run1',
+    projectId: 'p',
+    sessionId: 's',
+    branchId: 'main'
+  })
+  const props = callbacks()
+  const { container } = render(<ReplayPanel document={doc} {...props} />)
+  seekProgress(2900)
+  openMaterials()
+  const card = container.querySelector<HTMLElement>('[data-replay-run-item="run1"]')!
+  const ask = await within(card).findByRole('button', { name: 'Ask' })
+  expect(ask.textContent).toBe('')
+  fireEvent.click(ask)
+  expect(props.onAskStep).toHaveBeenCalledWith(
+    expect.objectContaining({
+      stepId: 'three',
+      branchId: 'main',
+      stepOffsetMs: 900,
+      evidence: [expect.objectContaining({ kind: 'notebook-run', id: 'run1' })],
+      records: [expect.objectContaining({ id: 'notebook-run:run1', text: 'print(42)\n42' })]
+    })
+  )
 })

@@ -16,14 +16,20 @@ import type { AgentFrameworkId } from '../../shared/settings'
 import type { AgentFramework } from '../agent-framework'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { canonicalAppMcpServerName } from '../agent-framework/app-mcp-names'
+import { HARNESS_EPHEMERAL_SESSION } from '../harness-acp/config'
 import { trustedMcpToolIdentity } from './permission-policy'
 import type { PiPermissionContext, PiPermissionState } from './pi-permission-correlation'
 import { extractProviderToolName } from './runtime-events'
-import { REVIEWER_MCP_PROXY_ARG } from '../mcp-server-args'
+import {
+  createReviewerMcpSocketConfig,
+  readReviewerMcpStdioProxyConfig,
+  type ReviewerMcpSocket
+} from '../agent-framework/reviewer-mcp-transport'
 
 const log = createLogger('acp')
 
 const REVIEWER_SESSION_ROLE = 'reviewer' as const
+const REVIEWER_SESSION_CLOSE_TIMEOUT_MS = 5_000
 
 const REVIEWER_MCP_OPENCODE_TOOL_NAMES = new Set(
   Object.values(REVIEWER_MCP_TOOLS).map((toolName) => `${REVIEWER_MCP_SERVER_NAME}_${toolName}`)
@@ -89,6 +95,7 @@ export type ReviewerSessionDisposition = {
   rejectedToolCalls: number
   // Undefined for frameworks/providers that do not traverse the Responses bridge.
   reviewerBridgeScoped: boolean | undefined
+  providerClosed?: Promise<void>
 }
 
 export type ReviewerSessionSnapshot = {
@@ -114,6 +121,7 @@ type ReviewerSessionIdentityReservationResult =
   | { reservation?: never; collision: Error }
 
 type ActiveReviewerSessionOwner = ReviewerSessionContext & {
+  closeProvider?: () => Promise<void>
   cwd: string
   session: ActiveSession
   sessionId: string
@@ -127,6 +135,7 @@ export type ReviewerSessionOwnerDependencies = {
   currentSessionSetup: () => {
     framework: AgentFramework
     sessionOptions: Record<string, unknown> | undefined
+    supportsSessionClose: boolean
   }
   currentStartupGeneration: () => number
   isPrimarySessionIdClaimed: (sessionId: string) => boolean
@@ -155,10 +164,19 @@ export class ReviewerSessionOwner {
     request: ReviewerSessionRequest,
     capability: ReviewerSessionCreateCapability
   ): Promise<ReviewerSessionResult> {
-    const mcpServerNames = this.validateRequest(request)
+    const { server, socket } = this.validateRequest(request)
+    const mcpServerNames = [REVIEWER_MCP_SERVER_NAME]
     const connection = await capability.ensureConnected(request.cwd)
     this.dependencies.assertCurrentConnection(connection)
-    const { framework, sessionOptions } = this.dependencies.currentSessionSetup()
+    const { framework, sessionOptions, supportsSessionClose } =
+      this.dependencies.currentSessionSetup()
+    let mcpServer = server
+    if (socket && !framework.acceptsStdioMcp) {
+      if (!framework.acceptsReviewerMcpSocket) {
+        throw new Error('The selected Reviewer backend does not support the MCP socket transport.')
+      }
+      mcpServer = createReviewerMcpSocketConfig(socket)
+    }
     const startupGeneration = this.dependencies.currentStartupGeneration()
     const reviewerCwd = await mkdtemp(join(tmpdir(), 'open-science-reviewer-'))
     const setup = framework.buildSessionSetup({
@@ -167,6 +185,7 @@ export class ReviewerSessionOwner {
     })
     const reviewerMeta: Record<string, unknown> = {
       ...(setup.meta ?? {}),
+      ...(framework.id === 'open-science-agent' ? { [HARNESS_EPHEMERAL_SESSION]: true } : {}),
       // claude-agent-acp honors this legacy switch. Codex is independently restricted by the
       // Responses bridge and the strict permission decision below.
       disableBuiltInTools: true
@@ -190,7 +209,7 @@ export class ReviewerSessionOwner {
       const session = await connection.agent
         .buildSession({
           cwd: reviewerCwd,
-          mcpServers: request.mcpServers,
+          mcpServers: [mcpServer],
           _meta: reviewerMeta
         })
         .start()
@@ -200,6 +219,9 @@ export class ReviewerSessionOwner {
         throw reservationResult.collision
       }
       const reservation = reservationResult.reservation
+      const closeProvider = supportsSessionClose
+        ? () => this.closeProviderSession(connection, session.sessionId)
+        : undefined
       let identityActivated = false
 
       try {
@@ -212,7 +234,13 @@ export class ReviewerSessionOwner {
         }
 
         await capability.configureModel?.(connection, session)
-        this.activateIdentity(reservation, session, reviewerCwd, framework.id, mcpServerNames)
+        this.activateIdentity(reservation, {
+          session,
+          cwd: reviewerCwd,
+          frameworkId: framework.id,
+          mcpServerNames,
+          closeProvider
+        })
         identityActivated = true
         this.dependencies.registerBridgeSession(session.sessionId)
 
@@ -224,9 +252,11 @@ export class ReviewerSessionOwner {
         }
       } catch (error) {
         let startupError = error
+        let ownsProviderSession = identityActivated
         if (!identityActivated) {
           try {
             this.assertIdentityReservation(reservation)
+            ownsProviderSession = true
           } catch (supersededError) {
             startupError = supersededError
           }
@@ -247,6 +277,7 @@ export class ReviewerSessionOwner {
           }
         }
         this.disposeSessionAfterFailure(session, 'reviewer startup session disposal failed')
+        if (ownsProviderSession) await closeProvider?.()
         throw startupError
       }
     } catch (error) {
@@ -434,6 +465,7 @@ export class ReviewerSessionOwner {
       disposeFailure = error
     }
 
+    const providerClosed = ownsActiveIdentity ? owner?.closeProvider?.() : undefined
     if (owner) this.removeDirectory(owner.cwd)
     if (ownsActiveIdentity) {
       runCleanup('reconnect-retirement', () => this.dependencies.onActiveSessionReleased())
@@ -441,7 +473,11 @@ export class ReviewerSessionOwner {
 
     if (disposeFailed) throw disposeFailure
     if (cleanupFailures.length > 0) throw cleanupFailures[0]
-    return { rejectedToolCalls, reviewerBridgeScoped }
+    return {
+      rejectedToolCalls,
+      reviewerBridgeScoped,
+      ...(providerClosed ? { providerClosed } : {})
+    }
   }
 
   invalidatePending(): void {
@@ -475,44 +511,27 @@ export class ReviewerSessionOwner {
     this.rejectedToolCalls.clear()
   }
 
-  private validateRequest(request: ReviewerSessionRequest): string[] {
-    const mcpServerNames = request.mcpServers
-      .map((server) => (server as { name?: unknown }).name)
-      .filter((name): name is string => typeof name === 'string')
-      .map(canonicalAppMcpServerName)
-    const reviewerMcp = request.mcpServers[0]
-    const reviewerMcpHttp =
-      reviewerMcp && 'type' in reviewerMcp && reviewerMcp.type === 'http' ? reviewerMcp : undefined
-    const reviewerMcpStdio = reviewerMcp && !('type' in reviewerMcp) ? reviewerMcp : undefined
-    let reviewerMcpUrl: URL | undefined
-    try {
-      reviewerMcpUrl = reviewerMcpHttp ? new URL(reviewerMcpHttp.url) : undefined
-    } catch {
-      reviewerMcpUrl = undefined
-    }
+  private validateRequest(request: ReviewerSessionRequest): {
+    server: McpServer
+    socket?: ReviewerMcpSocket
+  } {
+    const [server] = request.mcpServers
     if (
-      request.mcpServers.length !== 1 ||
-      mcpServerNames.length !== 1 ||
-      mcpServerNames[0] !== REVIEWER_MCP_SERVER_NAME ||
-      !(
-        (reviewerMcpHttp &&
-          reviewerMcpUrl?.protocol === 'http:' &&
-          reviewerMcpUrl.hostname === '127.0.0.1') ||
-        (reviewerMcpStdio &&
-          reviewerMcpStdio.args?.at(-1) === REVIEWER_MCP_PROXY_ARG &&
-          reviewerMcpStdio.env?.some(
-            (entry) => entry.name === 'OPEN_SCIENCE_REVIEWER_MCP_SOCKET_PATH' && entry.value
-          ) &&
-          reviewerMcpStdio.env.some(
-            (entry) => entry.name === 'OPEN_SCIENCE_REVIEWER_MCP_TOKEN' && entry.value
-          ))
-      )
+      request.mcpServers.length === 1 &&
+      typeof server?.name === 'string' &&
+      canonicalAppMcpServerName(server.name) === REVIEWER_MCP_SERVER_NAME
     ) {
-      throw new Error(
-        `Reviewer sessions require exactly one app-owned ${REVIEWER_MCP_SERVER_NAME} MCP server.`
-      )
+      if (!('type' in server)) {
+        const socket = readReviewerMcpStdioProxyConfig(server)
+        if (socket) return { server, socket }
+      } else if (server.type === 'http') {
+        const url = URL.parse(server.url)
+        if (url?.protocol === 'http:' && url.hostname === '127.0.0.1') return { server }
+      }
     }
-    return mcpServerNames
+    throw new Error(
+      `Reviewer sessions require exactly one app-owned ${REVIEWER_MCP_SERVER_NAME} MCP server.`
+    )
   }
 
   private reserveIdentity(
@@ -541,25 +560,22 @@ export class ReviewerSessionOwner {
 
   private activateIdentity(
     reservation: ReviewerSessionIdentityReservation,
-    session: ActiveSession,
-    cwd: string,
-    frameworkId: AgentFrameworkId,
-    mcpServerNames: readonly string[]
+    ownership: Pick<
+      ActiveReviewerSessionOwner,
+      'session' | 'cwd' | 'frameworkId' | 'mcpServerNames' | 'closeProvider'
+    >
   ): void {
     this.assertIdentityReservation(reservation)
     this.pendingIds.delete(reservation.sessionId)
     this.dependencies.removeStartupBlocker(reservation.token)
     const owner = {
-      cwd,
-      frameworkId,
-      mcpServerNames,
+      ...ownership,
       role: REVIEWER_SESSION_ROLE,
-      session,
       sessionId: reservation.sessionId,
       token: reservation.token
     } satisfies ActiveReviewerSessionOwner
     this.activeById.set(reservation.sessionId, owner)
-    this.activeBySession.set(session, owner)
+    this.activeBySession.set(ownership.session, owner)
     this.rejectedToolCalls.delete(reservation.sessionId)
   }
 
@@ -592,6 +608,26 @@ export class ReviewerSessionOwner {
       safeLogError(logMessage, {
         ...diagnosticErrorFields(cleanupError),
         sessionId: session.sessionId
+      })
+    }
+  }
+
+  private async closeProviderSession(
+    connection: ClientConnection,
+    sessionId: string
+  ): Promise<void> {
+    try {
+      await connection.agent.request(
+        acp.methods.agent.session.close,
+        { sessionId },
+        {
+          cancellationSignal: AbortSignal.timeout(REVIEWER_SESSION_CLOSE_TIMEOUT_MS)
+        }
+      )
+    } catch (error) {
+      safeLogWarn('reviewer provider session close failed', {
+        sessionId,
+        error: errorMessage(error)
       })
     }
   }

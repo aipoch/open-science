@@ -197,6 +197,8 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           expect
             .soft(failure?.diagnostics.code, `${protocol}/${item.id}: normalized error code`)
             .toBe(standardCodes[item.reason])
+          if (item.expectedExcerpt)
+            expect.soft(failure?.diagnostics.providerExcerpt).toBe(item.expectedExcerpt)
           const serialized = JSON.stringify(outcome)
           expect
             .soft(serialized)
@@ -246,7 +248,9 @@ for (const protocol of ['chat-completions', 'responses', 'messages'] as const) {
           await page.screenshot({ path: join(directory, screenshot), fullPage: true })
           await notice.locator('summary').click()
           await expect(notice.locator('pre')).toBeVisible()
-          await expect(notice.locator('pre')).toContainText(phase)
+          await expect(notice.locator('summary')).toContainText(model)
+          if (item.expectedExcerpt)
+            await expect(notice.locator('pre')).toContainText(item.expectedExcerpt)
           await expect(notice.locator('pre')).not.toContainText('private account')
           if (item.message) await expect(notice.locator('pre')).not.toContainText(item.message)
           if (item.wire === 'interrupt')

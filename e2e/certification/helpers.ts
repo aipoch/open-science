@@ -68,7 +68,8 @@ const openProjectSession = async (
 ): Promise<void> => {
   const project = page
     .getByRole('region', { name: 'Projects' })
-    .getByRole('button', { name: projectName, exact: true })
+    .getByRole('button')
+    .filter({ has: page.getByText(projectName, { exact: true }) })
   await expect(project).toBeVisible({ timeout: 60_000 })
   await project.click()
   const promptPrefix = prompt.slice(0, 36)

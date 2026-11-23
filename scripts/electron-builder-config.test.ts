@@ -12,7 +12,8 @@ import { describe, expect, it } from 'vitest'
 import {
   assertElectronHostDependencies,
   backendOnlyElectronDependencies,
-  electronHostDependencyGuard
+  electronHostDependencyGuard,
+  platformBackendOnlyElectronDependencies
 } from './electron-host-dependencies.mjs'
 
 import {
@@ -84,6 +85,14 @@ describe('electron-builder local evidence exclusion', () => {
     try {
       for (const name of backendOnlyElectronDependencies)
         expect(() => assertElectronHostDependencies([`${name}/subpath`], root)).toThrow(name)
+      const audited = platformBackendOnlyElectronDependencies('darwin', 'arm64')
+      expect(audited).toContain('diff')
+      for (const name of audited) {
+        expect(() => assertElectronHostDependencies([name], root, 'darwin')).toThrow(name)
+        expect(() => assertElectronHostDependencies([name], root, 'win32', 'x64')).toThrow(name)
+      }
+      expect(() => assertElectronHostDependencies(['diff'], root, 'win32', 'arm64')).not.toThrow()
+      expect(() => assertElectronHostDependencies(['diff'], root, 'linux')).not.toThrow()
       await put('@fixture/desktop', {
         dependencies: { bridge: '1' },
         devDependencies: { 'styled-exceljs': '1' }
@@ -98,6 +107,10 @@ describe('electron-builder local evidence exclusion', () => {
           root
         )
       ).not.toThrow()
+      await put('bridge', { dependencies: { diff: '1' } })
+      expect(() =>
+        assertElectronHostDependencies(['@fixture/desktop'], root, 'win32', 'x64')
+      ).toThrow('@fixture/desktop -> bridge -> diff')
       for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
         await put('bridge', { [field]: { 'styled-exceljs': '1' } })
         expect(() => assertElectronHostDependencies(['@fixture/desktop'], root)).toThrow(
@@ -501,6 +514,7 @@ describe('electron-builder native image processing', () => {
       to: 'notebook-network-sandbox/wsl2/manifest.json'
     })
     expect(config.mac?.extraResources).toEqual([
+      { from: 'build/mac-quit-handoff.cjs', to: 'mac-quit-handoff.cjs' },
       { from: 'out/desktop-service-launcher', to: 'backend/desktop-service-launcher' }
     ])
     expect(config.linux?.extraResources).toEqual([

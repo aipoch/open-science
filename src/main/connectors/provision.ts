@@ -53,9 +53,16 @@ export async function syncConnectorSkillDocs(
   for (const id of enabled) {
     signal?.throwIfAborted()
     const dir = join(skillsDir, `mcp-${id}`)
+    const path = join(dir, 'SKILL.md')
+    const document = Buffer.from(renderSkillDoc(id))
+    const existing = await lstat(path).catch(() => undefined)
+    if (existing?.isFile() && existing.size === document.length) {
+      const contents = await readFile(path).catch(() => undefined)
+      if (contents?.equals(document)) continue
+    }
     await mkdir(dir, { recursive: true })
     signal?.throwIfAborted()
-    await writeFile(join(dir, 'SKILL.md'), renderSkillDoc(id), 'utf8')
+    await writeFile(path, document)
   }
   signal?.throwIfAborted()
   const existing = await readdir(skillsDir).catch(() => [] as string[])

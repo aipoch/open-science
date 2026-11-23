@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../src/shared/agent-framework-id'
 import { toAcpRuntimeEvent } from '../../src/main/acp/runtime-events'
 import { AcpRuntimeSnapshotOwner } from '../../src/main/acp/runtime-snapshot-owner'
 import type { AcpRuntimeEvent } from '../../src/shared/acp'
@@ -142,7 +143,7 @@ export const createOfficialScienceContinuation = (
         )
         const runtimeGraph = ensureConversationRuntimeSegment(graph, {
           id: SEGMENT_ID,
-          frameworkId: session.agentFrameworkId ?? 'claude-code',
+          frameworkId: session.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
           providerId: session.agentConfiguration?.providerId,
           backendId: session.agentBackendId,
           model: session.agentModel,

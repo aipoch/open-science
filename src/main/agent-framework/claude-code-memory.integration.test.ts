@@ -11,10 +11,28 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
-import { query, type Options } from '@anthropic-ai/claude-agent-sdk'
+import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { claudeCodeFramework } from './claude-code'
+import { externalAcpAvailable, resolveExternalAcpModule } from '../../../test/acp-agent-runtime'
+
+type ClaudeSdkOptions = {
+  cwd?: string
+  env?: Record<string, string>
+  maxTurns?: number
+  model?: string
+  settings?: unknown
+  settingSources?: unknown
+  systemPrompt?: unknown
+  tools?: unknown
+}
+
+type ClaudeSdkSession = AsyncIterable<{ type?: string }> & { close: () => void }
+
+type ClaudeSdk = {
+  query: (input: { prompt: string; options: ClaudeSdkOptions }) => ClaudeSdkSession
+}
 
 const temporaryRoots: string[] = []
 const inheritedProcessEnvironmentKeys = [
@@ -93,9 +111,7 @@ const runMemoryProbe = async (memoryFlag: '0' | '1'): Promise<MemoryProbeResult>
     const apiKey = 'synthetic-memory-probe-key'
     const baseUrl = `http://127.0.0.1:${address.port}`
     const setup = claudeCodeFramework.buildSessionSetup({ systemPromptAppends: [] })
-    const frameworkOptions = (
-      setup.meta?.claudeCode as { options: Pick<Options, 'env' | 'settings' | 'settingSources'> }
-    ).options
+    const frameworkOptions = (setup.meta?.claudeCode as { options: ClaudeSdkOptions }).options
     const env: Record<string, string> = {}
     for (const key of inheritedProcessEnvironmentKeys) {
       const value = process.env[key]
@@ -118,7 +134,7 @@ const runMemoryProbe = async (memoryFlag: '0' | '1'): Promise<MemoryProbeResult>
       XDG_CONFIG_HOME: join(root, 'xdg-config')
     })
     const settings = {
-      ...(frameworkOptions.settings as Exclude<Options['settings'], string | undefined>),
+      ...(frameworkOptions.settings as Record<string, unknown>),
       env: {
         ...((frameworkOptions.settings as { env?: Record<string, string> }).env ?? {}),
         ANTHROPIC_API_KEY: apiKey,
@@ -127,6 +143,9 @@ const runMemoryProbe = async (memoryFlag: '0' | '1'): Promise<MemoryProbeResult>
       }
     }
 
+    const { query } = (await import(
+      pathToFileURL(resolveExternalAcpModule('claude', '@anthropic-ai/claude-agent-sdk')).href
+    )) as ClaudeSdk
     const session = query({
       prompt: 'Reply with OK.',
       options: {
@@ -169,7 +188,7 @@ afterEach(async () => {
   )
 })
 
-describe('Claude Code ACP memory isolation', () => {
+describe.runIf(externalAcpAvailable('claude'))('Claude Code ACP memory isolation', () => {
   it('keeps seeded auto memory out of model requests only when the ACP session flag is active', async () => {
     const enabled = await runMemoryProbe('0')
     const disabled = await runMemoryProbe('1')

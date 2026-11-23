@@ -151,9 +151,11 @@ export class AcpProviderSessionResumer {
     const connection = this.deps.currentConnection()
     const backend = this.deps.currentBackend()
     if (!attachment || !snapshot || !connection) throw new Error('ACP Session is not attached.')
+    const closeBeforeResume =
+      backend.framework.id === 'codex' || backend.framework.id === 'open-science-agent'
     if (
       !this.deps.resumeCapabilityAdvertised() ||
-      (backend.framework.id === 'codex' && !this.deps.supportsSessionClose())
+      (closeBeforeResume && !this.deps.supportsSessionClose())
     )
       throw new Error(
         'The Agent runtime cannot safely refresh Notebook execution authority. Update or repair the runtime and retry.'
@@ -208,33 +210,43 @@ export class AcpProviderSessionResumer {
             sessionOptions: backend.session.options,
             specialistSkills
           })
-          if (backend.framework.id === 'codex') {
-            // Ordinary Codex resume retains old MCP subprocesses, including their old credential.
+          if (closeBeforeResume) {
+            // Codex retains old MCP processes on resume, and the built-in Agent requires an exclusive writer.
             await connection.agent.request(
               acp.methods.agent.session.close,
               { sessionId: attachment.providerSessionId },
               { cancellationSignal: signal }
             )
-            checkpoint()
           }
-          const response = await connection.agent.request(
-            acp.methods.agent.session.resume,
-            {
-              sessionId: attachment.providerSessionId,
-              cwd: input.cwd,
-              mcpServers: [...input.mcpServers],
-              ...setup.metaArg,
-              ...(backend.framework.id === 'open-science-agent'
-                ? {
-                    _meta: {
-                      ...setup.metaArg._meta,
-                      [HARNESS_OWNER]: { projectId: snapshot.projectId, sessionId: input.sessionId }
+          let response: unknown
+          try {
+            checkpoint()
+            response = await connection.agent.request(
+              acp.methods.agent.session.resume,
+              {
+                sessionId: attachment.providerSessionId,
+                cwd: input.cwd,
+                mcpServers: [...input.mcpServers],
+                ...setup.metaArg,
+                ...(backend.framework.id === 'open-science-agent'
+                  ? {
+                      _meta: {
+                        ...setup.metaArg._meta,
+                        [HARNESS_OWNER]: {
+                          projectId: snapshot.projectId,
+                          sessionId: input.sessionId
+                        }
+                      }
                     }
-                  }
-                : {})
-            },
-            { cancellationSignal: signal }
-          )
+                  : {})
+              },
+              { cancellationSignal: signal }
+            )
+          } catch (error) {
+            if (closeBeforeResume && this.deps.registry.detach(attachment, 'connection'))
+              attachment.session.dispose()
+            throw error
+          }
           checkpoint()
           if (
             response &&

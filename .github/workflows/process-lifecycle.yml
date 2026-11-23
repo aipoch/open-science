@@ -14,13 +14,11 @@ on:
       - 'packages/connector-mcp-client/src/index.ts'
       # ACP launch, connection cleanup and companion-service lifecycle.
       - 'src/main/acp/main-agent-process-ownership.ts'
-      - 'src/main/acp/agent-process.ts'
-      - 'src/main/acp/claude-executable.ts'
       - 'src/main/acp/agent-connection-adapter.ts'
       - 'src/main/acp/connection-resource-owner.ts'
       - 'src/main/acp/backend-generation-owner.ts'
       - 'src/main/acp/opencode-service.ts'
-      - 'src/main/agent-framework/claude-code.ts'
+      - 'src/main/agent-framework/harness.ts'
       - 'src/main/agent-framework/opencode.ts'
       - 'src/main/agent-framework/codex.ts'
       - 'src/main/settings/managed-codex.ts'
@@ -74,7 +72,7 @@ on:
       - 'scripts/install-native-components.mjs'
       - 'build/native-components-lock.json'
   schedule:
-    - cron: '23 19 * * *' # UTC; 02:23 the next day in Asia/Saigon
+    - cron: '33 16 * * *' # UTC; 00:33 Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:

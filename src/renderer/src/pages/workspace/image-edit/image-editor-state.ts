@@ -28,6 +28,16 @@ export function imageLineageRequest(
 
 export type ImageEditorTool = ImageEditRegion['geometry']['kind'] | 'pan'
 export type ImageEditorDraft = {
+  panelOpen?: boolean
+  composerCollapsed?: boolean
+  composerExpanded?: boolean
+  browsing?: { item: PreviewFileItem; inputSource?: ImageEditSnapshot['source'] }
+  completedResult?: {
+    item: PreviewFileItem
+    inputSource: ImageEditSnapshot['source']
+    failed?: boolean
+  }
+  lastEdit?: { source: PreviewFileItem; prompt: string; regions: ImageEditRegion[] }
   inputSource?: ImageEditSnapshot['source']
   sourceSwitchBlocked?: boolean
   versionDrafts?: ReadonlyMap<string, ImageVersionDraft>
@@ -144,6 +154,7 @@ export function switchImageEditorSource(
     ...restored,
     ...(inputSource ? { inputSource } : {}),
     selectedCandidate: undefined,
+    browsing: undefined,
     submission: undefined,
     versionDrafts: saved
   }

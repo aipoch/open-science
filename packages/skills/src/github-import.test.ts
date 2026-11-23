@@ -828,10 +828,33 @@ describe('searchGitHubSkillRepositories', () => {
       })
 
       await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
-        'GitHub request was rate-limited. Configure or update the GitHub token on this page, then try again.'
+        retryAfter
+          ? 'GitHub rate limit reached. Retry after 30 seconds.'
+          : 'GitHub rate limit reached.'
       )
     }
   )
+
+  it.each([
+    ['ENOTFOUND', 'GitHub request failed during DNS lookup.'],
+    ['ERR_PROXY_CONNECTION_FAILED', 'GitHub proxy connection failed.'],
+    ['ECONNRESET', 'Could not reach GitHub.']
+  ])('preserves the cause of failed GitHub requests (%s)', async (code, message) => {
+    const cause = Object.assign(new Error('connection failed'), { code })
+    const fetcher: FetchLike = async () => {
+      throw new TypeError('fetch failed', { cause })
+    }
+    await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(message)
+  })
+
+  it('explains a Chromium fetch rejection without a network code', async () => {
+    const fetcher: FetchLike = async () => {
+      throw new TypeError('Failed to fetch')
+    }
+    await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
+      'Could not reach GitHub.'
+    )
+  })
 
   it('keeps a bare 403 distinct from rate limiting', async () => {
     const fetcher: FetchLike = async () => ({
@@ -842,7 +865,7 @@ describe('searchGitHubSkillRepositories', () => {
     })
 
     await expect(searchGitHubSkillRepositories('slides', fetcher)).rejects.toThrow(
-      'GitHub API request was forbidden (403). Check repository access and token permissions, then try again.'
+      'GitHub denied access.'
     )
   })
 

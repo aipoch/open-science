@@ -5305,9 +5305,14 @@ it.each([
   expect(attempts).toEqual(recover ? [target, [source[0], target[1]]] : [target])
 })
 
-it.each([false, true])(
-  'retains one failed placement before full-page fallback when retained ink is corrupted: %s',
-  async (corrupted) => {
+it.each([
+  { foreign: false, corrupted: false },
+  { foreign: false, corrupted: true },
+  { foreign: true, corrupted: false },
+  { foreign: true, corrupted: true }
+])(
+  'retains one failed placement before restoring the page (foreign: $foreign, corrupted: $corrupted)',
+  async ({ foreign, corrupted }) => {
     const f = fixture()
     const native = ['First row.', 'Second row.']
     const translated = ['第一行。', '第二行。']
@@ -5317,28 +5322,52 @@ it.each([false, true])(
         str,
         transform: [10, 0, 0, 10, 60, index ? 580 : 700]
       }))
-    f.originalPage.getTextContent.mockResolvedValue({ items: glyphs(native) })
+    const mark = { str: '(', width: 4, transform: [10, 0, 0, 10, 194, 700] }
+    const withMark = (texts: string[], keep: boolean): (typeof f.item)[] =>
+      foreign && keep ? [...glyphs(texts), mark] : glyphs(texts)
+    f.originalPage.getTextContent.mockResolvedValue({ items: withMark(native, true) })
     const source = createPdfTranslationSource({
       ...f.results.source,
-      units: native.map((text, index) => ({
-        id: `row-${index}`,
-        source: text,
-        fragments: [
-          {
-            ...f.results.source.units[0].fragments[0],
-            rect: { x: 0.1, y: index ? 0.24 : 0.1, width: 0.5, height: 0.1 },
-            items: [{ index, text }]
-          }
-        ]
-      }))
+      units: [
+        ...native.map((text, index) => ({
+          id: `row-${index}`,
+          source: text,
+          fragments: [
+            {
+              ...f.results.source.units[0].fragments[0],
+              rect: { x: 0.1, y: index ? 0.24 : 0.1, width: 0.5, height: 0.1 },
+              items: [{ index, text }]
+            }
+          ]
+        })),
+        ...(foreign
+          ? [
+              {
+                id: 'native-mark',
+                source: mark.str,
+                sourceOnly: true as const,
+                preserve: 'formula' as const,
+                fragments: [
+                  {
+                    pageNumber: 1,
+                    rect: { x: 0.32, y: 0.12, width: 0.02, height: 0.02 },
+                    items: [{ index: native.length, text: mark.str }]
+                  }
+                ]
+              }
+            ]
+          : [])
+      ]
     })
     const results = {
       source,
-      units: source.units.map((unit, index) => ({
-        id: unit.id,
-        translationSource: unit.source,
-        translation: translated[index]
-      }))
+      units: source.units
+        .filter((unit) => !unit.sourceOnly)
+        .map((unit, index) => ({
+          id: unit.id,
+          translationSource: unit.source,
+          translation: translated[index]
+        }))
     }
     let attempt = 0
     const generatePdf = vi.fn<(request: PdfTranslationPdfRequest) => Promise<Uint8Array>>(
@@ -5347,16 +5376,18 @@ it.each([false, true])(
     getDocument.mockImplementation(({ data }: { data: Uint8Array }) => {
       const texts =
         data[0] === 10
-          ? ['Incorrect text.', translated[1]]
+          ? [foreign ? translated[0] : 'Incorrect text.', translated[1]]
           : data[0] === 11
-            ? [corrupted ? 'Damaged original.' : native[0], translated[1]]
+            ? [!foreign && corrupted ? 'Damaged original.' : native[0], translated[1]]
             : native
       return {
         promise: Promise.resolve({
           ...f.target,
           getPage: async () => ({
             ...f.targetPage,
-            getTextContent: async () => ({ items: glyphs(texts) })
+            getTextContent: async () => ({
+              items: withMark(texts, data[0] !== 10 && !(data[0] === 11 && corrupted))
+            })
           })
         }),
         destroy: f.destroy
@@ -6412,6 +6443,9 @@ it.each(['valid', 'changed-action', 'changed-vector'] as const)(
 
 it.each([
   'same-ink',
+  'split-final-space',
+  'final-space-wrong-font',
+  'final-space-changed-ink',
   'neighbor-ink',
   'invalid-font-metrics',
   'blank-ink',
@@ -6431,10 +6465,11 @@ it.each([
   async (kind) => {
     const { createCanvas } = await import('@napi-rs/canvas')
     const staggered = kind.startsWith('staggered-'),
+      splitSpace = kind === 'split-final-space' || kind.startsWith('final-space-'),
       moved = kind === 'moved-piece' || kind === 'staggered-moved'
     const f = fixture(),
       before = {
-        str: staggered ? '❳❳' : '1) (%)',
+        str: splitSpace ? 'tag ' : staggered ? '❳❳' : '1) (%)',
         ...(staggered ? { height: 10 } : {}),
         fontName: 'native',
         transform: [10, 0, 0, 10, 100, 700],
@@ -6442,8 +6477,16 @@ it.each([
       },
       first = {
         ...before,
-        str: staggered ? '❳' : kind === 'changed-character' ? '2)' : '1)',
-        width: 10
+        str: splitSpace ? 'tag' : staggered ? '❳' : kind === 'changed-character' ? '2)' : '1)',
+        width: splitSpace ? 25 : 10
+      },
+      space = {
+        ...before,
+        str: ' ',
+        height: 0,
+        width: 5,
+        fontName: kind === 'final-space-wrong-font' ? 'other' : before.fontName,
+        transform: [10, 0, 0, 10, 125, 700]
       },
       last = {
         ...before,
@@ -6508,7 +6551,7 @@ it.each([
       items: [
         f.item,
         first,
-        ...(kind === 'staggered-missing' ? [] : [last]),
+        ...(splitSpace ? [space] : kind === 'staggered-missing' ? [] : [last]),
         ...(['duplicate-piece', 'staggered-duplicate'].includes(kind) ? [last] : [])
       ],
       styles: staggered ? originalText.styles : {}
@@ -6538,7 +6581,11 @@ it.each([
               // Matching run bounds alone cannot detect movement of an inner glyph.
               if (kind !== 'blank-ink')
                 context.fillRect(
-                  ['changed-ink', 'staggered-changed-ink'].includes(kind) && changed ? 5 : 4,
+                  ['changed-ink', 'staggered-changed-ink', 'final-space-changed-ink'].includes(
+                    kind
+                  ) && changed
+                    ? 5
+                    : 4,
                   4,
                   3,
                   3
@@ -6551,9 +6598,13 @@ it.each([
         ),
       originalRender = render(false),
       targetRender = render(
-        ['changed-ink', 'staggered-changed-ink', 'neighbor-ink', 'invalid-font-metrics'].includes(
-          kind
-        )
+        [
+          'changed-ink',
+          'staggered-changed-ink',
+          'neighbor-ink',
+          'invalid-font-metrics',
+          'final-space-changed-ink'
+        ].includes(kind)
       )
     Object.assign(f.originalPage, { render: originalRender })
     Object.assign(f.targetPage, { render: targetRender })
@@ -6574,7 +6625,9 @@ it.each([
       )
       await waitFor(() =>
         expect(hook.result.current.state.status).toBe(
-          ['same-ink', 'neighbor-ink', 'staggered-same-ink'].includes(kind) ? 'ready' : 'error'
+          ['same-ink', 'neighbor-ink', 'staggered-same-ink', 'split-final-space'].includes(kind)
+            ? 'ready'
+            : 'error'
         )
       )
       if (
@@ -6585,6 +6638,8 @@ it.each([
           'neighbor-ink',
           'invalid-font-metrics',
           'changed-ink',
+          'split-final-space',
+          'final-space-changed-ink',
           'blank-ink',
           'transparent-ink'
         ].includes(kind)
@@ -8268,3 +8323,83 @@ describe('native mixed bullet literals', () => {
     ).toBe('另一段译文')
   })
 })
+
+it.each(['raised', 'flat', 'shared exponent'])(
+  'verifies a caret mass power against native raised ink (%s)',
+  async (shape) => {
+    const f = fixture()
+    const flat = shape === 'flat'
+    const sharedExponent = shape === 'shared exponent'
+    const expression = 'M⋆ = 6 × 10¹²M⊙'
+    const originals = [
+      'The sample mass is M⋆ = 6 × ',
+      '10',
+      '12',
+      ...(sharedExponent ? ['M⊙ and ', 'A', '12', '.'] : ['M⊙.'])
+    ]
+    const originalText = 'The sample mass is ' + expression + (sharedExponent ? ' and A¹².' : '.')
+    const translation = '测得 M⋆ = 6 × 10^12M⊙' + (sharedExponent ? ' 和 A¹²。' : '。')
+    const run = (
+      str: string,
+      x: number,
+      width: number,
+      y = 700,
+      size = 10
+    ): typeof f.item & { height: number } => ({
+      ...f.item,
+      str,
+      width,
+      height: size,
+      transform: [size, 0, 0, size, x, y]
+    })
+    const source = createPdfTranslationSource({
+      ...f.results.source,
+      units: [
+        {
+          id: 'one',
+          source: originalText,
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.09, width: 0.6, height: 0.07 },
+              items: originals.map((text, index) => ({ index, text }))
+            }
+          ]
+        }
+      ]
+    })
+    f.originalPage.getTextContent.mockResolvedValue({
+      items: [
+        run(originals[0], 60, 130),
+        run('10', 190, 10),
+        run('12', 200, 7, 704, 7),
+        run(originals[3], 208, sharedExponent ? 44 : 18),
+        ...(sharedExponent ? [run('A', 252, 6), run('12', 258, 7, 704, 7), run('.', 265, 2)] : [])
+      ]
+    })
+    f.targetPage.getTextContent.mockResolvedValue({
+      items: [
+        run('测得 M⋆ = 6 × ', 60, 80),
+        run('10', 140, 10),
+        run('12', 150, 7, flat ? 700 : 704, flat ? 10 : 7),
+        run(sharedExponent ? 'M⊙ 和 ' : 'M⊙。', 158, sharedExponent ? 34 : 18),
+        ...(sharedExponent ? [run('A', 192, 6), run('12', 198, 7, 704, 7), run('。', 205, 4)] : [])
+      ]
+    })
+    const results = {
+      source,
+      units: [{ id: 'one', translationSource: originalText, translation }]
+    }
+    const artifact = { results, data: new Uint8Array([4, 5]) }
+    const { result } = renderHook(() =>
+      usePdfTranslationDocument(f.original, results, artifact, 'reader:0')
+    )
+    await waitFor(() =>
+      expect(result.current.state).toMatchObject(
+        flat
+          ? { status: 'error', failure: { code: 'validation-failed' } }
+          : { status: 'ready', originalUnitCount: 0 }
+      )
+    )
+  }
+)

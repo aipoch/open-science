@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -194,7 +194,15 @@ it('does not certify serialization when the caller has no verified generation', 
     await evidence(root, run, 'created', 'a'.repeat(64))
     const { facts } = await analyzeRNotebookSource(run.script)
     generations.get(root)!.delete(run.runId)
-    const context = await serializedFileContext(readGenerations(root), [run], () => facts, 'next')
+    const factsFor = vi.fn(() => facts)
+    const context = await serializedFileContext(
+      readGenerations(root),
+      [makeRun(0), run],
+      factsFor,
+      'next'
+    )
+    expect(factsFor.mock.calls).toHaveLength(1)
+    expect(factsFor).toHaveBeenCalledWith(run)
     expect(context?.serializedValueFiles).toBeUndefined()
   } finally {
     generations.delete(root)

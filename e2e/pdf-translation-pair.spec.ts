@@ -188,18 +188,18 @@ for (const variant of [
     const directRequests: Array<Record<string, unknown>> = []
     let paragraphRequests = 0
     let directProvider: { id: string; baseUrl: string } | undefined
+    const useDirectProvider = [
+      'direct-api',
+      'provider-overloaded',
+      'close-confirmation',
+      'streaming-reading',
+      'retained-paragraph',
+      'busy'
+    ].includes(variant)
     let replacementText: string | undefined
     let holdTranslation = ['close-confirmation', 'streaming-reading'].includes(variant)
     const heldTranslations: Array<() => void> = []
-    if (
-      [
-        'direct-api',
-        'provider-overloaded',
-        'close-confirmation',
-        'streaming-reading',
-        'retained-paragraph'
-      ].includes(variant)
-    ) {
+    if (useDirectProvider) {
       const server = createServer(async (request, response) => {
         if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
           response.writeHead(404).end()
@@ -226,7 +226,11 @@ for (const variant of [
           )
           return
         }
-        if (holdTranslation && !isBatch && paragraphRequests > 1) {
+        if (
+          !isBatch &&
+          ((holdTranslation && paragraphRequests > 1) ||
+            (variant === 'busy' && paragraphRequests === 4))
+        ) {
           await new Promise<void>((resolve) => heldTranslations.push(resolve))
         }
         // Controlled latency makes the actual running state observable.
@@ -465,27 +469,11 @@ for (const variant of [
     await panel.getByRole('combobox', { name: 'Translation method' }).click()
     await page
       .getByRole('option', {
-        name: [
-          'direct-api',
-          'provider-overloaded',
-          'close-confirmation',
-          'streaming-reading',
-          'retained-paragraph'
-        ].includes(variant)
-          ? 'Direct API'
-          : 'Agent',
+        name: useDirectProvider ? 'Direct API' : 'Agent',
         exact: true
       })
       .click()
-    if (
-      [
-        'direct-api',
-        'provider-overloaded',
-        'close-confirmation',
-        'streaming-reading',
-        'retained-paragraph'
-      ].includes(variant)
-    ) {
+    if (useDirectProvider) {
       await panel.getByRole('combobox', { name: 'Model', exact: true }).click()
       await page
         .getByRole('option', {
@@ -915,7 +903,9 @@ for (const variant of [
       // Wait for the previous page generation to release its slot before occupying both.
       await expect(panel.getByRole('button', { name: '0 Not in PDF', exact: true })).toBeVisible()
       const fixtureRoot = dirname(await app.createTestDirectory('pdf-capacity'))
+      await expect.poll(() => heldTranslations.length).toBe(1)
       releasePdfWriter = await occupyPdfWriter(join(fixtureRoot, 'storage'), bytes)
+      heldTranslations.shift()!()
     }
     await expect(panel.getByRole('button', { name: '4 Translated', exact: true })).toBeVisible({
       timeout: 60000
@@ -937,7 +927,7 @@ for (const variant of [
       await expect(updatePreview).toBeHidden({ timeout: 60000 })
     }
     const failure = panel.getByRole('alert')
-    let promptsBeforeRetry: Awaited<ReturnType<typeof app.readFakeAgentPrompts>> | undefined
+    let requestsBeforeRetry: number | undefined
     if (variant === 'busy') {
       await expect(failure).toContainText(
         'PDF generation is busy. Retry after another document finishes.'
@@ -954,11 +944,9 @@ for (const variant of [
       await translationEntry.click()
       await expect(failure).toContainText('PDF generation is busy.')
       await page.screenshot({ path: testInfo.outputPath('pdf-generation-retry.png') })
-      promptsBeforeRetry = await app.readFakeAgentPrompts()
       // One unsupported batch falls back to four individual paragraph requests.
-      expect(
-        promptsBeforeRetry.filter((entry) => entry.prompt.includes('PAIR_PDF_ACCEPTANCE'))
-      ).toHaveLength(5)
+      requestsBeforeRetry = directRequests.length
+      expect(requestsBeforeRetry).toBe(5)
       await page.getByRole('button', { name: 'Retry PDF generation', exact: true }).focus()
       await page.keyboard.press('Enter')
       await expect(
@@ -1253,8 +1241,8 @@ for (const variant of [
           expect(Math.abs(positions[0].y - positions[1].y)).toBeLessThan(1)
         }
       }
-    if (promptsBeforeRetry) {
-      expect(await app.readFakeAgentPrompts()).toEqual(promptsBeforeRetry)
+    if (requestsBeforeRetry !== undefined) {
+      expect(directRequests).toHaveLength(requestsBeforeRetry)
       await page.screenshot({ path: testInfo.outputPath('pdf-generation-recovered.png') })
     }
     if (await panel.isVisible())

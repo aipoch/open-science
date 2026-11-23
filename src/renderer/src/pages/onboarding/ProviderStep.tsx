@@ -41,6 +41,7 @@ import {
   type ProviderFormValue
 } from '../settings/provider-form-value'
 import { describeValidation, localizeProviderResourceMessage } from '../settings/validation-message'
+import type { ProviderStepOperation } from './use-provider-step-operation'
 
 const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
   type === 'codex-isolated' ||
@@ -84,6 +85,7 @@ type ProviderStepProps = {
   onSkip?: () => void | Promise<void>
   isSkipping?: boolean
   skipError?: string
+  operation: ProviderStepOperation
 }
 
 type QuickProviderCard = {
@@ -186,8 +188,9 @@ const ProviderStep = ({
   onBusyChange,
   onAdvanced,
   onSkip,
-  isSkipping = false,
-  skipError
+  isSkipping: entryIsSkipping = false,
+  skipError,
+  operation
 }: ProviderStepProps): React.JSX.Element => {
   const { t, i18n } = useTranslation()
   // Validation copy is shared with the settings page and lives in the `settings` namespace, so this
@@ -197,6 +200,11 @@ const ProviderStep = ({
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
+  const addOnboardingKiloProvider = useSettingsStore((state) => state.addOnboardingKiloProvider)
+  const existingKiloId = useSettingsStore(
+    (state) =>
+      state.providers.find(({ type, vendorId }) => type === 'official' && vendorId === 'kilo')?.id
+  )
   const persistProvider = useSettingsStore((state) => state.persistProvider)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
@@ -227,6 +235,8 @@ const ProviderStep = ({
     { id: string; cancel: (id: string) => Promise<void>; settled: Promise<unknown> } | undefined
   >(undefined)
   const [isSaving, setIsSaving] = useState(false)
+  const [isSkipping, setIsSkipping] = useState(false)
+  const busy = operation.pending
   const mounted = useRef(false)
   useEffect(() => {
     mounted.current = true
@@ -248,7 +258,7 @@ const ProviderStep = ({
     string | { summary: string; details?: string }
   >()
   const validationMessage = typeof feedback === 'object' ? feedback.summary : feedback
-  const codexImportFailure = (cause: unknown) => {
+  const codexImportFailure = (cause: unknown): { summary: string; details?: string } => {
     const details =
       cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : undefined
     const signIn = t('Sign in with Open-Science')
@@ -368,11 +378,32 @@ const ProviderStep = ({
     }
   }
 
+  const handleSkip = async (): Promise<void> => {
+    if (!operation.begin()) return
+    setIsSkipping(true)
+    setValidationMessage(undefined)
+    try {
+      await addOnboardingKiloProvider()
+      advanceIfMounted()
+    } catch (error) {
+      if (!mounted.current) return
+      setValidationOk(false)
+      setValidationMessage(
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, tSettings)
+          : t('Could not save provider.')
+      )
+    } finally {
+      operation.finish()
+      setIsSkipping(false)
+    }
+  }
+
   const handleSaveProvider = async (
     valueOverride?: ProviderFormValue,
     signal?: AbortSignal
   ): Promise<void> => {
-    if (!canContinue) return
+    if (!canContinue || busy) return
     const value = valueOverride ?? formValue
     // Quick subscription selection may have just switched frameworks; use the persisted snapshot.
     const currentSettings = useSettingsStore.getState()
@@ -413,6 +444,7 @@ const ProviderStep = ({
       return
     }
 
+    if (!operation.begin()) return
     setIsSaving(true)
     setValidationMessage(undefined)
 
@@ -560,7 +592,11 @@ const ProviderStep = ({
         return
       }
 
-      const request = toUpsertRequest(providerValue, savedProviderId)
+      const isKilo = providerValue.type === 'official' && providerValue.vendorId === 'kilo'
+      const request = toUpsertRequest(
+        providerValue,
+        (isKilo ? existingKiloId : undefined) ?? savedProviderId
+      )
       const quickKey = variant === 'quick' && value.type === 'official'
       const explicitImport = variant === 'quick' && value.type === 'codex-shared'
       const { providerId, validation } = quickKey
@@ -613,6 +649,7 @@ const ProviderStep = ({
           : t('Could not save provider.')
       )
     } finally {
+      operation.finish()
       if (!signal) setIsSaving(false)
     }
   }
@@ -782,9 +819,12 @@ const ProviderStep = ({
           : t('Could not save provider.')
       )
     } finally {
-      if (!attempt.signal.aborted) {
-        quickAuth.current = undefined
-        setAuthStage(undefined)
+      if (quickAuth.current === attempt) {
+        if (!attempt.signal.aborted) {
+          quickAuth.current = undefined
+          setAuthStage(undefined)
+        }
+        operation.finish()
         setIsSaving(false)
       }
     }
@@ -820,6 +860,7 @@ const ProviderStep = ({
     } finally {
       quickAuth.current = undefined
       setAuthStage(undefined)
+      operation.finish()
       setIsSaving(false)
     }
   }
@@ -1123,7 +1164,7 @@ const ProviderStep = ({
                 variant="ghost"
                 data-onboarding-action="skip"
                 onClick={onSkip}
-                disabled={isSaving || isSkipping}
+                disabled={isSaving || entryIsSkipping}
               >
                 <span aria-hidden="true">↗</span>
                 {t('Skip for now, explore first')}
@@ -1133,7 +1174,7 @@ const ProviderStep = ({
                 variant="ghost"
                 data-onboarding-action="advanced"
                 onClick={onAdvanced}
-                disabled={isSaving || isSkipping}
+                disabled={isSaving || entryIsSkipping}
               >
                 <Settings2 aria-hidden="true" />
                 {t('Advanced options')}
@@ -1169,9 +1210,7 @@ const ProviderStep = ({
           )}
         </CardDescription>
         <p className="text-xs leading-5 text-muted-foreground">
-          {t(
-            'Connect and test a model to finish setup. The agent needs this connection to respond to your requests.'
-          )}
+          {t('Skip to access free Kilo models.')}
         </p>
       </CardHeader>
       <Separator className="bg-border-200" />
@@ -1195,7 +1234,7 @@ const ProviderStep = ({
               setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
             }
             errors={showProviderErrors ? formErrors : undefined}
-            disabled={isSaving}
+            disabled={isSaving || isSkipping}
             encryptionAvailable={encryptionAvailable}
             showCodexSubscriptions={
               agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent'
@@ -1256,6 +1295,7 @@ const ProviderStep = ({
           <Button
             type="button"
             variant="outline"
+            disabled={isSkipping}
             onClick={() => {
               mounted.current = false
               onBack()
@@ -1266,8 +1306,17 @@ const ProviderStep = ({
         )}
         <Button
           type="button"
+          variant="outline"
+          onClick={() => void handleSkip()}
+          disabled={busy}
+          aria-busy={isSkipping}
+        >
+          {t('Skip')}
+        </Button>
+        <Button
+          type="button"
           onClick={() => void handleSaveProvider()}
-          disabled={isSaving || !canContinue}
+          disabled={busy || !canContinue}
           className="px-4"
           aria-busy={Boolean(isSaving)}
         >

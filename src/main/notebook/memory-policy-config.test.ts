@@ -55,6 +55,27 @@ describe('loadNotebookMemoryPolicyConfig', () => {
     }
   })
 
+  it.each([
+    [{ linuxEnterRatio: 0.08 }, true],
+    [{ windowsEnterRatio: 0.08 }, false],
+    [{ windowsExitRatio: 0.2 }, false]
+  ] as const)(
+    'selects default physical caps for a partial override %j',
+    async (overrides, capped) => {
+      const root = await makeRoot()
+      try {
+        await writeFile(join(root, NOTEBOOK_MEMORY_POLICY_CONFIG_FILE), JSON.stringify(overrides))
+        const config = await loadNotebookMemoryPolicyConfig(root)
+        expect(config.source).toBe('file')
+        expect(config.policy.windowsPhysicalCaps).toEqual(
+          capped ? DEFAULT_NOTEBOOK_MEMORY_POLICY.windowsPhysicalCaps : undefined
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('falls back to defaults for malformed or unsafe values', async () => {
     const root = await makeRoot()
     try {

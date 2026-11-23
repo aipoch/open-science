@@ -27,7 +27,7 @@ Read [README.md](README.md) for the supported application subset, [SCRIPT.md](SC
 - Reference animation scripts through the existing `script` and `use` fields. Do not inline source code into JSON. Use distinct `anims/<name>.js` paths; at most 16 files total and four `use` files per animation panel.
 - An approved offline session app may be used as `libs: ["libs/app.js"]` if its motion carries the story. Draw a recurring subject when the session has no suitable app. Show charts and tables as supporting evidence. Omit external libraries, animation assets, subject manifests and voice overrides. Omit `data` unless the host actually supplied the named CSV. Do not assume attachments mentioned in prose have been staged.
 
-Write the question, answer, catch and two or three key numbers before composing the voice lines. Read the narration on its own and apply the nine SCRIPT.md criteria. The host scores the spoken script separately and returns failed criteria for revision. End with a plain answer to the hook, then this exact closing caption and spoken line, timed to the end card.
+Write the question, answer, catch and two or three key numbers before composing the voice lines. Read the narration on its own and apply the nine SCRIPT.md criteria. The host scores the spoken script separately for the preview. End with a plain answer to the hook, then this exact closing caption and spoken line, timed to the end card.
 
 ```json
 {

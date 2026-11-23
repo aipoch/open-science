@@ -91,7 +91,7 @@ describe('useSmoothStreamingContent', () => {
   it.each([600, 601])(
     'preserves ordinary close pacing through the %i-grapheme catch-up boundary',
     async (size) => {
-      const target = 'x'.repeat(size)
+      const target = '👩‍🔬'.repeat(size)
       await renderProbe(target)
       await renderProbe(target, false)
       expect(snapshots.at(-1)).toEqual(
@@ -128,7 +128,7 @@ describe('useSmoothStreamingContent', () => {
   })
 
   it('segments initial content once rather than on every presentation render', async () => {
-    const target = 'initial'.repeat(1_000)
+    const target = '研究👩‍🔬'.repeat(1_000)
     const segment = vi.spyOn(Intl.Segmenter.prototype, 'segment')
     try {
       await renderProbe(target)

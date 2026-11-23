@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
-      group: ${{ format('codex-review-{0}', inputs.pull_request_number) }}
+      group: ${{ format('codex-review-{0}-{1}', inputs.pull_request_number, inputs.head_sha) }}
       cancel-in-progress: true
     permissions:
       contents: read
@@ -311,33 +311,66 @@ jobs:
             echo "codex_home=$codex_home"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Checkout pull request review commit
+      - name: Checkout trusted review base
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.review_event == 'pull_request_target' && format('refs/pull/{0}/merge', inputs.pull_request_number) || inputs.review_sha }}
-          # The caller gates fork reviews with FORK_REVIEW_MODE. This job performs static review
-          # with a read-only token, isolated model credentials, and untrusted project config.
-          allow-unsafe-pr-checkout: ${{ inputs.is_fork && inputs.review_event == 'pull_request_target' }}
+          # Open pull requests are materialized into a trusted synthetic merge context below.
+          # Merged manual reviews retain their historical merge-commit checkout.
+          ref: ${{ inputs.review_state == 'MERGED' && inputs.review_sha || inputs.base_sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Resolve review comparison base
-        id: diff_base
+      - name: Prepare review merge context
+        id: review_snapshot
         env:
+          PR_NUMBER: ${{ inputs.pull_request_number }}
           PR_BASE_SHA: ${{ inputs.base_sha }}
+          PR_HEAD_SHA: ${{ inputs.head_sha }}
           PR_STATE: ${{ inputs.review_state }}
-          REVIEW_EVENT: ${{ inputs.review_event }}
+          REVIEW_SHA: ${{ inputs.review_sha }}
         shell: bash
         run: |
           set -euo pipefail
           if [[ "$PR_STATE" == "MERGED" ]]; then
             base_sha="$(git rev-parse HEAD^)"
-          elif [[ "$REVIEW_EVENT" == "pull_request_target" ]]; then
-            base_sha="$(git rev-parse HEAD^1)"
+            review_sha="$(git rev-parse HEAD)"
           else
-            base_sha="$(git merge-base HEAD "$PR_BASE_SHA")"
+            if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ || ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo 'Invalid pull request merge-context identifiers.' >&2
+              exit 1
+            fi
+            if [[ "$(git rev-parse HEAD)" != "$PR_BASE_SHA" ]]; then
+              echo 'Trusted review base checkout does not match the resolved base SHA.' >&2
+              exit 1
+            fi
+            git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+            fetched_head="$(git rev-parse FETCH_HEAD)"
+            if [[ "$fetched_head" != "$PR_HEAD_SHA" ]]; then
+              echo 'Pull request head changed while preparing the merge context.' >&2
+              exit 1
+            fi
+            if ! merge_tree="$(git merge-tree --write-tree "$PR_BASE_SHA" "$PR_HEAD_SHA")"; then
+              echo 'Could not create a clean pull request merge context.' >&2
+              exit 1
+            fi
+            if [[ ! "$merge_tree" =~ ^[0-9a-f]{40}$ ]]; then
+              echo 'Git returned an invalid merge tree.' >&2
+              exit 1
+            fi
+            merge_sha="$(
+              printf 'Trusted pull request merge context\n\nbase: %s\nhead: %s\n' "$PR_BASE_SHA" "$PR_HEAD_SHA" |
+                GIT_AUTHOR_NAME='GitHub Actions review' \
+                GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
+                GIT_COMMITTER_NAME='GitHub Actions review' \
+                GIT_COMMITTER_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
+                git commit-tree "$merge_tree" -p "$PR_BASE_SHA" -p "$PR_HEAD_SHA"
+            )"
+            git reset --hard "$merge_sha"
+            base_sha="$PR_BASE_SHA"
+            review_sha="$merge_sha"
           fi
-          echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "review_sha=$review_sha" >> "$GITHUB_OUTPUT"
 
       - name: Resolve Responses API endpoint
         id: responses_endpoint
@@ -361,9 +394,9 @@ jobs:
         id: review_inputs
         env:
           PR_BRANCH: ${{ inputs.head_ref }}
-          PR_DIFF_BASE: ${{ steps.diff_base.outputs.sha }}
+          PR_DIFF_BASE: ${{ steps.review_snapshot.outputs.base_sha }}
           PR_TITLE: ${{ inputs.pull_request_title }}
-          REVIEW_SHA: ${{ inputs.review_sha }}
+          REVIEW_SHA: ${{ steps.review_snapshot.outputs.review_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -403,8 +436,9 @@ jobs:
           } >> "$instructions_file"
 
           {
-            echo 'Review only the changes introduced by this pull request. Inspect the checked-out'
-            echo 'repository, diff, callers, tests, and configuration as needed.'
+            echo 'Review the changes introduced by this pull request in the checked-out trusted'
+            echo 'merge context. Inspect the resulting repository, diff, callers, tests, and'
+            echo 'configuration as needed.'
             echo
             echo 'The exact pull request changes are between these commits:'
             printf '  base: %s\n' "$PR_DIFF_BASE"

@@ -1,3 +1,4 @@
+import * as packageState from '../storage/session-package-state'
 import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
@@ -133,7 +134,8 @@ async function createLifecycleFixture(realWindowsOwner = false): Promise<Lifecyc
     dataRoot: root,
     projectId: scope.projectId,
     memoryPolicy: healthyNotebookMemoryPolicy(),
-    admitSessionWork: (projectId, sessionId) => archive.admitSessionWork(projectId, sessionId),
+    admitSessionWork: (projectId, sessionId, observation) =>
+      archive.admitSessionWork(projectId, sessionId, observation ? 'observation' : 'work'),
     isSessionExporting: (projectId, sessionId) => archive.isSessionExporting(projectId, sessionId),
     processSandbox: windowsSandbox?.port,
     executorFactory: realWindowsOwner
@@ -418,11 +420,24 @@ it.each(['export', 'fork'] as const)(
     try {
       if (kind === 'export') {
         const destination = join(f.fixture.storageRoot, 'desktop.science')
+        const imported = Promise.withResolvers<boolean>()
+        vi.spyOn(packageState, 'isImportedResearchSession').mockReturnValueOnce(imported.promise)
+        const reading = f.notebook.backgroundTasks(f.scope)
+        f.runtimeActivity.isSessionBusy.mockImplementationOnce(() => {
+          // Resume the panel's read only after export has fenced new work.
+          expect(f.archive.isSessionExporting(request.projectId, request.sessionId)).toBe(true)
+          imported.resolve(false)
+          return false
+        })
         await expect(sessionPackageDesktop.export(request, 'cli', destination)).resolves.toEqual({
           saved: true,
           filePath: destination
         })
-        expect((await stat(destination)).size).toBeGreaterThan(0)
+        await expect(reading).resolves.toEqual({ runs: [] })
+        await expect(f.composed.sessionPackageService.inspect(destination)).resolves.toMatchObject({
+          title: 'Retained research',
+          messageCount: 1
+        })
       } else {
         const child = await sessionPackageDesktop.fork(request)
         expect(child?.sessionId).not.toBe(request.sessionId)

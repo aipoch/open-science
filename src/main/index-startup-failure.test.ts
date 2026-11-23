@@ -324,6 +324,29 @@ it.each(['mac-keychain', 'windows-dpapi'] as const)(
     )
   }
 )
+it('initializes the owned Windows profile before a packaged cold launch checks for an installer', async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  f.app.isPackaged = true
+  f.select.mockReturnValue({ backend: 'windows-dpapi', appName: 'Open-Science' })
+  f.inventory.mockReturnValueOnce([])
+  const applyUpdate = vi.fn(async () => false)
+  vi.doMock('./update/windows-desktop-version', () => ({ applyPreparedWindowsUpdate: applyUpdate }))
+  try {
+    await import('./index')
+    await vi.waitFor(() => expect(f.launch).toHaveBeenCalledOnce())
+    expect(f.key).toHaveBeenCalledWith('/test/profile')
+    expect(f.validate).toHaveBeenCalledBefore(f.key)
+    expect(f.key).toHaveBeenCalledBefore(f.leaseRelease)
+    expect(f.leaseRelease).toHaveBeenCalledBefore(applyUpdate)
+    expect(applyUpdate).toHaveBeenCalledBefore(f.launch)
+  } finally {
+    f.app.isPackaged = false
+    Object.defineProperty(process, 'platform', platform)
+    vi.doUnmock('./update/windows-desktop-version')
+  }
+})
+
 it('displays inventory details without persisting them or initializing the profile', async () => {
   const { CredentialIdentityError } = await import('./credential-identity/selection')
   f.inventory.mockImplementationOnce(() => {

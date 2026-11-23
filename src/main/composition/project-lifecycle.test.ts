@@ -77,6 +77,7 @@ const fixture = ((notebookRuntime?: NotebookRuntimeService) => {
     deleteProjectFileEvidence: vi.fn(),
     deleteProjectInputs: vi.fn(),
     forgetDeletedExecutionIntents: vi.fn(),
+    finishPendingRunDeletion: vi.fn(),
     releaseProjectDeletion: vi.fn()
   }
   const broker = new CredentialRequestBroker({
@@ -308,7 +309,9 @@ describe('Project lifecycle composition', () => {
     const activity = mocks.archive.mock.calls[0][2]
     expect(result.detectSessionExportBlockingSessions()).toEqual([])
     await expect(activity.isSessionBusy('project-1', 'session-1')).resolves.toBe(true)
-    await expect(activity.isSessionExportBusy('project-1', 'session-1')).resolves.toBe(false)
+    await expect(
+      activity.getSessionExportBlocker('project-1', 'session-1')
+    ).resolves.toBeUndefined()
     await expect(activity.isProjectBusy('project-1')).resolves.toBe(true)
     d.getActiveSideChatSessions.mockReturnValue([])
     d.computeJobActivityRef.current.findNonTerminal.mockResolvedValue([{ project_id: 'project-1' }])
@@ -358,7 +361,9 @@ describe('Project lifecycle composition', () => {
     const activity = mocks.archive.mock.calls[0][2]
     expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(false)
     await expect(activity.isSessionBusy('project-1', 'session-1')).resolves.toBe(true)
-    await expect(activity.isSessionExportBusy('project-1', 'session-1')).resolves.toBe(true)
+    await expect(activity.getSessionExportBlocker('project-1', 'session-1')).resolves.toBe(
+      'compute'
+    )
     // A database outage cannot turn local activity into a persistent execution fence.
     d.computeJobActivityRef.current.countNonTerminalBySession.mockRejectedValue(
       new Error('offline')
@@ -377,7 +382,7 @@ describe('Project lifecycle composition', () => {
     'side-chat-prompt',
     'delegated',
     'notebook'
-  ])('protects local %s activity and releases the protection when it settles', (kind) => {
+  ])('protects local %s activity and releases the protection when it settles', async (kind) => {
     const { dependencies: d, runtime } = fixture()
     d.getActiveSideChatSessions.mockReturnValue([])
     const active = [{ projectId: 'project-1', sessionId: 'session-1' }]
@@ -399,6 +404,17 @@ describe('Project lifecycle composition', () => {
         ]
       })
     expect(activity.isSessionLocallyBusy('project-1', 'session-1')).toBe(true)
+    if (kind === 'permission' || kind === 'elicitation')
+      runtime.getActivePromptSessions.mockReturnValue(active as never)
+    const expected = {
+      prompt: 'agent',
+      permission: 'permission',
+      elicitation: 'question',
+      delegated: 'delegated',
+      notebook: 'notebook'
+    }[kind]
+    await expect(activity.getSessionExportBlocker('project-1', 'session-1')).resolves.toBe(expected)
+    runtime.getActivePromptSessions.mockReturnValue([])
     if (source) source.mockReturnValue([])
     d.sideChatOwnerRef.current.hasForParent.mockReturnValue(false)
     runtime.getSnapshot.mockReturnValue({ promptInFlightSessionIds: [] })

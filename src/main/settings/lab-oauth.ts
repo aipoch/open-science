@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http'
 import type { LabSignInChallenge } from '../../shared/lab'
 import { LAB_CALLBACK_PATH } from '../../shared/lab'
 import { desktopShellInteraction } from '../desktop-interaction'
+import openScienceLogoSvg from '../remote-access/open-science-logo.svg?raw'
 import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { LabApi, LabApiError, type LabTokenResponse } from './lab-api'
 import { collectLabDeviceInfo } from './lab-device-info'
@@ -14,10 +15,62 @@ import { LAB_RESOURCE_LIMITS } from './lab-resource-limits'
 // 127.0.0.1 port, PKCE S256, state matching and a five-minute window. The tokens are exchanged and
 // stored entirely in main; the renderer only sees the authorization URL and the resulting status.
 
-const CALLBACK_OK_HTML =
-  '<!doctype html><meta charset="utf-8"><title>Lab sign-in complete</title><h1>Sign-in complete</h1><p>You can close this window and return to Open-Science.</p>'
-const CALLBACK_ERROR_HTML =
-  '<!doctype html><meta charset="utf-8"><title>Lab sign-in failed</title><h1>Sign-in failed</h1><p>You can close this window and try again from Open-Science.</p>'
+const callbackPage = (accepted: boolean): string => {
+  const title = accepted ? 'Return to Open-Science' : 'Sign-in failed'
+  const message = accepted
+    ? 'Authorization received. You can close this tab.'
+    : 'Return to Lab settings in Open-Science and try signing in again.'
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>${title}</title>
+  <style>
+    /* Mirror the renderer's default palette from src/renderer/src/assets/main.css. */
+    :root {
+      color-scheme: light dark;
+      --background: #fafaf8;
+      --foreground: #202321;
+      --muted-foreground: hsl(90 3% 34%);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #1a1a18;
+        --foreground: #e8e6df;
+        --muted-foreground: hsl(45 5% 78%);
+      }
+    }
+    * { box-sizing: border-box }
+    body {
+      margin: 0;
+      min-block-size: 100vh;
+      min-block-size: 100svh;
+      display: grid;
+      place-items: center;
+      padding: 32px 24px;
+      font: 15px/1.6 system-ui, sans-serif;
+      background: var(--background);
+      color: var(--foreground);
+    }
+    main { width: min(100%, 440px); text-align: center; margin-block-end: 6vh }
+    .logo { display: grid; place-items: center; width: 72px; height: 72px; margin: 0 auto 20px }
+    .logo svg { display: block; width: 100%; height: auto }
+    h1 { margin: 0 0 10px; font-size: clamp(24px, 5vw, 30px); font-weight: 650; line-height: 1.2; letter-spacing: -.035em }
+    p { margin: 0; color: var(--muted-foreground) }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="logo" aria-hidden="true">${openScienceLogoSvg}</div>
+    <h1>${title}</h1>
+    <p>${message}</p>
+  </main>
+  ${accepted ? '<script>window.close()</script>' : ''}
+</body>
+</html>`
+}
 
 const base64Url = (bytes: number): string => randomBytes(bytes).toString('base64url')
 
@@ -58,15 +111,16 @@ class LabLoopbackCallbackHost {
       const pending = this.pending
       if (!pending || pending.state !== state) {
         response.writeHead(400, { 'content-type': 'text/html; charset=utf-8' })
-        response.end(CALLBACK_ERROR_HTML)
+        response.end(callbackPage(false))
         return
       }
       this.pending = undefined
       if (pending.timer) clearTimeout(pending.timer)
       const error = url.searchParams.get('error') ?? undefined
-      const code = url.searchParams.get('code') ?? undefined
-      response.writeHead(error ? 400 : 200, { 'content-type': 'text/html; charset=utf-8' })
-      response.end(error ? CALLBACK_ERROR_HTML : CALLBACK_OK_HTML)
+      const code = url.searchParams.get('code')?.trim() || undefined
+      const accepted = Boolean(code && !error)
+      response.writeHead(accepted ? 200 : 400, { 'content-type': 'text/html; charset=utf-8' })
+      response.end(callbackPage(accepted))
       pending.resolve({ ...(code ? { code } : {}), ...(error ? { error } : {}) })
     })
     this.server = server

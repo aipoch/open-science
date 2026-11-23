@@ -39,6 +39,42 @@ const extract = (items: PdfLayoutTextItem[], page = 1) =>
   groupPdfTranslationPages({
     pages: [{ page, width: 612, height: 792, rotation: 0, items } satisfies PdfLayoutPage]
   }).units
+
+it.each([true, false])(
+  'separates same-face Roman headings with a consecutive justified peer: %s',
+  (consecutive) => {
+    const input = [
+      item('II. C', 55.5, 430, 23, 'Body', 10, false),
+      item('OMPARISON OF THE REPEATED', 79, 430, 153, 'Body', 8, false),
+      item('R-', 235, 430, 9.5, 'Body', 10, false),
+      item('EADINGS', 245, 430, 48.5, 'Body', 8, false),
+      item('', 59, 413.6, 0, 'Body', 0),
+      item('We examine the readings from a set of sensors to obtain', 59, 413.6, 241, 'Body', 10),
+      item(
+        'a stable average for the conditions tested in this section.',
+        49,
+        401.6,
+        251,
+        'Body',
+        10
+      ),
+      item('The measurements are kept for a later comparison.', 49, 389.6, 226, 'Body', 10),
+      item(consecutive ? 'III. R' : 'IV. R', 402, 641, 25, 'Body', 10, false),
+      item('ESULTS', 427.5, 641, 45.5, 'Body', 8, false),
+      item('', 322, 626, 0, 'Body', 0),
+      item('We record each response in the same calibrated range', 322, 626, 241, 'Body', 10),
+      item('and compare these values at all of the sampling sites.', 312, 614, 251, 'Body', 10),
+      item('A separate test uses the preceding control readings.', 312, 602, 221, 'Body', 10)
+    ]
+    const units = extract(input)
+    const first = units.find((u) => u.items.includes('1:0'))
+    expect(first?.items.includes('1:5')).toBe(!consecutive)
+    if (consecutive) {
+      expect(first?.items).toEqual(['1:0', '1:1', '1:2', '1:3'])
+      expect(units.find((u) => u.items.includes('1:5'))?.source.startsWith('We examine')).toBe(true)
+    }
+  }
+)
 const title = () => [
   item('A careful study of the relationships between distinct', 86, 660, 440, 'Title', 20),
   item('observed structures', 196, 620, 220, 'Title', 20),
@@ -144,3 +180,95 @@ it.each(['unknown-contact', 'missing-affiliation', 'unpaired-baseline', 'unmarke
     expect(extract(input).some((u) => u.source === 'Bo Example')).toBe(false)
   }
 )
+
+it('separates stacked centered authors from the affiliation in a distinct face', () => {
+  const input = [
+    item('A STUDY OF FINITE COLLECTIONS', 176, 676, 260, 'Heading', 14.4),
+    item('Ivy Example', 256, 633, 100, 'Heading'),
+    item('and', 296, 618, 20),
+    item('Sam Sample', 263, 598, 86, 'Heading'),
+    item('School of Natural Sciences', 248, 578, 116),
+    item('Example Institute of Research', 225, 563.5, 162),
+    item('Sample City, EX 12345, Country', 218, 549, 176),
+    ...body(477)
+  ]
+  const units = extract(input)
+  const affiliation = units.find((u) => u.items.includes('1:4'))
+  expect(units.find((u) => u.items.includes('1:3'))?.originalStrings).toEqual(['Sam Sample'])
+  expect(affiliation?.originalStrings).toEqual(input.slice(4, 7).map((row) => row.str))
+
+  input[1].fontName = 'Other'
+  const ordinary = extract(input).find((u) => u.items.includes('1:4'))
+  expect(ordinary?.originalStrings).toContain('Sam Sample')
+})
+
+it.each([0, 8])('preserves referenced names on an aligned equation label column (%s)', (offset) => {
+  const items = [
+    item('The first equation follows by direct substitution.', 70, 580, 240, 'Body', 11),
+    item('x² + y² = z²', 200, 550, 226, 'Math', 11, false),
+    item('.', 430, 550, 3, 'Math', 11, false),
+    item('(', 490, 550, 4, 'Body', 11, false),
+    item('Slope', 494, 550, 30, 'Math', 11, false),
+    item(')', 524, 550, 4, 'Body', 11),
+    item('The second equation follows from the same identity.', 70, 480, 254, 'Body', 11),
+    item('a² + b² = c²', 200, 450, 226, 'Math', 11, false),
+    item('.', 430, 450, 3, 'Math', 11, false),
+    item('(', 490 + offset, 450, 4, 'Body', 11, false),
+    item('Shift', 494 + offset, 450, 30, 'Math', 11, false),
+    item(')', 524 + offset, 450, 4, 'Body', 11),
+    item(
+      'Use the identities (Slope) and (Shift) to compare the two estimates.',
+      70,
+      388,
+      354,
+      'Body',
+      11
+    )
+  ]
+  const units = extract(items)
+  for (const source of ['(Slope)', '(Shift)']) {
+    const tag = units.find((unit) => unit.source === source)
+    expect(tag?.items).toHaveLength(3)
+    expect(tag?.sourceOnly).toBe(offset === 0 ? true : undefined)
+    expect(tag?.preserve).toBe(offset === 0 ? 'formula' : undefined)
+  }
+  expect(units.find((unit) => unit.items.includes('1:12'))?.sourceOnly).toBeUndefined()
+})
+
+it.each([0, 4])('keeps a lowered variable with its native minimum (%s)', (offset) => {
+  const units = extract([
+    item('Let the measurement be the following finite quantity.', 90, 485, 248, 'Body', 10),
+    item('Q(t', 248, 454, 26, 'Math', 10, false),
+    item(') := min', 274, 454, 36, 'Body', 10, false),
+    item('r', 299.4 + offset, 447.5, 4, 'Script', 7),
+    item('|', 312, 454, 3, 'Math', 10, false),
+    item('h', 315, 454, 5, 'Math', 10, false),
+    item('(', 320, 454, 4, 'Body', 10, false),
+    item('r', 324, 454, 4, 'Math', 10, false),
+    item(')', 328, 454, 4, 'Body', 10, false),
+    item('|', 332, 454, 3, 'Math', 10),
+    item('over all eligible values of the variable.', 90, 426, 187, 'Body', 10)
+  ])
+  const label = units.find((unit) => unit.items.includes('1:3'))
+  expect(label?.items).toEqual(['1:3'])
+  expect(label?.sourceOnly).toBe(offset ? undefined : true)
+  expect(label?.preserve).toBe(offset ? undefined : 'formula')
+})
+
+it.each([0, 4])('keeps infinity over a native summation with a lowered limit (%s)', (offset) => {
+  const units = extract([
+    item('The observed total is found directly from the terms.', 90, 485, 248, 'Body', 10),
+    item('T = 2', 246, 420, 31, 'Body', 10, false),
+    item('∞', 284 + offset, 433, 8, 'Small', 7),
+    { ...item('∑', 281, 430, 14, 'Large', 10, false), fontAscent: 0.03, fontDescent: -2.7 },
+    item('j', 281, 408.7, 4, 'Script', 7, false),
+    item('=1', 285, 408.7, 10, 'Small', 7),
+    item('c', 302, 420, 5, 'Math', 10, false),
+    item('j', 307, 418, 4, 'Script', 7),
+    item('We use this expression below.', 90, 389, 150, 'Body', 10)
+  ])
+  const label = units.find((unit) => unit.items.includes('1:2'))
+  expect(label?.items).toEqual(['1:2'])
+  expect(label?.sourceOnly).toBe(offset ? undefined : true)
+  expect(label?.preserve).toBe(offset ? undefined : 'formula')
+})

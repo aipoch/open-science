@@ -6,6 +6,7 @@ const NOTEBOOK_MEMORY_POLICY_CONFIG_FILE = 'notebook-memory-policy.json'
 type NotebookMemoryPolicy = Readonly<{
   windowsEnterRatio: number
   windowsExitRatio: number
+  windowsPhysicalCaps?: Readonly<{ enterBytes: number; exitBytes: number }>
   linuxEnterRatio: number
   linuxExitRatio: number
   macNormalRecoveryMs: number
@@ -18,8 +19,9 @@ type NotebookMemoryPolicyConfigResult = Readonly<{
 }>
 
 const DEFAULT_NOTEBOOK_MEMORY_POLICY: NotebookMemoryPolicy = Object.freeze({
-  windowsEnterRatio: 0.1,
-  windowsExitRatio: 0.2,
+  windowsEnterRatio: 0.05,
+  windowsExitRatio: 0.1,
+  windowsPhysicalCaps: Object.freeze({ enterBytes: 400 * 1024 ** 2, exitBytes: 800 * 1024 ** 2 }),
   linuxEnterRatio: 0.1,
   linuxExitRatio: 0.2,
   macNormalRecoveryMs: 20_000
@@ -48,6 +50,10 @@ const parsePolicy = (value: unknown): NotebookMemoryPolicy | undefined => {
   const linuxExitRatio = readOptionalNumber(value, 'linuxExitRatio')
   const macNormalRecoveryMs = readOptionalNumber(value, 'macNormalRecoveryMs')
   const policy = {
+    // A configured Windows ratio customizes the hysteresis pair, including a defaulted partner.
+    ...(windowsEnterRatio === undefined && windowsExitRatio === undefined
+      ? { windowsPhysicalCaps: DEFAULT_NOTEBOOK_MEMORY_POLICY.windowsPhysicalCaps }
+      : {}),
     windowsEnterRatio: windowsEnterRatio ?? DEFAULT_NOTEBOOK_MEMORY_POLICY.windowsEnterRatio,
     windowsExitRatio: windowsExitRatio ?? DEFAULT_NOTEBOOK_MEMORY_POLICY.windowsExitRatio,
     linuxEnterRatio: linuxEnterRatio ?? DEFAULT_NOTEBOOK_MEMORY_POLICY.linuxEnterRatio,

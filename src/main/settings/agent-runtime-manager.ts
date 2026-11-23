@@ -2,10 +2,28 @@ import { providerValidationRoute } from '../../shared/settings-runtime'
 import { installManagedPi, uninstallManagedPi } from './managed-pi'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
-import { runVerificationProcess } from '../update/verification-process'
-import { constants, existsSync } from 'node:fs'
-import { access, mkdir, stat } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
+import {
+  runVerificationProcess,
+  VerificationProcessUnsettledError,
+  verificationDirectoryIsSettled
+} from '../update/verification-process'
+import { randomUUID } from 'node:crypto'
+import { constants, existsSync, realpathSync } from 'node:fs'
+import {
+  access,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { applyPatch, parsePatch } from 'diff'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { createServer } from 'node:net'
 import { BootstrapError } from '../../shared/bootstrap'
 import {
@@ -40,8 +58,20 @@ import {
   MINIMUM_CODEX_ACP_VERSION
 } from '../../shared/codex-runtime'
 import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
-import { CLAUDE_EXECUTABLE_MISSING_MESSAGE } from '../../shared/failure/messages'
-import { buildAgentSpawnEnv } from '../acp/agent-process'
+import {
+  CLAUDE_ACP_MISSING_MESSAGE,
+  CLAUDE_EXECUTABLE_MISSING_MESSAGE
+} from '../../shared/failure/messages'
+import {
+  buildAgentSpawnEnv,
+  claudeAcpAdapterPath,
+  claudeAcpAdapterRevision,
+  claudeAcpInstallationReceipt,
+  isClaudeAgentAcpAvailable,
+  managedClaudeAcpEntryAt,
+  managedClaudeAcpRoot,
+  resolveClaudeAgentAcpEntry
+} from '../acp/agent-process'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
@@ -146,6 +176,143 @@ const CODEX_INSTALL_TARGET: InstallTarget = {
 
 const isManagedCodexPath = (adapterPath: string, configRoot: string): boolean =>
   adapterPath === managedCodexAdapterEntry(configRoot)
+
+const claudeAcpPatchName = '@agentclientprotocol+claude-agent-acp+0.70.0.patch'
+
+const resolveNpm = (env: NodeJS.ProcessEnv): string => {
+  const directory = dirname(process.execPath)
+  for (const candidate of [
+    join(directory, 'node_modules/npm/bin/npm-cli.js'),
+    resolve(directory, '../lib/node_modules/npm/bin/npm-cli.js'),
+    ...(process.platform === 'win32'
+      ? []
+      : (env.PATH ?? '')
+          .split(delimiter)
+          .filter(isAbsolute)
+          .map((dir) => join(dir, 'npm')))
+  ]) {
+    try {
+      const path = realpathSync(candidate)
+      if (path.endsWith(join('npm', 'bin', 'npm-cli.js'))) return path
+    } catch {
+      // Try the next location.
+    }
+  }
+  throw new Error(
+    'npm is unavailable. Install Open Science with its Node runtime or use Node.js with npm.'
+  )
+}
+
+const applyAdapterPatch = async (root: string, patch: string): Promise<void> => {
+  const prefix = 'b/' + claudeAcpAdapterPath + '/'
+  for (const file of parsePatch(patch)) {
+    const name = file.newFileName
+    if (!name?.startsWith(prefix) || !/^[\w.-]+$/.test(name.slice(prefix.length)))
+      throw new Error('Invalid Claude ACP patch path.')
+    const destination = join(root, claudeAcpAdapterPath, name.slice(prefix.length))
+    const source = file.oldFileName === '/dev/null' ? '' : await readFile(destination, 'utf8')
+    const patched = applyPatch(source, file)
+    if (patched === false) throw new Error('The Claude ACP patch could not be applied to ' + name)
+    await writeFile(destination, patched)
+  }
+}
+
+const installManagedClaudeAcp = async ({
+  configRoot,
+  installId,
+  onEvent,
+  registries,
+  signal
+}: {
+  configRoot: string
+  installId: string
+  onEvent: (event: ClaudeInstallEvent) => void
+  registries: readonly string[]
+  signal: AbortSignal
+}): Promise<void> => {
+  const root = managedClaudeAcpRoot(configRoot)
+  if (managedClaudeAcpEntryAt(root)) return
+  const host = runtimeMetadataIfConfigured()
+  const applicationPath = host?.applicationPath ?? process.cwd()
+  const assets = join(applicationPath, 'resources', 'claude-acp')
+  const stagedPatch = join(assets, claudeAcpPatchName)
+  const patch = await readFile(stagedPatch, 'utf8')
+  const env = { ...augmentedPathEnv(process.env), ...nodeRuntimeEnvironment() }
+  const npm = resolveNpm(env)
+  const staging = await mkdtemp(join(configRoot, '.claude-acp-install-'))
+  const log = (chunk: string): void =>
+    onEvent({ kind: 'log', installId, stream: 'system', chunk: chunk + '\n' })
+  try {
+    for (const file of ['package.json', 'package-lock.json'])
+      await copyFile(join(assets, file), join(staging, file))
+    log('Installing the app-managed Claude ACP adapter from npm.')
+    for (const [index, registry] of registries.entries()) {
+      try {
+        await runVerificationProcess(
+          process.execPath,
+          [
+            npm,
+            'ci',
+            '--ignore-scripts',
+            '--omit=optional',
+            '--no-audit',
+            '--no-fund',
+            '--registry',
+            registry,
+            '--cache',
+            join(staging, '.npm-cache')
+          ],
+          { cwd: staging, env, signal, timeoutMs: 180_000 }
+        )
+        break
+      } catch (error) {
+        signal.throwIfAborted()
+        if (!verificationDirectoryIsSettled(staging) || index === registries.length - 1) throw error
+        log('Could not download Claude ACP. Trying the next npm registry.')
+      }
+    }
+    await applyAdapterPatch(staging, patch)
+    await writeFile(join(staging, claudeAcpInstallationReceipt), claudeAcpAdapterRevision)
+    const entry = managedClaudeAcpEntryAt(staging)
+    if (!entry) throw new Error('The Claude ACP installation is incomplete.')
+    const agent = pathToFileURL(join(dirname(entry), 'acp-agent.js')).href
+    const launch = pathToFileURL(join(dirname(entry), 'open-science-launch.js')).href
+    await runVerificationProcess(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `import { waitForMcpServers } from ${JSON.stringify(agent)};
+        import { spawnWithFileConfiguration } from ${JSON.stringify(launch)};
+        if (typeof waitForMcpServers !== 'function' || typeof spawnWithFileConfiguration !== 'function')
+          throw new Error('The Claude ACP patch is incomplete.');`
+      ],
+      { cwd: staging, env, signal, timeoutMs: 15_000 }
+    )
+    await rm(join(staging, '.npm-cache'), { recursive: true, force: true })
+    signal.throwIfAborted()
+    // All work is verified before replacing incomplete files. A usable installation returned above.
+    const backup = root + '.backup-' + randomUUID()
+    const previousExists = existsSync(root)
+    if (previousExists) await rename(root, backup)
+    try {
+      await rename(staging, root)
+    } catch (error) {
+      if (previousExists) await rename(backup, root)
+      throw error
+    }
+    if (previousExists) await rm(backup, { recursive: true, force: true }).catch(() => undefined)
+  } finally {
+    if (verificationDirectoryIsSettled(staging))
+      await rm(staging, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+const uninstallManagedClaudeAcp = (configRoot: string): Promise<void> =>
+  rm(managedClaudeAcpRoot(configRoot), { recursive: true, force: true })
+
+const hasManagedClaudeAcp = (configRoot: string): boolean =>
+  existsSync(join(managedClaudeAcpRoot(configRoot), claudeAcpInstallationReceipt))
 
 export type ExecuteClaudeProbe = (
   executablePath: string,
@@ -334,6 +501,7 @@ export type AgentRuntimeManagerOptions = {
   installManagedClaudeImpl?: (
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
+  installManagedClaudeAcpImpl?: typeof installManagedClaudeAcp
   installManagedOpencodeImpl?: (
     options: InstallManagedOpencodeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -374,6 +542,7 @@ export class AgentRuntimeManager {
   private pendingNpmAvailability?: Promise<boolean>
   private npmAvailableUntil = 0
   private lastOpencodeLaunchProbe?: { executableKey: string; version: string; expiresAt: number }
+  private readonly installManagedClaudeAcpImpl: typeof installManagedClaudeAcp
   private readonly installManagedClaudeImpl: (
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -463,6 +632,8 @@ export class AgentRuntimeManager {
     this.executeClaudeProbe = options.executeClaudeProbe ?? executeClaudeProbe
     this.installCoordinator = options.installCoordinator ?? new SettingsInstallCoordinator()
     this.installManagedClaudeImpl = options.installManagedClaudeImpl ?? installManagedClaude
+    this.installManagedClaudeAcpImpl =
+      options.installManagedClaudeAcpImpl ?? installManagedClaudeAcp
     this.installManagedOpencodeImpl = options.installManagedOpencodeImpl ?? installManagedOpencode
     this.installManagedCodeBuddyImpl =
       options.installManagedCodeBuddyImpl ?? installManagedCodeBuddy
@@ -540,7 +711,9 @@ export class AgentRuntimeManager {
       signal.throwIfAborted()
       return computePreflight({
         settings,
-        claudePathExists: isSupportedClaudeCliVersion(runtimeProbe.claudeVersion),
+        claudePathExists:
+          isSupportedClaudeCliVersion(runtimeProbe.claudeVersion) &&
+          isClaudeAgentAcpAvailable(this.configRoot),
         opencodePathExists: runtimeProbe.opencodeVersion !== null,
         codebuddyPathExists: isSupportedCodeBuddyVersion(runtimeProbe.codebuddyVersion),
         codexPathExists: codexVersionsFromProbe(runtimeProbe.codex) !== undefined,
@@ -628,7 +801,10 @@ export class AgentRuntimeManager {
           {
             id: 'claude-code',
             label: getAgentFramework('claude-code').displayName,
-            runtime: claudeRuntime
+            runtime:
+              claudeRuntime.found && !isClaudeAgentAcpAvailable(this.configRoot)
+                ? { ...claudeRuntime, found: false, diagnostic: CLAUDE_ACP_MISSING_MESSAGE }
+                : claudeRuntime
           },
           {
             id: 'opencode',
@@ -842,12 +1018,36 @@ export class AgentRuntimeManager {
     const installId = `install-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
     return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
+      const registries =
+        request.managedRegistry === 'npmmirror'
+          ? [DEFAULT_REGISTRIES[1], DEFAULT_REGISTRIES[0]]
+          : DEFAULT_REGISTRIES
+      const complete = async (result: ClaudeInstallResult): Promise<ClaudeInstallResult> => {
+        if (!result.ok) return result
+        try {
+          await this.installManagedClaudeAcpImpl({
+            configRoot: this.configRoot,
+            installId,
+            onEvent,
+            registries,
+            signal
+          })
+          return result
+        } catch (cause) {
+          if (cause instanceof VerificationProcessUnsettledError) onCleanupFailure(cause)
+          const error = cause instanceof Error ? cause.message : String(cause)
+          onEvent({
+            kind: 'log',
+            installId,
+            stream: 'system',
+            chunk: `Claude ACP installation failed: ${error}\n`
+          })
+          return { installId, ok: false, error }
+        }
+      }
+
       if (request.source === 'managed') {
         this.signInInstallId = request.signInAttemptId
-        const registries =
-          request.managedRegistry === 'npmmirror'
-            ? [DEFAULT_REGISTRIES[1], DEFAULT_REGISTRIES[0]]
-            : DEFAULT_REGISTRIES
         const outcome = await this.installManagedClaudeImpl({
           installId,
           onEvent,
@@ -877,7 +1077,7 @@ export class AgentRuntimeManager {
 
         if (request.signInAttemptId && outcome.result.ok && !outcome.resolvedPath)
           return { installId, ok: false, error: CLAUDE_EXECUTABLE_MISSING_MESSAGE }
-        return outcome.result
+        return complete(outcome.result)
       }
 
       const result = await runInstallWithFallback({
@@ -888,7 +1088,7 @@ export class AgentRuntimeManager {
         signal
       })
       if (result.ok) await this.detectClaude(signal)
-      return result
+      return complete(result)
     })
   }
 
@@ -1111,12 +1311,15 @@ export class AgentRuntimeManager {
     const resolvedPath = settings.claude?.resolvedPath
     const wasActive = (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID) === 'claude-code'
 
-    if (!resolvedPath || !isManagedClaudePath(resolvedPath, this.configRoot)) {
+    const ownsExecutable = resolvedPath && isManagedClaudePath(resolvedPath, this.configRoot)
+    if (!ownsExecutable && !hasManagedClaudeAcp(this.configRoot))
       return { activeBackendAffected: false }
-    }
 
-    await uninstallManagedClaude(this.configRoot)
-    await this.detectClaude()
+    if (ownsExecutable) {
+      await uninstallManagedClaude(this.configRoot)
+      await this.detectClaude()
+    }
+    await uninstallManagedClaudeAcp(this.configRoot)
     await this.autoSwitchAwayFrom('claude-code')
     return { activeBackendAffected: wasActive }
   }
@@ -1345,6 +1548,7 @@ export class AgentRuntimeManager {
     if (storedPath && (await this.pathExists(storedPath))) {
       const version = await this.detectDeps.getVersion(storedPath).catch(() => undefined)
       if (!isSupportedClaudeCliVersion(version)) throw new Error(CLAUDE_CLI_INCOMPATIBLE_MESSAGE)
+      resolveClaudeAgentAcpEntry(this.configRoot)
       return storedPath
     }
 
@@ -1352,6 +1556,7 @@ export class AgentRuntimeManager {
     if (detected.found && detected.path) {
       if (!isSupportedClaudeCliVersion(detected.version))
         throw new Error(CLAUDE_CLI_INCOMPATIBLE_MESSAGE)
+      resolveClaudeAgentAcpEntry(this.configRoot)
       return detected.path
     }
     throw new Error(CLAUDE_EXECUTABLE_MISSING_MESSAGE)
@@ -1925,49 +2130,7 @@ export class AgentRuntimeManager {
   }
 
   private async autoSwitchAwayFrom(uninstalled: AgentFrameworkId): Promise<void> {
-    const settings = await this.repository.getSettings()
-    const active = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
-    if (active !== uninstalled) return
-
-    const candidates: AgentFrameworkId[] = ['claude-code', 'opencode', 'codex', 'codebuddy']
-    for (const candidate of candidates) {
-      if (candidate === uninstalled) continue
-      const path =
-        candidate === 'claude-code'
-          ? settings.claude?.resolvedPath
-          : candidate === 'opencode'
-            ? settings.opencodePath
-            : candidate === 'codebuddy'
-              ? settings.codebuddyPath
-              : settings.codex?.resolvedPath
-      if (!path) continue
-
-      const version =
-        candidate === 'claude-code'
-          ? await this.detectDeps.getVersion(path)
-          : candidate === 'opencode'
-            ? await this.opencodeDetectDeps.getVersion(path)
-            : candidate === 'codebuddy'
-              ? await this.codebuddyDetectDeps.getVersion(path)
-              : await this.codexDetectDeps.getAdapterVersion(path)
-      const ready =
-        candidate === 'codex'
-          ? !!version &&
-            isSupportedCodexAcpVersion(parseCodexVersion(version) ?? '') &&
-            !!settings.codex?.nativePath &&
-            isSupportedCodexCliVersion(
-              await this.probeCodexNativeVersion(settings.codex.nativePath)
-            )
-          : candidate === 'claude-code'
-            ? isSupportedClaudeCliVersion(version)
-            : candidate === 'codebuddy'
-              ? isSupportedCodeBuddyVersion(version)
-              : !!version
-      if (ready) {
-        await this.repository.setAgentFramework(candidate)
-        return
-      }
-    }
+    await this.repository.setAgentFramework(DEFAULT_AGENT_FRAMEWORK_ID, uninstalled)
   }
 
   private async pathExists(path: string): Promise<boolean> {

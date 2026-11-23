@@ -5,7 +5,8 @@ import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 
 import { createManagedPreviewRequest } from './preview-file-reader'
 import { isManagedFilePublicationPendingError } from './preview-errors'
-import { usePreviewResourceKey } from './usePreviewResourceGeneration'
+import { createPreviewResourceKey } from './preview-resource-key'
+import { usePreviewResourceGeneration } from './usePreviewResourceGeneration'
 
 const MAX_CACHED_IMAGE_BYTES = 64 * 1024 * 1024
 const MAX_CACHED_IMAGE_COUNT = 32
@@ -199,8 +200,13 @@ const useCachedPreviewImage = (
   invalidateWhenDisabled = false,
   thumbnail = false
 ): CachedPreviewImageState => {
-  const resourceKey = usePreviewResourceKey(item)
-  const requestKey = thumbnail ? `${resourceKey}:thumbnail` : resourceKey
+  const generation = usePreviewResourceGeneration()
+  const suffix = thumbnail ? `${generation}:thumbnail` : generation
+  const requestKey = `${createPreviewResourceKey(item)}:${suffix}`
+  const previewKey =
+    item.imageGenerationSessionId && item.selectedVersionId
+      ? `${createPreviewResourceKey({ ...item, imageGenerationSessionId: undefined })}:${suffix}`
+      : requestKey
   const [result, setResult] = useState<
     | ({ requestKey: string; status: 'ready'; url: string } & ImageDimensions)
     | { requestKey: string; status: 'error'; error: Error }
@@ -214,6 +220,10 @@ const useCachedPreviewImage = (
     }
 
     let disposed = false
+    const preview = entries.get(previewKey)?.value
+    // A producer-scoped read can reuse an ordinary preview Blob for the same version.
+    // Producer-only Blobs stay scoped and live resource handles keep their own lifetime.
+    const cacheKey = preview && !preview.managedResourceId ? previewKey : requestKey
     const entry = acquire(
       {
         path: item.path,
@@ -227,7 +237,7 @@ const useCachedPreviewImage = (
         selectedVersionId: item.selectedVersionId,
         imageGenerationSessionId: item.imageGenerationSessionId
       },
-      requestKey,
+      cacheKey,
       thumbnail
     )
     void entry.promise.then(
@@ -266,6 +276,7 @@ const useCachedPreviewImage = (
     item.imageGenerationSessionId,
     item.size,
     item.source,
+    previewKey,
     requestKey
   ])
 

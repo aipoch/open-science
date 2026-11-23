@@ -1,0 +1,141 @@
+name: Daily Windows Upgrade
+
+on:
+  workflow_call:
+    outputs:
+      baseline:
+        value: ${{ jobs.certify.outputs.baseline }}
+      failed_stage:
+        value: ${{ jobs.certify.outputs.failed_stage }}
+    inputs:
+      signed_run_id:
+        description: Reuse the Windows artifact from this Release run
+        type: string
+        default: ''
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  certify:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    outputs:
+      baseline: ${{ steps.plan.outputs.baseline }}
+      failed_stage: ${{ steps.fixtures.outcome == 'failure' && 'Build test packages' || steps.aba.outcome == 'failure' && 'A to B and rollback' || steps.forward.outcome == 'failure' && 'B to C' || 'Runner preparation or cleanup' }}
+    env:
+      ARTIFACT_RUN: ${{ inputs.signed_run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Download the exact signed release candidate
+        if: env.ARTIFACT_RUN != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.signed_run_id }}
+          name: windows-x64
+          path: ${{ runner.temp }}/upgrade-b
+      - name: Pin baseline, candidate and forward-update coverage
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $last = ''
+          $version = ''
+          if ($env:ARTIFACT_RUN) {
+            $installer = @(Get-ChildItem "$env:RUNNER_TEMP/upgrade-b/*-win-x64-setup.exe")
+            if ($installer.Count -ne 1 -or $installer[0].Name -notmatch '^aipoch-open-science-(\d+\.\d+\.\d+)-win-x64-setup\.exe$') { throw 'Expected a stable candidate' }
+            $version = $Matches[1]
+            if ($env:GITHUB_EVENT_NAME -eq 'push' -and "v$version" -cne $env:GITHUB_REF_NAME) { throw 'Candidate version differs from release tag' }
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'schedule') {
+            $last = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/windows-upgrade-smoke.yml/runs?event=schedule&branch=main&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // empty'
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          ./scripts/ci/plan-windows-upgrade.ps1 -ReleaseVersion $version -LastSuccess "$last"
+
+      - name: Build test-signed Windows packages
+        if: env.ARTIFACT_RUN == ''
+        id: fixtures
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ steps.plan.outputs.baseline_sha }}
+          VERSION_A: ${{ steps.plan.outputs.version_a }}
+          VERSION_B: ${{ steps.plan.outputs.version_b }}
+          VERSION_C: ${{ steps.plan.outputs.version_c }}
+          FORWARD: ${{ steps.plan.outputs.forward }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Open Science CI' -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable -NotAfter (Get-Date).AddDays(1)
+          "TEST_SIGNER=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          $public = Export-Certificate -Cert $cert -FilePath "$env:RUNNER_TEMP/upgrade-test.cer"
+          Import-Certificate -FilePath $public.FullName -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+          $source = Join-Path $env:RUNNER_TEMP 'upgrade-source'
+          git worktree add --detach $source $env:BASE_SHA
+          ./scripts/ci/build-upgrade-fixture.ps1 $source $env:VERSION_A "$env:RUNNER_TEMP/upgrade-a" $cert.Thumbprint
+          git worktree remove --force $source
+          ./scripts/ci/build-upgrade-fixture.ps1 $PWD $env:VERSION_B "$env:RUNNER_TEMP/upgrade-b" $cert.Thumbprint
+          if ($env:FORWARD -eq 'true') {
+            ./scripts/ci/build-upgrade-fixture.ps1 $PWD $env:VERSION_C "$env:RUNNER_TEMP/upgrade-c" $cert.Thumbprint -ReuseDependencies
+          }
+
+      - name: Verify previously signed release installers
+        if: env.ARTIFACT_RUN != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_TAG: ${{ steps.plan.outputs.baseline }}
+          AZURE_SIGNING_PUBLISHER: AIPOCH PTE. LTD.
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          gh release download $env:BASE_TAG -p '*-win-x64-setup.exe' -p '*-win-x64-setup.exe.blockmap' -D "$env:RUNNER_TEMP/upgrade-a"
+          foreach ($dir in 'upgrade-a', 'upgrade-b') {
+            ./scripts/ci/verify-windows-signature.ps1 -InstallerDir "$env:RUNNER_TEMP/$dir"
+          }
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install prisma generate
+
+      - name: Upgrade A to B and roll back the same profile to A
+        id: aba
+        shell: pwsh
+        run: node scripts/windows-updater-certification.mjs --previous-dir "$env:RUNNER_TEMP/upgrade-a" --current-dir "$env:RUNNER_TEMP/upgrade-b" --rollback --output aba.json
+
+      - name: Exercise the candidate updater from B to C
+        id: forward
+        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.plan.outputs.forward == 'true' }}
+        shell: pwsh
+        run: |
+          # Both drills share this disposable Windows account. electron-updater promotes the
+          # downloaded B blockmap even if apply is blocked. Start the independent B install with
+          # a cold blockmap cache so the fixture observes both versioned feed requests.
+          $map = Join-Path $env:LOCALAPPDATA 'open-science-updater/current.blockmap'
+          if (Test-Path -LiteralPath $map -PathType Leaf) {
+            Move-Item -LiteralPath $map -Destination "$env:RUNNER_TEMP/upgrade-b-prior.blockmap"
+          }
+          node scripts/windows-updater-certification.mjs --previous-dir "$env:RUNNER_TEMP/upgrade-b" --current-dir "$env:RUNNER_TEMP/upgrade-c" --cold-launch --output forward.json
+
+      - name: Remove test signing identity
+        if: always() && env.TEST_SIGNER != ''
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:TEST_SIGNER" -DeleteKey
+          Remove-Item -LiteralPath "Cert:\LocalMachine\Root\$env:TEST_SIGNER"
+
+      - name: Retain upgrade observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-upgrade-observations
+          path: |
+            aba.json
+            forward.json
+          if-no-files-found: warn
+          retention-days: 7
