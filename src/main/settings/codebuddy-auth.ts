@@ -73,12 +73,14 @@ const readEffortValues = (value: unknown): ModelReasoningEffort[] => {
   ]
 }
 
-const readModelReasoningEfforts = (option: Record<string, unknown>): ModelReasoningEffort[] => {
-  const metadata = option._meta
+const readModelReasoningEfforts = (option: unknown): ModelReasoningEffort[] => {
+  if (!option || typeof option !== 'object' || Array.isArray(option)) return []
+  const optionRecord = option as Record<string, unknown>
+  const metadata = optionRecord._meta
   const metadataRecord =
     metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : undefined
   const candidates = [
-    option.effortOptions,
+    optionRecord.effortOptions,
     metadataRecord?.effortOptions,
     metadataRecord?.['codebuddy.ai/effortOptions'],
     metadataRecord?.supportedEfforts,
@@ -89,6 +91,11 @@ const readModelReasoningEfforts = (option: Record<string, unknown>): ModelReason
     if (values.length) return values
   }
   return []
+}
+
+const readModelId = (value: unknown): unknown => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return (value as Record<string, unknown>).modelId
 }
 
 // Keep credentials and vendor auth responses on the CLI side of the settings IPC boundary.
@@ -207,7 +214,10 @@ export async function runCodeBuddyAuth(
       const session = await Promise.race([
         connection.agent.request<
           acp.NewSessionResponse & {
-            models?: { currentModelId?: string; availableModels?: { modelId: string }[] }
+            models?: {
+              currentModelId?: string
+              availableModels?: unknown[]
+            }
           }
         >('session/new', { cwd, mcpServers: [] }),
         new Promise<never>((_, reject) => {
@@ -232,7 +242,7 @@ export async function runCodeBuddyAuth(
       const values = collectSelectValues(select?.options).filter(validId)
       const ids = values.length
         ? values
-        : (session.models?.availableModels ?? []).map((m) => m?.modelId).filter(validId)
+        : (session.models?.availableModels ?? []).map(readModelId).filter(validId)
       if (!ids.length) return { authenticated: true }
       const current = values.length ? select?.currentValue : session.models?.currentModelId
       const model = current && ids.includes(current) ? current : ids[0]
@@ -246,6 +256,16 @@ export async function runCodeBuddyAuth(
         const modelId = entry.value
         const efforts = readModelReasoningEfforts(entry)
         if (typeof modelId === 'string' && efforts.length) modelReasoningEfforts[modelId] = efforts
+      }
+      for (const entry of session.models?.availableModels ?? []) {
+        const modelId = readModelId(entry)
+        const efforts = readModelReasoningEfforts(entry)
+        if (
+          typeof modelId === 'string' &&
+          efforts.length &&
+          modelReasoningEfforts[modelId] === undefined
+        )
+          modelReasoningEfforts[modelId] = efforts
       }
       if (model && effortValues.length && !modelReasoningEfforts[model]) {
         modelReasoningEfforts[model] = [...new Set(effortValues)]
