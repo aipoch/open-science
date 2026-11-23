@@ -115,7 +115,7 @@ export const createResearchMcpServer = ({
       {
         description,
         inputSchema: refine ? inputSchema.superRefine(refine) : inputSchema,
-        outputSchema: z.object({ result: z.unknown() }),
+        outputSchema: z.object({ result: z.unknown() }).meta({ $schema: undefined }),
         annotations
       },
       async (args, extra) => {
