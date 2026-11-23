@@ -207,8 +207,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Main-only initial connection preparation changes no tool schemas, handlers or Auto dispositions.
         // Reviewed: terminal status and diagnostics are projected after RPC dispatch. Background
         // query and cancel still require the registered action and its validated Run identity.
+        // The read-only state request limits history to the ten runs its response can display.
         'notebook/mcp-server.ts':
-          '98fa18d1a85dfa0e389f370961710bcbfaf69af1302afcbae7ce9d06608d109d',
+          '80e9b1e4677caf0ac28706b3711c02340ae89f617bdd28fb6dade801c2cebbcf',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
