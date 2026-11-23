@@ -3852,6 +3852,7 @@
     "Failed to load bookmarks.": "Échec du chargement des favoris.",
     "Failed to update bookmarks.": "Échec de la mise à jour des favoris.",
     "Folder path": "Chemin du dossier",
+    "Show parent folders": "Afficher les dossiers parents",
     "New version": "Nouvelle version",
     "No other drives": "Aucun autre lecteur",
     "None declared": "Aucun déclaré",
@@ -9238,12 +9239,14 @@
     "This Office format cannot be previewed.": "L’aperçu ne prend pas en charge ce format Office.",
     "The secure Office preview could not start.": "L’aperçu sécurisé Office n’a pas pu démarrer.",
     "Search limited. Type a folder path to narrow the results.": "Recherche limitée. Saisissez le chemin d’un dossier pour affiner les résultats.",
+    "Project file location": "Emplacement des fichiers du projet",
+    "Default data location": "Emplacement des données par défaut",
+    "Choose folder…": "Choisir un dossier…",
+    "Change folder…": "Changer de dossier…",
+    "Use app storage": "Utiliser le stockage de l’application",
     "Project folder": "Dossier du projet",
-    "Managed by Open Science": "Géré par Open Science",
-    "A folder on this computer": "Un dossier sur cet ordinateur",
     "Available in the desktop app": "Disponible dans l’application de bureau",
     "No folder selected": "Aucun dossier sélectionné",
-    "Choose…": "Choisir…",
     "Use your existing data and save results in this folder.": "Utilisez vos données existantes et enregistrez les résultats dans ce dossier.",
     "Cloud-synced folder": "Dossier synchronisé dans le cloud",
     "Removable drive": "Lecteur amovible",
@@ -9257,7 +9260,6 @@
     "Your project folder and its files will not be deleted.": "Le dossier de votre projet et ses fichiers ne seront pas supprimés.",
     "Drop a folder to create a project, or a .science file to import": "Déposez un dossier pour créer un projet, ou un fichier .science à importer",
     "Shown in the project list for your reference.": "Affiché dans la liste des projets pour votre référence.",
-    "Search files": "Rechercher des fichiers",
     "Refresh files": "Actualiser les fichiers",
     "Locate folder…": "Localiser le dossier…",
     "Use the desktop app to locate this folder.": "Utilisez l’application de bureau pour localiser ce dossier.",
@@ -9298,7 +9300,6 @@
     "Enable session outputs?": "Activer les sorties de session?",
     "This upgrades project records. Older clients that support only version 1 cannot open this project. Finish or stop running work before saving. Existing files and saved versions stay in place; future outputs from every session use session folders. Managed undo backups remain on this computer. Native code using a bare relative output path still follows its working directory.": "Les données du projet seront mises à niveau. Les anciens clients qui ne prennent en charge que la version 1 ne pourront pas ouvrir ce projet. Terminez ou arrêtez les travaux en cours avant d’enregistrer. Les fichiers existants et les versions enregistrées restent en place; les prochaines sorties de toutes les sessions utiliseront des dossiers de session. Les sauvegardes gérées pour l’annulation restent sur cet ordinateur. Le code natif utilisant un simple chemin de sortie relatif reste basé sur son répertoire de travail.",
     "Enable session outputs": "Activer les sorties de session",
-    "Finish or stop running work before enabling session outputs.": "Terminez ou arrêtez les travaux en cours avant d’activer les sorties de session.",
-    "New projects use session folders for published files and generated Notebook outputs and require project records version 2. Existing projects keep their layout.": "Les nouveaux projets utilisent des dossiers de session pour les fichiers publiés et les sorties Notebook générées, et nécessitent la version 2 des données de projet. Les projets existants conservent leur organisation."
+    "Finish or stop running work before enabling session outputs.": "Terminez ou arrêtez les travaux en cours avant d’activer les sorties de session."
   }
 }

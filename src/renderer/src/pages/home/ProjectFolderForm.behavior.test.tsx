@@ -41,12 +41,12 @@ const Harness = ({ existing = project }: { existing?: Project }): React.JSX.Elem
     </>
   )
 }
-const startFolder = (): void => {
+const startCreate = (): void => {
   fireEvent.click(screen.getByText('New fixture'))
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research' } })
-  fireEvent.click(screen.getByRole('radio', { name: 'A folder on this computer' }))
 }
 const submit = (): HTMLButtonElement => screen.getByRole('button', { name: 'Create project' })
+const choose = (): HTMLButtonElement => screen.getByRole('button', { name: 'Choose folder…' })
 
 beforeEach(() => {
   useProjectStore.setState(createInitialProjectState())
@@ -74,10 +74,9 @@ describe('Project folder creation and settings', () => {
   it('keeps managed creation as the default and omits folder binding', async () => {
     render(<Harness />)
     fireEvent.click(screen.getByText('New fixture'))
-    expect(
-      (screen.getByRole('radio', { name: 'Managed by Open Science' }) as HTMLInputElement).checked
-    ).toBe(true)
-    expect(screen.queryByRole('button', { name: 'Choose…' })).toBeNull()
+    expect(screen.getByText('Default data location')).not.toBeNull()
+    expect(choose().disabled).toBe(false)
+    expect(screen.queryByRole('radio')).toBeNull()
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research' } })
     await act(async () => fireEvent.click(submit()))
     expect(create).toHaveBeenCalledWith({
@@ -89,22 +88,47 @@ describe('Project folder creation and settings', () => {
     expect(validateFolder).not.toHaveBeenCalled()
   })
 
-  it('waits for authoritative folder validation and saves the canonical path', async () => {
+  it('uses the selected folder name and saves the validated canonical path', async () => {
     const validation = deferred<ProjectFolderValidation>()
+    pickDirectory.mockResolvedValueOnce('/Research/Selected cohort/')
     validateFolder.mockReturnValue(validation.promise)
     render(<Harness />)
-    startFolder()
-    expect(submit().disabled).toBe(true)
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Choose…' })))
-    expect(validateFolder).toHaveBeenCalledWith({ path: '/Research/cohort-study' })
+    fireEvent.click(screen.getByText('New fixture'))
+    await act(async () => fireEvent.click(choose()))
+    expect(pickDirectory).toHaveBeenCalledOnce()
+    expect(validateFolder).toHaveBeenCalledWith({ path: '/Research/Selected cohort/' })
     expect(submit().disabled).toBe(true)
     expect(screen.getByRole('button', { name: 'Checking…' })).not.toBeNull()
     await act(async () => validation.resolve({ ok: true, path: '/canonical/cohort-study' }))
+    expect(screen.getByDisplayValue('Selected cohort')).not.toBeNull()
     expect(submit().disabled).toBe(false)
     await act(async () => fireEvent.click(submit()))
     expect(create).toHaveBeenCalledWith(
-      expect.objectContaining({ rootPath: '/canonical/cohort-study' })
+      expect.objectContaining({ name: 'Selected cohort', rootPath: '/canonical/cohort-study' })
     )
+  })
+
+  it('updates the suggested name on Windows until the user edits it', async () => {
+    Object.defineProperty(window.api, 'platform', { value: 'win32' })
+    pickDirectory
+      .mockResolvedValueOnce('C:\\Research\\Cohort one\\')
+      .mockResolvedValueOnce('C:\\Research\\Cohort two')
+      .mockResolvedValueOnce('C:\\Research\\Cohort three')
+    render(<Harness />)
+    fireEvent.click(screen.getByText('New fixture'))
+    await act(async () => fireEvent.click(choose()))
+    expect(screen.getByDisplayValue('Cohort one')).not.toBeNull()
+
+    const changeFolder = (): HTMLElement => screen.getByRole('button', { name: 'Change folder…' })
+    await act(async () => fireEvent.click(changeFolder()))
+    expect(screen.getByDisplayValue('Cohort two')).not.toBeNull()
+
+    const validation = deferred<ProjectFolderValidation>()
+    validateFolder.mockReturnValueOnce(validation.promise)
+    await act(async () => fireEvent.click(changeFolder()))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'My study' } })
+    await act(async () => validation.resolve({ ok: true, path: 'C:\\Research\\Cohort three' }))
+    expect(screen.getByDisplayValue('My study')).not.toBeNull()
   })
 
   it('blocks conflicts and keeps project names and paths in closed details', async () => {
@@ -112,8 +136,8 @@ describe('Project folder creation and settings', () => {
       'Project: Cohort follow-up\nFolder: /Research/shared-study\nArchive the other project first.'
     validateFolder.mockResolvedValue({ ok: false, kind: 'conflict', diagnostics })
     render(<Harness />)
-    startFolder()
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Choose…' })))
+    startCreate()
+    await act(async () => fireEvent.click(choose()))
     expect(screen.getByRole('alert').textContent).toBe('Project folder is already in use')
     expect(
       screen
@@ -124,8 +148,9 @@ describe('Project folder creation and settings', () => {
     ).toBe(false)
     expect(submit().disabled).toBe(true)
     expect(create).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('radio', { name: 'Managed by Open Science' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Use app storage' }))
     expect(screen.queryByRole('alert')).toBeNull()
+    expect(document.activeElement).toBe(choose())
     expect(submit().disabled).toBe(false)
   })
 
@@ -136,8 +161,8 @@ describe('Project folder creation and settings', () => {
       warnings: ['cloud-synced', 'removable', 'network']
     })
     render(<Harness />)
-    startFolder()
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Choose…' })))
+    startCreate()
+    await act(async () => fireEvent.click(choose()))
     expect(screen.getByText('Cloud-synced folder')).not.toBeNull()
     expect(screen.getByText('Removable drive')).not.toBeNull()
     expect(screen.getByText('Network location')).not.toBeNull()
@@ -150,8 +175,8 @@ describe('Project folder creation and settings', () => {
       message: 'Project: competing project\nPath: /Research/cohort-study'
     })
     render(<Harness />)
-    startFolder()
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Choose…' })))
+    startCreate()
+    await act(async () => fireEvent.click(choose()))
     await act(async () => fireEvent.click(submit()))
     expect(screen.getByRole('dialog')).not.toBeNull()
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Research')
@@ -159,15 +184,34 @@ describe('Project folder creation and settings', () => {
     expect(submit().disabled).toBe(true)
   })
 
-  it('ignores a late folder picker after changing storage or closing the dialog', async () => {
-    const picker = deferred<string | null>()
-    pickDirectory.mockReturnValue(picker.promise)
+  it('preserves the current storage when cancelling the initial picker or a replacement', async () => {
+    pickDirectory.mockResolvedValueOnce(null)
     render(<Harness />)
-    startFolder()
-    fireEvent.click(screen.getByRole('button', { name: 'Choose…' }))
-    fireEvent.click(screen.getByRole('radio', { name: 'Managed by Open Science' }))
-    await act(async () => picker.resolve('/late/folder'))
+    startCreate()
+    await act(async () => fireEvent.click(choose()))
+    expect(screen.getByText('Default data location')).not.toBeNull()
     expect(validateFolder).not.toHaveBeenCalled()
+    expect(submit().disabled).toBe(false)
+
+    await act(async () => fireEvent.click(choose()))
+    pickDirectory.mockResolvedValueOnce(null)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Change folder…' })))
+    expect(screen.getByText('/Research/cohort-study')).not.toBeNull()
+    expect(validateFolder).toHaveBeenCalledOnce()
+    expect(submit().disabled).toBe(false)
+  })
+
+  it('ignores a late replacement picker after returning to app storage', async () => {
+    const picker = deferred<string | null>()
+    render(<Harness />)
+    startCreate()
+    await act(async () => fireEvent.click(choose()))
+    pickDirectory.mockReturnValueOnce(picker.promise)
+    fireEvent.click(screen.getByRole('button', { name: 'Change folder…' }))
+    expect(submit().disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Use app storage' }))
+    await act(async () => picker.resolve('/late/folder'))
+    expect(validateFolder).toHaveBeenCalledOnce()
     expect(screen.queryByText('/late/folder')).toBeNull()
     expect(submit().disabled).toBe(false)
   })
@@ -176,26 +220,22 @@ describe('Project folder creation and settings', () => {
     const validation = deferred<ProjectFolderValidation>()
     validateFolder.mockReturnValue(validation.promise)
     render(<Harness />)
-    startFolder()
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Choose…' })))
+    startCreate()
+    await act(async () => fireEvent.click(choose()))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     fireEvent.click(screen.getByText('New fixture'))
     await act(async () => validation.resolve({ ok: true, path: '/late/folder' }))
     expect(screen.queryByText('/late/folder')).toBeNull()
-    expect(
-      (screen.getByRole('radio', { name: 'Managed by Open Science' }) as HTMLInputElement).checked
-    ).toBe(true)
+    expect(screen.getByText('Default data location')).not.toBeNull()
   })
 
   it('keeps host folder selection unavailable in remote and local web browsers', () => {
     document.documentElement.setAttribute('data-open-science-web-events', 'true')
     render(<Harness />)
     fireEvent.click(screen.getByText('New fixture'))
-    const choice = screen.getByRole('radio', {
-      name: /A folder on this computer/
-    }) as HTMLInputElement
+    const choice = choose()
     expect(choice.disabled).toBe(true)
     expect(screen.getByText('Available in the desktop app')).not.toBeNull()
     fireEvent.click(choice)
@@ -207,7 +247,7 @@ describe('Project folder creation and settings', () => {
     fireEvent.click(screen.getByText('Edit fixture'))
     expect(screen.getByText('/Research/cohort-study')).not.toBeNull()
     expect(screen.queryByRole('radio')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Choose…' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^(Choose|Change) folder…$/ })).toBeNull()
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Reveal in Finder' })))
     expect(reveal).toHaveBeenCalledWith('/Research/cohort-study')
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save' })))

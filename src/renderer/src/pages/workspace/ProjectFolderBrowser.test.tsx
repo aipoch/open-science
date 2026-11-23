@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectFolderBrowser } from './ProjectFolderBrowser'
 import {
@@ -43,41 +43,88 @@ afterEach(() => {
   cleanup()
   document.documentElement.removeAttribute('data-open-science-web-events')
 })
-const mount = (): ReturnType<typeof render> =>
+const mount = (rootPath = '/Research/cohort-study'): ReturnType<typeof render> =>
   render(
-    <ProjectFolderBrowser
-      projectId="research"
-      rootPath="/Research/cohort-study"
-      onEntryCountChange={count}
-    />
+    <ProjectFolderBrowser projectId="research" rootPath={rootPath} onEntryCountChange={count} />
   )
 
 describe('Project folder browser', () => {
-  it('reads only the selected directory and navigates back to its parent', async () => {
+  it('reads only the selected directory and navigates via clickable ancestors', async () => {
     mount()
     await screen.findByRole('button', { name: 'analysis' })
+    expect(screen.queryByRole('searchbox')).toBeNull()
     expect(listFolder).toHaveBeenCalledWith({
       projectId: 'research',
       relativePath: '',
-      query: '',
       limit: 100
     })
-    listFolder.mockResolvedValue(page([entry('nested.csv')], { relativePath: 'analysis' }))
+    listFolder.mockResolvedValue(page([entry('figures', true)], { relativePath: 'analysis' }))
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'analysis' })))
     expect(listFolder).toHaveBeenLastCalledWith({
       projectId: 'research',
       relativePath: 'analysis',
-      query: '',
+      limit: 100
+    })
+    listFolder.mockResolvedValue(page([entry('nested.csv')], { relativePath: 'analysis/figures' }))
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'figures' })))
+    const path = within(screen.getByRole('navigation', { name: 'Folder path' }))
+    expect(path.getByText('figures').getAttribute('aria-current')).toBe('page')
+    expect(listFolder).toHaveBeenLastCalledWith({
+      projectId: 'research',
+      relativePath: 'analysis/figures',
       limit: 100
     })
     expect(screen.getByRole('button', { name: /nested.csv/ })).not.toBeNull()
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Go up one level' })))
+    listFolder.mockResolvedValue(page())
+    await act(async () => fireEvent.click(path.getByRole('button', { name: 'cohort-study' })))
     expect(listFolder).toHaveBeenLastCalledWith({
       projectId: 'research',
       relativePath: '',
-      query: '',
       limit: 100
     })
+  })
+
+  it('collapses intermediate folders and opens the selected Windows ancestor', async () => {
+    Object.defineProperty(window.api, 'platform', { value: 'win32' })
+    const root = 'D:\\Research\\cohort-study'
+    const folders = ['notebooks', 'run-id', 'execution-id', 'data']
+    listFolder.mockImplementation(async ({ relativePath }: { relativePath: string }) => {
+      const depth = relativePath ? relativePath.split('\\').length : 0
+      return page([depth < folders.length ? entry(folders[depth], true) : entry('result.csv')], {
+        relativePath
+      })
+    })
+    mount(root)
+    for (const name of folders) {
+      const folder = await screen.findByRole('button', { name })
+      await act(async () => fireEvent.click(folder))
+    }
+
+    const nav = screen.getByRole('navigation', { name: 'Folder path' })
+    const path = within(nav)
+    expect(path.getByText('data').getAttribute('title')).toBe([root, ...folders].join('\\'))
+    expect(path.getByRole('button', { name: 'cohort-study' })).toBeTruthy()
+    expect(path.getByRole('button', { name: 'execution-id' })).toBeTruthy()
+    expect(path.queryByText('notebooks')).toBeNull()
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    fireEvent.keyDown(path.getByRole('button', { name: 'Show parent folders' }), { key: 'Enter' })
+    const menu = within(await screen.findByRole('menu', { name: 'Show parent folders' }))
+    expect(menu.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'notebooks',
+      'run-id'
+    ])
+    fireEvent.click(menu.getByRole('menuitem', { name: 'run-id' }))
+    await waitFor(() =>
+      expect(listFolder).toHaveBeenLastCalledWith({
+        projectId: 'research',
+        relativePath: 'notebooks\\run-id',
+        limit: 100
+      })
+    )
+    expect(document.activeElement).toBe(nav)
+    expect(path.getByText('run-id').getAttribute('aria-current')).toBe('page')
+    expect(path.queryByRole('button', { name: 'Show parent folders' })).toBeNull()
   })
 
   it('appends bounded pages and refreshes external changes when the window regains focus', async () => {
@@ -87,27 +134,14 @@ describe('Project folder browser', () => {
       .mockResolvedValueOnce(page([entry('external.csv')]))
     mount()
     await screen.findByRole('button', { name: 'Load more' })
+    const firstFile = screen.getByRole('button', { name: /first.csv/ })
     await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Load more' })))
     expect(listFolder).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: 'next' }))
-    expect(screen.getByRole('button', { name: /first.csv/ })).not.toBeNull()
+    expect(screen.getByRole('button', { name: /first.csv/ })).toBe(firstFile)
     expect(screen.getByRole('button', { name: /second.csv/ })).not.toBeNull()
     await act(async () => window.dispatchEvent(new Event('focus')))
     expect(screen.getByRole('button', { name: /external.csv/ })).not.toBeNull()
     expect(screen.queryByRole('button', { name: /first.csv/ })).toBeNull()
-  })
-
-  it('debounces filename search without scanning child folders', async () => {
-    mount()
-    await screen.findByRole('button', { name: 'analysis' })
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'raw' } })
-    await waitFor(() =>
-      expect(listFolder).toHaveBeenLastCalledWith({
-        projectId: 'research',
-        relativePath: '',
-        query: 'raw',
-        limit: 100
-      })
-    )
   })
 
   it('opens the shared preview dialog with a Project-scoped file item', async () => {

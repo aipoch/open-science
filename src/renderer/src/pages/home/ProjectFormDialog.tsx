@@ -354,8 +354,7 @@ const ProjectFormDialog = ({
                   Boolean(conflictProject) ||
                   Boolean(
                     folder?.mode === 'create' &&
-                    folder.storage === 'folder' &&
-                    (folder.isBusy || !folder.validation?.ok)
+                    (folder.isBusy || (folder.storage === 'folder' && !folder.validation?.ok))
                   )
                 }
                 aria-busy={Boolean(isSubmitting)}

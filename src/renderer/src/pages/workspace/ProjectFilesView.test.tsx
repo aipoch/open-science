@@ -434,7 +434,6 @@ describe('ProjectFilesView', () => {
     expect(listFolder).toHaveBeenCalledWith({
       projectId: 'default',
       relativePath: '',
-      query: '',
       limit: 100
     })
     expect(

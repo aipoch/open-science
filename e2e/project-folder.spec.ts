@@ -1,5 +1,5 @@
 import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
-import { join, relative, isAbsolute } from 'node:path'
+import { basename, join, relative, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
@@ -70,7 +70,12 @@ test('uses a project folder, reviews changes, then locates and resumes the same 
   const original = 'sample,value\nA,10\n'
   const relocatedInput = 'sample,value\nA,11\n'
   await writeFile(join(folder, 'raw.csv'), original)
-  await mkdir(join(folder, 'measurements'))
+  const nestedFolders = [
+    'sequencing-run-with-a-long-directory-name',
+    'primary-analysis-with-a-long-directory-name',
+    'data'
+  ]
+  await mkdir(join(folder, 'measurements', ...nestedFolders), { recursive: true })
   await writeFile(join(folder, 'measurements', 'folder-mention-only.csv'), 'sample,value\nB,42\n')
   await writeFile(join(folder, '.DS_Store'), 'metadata')
   await writeFile(join(folder, 'measurements', '.folder-mention-only.csv'), 'hidden')
@@ -83,10 +88,12 @@ test('uses a project folder, reviews changes, then locates and resumes the same 
   await app.selectDirectoryInNextDialog(folder)
   await homeNewProjectButton(page).click()
   const create = page.getByRole('dialog', { name: 'New project', exact: true })
-  await create.getByLabel('Name', { exact: true }).fill('Project folder journey')
-  await create.getByRole('radio', { name: 'A folder on this computer' }).check()
-  await create.getByRole('button', { name: 'Choose…', exact: true }).click()
+  await expect(create.getByText('Default data location', { exact: true })).toBeVisible()
+  await create.getByRole('button', { name: 'Choose folder…', exact: true }).click()
   await expect(create.getByText(folder, { exact: true })).toBeVisible()
+  const name = create.getByLabel('Name', { exact: true })
+  await expect(name).toHaveValue(basename(folder))
+  await name.fill('Project folder journey')
   await expect(create.getByRole('button', { name: 'Create project', exact: true })).toBeEnabled()
   await create.screenshot({ path: info.outputPath('folder-create.png') })
   await create.getByRole('button', { name: 'Create project', exact: true }).click()
@@ -131,7 +138,23 @@ test('uses a project folder, reviews changes, then locates and resumes the same 
   await expect(files.getByText('.private', { exact: true })).toHaveCount(0)
   await files.getByText('folder-mention-only.csv', { exact: true }).click()
   await verifyAndCloseCsvPreview(page)
-  await files.getByRole('button', { name: 'Go up one level' }).click()
+  const contents = files.getByRole('list', { name: 'Directory contents' })
+  for (const name of nestedFolders) {
+    await contents.getByRole('button', { name, exact: true }).click()
+  }
+  const folderPath = files.getByRole('navigation', { name: 'Folder path' })
+  await expect(folderPath.locator('[aria-current="page"]')).toHaveAttribute(
+    'title',
+    join(folder, 'measurements', ...nestedFolders)
+  )
+  const hiddenParents = folderPath.getByRole('button', { name: 'Show parent folders' })
+  await hiddenParents.press('ArrowDown')
+  const hiddenAncestor = page.getByRole('menuitem', { name: 'measurements', exact: true })
+  await expect(hiddenAncestor).toBeFocused()
+  await hiddenAncestor.press('Enter')
+  await expect(folderPath).toBeFocused()
+  await expect(contents.getByRole('button', { name: 'folder-mention-only.csv' })).toBeVisible()
+  await folderPath.getByRole('button', { name: basename(folder), exact: true }).click()
   await page.screenshot({ path: info.outputPath('folder-result.png') })
   await rename(folder, moved)
   // A real disk edit distinguishes a fresh ACP read after relocation from cached input bytes.
@@ -300,8 +323,7 @@ test('retains Notebook and Artifact records when a project is removed and select
     await homeNewProjectButton(page).click()
     const dialog = page.getByRole('dialog', { name: 'New project', exact: true })
     await dialog.getByLabel('Name', { exact: true }).fill(name)
-    await dialog.getByRole('radio', { name: 'A folder on this computer' }).check()
-    await dialog.getByRole('button', { name: 'Choose…', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Choose folder…', exact: true }).click()
     await dialog.getByRole('button', { name: 'Create project', exact: true }).click()
     await expect(dialog).toBeHidden()
   }

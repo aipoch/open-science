@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import type { Page } from 'playwright'
+import type { Locator, Page } from 'playwright'
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
 import { openSettingsPage, setTheme } from './fixtures/settings-preferences'
@@ -75,7 +75,8 @@ const pinConversationToEnd = async (page: Page): Promise<void> => {
 const expectStableScreenshot = async (
   page: Page,
   name: string,
-  maxDiffPixelRatio = 0.002
+  maxDiffPixelRatio = 0.002,
+  target: Locator | Page = page
 ): Promise<void> => {
   // Keep the capture independent of the pointer location left by the previous interaction. In
   // particular, the conversation edge markers expose hover-only navigation labels.
@@ -100,7 +101,7 @@ const expectStableScreenshot = async (
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   })
   // Collect every visual mismatch in the journey while keeping the test failure blocking.
-  await expect.soft(page).toHaveScreenshot(name, {
+  await expect.soft(target).toHaveScreenshot(name, {
     animations: 'disabled',
     caret: 'hide',
     maxDiffPixelRatio: process.platform === 'darwin' ? maxDiffPixelRatio : 0.035
@@ -161,7 +162,8 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await homeNewProjectButton(page).click()
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
   await expect(projectDialog).toBeVisible()
-  await expectStableScreenshot(page, 'project-create-dialog.png')
+  // Crop to the dialog so the platform title bar and Home layout do not affect this baseline.
+  await expectStableScreenshot(page, 'project-create-dialog.png', 0.01, projectDialog)
 
   await projectDialog.getByLabel('Name').fill('Visual baseline project')
   await projectDialog.getByRole('button', { name: 'Create project' }).click()

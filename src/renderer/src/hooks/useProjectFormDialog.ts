@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { Project } from '../../../shared/projects'
+import { PROJECT_NAME_MAX_LENGTH, type Project } from '../../../shared/projects'
 import { isDesktopRenderer } from '@/lib/interface-scale'
 import type { ProjectFolderForm, ProjectFolderValidation } from '@/lib/project-folder'
 import { projectFolderFailure } from '@/lib/project-folder-error'
@@ -78,7 +78,8 @@ const useProjectFormDialog = (
   const [folderValidation, setFolderValidation] = useState<ProjectFolderValidation>()
   const [folderBusy, setFolderBusy] = useState(false)
   const [formState, setFormState] = useState<ProjectFormState | null>(null)
-  const [nameDraft, setNameDraft] = useState('')
+  const [projectName, setProjectName] = useState({ value: '', fromFolder: false })
+  const nameDraft = projectName.value
   const [descriptionDraft, setDescriptionDraft] = useState('')
   const [agentContextDraft, setAgentContextDraft] = useState('')
   const [optimizationPromptDraft, setOptimizationPromptDraft] = useState('')
@@ -117,7 +118,7 @@ const useProjectFormDialog = (
     setDiscardConfirmationOpen(false)
     setConflictProject(undefined)
     setFormState({ mode: 'create' })
-    setNameDraft('')
+    setProjectName({ value: '', fromFolder: false })
     setDescriptionDraft('')
     setAgentContextDraft('')
     setOptimizationPromptDraft('')
@@ -152,7 +153,7 @@ const useProjectFormDialog = (
         projectId: project.id,
         expectedUpdatedAt: project.updatedAt
       })
-      setNameDraft(project.name)
+      setProjectName({ value: project.name, fromFolder: false })
       setDescriptionDraft(project.description)
       setAgentContextDraft(project.agentContext ?? '')
       setOptimizationPromptDraft(project.optimizationPrompt ?? '')
@@ -171,6 +172,14 @@ const useProjectFormDialog = (
     setFolderValidation(validation)
   }
 
+  const suggestFolderName = (folderName: string): void => {
+    const value = folderName.trim().slice(0, PROJECT_NAME_MAX_LENGTH)
+    if (!value) return
+    setProjectName((current) =>
+      current.fromFolder || !current.value.trim() ? { value, fromFolder: true } : current
+    )
+  }
+
   const chooseFolder = (): void => {
     if (!isDesktopRenderer() || formState?.mode !== 'create' || isSubmitting || folderBusy) return
     const generation = ++folderGeneration.current
@@ -178,10 +187,17 @@ const useProjectFormDialog = (
     void (async () => {
       const path = await window.api.storage.pickDirectory()
       if (generation !== folderGeneration.current || !path) return
+      setFolderStorage('folder')
       setRootPathDraft(path)
       setFolderValidation(undefined)
       const validation = await window.api.projects.validateFolder({ path })
-      if (generation === folderGeneration.current) applyFolderValidation(validation, path)
+      if (generation !== folderGeneration.current) return
+      applyFolderValidation(validation, path)
+      if (validation.ok) {
+        const separator = window.api.platform === 'win32' ? /[\\/]/ : '/'
+        const folderName = path.split(separator).filter(Boolean).at(-1)
+        if (folderName) suggestFolderName(folderName)
+      }
     })()
       .catch((error: unknown) => {
         if (generation === folderGeneration.current)
@@ -200,7 +216,7 @@ const useProjectFormDialog = (
     if (!isDesktopRenderer() || isSubmitting || formState) return
     openCreateDialog()
     const generation = ++folderGeneration.current
-    setNameDraft(file.name)
+    suggestFolderName(file.name)
     setFolderStorage('folder')
     setFolderBusy(true)
     void window.api.projects
@@ -256,8 +272,9 @@ const useProjectFormDialog = (
     if (!formState || !name || isSubmitting || conflictProject || discardConfirmationOpen) return
     if (
       formState.mode === 'create' &&
-      folderStorage === 'folder' &&
-      (!isDesktopRenderer() || folderBusy || !folderValidation?.ok || !rootPathDraft)
+      (folderBusy ||
+        (folderStorage === 'folder' &&
+          (!isDesktopRenderer() || !folderValidation?.ok || !rootPathDraft)))
     )
       return
 
@@ -361,15 +378,10 @@ const useProjectFormDialog = (
         validation: folderValidation,
         isBusy: folderBusy,
         canSelect: isDesktopRenderer(),
-        onStorageChange: (storage) => {
-          if (
-            isSubmitting ||
-            formState?.mode !== 'create' ||
-            (storage === 'folder' && !isDesktopRenderer())
-          )
-            return
+        onUseAppStorage: () => {
+          if (isSubmitting || formState?.mode !== 'create') return
           folderGeneration.current += 1
-          setFolderStorage(storage)
+          setFolderStorage('managed')
           setFolderBusy(false)
           setFolderValidation(undefined)
           setRootPathDraft(undefined)
@@ -438,7 +450,7 @@ const useProjectFormDialog = (
             setErrorDetail(undefined)
           }
         : undefined,
-      onNameChange: setNameDraft,
+      onNameChange: (value) => setProjectName({ value, fromFolder: false }),
       onDescriptionChange: setDescriptionDraft,
       onAgentContextChange: setAgentContextDraft,
       onOptimizationPromptChange: setOptimizationPromptDraft,

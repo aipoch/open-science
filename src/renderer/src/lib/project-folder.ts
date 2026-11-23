@@ -12,7 +12,7 @@ export type ProjectFolderForm = {
   validation?: ProjectFolderValidation
   isBusy: boolean
   canSelect: boolean
-  onStorageChange: (storage: 'managed' | 'folder') => void
+  onUseAppStorage: () => void
   onChoose: () => void
   onReveal: () => void
   outputLayout?: 'legacy' | 'session-v1'

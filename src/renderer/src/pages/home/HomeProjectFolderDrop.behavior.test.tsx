@@ -77,9 +77,7 @@ describe('Home folder drop', () => {
     ).not.toBeNull()
     await act(async () => fireEvent.drop(target, { dataTransfer }))
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('cohort-study')
-    expect(
-      (screen.getByRole('radio', { name: 'A folder on this computer' }) as HTMLInputElement).checked
-    ).toBe(true)
+    expect(screen.getByRole('button', { name: 'Change folder…' })).not.toBeNull()
     expect(screen.getByText('/Research/cohort-study')).not.toBeNull()
     expect(inspectDroppedFolder).toHaveBeenCalledExactlyOnceWith(dataTransfer.files[0])
     expect(create).not.toHaveBeenCalled()

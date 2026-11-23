@@ -55,7 +55,7 @@ it('shows missing-folder recovery in its region with collapsed diagnostics and u
   })
   expect(screen.getByText('Project folder not found')).not.toBeNull()
   expect(screen.getByText('ENOENT /private/old').closest('details')?.open).toBe(false)
-  expect(screen.queryByText('Managed by Open Science')).toBeNull()
+  expect(screen.queryByText('Default data location')).toBeNull()
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Locate folder…' }))
   })
