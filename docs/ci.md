@@ -119,7 +119,7 @@ while pinning the backend and reader birth identities so their exit cannot produ
 The same source gate also exercises a live registration from another profile and an unreadable live
 registration, preserving the conservative `other-runtime` and recovery-blocking decisions in PRs.
 Changes under `src/main/update/`, the installation startup helper, or the Update Occupancy workflow
-select a dedicated `update_occupancy` lane so the source gate cannot be silently skipped by change
+select a dedicated `update_occupancy_source` lane so the source gate cannot be silently skipped by change
 classification.
 Other Mac validation runs in merge queue.
 The separate Process Lifecycle workflow also covers its declared lifecycle owners and harness paths.

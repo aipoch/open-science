@@ -3,7 +3,7 @@
   "alwaysLanes": ["policy"],
   "laneOrder": [
     "policy",
-    "update_occupancy",
+    "update_occupancy_source",
     "docs",
     "format",
     "lint",
@@ -40,7 +40,7 @@
   ],
   "laneBundles": {
     "policy": "policy",
-    "update_occupancy": "policy",
+    "update_occupancy_source": "policy",
     "docs": "static",
     "format": "static",
     "lint": "static",
@@ -159,7 +159,7 @@
         "packages/open-science/installation-startup.cjs",
         ".github/workflows/update-occupancy.yml"
       ],
-      "capabilities": ["update_occupancy"]
+      "capabilities": ["update_occupancy_source"]
     },
     {
       "id": "documentation",
@@ -944,9 +944,9 @@
       "consumers": [],
       "lanes": []
     },
-    "update_occupancy": {
+    "update_occupancy_source": {
       "consumers": [],
-      "lanes": ["update_occupancy"]
+      "lanes": ["update_occupancy_source"]
     },
     "documentation": {
       "consumers": [],

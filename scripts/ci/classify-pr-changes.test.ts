@@ -44,7 +44,7 @@ it.each([
   'packages/open-science/installation-startup.cjs',
   '.github/workflows/update-occupancy.yml'
 ])('selects the update occupancy gate for %s', (path) => {
-  expect(classifyChanges([{ path, status: 'modified' }]).lanes).toContain('update_occupancy')
+  expect(classifyChanges([{ path, status: 'modified' }]).lanes).toContain('update_occupancy_source')
 })
 
 describe('declared test evidence without source ownership', () => {

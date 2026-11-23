@@ -1904,7 +1904,7 @@ jobs:
   # Keep this result inside the required PR Gate, not only the advisory lifecycle workflow.
   update_occupancy:
     needs: preflight
-    if: ${{ inputs.dry_run == 'update-occupancy' || ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.dry_run == 'classified' || !inputs.dry_run) && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'update_occupancy') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk'))) }}
+    if: ${{ inputs.dry_run == 'update-occupancy' || ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.dry_run == 'classified' || !inputs.dry_run) && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'update_occupancy_source') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk'))) }}
     uses: ./.github/workflows/update-occupancy.yml
     with:
       platform: all
@@ -1955,7 +1955,7 @@ jobs:
           PR_GATE_EXECUTION_MODE: bundles
           PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
           RUNTIME_REQUIRED: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'static') && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full') }}
-          UPDATE_OCCUPANCY_REQUIRED: ${{ inputs.dry_run == 'update-occupancy' || ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.dry_run == 'classified' || !inputs.dry_run) && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'update_occupancy') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk'))) }}
+          UPDATE_OCCUPANCY_REQUIRED: ${{ inputs.dry_run == 'update-occupancy' || ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.dry_run == 'classified' || !inputs.dry_run) && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'update_occupancy_source') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk'))) }}
           UPDATE_OCCUPANCY_RESULT: ${{ needs.update_occupancy.result }}
           RUNTIME_RESULT: ${{ needs.runtime_checks.result }}
           PACKAGE_RESULT: ${{ needs.package_verification.result }}
