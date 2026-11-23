@@ -100,6 +100,9 @@ type KernelProcessRecoveryOptions = Readonly<{
   // remains an exact process fence but does not stop unrelated kernel admission. Invalid receipts
   // are still global failures because their owner cannot be determined safely.
   allowUnverifiedReceipts?: boolean
+  // Scoped recovery only needs to verify receipts that could fence this lane. Omit this for the
+  // strict global recovery used before environment mutation.
+  targetLaneKey?: string
 }>
 
 type KernelProcessLifecycleOwnerOptions = Readonly<{
@@ -430,7 +433,7 @@ class KernelProcessLifecycleOwner {
     // Session admission may happen concurrently for several lanes. Serialize the filesystem scan,
     // while sharing duplicate callers for the same lane.
     const queued = this.scopedRecoveryTail.then(() =>
-      this.recoverRecords({ allowUnverifiedReceipts: true })
+      this.recoverRecords({ allowUnverifiedReceipts: true, targetLaneKey: laneKey })
     )
     this.scopedRecoveryTail = queued.catch(() => undefined)
     this.scopedRecoveries.set(laneKey, queued)
@@ -601,6 +604,12 @@ class KernelProcessLifecycleOwner {
             continue
           }
           if (
+            options.targetLaneKey !== undefined &&
+            pendingRecord.laneKey !== options.targetLaneKey
+          ) {
+            continue
+          }
+          if (
             pendingRecord.ownerInstanceId === this.ownerInstanceId &&
             this.pendingReceiptIds.has(pendingRecord.receiptId)
           ) {
@@ -641,6 +650,13 @@ class KernelProcessLifecycleOwner {
         continue
       }
       if (record.ownerInstanceId === this.ownerInstanceId) continue
+      if (
+        options.allowUnverifiedReceipts &&
+        options.targetLaneKey !== undefined &&
+        record.laneKey !== options.targetLaneKey
+      ) {
+        continue
+      }
       const legacyWindows =
         this.platform === 'win32' && record.platform === 'win32' && !record.windowsJobName
       if (legacyWindows && record.windowsBootObservation) {
