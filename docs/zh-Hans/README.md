@@ -53,18 +53,17 @@
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-### 💡 AIPOCH Open-Science v1.3.3 更新
+### 💡 AIPOCH Open-Science v1.3.4 更新
 
-_2026 年 11 月 21 日_
+_2026 年 11 月 22 日_
 
-- **自动更新**：在 macOS 上，符合条件的更新可在退出应用时自行完成安装；在 Windows 和 Linux 上，更新可在工作时提前为下次启动做好准备——后台下载需要不受限的网络与存储空间，手动更新路径仍然可用。
-- **默认内置 Agent**：新建项目和会话在所有环境中（包括干净的 CLI 与 SDK 安装）均以内置 Open-Science Agent 启动；外部 Agent 运行时仅在你选择时才按需安装。
-- **更精简的应用**：macOS 与 Windows 上安装后的桌面应用体积更小，内置离线 npm 运行时改为针对 Node 22 编译，不再附带一千多个散落的包文件。
-- **统一的图像编辑**：编辑指令位于会话输入框中，悬停或键盘操作可从任意预览进入编辑，并全程支持版本导航。
-- **失败会自我说明**：请求、加载、导入与 Notebook 失败现在会说明实际发生的情况，已停止的运行与从未应答的工作会被区分开。
-- **设置快捷入口回归**：Skills、Specialists 与 Connectors 已回到 Settings，各自打开对应类别并返回到你之前的位置。
+- **看清内置 Agent 的内部**：项目可选择开启 Agent 追踪，将回合、模型请求与工具执行彼此关联的 span 导出到你自行托管的 OTLP/HTTP 接收端，捕获细节由你掌控。
+- **Windows 更新不再受阻**：内置 Agent 运行时，应用内更新不再停滞；Windows 稳定版更新重新以紧凑的安装器增量包形式应用。
+- **长 Notebook 历史保持快速**：启动与结束 Run、选择结果、打开预览都不再重新读取整个历史。
+- **值得信赖的内存读数**：Compute 摘要现在在 macOS 上与活动监视器一致，在 Windows 上显示已提交内存相对其上限。
+- **CodeBuddy 推理档位**：档位选择器现在只提供所选 CodeBuddy 模型实际支持的级别。
 
-[查看 v1.3.3 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
+[查看 v1.3.4 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 
