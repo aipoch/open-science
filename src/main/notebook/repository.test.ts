@@ -173,7 +173,8 @@ describe('notebook run repository', () => {
         runId: 'old-' + i,
         submissionIdentity: 'old-' + i,
         status: 'completed',
-        script: 'x'.repeat(36 * 1024)
+        // A sub-MiB history must also survive an interrupted batch checkpoint.
+        script: 'x'.repeat(12 * 1024)
       })
     )
     const base = { ...JSON.parse(await readFile(manifest, 'utf8')), runs: old }

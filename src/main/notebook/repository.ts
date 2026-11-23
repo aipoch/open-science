@@ -73,6 +73,8 @@ import { ensureNotebookInputRoot } from './input-staging'
 
 const RECORDS_DIRECTORY = '.run-records'
 const INLINE_BYTES = 64 * 1024
+// Batch lifecycle transitions once rewriting the manifest costs at least four full hot slots.
+const MIN_BATCHED_MANIFEST_BYTES = 4 * PENDING_RUN_BYTES
 const ENVIRONMENT_MANIFEST_DIRECTORY = 'runtime/provenance/environment-manifests'
 const MAX_ENVIRONMENT_MANIFEST_BYTES = 32 * 1024 * 1024
 const digestPattern = /^[a-f0-9]{64}$/
@@ -3056,7 +3058,7 @@ class NotebookRunRepository {
     if (
       !compact &&
       (cache?.document !== previous ||
-        cache.size < 1024 * 1024 ||
+        cache.size < MIN_BATCHED_MANIFEST_BYTES ||
         cache.weight + PENDING_RUN_BYTES > MAX_DOCUMENT_CACHE_BYTES)
     )
       return false
