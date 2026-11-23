@@ -53,10 +53,14 @@ import {
   CUSTOM_REASONING_EFFORT_TRANSPORTS,
   type ReasoningEffortPresetId
 } from '../../../../shared/reasoning-effort'
-import { customProviderRequiresKey } from '../../../../shared/provider-url-policy'
+import {
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError
+} from '../../../../shared/provider-url-policy'
 
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
+import { LocalProviderModelsEditor } from './LocalProviderModelsEditor'
 import {
   LOCAL_MODEL_PRESETS,
   PROVIDER_KIND_GROUPS,
@@ -202,6 +206,29 @@ function SupportedModelTags({
         )
       )}
     </div>
+  )
+}
+
+function RefreshModelListButton({
+  onClick,
+  disabled,
+  refreshing
+}: {
+  onClick?: () => void
+  disabled?: boolean
+  refreshing?: boolean
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || refreshing || !onClick}
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary/35 px-2.5 text-xs font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 disabled:pointer-events-none disabled:opacity-50"
+    >
+      <RefreshCw aria-hidden="true" className={cn('size-3.5', refreshing && 'animate-spin')} />
+      {refreshing ? t('Refreshing…') : t('Refresh model list')}
+    </button>
   )
 }
 
@@ -1179,7 +1206,7 @@ const ProviderForm = ({
             </Select>
           </div>
 
-          {frameworkCanDriveDraft === false && framework ? (
+          {!selectedLocalPreset && frameworkCanDriveDraft === false && framework ? (
             <p
               role="status"
               className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-foreground"
@@ -1201,206 +1228,241 @@ const ProviderForm = ({
 
           {keyField}
 
-          {modelField}
-
-          <SettingsDisclosure
-            expanded={advancedVisible}
-            label={t('Advanced settings')}
-            onToggle={() => setAdvancedOpen((open) => !open)}
-          >
-            <TokenLimitField
-              id="provider-context-window"
-              label={t('Context window')}
-              help={t('Total tokens shared by the request and response.')}
-              value={value.contextWindow}
-              presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
-              disabled={disabled}
-              error={errors.contextWindow}
-              onValueChange={(contextWindow) => onChange({ contextWindow })}
-              t={t}
-            />
-
-            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-              <div className="flex items-start justify-between gap-3">
-                <label className="space-y-0.5" htmlFor="provider-image-input">
-                  <span className="block text-xs font-medium">{t('Image input')}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t('The gateway and model accept image content.')}
-                  </span>
-                </label>
-                <Switch
-                  id="provider-image-input"
-                  aria-label={t('Supports image input')}
-                  checked={value.supportsImageInput}
-                  disabled={disabled}
-                  onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
+          {selectedLocalPreset ? (
+            <>
+              <LocalProviderModelsEditor
+                providerName={value.name.trim()}
+                rows={value.localModels ?? []}
+                onChange={(localModels) => onChange({ localModels })}
+                disabled={disabled}
+                modelError={errors.model ? t(errors.model) : undefined}
+                contextError={errors.contextWindow ? t(errors.contextWindow) : undefined}
+                refreshButton={
+                  <RefreshModelListButton
+                    onClick={onRefreshModels}
+                    refreshing={isRefreshingModels}
+                    disabled={
+                      disabled ||
+                      Boolean(getCustomProviderBaseUrlError(value.baseUrl.trim())) ||
+                      (keyRequired && !value.key.trim())
+                    }
+                  />
+                }
+              />
+              {catalogError ? (
+                <ErrorNotice
+                  inline
+                  role="alert"
+                  title={t('Model refresh failed. The previous list is kept.')}
+                  description={catalogError}
                 />
+              ) : null}
+            </>
+          ) : (
+            modelField
+          )}
+
+          {!selectedLocalPreset && (
+            <SettingsDisclosure {...advancedSettingsProps}>
+              <TokenLimitField
+                id="provider-context-window"
+                label={t('Context window')}
+                help={t('Total tokens shared by the request and response.')}
+                value={value.contextWindow}
+                presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
+                disabled={disabled}
+                error={errors.contextWindow}
+                onValueChange={(contextWindow) => onChange({ contextWindow })}
+                t={t}
+              />
+
+              <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                <div className="flex items-start justify-between gap-3">
+                  <label className="space-y-0.5" htmlFor="provider-image-input">
+                    <span className="block text-xs font-medium">{t('Image input')}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {t('The gateway and model accept image content.')}
+                    </span>
+                  </label>
+                  <Switch
+                    id="provider-image-input"
+                    aria-label={t('Supports image input')}
+                    checked={value.supportsImageInput}
+                    disabled={disabled}
+                    onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
+                  />
+                </div>
+
+                <div className="flex items-start justify-between gap-3">
+                  <label className="space-y-0.5" htmlFor="provider-thinking-mode">
+                    <span className="block text-xs font-medium">{t('Thinking mode')}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {t('The gateway and model accept thinking or effort controls.')}
+                    </span>
+                  </label>
+                  <Switch
+                    id="provider-thinking-mode"
+                    aria-label={t('Supports thinking mode')}
+                    checked={value.reasoningEffortPreset !== 'unsupported'}
+                    disabled={disabled}
+                    onCheckedChange={(supported) =>
+                      onChange({
+                        reasoningEffortPreset: supported ? 'standard-5' : 'unsupported'
+                      })
+                    }
+                  />
+                </div>
               </div>
 
-              <div className="flex items-start justify-between gap-3">
-                <label className="space-y-0.5" htmlFor="provider-thinking-mode">
-                  <span className="block text-xs font-medium">{t('Thinking mode')}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t('The gateway and model accept thinking or effort controls.')}
-                  </span>
-                </label>
-                <Switch
-                  id="provider-thinking-mode"
-                  aria-label={t('Supports thinking mode')}
-                  checked={value.reasoningEffortPreset !== 'unsupported'}
-                  disabled={disabled}
-                  onCheckedChange={(supported) =>
-                    onChange({
-                      reasoningEffortPreset: supported ? 'standard-5' : 'unsupported'
-                    })
-                  }
-                />
-              </div>
-            </div>
-
-            {value.reasoningEffortPreset !== 'unsupported' ? (
-              <div className="space-y-3 border-t border-border-200 pt-3">
-                <div
-                  className={cn(
-                    'grid gap-3',
-                    value.apiEndpoint === 'chat-completions' && 'sm:grid-cols-2'
-                  )}
-                >
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-1">
-                      <span className={fieldLabelClassName}>{t('Supported effort levels')}</span>
-                      <FieldHelp
-                        label={t('Supported effort levels')}
-                        content={
-                          <>
-                            <span className="block">
-                              {t(
-                                'Open-Science maps five relative strengths onto the exact levels accepted by this model.'
-                              )}
-                            </span>
-                            <span className="mt-1 block">
-                              {t(
-                                'Examples reflect common native model APIs. A gateway may use different mappings.'
-                              )}
-                            </span>
-                            {value.apiEndpoint === 'messages' ? (
-                              <span className="mt-1 block">
-                                {t(
-                                  "Messages API uses the framework's Anthropic-compatible thinking request automatically."
-                                )}
-                              </span>
-                            ) : value.apiEndpoint === 'responses' ? (
-                              <span className="mt-1 block">
-                                {t(
-                                  'Responses API uses its native reasoning request automatically.'
-                                )}
-                              </span>
-                            ) : null}
-                          </>
-                        }
-                      />
-                    </div>
-                    <Select
-                      value={value.reasoningEffortPreset}
-                      disabled={disabled}
-                      onValueChange={(reasoningEffortPreset) =>
-                        onChange({
-                          reasoningEffortPreset: reasoningEffortPreset as ReasoningEffortPresetId
-                        })
-                      }
-                    >
-                      <SelectTrigger aria-label={t('Reasoning effort levels')} disabled={disabled}>
-                        <span>
-                          {
-                            CUSTOM_REASONING_EFFORT_PRESETS.find(
-                              (preset) => preset.id === value.reasoningEffortPreset
-                            )?.label
-                          }
-                        </span>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
-                          <SelectItem key={preset.id} value={preset.id}>
-                            {preset.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {value.apiEndpoint === 'chat-completions' ? (
+              {value.reasoningEffortPreset !== 'unsupported' ? (
+                <div className="space-y-3 border-t border-border-200 pt-3">
+                  <div
+                    className={cn(
+                      'grid gap-3',
+                      value.apiEndpoint === 'chat-completions' && 'sm:grid-cols-2'
+                    )}
+                  >
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-1">
-                        <span className={fieldLabelClassName}>{t('Reasoning request format')}</span>
+                        <span className={fieldLabelClassName}>{t('Supported effort levels')}</span>
                         <FieldHelp
-                          label={t('Reasoning request format')}
-                          content={t(
-                            'The JSON fields sent to a Chat Completions gateway. Follow the gateway documentation; OpenAI-compatible services commonly use {{parameter}}.',
-                            { parameter: 'reasoning_effort' }
-                          )}
+                          label={t('Supported effort levels')}
+                          content={
+                            <>
+                              <span className="block">
+                                {t(
+                                  'Open-Science maps five relative strengths onto the exact levels accepted by this model.'
+                                )}
+                              </span>
+                              <span className="mt-1 block">
+                                {t(
+                                  'Examples reflect common native model APIs. A gateway may use different mappings.'
+                                )}
+                              </span>
+                              {value.apiEndpoint === 'messages' ? (
+                                <span className="mt-1 block">
+                                  {t(
+                                    "Messages API uses the framework's Anthropic-compatible thinking request automatically."
+                                  )}
+                                </span>
+                              ) : value.apiEndpoint === 'responses' ? (
+                                <span className="mt-1 block">
+                                  {t(
+                                    'Responses API uses its native reasoning request automatically.'
+                                  )}
+                                </span>
+                              ) : null}
+                            </>
+                          }
                         />
                       </div>
                       <Select
-                        value={value.reasoningEffortTransport}
+                        value={value.reasoningEffortPreset}
                         disabled={disabled}
-                        onValueChange={(reasoningEffortTransport) =>
+                        onValueChange={(reasoningEffortPreset) =>
                           onChange({
-                            reasoningEffortTransport:
-                              reasoningEffortTransport as CustomReasoningEffortTransport
+                            reasoningEffortPreset: reasoningEffortPreset as ReasoningEffortPresetId
                           })
                         }
                       >
                         <SelectTrigger
-                          aria-label={t('Reasoning effort request format')}
+                          aria-label={t('Reasoning effort levels')}
                           disabled={disabled}
                         >
                           <span>
                             {
-                              CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
-                                (transport) => transport.id === value.reasoningEffortTransport
+                              CUSTOM_REASONING_EFFORT_PRESETS.find(
+                                (preset) => preset.id === value.reasoningEffortPreset
                               )?.label
                             }
                           </span>
                         </SelectTrigger>
                         <SelectContent>
-                          {CUSTOM_REASONING_EFFORT_TRANSPORTS.map((transport) => (
-                            <SelectItem key={transport.id} value={transport.id}>
-                              {transport.label}
+                          {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
+                            <SelectItem key={preset.id} value={preset.id}>
+                              {preset.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
 
-            <div className="grid gap-4 border-t border-border-200 pt-3 sm:grid-cols-2">
-              <TokenLimitField
-                id="provider-max-input-tokens"
-                label={t('Maximum input tokens')}
-                help={t('Optional provider-reported input cap.')}
-                value={value.maxInputTokens}
-                presets={CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS}
-                disabled={disabled}
-                error={errors.maxInputTokens}
-                onValueChange={(maxInputTokens) => onChange({ maxInputTokens })}
-                t={t}
-              />
-              <TokenLimitField
-                id="provider-max-output-tokens"
-                label={t('Maximum output tokens')}
-                help={t('Optional provider-reported output cap.')}
-                value={value.maxOutputTokens}
-                presets={CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS}
-                disabled={disabled}
-                error={errors.maxOutputTokens}
-                onValueChange={(maxOutputTokens) => onChange({ maxOutputTokens })}
-                t={t}
-              />
-            </div>
-          </SettingsDisclosure>
+                    {value.apiEndpoint === 'chat-completions' ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1">
+                          <span className={fieldLabelClassName}>
+                            {t('Reasoning request format')}
+                          </span>
+                          <FieldHelp
+                            label={t('Reasoning request format')}
+                            content={t(
+                              'The JSON fields sent to a Chat Completions gateway. Follow the gateway documentation; OpenAI-compatible services commonly use {{parameter}}.',
+                              { parameter: 'reasoning_effort' }
+                            )}
+                          />
+                        </div>
+                        <Select
+                          value={value.reasoningEffortTransport}
+                          disabled={disabled}
+                          onValueChange={(reasoningEffortTransport) =>
+                            onChange({
+                              reasoningEffortTransport:
+                                reasoningEffortTransport as CustomReasoningEffortTransport
+                            })
+                          }
+                        >
+                          <SelectTrigger
+                            aria-label={t('Reasoning effort request format')}
+                            disabled={disabled}
+                          >
+                            <span>
+                              {
+                                CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
+                                  (transport) => transport.id === value.reasoningEffortTransport
+                                )?.label
+                              }
+                            </span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CUSTOM_REASONING_EFFORT_TRANSPORTS.map((transport) => (
+                              <SelectItem key={transport.id} value={transport.id}>
+                                {transport.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid gap-4 border-t border-border-200 pt-3 sm:grid-cols-2">
+                <TokenLimitField
+                  id="provider-max-input-tokens"
+                  label={t('Maximum input tokens')}
+                  help={t('Optional provider-reported input cap.')}
+                  value={value.maxInputTokens}
+                  presets={CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS}
+                  disabled={disabled}
+                  error={errors.maxInputTokens}
+                  onValueChange={(maxInputTokens) => onChange({ maxInputTokens })}
+                  t={t}
+                />
+                <TokenLimitField
+                  id="provider-max-output-tokens"
+                  label={t('Maximum output tokens')}
+                  help={t('Optional provider-reported output cap.')}
+                  value={value.maxOutputTokens}
+                  presets={CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS}
+                  disabled={disabled}
+                  error={errors.maxOutputTokens}
+                  onValueChange={(maxOutputTokens) => onChange({ maxOutputTokens })}
+                  t={t}
+                />
+              </div>
+            </SettingsDisclosure>
+          )}
         </>
       ) : cloudflare ? (
         <>
@@ -1584,23 +1646,11 @@ const ProviderForm = ({
                     />
                   </div>
                   {catalog ? (
-                    <button
-                      type="button"
+                    <RefreshModelListButton
                       onClick={onRefreshModels}
-                      disabled={
-                        disabled ||
-                        isRefreshingModels ||
-                        Boolean(disabledReason) ||
-                        !onRefreshModels
-                      }
-                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary/35 px-2.5 text-xs font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <RefreshCw
-                        aria-hidden="true"
-                        className={`size-3.5 ${isRefreshingModels ? 'animate-spin' : ''}`}
-                      />
-                      {isRefreshingModels ? t('Refreshing…') : t('Refresh model list')}
-                    </button>
+                      refreshing={isRefreshingModels}
+                      disabled={disabled || Boolean(disabledReason)}
+                    />
                   ) : null}
                 </div>
                 {catalog?.options.inputs?.map((input) => (

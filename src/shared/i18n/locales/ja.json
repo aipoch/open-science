@@ -1988,6 +1988,7 @@
     "Model": "モデル",
     "e.g. deepseek-v4-flash": "例：deepseek-v4-flash",
     "Model is required.": "モデルは必須です。",
+    "Model IDs must be unique.": "モデル ID は重複できません。",
     "Model not supported over the Codex bridge": "Codex ブリッジではサポートされていないモデル",
     "Model provider": "モデルプロバイダー",
     "Model provider error": "モデルプロバイダーのエラー",

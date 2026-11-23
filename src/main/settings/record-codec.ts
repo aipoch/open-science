@@ -2,7 +2,10 @@ import {
   manualProviderDefinition,
   resolveManualProviderConnection
 } from '../../shared/manual-provider'
-import { isLocalProviderPresetId } from '../../shared/local-provider-preset'
+import {
+  decodeLocalProviderModels,
+  isLocalProviderPresetId
+} from '../../shared/local-provider-preset'
 import { parseCloudflareGateway } from '../../shared/cloudflare-gateway'
 import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import { z } from 'zod'
@@ -376,7 +379,14 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (model && characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
     provider.model = model
   if (type === 'custom') {
-    if (isLocalProviderPresetId(value.localPresetId)) provider.localPresetId = value.localPresetId
+    if (isLocalProviderPresetId(value.localPresetId)) {
+      provider.localPresetId = value.localPresetId
+      const models = decodeLocalProviderModels(value.localModels)
+      if (models) {
+        provider.localModels = models
+        provider.model = models.find(({ id }) => id === provider.model)?.id ?? models[0].id
+      }
+    }
     if (maxInputTokens !== undefined) provider.maxInputTokens = maxInputTokens
     if (maxOutputTokens !== undefined) provider.maxOutputTokens = maxOutputTokens
   }

@@ -2,11 +2,22 @@ import { createHash, randomUUID } from 'node:crypto'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
   resolveVendorModelCatalog,
+  type CatalogErrorCode,
   type CatalogSnapshot,
   type CatalogStatus
 } from '@aipoch/providers'
 import { createProvider } from '@aipoch/providers/client'
+import { resolveChatCompletionsBaseUrl } from '@aipoch/providers/protocol'
+import {
+  isLocalProviderPresetId,
+  sameLocalProviderCredentialScope
+} from '../../shared/local-provider-preset'
+import {
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError
+} from '../../shared/provider-url-policy'
 import type {
+  ProviderDraft,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult
 } from '../../shared/settings'
@@ -25,6 +36,16 @@ import type { XaiAccessCredential } from './xai-oauth'
 import type { StoredProvider } from './types'
 
 const log = createLogger('settings.model-catalog')
+
+const refreshErrorCategory = (
+  code: CatalogErrorCode | undefined
+): RefreshProviderModelsResult['category'] =>
+  code === 'authentication' || code === 'permission' || code === 'missing-key'
+    ? 'auth'
+    : code === 'network' || code === 'timeout'
+      ? 'network'
+      : 'unknown'
+
 type DraftCatalog = {
   baseline?: ProviderCatalogState
   fingerprint: string
@@ -89,6 +110,52 @@ export class ProviderModelCatalogOwner {
     return result.baseline
   }
 
+  private async refreshLocalDraft(
+    draft: ProviderDraft,
+    stored: StoredProvider | undefined
+  ): Promise<RefreshProviderModelsResult> {
+    const baseUrl = draft.baseUrl?.trim()
+    if (!baseUrl || getCustomProviderBaseUrlError(baseUrl))
+      return { ok: false, category: 'bad-url', code: 'unsupported' }
+
+    const endpoint = new URL(baseUrl)
+    endpoint.pathname = endpoint.pathname.replace(/(\/v1)\/(messages|responses)\/*$/i, '$1')
+    const modelsBase = resolveChatCompletionsBaseUrl({ baseUrl: endpoint.href })
+    if (!modelsBase) return { ok: false, category: 'bad-url', code: 'unsupported' }
+
+    const savedKey =
+      stored?.type === 'custom' &&
+      sameLocalProviderCredentialScope(stored, {
+        baseUrl,
+        localPresetId: draft.localPresetId ?? undefined
+      })
+        ? this.resolveProvider(stored).key
+        : undefined
+    const key = draft.key?.trim() || savedKey
+    if (!key && customProviderRequiresKey(baseUrl))
+      return { ok: false, category: 'auth', code: 'missing-key' }
+
+    const result = await createProvider({
+      id: 'custom',
+      key,
+      fetch: netFetchStandard,
+      discovery: { url: `${modelsBase}/models` }
+    }).listModels({ limits: PROVIDER_RESOURCE_LIMITS })
+    log.info('Local model discovery completed', {
+      preset: draft.localPresetId,
+      ok: result.ok,
+      code: result.code,
+      count: result.models?.length ?? 0
+    })
+    // Imported rows are part of the editable form and only persist when the provider is saved.
+    return {
+      ok: result.ok,
+      category: result.ok ? 'ok' : refreshErrorCategory(result.code),
+      models: result.models,
+      code: result.code
+    }
+  }
+
   async refresh(request: RefreshProviderModelsRequest): Promise<RefreshProviderModelsResult> {
     const start = Date.now()
     const draft = request.draft
@@ -109,6 +176,8 @@ export class ProviderModelCatalogOwner {
       request.expectedConfigRevision !== (stored?.configRevision ?? 0)
     )
       return { ok: false, category: 'unknown', code: 'stale' }
+    if (draft?.type === 'custom' && isLocalProviderPresetId(draft.localPresetId))
+      return this.refreshLocalDraft(draft, stored)
     if (draft && draft.type !== 'official')
       return { ok: false, category: 'unknown', code: 'unsupported' }
     const target = draft
@@ -211,12 +280,7 @@ export class ProviderModelCatalogOwner {
         previousDraft.catalogStatus = catalogStatus
       return {
         ok: false,
-        category:
-          code === 'authentication' || code === 'permission' || code === 'missing-key'
-            ? 'auth'
-            : code === 'network' || code === 'timeout'
-              ? 'network'
-              : 'unknown',
+        category: refreshErrorCategory(code),
         code,
         message: result.message,
         catalogStatus

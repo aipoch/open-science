@@ -2081,6 +2081,7 @@
     "Model": "模型",
     "e.g. deepseek-v4-flash": "例如 deepseek-v4-flash",
     "Model is required.": "必须填写模型。",
+    "Model IDs must be unique.": "模型 ID 不能重复。",
     "Model not supported over the Codex bridge": "该模型不支持通过 Codex 桥接使用",
     "Model provider": "模型提供方",
     "Model provider error": "模型供应商错误",

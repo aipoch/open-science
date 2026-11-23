@@ -1,4 +1,8 @@
 import { supportsManualProviderContextWindow } from '../../shared/manual-provider'
+import {
+  decodeLocalProviderModels,
+  isLocalProviderPresetId
+} from '../../shared/local-provider-preset'
 import { resolveOfficialModelCatalog } from '../../shared/provider-model-catalog'
 import { resolveManualProviderTarget } from './manual-provider-target'
 import { resolveCloudflareGateway } from './cloudflare-gateway-transport'
@@ -49,14 +53,21 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
     }
   }
   const tokenLimits = draft.type === 'custom' ? resolveCustomTokenLimits(draft) : undefined
+  const localModels =
+    draft.type === 'custom' && isLocalProviderPresetId(draft.localPresetId)
+      ? decodeLocalProviderModels(draft.localModels)
+      : undefined
+  const localModel = localModels?.find(({ id }) => id === draft.model) ?? localModels?.[0]
   return {
     type: draft.type,
     ...(draft.codexTransport === undefined ? {} : { codexTransport: draft.codexTransport }),
     baseUrl: draft.baseUrl,
-    model: draft.model,
+    model: localModel?.id ?? draft.model,
     ...(draft.type === 'custom'
       ? {
-          contextWindow: resolveCustomModelContextWindow(tokenLimits?.contextWindow),
+          contextWindow: resolveCustomModelContextWindow(
+            localModel ? localModel.contextWindow : tokenLimits?.contextWindow
+          ),
           ...(tokenLimits?.maxInputTokens === undefined
             ? {}
             : { maxInputTokens: tokenLimits.maxInputTokens }),

@@ -1,4 +1,5 @@
 import {
+  decodeLocalProviderModels,
   isLocalProviderPresetId,
   sameLocalProviderCredentialScope
 } from '../../shared/local-provider-preset'
@@ -539,22 +540,35 @@ class ProviderAccountsModule {
           provider.model !== existing?.model)
     } else if (request.type === 'custom') {
       const baseUrl = request.baseUrl?.trim() || existing?.baseUrl
-      const model = request.model?.trim() || existing?.model
       const tokenLimits = resolveCustomTokenLimits(request, existing)
       if (!baseUrl) throw new Error('Base URL is required for a custom provider.')
       const baseUrlError = getCustomProviderBaseUrlError(baseUrl)
       if (baseUrlError) throw new Error(baseUrlError)
-      if (!model) throw new Error('Model is required for a custom provider.')
       const localPresetId =
         request.localPresetId === undefined ? existing?.localPresetId : request.localPresetId
-      if (isLocalProviderPresetId(localPresetId)) provider.localPresetId = localPresetId
+      let model = request.model?.trim() || existing?.model
+      if (isLocalProviderPresetId(localPresetId)) {
+        provider.localPresetId = localPresetId
+        const models =
+          request.localModels === undefined
+            ? existing?.localModels
+            : decodeLocalProviderModels(request.localModels)
+        if (request.localModels !== undefined && !models)
+          throw new Error('Enter a valid local model list.')
+        if (models) {
+          provider.localModels = models
+          model = models.find(({ id }) => id === model)?.id ?? models[0].id
+        }
+      }
+      if (!model) throw new Error('Model is required for a custom provider.')
       provider.baseUrl = baseUrl
-      // 本机服务可匿名访问，远程目标需要凭据。
+      // Local services may allow anonymous access. Remote gateways require credentials.
       if (!carryKey() && customProviderRequiresKey(baseUrl)) {
         throw new Error('API key is required for a custom provider.')
       }
       provider.model = model
       Object.assign(provider, tokenLimits)
+      if (provider.localModels) delete provider.contextWindow
       provider.supportsImageInput =
         request.supportsImageInput ?? existing?.supportsImageInput ?? false
       provider.reasoningEffortPreset =

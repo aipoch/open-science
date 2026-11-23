@@ -1,4 +1,4 @@
-import type { LocalProviderPresetId } from './local-provider-preset'
+import type { LocalProviderModel, LocalProviderPresetId } from './local-provider-preset'
 import type { ManualProviderConnection } from './manual-provider'
 import type { CloudflareGateway } from './cloudflare-gateway'
 import type { CatalogSnapshot, CatalogStatus, CatalogErrorCode } from '@aipoch/providers'
@@ -172,8 +172,8 @@ export type ProviderView = {
   cloudflare?: CloudflareGateway
   manualConnection?: ManualProviderConnection
   localPresetId?: LocalProviderPresetId
-  // Models selectable for this provider in the composer: the vendor catalog for official providers,
-  // or the single configured model for custom. Derived from the registry in main.
+  localModels?: readonly LocalProviderModel[]
+  // Models selectable in the composer, projected by main from the provider configuration.
   models: string[]
   // Per-model protocol sets for app-managed providers whose catalog is heterogeneous (Lab). Absent
   // means the provider-level apiEndpoints apply to every model.
@@ -516,6 +516,7 @@ export type ProviderDraft = {
   cloudflare?: CloudflareGateway
   manualConnection?: ManualProviderConnection
   localPresetId?: LocalProviderPresetId | null
+  localModels?: readonly LocalProviderModel[]
   key?: string
 }
 

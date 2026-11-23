@@ -2,6 +2,7 @@ import {
   isLocalProviderPresetId,
   type LocalProviderPresetId
 } from '../../../../shared/local-provider-preset'
+import { localModelsFromForm, type LocalModelFormRow } from './local-provider-model-form'
 import {
   manualProviderDefinition,
   manualProviderPresetModels,
@@ -90,6 +91,7 @@ export type ProviderFormValue = {
   cloudflare?: CloudflareGateway
   manualConnection?: ManualProviderConnection
   localPresetId?: LocalProviderPresetId
+  localModels?: LocalModelFormRow[]
   // Plaintext only while the user is typing a new key; empty means "keep the stored key".
   key: string
 }
@@ -173,7 +175,7 @@ export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormT
   const contextWindow = value.contextWindow.trim() ? Number(value.contextWindow) : null
   if (value.type === 'custom') {
     return {
-      contextWindow,
+      contextWindow: value.localPresetId ? null : contextWindow,
       maxInputTokens: value.maxInputTokens.trim() ? Number(value.maxInputTokens) : null,
       maxOutputTokens: value.maxOutputTokens.trim() ? Number(value.maxOutputTokens) : null
     }
@@ -184,6 +186,17 @@ export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormT
           providerFormPublishedContextWindow(value) === undefined ? contextWindow : null
       }
     : {}
+}
+
+export const providerFormLocalModels = (value: ProviderFormValue): ProviderDraft['localModels'] =>
+  value.type === 'custom' && value.localPresetId
+    ? localModelsFromForm(value.localModels ?? [])
+    : undefined
+
+export const providerFormModel = (value: ProviderFormValue): string => {
+  if (!value.localPresetId) return value.model
+  const ids = value.localModels?.map(({ id }) => id.trim()) ?? []
+  return ids.includes(value.model) ? value.model : (ids[0] ?? '')
 }
 
 // Chooses the framework's preferred wire protocol for a new custom gateway. This mirrors runtime
@@ -285,6 +298,7 @@ export type ProviderFormErrorKey =
   | 'Base URL is required.'
   | CustomProviderBaseUrlError
   | 'Model is required.'
+  | 'Model IDs must be unique.'
   | 'Enter a valid Cloudflare Account ID.'
   | 'Enter a valid Gateway ID.'
   | 'Enter a valid provider endpoint.'
@@ -339,10 +353,13 @@ export const getProviderFormErrors = (
       const baseUrlError = getCustomProviderBaseUrlError(value.baseUrl.trim())
       if (baseUrlError) errors.baseUrl = baseUrlError
     }
-    if (!value.model.trim()) errors.model = 'Model is required.'
-    if (positiveWholeNumberError(value.contextWindow)) {
-      errors.contextWindow = 'Context window must be a positive whole number of tokens.'
-    }
+    if (value.localPresetId) {
+      const ids = value.localModels?.map(({ id }) => id.trim()) ?? []
+      if (!ids.length || ids.some((id) => !id)) errors.model = 'Model is required.'
+      else if (new Set(ids).size !== ids.length) errors.model = 'Model IDs must be unique.'
+      if (value.localModels?.some(({ contextWindow }) => positiveWholeNumberError(contextWindow)))
+        errors.contextWindow = 'Context window must be a positive whole number of tokens.'
+    } else if (!value.model.trim()) errors.model = 'Model is required.'
     if (positiveWholeNumberError(value.maxInputTokens)) {
       errors.maxInputTokens = 'Maximum input tokens must be a positive whole number of tokens.'
     }
@@ -351,9 +368,10 @@ export const getProviderFormErrors = (
     }
   }
   if (
-    value.type === 'official' &&
-    supportsManualProviderContextWindow(value.vendorId) &&
-    providerFormPublishedContextWindow(value) === undefined &&
+    ((value.type === 'custom' && !value.localPresetId) ||
+      (value.type === 'official' &&
+        supportsManualProviderContextWindow(value.vendorId) &&
+        providerFormPublishedContextWindow(value) === undefined)) &&
     positiveWholeNumberError(value.contextWindow)
   ) {
     errors.contextWindow = 'Context window must be a positive whole number of tokens.'
@@ -497,6 +515,7 @@ export const providerKindPatch = (
     cloudflare: undefined,
     manualConnection: undefined,
     localPresetId: undefined,
+    localModels: undefined,
     vendorId: undefined,
     region: undefined,
     model: '',

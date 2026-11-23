@@ -2003,6 +2003,7 @@
     "Model": "모델",
     "e.g. deepseek-v4-flash": "예: deepseek-v4-flash",
     "Model is required.": "모델이 필요합니다.",
+    "Model IDs must be unique.": "모델 ID는 고유해야 합니다.",
     "Model not supported over the Codex bridge": "모델은 Codex 브리지에서는 지원되지 않습니다.",
     "Model provider": "모델 제공업체",
     "Model provider error": "모델 제공업체 오류",

@@ -423,6 +423,9 @@ class SettingsRepository {
         provider.vendorId === 'vectrust' &&
         settings.providers[index]?.model === provider.model &&
         resolveOfficialModelCatalog(provider).some(({ id }) => id === settings.activeModel)
+      const keepActiveLocalModel = provider.localModels?.some(
+        ({ id }) => id === settings.activeModel
+      )
       return {
         ...settings,
         providers,
@@ -430,7 +433,8 @@ class SettingsRepository {
         ...(configEdit &&
         (provider.type === 'custom' || provider.cloudflare || provider.manualConnection) &&
         settings.activeProviderId === provider.id &&
-        !keepActiveVectrustModel
+        !keepActiveVectrustModel &&
+        !keepActiveLocalModel
           ? { activeModel: provider.model }
           : {}),
         ...(isClaudeSubscriptionProvider(provider.type) &&

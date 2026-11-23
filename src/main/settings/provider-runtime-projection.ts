@@ -150,6 +150,7 @@ class ProviderRuntimeProjectionOwner {
       ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
       ...(provider.manualConnection && { manualConnection: provider.manualConnection }),
       ...(provider.localPresetId && { localPresetId: provider.localPresetId }),
+      ...(provider.localModels && { localModels: provider.localModels }),
       models: this.availableModels(
         needsKey && provider.vendorId === 'kilo' ? { ...provider, keyRef: undefined } : provider
       ),
@@ -430,7 +431,11 @@ class ProviderRuntimeProjectionOwner {
     // Hand-entered Claude subscription overrides retain their engine-specific context syntax.
     const contextWindow =
       provider.type === 'custom'
-        ? resolveCustomModelContextWindow(provider.contextWindow)
+        ? resolveCustomModelContextWindow(
+            provider.localModels
+              ? provider.localModels.find(({ id }) => id === model)?.contextWindow
+              : provider.contextWindow
+          )
         : isClaudeSubscriptionProvider(provider.type)
           ? /\[1m\]$/i.test(model ?? '')
             ? 1_000_000
@@ -570,7 +575,7 @@ class ProviderRuntimeProjectionOwner {
         .filter(isCatalogModelAvailable)
         .map((entry) => entry.id)
     }
-    return provider.model ? [provider.model] : []
+    return provider.localModels?.map(({ id }) => id) ?? (provider.model ? [provider.model] : [])
   }
 }
 

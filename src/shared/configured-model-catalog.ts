@@ -37,6 +37,7 @@ export type ConfiguredModelCatalogEntry = Readonly<{
   providerName: string
   providerType: ProviderType
   vendorId?: OfficialVendorId
+  localPresetId?: ProviderView['localPresetId']
   model: string
   label: string
   metadata?: CatalogModel
@@ -128,8 +129,15 @@ export const buildConfiguredModelInventory = (
           providerName: provider.name,
           providerType: provider.type,
           ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
+          ...(provider.localPresetId ? { localPresetId: provider.localPresetId } : {}),
           model,
-          label: provider.type === 'lab' ? labModelLabel(model) : model || provider.name,
+          label:
+            provider.type === 'lab'
+              ? labModelLabel(model)
+              : (provider.localModels?.find(({ id }) => id === model)?.displayName ??
+                (provider.localPresetId && model
+                  ? `${provider.name} · ${model}`
+                  : model || provider.name)),
           metadata,
           supportsImageInput: supportsImageInput(provider, model, metadata),
           ...(provider.modelStreaming?.[model] === false ? { streaming: false } : {})

@@ -1873,6 +1873,7 @@
     "Model": "Modell",
     "e.g. deepseek-v4-flash": "z. B. deepseek-v4-flash",
     "Model is required.": "Modell ist erforderlich.",
+    "Model IDs must be unique.": "Modell-IDs müssen eindeutig sein.",
     "Model not supported over the Codex bridge": "Modell wird über die Codex-Brücke nicht unterstützt",
     "Model provider": "Modellanbieter",
     "Model provider error": "Fehler beim Modellanbieter",
