@@ -9,6 +9,7 @@ import { setTimeout as wait } from 'node:timers/promises'
 
 import { toAcpTurnTokenUsage } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
+import { requireTracingFramework } from './task-run-tracing'
 import { HARNESS_TRACE_ENABLED } from '../harness-acp/config'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
 import { createClaudeTranscriptReader } from './claude-transcript-reader'
@@ -35,7 +36,7 @@ type ProviderPromptExecutionInput = Readonly<{
   isCurrent: () => boolean
   isUserStopped?: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
-  authorizeHarnessTracing?: () => Promise<boolean>
+  authorizeHarnessTracing?: true | (() => Promise<boolean>)
   signal?: AbortSignal
   cancellationCheckpoint?: () => Promise<'active' | 'cancelled'>
   captureStop: (response: PromptResponse) => boolean
@@ -84,8 +85,8 @@ async function authorizeHarnessPrompt(
   authorize: ProviderPromptExecutionInput['authorizeHarnessTracing'],
   signal: AbortSignal | undefined
 ): Promise<ProviderPromptExecutionInput['content']> {
-  let enabled = false
-  if (authorize && !signal?.aborted) {
+  let enabled = authorize === true
+  if (typeof authorize === 'function' && !signal?.aborted) {
     const lookupLifetime = new AbortController()
     const lookupSignal = signal
       ? AbortSignal.any([signal, lookupLifetime.signal])
@@ -301,6 +302,7 @@ class AcpProviderPromptExecutor {
       }
 
       let content = input.content
+      if (input.authorizeHarnessTracing === true) requireTracingFramework(input.frameworkId)
       if (input.frameworkId === 'open-science-agent') {
         content = await authorizeHarnessPrompt(content, input.authorizeHarnessTracing, input.signal)
         // Stop aborts the lookup before ACP confirms whether it cancelled the prompt.

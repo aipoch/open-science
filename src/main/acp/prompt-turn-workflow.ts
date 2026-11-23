@@ -1,7 +1,13 @@
+import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import { SessionPromptAdmissionError } from './runtime-activity-port'
 import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
-import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
+import type {
+  ActiveSession,
+  ClientConnection,
+  PromptResponse,
+  SessionNotification
+} from '@agentclientprotocol/sdk'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest } from '../../shared/acp'
@@ -92,6 +98,7 @@ type AcpPromptTurnPlanContext = Readonly<{
 type AcpActivatedPromptTurn = Readonly<{
   request: AcpPromptRequest
   connectionGeneration: number
+  traceThisRun: boolean
   mode: AcpPromptTurnMode
   session: ActiveSession
   interaction: AcpPromptSessionInteractionScope
@@ -101,6 +108,7 @@ type AcpActivatedPromptTurn = Readonly<{
 
 type AcpPromptTurnEnvironment = Readonly<{
   authorizedDirectories?: Pick<AuthorizedDirectoryNotices, 'prepareNotice'>
+  connection?: () => ClientConnection | undefined
   connectionGeneration?: () => number
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
@@ -473,11 +481,28 @@ class AcpPromptTurnWorkflow {
     }
 
     let interaction: AcpPromptSessionInteractionScope | undefined
+    const traceThisRun =
+      mode.kind === 'user' && mode.runtimeReviewOwner === 'task' && requiresTaskRunTracing(request)
     let admittedRequest = request
     try {
       interaction = this.options.interactions.activatePrompt(reservation)
       // Activate the prompt before releasing startup protection so reconnect never sees an idle gap.
       this.releaseReloadStartup(cancellation, 'prompt-activated')
+      if (traceThisRun) {
+        // Skill preparation can replace the helper after Task admission.
+        await assertTaskRunTracingReady(
+          this.options.environment.backend().framework.id,
+          this.options.environment.connection?.()
+        )
+        if ((await this.checkpoint(interaction)) === 'cancelled') {
+          notebookExecutionIntent(request)?.abandonUserExecution()
+          skill.close('cancelled')
+          this.options.interactions.release(interaction)
+          return { stopReason: 'cancelled' }
+        }
+        if (!this.isCurrent({ request, session: activeSession, interaction }))
+          throw new Error('ACP prompt interaction is no longer active')
+      }
       const admittedPlan = this.options.plan.admit(request, interaction, plan)
       plan = admittedPlan instanceof Promise ? await admittedPlan : admittedPlan
       // Admission-dependent state may commit only while this interaction owns the Session. A
@@ -560,6 +585,7 @@ class AcpPromptTurnWorkflow {
     })
     return this.executeTurn({
       request: admittedRequest,
+      traceThisRun,
       connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
       mode,
       session: activeSession,
@@ -769,14 +795,16 @@ class AcpPromptTurnWorkflow {
           frameworkId,
           signal: interaction.signal,
           cancellationCheckpoint: () => this.checkpoint(interaction),
-          ...(frameworkId === 'open-science-agent' && resolveProjectTracing
-            ? {
-                authorizeHarnessTracing: async (): Promise<boolean> => {
-                  const projectId = registry.lookup(sessionId)?.aggregate.snapshot().projectId
-                  return projectId ? resolveProjectTracing(projectId) : false
+          ...(turn.traceThisRun
+            ? { authorizeHarnessTracing: true as const }
+            : frameworkId === 'open-science-agent' && resolveProjectTracing
+              ? {
+                  authorizeHarnessTracing: async (): Promise<boolean> => {
+                    const projectId = registry.lookup(sessionId)?.aggregate.snapshot().projectId
+                    return projectId ? resolveProjectTracing(projectId) : false
+                  }
                 }
-              }
-            : {}),
+              : {}),
           ...(!accumulatedFacts && readyPrepared.preDispatchModelCalls
             ? { preDispatchModelCalls: readyPrepared.preDispatchModelCalls }
             : {}),
@@ -1110,7 +1138,9 @@ class AcpPromptTurnWorkflow {
     return this.options.interactions.cancellationCheckpoint(interaction)
   }
 
-  private isCurrent(turn: AcpActivatedPromptTurn): boolean {
+  private isCurrent(
+    turn: Pick<AcpActivatedPromptTurn, 'request' | 'session' | 'interaction'>
+  ): boolean {
     return (
       this.options.interactions.current(turn.request.sessionId) === turn.interaction &&
       this.activeSession(turn.request.sessionId) === turn.session

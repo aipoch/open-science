@@ -129,7 +129,8 @@ and continue to require the certified, version-matched WSL2 assets.
    config root's `.env` for installed runtimes (usually `~/.open-science/.env`).
 2. Restart the backend. Open **Project Settings → Advanced agent options**, enable **Agent
    tracing**, and save. Tracing starts off for each project and the saved setting applies on
-   the next send.
+   the next send. For a single CLI Run, use `open-science run --otel-traces` to authorize that
+   turn independently of the Project setting.
 3. Send a message with Open-Science Agent and look for spans under the `open-science-agent` service.
 
 These switches default to `1`. Set any to `0` in the same configuration source as the endpoint.
