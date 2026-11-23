@@ -8171,20 +8171,25 @@
     "notebook_repository": {
       "sources": [
         "src/main/notebook/conditional-restore-script.ts",
+        "src/main/notebook/inline-run-window.ts",
         "src/main/notebook/input-staging.ts",
+        "src/main/notebook/pending-run-files.ts",
         "src/main/notebook/repository.ts",
         "src/main/notebook/run-document-data-path-codec.ts",
-        "src/main/notebook/run-document-data-paths.ts"
+        "src/main/notebook/run-document-data-paths.ts",
+        "src/main/notebook/run-record-reference.ts"
       ],
       "layer": "repository",
       "sourceLayers": {
         "src/main/notebook/conditional-restore-script.ts": "policy",
         "src/main/notebook/input-staging.ts": "host-infrastructure",
         "src/main/notebook/run-document-data-path-codec.ts": "record-codec",
-        "src/main/notebook/run-document-data-paths.ts": "application-service"
+        "src/main/notebook/run-document-data-paths.ts": "application-service",
+        "src/main/notebook/run-record-reference.ts": "record-codec"
       },
-      "consumerModules": [],
+      "consumerModules": ["main_session_package", "session_diagnostics"],
       "requiredTests": [
+        "src/main/notebook/inline-run-window.test.ts",
         "src/main/notebook/input-staging.test.ts",
         "src/main/notebook/repository.test.ts",
         "src/main/notebook/run-document-data-paths.test.ts",
@@ -8199,6 +8204,7 @@
         "@aipoch/diagnostics/node",
         "@aipoch/durable-files",
         "node:crypto",
+        "node:fs",
         "node:fs/promises",
         "node:path",
         "node:url"
