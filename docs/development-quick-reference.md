@@ -122,6 +122,30 @@ npm run dev
 The switch is off by default and applies only to the development server. Packaged builds ignore it
 and continue to require the certified, version-matched WSL2 assets.
 
+### Open-Science Agent traces
+
+1. Set `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT` to a full OTLP/HTTP JSON traces URL such as
+   `http://127.0.0.1:4318/v1/traces`. Use the repository's `.env` in development or the active
+   config root's `.env` for installed runtimes (usually `~/.open-science/.env`).
+2. Restart the backend. Open **Project Settings → Advanced agent options**, enable **Agent
+   tracing**, and save. Tracing starts off for each project and the saved setting applies on
+   the next send.
+3. Send a message with Open-Science Agent and look for spans under the `open-science-agent` service.
+
+These switches default to `1`. Set any to `0` in the same configuration source as the endpoint.
+
+| Variable                                         | What it controls                              |
+| ------------------------------------------------ | --------------------------------------------- |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT`        | User prompt and final visible reply excerpts  |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST`    | Model request JSON before the provider bridge |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_ARGUMENTS` | MCP tool input previews                       |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS`   | MCP tool output previews                      |
+| `OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS`            | Local `.env.otel-status.json` status file     |
+
+For metadata-only traces, set all four `CAPTURE_*` switches to `0`. Model request bodies can
+include instructions, conversation history, tool data, and attachments. Authentication examples
+are in [`.env.example`](../.env.example).
+
 ## Coding-agent navigation
 
 Run installation, development, and validation commands from the repository root:

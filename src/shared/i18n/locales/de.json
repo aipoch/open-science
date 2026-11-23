@@ -7909,6 +7909,8 @@
     "The cancellation attempt ended. The job is still being tracked.": "Dieser Abbruchversuch ist beendet. Der Job wird weiterhin verfolgt.",
     "Unable to get job status": "Jobstatus kann nicht abgerufen werden",
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "Der Scheduler hat kein verfügbares Ergebnis für diesen Job. Der entfernte Prozess läuft möglicherweise noch. Prüfen Sie den Scheduler und die entfernten Dateien, bevor Sie das weitere Vorgehen festlegen.",
+    "Agent tracing": "Agent-Tracing",
+    "Send traces from this project's built-in agent to the configured receiver. Traces can include conversation content, model requests, and tool data.": "Sendet Traces des integrierten Agenten für dieses Projekt an das konfigurierte Ziel. Die Traces können Konversationsinhalte, Modellanfragen und Daten von Tools enthalten.",
     "Advanced agent options": "Erweiterte Agentenoptionen",
     "Optimization prompt": "Optimierungs-Prompt",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "Wird nur beim Optimieren einer Frage in diesem Projekt verwendet. Leer lassen, um die integrierte Standardvorlage zu verwenden.",
