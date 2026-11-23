@@ -32,6 +32,7 @@ import {
   extractRestrictedInferenceUsage
 } from '../acp/restricted-inference-runner'
 import type { ApplicationModuleBuilder } from '../application-runtime'
+import type { ApplicationEvents } from '../application-events'
 import { createLocalModelOwner } from '../local-models/owner'
 import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
 import {
@@ -88,6 +89,7 @@ export async function composeResearchFilm({
   previewResources,
   recordAuxiliaryUsage,
   translate = englishNativeTranslator,
+  applicationEvents,
   modules
 }: {
   configRoot: string
@@ -102,6 +104,7 @@ export async function composeResearchFilm({
   researchFilmLifecycle: ResearchFilmLifecycle
   previewResources: Pick<ManagedPreviewResources, 'withUnusedFiles'>
   recordAuxiliaryUsage(record: SessionAuxiliaryTurnUsageRecord): Promise<void>
+  applicationEvents: Pick<ApplicationEvents, 'publish'>
   modules: ApplicationModuleBuilder
 }): Promise<{
   researchNarrationModels: ReturnType<typeof createLocalModelOwner>
@@ -385,6 +388,8 @@ export async function composeResearchFilm({
   let replayNotebook: NotebookRunRepository | undefined
   let replayNotebookRoot: string | undefined
   const researchVideoPresentation = createResearchVideoPresentationOwner({
+    onActivityChanged: (sessions) =>
+      applicationEvents.publish('research-video:activity-changed', sessions),
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
     lifecycle: researchFilmLifecycle,

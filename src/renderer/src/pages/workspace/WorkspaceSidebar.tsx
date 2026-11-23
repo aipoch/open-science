@@ -31,6 +31,7 @@ import {
   Settings,
   Store,
   Toolbox,
+  Video,
   X
 } from 'lucide-react'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -92,6 +93,7 @@ type WorkspaceSidebarProps = {
   onOpenProject?: (projectId: string) => void
   sessions: ChatSession[]
   credentialPendingSessionIds?: ReadonlySet<string>
+  activeFilmSessionIds?: ReadonlySet<string>
   activeSessionId: string | undefined
   canCreateConversation: boolean
   canMutateConversations: boolean
@@ -256,6 +258,7 @@ const sessionStatusLabelKeys = {
 
 const ACTIVE_SESSION_GRACE_MS = 15 * 60_000
 const EMPTY_CREDENTIAL_SESSION_IDS = new Set<string>()
+const EMPTY_ACTIVE_FILM_SESSION_IDS: ReadonlySet<string> = new Set()
 const EMPTY_PENDING_INTERACTION_FACTS = new Map<string, SessionPendingInteractionFacts>()
 const INITIAL_PROJECT_MENU_LIMIT = 5
 const FIRST_PROJECT_MENU_DESTINATION_SELECTOR = '[data-project-id], [data-project-new]'
@@ -304,7 +307,8 @@ const getSessionSections = (
   sessions: ChatSession[],
   now: number,
   credentialPendingSessionIds: ReadonlySet<string>,
-  pendingInteractionFactsBySession: ReadonlyMap<string, SessionPendingInteractionFacts>
+  pendingInteractionFactsBySession: ReadonlyMap<string, SessionPendingInteractionFacts>,
+  activeFilmSessionIds: ReadonlySet<string>
 ): SidebarSessionSection[] => {
   const imports = sessions.filter(isImportedSession)
   const children = new Map(imports.map((source) => [source.id, [] as ChatSession[]]))
@@ -322,6 +326,7 @@ const getSessionSections = (
     if (session.pinned) {
       pinned.push(session)
     } else if (
+      activeFilmSessionIds.has(session.id) ||
       isLiveSession(session, credentialPendingSessionIds, pendingInteractionFactsBySession) ||
       (session.status === 'idle' && now - session.updatedAt < ACTIVE_SESSION_GRACE_MS)
     ) {
@@ -488,6 +493,7 @@ type SessionRowProps = {
   imported: boolean
   shortcutNumber?: number
   presentedStatus: SessionStatus
+  filmInProgress: boolean
   archiveAvailable: boolean
   mobileMode: boolean
   isMac: boolean
@@ -540,6 +546,7 @@ const SessionRow = memo(function SessionRow({
   imported,
   shortcutNumber,
   presentedStatus,
+  filmInProgress,
   archiveAvailable,
   mobileMode,
   isMac,
@@ -617,6 +624,7 @@ const SessionRow = memo(function SessionRow({
     archiveAvailable
   ])
   const showShortcut = showSessionShortcuts && shortcutNumber !== undefined
+  const filmActivityLabel = filmInProgress ? t('Research film in progress') : undefined
   const openSessionButton = (
     <button
       type="button"
@@ -663,6 +671,16 @@ const SessionRow = memo(function SessionRow({
           />
         )}
       </span>
+      {filmActivityLabel && (
+        <span
+          role="img"
+          aria-label={filmActivityLabel}
+          title={filmActivityLabel}
+          className="relative z-[2] inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-session-running/10 text-session-running"
+        >
+          <Video className="size-3.5" aria-hidden="true" />
+        </span>
+      )}
       {showShortcut ? (
         <kbd
           aria-hidden="true"
@@ -798,6 +816,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     onOpenProject,
     sessions,
     credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
+    activeFilmSessionIds = EMPTY_ACTIVE_FILM_SESSION_IDS,
     pendingInteractionFactsBySession = EMPTY_PENDING_INTERACTION_FACTS,
     activeSessionId,
     canCreateConversation,
@@ -853,7 +872,8 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     sessions,
     now,
     credentialPendingSessionIds,
-    pendingInteractionFactsBySession
+    pendingInteractionFactsBySession,
+    activeFilmSessionIds
   )
   const activeSectionLabel = sections.find((section) =>
     section.items.some((session) => session.id === activeSessionId)
@@ -1450,6 +1470,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                           imported={isImportedSession(session)}
                           shortcutNumber={shortcutNumberBySessionId.get(session.id)}
                           presentedStatus={presentedStatus}
+                          filmInProgress={activeFilmSessionIds.has(session.id)}
                           archiveAvailable={canArchiveSession?.(session) ?? false}
                           mobileMode={mobileMode}
                           isMac={isMac}
@@ -1668,6 +1689,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const packageBusy = usePackageOperationStore((state) => packageOperationActive(state.operation))
   const {
     credentialPendingSessionIds = EMPTY_CREDENTIAL_SESSION_IDS,
+    activeFilmSessionIds = EMPTY_ACTIVE_FILM_SESSION_IDS,
     onOpenSession,
     sessions
   } = props
@@ -1729,7 +1751,8 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
         sessions,
         now,
         credentialPendingSessionIds,
-        pendingInteractionFactsBySession
+        pendingInteractionFactsBySession,
+        activeFilmSessionIds
       )
         .flatMap((section) => section.items)
         .at(shortcutNumber - 1)
@@ -1754,6 +1777,7 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
       window.removeEventListener('blur', hideSessionShortcuts)
     }
   }, [
+    activeFilmSessionIds,
     credentialPendingSessionIds,
     isMac,
     now,

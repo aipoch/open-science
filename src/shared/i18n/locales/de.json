@@ -8107,6 +8107,7 @@
     "Generating narration and aligning captions…": "Kommentar wird erzeugt und Untertitel werden ausgerichtet…",
     "Speech steps: {{completed}} / {{total}} · Lines: {{lines}} / {{totalLines}}": "Sprachschritte: {{completed}} / {{total}} · Sätze: {{lines}} / {{totalLines}}",
     "Research film": "Forschungsfilm",
+    "Research film in progress": "Forschungsfilm wird erstellt",
     "Generating a film uses your token quota, and its quality depends on the model you select.": "Das Erstellen eines Films verbraucht einen Teil Ihres Token-Kontingents. Die Qualität hängt von den Fähigkeiten des gewählten Modells ab.",
     "Generate research film": "Forschungsfilm erstellen",
     "View research film": "Forschungsfilm ansehen",

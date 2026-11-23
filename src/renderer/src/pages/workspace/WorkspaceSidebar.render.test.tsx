@@ -159,7 +159,8 @@ const createMessage = (): ChatSession['messages'][number] => ({
 const renderSidebar = async (
   sessions: ChatSession[],
   mobileMode = false,
-  credentialPendingSessionIds?: ReadonlySet<string>
+  credentialPendingSessionIds?: ReadonlySet<string>,
+  activeFilmSessionIds?: ReadonlySet<string>
 ): Promise<string> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
 
@@ -168,6 +169,7 @@ const renderSidebar = async (
       projectName="Example project"
       sessions={sessions}
       credentialPendingSessionIds={credentialPendingSessionIds}
+      activeFilmSessionIds={activeFilmSessionIds}
       activeSessionId={sessions[0]?.id}
       canCreateConversation
       canMutateConversations
@@ -2958,6 +2960,58 @@ describe('WorkspaceSidebar accessible render', () => {
     await sidebar.selectSession('recent')
     expect(recents?.open).toBe(true)
     sidebar.cleanup()
+  })
+
+  it('keeps an older idle conversation in Active while its research film is generating', async () => {
+    const session = createSession({
+      id: 'film-session',
+      title: 'Old film conversation',
+      status: 'idle',
+      updatedAt: 1
+    })
+
+    const generating = await renderSidebar([session], false, undefined, new Set([session.id]))
+    expect(generating).toContain('>Active<')
+    expect(generating.indexOf('Old film conversation')).toBeGreaterThan(
+      generating.indexOf('>Active<')
+    )
+    expect(generating).toContain('aria-label="Research film in progress"')
+
+    const settled = await renderSidebar([session], false, undefined, new Set())
+    expect(settled).not.toContain('>Active<')
+    expect(settled).not.toContain('aria-label="Research film in progress"')
+    expect(settled.indexOf('Old film conversation')).toBeGreaterThan(settled.indexOf('>Recents<'))
+  })
+
+  it('keeps pinned and imported precedence while a research film is generating', async () => {
+    const pinned = createSession({
+      id: 'pinned-film',
+      title: 'Pinned film conversation',
+      status: 'idle',
+      pinned: true,
+      updatedAt: 1
+    })
+    const imported = createSession({
+      id: 'import-film',
+      title: 'Imported film conversation',
+      status: 'idle',
+      contentLoaded: false,
+      updatedAt: 1
+    })
+
+    const html = await renderSidebar(
+      [pinned, imported],
+      false,
+      undefined,
+      new Set([pinned.id, imported.id])
+    )
+
+    expect(html).toContain('>Pinned<')
+    expect(html).toContain('>Imported research<')
+    expect(html).not.toContain('>Active<')
+    expect(html.indexOf('Pinned film conversation')).toBeLessThan(
+      html.indexOf('>Imported research<')
+    )
   })
 
   it('presents an in-memory credential request as an active Session needing input', async () => {

@@ -43,6 +43,7 @@ import type {
   ResearchFilmMode
 } from '../../../shared/research-video-presentation'
 import { isDesktopRenderer } from '@/lib/interface-scale'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
@@ -358,6 +359,10 @@ function ResearchVideoModeButton({
     status.preflightError !== missingRuntime &&
     status.preflightError !== RESEARCH_FILM_BUSY_MESSAGE &&
     knownPreflight
+  const blockingSession =
+    !status.generationBlock && preflight === RESEARCH_FILM_BUSY_MESSAGE
+      ? status.blockingSession
+      : undefined
   const loadingTrigger =
     !statusLoaded ||
     (preferSavedFilm &&
@@ -862,6 +867,21 @@ function ResearchVideoModeButton({
                 <ErrorNotice
                   inline
                   level="warning"
+                  primaryButton={
+                    blockingSession && {
+                      label: t('Go to conversation'),
+                      onClick: () => {
+                        useNavigationStore
+                          .getState()
+                          .openSession(
+                            blockingSession.projectId,
+                            blockingSession.sessionId,
+                            'user',
+                            () => setOpen(false)
+                          )
+                      }
+                    }
+                  }
                   content={
                     modelSettingsAvailable && status.preflightError === missingModel ? (
                       <Trans

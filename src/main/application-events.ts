@@ -47,6 +47,7 @@ import type { MigrationProgress } from '../shared/storage'
 import type { TagsChangedEvent } from '../shared/tags'
 import type { UpdateStatus } from '../shared/update'
 import type { WslSetupStatus } from '../shared/wsl-setup'
+import type { ResearchVideoActiveSession } from '../shared/research-video-presentation'
 import type { CompletionGateLifecycleEvent } from './agents/completion-gate-contract'
 
 const log = createLogger('application-events')
@@ -56,6 +57,7 @@ const log = createLogger('application-events')
 // them deliberately.
 export type ApplicationEventMap = {
   'resource-recording:changed': import('../shared/resource-recording').ResourceRecordingState
+  'research-video:activity-changed': readonly ResearchVideoActiveSession[]
   'sessions:package-operation-changed': PackageOperationSnapshot
   'sessions:catalog-changed': undefined
   'sessions:org-case-download-changed': OrgCaseDownloadSnapshot | null

@@ -8422,6 +8422,7 @@
     "Generating narration and aligning captions…": "Создание озвучки и синхронизация субтитров…",
     "Speech steps: {{completed}} / {{total}} · Lines: {{lines}} / {{totalLines}}": "Этапы синтеза: {{completed}} / {{total}} · Фразы: {{lines}} / {{totalLines}}",
     "Research film": "Исследовательский фильм",
+    "Research film in progress": "Создаётся исследовательский фильм",
     "Generating a film uses your token quota, and its quality depends on the model you select.": "На создание фильма расходуются токены из вашей квоты, а его качество зависит от возможностей выбранной модели.",
     "Generate research film": "Создать исследовательский фильм",
     "View research film": "Посмотреть исследовательский фильм",
