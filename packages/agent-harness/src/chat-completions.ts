@@ -500,14 +500,16 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
                   return protocol()
                 const fn = object(part.function ?? {})
                 const prior = calls.get(index) ?? { id: '', name: '', arguments: '' }
-                if (part.id !== undefined) {
-                  if (typeof part.id !== 'string' || (prior.id && prior.id !== part.id))
-                    return protocol()
-                  prior.id = part.id
+                // Some gateways repeat null for identity fields already sent on this index.
+                const id = part.id === null && prior.id ? undefined : part.id
+                const name = fn.name === null && prior.name ? undefined : fn.name
+                if (id !== undefined) {
+                  if (typeof id !== 'string' || (prior.id && prior.id !== id)) return protocol()
+                  prior.id = id
                 }
-                if (fn.name !== undefined) {
-                  if (typeof fn.name !== 'string') return protocol()
-                  prior.name += fn.name
+                if (name !== undefined) {
+                  if (typeof name !== 'string') return protocol()
+                  prior.name += name
                 }
                 if (fn.arguments !== undefined && typeof fn.arguments !== 'string')
                   return protocol()
@@ -517,8 +519,8 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
                   type: 'tool-delta',
                   index,
                   arguments: (fn.arguments ?? '') as string,
-                  ...(part.id !== undefined ? { id: part.id as string } : {}),
-                  ...(fn.name !== undefined ? { name: fn.name as string } : {})
+                  ...(id !== undefined ? { id } : {}),
+                  ...(name !== undefined ? { name } : {})
                 }
               }
             }
