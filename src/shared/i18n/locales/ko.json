@@ -8888,6 +8888,21 @@
     "This file contains encrypted content.": "이 파일에는 암호화된 내용이 있습니다.",
     "This file uses external content that the preview cannot load.": "이 파일은 미리보기에서 불러올 수 없는 외부 콘텐츠를 사용합니다.",
     "This Office format cannot be previewed.": "이 Office 형식은 미리 볼 수 없습니다.",
-    "The secure Office preview could not start.": "보안 Office 미리보기를 시작할 수 없습니다."
+    "The secure Office preview could not start.": "보안 Office 미리보기를 시작할 수 없습니다.",
+    "Change": "변경",
+    "Change provider": "모델 제공업체 변경",
+    "Search providers": "모델 제공업체 검색",
+    "Search by name or website, e.g. kimi, openrouter": "이름 또는 웹사이트로 검색(예: kimi, openrouter)",
+    "Provider category": "모델 제공업체 분류",
+    "Account sign-in": "계정 로그인",
+    "Model vendors": "모델 공급사",
+    "Coding plans": "코딩 플랜",
+    "Cloud platforms": "클라우드 플랫폼",
+    "Gateways": "게이트웨이",
+    "Recommended": "추천",
+    "No providers match your search.": "검색과 일치하는 모델 제공업체가 없습니다.",
+    "{{count}} regions_other": "리전 {{count}}개",
+    "Sign in with your CodeBuddy account": "CodeBuddy 계정으로 로그인",
+    "Already added": "이미 추가됨"
   }
 }

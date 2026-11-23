@@ -1,5 +1,5 @@
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
-import { CirclePlus, FlaskConical, Sparkles } from 'lucide-react'
+import { CirclePlus, FlaskConical, Server, Sparkles } from 'lucide-react'
 
 import {
   AipochMono,
@@ -124,6 +124,16 @@ export const ProviderKindIcon = ({
 
   if (kindKey === 'xai-subscription') {
     return <img src={grokLogo} alt="" className={cn('size-5 shrink-0', className)} />
+  }
+
+  // Local model servers have no bundled brand marks; a neutral server glyph avoids guessing one.
+  if (kindKey.startsWith('local:')) {
+    return (
+      <Server
+        className={cn('size-5 shrink-0 text-muted-foreground', className)}
+        aria-hidden="true"
+      />
+    )
   }
 
   if (kindKey === 'lab') {

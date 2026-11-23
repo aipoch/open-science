@@ -104,6 +104,7 @@ import type { MemoryView } from '@/lib/settings-navigation'
 import type { TagsView } from '@/lib/settings-navigation'
 import type { CredentialsView } from '@/lib/settings-navigation'
 import { ProviderForm } from './ProviderForm'
+import { ProviderKindPicker } from './ProviderKindPicker'
 import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
@@ -1066,9 +1067,23 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
   }))
 
-  // Only create/edit locations open a provider form.
+  // Add provider first shows the kind picker; the form opens once a kind is chosen, or for an edit.
+  const isProviderPickerOpen =
+    activePanel === 'model' && modelView.kind === 'create' && !modelView.providerKindKey
   const isProviderFormOpen =
-    activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')
+    activePanel === 'model' &&
+    ((modelView.kind === 'create' && Boolean(modelView.providerKindKey)) ||
+      modelView.kind === 'edit')
+  // Kinds offered when adding a provider; the picker and the form's type dropdown share them.
+  const createKindAvailability = {
+    codeBuddyProviders:
+      agentFrameworkId === 'codebuddy' && isDesktopRenderer()
+        ? providers.map((provider) => provider.id)
+        : undefined,
+    showCodexSubscriptions:
+      agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent',
+    showClaudeIsolated: agentFrameworkId === 'claude-code'
+  }
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
   // reflected in the form; undefined until the provider is found (or when creating).
   const editingProvider =
@@ -1101,9 +1116,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
-  // loads). A create pre-selects the official vendor matching the active agent framework. Also
-  // clears any stale status message on entry.
-  const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
+  // loads). A create is seeded from the kind chosen in the picker. Also clears any stale status
+  // message on entry.
+  const modelViewKey =
+    modelView.kind === 'edit'
+      ? `edit:${modelView.providerId}`
+      : modelView.kind === 'create'
+        ? `create:${modelView.providerKindKey ?? ''}`
+        : modelView.kind
   const catalogSignature = JSON.stringify([
     modelViewKey,
     editingProvider && (editingProvider.configRevision ?? 0),
@@ -1123,9 +1143,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [seededModelView, setSeededModelView] = useState<string | undefined>(modelViewKey)
   if (open && modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
-    if (modelView.kind === 'create') {
+    if (modelView.kind === 'create' && modelView.providerKindKey) {
       const initial = createEmptyProviderFormValue(
-        providerKindPatch(defaultProviderKindKey(agentFrameworkId))
+        providerKindPatch(modelView.providerKindKey, customApiEndpoint)
       )
       setFormValue(initial)
       setProviderDraftBaseline(initial)
@@ -1190,6 +1210,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setBusyProviderId(undefined)
     setPostSaveValidationFailed(false)
     navigate({ panel: 'model', view: { kind: 'create' } })
+  }
+
+  const selectProviderKind = (providerKindKey: string): void =>
+    navigate({ panel: 'model', view: { kind: 'create', providerKindKey } })
+
+  // Return to the picker the user came from, keeping history linear; otherwise open a fresh one.
+  const changeProviderKind = (): void => {
+    const previous = history[historyIndex - 1]
+    if (
+      previous?.panel === 'model' &&
+      previous.view.kind === 'create' &&
+      !previous.view.providerKindKey
+    )
+      goBack()
+    else navigate({ panel: 'model', view: { kind: 'create' } })
   }
 
   const openEdit = (provider: ProviderView): void => {
@@ -2115,23 +2150,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           isRefreshingModels={isRefreshingModels}
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
-                          codeBuddyProviders={
-                            agentFrameworkId === 'codebuddy' &&
-                            modelView.kind === 'create' &&
-                            isDesktopRenderer()
-                              ? providers.map((p) => p.id)
-                              : undefined
-                          }
-                          showCodexSubscriptions={
-                            (agentFrameworkId === 'codex' ||
-                              agentFrameworkId === 'open-science-agent') &&
-                            modelView.kind === 'create'
-                          }
-                          showClaudeIsolated={
-                            agentFrameworkId === 'claude-code' && modelView.kind === 'create'
+                          {...(modelView.kind === 'create' ? createKindAvailability : {})}
+                          onChangeProviderKind={
+                            modelView.kind === 'create' ? changeProviderKind : undefined
                           }
                           defaultCustomApiEndpoint={customApiEndpoint}
                           framework={activeFramework}
+                        />
+                      </div>
+                    ) : isProviderPickerOpen ? (
+                      <div className="p-5">
+                        <ProviderKindPicker
+                          {...createKindAvailability}
+                          recommendedKey={defaultProviderKindKey(agentFrameworkId)}
+                          onSelect={selectProviderKind}
                         />
                       </div>
                     ) : (
