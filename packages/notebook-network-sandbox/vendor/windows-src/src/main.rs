@@ -5118,23 +5118,23 @@ mod windows_host {
             let root = parent.join(installation_id);
             let requested = root.to_string_lossy();
             let lock = OperationLock::acquire(installation_id).unwrap();
-            let (started, checking) = std::sync::mpsc::channel();
-            let (finished, result) = std::sync::mpsc::channel();
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let (result_tx, result_rx) = std::sync::mpsc::channel();
             std::thread::scope(|scope| {
-                scope.spawn(|| {
-                    started.send(()).unwrap();
-                    finished
+                scope.spawn(move || {
+                    started_tx.send(()).unwrap();
+                    result_tx
                         .send(configured(installation_id, &requested))
                         .unwrap();
                 });
-                checking.recv().unwrap();
-                let while_locked = result.recv_timeout(std::time::Duration::from_millis(200));
+                started_rx.recv().unwrap();
+                let while_locked = result_rx.recv_timeout(std::time::Duration::from_millis(200));
                 drop(lock);
                 assert!(matches!(
                     while_locked,
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout)
                 ));
-                assert!(!result.recv().unwrap().unwrap());
+                assert!(!result_rx.recv().unwrap().unwrap());
             });
             fs::remove_dir_all(parent).unwrap();
         }
