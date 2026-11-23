@@ -73,12 +73,19 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
           {current ? (
             <>
               <ProviderKindIcon
-                kindKey={providerKindKey(current.providerType, current.vendorId)}
+                kindKey={providerKindKey(
+                  current.providerType,
+                  current.vendorId,
+                  current.localPresetId
+                )}
                 className="size-4"
               />
               <span className="truncate">
-                {current.model || current.providerName}{' '}
-                <span className="ml-1.5 text-muted-foreground">{current.providerName}</span>
+                {current.localPresetId ? current.label : current.model || current.providerName}{' '}
+                {(!current.localPresetId ||
+                  current.label !== `${current.providerName} · ${current.model}`) && (
+                  <span className="ml-1.5 text-muted-foreground">{current.providerName}</span>
+                )}
               </span>
             </>
           ) : (
@@ -108,12 +115,16 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                       value={option.key}
                       icon={
                         <ProviderKindIcon
-                          kindKey={providerKindKey(option.providerType, option.vendorId)}
+                          kindKey={providerKindKey(
+                            option.providerType,
+                            option.vendorId,
+                            option.localPresetId
+                          )}
                           className="size-4"
                         />
                       }
                     >
-                      {option.model || option.providerName}
+                      {option.localPresetId ? option.label : option.model || option.providerName}
                     </SelectItem>
                   )
                 }
@@ -137,12 +148,18 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                           className="data-[disabled]:pointer-events-auto data-[disabled]:cursor-not-allowed"
                           icon={
                             <ProviderKindIcon
-                              kindKey={providerKindKey(option.providerType, option.vendorId)}
+                              kindKey={providerKindKey(
+                                option.providerType,
+                                option.vendorId,
+                                option.localPresetId
+                              )}
                               className="size-4"
                             />
                           }
                         >
-                          {option.model || option.providerName}
+                          {option.localPresetId
+                            ? option.label
+                            : option.model || option.providerName}
                         </SelectItem>
                       </TooltipTrigger>
                       <TooltipContent side="right" className="max-w-72 leading-5">

@@ -1,3 +1,7 @@
+import {
+  isLocalProviderPresetId,
+  type LocalProviderPresetId
+} from '../../../../shared/local-provider-preset'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
 import { CirclePlus, FlaskConical, Sparkles } from 'lucide-react'
 
@@ -14,6 +18,14 @@ import {
 import { cn } from '@/lib/utils'
 import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import apodexLogo from '@/assets/provider-icons/apodex.svg'
+import awsLogo from '@/assets/provider-icons/aws.svg'
+import azureLogo from '@/assets/provider-icons/azure.svg'
+import cloudflareLogo from '@/assets/provider-icons/cloudflare.svg'
+import llamaCppLogo from '@/assets/provider-icons/llamacpp.svg'
+import lmStudioLogo from '@/assets/provider-icons/lmstudio.svg'
+import ollamaLogo from '@/assets/provider-icons/ollama.svg'
+import vectrustLogo from '@/assets/provider-icons/vectrust.png'
+import vllmLogo from '@/assets/provider-icons/vllm.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 // CodeBuddy is a third-party product mark used only to identify its compatible ACP runtime.
 // Keep it separate from Open-Science branding and avoid implying affiliation or endorsement.
@@ -88,10 +100,20 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   requesty: requestyLogo,
   xiaomimimo: xiaomimimoLogo,
   sensenova: sensenovaLogo,
-  volcengine: volcengineLogo
+  volcengine: volcengineLogo,
+  'cloudflare-ai-gateway': cloudflareLogo,
+  'aws-bedrock': awsLogo,
+  'microsoft-foundry': azureLogo,
+  vectrust: vectrustLogo
 }
 
-// Renders the icon for a provider-kind key ('custom' or `official:<vendorId>`).
+const LOCAL_LOGO: Record<LocalProviderPresetId, string> = {
+  llamacpp: llamaCppLogo,
+  lmstudio: lmStudioLogo,
+  ollama: ollamaLogo,
+  vllm: vllmLogo
+}
+
 export const ProviderKindIcon = ({
   kindKey,
   className
@@ -171,11 +193,25 @@ export const ProviderKindIcon = ({
     )
   }
 
-  const vendorId = kindKey.slice('official:'.length) as OfficialVendorId
-  const logo = VENDOR_LOGO[vendorId]
+  const localId = kindKey.startsWith('local:') ? kindKey.slice('local:'.length) : undefined
+  const logo = isLocalProviderPresetId(localId)
+    ? LOCAL_LOGO[localId]
+    : kindKey.startsWith('official:')
+      ? VENDOR_LOGO[kindKey.slice('official:'.length) as OfficialVendorId]
+      : undefined
 
   if (logo) {
-    return <img src={logo} alt="" className={cn('size-5 shrink-0', className)} />
+    return (
+      <img
+        src={logo}
+        alt=""
+        className={cn(
+          'size-5 shrink-0 object-contain',
+          (localId === 'llamacpp' || localId === 'ollama') && 'dark:invert',
+          className
+        )}
+      />
+    )
   }
 
   // No official asset bundled for this vendor yet (e.g. GLM/Z.AI): neutral placeholder, not a guess.

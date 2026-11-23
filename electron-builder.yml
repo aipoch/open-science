@@ -88,6 +88,8 @@ extraResources:
   # Keep the copied third-party provider icon paths' MIT notice readable in every packaged app.
   - from: src/renderer/src/assets/provider-icons/LobeHub-icons-LICENSE
     to: LobeHub-icons-LICENSE
+  - from: src/renderer/src/assets/provider-icons/provider-icon-credits.txt
+    to: provider-icon-credits.txt
   # Ship the `open-science` CLI as plain files (not in the asar) so the installed command-line launcher
   # can run it with the app's own Electron in Node mode. Only the runtime .mjs files; tests are excluded.
   - from: cli

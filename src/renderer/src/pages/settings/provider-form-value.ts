@@ -630,9 +630,7 @@ export const providerKindPatch = (
 export const selectedKindKey = (value: ProviderFormValue): string => {
   if (value.type === 'codebuddy-subscription' && value.codeBuddySite)
     return codeBuddyAccounts[value.codeBuddySite].id
-  if (value.type === 'custom') {
-    return value.localPresetId ? `local:${value.localPresetId}` : 'custom'
-  }
+  if (value.type === 'custom') return providerKindKey(value.type, undefined, value.localPresetId)
   if (value.type === 'claude-shared' || value.type === 'claude-isolated') {
     return 'claude-subscription'
   }
@@ -644,14 +642,15 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
   return value.vendorId ? `official:${value.vendorId}` : 'custom'
 }
 
-// Maps a provider's type + vendor to its icon key ('custom' | 'official:<id>').
-export const providerKindKey = (type: ProviderType, vendorId?: OfficialVendorId): string =>
-  type === 'official' && vendorId
-    ? `official:${vendorId}`
-    : type === 'codex-shared' || type === 'codex-isolated'
-      ? 'codex-subscription'
-      : type === 'claude-shared' || type === 'claude-isolated'
-        ? 'claude-subscription'
-        : type === 'xai-subscription'
-          ? 'xai-subscription'
-          : type
+// Local presets share the custom transport but retain their own presentation identity.
+export function providerKindKey(
+  type: ProviderType,
+  vendorId?: OfficialVendorId,
+  localPresetId?: LocalProviderPresetId
+): string {
+  if (type === 'official' && vendorId) return `official:${vendorId}`
+  if (type === 'custom' && localPresetId) return `local:${localPresetId}`
+  if (type === 'codex-shared' || type === 'codex-isolated') return 'codex-subscription'
+  if (type === 'claude-shared' || type === 'claude-isolated') return 'claude-subscription'
+  return type
+}

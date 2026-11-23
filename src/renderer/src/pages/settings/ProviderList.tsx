@@ -304,7 +304,11 @@ const ProviderList = ({
               badge={
                 <>
                   <ProviderKindIcon
-                    kindKey={providerKindKey(provider.type, provider.vendorId)}
+                    kindKey={providerKindKey(
+                      provider.type,
+                      provider.vendorId,
+                      provider.localPresetId
+                    )}
                     className="size-3"
                   />
                   {describeType(provider, t)}
