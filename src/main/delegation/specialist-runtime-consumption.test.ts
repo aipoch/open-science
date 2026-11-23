@@ -3,10 +3,10 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
 
 import { opencodeFramework } from '../agent-framework'
-import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
 import type { AcpDelegateRuntime } from './acp-execution'
 import { createClaudeCodeDelegateExecution } from './claude-code-execution'
 import {
+  CODEX_DELEGATION_AUDITED_RUNTIME,
   createCodexDelegateExecution,
   type PreparedCodexDelegateExecution
 } from './codex-execution'
@@ -134,7 +134,7 @@ const factories: ReadonlyArray<{
       const requests: Harness['requests'] = []
       const codex = createCodexDelegateExecution({
         capacity: 2,
-        runtime: { nativeVersion: CODEX_VERSION, adapterVersion: CODEX_ACP_VERSION },
+        runtime: CODEX_DELEGATION_AUDITED_RUNTIME,
         framework: {
           spawn: () => ({ kill: vi.fn() }) as unknown as ChildProcessWithoutNullStreams
         },

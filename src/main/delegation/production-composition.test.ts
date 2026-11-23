@@ -60,7 +60,7 @@ import type { AcpDelegateExecutionCallbacks, AcpDelegateRuntime } from './acp-ex
 import type { DelegateExecutionInput } from './execution-port'
 import type { DelegationSettlementDispatch } from './delegation-settlement-wake-owner'
 import { claudeCodeFramework } from '../agent-framework'
-import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
+import { CODEX_DELEGATION_AUDITED_RUNTIME } from './codex-execution'
 import { preS6ReaderSave } from '../../shared/pre-s6-session-reader.fixture'
 import type { AcpPromptRequest, AcpStateSnapshot } from '../../shared/acp'
 import { AcpRuntimeCoordinator } from '../acp/runtime-coordinator'
@@ -360,10 +360,7 @@ const createFrameworkCompositionHarness = async (
         assertProviderAvailable: async () => undefined,
         ...(frameworkId === 'codex'
           ? {
-              codexRuntime: {
-                nativeVersion: CODEX_VERSION,
-                adapterVersion: CODEX_ACP_VERSION
-              },
+              codexRuntime: CODEX_DELEGATION_AUDITED_RUNTIME,
               codexFramework: {
                 spawn: () => ({ kill: vi.fn() }) as unknown as ChildProcessWithoutNullStreams
               }

@@ -3,12 +3,12 @@ import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { describe, expect, it, vi } from 'vitest'
 
 import { claudeCodeFramework } from '../agent-framework'
-import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { DelegateMessagePreAcceptanceError, type DelegateExecutionInput } from './execution-port'
 import { createProductionDelegatedFrameworks } from './production-frameworks'
 import { productionDelegatedWorkFrameworks } from './production-readiness'
+import { CODEX_DELEGATION_AUDITED_RUNTIME } from './codex-execution'
 
 const session = (frameworkId: AgentFrameworkId): PersistedChatSession => ({
   id: `session-${frameworkId}`,
@@ -94,10 +94,7 @@ describe('production delegated framework factory composition', () => {
           assertProviderAvailable: async () => undefined,
           ...(frameworkId === 'codex'
             ? {
-                codexRuntime: {
-                  nativeVersion: CODEX_VERSION,
-                  adapterVersion: CODEX_ACP_VERSION
-                },
+                codexRuntime: CODEX_DELEGATION_AUDITED_RUNTIME,
                 codexFramework: {
                   spawn: () => ({ kill: vi.fn() }) as unknown as ChildProcessWithoutNullStreams
                 }
@@ -262,10 +259,7 @@ describe('production delegated framework factory composition', () => {
       capacity: 1,
       certify: async () => ({
         frameworkId: 'codex',
-        codexRuntime: {
-          nativeVersion: CODEX_VERSION,
-          adapterVersion: CODEX_ACP_VERSION
-        },
+        codexRuntime: CODEX_DELEGATION_AUDITED_RUNTIME,
         assertProviderAvailable: async () => {
           throw new Error('Codex native multi-agent features must be disabled')
         },

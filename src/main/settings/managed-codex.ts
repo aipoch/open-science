@@ -30,8 +30,8 @@ import {
   ACP_TURN_TOKEN_USAGE_META_KEY
 } from '../../shared/acp'
 import {
+  MANAGED_CODEX_ACP_VERSION,
   MANAGED_CODEX_VERSION,
-  MINIMUM_CODEX_ACP_VERSION,
   isSupportedCodexCliVersion,
   CODEX_CLI_INCOMPATIBLE_MESSAGE
 } from '../../shared/codex-runtime'
@@ -58,7 +58,7 @@ import {
   VerificationProcessExitError
 } from '../update/verification-process'
 
-export const CODEX_ACP_VERSION = MINIMUM_CODEX_ACP_VERSION
+export const CODEX_ACP_VERSION = MANAGED_CODEX_ACP_VERSION
 export const CODEX_VERSION = MANAGED_CODEX_VERSION
 
 const log = createLogger('managed-codex')
@@ -67,21 +67,21 @@ const MAX_INITIALIZE_DIAGNOSTIC_CHARS = 4 * 1024
 export const MAX_ACP_INITIALIZE_RESPONSE_CHARS = 256 * 1024
 
 export const CODEX_ACP_INTEGRITY =
-  'sha512-2eF1mbs1gTqkZJSLYOun/pFDx37sYa7W63HOPezC37b/R8AYms5O1nfQu8lrqFSGDrwDZkASVORymLcqjCNqyA=='
+  'sha512-2w0hyqz/8a4N6U+4ysE9zeINfpZzrrRtBjusNkQ5gCx4j5GTknPlVcIhq/ULmFNmb8DIvfI0dDHVO8dSI4h+7Q=='
 
 export const CODEX_INTEGRITIES: Readonly<Record<string, string>> = {
   'darwin-arm64':
-    'sha512-62/e4TZ34z93KK3FYIHmo/K88aH0JRPA8x7SAVBdK4iG9f9HPO2tsDrJcmOj9z6DrFpMvPEVymomCbYpqN+ylQ==',
+    'sha512-hIYTkRUpuYpkVfTq4cpby0PXqhAVcIgE7f6FoyY1lt2RyARj3GXS1Can/dIYUBItVhXzhb98HYHZNzCX74QRlQ==',
   'darwin-x64':
-    'sha512-PscZvqKD4zlaSw1nM5Sh4lU1M+01sr4b3qzGx8pf+4OLyULg1z1yAyTR1c35C3t62H8DXy/14y7oazTR3JMMKA==',
+    'sha512-pwN5uNEKx/mZjwBEf/6CKq6SJMfJS5kruV3sJQAk7ebIPvC58Ote3CicIxETDZtjLj35rNv3PLPd7mHCg6hGPw==',
   'linux-arm64':
-    'sha512-nEaBZT3ldrtqUNaBlvI+Y+fg+LbNCTsQjbUnl7Q45rl9vSSqHU2vRj1l6iJDwupZkrpeIJ/ClHIwxgMKv1SKHg==',
+    'sha512-9z17t4bbUJ9UCIb49O4PoA+ki+45q3rd8nZ8PeH6sYnlKkBld/Xpo/OS3h3Ti954+foshX4o7k5TCU8N7zzqQA==',
   'linux-x64':
-    'sha512-Eac8XlC0nCXSeUjDU9l8yLJ6P9evv1mO+AnvILoNwlegBC7B3AVXqJ05QcMhQX7RcJ3Lk2618ykCb2X2ui8VAQ==',
+    'sha512-l66NZkQgdk2C3pbcfULDz42yEUB581MVA6I+Y43Wp4OIqEy73HCdmZ0GTjeAHY2ycuH4N00d9VsLrwT1jxshTw==',
   'win32-arm64':
-    'sha512-tFkxdrSXPUDQXXp3JwTxNOgI17RQcexyuaZTiNmL1A/UaVtVmVBNe+8cBk3r8b7dLpaoWFbjPwL7p5SBCrkLQg==',
+    'sha512-kkavDHtAkkNaYtO7eBw4IdBbE/PsWP+Ezp9JXcr/mBu/Cc7EevzFVIVC3sZYvWsF9xuvyjIUv9CKeN0LU0+N9Q==',
   'win32-x64':
-    'sha512-vgqs/VRXNwhLYMsZDgYfnRSXpRh5Nm782L8lacGskw86kOxbMaquvQKxkuZHUBrJA2XGcksB7rMUHy1XaCJgrA=='
+    'sha512-HKWBK25tLQxdEg6svw0CrBf+v0bQhRyF8EBVdNqeRxErqpfFa/dfSar6r3sJt6tyPqozOtgz2BH8B2G3n/+gnQ=='
 }
 
 export type ManagedCodexPlatform = {
@@ -216,6 +216,22 @@ const CODEX_ACP_CONTEXT_USAGE_INPUT_ONLY_REPLACEMENT = [
   '      contextTokenUsage == null',
   '        ? void 0',
   '        : contextTokenUsage.inputTokens;'
+].join('\n')
+const CODEX_ACP_CONTEXT_USAGE_MODERN_SOURCE = [
+  '    if (params.threadId === this.sessionState.sessionId) {',
+  '      this.handleTokenUsageUpdated(params);',
+  '      used = this.sessionState.lastTokenUsage?.totalTokens;',
+  '      size = this.sessionState.modelContextWindow;'
+].join('\n')
+const CODEX_ACP_CONTEXT_USAGE_MODERN_REPLACEMENT = [
+  '    if (params.threadId === this.sessionState.sessionId) {',
+  '      this.handleTokenUsageUpdated(params);',
+  '      const contextTokenUsage = this.sessionState.lastTokenUsage;',
+  '      used =',
+  '        contextTokenUsage == null',
+  '          ? void 0',
+  '          : contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);',
+  '      size = this.sessionState.modelContextWindow;'
 ].join('\n')
 
 const CODEX_ACP_TURN_USAGE_UPDATE_SOURCE = [
@@ -590,6 +606,10 @@ const CODEX_ACP_SKILL_INPUT_REPLACEMENT = [
   '        return [...nativeSkills, { type: "text", text: block.text, text_elements: [] }];',
   '      }'
 ].join('\n')
+const CODEX_ACP_SKILL_INPUT_MODERN_REPLACEMENT = CODEX_ACP_SKILL_INPUT_REPLACEMENT.replaceAll(
+  'path4',
+  'path10'
+).replaceAll('fs4', 'fs')
 
 const CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE = [
   'function startCodexConnection(codexPath, env) {',
@@ -631,6 +651,10 @@ const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT =
     'env: spawnEnv }',
     'env: spawnEnv, windowsHide: true }'
   )
+const CODEX_ACP_MODEL_CATALOG_STARTUP_MODERN_SOURCE =
+  'function startCodexConnection(codexPath, env, appServerStartupArgs = ["app-server"], options = {}) {'
+const CODEX_ACP_MODEL_CATALOG_STARTUP_MODERN_MARKER =
+  'const modelCatalogOverride = modelCatalogPath'
 
 const CODEX_ADAPTER_REPLACE_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 
@@ -664,6 +688,14 @@ export const patchCodexAcpContextUsageSource = (source: string): string => {
     return source.replace(
       CODEX_ACP_CONTEXT_USAGE_LEGACY_REPLACEMENT,
       CODEX_ACP_CONTEXT_USAGE_REPLACEMENT
+    )
+  }
+
+  const modernMatches = source.split(CODEX_ACP_CONTEXT_USAGE_MODERN_SOURCE).length - 1
+  if (modernMatches === 1) {
+    return source.replace(
+      CODEX_ACP_CONTEXT_USAGE_MODERN_SOURCE,
+      CODEX_ACP_CONTEXT_USAGE_MODERN_REPLACEMENT
     )
   }
 
@@ -811,11 +843,18 @@ export const patchCodexAcpTurnUsageSource = (source: string): string => {
 // private extension metadata. Extend that exact source shape so an explicit app Skill selection
 // becomes Codex's native UserInput::Skill while preserving the original text byte-for-byte.
 export const patchCodexAcpSkillInputSource = (source: string): string => {
-  if (source.includes(CODEX_ACP_SKILL_INPUT_REPLACEMENT)) return source
+  if (
+    source.includes(CODEX_ACP_SKILL_INPUT_REPLACEMENT) ||
+    source.includes(CODEX_ACP_SKILL_INPUT_MODERN_REPLACEMENT)
+  )
+    return source
 
   const matches = source.split(CODEX_ACP_SKILL_INPUT_SOURCE).length - 1
   if (matches === 1) {
-    return source.replace(CODEX_ACP_SKILL_INPUT_SOURCE, CODEX_ACP_SKILL_INPUT_REPLACEMENT)
+    const replacement = source.includes('path10')
+      ? CODEX_ACP_SKILL_INPUT_MODERN_REPLACEMENT
+      : CODEX_ACP_SKILL_INPUT_REPLACEMENT
+    return source.replace(CODEX_ACP_SKILL_INPUT_SOURCE, replacement)
   }
 
   throw new Error('Pinned Codex ACP Skill-input patch no longer matches the adapter bundle')
@@ -826,6 +865,44 @@ export const patchCodexAcpSkillInputSource = (source: string): string => {
 // in model lookup. Project just that immutable catalog path into this native process's CLI override;
 // the remaining request-scoped config continues through codex-acp unchanged.
 export const patchCodexAcpModelCatalogStartupSource = (source: string): string => {
+  if (source.includes(CODEX_ACP_MODEL_CATALOG_STARTUP_MODERN_MARKER)) return source
+
+  if (source.includes(CODEX_ACP_MODEL_CATALOG_STARTUP_MODERN_SOURCE)) {
+    if (source.split(CODEX_ACP_MODEL_CATALOG_STARTUP_MODERN_SOURCE).length !== 2) {
+      throw new Error(
+        'Pinned Codex ACP model-catalog startup patch no longer matches the adapter bundle'
+      )
+    }
+    const modernPrefix = [
+      CODEX_ACP_MODEL_CATALOG_STARTUP_MODERN_SOURCE,
+      '  const spawnEnv = env ?? process.env;',
+      '  const startupConfigString = spawnEnv["CODEX_CONFIG"];',
+      '  const startupConfig = startupConfigString ? JSON.parse(startupConfigString) : void 0;',
+      '  const modelCatalogPath = typeof startupConfig?.model_catalog_json === "string"',
+      '    ? startupConfig.model_catalog_json',
+      '    : void 0;',
+      '  const modelCatalogOverride = modelCatalogPath',
+      '    ? `model_catalog_json=${JSON.stringify(modelCatalogPath)}`',
+      '    : void 0;',
+      '  if (modelCatalogOverride && !appServerStartupArgs.includes(modelCatalogOverride)) {',
+      '    appServerStartupArgs = [...appServerStartupArgs, "-c", modelCatalogOverride];',
+      '  }'
+    ].join('\n')
+    return source
+      .replace(
+        `${CODEX_ACP_MODEL_CATALOG_STARTUP_MODERN_SOURCE}\n  const spawnEnv = env ?? process.env;`,
+        modernPrefix
+      )
+      .replaceAll(
+        'spawn(codexPath, appServerStartupArgs, { env: spawnEnv })',
+        'spawn(codexPath, appServerStartupArgs, { env: spawnEnv, windowsHide: true })'
+      )
+      .replaceAll(
+        'spawn(process.execPath, [bundledCodexPath, ...appServerStartupArgs], { env: spawnEnv })',
+        'spawn(process.execPath, [bundledCodexPath, ...appServerStartupArgs], { env: spawnEnv, windowsHide: true })'
+      )
+  }
+
   const variants = [
     CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE,
     CODEX_ACP_MODEL_CATALOG_STARTUP_PREVIOUS,
@@ -853,7 +930,11 @@ const patchCodexAcpReviewerMcpSource = (source: string): string => {
   if (matches.length === 1 && source.split(matches[0]).length === 2) {
     return source.replace(matches[0], CODEX_ACP_REVIEWER_MCP_REPLACEMENT)
   }
-  if (matches.length > 0 || source.includes('createSessionConfig(')) {
+  if (
+    matches.length > 0 ||
+    source.includes('createMcpSeverConfig(') ||
+    (source.includes('createSessionConfig(') && source.includes('"mcp_servers"'))
+  ) {
     throw new Error('Pinned Codex ACP Reviewer MCP patch no longer matches the adapter bundle')
   }
   // Unit-test fixtures use tiny stand-in adapters without session configuration.
@@ -876,6 +957,13 @@ const CODEX_ACP_PROMPT_FAILURE_REPLACEMENT = [
 // after the upstream current-turn/retry guards, without interpreting assistant text in the app.
 export const patchCodexAcpPromptFailureSource = (source: string): string => {
   if (source.includes(CODEX_ACP_PROMPT_FAILURE_REPLACEMENT)) return source
+  if (
+    source.includes('supportsTypedSessionFailures') &&
+    source.includes('this.sessionFailureKind(params.error)') &&
+    source.includes('recordTypedSessionFailure')
+  ) {
+    return source
+  }
   const matches = source.split(CODEX_ACP_PROMPT_FAILURE_SOURCE).length - 1
   if (matches === 1) {
     return source.replace(CODEX_ACP_PROMPT_FAILURE_SOURCE, CODEX_ACP_PROMPT_FAILURE_REPLACEMENT)
@@ -952,6 +1040,7 @@ const CODEX_ACP_COMPACTION_PATCHES = [
 
 export const patchCodexAcpCompactionSource = (source: string): string => {
   if (!source.includes('async runCompact(')) return source
+  if (source.includes('captureTurnRoutings') && source.includes('onAccepted')) return source
   for (const [before, after] of CODEX_ACP_COMPACTION_PATCHES) {
     if (source.includes(after)) continue
     if (source.split(before).length !== 2) {

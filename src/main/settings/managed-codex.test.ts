@@ -351,8 +351,8 @@ describe('managed Codex paths and platform resolution', () => {
     const root = '/data/open-science'
     const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
 
-    expect(CODEX_ACP_VERSION).toBe('1.6.2')
-    expect(CODEX_VERSION).toBe('0.157.1')
+    expect(CODEX_ACP_VERSION).toBe('2.9.0')
+    expect(CODEX_VERSION).toBe('0.171.0')
     expect(CODEX_ACP_INTEGRITY).toMatch(/^sha512-/)
     expect(Object.keys(CODEX_INTEGRITIES).sort()).toEqual([
       'darwin-arm64',
@@ -852,8 +852,8 @@ describe('installManagedCodex', () => {
       codexVersion: '0.157.1'
     })
     expect(metadataUrls).toEqual([
-      'https://reg/@agentclientprotocol%2fcodex-acp/1.6.2',
-      'https://reg/@openai%2fcodex/0.157.1-darwin-arm64'
+      'https://reg/@agentclientprotocol%2fcodex-acp/2.9.0',
+      'https://reg/@openai%2fcodex/0.171.0-darwin-arm64'
     ])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('codex-acp')
     expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('native-codex')
@@ -934,7 +934,7 @@ describe('installManagedCodex', () => {
       codexPath: externalCodexPath,
       codexVersion: '0.157.1'
     })
-    expect(metadataUrls).toEqual(['https://reg/@agentclientprotocol%2fcodex-acp/1.6.2'])
+    expect(metadataUrls).toEqual(['https://reg/@agentclientprotocol%2fcodex-acp/2.9.0'])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('adapter-only')
     expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-codex')
     await expect(readFile(managedCodexBinary(root, platform))).rejects.toThrow()
@@ -1017,7 +1017,7 @@ describe('installManagedCodex', () => {
         codexPath: managedCodexBinary(root, platform),
         codexVersion: '0.157.1'
       })
-      expect(metadataUrls).toContain('https://reg/@openai%2fcodex/0.157.1-darwin-arm64')
+      expect(metadataUrls).toContain('https://reg/@openai%2fcodex/0.171.0-darwin-arm64')
       expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-incompatible-codex')
       expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe(
         'managed-compatible-codex'
@@ -1817,6 +1817,28 @@ describe('patchCodexAcpContextUsageSource', () => {
     expect(patchCodexAcpContextUsageSource(patched)).toBe(patched)
   })
 
+  it('adapts the current Codex ACP usage-update shape', () => {
+    const source = [
+      '  createUsageUpdate(params) {',
+      '    let used;',
+      '    let size;',
+      '    if (params.threadId === this.sessionState.sessionId) {',
+      '      this.handleTokenUsageUpdated(params);',
+      '      used = this.sessionState.lastTokenUsage?.totalTokens;',
+      '      size = this.sessionState.modelContextWindow;',
+      '    }',
+      '    return { used, size };',
+      '  }'
+    ].join('\n')
+
+    const patched = patchCodexAcpContextUsageSource(source)
+
+    expect(patched).toContain(
+      ': contextTokenUsage.inputTokens + (contextTokenUsage.cachedInputTokens ?? 0);'
+    )
+    expect(patchCodexAcpContextUsageSource(patched)).toBe(patched)
+  })
+
   it('updates an already-installed managed adapter in place', async () => {
     const patchRoot = await mkdtemp(join(tmpdir(), 'managed-codex-patch-'))
     try {
@@ -2368,6 +2390,27 @@ const PREVIOUS_MODEL_CATALOG_STARTUP_FIXTURE =
   ].join('\n') + '\n  return codex;\n}'
 
 describe('patchCodexAcpModelCatalogStartupSource', () => {
+  it('adapts the current startup signature while preserving the catalog override', () => {
+    const source = [
+      'function startCodexConnection(codexPath, env, appServerStartupArgs = ["app-server"], options = {}) {',
+      '  const spawnEnv = env ?? process.env;',
+      '  let codex;',
+      '  if (codexPath) {',
+      '    codex = spawn(codexPath, appServerStartupArgs, { env: spawnEnv });',
+      '  } else {',
+      '    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");',
+      '    codex = spawn(process.execPath, [bundledCodexPath, ...appServerStartupArgs], { env: spawnEnv });',
+      '  }',
+      '}'
+    ].join('\n')
+
+    const patched = patchCodexAcpModelCatalogStartupSource(source)
+
+    expect(patched).toContain('const modelCatalogOverride = modelCatalogPath')
+    expect(patched).toContain('windowsHide: true')
+    expect(patchCodexAcpModelCatalogStartupSource(patched)).toBe(patched)
+  })
+
   it.each(['C:\\Program Files\\Codex\\codex.exe', undefined])(
     'hides the nested Windows app-server console for executable %s',
     (codexPath) => {
@@ -2577,6 +2620,7 @@ describe('Codex Reviewer MCP normalization', () => {
   it('rejects drifted, duplicated or mixed config projections', async () => {
     for (const source of [
       fixture.replace('mcp.server)', 'mcp.server, true)'),
+      fixture.replace('this.createMcpSeverConfig(mcp.server)', 'mcp.server'),
       `${fixture}\n${fixture}`,
       `${fixture}\n${await normalize(fixture)}`
     ]) {

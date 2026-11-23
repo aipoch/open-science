@@ -55,6 +55,22 @@ export type CodexDetectDeps = {
   managedCodexPath?: string
 }
 
+const runSmokeInitialize = async (
+  deps: CodexDetectDeps,
+  adapterPath: string,
+  options: { codexPath?: string } | undefined,
+  signal?: AbortSignal
+): Promise<boolean> => {
+  try {
+    return signal
+      ? await deps.smokeInitialize(adapterPath, options, signal)
+      : await deps.smokeInitialize(adapterPath, options)
+  } catch {
+    signal?.throwIfAborted()
+    return false
+  }
+}
+
 const pathFor = (platform: NodeJS.Platform): path.PlatformPath =>
   platform === 'win32' ? path.win32 : path.posix
 
@@ -162,9 +178,7 @@ const detectCodex = async (
     // `--version` but fails the first real session. Gate "ready" on a live ACP initialize so PATH/npm/
     // manual installs are held to the same bar as the managed pair.
     const smokeOpts = result.nativeCodexPath ? { codexPath: result.nativeCodexPath } : undefined
-    const smokeOk = signal
-      ? await deps.smokeInitialize(adapterPath, smokeOpts, signal)
-      : await deps.smokeInitialize(adapterPath, smokeOpts)
+    const smokeOk = await runSmokeInitialize(deps, adapterPath, smokeOpts, signal)
     signal?.throwIfAborted()
     if (!smokeOk) continue
 
@@ -235,11 +249,16 @@ const detectCodexComponents = async (
     }
 
     // Version probe succeeded - now check if smoke test passes
-    const smokeOk = await deps.smokeInitialize(
-      candidate,
-      deps.managedAdapterPath && nativeCodex ? { codexPath: nativeCodex.path } : undefined,
-      signal
-    )
+    let smokeOk = false
+    try {
+      smokeOk = await deps.smokeInitialize(
+        candidate,
+        deps.managedAdapterPath && nativeCodex ? { codexPath: nativeCodex.path } : undefined,
+        signal
+      )
+    } catch {
+      signal?.throwIfAborted()
+    }
     signal?.throwIfAborted()
     if (smokeOk) {
       adapterFound = true

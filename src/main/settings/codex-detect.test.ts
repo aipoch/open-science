@@ -346,6 +346,17 @@ describe('codex-detect', () => {
     expect(result).toBeUndefined()
   })
 
+  it('treats an adapter patch failure as a failed smoke check', async () => {
+    const result = await detectCodex(
+      createDeps(
+        { '/usr/local/bin/codex-acp': '@agentclientprotocol/codex-acp 1.6.2' },
+        { smokeInitialize: () => Promise.reject(new Error('adapter patch drift')) }
+      )
+    )
+
+    expect(result).toBeUndefined()
+  })
+
   it('smoke-checks each candidate and returns the first that initializes', async () => {
     const first = '/usr/bin/codex-acp'
     const second = '/usr/local/bin/codex-acp'
@@ -1086,6 +1097,27 @@ describe('detectCodexComponents', () => {
 
     expect(result).toMatchObject({
       nativeCliFound: false,
+      adapterFound: true,
+      adapterPath: '/usr/local/bin/codex-acp',
+      adapterVersion: '1.6.2',
+      adapterFailureReason: 'smoke-test-failed'
+    })
+  })
+
+  it('reports adapter patch failures as repairable smoke-test failures', async () => {
+    const { detectCodexComponents } = await import('./codex-detect')
+    const result = await detectCodexComponents({
+      platform: 'darwin',
+      env: { PATH: '/usr/bin' },
+      homePath: '/Users/test',
+      isRunnable: (path) => Promise.resolve(path === '/usr/local/bin/codex-acp'),
+      getAdapterVersion: () => Promise.resolve('codex-acp 1.6.2'),
+      getCodexVersion: () => Promise.resolve(undefined),
+      smokeInitialize: () => Promise.reject(new Error('adapter patch drift')),
+      resolveNpmBinDirs: () => Promise.resolve([])
+    })
+
+    expect(result).toMatchObject({
       adapterFound: true,
       adapterPath: '/usr/local/bin/codex-acp',
       adapterVersion: '1.6.2',

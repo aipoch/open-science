@@ -23,6 +23,12 @@ type CodexRuntimeIdentity = Readonly<{
   adapterVersion: string
 }>
 
+/** The last Codex/ACP pair whose native delegation entry points were audited. */
+const CODEX_DELEGATION_AUDITED_RUNTIME: CodexRuntimeIdentity = Object.freeze({
+  nativeVersion: '0.157.1',
+  adapterVersion: '1.6.2'
+})
+
 type PreparedCodexDelegateExecution = Readonly<{
   executionId: string
   provenance: DelegateExecutionProvenance
@@ -64,7 +70,9 @@ type CodexDelegateExecution = Readonly<{
 const getCodexNativeDelegationAudit = (
   identity: CodexRuntimeIdentity
 ): readonly NativeDelegationAudit[] => {
-  const reviewed = identity.nativeVersion === '0.157.1' && identity.adapterVersion === '1.6.2'
+  const reviewed =
+    identity.nativeVersion === CODEX_DELEGATION_AUDITED_RUNTIME.nativeVersion &&
+    identity.adapterVersion === CODEX_DELEGATION_AUDITED_RUNTIME.adapterVersion
   if (!reviewed) {
     return Object.freeze(
       (['task', 'agent', 'multi-agent'] as const).map((entryPoint) =>
@@ -182,6 +190,7 @@ export {
   assertCodexLaunchIsolated,
   assertCodexScopeIsolated,
   createCodexDelegateExecution,
+  CODEX_DELEGATION_AUDITED_RUNTIME,
   getCodexNativeDelegationAudit
 }
 export type {

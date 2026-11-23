@@ -7,6 +7,7 @@ import type { AcpPermissionResponse } from '../../shared/acp'
 import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
 import type { AcpDelegateExecutionCallbacks, AcpDelegateRuntime } from './acp-execution'
 import {
+  CODEX_DELEGATION_AUDITED_RUNTIME,
   createCodexDelegateExecution,
   assertCodexLaunchIsolated,
   getCodexNativeDelegationAudit,
@@ -67,7 +68,7 @@ const makeCertificationAdapter = (
   let processId = 8_000
   const adapter = createCodexDelegateExecution({
     capacity,
-    runtime: { nativeVersion: CODEX_VERSION, adapterVersion: CODEX_ACP_VERSION },
+    runtime: CODEX_DELEGATION_AUDITED_RUNTIME,
     framework: {
       spawn: ({ env }) => {
         processSpawns.push(`${++processId}:${env.CODEX_HOME}`)
@@ -201,13 +202,13 @@ const makeCertificationAdapter = (
 }
 
 describe('Codex delegated-work production adapter', () => {
-  it.each([CODEX_VERSION])(
+  it.each([CODEX_DELEGATION_AUDITED_RUNTIME.nativeVersion])(
     'audits reviewed runtime %s and fails closed for an unreviewed pair',
     (nativeVersion) => {
       expect(
         getCodexNativeDelegationAudit({
           nativeVersion,
-          adapterVersion: CODEX_ACP_VERSION
+          adapterVersion: CODEX_DELEGATION_AUDITED_RUNTIME.adapterVersion
         })
       ).toEqual([
         { entryPoint: 'task', status: 'not-present' },
@@ -218,7 +219,7 @@ describe('Codex delegated-work production adapter', () => {
       expect(
         getCodexNativeDelegationAudit({
           nativeVersion: 'future',
-          adapterVersion: CODEX_ACP_VERSION
+          adapterVersion: CODEX_DELEGATION_AUDITED_RUNTIME.adapterVersion
         })
       ).toEqual([
         { entryPoint: 'task', status: 'unknown' },
@@ -258,7 +259,7 @@ describe('Codex delegated-work isolation evidence', () => {
             }
           },
           runtimeHome,
-          { nativeVersion: CODEX_VERSION, adapterVersion: CODEX_ACP_VERSION }
+          CODEX_DELEGATION_AUDITED_RUNTIME
         )
       ).toThrow('Codex native multi-agent features must be disabled.')
     }

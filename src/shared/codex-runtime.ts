@@ -3,7 +3,7 @@ import { compareVersions } from './update'
 // Open-Science's supported baseline, not a universal provider minimum for every model.
 export const MINIMUM_CODEX_CLI_VERSION = '0.157.1'
 // Keep optional future download upgrades independent from the supported baseline.
-export const MANAGED_CODEX_VERSION = '0.157.1'
+export const MANAGED_CODEX_VERSION = '0.171.0'
 
 export const isSupportedCodexCliVersion = (version: string | null | undefined): boolean =>
   Boolean(
@@ -25,6 +25,9 @@ export const hasCodexNativeUpdate = (version: string | undefined): boolean =>
 // Newer compatible adapters remain usable; older installs stay discoverable so Settings can offer an
 // explicit update instead of misreporting them as missing.
 export const MINIMUM_CODEX_ACP_VERSION = '1.6.2'
+
+// Keep the managed adapter paired with the native Codex runtime that it bundles and tests against.
+export const MANAGED_CODEX_ACP_VERSION = '2.9.0'
 
 export const isSupportedCodexAcpVersion = (version: string): boolean =>
   compareVersions(version, MINIMUM_CODEX_ACP_VERSION) >= 0
