@@ -29,6 +29,8 @@ export async function formPage(fault = '', disableFontFace = true): Promise<PDFD
     'clipped-font-unclipped-rectangle': '0 30 200 70 re n'
   }
   const explicitPath = explicitPaths[fault] ?? ''
+  const fill =
+    fault === 'white' ? '1 1 1 rg' : fault.endsWith('-rgb') ? '0.7 0.2 0.2 rg' : '0 0 0 rg'
   const page = pdf.addPage([300, 220])
   page.drawText('Visible caption', { x: 20, y: 70, size: 12, font: exteriorFont })
   const fontKey = page.node.Resources()!.lookup(PDFName.of('Font'), PDFDict).keys()[0].toString(),
@@ -38,10 +40,10 @@ export async function formPage(fault = '', disableFontFace = true): Promise<PDFD
         (fault === 'clipped-font-with-visible-form-text'
           ? ` BT /FixtureFont 12 Tf 10 72 Td ${font.encodeText('Visible note')} Tj ET`
           : '')
-      : `BT /FixtureFont 12 Tf 10 ${fault === 'visible' ? 45 : fault === 'partial' ? 25 : 10} Td ${label} Tj ET`,
+      : `BT /FixtureFont 12 Tf 10 ${fault.startsWith('visible') ? 45 : fault === 'partial' ? 25 : 10} Td ${label} Tj ET`,
     form = pdf.context.register(
       pdf.context.flateStream(
-        `${fault === 'path-clip' ? '0 30 m 200 30 l 100 100 l h W n' : explicitPath} ${fault === 'white' ? '1 1 1 rg' : '0 0 0 rg'} ${text}`,
+        `${fault === 'path-clip' ? '0 30 m 200 30 l 100 100 l h W n' : explicitPath} ${fill} ${text}`,
         {
           Type: 'XObject',
           Subtype: 'Form',

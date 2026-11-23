@@ -1,3 +1,7 @@
+import {
+  ApplicationCommandError,
+  isSessionReadChannel
+} from '../shared/application-command-contract'
 import { randomUUID } from 'node:crypto'
 import { lstat, mkdtemp, open, readdir, rm, rmdir, type FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -6,6 +10,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import {
   MAX_RUNTIME_PAYLOAD_BYTES,
   RUNTIME_PAYLOAD_CHANNELS,
+  RUNTIME_PAYLOAD_READ_CHANNELS,
   RUNTIME_PAYLOAD_UPLOAD_CHANNELS,
   RUNTIME_PAYLOAD_INLINE_BYTES,
   RUNTIME_PAYLOAD_PAGE_BYTES,
@@ -68,8 +73,7 @@ export class RuntimePayloadTransfers {
     options: RuntimePayloadOptions,
     dispatch: (args: readonly unknown[]) => Promise<unknown>
   ): Promise<unknown> {
-    const read =
-      !options.transfer && (channel === 'sessions:load-one' || channel === 'notebook:state')
+    const read = !options.transfer && RUNTIME_PAYLOAD_READ_CHANNELS.has(channel)
     this.authorize(caller, lease)
     if (read) await this.acquireRead(lease)
     try {
@@ -200,7 +204,7 @@ export class RuntimePayloadTransfers {
       throw new Error('Payload uploads are unavailable for this command.')
     let readResult: unknown
     let readBytes: string | undefined
-    if (!request && (channel === 'sessions:load-one' || channel === 'notebook:state')) {
+    if (!request && RUNTIME_PAYLOAD_READ_CHANNELS.has(channel)) {
       readResult = await dispatch(args)
       this.authorize(caller, lease)
       readBytes = stringifyRpcJson(readResult ?? null)
@@ -275,7 +279,12 @@ export class RuntimePayloadTransfers {
     // until a slot is available, so at most four materialized results can wait here. Small reads
     // bypass this queue; uploads and mutations still fail admission before dispatching side effects.
     if (bytes > MAX_RUNTIME_PAYLOAD_BYTES)
-      return Promise.reject(new Error('Payload transfer exceeds the temporary byte budget.'))
+      return Promise.reject(
+        new ApplicationCommandError(
+          isSessionReadChannel(channel) ? 'response-too-large' : 'command-failed',
+          'Payload transfer exceeds the temporary byte budget.'
+        )
+      )
     return new Promise<Transfer>((resolve, reject) => {
       const cleanup = (): void => {
         this.readTransferWaiters.delete(waiter)

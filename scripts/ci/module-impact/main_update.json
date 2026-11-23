@@ -1,5 +1,19 @@
 {
   "ownerPaths": [
+    "build/mac-open-after-update.m",
+    "build/mac-quit-handoff.cjs",
+    "build/mac-update-network.c",
+    "src/main/update/linux-background-download.test.ts",
+    "src/main/update/mac-background-update.test.ts",
+    "src/main/update/mac-quit-handoff.test.ts",
+    "src/main/update/windows-desktop-version.test.ts",
+    "src/main/update/windows-desktop-version.ts",
+    "src/main/update/download-preference.ts",
+    "src/main/update/linux-appimage-quit.ts",
+    "src/main/update/linux-background-download.ts",
+    "src/main/update/mac-background-update.ts",
+    "src/main/update/mac-quit-handoff.ts",
+    "src/main/update/windows-background-download.ts",
     "src/main/update/windows-recovery-identity.integration.test.ts",
     "src/main/update/windows-signature-verification.test.ts",
     "src/main/update/create-strategy.test.ts",
@@ -60,6 +74,13 @@
     "scripts/windows-extraction-partitions.test.ts"
   ],
   "interfacePaths": [
+    "src/main/update/windows-desktop-version.ts",
+    "src/main/update/download-preference.ts",
+    "src/main/update/linux-appimage-quit.ts",
+    "src/main/update/linux-background-download.ts",
+    "src/main/update/mac-background-update.ts",
+    "src/main/update/mac-quit-handoff.ts",
+    "src/main/update/windows-background-download.ts",
     "src/main/update/create-strategy.ts",
     "src/main/update/ipc.ts",
     "src/main/update/scheduler.ts",
@@ -80,6 +101,10 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/update/linux-background-download.test.ts",
+      "src/main/update/mac-background-update.test.ts",
+      "src/main/update/mac-quit-handoff.test.ts",
+      "src/main/update/windows-desktop-version.test.ts",
       "src/main/update/windows-recovery-identity.integration.test.ts",
       "src/main/update/windows-signature-verification.test.ts",
       "src/main/update/create-strategy.test.ts",

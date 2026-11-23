@@ -3,6 +3,57 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { test } from './fixtures/electron-app'
 import { openSettingsPage } from './fixtures/settings-preferences'
 
+test('limits image catalog refresh to official providers and saves custom model IDs', async ({
+  app
+}) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  const settings = await openSettingsPage(page, 'Model')
+  await settings.locator('[data-scenario-model="image-generation"]').click()
+  await settings.getByRole('button', { name: 'Image services', exact: true }).click()
+  await settings.getByRole('button', { name: 'Add image service', exact: true }).click()
+
+  const refresh = settings.getByRole('button', { name: 'Refresh model list', exact: true })
+  const providerType = settings.getByRole('combobox', { name: 'Provider type', exact: true })
+  const format = settings.getByRole('combobox', { name: 'API format', exact: true })
+  const modelId = settings.getByLabel('Model ID', { exact: true })
+  const baseUrl = 'http://127.0.0.1:9/v1'
+  await settings.getByLabel('Name', { exact: true }).fill('Manual image service')
+  await settings.getByLabel('Base URL', { exact: true }).fill(baseUrl)
+  for (const label of ['MiniMax', 'Qwen Images', 'Seedream', 'OpenAI Images']) {
+    await format.click()
+    await page.getByRole('option', { name: label, exact: true }).click()
+    await expect(refresh).toHaveCount(0)
+    await expect(modelId).toBeEditable()
+  }
+
+  const result = await page.evaluate(
+    (baseUrl) =>
+      window.api.settings.refreshImageModelCatalog({
+        id: crypto.randomUUID(),
+        adapter: 'openai-images',
+        baseUrl
+      }),
+    baseUrl
+  )
+  expect(result).toEqual({ ok: false, code: 'unsupported' })
+  await modelId.fill('manual-image')
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await settings.getByRole('button', { name: 'Edit Manual image service' }).click()
+  await expect(modelId).toHaveValue('manual-image')
+  await expect(refresh).toHaveCount(0)
+
+  for (const vendor of ['OpenAI', 'MiniMax', 'Bailian', 'Volcengine Ark']) {
+    await providerType.click()
+    await page.getByRole('option', { name: vendor, exact: true }).click()
+    await expect(refresh).toBeVisible()
+    await expect(refresh).toBeDisabled()
+    await settings.getByLabel('API key', { exact: true }).fill('synthetic-catalog-key')
+    await expect(refresh).toBeEnabled()
+  }
+})
+
 // Run through the real Electron IPC, network owner and repository without using account credentials.
 test('accepts public catalogs and reports missing discovery prerequisites', async ({
   app

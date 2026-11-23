@@ -75,3 +75,28 @@ it.each([
   expect(owner.items).not.toContain(`1:${tailIndex}`)
   if (fault === 'same-row-foreign') expect(owner.items).not.toContain('1:3')
 })
+
+const scripted = readPdfTranslationCases<{ page: PdfLayoutPage }>(
+  'scripted-footnote-citation-wrap.jsonl'
+)[0]
+
+it('keeps paired numbered notes with inline subscripts and their own wrapped citations', () => {
+  const { units } = extract(structuredClone(scripted.page))
+  const first = units.find((unit) => unit.items.includes('1:1'))!
+  const second = units.find((unit) => unit.items.includes('1:8'))!
+  expect(first.items).toEqual([1, 2, 3, 4, 6].map((index) => `1:${index}`))
+  expect(second.items).toEqual([8, 9, 10, 11, 13].map((index) => `1:${index}`))
+  expect(first.source).toContain('R3 [Ref24].')
+  expect(second.source).toContain('R3 under mild assumptions [Ref25].')
+})
+
+it.each(['missing-peer', 'citation-rail'])(
+  'keeps the unmatched citation separate when the scripted note lacks proof: %s',
+  (fault) => {
+    const page = structuredClone(scripted.page)
+    if (fault === 'missing-peer') page.items.splice(7)
+    else page.items[6].transform[4] -= 24
+    const { units } = extract(page)
+    expect(units.find((unit) => unit.items.includes('1:6'))?.items).toEqual(['1:6'])
+  }
+)

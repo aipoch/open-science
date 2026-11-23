@@ -930,7 +930,7 @@ it('cancels a stalled prepublication session read without discarding the built F
       })
     return result
   })
-  const owner = createResearchVideoPresentationOwner(f.options)
+  let owner = createResearchVideoPresentationOwner(f.options)
   try {
     await owner.start(request)
     await entered.promise
@@ -945,9 +945,23 @@ it('cancels a stalled prepublication session read without discarding the built F
       },
       { timeout: 400 }
     )
+    // Restore a built film whose narration was accepted with an advisory zero score.
+    await owner.close()
+    const pointer = join(
+      f.options.dataRoot(),
+      'research-video-presentations',
+      researchFilmScopeKey(request),
+      'pending.json'
+    )
+    const pending = JSON.parse(await readFile(pointer, 'utf8'))
+    pending.built.scriptScore = 0
+    await writeFile(pointer, JSON.stringify(pending))
+    const reviewScript = vi.fn()
+    owner = createResearchVideoPresentationOwner({ ...f.options, reviewScript })
     stall = false
     await owner.start({ ...request, resume: true })
     await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+    expect(reviewScript).not.toHaveBeenCalled()
     expect(f.options.generate).toHaveBeenCalledOnce()
   } finally {
     lookup.resolve(session)

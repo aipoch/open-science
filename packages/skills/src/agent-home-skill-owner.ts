@@ -76,6 +76,12 @@ const parsedSkillPreview = (
   }
 }
 
+type ImportAgentHomeSkill = (
+  sourcePath: string,
+  skill: AgentHomeSkillRef,
+  options?: AgentHomeImportOptions
+) => Promise<ImportOutcome>
+
 class AgentHomeSkillOwner {
   constructor(
     private readonly store: UserSkillStore,
@@ -204,14 +210,18 @@ class AgentHomeSkillOwner {
 
   private async findImportedDirectoryNameByAgentHome(
     skill: AgentHomeSkillRef,
-    aliases: readonly AgentHomeSkillRef[]
+    aliases: readonly AgentHomeSkillRef[],
+    identities?: Map<string, string | null>
   ): Promise<string | undefined> {
     const acceptedKeys = new Set([skill, ...aliases].map(agentHomeKey))
     for (const directoryName of await this.store.listDirectoryNames('imported')) {
-      const source = await this.transactions.readImportedSource(directoryName)
-      if (source?.agentHome && acceptedKeys.has(agentHomeKey(source.agentHome))) {
-        return directoryName
+      let identity = identities?.get(directoryName)
+      if (identity === undefined) {
+        const source = await this.transactions.readImportedSource(directoryName)
+        identity = source?.agentHome ? agentHomeKey(source.agentHome) : null
+        identities?.set(directoryName, identity)
       }
+      if (identity !== null && acceptedKeys.has(identity)) return directoryName
     }
     return undefined
   }
@@ -531,10 +541,39 @@ class AgentHomeSkillOwner {
   // the same shape Open-Science would have produced from a fresh in-app edit. Suffix allocation
   // mirrors importFromZip: the same source identity is unchanged, while a same-name skill from a
   // different source gets `-2`, `-3`, ... appended and never clobbers an existing record.
-  async importAgentHomeSkill(
+  withImportBatch<T>(operation: (importSkill: ImportAgentHomeSkill) => Promise<T>): Promise<T> {
+    return this.transactions.runMutationRecovered(() => {
+      // The mutation lock spans this bounded selection. Other writers cannot change a cached
+      // manifest between rows. Keep recovery and failure reporting at each item's boundary.
+      const identities = new Map<string, string | null>()
+      return operation(async (sourcePath, skill, options = {}) => {
+        try {
+          return await this.transactions.runRecovered(() =>
+            this.importLocked(sourcePath, skill, options, identities)
+          )
+        } catch (error) {
+          identities.clear()
+          throw error
+        }
+      })
+    })
+  }
+
+  importAgentHomeSkill(
     sourcePath: string,
     skill: AgentHomeSkillRef,
     options: AgentHomeImportOptions = {}
+  ): Promise<ImportOutcome> {
+    return this.transactions.runMutationRecovered(() =>
+      this.importLocked(sourcePath, skill, options)
+    )
+  }
+
+  private async importLocked(
+    sourcePath: string,
+    skill: AgentHomeSkillRef,
+    options: AgentHomeImportOptions,
+    identities?: Map<string, string | null>
   ): Promise<ImportOutcome> {
     const requestedSlug = skill.slug
     assertUsableSkillName(requestedSlug)
@@ -550,90 +589,90 @@ class AgentHomeSkillOwner {
       )
     }
 
-    return this.transactions.runMutationRecovered(async () => {
-      const existingDirectoryName = await this.findImportedDirectoryNameByAgentHome(
-        skill,
-        options.aliases ?? []
-      )
-      const directoryName =
-        existingDirectoryName ??
-        (await this.store.uniqueImportedName(requestedSlug, options.reservedNames))
-      const staged = await this.stageAgentHomeSkill(directoryName, sourcePath, skill)
-      try {
-        if (options.expectedImportedIdentity) {
-          const expected = options.expectedImportedIdentity
-          const current = await this.transactions.readImportedSource(expected.importedDirectoryName)
-          let currentTreeSignature: string | undefined
-          try {
-            currentTreeSignature = await this.signatureOfAgentHomeSkill(
-              this.store.skillDirectory('imported', expected.importedDirectoryName),
-              { skipSourceManifest: true }
-            )
-          } catch {
-            // Report every missing or malformed expected record as the same stale-scan condition.
-          }
-          if (
-            existingDirectoryName !== expected.importedDirectoryName ||
-            !current?.agentHome ||
-            agentHomeKey(current.agentHome) !== agentHomeKey(expected.agentHome) ||
-            current.signature !== expected.signature ||
-            currentTreeSignature !== expected.signature
-          ) {
-            throw new Error('Imported skill changed during canonical identity migration.')
-          }
-        }
-        if (options.expectedSignature && staged.signature !== options.expectedSignature) {
-          throw new Error('Installed skill changed during canonical identity migration.')
-        }
-        if (!existingDirectoryName) {
-          const fallbackDirectoryName = await this.findFallbackImportedDirectoryName(
-            new Set(options.fallbackDirectoryNames ?? []),
-            staged.signature
+    const existingDirectoryName = await this.findImportedDirectoryNameByAgentHome(
+      skill,
+      options.aliases ?? [],
+      identities
+    )
+    const directoryName =
+      existingDirectoryName ??
+      (await this.store.uniqueImportedName(requestedSlug, options.reservedNames))
+    const staged = await this.stageAgentHomeSkill(directoryName, sourcePath, skill)
+    try {
+      if (options.expectedImportedIdentity) {
+        const expected = options.expectedImportedIdentity
+        const current = await this.transactions.readImportedSource(expected.importedDirectoryName)
+        let currentTreeSignature: string | undefined
+        try {
+          currentTreeSignature = await this.signatureOfAgentHomeSkill(
+            this.store.skillDirectory('imported', expected.importedDirectoryName),
+            { skipSourceManifest: true }
           )
-          if (fallbackDirectoryName) {
-            await this.transactions.discard(staged)
-            return { status: 'unchanged', id: `imported-${fallbackDirectoryName}` }
-          }
-        }
-
-        const existing = existingDirectoryName
-          ? await this.transactions.readImportedSource(existingDirectoryName)
-          : null
-        const identityUnchanged =
-          existing?.agentHome && agentHomeKey(existing.agentHome) === agentHomeKey(skill)
-        let installedSignature: string | undefined
-        if (existingDirectoryName && identityUnchanged && existing.signature === staged.signature) {
-          try {
-            installedSignature = await this.signatureOfAgentHomeSkill(
-              this.store.skillDirectory('imported', existingDirectoryName),
-              { skipSourceManifest: true }
-            )
-          } catch {
-            // A broken live tree is repaired from the validated staging copy.
-          }
+        } catch {
+          // Report every missing or malformed expected record as the same stale-scan condition.
         }
         if (
-          existingDirectoryName &&
-          identityUnchanged &&
-          existing.signature === staged.signature &&
-          installedSignature === staged.signature
+          existingDirectoryName !== expected.importedDirectoryName ||
+          !current?.agentHome ||
+          agentHomeKey(current.agentHome) !== agentHomeKey(expected.agentHome) ||
+          current.signature !== expected.signature ||
+          currentTreeSignature !== expected.signature
         ) {
-          await this.transactions.discard(staged)
-          return { status: 'unchanged', id: `imported-${existingDirectoryName}` }
+          throw new Error('Imported skill changed during canonical identity migration.')
         }
-
-        if (existingDirectoryName)
-          await this.store.assertOrdinaryReplacement('imported', existingDirectoryName)
-        await this.transactions.promote(staged)
-        return {
-          status: existingDirectoryName ? 'updated' : 'imported',
-          id: `imported-${directoryName}`
-        }
-      } catch (error) {
-        await this.transactions.discard(staged)
-        throw error
       }
-    })
+      if (options.expectedSignature && staged.signature !== options.expectedSignature) {
+        throw new Error('Installed skill changed during canonical identity migration.')
+      }
+      if (!existingDirectoryName) {
+        const fallbackDirectoryName = await this.findFallbackImportedDirectoryName(
+          new Set(options.fallbackDirectoryNames ?? []),
+          staged.signature
+        )
+        if (fallbackDirectoryName) {
+          await this.transactions.discard(staged)
+          return { status: 'unchanged', id: `imported-${fallbackDirectoryName}` }
+        }
+      }
+
+      const existing = existingDirectoryName
+        ? await this.transactions.readImportedSource(existingDirectoryName)
+        : null
+      const identityUnchanged =
+        existing?.agentHome && agentHomeKey(existing.agentHome) === agentHomeKey(skill)
+      let installedSignature: string | undefined
+      if (existingDirectoryName && identityUnchanged && existing.signature === staged.signature) {
+        try {
+          installedSignature = await this.signatureOfAgentHomeSkill(
+            this.store.skillDirectory('imported', existingDirectoryName),
+            { skipSourceManifest: true }
+          )
+        } catch {
+          // A broken live tree is repaired from the validated staging copy.
+        }
+      }
+      if (
+        existingDirectoryName &&
+        identityUnchanged &&
+        existing.signature === staged.signature &&
+        installedSignature === staged.signature
+      ) {
+        await this.transactions.discard(staged)
+        return { status: 'unchanged', id: `imported-${existingDirectoryName}` }
+      }
+
+      if (existingDirectoryName)
+        await this.store.assertOrdinaryReplacement('imported', existingDirectoryName)
+      await this.transactions.promote(staged)
+      identities?.set(directoryName, agentHomeKey(skill))
+      return {
+        status: existingDirectoryName ? 'updated' : 'imported',
+        id: `imported-${directoryName}`
+      }
+    } catch (error) {
+      await this.transactions.discard(staged)
+      throw error
+    }
   }
 }
 

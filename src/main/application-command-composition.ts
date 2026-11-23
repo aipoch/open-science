@@ -563,13 +563,27 @@ const createApplicationCommandComposition = (
   onDiagnostic?: (diagnostic: ApplicationCommandDiagnostic) => void
 ): ApplicationCommandComposition => {
   const remoteAccess = createRemoteAccessSlot()
-  const modules = createApplicationCommandModules(dependencies, remoteAccess.owner)
+  let stopping = false
+  let updateHolds = 0
+  const modules = createApplicationCommandModules(
+    {
+      ...dependencies,
+      notebook: {
+        ...dependencies.notebook,
+        resourceReleaseBlockedReason: () =>
+          stopping
+            ? 'application-stopping'
+            : updateHolds > 0
+              ? 'application-updating'
+              : dependencies.notebook.resourceReleaseBlockedReason?.()
+      }
+    },
+    remoteAccess.owner
+  )
   const certified = certifyInventory(modules.flatMap(({ groups }) => groups))
   const router = createApplicationCommandRouter(onDiagnostic)
   const installations: CommandModuleInstallation[] = []
   let disposal: Promise<void> | undefined
-  let stopping = false
-  let updateHolds = 0
 
   try {
     for (const module of modules) installations.push(module.install(router.registrar))

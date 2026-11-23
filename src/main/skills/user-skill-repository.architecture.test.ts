@@ -190,6 +190,7 @@ describe('User Skill repository architecture', () => {
       'releaseInstallation',
       'scanRepo',
       'updatePersonal',
+      'withAgentHomeImportBatch',
       'withSkillReadLock'
     ])
   })

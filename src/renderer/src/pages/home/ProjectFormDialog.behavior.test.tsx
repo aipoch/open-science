@@ -32,6 +32,28 @@ beforeEach(() => useProjectStore.setState(createInitialProjectState()))
 afterEach(cleanup)
 
 describe('project form public submission behavior', () => {
+  it('lets a user enable tracing by opening their project settings and saving the switch', async () => {
+    const update = vi.fn(async () => project)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { projects: { update } }
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByText('Edit fixture'))
+    fireEvent.click(screen.getByText('Advanced agent options'))
+    const tracing = screen.getByRole('switch', { name: 'Agent tracing' })
+    expect(tracing.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(tracing)
+    expect(tracing.getAttribute('aria-checked')).toBe('true')
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save' })))
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: project.id,
+        agentTracingEnabled: true
+      })
+    )
+  })
+
   it('groups both agent fields in a collapsed section and saves their values while collapsed', async () => {
     const create = vi.fn(async () => project)
     Object.defineProperty(window, 'api', {

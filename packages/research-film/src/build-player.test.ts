@@ -80,7 +80,7 @@ describe('research video source boundaries', () => {
     ).rejects.toThrow('approved session app changed')
     const provenance = {
       sessionAppSha256: createHash('sha256').update(appBytes).digest('hex'),
-      scriptScore: 9
+      scriptScore: 0
     }
     const live = await buildResearchVideoPlayer({ ...appOptions, provenance })
     const liveSources = unzipSync(await readFile(live.sourcePath))
@@ -89,9 +89,9 @@ describe('research video source boundaries', () => {
       provenance
     )
     expect((await readFile(live.playerPath, 'utf8')).slice(0, 96)).toContain(
-      '<!--open-science-film-card:9:live-->'
+      '<!--open-science-film-card:0:live-->'
     )
-    expect(await readFile(live.playerPath, 'utf8')).toContain('"scriptScore":9')
+    expect(await readFile(live.playerPath, 'utf8')).toContain('"scriptScore":0')
     await writeFile(options.specPath, JSON.stringify({ ...spec, session: 'engine/js/stage.js' }))
     await expect(buildResearchVideoPlayer(options)).rejects.toThrow(
       'conflicts with generated bundle files'

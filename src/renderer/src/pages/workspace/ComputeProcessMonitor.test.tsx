@@ -17,6 +17,8 @@ const snapshot = (): NotebookProcessMonitorSnapshot => ({
     cpuPercent: 25,
     memoryTotalBytes: 16 * 1024 ** 3,
     memoryUsedBytes: 8 * 1024 ** 3,
+    memoryCommittedBytes: 8 * 1024 ** 3,
+    memoryCommitLimitBytes: 16 * 1024 ** 3,
     uptimeSeconds: 100
   },
   instances: ['python', 'repl', 'shell'].map((kind, index) => ({
@@ -100,6 +102,12 @@ describe('Compute process monitoring', () => {
     await click('All kernels')
     expect(totals()).toContain('3 kernels')
     expect(container.querySelector('[role="img"][aria-label="Shell"]')).not.toBeNull()
+  })
+
+  it('shows commit usage and its limit in system details', async () => {
+    await mount()
+    expect(container.textContent).toContain('Committed / limit')
+    expect(container.textContent).toContain('8.0 GB / 16.0 GB')
   })
 
   it('sums current kernel uptimes per session, including idle time, without a duration column', async () => {

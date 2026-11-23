@@ -7,6 +7,7 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Security.Cryptography;
 using System.Web.Script.Serialization;
 
 // Native replacement for the install-path PowerShell scripts (windows-install-publication.ps1 and
@@ -31,6 +32,9 @@ public static class InstallHelper {
       if (args.Length == 0) throw new ArgumentException("Missing subcommand.");
       var options = ParseOptions(args);
       switch (args[0]) {
+        case "copy-prepared":
+          CopyPrepared(Required(options, "root"), Required(options, "target"), Required(options, "lists"));
+          break;
         case "prepare":
         case "publish":
         case "cleanup":
@@ -459,6 +463,51 @@ public static class InstallHelper {
   }
 
   // ---- extraction: windows-extract-payload.ps1 ----
+
+  // Read exclusively the archive members named by the signed installer. Write into its private
+  // publication tree so the existing destination ACL and data-root checks still apply. A partial
+  // copy can be overwritten by the normal extractor without introducing any extra entries.
+  static void CopyPrepared(string root, string target, string lists) {
+    var principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
+    if (principal.IsInRole(WindowsBuiltInRole.Administrator))
+      throw new IOException("Elevated installers use the embedded archive.");
+    var id = Environment.GetEnvironmentVariable("OPEN_SCIENCE_PREPARED_ID") ?? "";
+    if (!System.Text.RegularExpressions.Regex.IsMatch(id, @"\A[a-f0-9]{32}\z"))
+      throw new InvalidDataException("Invalid prepared package identifier.");
+    var source = Path.Combine(Path.GetFullPath(root), id, "payload");
+    using (InstallDirectory.Hold(source))
+    using (InstallDirectory.Hold(target)) {
+      var directories = File.ReadAllLines(Path.Combine(lists, "all-directories.txt"));
+      Array.Sort(directories, (left, right) => left.Length.CompareTo(right.Length));
+      foreach (var name in directories) InstallDirectory.Create(Extended(Path.Combine(target, name.Replace('/', '\\'))));
+      var buffer = new byte[256 * 1024];
+      foreach (var line in File.ReadLines(Path.Combine(lists, "staged-sha256.txt"))) {
+        if (line.Length < 66 || line[64] != '\t') throw new InvalidDataException("Invalid packaged manifest.");
+        var relative = line.Substring(65).Replace('/', '\\');
+        var sourceFile = Extended(Path.Combine(source, relative));
+        var targetFile = Extended(Path.Combine(target, relative));
+        using (var inputHandle = CreateFile(sourceFile, 0x80000000, 1, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero))
+        using (var outputHandle = CreateFile(targetFile, 0x40000000, 0, IntPtr.Zero, 1, 0x80, IntPtr.Zero)) {
+          if (inputHandle.IsInvalid || outputHandle.IsInvalid) throw new IOException("Prepared file unavailable: " + relative);
+          ByHandle info;
+          if (!GetFileInformationByHandle(inputHandle, out info) || (info.Attributes & 0x410) != 0)
+            throw new IOException("Invalid prepared entry: " + relative);
+          using (var input = new FileStream(inputHandle, FileAccess.Read))
+          using (var output = new FileStream(outputHandle, FileAccess.Write))
+          using (var hash = SHA256.Create()) {
+            int count;
+            while ((count = input.Read(buffer, 0, buffer.Length)) != 0) {
+              hash.TransformBlock(buffer, 0, count, buffer, 0);
+              output.Write(buffer, 0, count);
+            }
+            hash.TransformFinalBlock(buffer, 0, 0);
+            if (!String.Equals(line.Substring(0, 64), BitConverter.ToString(hash.Hash).Replace("-", ""), StringComparison.OrdinalIgnoreCase))
+              throw new InvalidDataException("Prepared file checksum mismatch: " + relative);
+          }
+        }
+      }
+    }
+  }
 
   static string extractionSource = "powershell-extractor";
   static string extractionOperation = "resolve-extraction-lists";

@@ -909,6 +909,7 @@ it('publishes an image task without a prompt and recovers its result without adv
   const laterId = crypto.randomUUID()
   const later = await value.repository.writeAppGeneratedVersion({
     ...request,
+    lineageId: published.artifactId,
     artifactRunId: laterId,
     imageTaskId: laterId,
     content: createPngBytes('distinct later result').toString('base64'),
@@ -1119,6 +1120,45 @@ it('publishes an image task without a prompt and recovers its result without adv
   await expect(
     value.client.artifactVersion.findUniqueOrThrow({ where: { id: newest.versionId } })
   ).resolves.toMatchObject({ basedOnVersionId: published.versionId })
+  // Editing an image from another session publishes successive versions in the task session.
+  const destinationVersions = []
+  for (const versionNumber of [1, 2]) {
+    const id = crypto.randomUUID()
+    const target = { appSessionId: 'session-2', artifactStorageSessionId: 'session-2' }
+    const result = await value.repository.writeAppGeneratedVersion({
+      ...request,
+      ...target,
+      lineageId: published.artifactId,
+      artifactRunId: id,
+      imageTaskId: id,
+      producer: {
+        ...request.producer,
+        invocationId: id,
+        normalizedArguments: { imageTaskId: id, sourceVersionId: published.versionId },
+        inputFiles: [input!]
+      }
+    })
+    const saved = await value.repository.publishImageTaskVersion({
+      projectId: request.projectId,
+      appSessionId: target.appSessionId,
+      taskId: id,
+      versionId: result.versionId,
+      sourceVersionId: published.versionId
+    })
+    expect(saved.versionNumber).toBe(versionNumber)
+    expect(saved.artifactId).not.toBe(published.artifactId)
+    await expect(
+      value.client.artifactVersion.findUniqueOrThrow({
+        where: { id: saved.versionId },
+        include: { inputs: true }
+      })
+    ).resolves.toMatchObject({
+      basedOnVersionId: null,
+      inputs: [expect.objectContaining({ inputFileVersionId: published.versionId })]
+    })
+    destinationVersions.push(saved.artifactId)
+  }
+  expect(new Set(destinationVersions).size).toBe(1)
   const catalog = new ManagedFileIndexRepository(
     async () => value.client,
     value.storageRoot,
@@ -1143,7 +1183,11 @@ it('publishes an image task without a prompt and recovers its result without adv
   const deletion = await snapshots.prepareSessionDeletion(durableSession(value.storageRoot))
   expect(deletion.kind).toBe('retained')
   await snapshots.completeSessionDeletion(deletion)
-  expect(await value.client.artifactVersion.count()).toBe(39)
+  expect(
+    await value.client.artifactVersion.count({
+      where: { artifact: { sessionId: request.appSessionId } }
+    })
+  ).toBe(39)
   expect(sha256(await readFile(published.path))).toBe(published.checksum)
   await unlink(later.path)
   await expect(

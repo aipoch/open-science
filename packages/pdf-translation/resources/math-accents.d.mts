@@ -24,7 +24,8 @@ export function resolveNativeLatinAccents(
   letter: string
 }>
 export function resolveNativeNegatedEqualities(
-  objects: Array<NativeMathObject & { baseline?: number }>
+  objects: Array<NativeMathObject & { baseline?: number }>,
+  allowLegacySlash?: boolean
 ): Array<{
   indices: number[]
   label: string

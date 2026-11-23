@@ -194,17 +194,27 @@ class ProjectRepository {
       data.optimizationPrompt = request.optimizationPrompt.trim()
     }
 
-    if (request.sessionDefaults !== undefined) {
-      data.sessionDefaults = JSON.stringify(
-        projectSessionDefaultsSchema.parse(request.sessionDefaults)
-      )
-    }
-
     if (!Number.isSafeInteger(request.expectedUpdatedAt) || request.expectedUpdatedAt <= 0) {
       throw new Error('Project update timestamp is invalid.')
     }
 
     const client = await this.getClient()
+
+    if (request.sessionDefaults !== undefined || request.agentTracingEnabled !== undefined) {
+      const defaults =
+        request.sessionDefaults ??
+        decodeProjectSessionDefaults(
+          (await client.project.findUnique({ where: { id: request.id } }))?.sessionDefaults ?? null
+        )
+      data.sessionDefaults = JSON.stringify(
+        projectSessionDefaultsSchema.parse({
+          ...defaults,
+          ...(request.agentTracingEnabled !== undefined
+            ? { agentTracingEnabled: request.agentTracingEnabled }
+            : {})
+        })
+      )
+    }
 
     if (
       request.pinned !== undefined &&
@@ -212,7 +222,8 @@ class ProjectRepository {
       request.description === undefined &&
       request.agentContext === undefined &&
       request.optimizationPrompt === undefined &&
-      request.sessionDefaults === undefined
+      request.sessionDefaults === undefined &&
+      request.agentTracingEnabled === undefined
     ) {
       // Prisma's @updatedAt automation also runs for administrative changes. Updating only the pin
       // column in SQL avoids both a fake activity bump and a read/write race that could restore an

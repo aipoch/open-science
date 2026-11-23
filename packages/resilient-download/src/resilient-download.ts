@@ -66,6 +66,24 @@ const markTerminal = <E>(error: E): E => {
 const isAbortError = (e: unknown): boolean =>
   e instanceof Error && (e.name === 'AbortError' || e.name === 'TimeoutError')
 
+const isIncompleteResponse = (
+  error: unknown,
+  expectedBytes: number | undefined,
+  receivedBytes: number
+): boolean => {
+  const cause: unknown = error instanceof Error ? error.cause : undefined
+  if (!(cause instanceof Error)) return false
+  const code = 'code' in cause ? cause.code : undefined
+  if (code === 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH') return true
+  if (expectedBytes === undefined || receivedBytes >= expectedBytes) return false
+  // Undici reports premature EOF through different errors depending on HTTP framing.
+  return (
+    (code === 'UND_ERR_SOCKET' && cause.message === 'other side closed') ||
+    code === 'HPE_INVALID_EOF_STATE' ||
+    (cause.name === 'HTTPParserError' && cause.message.endsWith('(Invalid EOF state)'))
+  )
+}
+
 const strongEtag = (headers: Headers): ResumeValidator | undefined => {
   const etag = headers.get('etag')?.trim()
   return etag && !etag.toLowerCase().startsWith('w/') ? { kind: 'etag', value: etag } : undefined
@@ -435,38 +453,46 @@ export const downloadWithDependencies = async (
       file.on('error', (e) => (fileError = markTerminal(e)))
 
       const nodeStream = Readable.fromWeb(res.body as unknown as NodeReadableStream<Uint8Array>)
-      for await (const chunk of nodeStream) {
-        if (fileError) throw fileError
-        const buf = Buffer.from(chunk as Uint8Array)
-        if (opts.expectedSize != null && transferred + buf.length > opts.expectedSize) {
-          throw new DownloadResponseIntegrityError(
-            `response exceeds expected size (${transferred + buf.length} > ${opts.expectedSize})`
+      try {
+        for await (const chunk of nodeStream) {
+          if (fileError) throw fileError
+          const buf = Buffer.from(chunk as Uint8Array)
+          if (opts.expectedSize != null && transferred + buf.length > opts.expectedSize) {
+            throw new DownloadResponseIntegrityError(
+              `response exceeds expected size (${transferred + buf.length} > ${opts.expectedSize})`
+            )
+          }
+          // Update the hash only AFTER the write is confirmed. If the write callback rejects, the hash
+          // must NOT have consumed these bytes — otherwise it runs ahead of the persisted .part and,
+          // when the next attempt resumes at the same offset (no re-seed), the digest is corrupted.
+          // hash, transferred, and hashSeededTo advance together in lockstep, with no await between
+          // them, so a failed attempt always leaves the three consistent. A write fault is terminal:
+          // a partial write may have reached disk, and re-downloading will not fix a bad disk.
+          await new Promise<void>((resolve, reject) =>
+            file!.write(buf, (e) => (e ? reject(markTerminal(e)) : resolve()))
           )
+          hash.update(buf)
+          transferred += buf.length
+          hashSeededTo = transferred
+          meter.record(transferred)
+          armStall()
+          const bps = meter.bytesPerSecond()
+          opts.onProgress?.({
+            phase: 'downloading',
+            transferred,
+            total,
+            percent: total ? Math.round((transferred / total) * 100) : undefined,
+            bytesPerSecond: bps,
+            etaSeconds: meter.etaSeconds(total),
+            attempt
+          })
         }
-        // Update the hash only AFTER the write is confirmed. If the write callback rejects, the hash
-        // must NOT have consumed these bytes — otherwise it runs ahead of the persisted .part and,
-        // when the next attempt resumes at the same offset (no re-seed), the digest is corrupted.
-        // hash, transferred, and hashSeededTo advance together in lockstep, with no await between
-        // them, so a failed attempt always leaves the three consistent. A write fault is terminal:
-        // a partial write may have reached disk, and re-downloading will not fix a bad disk.
-        await new Promise<void>((resolve, reject) =>
-          file!.write(buf, (e) => (e ? reject(markTerminal(e)) : resolve()))
-        )
-        hash.update(buf)
-        transferred += buf.length
-        hashSeededTo = transferred
-        meter.record(transferred)
-        armStall()
-        const bps = meter.bytesPerSecond()
-        opts.onProgress?.({
-          phase: 'downloading',
-          transferred,
-          total,
-          percent: total ? Math.round((transferred / total) * 100) : undefined,
-          bytesPerSecond: bps,
-          etaSeconds: meter.etaSeconds(total),
-          attempt
-        })
+      } catch (error) {
+        const expectedBytes = contentLength ?? (total === undefined ? undefined : total - offset)
+        if (!combined.aborted && isIncompleteResponse(error, expectedBytes, transferred - offset)) {
+          throw new IncompleteStreamError('short read', { cause: error })
+        }
+        throw error
       }
 
       // Flushing/closing the fd failed — a local disk fault, terminal like the per-chunk writes.

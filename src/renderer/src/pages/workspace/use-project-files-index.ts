@@ -8,6 +8,9 @@ import {
   type SetStateAction
 } from 'react'
 
+import { errorDetail } from '@/lib/error-detail'
+import { isDesktopRuntimeConnectionError } from '../../../../shared/desktop-runtime-recovery'
+import { unwrapIpcErrorDetail } from '../../../../shared/failure/messages'
 import type {
   ArtifactGroupItem,
   ProjectFileItem,
@@ -28,16 +31,16 @@ type PageState<Item> = {
   totalCount: number
   isLoading: boolean
   isLoaded: boolean
-  error?: string
+  error?: ProjectFilesError
   failedCursor?: string
 }
 
 type ProjectFilesIndexState = {
   overview: ProjectFilesOverview
-  overviewError?: string
+  overviewError?: ProjectFilesError
   isOverviewLoaded: boolean
   isRepairing: boolean
-  repairError?: string
+  repairError?: ProjectFilesError
   uploads: PageState<ProjectFileItem>
   groups: PageState<ArtifactGroupItem>
   artifactsBySession: Record<string, PageState<ProjectFileItem> | undefined>
@@ -45,7 +48,7 @@ type ProjectFilesIndexState = {
   loadMoreGroups(): Promise<void>
   loadMoreArtifacts(sessionId: string): Promise<void>
   repairIndex(): Promise<void>
-  reload(): void
+  reloadOverview(): Promise<void>
 }
 
 type ProjectFilesIndexScope =
@@ -57,7 +60,7 @@ type ProjectFilesIndexScope =
 type IndexRepairState = {
   projectId?: string
   isRepairing: boolean
-  error?: string
+  error?: ProjectFilesError
 }
 
 const EMPTY_OVERVIEW: ProjectFilesOverview = {
@@ -75,8 +78,21 @@ const emptyPage = <Item>(): PageState<Item> => ({
   isLoaded: false
 })
 
-const getErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : 'Could not load project files.'
+type ProjectFilesError = {
+  detail: string
+  connection?: 'desktop-runtime-disconnected' | 'desktop-runtime-not-submitted'
+}
+
+const projectFilesError = (error: unknown): ProjectFilesError => {
+  const detail = unwrapIpcErrorDetail(errorDetail(error) ?? '')
+  if (isDesktopRuntimeConnectionError(error)) return { detail, connection: error.code }
+  // Electron may preserve only the serialized exception name across the bridge.
+  if (detail.startsWith('DesktopRuntimeDisconnectedError:'))
+    return { detail, connection: 'desktop-runtime-disconnected' }
+  if (detail.startsWith('DesktopRuntimeWriteNotSubmittedError:'))
+    return { detail, connection: 'desktop-runtime-not-submitted' }
+  return { detail: detail.replace(/^ApplicationCommandError:\s*/, '') }
+}
 
 // Omits blank state entirely so ordinary catalog reads retain their indexed path. Archive exclusions
 // remain part of the same query identity, keeping counts and cursors aligned with visible files.
@@ -158,7 +174,7 @@ type InitialProjectFilesLoad = {
   isUploadsCurrent: () => boolean
   isGroupsCurrent: () => boolean
   setOverview: Dispatch<SetStateAction<ProjectFilesOverview>>
-  setOverviewError: Dispatch<SetStateAction<string | undefined>>
+  setOverviewError: Dispatch<SetStateAction<ProjectFilesError | undefined>>
   setIsOverviewLoaded: Dispatch<SetStateAction<boolean>>
   setUploads: Dispatch<SetStateAction<PageState<ProjectFileItem>>>
   setGroups: Dispatch<SetStateAction<PageState<ArtifactGroupItem>>>
@@ -190,7 +206,7 @@ const startInitialProjectFilesLoad = ({
     })
     .catch((error: unknown) => {
       if (isOverviewCurrent()) {
-        setOverviewError(getErrorMessage(error))
+        setOverviewError(projectFilesError(error))
         setIsOverviewLoaded(true)
       }
     })
@@ -211,7 +227,7 @@ const startInitialProjectFilesLoad = ({
     })
     .catch((error: unknown) => {
       if (!isUploadsCurrent()) return
-      setUploads({ ...emptyPage(), isLoaded: true, error: getErrorMessage(error) })
+      setUploads({ ...emptyPage(), isLoaded: true, error: projectFilesError(error) })
     })
 
   void requestLimiter(() =>
@@ -229,7 +245,7 @@ const startInitialProjectFilesLoad = ({
     })
     .catch((error: unknown) => {
       if (!isGroupsCurrent()) return
-      setGroups({ ...emptyPage(), isLoaded: true, error: getErrorMessage(error) })
+      setGroups({ ...emptyPage(), isLoaded: true, error: projectFilesError(error) })
     })
 }
 
@@ -256,7 +272,7 @@ const useProjectFilesIndex = (
   const scopeKind = scope?.kind ?? 'all'
   const scopeSessionId = scope?.kind === 'sessionArtifacts' ? scope.sessionId : undefined
   const [overview, setOverview] = useState(EMPTY_OVERVIEW)
-  const [overviewError, setOverviewError] = useState<string>()
+  const [overviewError, setOverviewError] = useState<ProjectFilesError>()
   const [isOverviewLoaded, setIsOverviewLoaded] = useState(false)
   const [repairState, setRepairState] = useState<IndexRepairState>({ isRepairing: false })
   const [uploads, setUploads] = useState<PageState<ProjectFileItem>>(emptyPage)
@@ -267,7 +283,6 @@ const useProjectFilesIndex = (
   // Event subscriptions read the last rendered range without resubscribing for every loaded page.
   const pagesRef = useRef({ uploads, groups, artifactsBySession })
   pagesRef.current = { uploads, groups, artifactsBySession }
-  const [refreshVersion, setRefreshVersion] = useState(0)
   // generation invalidates the whole project view; the per-layer counters invalidate only one first
   // page. Per-session versions allow artifact requests for different groups to remain independent.
   const generationRef = useRef(0)
@@ -356,7 +371,7 @@ const useProjectFilesIndex = (
           if (generation !== generationRef.current || groupsRequest !== groupsRequestRef.current) {
             return
           }
-          setGroups({ ...emptyPage(), isLoaded: true, error: getErrorMessage(error) })
+          setGroups({ ...emptyPage(), isLoaded: true, error: projectFilesError(error) })
         })
       return
     }
@@ -389,7 +404,7 @@ const useProjectFilesIndex = (
           ) {
             return
           }
-          setUploads({ ...emptyPage(), isLoaded: true, error: getErrorMessage(error) })
+          setUploads({ ...emptyPage(), isLoaded: true, error: projectFilesError(error) })
         })
       return
     }
@@ -428,10 +443,36 @@ const useProjectFilesIndex = (
           return
         }
         setArtifactsBySession({
-          [scopeSessionId]: { ...emptyPage(), isLoaded: true, error: getErrorMessage(error) }
+          [scopeSessionId]: { ...emptyPage(), isLoaded: true, error: projectFilesError(error) }
         })
       })
-  }, [excludedSessionIds, filenameContains, projectId, refreshVersion, scopeKind, scopeSessionId])
+  }, [excludedSessionIds, filenameContains, projectId, scopeKind, scopeSessionId])
+
+  const reloadOverview = useCallback(async (): Promise<void> => {
+    if (!projectId) return
+    const request = ++overviewRequestRef.current
+    setOverviewError(undefined)
+    setIsOverviewLoaded(false)
+    try {
+      const next = await window.api.projectFiles.getOverview({
+        projectId,
+        ...withProjectFilesSearch(filenameContains, excludedSessionIds)
+      })
+      if (request !== overviewRequestRef.current) return
+      setOverview(next)
+      setGroups((current) => ({ ...current, totalCount: next.artifactGroupCount }))
+      // A read started after the repair error can resolve its uncertainty.
+      if (repairError) {
+        setRepairState((current) =>
+          current.error === repairError ? { projectId, isRepairing: false } : current
+        )
+      }
+    } catch (error) {
+      if (request === overviewRequestRef.current) setOverviewError(projectFilesError(error))
+    } finally {
+      if (request === overviewRequestRef.current) setIsOverviewLoaded(true)
+    }
+  }, [excludedSessionIds, filenameContains, projectId, repairError])
 
   const handleIndexChanged = useCallback(
     (event: ProjectFilesChangedEvent): void => {
@@ -442,39 +483,7 @@ const useProjectFilesIndex = (
         event.kind === 'reset' || (event.sources.includes('artifact') && !event.sessionId)
 
       const generation = generationRef.current
-      if (scopeKind === 'all') {
-        const overviewRequest = ++overviewRequestRef.current
-        setOverviewError(undefined)
-        setIsOverviewLoaded(false)
-        void window.api.projectFiles
-          .getOverview({
-            projectId,
-            ...withProjectFilesSearch(filenameContains, excludedSessionIds)
-          })
-          .then((nextOverview) => {
-            if (
-              generation !== generationRef.current ||
-              overviewRequest !== overviewRequestRef.current
-            ) {
-              return
-            }
-            setOverview(nextOverview)
-            setGroups((current) => ({
-              ...current,
-              totalCount: nextOverview.artifactGroupCount
-            }))
-            setIsOverviewLoaded(true)
-          })
-          .catch((error: unknown) => {
-            if (
-              generation === generationRef.current &&
-              overviewRequest === overviewRequestRef.current
-            ) {
-              setOverviewError(getErrorMessage(error))
-              setIsOverviewLoaded(true)
-            }
-          })
-      }
+      if (scopeKind === 'all') void reloadOverview()
 
       if (
         (refreshAll || event.sources.includes('upload')) &&
@@ -526,7 +535,7 @@ const useProjectFilesIndex = (
               ...current,
               isLoading: false,
               isLoaded: true,
-              error: getErrorMessage(error)
+              error: projectFilesError(error)
             }))
           })
           .finally(() => {
@@ -587,7 +596,7 @@ const useProjectFilesIndex = (
                 ...current,
                 isLoading: false,
                 isLoaded: true,
-                error: getErrorMessage(error),
+                error: projectFilesError(error),
                 failedCursor: undefined
               }))
             })
@@ -678,7 +687,7 @@ const useProjectFilesIndex = (
                   ...(current[sessionId] ?? emptyPage()),
                   isLoading: false,
                   isLoaded: true,
-                  error: getErrorMessage(error)
+                  error: projectFilesError(error)
                 }
               }))
             })
@@ -690,20 +699,21 @@ const useProjectFilesIndex = (
         }
       }
     },
-    [excludedSessionIds, filenameContains, onChanged, projectId, scopeKind, scopeSessionId]
+    [
+      excludedSessionIds,
+      filenameContains,
+      onChanged,
+      projectId,
+      reloadOverview,
+      scopeKind,
+      scopeSessionId
+    ]
   )
 
   useEffect(() => {
     if (!projectId) return
     return window.api.projectFiles.onChanged(handleIndexChanged)
   }, [handleIndexChanged, projectId])
-
-  const reload = useCallback((): void => {
-    // Advancing generation invalidates all in-flight layer and per-session responses before the next
-    // effect starts a clean set of first pages.
-    generationRef.current += 1
-    setRefreshVersion((version) => version + 1)
-  }, [])
 
   const repairIndex = useCallback(async (): Promise<void> => {
     if (!projectId || isRepairing) return
@@ -712,7 +722,7 @@ const useProjectFilesIndex = (
     try {
       await window.api.projectFiles.repairIndex({ projectId })
     } catch (error) {
-      setRepairState({ projectId, isRepairing: false, error: getErrorMessage(error) })
+      setRepairState({ projectId, isRepairing: false, error: projectFilesError(error) })
     } finally {
       setRepairState((current) =>
         current.projectId === projectId ? { ...current, isRepairing: false } : current
@@ -773,7 +783,7 @@ const useProjectFilesIndex = (
       setUploads((page) => ({
         ...page,
         isLoading: false,
-        error: getErrorMessage(error),
+        error: projectFilesError(error),
         failedCursor: cursor
       }))
     } finally {
@@ -832,7 +842,7 @@ const useProjectFilesIndex = (
       setGroups((page) => ({
         ...page,
         isLoading: false,
-        error: getErrorMessage(error),
+        error: projectFilesError(error),
         failedCursor: cursor
       }))
     } finally {
@@ -912,7 +922,7 @@ const useProjectFilesIndex = (
             ...(current[sessionId] ?? emptyPage()),
             isLoading: false,
             isLoaded: true,
-            error: getErrorMessage(error),
+            error: projectFilesError(error),
             failedCursor: cursor
           }
         }))
@@ -938,9 +948,9 @@ const useProjectFilesIndex = (
     loadMoreGroups,
     loadMoreArtifacts,
     repairIndex,
-    reload
+    reloadOverview
   }
 }
 
 export { FILE_PAGE_SIZE, GROUP_PAGE_SIZE, useProjectFilesIndex }
-export type { PageState, ProjectFilesIndexScope, ProjectFilesIndexState }
+export type { PageState, ProjectFilesError, ProjectFilesIndexScope, ProjectFilesIndexState }

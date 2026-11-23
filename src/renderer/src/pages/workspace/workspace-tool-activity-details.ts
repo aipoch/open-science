@@ -37,6 +37,7 @@ import {
   resolveNotebookRunToolName
 } from './notebook-tool-names'
 import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
+import { isBuiltinWebFetchActivity } from './workspace-web-fetch-details'
 import {
   extractSkillLoadDocument,
   getLoadedSkillName,
@@ -1481,8 +1482,14 @@ const buildToolActivityDetails = (
   if (activity.toolKind === 'execute') return buildExecuteDetails(activity, t)
   // Tool-discovery steps summarize the tools they found rather than repeating "ToolSearch".
   if (isToolSearchActivity(activity)) return buildToolSearchDetails(activity)
-  // WebFetch shows the URL and fetched result; other fetches without a URL stay plain chips.
-  if (activity.toolKind === 'fetch') return buildFetchDetails(activity)
+  // Preserve unknown built-in envelopes and SDK errors even when invalid input has no URL.
+  // Other legacy fetch tools retain their privacy-safe URL-less chip behavior.
+  if (activity.toolKind === 'fetch') {
+    return (
+      buildFetchDetails(activity) ??
+      (isBuiltinWebFetchActivity(activity) ? buildGenericDetails(activity) : undefined)
+    )
+  }
 
   return buildGenericDetails(activity)
 }

@@ -32,6 +32,47 @@ function surface<Electron, Web>(electron: Electron, web: Web): Surface<Electron,
 }
 
 describe('installWebRendererContracts', () => {
+  it.each([
+    ['europe-pmc', undefined],
+    ['opencitations', undefined],
+    ['opencitations', 'index']
+  ] as const)(
+    'forwards %s temporary citation centers in mode %s without replacing the saved root identity',
+    async (provider, opencitationsMode) => {
+      const api: Record<string, unknown> = {}
+      const result = {
+        itemId: 'saved-root',
+        metadataRevision: 7,
+        direction: 'references',
+        state: 'ready',
+        provider,
+        ...(opencitationsMode ? { opencitationsMode } : {}),
+        records: []
+      }
+      const invoke = vi.fn().mockResolvedValue(result)
+      installWebRendererContracts(api, {
+        availableRpcChannels: new Set(['literature:related']),
+        restrictedRpcChannels: new Set(),
+        invoke,
+        subscribe: vi.fn(),
+        nativeAdapters: {}
+      })
+      const request = {
+        itemId: 'saved-root',
+        expectedMetadataRevision: 7,
+        direction: 'references',
+        provider,
+        ...(opencitationsMode ? { opencitationsMode } : {}),
+        seedPaperId:
+          provider === 'opencitations' ? 'opencitations:br/06180349574' : 'europe-pmc:MED:10647931',
+        resolutionToken: '00000000-0000-4000-8000-000000000001',
+        offset: 0
+      }
+      await expect(methodAt(api, 'literature.related')!(request)).resolves.toEqual(result)
+      expect(invoke).toHaveBeenCalledExactlyOnceWith('literature:related', [request])
+    }
+  )
+
   it('carries the inspected target and intent across the local Web storage boundary', async () => {
     const api: Record<string, unknown> = {}
     const invoke = vi.fn()

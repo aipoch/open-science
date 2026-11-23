@@ -5,12 +5,17 @@ import { app } from 'electron'
 
 import { createLogger } from '@aipoch/diagnostics/node'
 import { createMacInstallationGuard } from '../mac-installation'
-import { ElectronUpdaterStrategy, type UpdateInstallationHooks } from './electron-updater-strategy'
+import {
+  ElectronUpdaterStrategy,
+  type ElectronUpdaterDeps,
+  type UpdateInstallationHooks
+} from './electron-updater-strategy'
 import { UpdateService } from './service'
 import type { InstallGate, UpdateStrategy } from './strategy'
 import type { NativeTranslator } from '../locale/main-process-messages'
 
 export type CreateStrategyOptions = UpdateInstallationHooks & {
+  downloadPreference?: ElectronUpdaterDeps['downloadPreference']
   // Whether this is a packaged (installed) build. Defaults to app.isPackaged; injectable for tests.
   isPackaged?: boolean
   // Running app version. Defaults to app.getVersion(); injectable for tests.

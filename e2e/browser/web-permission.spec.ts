@@ -1,5 +1,58 @@
 import { expect, test } from '@playwright/test'
 
+test('reviews built-in search parameters and preserves allow and deny responses', async ({
+  page
+}) => {
+  await page.goto('/web-permission.html?built-in-search=1&light=1&sites=1')
+  const card = page.getByTestId('web-search-permission-card')
+  await expect(card).toContainText('new foundation model release 2026')
+  await expect(card.getByText('Search query', { exact: true })).toBeVisible()
+  await expect(card.getByRole('term')).toHaveText([
+    'Time range',
+    'Result limit',
+    'Limit to these sites'
+  ])
+  await expect(card.getByRole('definition')).toHaveText([
+    'Past month',
+    'Up to 10 results',
+    'nature.comscience.org'
+  ])
+  await expect(card).toContainText('Past month')
+  await expect(card).toContainText('Up to 10 results')
+  await expect(card).toContainText('nature.com')
+  await expect(card).toContainText('science.org')
+  await expect(card.getByTestId('tool-code-block')).toHaveCount(0)
+  await expect(card.locator('details')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Choose authorization scope' }).click()
+  await expect(page.getByRole('menuitemradio')).toHaveCount(2)
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Allow for this conversation', exact: true }).click()
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses
+    )
+  ).toEqual([{ requestId: 'built-in-search', optionId: 'session' }])
+
+  await page.setViewportSize({ width: 375, height: 700 })
+  await page.goto('/web-permission.html?built-in-search=1&lang=zh-Hans&sites=1&embedded=1')
+  await expect(card).toContainText('过去一个月')
+  await expect(card).toContainText('最多 10 条结果')
+  for (const width of [320, 375, 414, 768]) {
+    await page.setViewportSize({ width, height: 700 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width
+    )
+    await expect(page.getByTestId('allow-primary')).toBeInViewport()
+    await expect(page.getByRole('button', { name: '拒绝', exact: true })).toBeInViewport()
+  }
+  await page.getByRole('button', { name: '拒绝', exact: true }).click()
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { webPermissionResponses: unknown[] }).webPermissionResponses
+    )
+  ).toEqual([{ requestId: 'built-in-search', optionId: 'deny' }])
+})
+
 test('withdraws a cancelled network approval on an incremental state update', async ({
   page
 }, testInfo) => {

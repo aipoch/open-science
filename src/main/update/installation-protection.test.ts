@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import {
+  captureInstallationHelperExit,
   advanceInstallationUpdate,
   advanceInstallationUpdateAsync,
   captureInstallationManifestAsync,
@@ -35,7 +36,10 @@ import {
   installationStateDirectory,
   registerInstallationRuntime
 } from './installation-protection'
-import { protectInstallationStartup } from '../../../packages/open-science/installation-startup.cjs'
+import {
+  installationHelperFlags,
+  protectInstallationStartup
+} from '../../../packages/open-science/installation-startup.cjs'
 import {
   inspectInstallationProcesses,
   inspectInstallationProcessesAsync
@@ -218,14 +222,7 @@ it.each(['home', 'explicit', 'environment', 'e2e'] as const)(
         }
       )
     try {
-      for (const flag of [
-        '--open-science-artifact-mcp',
-        '--open-science-notebook-mcp',
-        '--open-science-reviewer-mcp-proxy',
-        '--open-science-skill-import-mcp',
-        '--open-science-skill-runtime-mcp',
-        '--open-science-plan-mcp'
-      ]) {
+      for (const flag of installationHelperFlags) {
         const result = launch(flag)
         expect(result.status, result.stderr).toBe(0)
         expect(JSON.parse(result.stdout).configRoot).toBe(f.runtime.configRoot)
@@ -412,6 +409,9 @@ it.runIf(process.platform === 'linux')(
   'blocks an unregistered bundled Node with rewritten argv until the actual process exits',
   async () => {
     const f = fixture()
+    const replaceIfIdle = vi.fn()
+    const probe = (): Promise<void> =>
+      inspectInstallationAvailability({ ...f.location, replaceIfIdle })
     const executable = join(f.location.installationRoot, 'node')
     copyFileSync(process.execPath, executable)
     const child = spawn(
@@ -429,13 +429,14 @@ it.runIf(process.platform === 'linux')(
       expect(await inspectInstallationProcessesAsync(f.location.installationRoot)).toContain(
         child.pid
       )
-      await expect(inspectInstallationAvailability(f.location)).rejects.toMatchObject({
+      await expect(probe()).rejects.toMatchObject({
         reason: 'installation-busy',
         recovery: {
           detail: 'foreign-process',
           blockingProcesses: [{ pid: child.pid }]
         }
       })
+      expect(replaceIfIdle).not.toHaveBeenCalled()
       expect(child.exitCode).toBeNull()
       expect(inspectInstallationUpdate(f.location)).toBeUndefined()
     } finally {
@@ -445,7 +446,8 @@ it.runIf(process.platform === 'linux')(
         await exited
       }
     }
-    await expect(inspectInstallationAvailability(f.location)).resolves.toBeUndefined()
+    await expect(probe()).resolves.toBeUndefined()
+    expect(replaceIfIdle).toHaveBeenCalledOnce()
   },
   15000
 )
@@ -554,10 +556,12 @@ it('admits authenticated current-runtime helpers before the gate but blocks hand
       inspectProcesses: () => [child.pid!],
       targetManifest: captureInstallationManifest(f.location.installationRoot, '2')
     })
+    const waitForHelpers = captureInstallationHelperExit(f.location, f.runtime)
     advanceInstallationUpdate(f.location, record.operationId, 'stopping')
     advanceInstallationUpdate(f.location, record.operationId, 'stopped', true)
     runtime.release()
     expect(() => advanceInstallationUpdate(f.location, record.operationId, 'handoff')).toThrow()
+    await expect(waitForHelpers()).rejects.toMatchObject({ reason: 'installation-busy' })
   } finally {
     const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
     child.kill('SIGKILL')

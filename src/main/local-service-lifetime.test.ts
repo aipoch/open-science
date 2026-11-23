@@ -372,10 +372,10 @@ it('retires the generation after a failed published stop even when disk compensa
   await expect(lifetime.start()).rejects.toThrow('stop intent')
   expect(stop).not.toHaveBeenCalled()
   compensation.resolve()
-  await vi.waitFor(async () =>
-    expect(await readServiceLifetime(configRoot)).toMatchObject({ stopping: false })
-  )
-  expect(() => lifetime.connect('b', 'socket-b')).toThrow('stopping')
+  // The rollback is readable after rename, before directory sync settles the uncertain write.
+  await vi.waitFor(() => expect(() => lifetime.connect('b', 'socket-b')).toThrow('stopping'))
+  expect(lifetime.snapshot().apps).toBe(1)
+  expect(await readServiceLifetime(configRoot)).toMatchObject({ stopping: false })
   await expect(lifetime.start()).rejects.toThrow('stopping')
   expect(stop).not.toHaveBeenCalled()
   await lifetime.stop()

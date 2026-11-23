@@ -1,3 +1,4 @@
+import { reportWorkspaceOperationError } from '@/lib/acp/workspace-operation-error'
 import {
   createContext,
   createElement,
@@ -165,7 +166,10 @@ const WorkspaceMessageQueueRuntimeBridge = ({
         .catch(() => runtime.cancelRun(sessionId))
         .catch((error: unknown) => {
           cancelledPersistenceBlockedSessions.current.delete(sessionId)
-          console.warn('Failed to stop oversized conversation:', error)
+          reportWorkspaceOperationError(
+            sessionId,
+            error instanceof Error ? error.message : String(error)
+          )
         })
     }
   }, [persistenceBlockedSessionIds, runtime])

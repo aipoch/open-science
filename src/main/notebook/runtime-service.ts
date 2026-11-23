@@ -1,7 +1,38 @@
+import type {
+  NotebookMemoryPolicyState,
+  NotebookMemoryPolicyStateRequest
+} from '../../shared/notebook-memory'
 import { withDataRootWrite } from '../storage/migration-state'
+import type { NotebookOwnedResource } from './owned-resources'
+import { NotebookResourceReleaseOwner } from './resource-release'
+import type {
+  NotebookProjectResources,
+  NotebookProjectResourcesRequest,
+  NotebookResourceRelease,
+  NotebookResourceReleaseRequest,
+  ReleaseNotebookSessionResourcesRequest
+} from '../../shared/notebook-resources'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { randomUUID } from 'node:crypto'
 import { NotebookIdleReclamation } from './idle-reclamation'
+import {
+  createNotebookExecutionAdmission,
+  createNotebookMemoryPolicy,
+  notebookExecutionAdmission,
+  withNotebookExecutionAdmission,
+  NotebookExecutionAdmissionError,
+  type NotebookMemoryPolicyPort,
+  type NotebookExecutionAdmission
+} from './execution-admission'
+import {
+  NotebookExecutionIntentOwner,
+  notebookExecutionIntent,
+  notebookUserOperation,
+  type NotebookExecutionIntent,
+  type NotebookExecutionIntentDeletion,
+  type NotebookExecutionIntentScope,
+  type NotebookExecutionContinuation
+} from './execution-intent'
 import { NotebookProcessMonitor, type MonitoredInterpreter } from './process-monitor'
 import type {
   NotebookProcessMonitorSnapshot,
@@ -79,6 +110,9 @@ import type {
   NotebookRunRecord,
   NotebookRunSummary,
   NotebookSessionReference,
+  NotebookBackgroundTaskSnapshot,
+  NotebookRunEvidenceRequest,
+  NotebookRunEvidenceSnapshot,
   NotebookSessionRequest,
   NotebookSessionState,
   NotebookSessionStateRequest,
@@ -181,6 +215,7 @@ import {
   deliversNotebookResultToAgent
 } from '../background-result-delivery/notebook-adapter'
 import {
+  NOTEBOOK_PREVIEW_HISTORY_BYTES,
   assertNotebookCodeAppendWithinLimit,
   assertNotebookCodeWithinLimit
 } from './content-limits'
@@ -215,7 +250,24 @@ type ResolvedInterpreter = NotebookSessionResolvedInterpreter
 type NotebookDependencyAnalyzerPort = Pick<NotebookDependencyAnalyzer, 'project'> &
   Partial<Pick<NotebookDependencyAnalyzer, 'sourceFileAccessContext' | 'finalizeEpochs'>>
 
-type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks
+type NotebookMemoryRejectionContext = Pick<NotebookSessionReference, 'projectId' | 'sessionId'> & {
+  workspaceCwd?: string
+  source?: string
+  inputKind?: string
+  refusalId?: string
+  messageBranchId?: string
+  terminalTarget?: string
+}
+type NotebookRuntimeServiceCallbacks = NotebookSessionLifecycleCallbacks & {
+  onMemoryPolicyChanged?: (
+    state: import('./memory-policy').MemoryPolicyObservation,
+    hasLiveResources: boolean
+  ) => void
+  onMemoryPolicyRejected?: (
+    context: NotebookMemoryRejectionContext,
+    state: import('./memory-policy').MemoryPolicyObservation
+  ) => void
+}
 
 // Background execution is part of the normal Notebook contract. Environment flags remain an
 // emergency/rollout override: unset means enabled, exact "1" enables, and any other explicit value
@@ -236,8 +288,15 @@ type McpRpcConnectionBinding = {
 }
 
 type NotebookRuntimeServiceOptions = ProjectIdScope & {
+  externalNotebookResources?: (scope: {
+    projectId?: string
+    sessionId?: string
+  }) => NotebookOwnedResource[]
+  holdExternalNotebookStarts?: (scope: NotebookExecutionIntentScope) => () => void
+  memoryPolicy?: NotebookMemoryPolicyPort
   isSessionBusy?: (projectId: string, sessionId: string) => boolean | Promise<boolean>
-  admitSessionWork?: (projectId: string, sessionId: string) => () => void
+  isSessionExporting?: (projectId: string, sessionId: string) => boolean
+  admitSessionWork?: (projectId: string, sessionId: string, observation?: boolean) => () => void
   // Config root: source of the app-owned claude config dir (protected from the kernel). Never relocated.
   configRoot: string
   // Data root: where notebook workspaces, data, and the runtime install live (user-relocatable).
@@ -445,8 +504,285 @@ const resolveDefaultExecutorOptions = (): NotebookKernelExecutorOptions => {
   }
 }
 
+const projectNotebookMemoryPolicyState = (
+  state: import('./memory-policy').MemoryPolicyObservation
+): NotebookMemoryPolicyState => ({
+  status: state.status,
+  reason: state.reason.code,
+  remainingThresholdRatio: state.reason.remainingThresholdRatio,
+  detail: state.reason.detail,
+  source: state.source,
+  executionScope: state.executionScope,
+  checkedAt: Date.now(),
+  sampleAgeMs: state.sampleAgeMs,
+  retryAfterMs: state.reason.retryAfterMs,
+  recoveryRemainingMs: state.reason.recoveryRemainingMs,
+  limitingCgroupPath: state.reason.constraintPath,
+  cgroupConstraints: state.facts?.cgroup?.constraints,
+  pressureLevel: state.facts?.pressureLevel,
+  availableBytes: state.facts?.availableBytes,
+  totalBytes: state.facts?.totalBytes,
+  committedBytes: state.facts?.committedBytes,
+  commitLimitBytes: state.facts?.commitLimitBytes
+})
+
 // Coordinates notebook cells, shared interpreters, persisted run history, and UI notifications.
 class NotebookRuntimeService {
+  private readonly executionIntents = new NotebookExecutionIntentOwner()
+  private readonly resourceReleases: NotebookResourceReleaseOwner
+
+  createExecutionIntent(scope: NotebookExecutionIntentScope): NotebookExecutionIntent {
+    return this.executionIntents.create(scope)
+  }
+
+  currentExecutionIntent(scope: NotebookExecutionIntentScope): NotebookExecutionIntent | undefined {
+    return this.executionIntents.current(scope)
+  }
+
+  bindExecutionIntent(scope: NotebookExecutionIntentScope, intent: NotebookExecutionIntent): void {
+    this.executionIntents.bind(scope, intent)
+  }
+
+  adoptExecutionIntentScope(scope: NotebookExecutionIntentScope, sessionId: string): void {
+    this.executionIntents.adopt(scope, sessionId)
+  }
+
+  finishPendingRunDeletion(scope: {
+    projectId?: string
+    sessionIds?: readonly string[]
+  }): Promise<void> {
+    return this.repository.finishPendingRunDeletion(scope)
+  }
+
+  forgetDeletedExecutionIntents(deletion: NotebookExecutionIntentDeletion): void {
+    this.executionIntents.forgetDeleted(deletion)
+  }
+
+  rememberExecutionIntent(
+    scope: NotebookExecutionIntentScope,
+    promptId: string,
+    intent: NotebookExecutionIntent
+  ): void {
+    this.executionIntents.remember(scope, promptId, intent)
+  }
+
+  resolveExecutionIntent(
+    scope: NotebookExecutionIntentScope,
+    promptId: string
+  ): NotebookExecutionIntent | undefined {
+    return this.executionIntents.resolve(scope, promptId)
+  }
+
+  refusedExecutionIntent(
+    scope: NotebookExecutionIntentScope,
+    refusalId: string
+  ): NotebookExecutionIntent | undefined {
+    return this.executionIntents.refused(scope, refusalId)
+  }
+
+  blockExecutionIntents(
+    scope: NotebookExecutionIntentScope,
+    reason = 'manual-release'
+  ): readonly NotebookExecutionContinuation[] {
+    return this.executionIntents.block(scope, reason)
+  }
+
+  private memoryPolicyPromise?: Promise<NotebookMemoryPolicyPort>
+  private memoryPolicyUnsubscribe?: () => void
+  private memoryPolicyActive = false
+  private memoryPolicyDisposed = false
+  getMemoryPolicy(): Promise<NotebookMemoryPolicyPort> {
+    return (this.memoryPolicyPromise ??= (
+      this.options.memoryPolicy
+        ? Promise.resolve(this.options.memoryPolicy)
+        : createNotebookMemoryPolicy(this.options.configRoot, this.options.platform)
+    ).then((policy) => {
+      this.memoryPolicyUnsubscribe = policy.subscribe?.((state) => {
+        this.idleReclamation?.refresh()
+        this.options.callbacks?.onMemoryPolicyChanged?.(state, this.memoryPolicyActive)
+      })
+      policy.setActive?.(this.memoryPolicyActive && !this.memoryPolicyDisposed)
+      return policy
+    }))
+  }
+
+  async getMemoryPolicyState(
+    request: NotebookMemoryPolicyStateRequest
+  ): Promise<NotebookMemoryPolicyState> {
+    const { executionScope } = request
+    const guestPolicy =
+      executionScope === undefined ? undefined : this.shellProcess.memoryPolicy?.(executionScope)
+    const policy = guestPolicy ?? (await this.getMemoryPolicy())
+    const scopeMismatch = 'The visible memory check no longer matches the current execution domain.'
+    // UI input cannot create sampler domains or silently substitute a host sample for WSL.
+    if (
+      executionScope !== undefined &&
+      !guestPolicy &&
+      !policy.matchesDefaultScope?.(executionScope)
+    ) {
+      throw new Error(scopeMismatch)
+    }
+    const state = await policy.getState()
+    if (
+      executionScope !== undefined &&
+      (executionScope !== state.executionScope ||
+        (guestPolicy && this.shellProcess.memoryPolicy?.(executionScope) !== guestPolicy))
+    ) {
+      throw new Error(scopeMismatch)
+    }
+    return projectNotebookMemoryPolicyState(state)
+  }
+
+  private updateMemoryPolicyActivity(active: boolean): void {
+    if (this.memoryPolicyActive === active || this.memoryPolicyDisposed) return
+    this.memoryPolicyActive = active
+    void this.getMemoryPolicy()
+      .then((policy) => {
+        if (this.memoryPolicyDisposed) return
+        policy.setActive?.(this.memoryPolicyActive)
+        // Stopping polling must also clear resource-dependent notices. Do not
+        // misrepresent resource release as recovery of system memory pressure.
+        if (!this.memoryPolicyActive)
+          this.options.callbacks?.onMemoryPolicyChanged?.(policy.currentState(), false)
+      })
+      .catch((error) =>
+        this.runtimeLogger.error(
+          'Notebook memory policy could not observe resources',
+          errorLogFields(error)
+        )
+      )
+  }
+
+  private notifyMemoryPolicyRejected(
+    context: NotebookMemoryRejectionContext,
+    state: import('./memory-policy').MemoryPolicyObservation
+  ): void {
+    // A rejected call ends independently; the existing serial idle owner may run afterward.
+    if (state.status === 'pressured') this.idleReclamation.refresh()
+    this.options.callbacks?.onMemoryPolicyRejected?.(context, state)
+  }
+
+  createExecutionAdmission(
+    signal?: AbortSignal,
+    executionScope?: string,
+    context?: NotebookMemoryRejectionContext,
+    intent?: NotebookExecutionIntent
+  ): NotebookExecutionAdmission {
+    return createNotebookExecutionAdmission({
+      policy: () => this.getMemoryPolicy(),
+      signal,
+      executionScope,
+      assertHostCurrent: () => intent?.assertExecutable(),
+      onRejected: (state) => {
+        const refusalId = intent?.block(state.status)
+        if (context)
+          this.notifyMemoryPolicyRejected(
+            {
+              ...context,
+              ...(refusalId ? { refusalId, messageBranchId: intent?.scope.messageBranchId } : {})
+            },
+            state
+          )
+      }
+    })
+  }
+
+  private shellMemoryScope(request: ExecuteShellRequest): string | undefined {
+    const binding =
+      request.shellRuntime ??
+      this.options.shellRuntimeBinding ??
+      defaultShellRuntimeBinding(this.options.platform)
+    return binding.kind === 'wsl2-bash' ? 'windows:host' : undefined
+  }
+
+  private async admitExecutionRequest<
+    T extends NotebookSessionRequest & {
+      source?: string
+      inputKind?: string
+      language?: NotebookLanguage
+      cellId?: string
+    }
+  >(request: T, signal?: AbortSignal, executionScope?: string): Promise<T> {
+    if (notebookExecutionAdmission(request)) return request
+    const intent = notebookExecutionIntent(request)
+    intent?.assertExecutable()
+    if (intent)
+      this.executionIntents.register(
+        {
+          projectId: resolveProjectId(request, this.options.projectId),
+          sessionId: request.sessionId
+        },
+        intent
+      )
+    // Snapshot the actual host-owned live object before the first await. Historical statuses and
+    // caller-provided epochs never authorize an explicit terminal to cold-start a replacement.
+    let terminalTarget: string | undefined
+    let assertHostCurrent:
+      ((boundary: import('./execution-admission').NotebookExecutionBoundary) => void) | undefined
+    if (request.source === 'user' && request.inputKind === 'terminal') {
+      const lane = this.sessionLifecycle.laneForRequest(request)
+      const session = this.sessions.get(lane)
+      const language =
+        request.language ??
+        (request.cellId ? session?.cellView(request.cellId).language : undefined) ??
+        'python'
+      const binding = session?.runtimeBinding(language)
+      const key = dataProcessKey(language, binding?.envName)
+      terminalTarget = key
+      const identity = session?.idleProcesses().find((proc) => proc.processKey === key)?.identity
+      assertHostCurrent = (boundary) => {
+        if (
+          boundary === 'create' ||
+          !identity ||
+          this.sessions.get(lane) !== session ||
+          session?.runtimeBinding(language)?.runtimeId !== binding?.runtimeId ||
+          !session
+            ?.idleProcesses()
+            .some((proc) => proc.processKey === key && proc.identity === identity)
+        ) {
+          throw new NotebookExecutionAdmissionError(
+            'NOTEBOOK_TERMINAL_KERNEL_UNAVAILABLE',
+            'The terminal kernel is no longer running. Execution was not started. Ask the Agent to start the Notebook kernel before retrying.'
+          )
+        }
+      }
+    }
+    const assertUserCurrent =
+      request.source === 'user' && request.inputKind === 'terminal'
+        ? notebookUserOperation(request)?.assertCurrent
+        : intent?.consumeUserMemoryRecheck()
+    return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
+      const admission = createNotebookExecutionAdmission({
+        policy: () => this.getMemoryPolicy(),
+        signal: signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+        executionScope,
+        force: Boolean(assertUserCurrent),
+        assertHostCurrent: (boundary) => {
+          assertUserCurrent?.()
+          intent?.assertExecutable()
+          assertHostCurrent?.(boundary)
+        },
+        onRejected: (state) => {
+          const refusalId = intent?.block(state.status)
+          this.notifyMemoryPolicyRejected(
+            {
+              projectId: resolveProjectId(request, this.options.projectId),
+              sessionId: request.sessionId,
+              workspaceCwd: request.workspaceCwd,
+              source: request.source,
+              inputKind: request.inputKind,
+              terminalTarget,
+              ...(refusalId ? { refusalId, messageBranchId: intent?.scope.messageBranchId } : {})
+            },
+            state
+          )
+        }
+      })
+      await admission.prepare('submit')
+      admission.assertCurrent('submit')
+      return withNotebookExecutionAdmission(request, admission)
+    })
+  }
   private executionApproval: NotebookExecutionApproval | undefined
   private runtimeBindingApproval: NotebookRuntimeBindingApproval | undefined
   private readonly runtimeBindingPermissionPolicies = new WeakMap<AbortSignal, 'none'>()
@@ -699,10 +1035,14 @@ class NotebookRuntimeService {
   ): Promise<void> {
     if (!this.executionApproval || (run.source === 'user' && !run.promptMessageId)) return
     signal?.throwIfAborted()
-    const document = run.kernelEpochId
-      ? await this.repository.findExisting(session.projectId, session.sessionId, session.lane)
-      : undefined
-    const previousSources = (document?.runs ?? [])
+    const history = run.kernelEpochId
+      ? await this.repository.readLaneAnalysisRuns(
+          session.projectId,
+          session.sessionId,
+          session.lane
+        )
+      : []
+    const previousSources = history
       .filter(
         (previous) =>
           previous.runId !== run.runId &&
@@ -1100,7 +1440,8 @@ class NotebookRuntimeService {
       new NotebookShellProcessAdapter(
         options.platform,
         options.processSandbox,
-        this.shellProcessOwnership
+        this.shellProcessOwnership,
+        options.configRoot
       )
     this.executionOwner = new NotebookExecutionOwner({
       reviewCode: (...args) => this.reviewCode(...args),
@@ -1147,21 +1488,128 @@ class NotebookRuntimeService {
       getGrantedLocalRoots: options.getGrantedLocalRoots
     })
     this.idleReclamation = new NotebookIdleReclamation({
-      resources: () => [
-        ...this.sessionLifecycle.idleInterpreters(),
-        ...(this.shellProcess.idleProcesses?.() ?? []).map((resource) => ({
-          ...resource,
-          release: (stillIdle: () => boolean) =>
-            this.sessionLifecycle.reclaimIdleInterpreter(resource, stillIdle)
-        }))
-      ],
+      resources: () => {
+        const resources = [
+          ...this.sessionLifecycle.idleInterpreters(),
+          ...(this.shellProcess.idleProcesses?.() ?? []).map((resource) => ({
+            ...resource,
+            release: (stillIdle: () => boolean) =>
+              this.sessionLifecycle.reclaimIdleInterpreter(resource, stillIdle)
+          }))
+        ]
+        this.refreshResourceActivity()
+        return resources
+      },
+      memoryPolicy: () => this.getMemoryPolicy(),
+      isSessionHeld: options.isSessionExporting,
       isSessionBusy: async (projectId, sessionId) =>
         this.sessionLifecycle.hasPendingWork(sessionId) ||
         (await options.isSessionBusy?.(projectId, sessionId)) === true ||
         this.sessionLifecycle.hasPendingWork(sessionId),
       onFailure: (error) =>
-        this.runtimeLogger.error('Notebook idle reclamation failed', errorLogFields(error))
+        this.runtimeLogger.error('Notebook idle reclamation failed', errorLogFields(error)),
+      onReclamation: (resource, reason, result) =>
+        this.runtimeLogger.info('Notebook idle reclamation', {
+          projectId: resource.projectId,
+          sessionId: resource.sessionId,
+          group: resource.group,
+          lastUsedAt: resource.lastUsedAt,
+          reason,
+          result
+        })
     })
+    this.resourceReleases = new NotebookResourceReleaseOwner({
+      resources: (scope) => this.ownedResources(scope),
+      hold: (scope, resources) => {
+        const releases: Array<() => void> = []
+        try {
+          releases.push(this.sessionLifecycle.holdSessionResources(scope))
+          releases.push(this.executionOwner.fenceShellRuns(scope))
+          if (options.holdExternalNotebookStarts)
+            releases.push(options.holdExternalNotebookStarts(scope))
+          releases.push(
+            this.runtimeBindingOwner.tryHoldSessionTeardown(this.resourceLaneKeys(scope, resources))
+          )
+          return () => {
+            for (const release of releases.reverse()) release()
+          }
+        } catch (error) {
+          for (const release of releases.reverse()) release()
+          throw error
+        }
+      },
+      observe: (scope, operation) => this.sessionLifecycle.observeSessionRelease(scope, operation),
+      block: (scope) => this.blockExecutionIntents(scope),
+      decisions: (projectId) => this.executionIntents.blockedContinuations(projectId),
+      blockedReason: (scope, scopeHeld) => {
+        if (options.isSessionExporting?.(scope.projectId, scope.sessionId))
+          return 'session-exporting'
+        if (scopeHeld) return undefined
+        return (
+          this.sessionLifecycle.resourceReleaseBlockedReason(scope) ??
+          (this.runtimeBindingOwner.hasSessionTeardownConflict(
+            this.resourceLaneKeys(scope, this.ownedResources(scope))
+          )
+            ? 'runtime-binding-changing'
+            : undefined)
+        )
+      },
+      changed: () => this.refreshResourceActivity(),
+      logger: this.runtimeLogger
+    })
+  }
+
+  private resourceLaneKeys(
+    scope: NotebookExecutionIntentScope,
+    resources: readonly NotebookOwnedResource[]
+  ): string[] {
+    return [
+      ...Array.from(this.sessions.values())
+        .filter(
+          (session) =>
+            session.projectId === scope.projectId && session.sessionId === scope.sessionId
+        )
+        .map((session) => notebookLaneKey(session.lane)),
+      ...resources.flatMap((resource) => (resource.laneKey ? [resource.laneKey] : []))
+    ]
+  }
+
+  refreshResourceActivity(): void {
+    this.updateMemoryPolicyActivity(this.ownedResources().length > 0)
+  }
+
+  async getProjectResources(
+    request: NotebookProjectResourcesRequest
+  ): Promise<NotebookProjectResources> {
+    return this.resourceReleases.project(request.projectId)
+  }
+
+  async releaseSessionResources(
+    request: ReleaseNotebookSessionResourcesRequest,
+    assertCurrent: () => void
+  ): Promise<NotebookResourceRelease> {
+    return this.resourceReleases.release(request, assertCurrent)
+  }
+
+  getResourceRelease(request: NotebookResourceReleaseRequest): NotebookResourceRelease {
+    return this.resourceReleases.get(request)
+  }
+
+  async retryResourceRelease(
+    request: NotebookResourceReleaseRequest,
+    assertCurrent: () => void
+  ): Promise<NotebookResourceRelease> {
+    return this.resourceReleases.retry(request, assertCurrent)
+  }
+
+  async waitForSessionTeardown(
+    scope: { projectId?: string; sessionId?: string } = {}
+  ): Promise<void> {
+    await this.sessionLifecycle.waitForSessionTeardown(scope)
+    if (this.ownedResources(scope).some((resource) => resource.phase === 'cleanup-pending'))
+      throw new Error(
+        'Notebook cleanup is incomplete. Retry the original cleanup before exporting.'
+      )
   }
 
   noteSessionActivity(sessionId: string): void {
@@ -1531,11 +1979,16 @@ class NotebookRuntimeService {
           source,
           startedAt: Date.now()
         },
-        signal ? { signal, onAbort: () => this.sessionLifecycle.notifyChanged(session) } : undefined
+        signal
+          ? {
+              signal,
+              onAbort: () => this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
+            }
+          : undefined
       )
 
       this.sessionLifecycle.notifyAvailable(session, source)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
 
       return { sessionId: session.sessionId, cellId, writeId, status: cell.status }
     })
@@ -1555,11 +2008,11 @@ class NotebookRuntimeService {
         assertNotebookCodeAppendWithinLimit(current.code, request.delta)
       } catch (error) {
         session.abortCellWrite(request.cellId, request.writeId)
-        this.sessionLifecycle.notifyChanged(session)
+        this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
         throw error
       }
       const cell = session.appendCellCode(request.cellId, request.writeId, request.delta)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeAppendOnly: true })
 
       return {
         sessionId: session.sessionId,
@@ -1580,7 +2033,7 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
       const session = await this.sessionLifecycle.ensure(request)
       const cell = session.finishCellWrite(request.cellId, request.writeId)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
 
       return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
     })
@@ -1596,7 +2049,7 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.runProjectOperation(request, async () => {
       const session = await this.sessionLifecycle.ensure(request)
       const cell = session.abortCellWrite(request.cellId, request.writeId)
-      this.sessionLifecycle.notifyChanged(session)
+      this.sessionLifecycle.notifyChanged(session, { codeWriteOnly: true })
       return { sessionId: session.sessionId, cellId: cell.id, code: cell.code, status: cell.status }
     })
   }
@@ -1618,6 +2071,7 @@ class NotebookRuntimeService {
         'Background execution must use the background admission path.'
       )
     }
+    request = await this.admitExecutionRequest(request, signal)
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       const session = await this.sessionLifecycle.ensure(request)
       // Select the execution route only after an admitted binding transition has committed or
@@ -1653,6 +2107,7 @@ class NotebookRuntimeService {
       )
     }
     assertNotebookCodeWithinLimit(request.code)
+    request = await this.admitExecutionRequest(request, signal)
     const begin = await this.beginCodeCell(request, signal)
 
     await this.appendCodeCell({
@@ -1717,39 +2172,49 @@ class NotebookRuntimeService {
     }
     if (signal?.aborted) throw signal.reason
     assertNotebookCodeWithinLimit(request.code)
-    const begin = await this.beginCodeCell(request)
+    const controller = new AbortController()
+    const cancelBeforeReceipt = (): void => controller.abort(signal?.reason)
+    signal?.addEventListener('abort', cancelBeforeReceipt, { once: true })
     try {
-      await this.appendCodeCell({
-        ...request,
-        writeId: begin.writeId,
-        cellId: begin.cellId,
-        delta: request.code
-      })
-      await this.finishCodeCell({ ...request, writeId: begin.writeId, cellId: begin.cellId })
-      signal?.throwIfAborted()
-      return await this.startBackgroundDataRun(
-        { ...request, cellId: begin.cellId },
-        signal,
-        request.helperModules
-      )
-    } catch (error) {
-      await this.sessionLifecycle
-        .runProjectOperation(request, async () => {
-          const session = await this.sessionLifecycle.ensure(request)
-          if (session.discardUnusedCell(begin.cellId)) this.sessionLifecycle.notifyChanged(session)
+      request = await this.admitExecutionRequest(request, controller.signal)
+      const begin = await this.beginCodeCell(request)
+      try {
+        await this.appendCodeCell({
+          ...request,
+          writeId: begin.writeId,
+          cellId: begin.cellId,
+          delta: request.code
         })
-        .catch(() => undefined)
-      throw error
+        await this.finishCodeCell({ ...request, writeId: begin.writeId, cellId: begin.cellId })
+        signal?.throwIfAborted()
+        return await this.startBackgroundDataRun(
+          { ...request, cellId: begin.cellId },
+          controller,
+          signal,
+          request.helperModules
+        )
+      } catch (error) {
+        await this.sessionLifecycle
+          .runProjectOperation(request, async () => {
+            const session = await this.sessionLifecycle.ensure(request)
+            if (session.discardUnusedCell(begin.cellId))
+              this.sessionLifecycle.notifyChanged(session)
+          })
+          .catch(() => undefined)
+        throw error
+      }
+    } finally {
+      signal?.removeEventListener('abort', cancelBeforeReceipt)
     }
   }
 
   private async startBackgroundDataRun(
     request: RunNotebookCellRequest,
+    controller: AbortController,
     transportSignal?: AbortSignal,
     helperModules?: readonly string[]
   ): Promise<NotebookBackgroundRunReceipt> {
     const createdCellId = request.cellId
-    const controller = new AbortController()
     const cancelBeforeReceipt = (): void => controller.abort(transportSignal?.reason)
     transportSignal?.addEventListener('abort', cancelBeforeReceipt, { once: true })
     let resolveReceipt!: (receipt: NotebookBackgroundRunReceipt) => void
@@ -2057,6 +2522,7 @@ class NotebookRuntimeService {
         'Background execution must use the background admission path.'
       )
     }
+    request = await this.admitExecutionRequest(request, signal)
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       assertNotebookCodeWithinLimit(request.code)
       const session = await this.sessionLifecycle.ensure(request)
@@ -2090,6 +2556,12 @@ class NotebookRuntimeService {
     const controller = new AbortController()
     const cancelBeforeReceipt = (): void => controller.abort(transportSignal?.reason)
     transportSignal?.addEventListener('abort', cancelBeforeReceipt, { once: true })
+    try {
+      request = await this.admitExecutionRequest(request, controller.signal)
+    } catch (error) {
+      transportSignal?.removeEventListener('abort', cancelBeforeReceipt)
+      throw error
+    }
     let resolveReceipt!: (receipt: NotebookBackgroundRunReceipt) => void
     let rejectReceipt!: (error: unknown) => void
     const receiptPromise = new Promise<NotebookBackgroundRunReceipt>((resolve, reject) => {
@@ -2172,6 +2644,7 @@ class NotebookRuntimeService {
         'Background execution must use the background admission path.'
       )
     }
+    request = await this.admitExecutionRequest(request, signal, this.shellMemoryScope(request))
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       assertNotebookCodeWithinLimit(request.command)
       const session = await this.sessionLifecycle.ensure(request)
@@ -2198,13 +2671,23 @@ class NotebookRuntimeService {
         'Background execution is disabled.'
       )
     }
-    const backgroundRequest = { ...request, background: true }
-    this.assertManagedShellCommand(backgroundRequest)
+    this.assertManagedShellCommand(request)
     transportSignal?.throwIfAborted()
-    assertNotebookCodeWithinLimit(backgroundRequest.command)
+    assertNotebookCodeWithinLimit(request.command)
     const controller = new AbortController()
     const cancelBeforeReceipt = (): void => controller.abort(transportSignal?.reason)
     transportSignal?.addEventListener('abort', cancelBeforeReceipt, { once: true })
+    try {
+      request = await this.admitExecutionRequest(
+        request,
+        controller.signal,
+        this.shellMemoryScope(request)
+      )
+    } catch (error) {
+      transportSignal?.removeEventListener('abort', cancelBeforeReceipt)
+      throw error
+    }
+    const backgroundRequest = { ...request, background: true }
     let resolveReceipt!: (receipt: NotebookBackgroundRunReceipt) => void
     let rejectReceipt!: (error: unknown) => void
     const receiptPromise = new Promise<NotebookBackgroundRunReceipt>((resolve, reject) => {
@@ -2354,59 +2837,107 @@ class NotebookRuntimeService {
     )
   }
 
+  private async sessionForHistoryRead(
+    request: NotebookSessionRequest,
+    projectId: string
+  ): Promise<RuntimeSession | undefined> {
+    if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId))
+      return undefined
+    const session = await this.sessionLifecycle.ensure(request, true)
+    // Project durable history only after the lane's binding commit settles, including reads
+    // that arrived just before shutdown closed session creation admission.
+    await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
+    await this.runTerminalization.reconcilePending(session)
+    return session
+  }
+
+  private readHistory<T>(
+    request: NotebookSessionRequest,
+    read: (projectId: string) => Promise<T>
+  ): Promise<T> {
+    const projectId = resolveProjectId(request, resolveProjectId(this.options))
+    return this.sessionLifecycle.runProjectOperation(
+      request,
+      () => this.repository.withinHistoryRead(projectId, request.sessionId, () => read(projectId)),
+      false
+    )
+  }
+
+  async runEvidence(
+    request: NotebookRunEvidenceRequest
+  ): Promise<NotebookRunEvidenceSnapshot | null> {
+    return this.readHistory(request, async (projectId) => {
+      const session = await this.sessionForHistoryRead(request, projectId)
+      return this.sessionReadModel.runEvidence(
+        session?.projectId ?? projectId,
+        session?.sessionId ?? request.sessionId,
+        request.runId,
+        session
+      )
+    })
+  }
+
+  async backgroundTasks(request: NotebookSessionRequest): Promise<NotebookBackgroundTaskSnapshot> {
+    return this.readHistory(request, async (projectId) => {
+      const session = await this.sessionForHistoryRead(request, projectId)
+      return this.sessionReadModel.backgroundTasks(
+        session?.projectId ?? projectId,
+        session?.sessionId ?? request.sessionId,
+        session
+      )
+    })
+  }
+
   // Returns current live state plus the bounded recent run window used by renderer consumers.
   async state(
     request: NotebookSessionStateRequest
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    return this.sessionLifecycle.runProjectOperation(
-      request,
-      async () => {
-        const requestedRunIds = request.runIds ?? []
-        if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
-          throw new Error(
-            `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
-          )
-        }
-        if (
-          request.historySummaryFrameId !== undefined &&
-          Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
-            NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
-        ) {
-          throw new Error(
-            `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
-          )
-        }
-        const runIds = [...new Set(requestedRunIds)]
-        const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
-        if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
-          throw new Error('Notebook history limit must be 1-100.')
-        if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
-          throw new Error('Notebook state history cursor is invalid.')
-        const projectId = resolveProjectId(request, resolveProjectId(this.options))
-        if (await isImportedResearchSession(this.options.dataRoot, projectId, request.sessionId)) {
-          return this.sessionReadModel.importedState(
-            request,
-            runIds,
-            request.historySummaryFrameId,
-            request.historyBefore,
-            historyLimit
-          )
-        }
-        const session = await this.sessionLifecycle.ensure(request)
-        // Project durable history only after the lane's binding commit settles, including reads
-        // that arrived just before shutdown closed session creation admission.
-        await this.runtimeBindingOwner.waitForWrites(notebookLaneKey(session.lane))
-        await this.runTerminalization.reconcilePending(session)
-        return this.sessionReadModel.state(
-          session,
+    return this.readHistory(request, async (projectId) => {
+      const requestedRunIds = request.runIds ?? []
+      if (requestedRunIds.length > NOTEBOOK_STATE_TARGET_RUN_LIMIT) {
+        throw new Error(
+          `Notebook state accepts at most ${NOTEBOOK_STATE_TARGET_RUN_LIMIT} targeted run IDs per request.`
+        )
+      }
+      if (
+        request.historySummaryFrameId !== undefined &&
+        Buffer.byteLength(request.historySummaryFrameId, 'utf8') >
+          NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES
+      ) {
+        throw new Error(
+          `Notebook state history summary Frame ID must not exceed ${NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES} UTF-8 bytes.`
+        )
+      }
+      const runIds = [...new Set(requestedRunIds)]
+      const historyLimit = request.historyLimit ?? NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+      if (!Number.isSafeInteger(historyLimit) || historyLimit < 1 || historyLimit > 100)
+        throw new Error('Notebook history limit must be 1-100.')
+      if (request.historyBefore && !isNotebookRunCursor(request.historyBefore))
+        throw new Error('Notebook state history cursor is invalid.')
+      const historyByteLimit =
+        request.previewHistory === true && request.historyBefore === undefined
+          ? NOTEBOOK_PREVIEW_HISTORY_BYTES
+          : undefined
+      const session = await this.sessionForHistoryRead(request, projectId)
+      if (!session) {
+        return this.sessionReadModel.importedState(
+          request,
           runIds,
           request.historySummaryFrameId,
           request.historyBefore,
-          historyLimit
+          historyLimit,
+          historyByteLimit
         )
-      },
-      false
-    )
+      }
+      return this.sessionReadModel.state(
+        session,
+        runIds,
+        request.historySummaryFrameId,
+        request.historyBefore,
+        historyLimit,
+        historyByteLimit
+      )
+    })
   }
 
   async inspectNamespace(request: NotebookNamespaceRequest): Promise<NotebookNamespaceSnapshot> {
@@ -2470,6 +3001,9 @@ class NotebookRuntimeService {
         }
       }
 
+      const admission = this.createExecutionAdmission()
+      await admission.prepare('restart')
+      admission.assertCurrent('restart')
       const session = await this.sessionLifecycle.ensure(request)
 
       if (!target) {
@@ -2812,6 +3346,13 @@ class NotebookRuntimeService {
     return this.recoveryCoordinator.status()
   }
 
+  async ensureEnvironmentStatusReady(): Promise<void> {
+    // Startup already reconciles kernel receipts. Reading status only needs its outcome and the
+    // current environment journal, even if an identifiable kernel still fences a future write.
+    if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
+    await this.recoveryCoordinator.ensureReady()
+  }
+
   async ensureRecovered(laneKey?: string): Promise<void> {
     if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
     if (laneKey) await this.kernelProcessLifecycle.ensureReadyForLane(laneKey)
@@ -2969,10 +3510,13 @@ class NotebookRuntimeService {
                 )
               if (this.shellProcessOwnership.hasReceipts())
                 await this.shellProcessOwnership.recover()
+              await this.repository.checkpointPendingRuns()
               await options.afterShutdown!()
             }
           : undefined
       )
+      if (!options?.afterShutdown && shell.reaped && sessions.reaped)
+        await this.repository.checkpointPendingRuns()
       if (shell.reaped && sessions.reaped && options?.legacyShellRecoveryToken) {
         try {
           this.shellProcessOwnership.archiveLegacyLaunches(options.legacyShellRecoveryToken)
@@ -2999,6 +3543,7 @@ class NotebookRuntimeService {
     } finally {
       // shutdownAll is reusable when an update/migration is cancelled.
       releaseFence()
+      this.idleReclamation.refresh()
     }
   }
 
@@ -3007,6 +3552,8 @@ class NotebookRuntimeService {
   // migration gates retain the reusable shutdown contract so a refused/cancelled flow can resume work.
   dispose(): Promise<{ reaped: boolean }> {
     if (this.disposalPromise) return this.disposalPromise
+    this.memoryPolicyDisposed = true
+    this.memoryPolicyUnsubscribe?.()
 
     // Close the terminal admission boundary before any asynchronous teardown starts. Existing holders
     // are released and queued acquisitions reject, so no package/environment operation can begin after
@@ -3049,8 +3596,8 @@ class NotebookRuntimeService {
           throw error
         }
       )
-    const disposal = Promise.allSettled([shutdown, recoveryDisposal, idleDisposal]).then(
-      ([shutdownResult, recoveryResult, idleResult]) => {
+    const disposal = Promise.allSettled([shutdown, recoveryDisposal, idleDisposal])
+      .then(async ([shutdownResult, recoveryResult, idleResult]) => {
         const failures = [shutdownResult, recoveryResult, idleResult]
           .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
           .map((result) => result.reason)
@@ -3061,9 +3608,15 @@ class NotebookRuntimeService {
             'Multiple notebook runtime resources failed to dispose.'
           )
         }
-        return (shutdownResult as PromiseFulfilledResult<{ reaped: boolean }>).value
-      }
-    )
+        const result = (shutdownResult as PromiseFulfilledResult<{ reaped: boolean }>).value
+        if (result.reaped) await this.repository.checkpointPendingRuns()
+        return result
+      })
+      .finally(async () => {
+        const policy = await this.memoryPolicyPromise?.catch(() => undefined)
+        this.memoryPolicyUnsubscribe?.()
+        policy?.dispose?.()
+      })
     this.disposalPromise = disposal
     return disposal
   }
@@ -3071,6 +3624,19 @@ class NotebookRuntimeService {
   // Lists sessions with a cell mid-execution, for the pre-migration active-session warning.
   getActiveNotebookSessions(): { projectId: string; sessionId: string }[] {
     return this.sessionLifecycle.activeSessions()
+  }
+
+  // Main-only original-owner handles; never serialized into Notebook or Session packages.
+  ownedResources(scope: { projectId?: string; sessionId?: string } = {}): NotebookOwnedResource[] {
+    return [
+      ...this.sessionLifecycle.resources(scope),
+      ...(this.shellProcess.resources?.() ?? []).filter(
+        (resource) =>
+          (scope.projectId === undefined || resource.projectId === scope.projectId) &&
+          (scope.sessionId === undefined || resource.sessionId === scope.sessionId)
+      ),
+      ...(this.options.externalNotebookResources?.(scope) ?? [])
+    ]
   }
 
   // Purely in-memory Project projection for renderer monitoring. Dormant Sessions have no kernel
@@ -3119,7 +3685,12 @@ class NotebookRuntimeService {
 }
 
 export { NotebookControlCompletionCapturedError } from './execution-owner'
-export { NotebookRuntimeService, resolveDefaultExecutorOptions, resolveLoopScriptPaths }
+export {
+  NotebookRuntimeService,
+  projectNotebookMemoryPolicyState,
+  resolveDefaultExecutorOptions,
+  resolveLoopScriptPaths
+}
 export type {
   InspectPackagesRequest,
   InspectPackagesResult,
@@ -3130,6 +3701,7 @@ export type {
   NotebookExecutor,
   NotebookExecutorLifecycleCallbacks,
   NotebookHandoffContext,
+  NotebookMemoryRejectionContext,
   NotebookRuntimeServiceCallbacks,
   NotebookRuntimeServiceOptions,
   NotebookShellResult

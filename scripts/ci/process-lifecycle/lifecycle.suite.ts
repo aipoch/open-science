@@ -25,12 +25,11 @@ import {
   spawnMainAgentProcess,
   closeMainAgentProcessOwnership
 } from '../../../src/main/acp/main-agent-process-ownership'
-import { spawnClaudeAgentAcp } from '../../../src/main/acp/agent-process'
 import { AcpAgentConnectionAdapter } from '../../../src/main/acp/agent-connection-adapter'
 import { AcpConnectionResourceOwner } from '../../../src/main/acp/connection-resource-owner'
 import { AcpBackendGenerationOwner } from '../../../src/main/acp/backend-generation-owner'
 import { startOpenCodeService } from '../../../src/main/acp/opencode-service'
-import { claudeCodeFramework } from '../../../src/main/agent-framework/claude-code'
+import { harnessFramework } from '../../../src/main/agent-framework/harness'
 import { opencodeFramework } from '../../../src/main/agent-framework/opencode'
 import { codexFramework } from '../../../src/main/agent-framework/codex'
 
@@ -206,22 +205,13 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
               root,
               `require('node:child_process').spawn(process.execPath, [${JSON.stringify(descendant.entry)}], { stdio: 'ignore' }); setInterval(() => {}, 1000)`
             )
-            const framework = mode.startsWith('codex-') ? codexFramework : claudeCodeFramework
+            const framework = mode.startsWith('codex-') ? codexFramework : harnessFramework
             const child = await spawnMainAgentProcess(framework.id, (ownedSpawn) =>
-              framework.id === 'codex'
-                ? framework.spawn({
-                    executablePath: target.entry,
-                    args: [],
-                    env: {},
-                    spawnProcess: ownedSpawn
-                  })
-                : spawnClaudeAgentAcp({
-                    executablePath: process.execPath,
-                    envOverrides: { CLAUDE_CONFIG_DIR: root },
-                    // Substitute the external CLI workload, retaining production spawn preparation/ownership.
-                    spawnProcess: (command, _args, options) =>
-                      ownedSpawn!(command, [target.entry], options)
-                  })
+              ownedSpawn!(process.execPath, [target.entry], {
+                stdio: 'pipe',
+                env: process.env,
+                windowsHide: true
+              })
             )
             await target.observe(observer, child.pid)
             await target.release()

@@ -50,6 +50,7 @@ type RestrictedInferenceRunnerOptions = Readonly<{
   // Use the supplied task contract without Workspace instructions, skills or client tools.
   taskOnly?: boolean
   allowNativeCodexSubscription?: boolean
+  allowCodeBuddySubscription?: boolean
   // Validation must exercise the configured route, including native Responses.
   preserveModelRoute?: boolean
   // Automatic Film retries must not overlap a disposable runtime whose exit is unconfirmed.
@@ -281,6 +282,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       ensureActive()
       const resolvedBackend = await prepareRestrictedBackend(backend, profileRoot, {
         taskOnly: this.options.taskOnly,
+        allowCodeBuddySubscription: this.options.allowCodeBuddySubscription,
         agentName: input.agentName,
         description: input.description,
         systemPrompt: input.systemPrompt,
@@ -312,9 +314,10 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
         appVersion: this.options.appVersion,
         separateProviderNotices: true,
         recoverOutputTruncation: true,
-        sessionCapabilityPolicy: this.options.taskOnly
-          ? { role: 'restricted-inference', delegation: 'denied' }
-          : undefined,
+        sessionCapabilityPolicy:
+          this.options.taskOnly || resolvedBackend.framework.id === 'open-science-agent'
+            ? { role: 'restricted-inference', delegation: 'denied' }
+            : undefined,
         defaultCwd: cwd,
         resolveBackend: () => {
           backendTransferred = true

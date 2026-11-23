@@ -16,6 +16,7 @@ import type { RuntimeDirectoryLease } from './runtime-ownership'
 import { RuntimeStopError, isRuntimeProcessAlive } from './runtime-stop-confirmation'
 import type { CreateStrategyOptions } from './update/create-strategy'
 import {
+  captureInstallationHelperExit,
   advanceInstallationUpdate,
   advanceInstallationUpdateAsync,
   beginInstallationUpdateAsync,
@@ -101,6 +102,7 @@ export function createDesktopUpdateIntegration(options: {
   let pending: Promise<unknown> | undefined
   let cancellation = new AbortController()
   let cancelRequested = false
+  let waitForHelpers: ReturnType<typeof captureInstallationHelperExit> | undefined
   const checkCancellation = (): void => {
     if (cancelRequested)
       throw new UpdateLifecycleError('user-cancelled', 'Installation was cancelled before handoff.')
@@ -611,6 +613,7 @@ export function createDesktopUpdateIntegration(options: {
           checkCancellation()
           await options.flushRenderer?.('final')
           checkCancellation()
+          waitForHelpers = captureInstallationHelperExit(options.location, record.runtime)
           record = advanceInstallationUpdate(options.location, record.operationId, 'stopping')
           publish()
           const lease = await options.client().stopRuntime('update')
@@ -670,6 +673,10 @@ export function createDesktopUpdateIntegration(options: {
         }
         if (!record)
           throw new UpdateLifecycleError('install-failed', 'Installation protection is missing.')
+        await (waitForHelpers ?? captureInstallationHelperExit(options.location, record.runtime))(
+          cancellation.signal
+        )
+        checkCancellation()
         record = await advanceInstallationUpdateAsync(
           options.location,
           record.operationId,

@@ -10,6 +10,7 @@ export const usePackageOperationStore = create<{
   browserReceipt?: BrowserPackageTransfer
   errorKind?: 'fork'
   useCaseFailure?: string
+  useCaseFailureMessage?: string
   useCaseSlug?: string
   importError?: string
   setImportError: (error: string | undefined) => void
@@ -19,7 +20,10 @@ export const usePackageOperationStore = create<{
   excludedStorageKeys: string[] | null
   selectionPreset: 'full' | 'compact' | 'custom'
   threshold: string
+  orgCaseDraft: { name: string; description: string } | null
+  retryOrgCaseUpload: boolean
   setThreshold: (threshold: string) => void
+  setOrgCaseDraft: (draft: { name: string; description: string } | null) => void
   receive: (operation: PackageOperationSnapshot | null) => void
   setOpen: (open: boolean) => void
 }>((set) => ({
@@ -29,7 +33,10 @@ export const usePackageOperationStore = create<{
   excludedStorageKeys: null,
   selectionPreset: 'compact',
   threshold: '256',
+  orgCaseDraft: null,
+  retryOrgCaseUpload: false,
   setThreshold: (threshold) => set({ threshold }),
+  setOrgCaseDraft: (orgCaseDraft) => set({ orgCaseDraft }),
   dismiss: () =>
     set((state) =>
       packageOperationActive(state.operation)
@@ -58,6 +65,7 @@ export const usePackageOperationStore = create<{
           ? newReceipt
           : undefined
       const retry =
+        !state.dismissedId &&
         state.operation?.state === 'failed' &&
         operation?.kind === 'export' &&
         state.operation.kind === 'export' &&
@@ -101,6 +109,18 @@ export const usePackageOperationStore = create<{
               ? 'custom'
               : preset,
         threshold: same || retry ? state.threshold : '256',
+        orgCaseDraft:
+          operation?.state === 'succeeded' || operation?.state === 'cancelled'
+            ? null
+            : same || retry
+              ? state.orgCaseDraft
+              : null,
+        retryOrgCaseUpload:
+          retry && state.operation?.exportDestination === 'org-case'
+            ? true
+            : same
+              ? state.retryOrgCaseUpload
+              : false,
         open: operation?.useCaseDownload
           ? same && state.open
           : state.operation?.useCaseDownload &&

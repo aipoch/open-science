@@ -397,6 +397,12 @@ export type ArtifactReproducibilityBarrierReason =
   | 'advisory-boundary'
   | 'ambiguous-activity-order'
 
+export type ArtifactReproducibilityFailedStep = Readonly<{
+  stepId: string
+  runIndex: number
+  execution: 'not-started' | 'may-have-run'
+}>
+
 export type ArtifactReproducibilityCheckLog = ArtifactReproducibilityCheckLogBase &
   (
     | {

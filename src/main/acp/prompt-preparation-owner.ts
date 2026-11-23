@@ -22,6 +22,7 @@ import type { NotebookPromptInput } from '../../shared/notebook'
 import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../shared/uploads'
 import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework/types'
+import { HARNESS_USER_TEXT_RANGE } from '../harness-acp/config'
 import type { NotebookHandoffContext } from '../notebook/session-read-model'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
@@ -116,6 +117,7 @@ type AcpPromptPreparationInput = Readonly<{
   projectId: string
   fallbackPromptMessageId?: string
   classificationEnabled?: boolean
+  markUserPromptText?: boolean
   bridgeSkillsAvailable: boolean
   skillImportEnabled: boolean
   skillImportTurnToken: string
@@ -619,6 +621,36 @@ class AcpPromptPreparationOwner {
       )
       if (!contextEstimateCurrent) return cancelPrepared()
       if (await cancelled()) return cancelPrepared()
+
+      // Mark the exact user-authored suffix of the composed text. Omit the marker if an
+      // adapter rewrote the block or if the user's text no longer has a verified range.
+      if (
+        input.markUserPromptText &&
+        input.backend.framework.id === 'open-science-agent' &&
+        input.request.text &&
+        selectedContent.text.endsWith(input.request.text)
+      ) {
+        const blocks: ContentBlock[] =
+          typeof providerContent === 'string'
+            ? [{ type: 'text', text: providerContent }]
+            : providerContent
+        const first = blocks[0]
+        if (first?.type === 'text' && first.text === promptText) {
+          providerContent = [
+            {
+              ...first,
+              _meta: {
+                ...first._meta,
+                [HARNESS_USER_TEXT_RANGE]: [
+                  promptText.length - input.request.text.length,
+                  promptText.length
+                ]
+              }
+            },
+            ...blocks.slice(1)
+          ]
+        }
+      }
 
       let transferred = false
       return Object.freeze({

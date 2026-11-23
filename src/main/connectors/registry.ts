@@ -4,6 +4,7 @@ import { ConnectorArgumentsError, createConnectorRegistry } from '@aipoch/connec
 import type { ConnectorRegistry, ToolDescriptor } from '@aipoch/connector-core'
 import { publishUserFile } from '../user-file-publisher'
 import { MOLECULE_PREVIEW_TOOL } from './molecule-preview-tool'
+import type { ConnectorSkillTool } from './skill-document-renderer'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -205,6 +206,12 @@ lazyLoaders.set(
 
 const registries = new Map<string, ConnectorRegistry>()
 const descriptorOwners = new Map<ToolDescriptor, ConnectorRegistry>()
+
+// Skill documents need descriptions at startup. Compile argument validators on registry access.
+export const getConnectorSkillTools = (connector: string): readonly ConnectorSkillTool[] =>
+  lazyLoaders
+    .get(connector)?.()
+    .filter((tool) => tool.connector === connector) ?? []
 
 const registryFor = (connector: string): ConnectorRegistry | undefined => {
   const loader = lazyLoaders.get(connector)

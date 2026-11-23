@@ -166,7 +166,7 @@ export const listProviderModels = async (
       prefix: target.vendorId === 'anthropic' ? '' : 'Bearer '
     }
   }
-  if (target.options && options.auth !== 'none' && !target.key)
+  if (target.options && options.auth !== 'none' && options.auth.required !== false && !target.key)
     return { ok: false, code: 'missing-key', message: 'API key is required.' }
   const controller = new AbortController()
   const signal = callerSignal
@@ -304,7 +304,16 @@ export const listProviderModels = async (
             `The vendor returned a model ID longer than ${limits.modelIdCharacters} characters.`
           )
         if (options.filter && fieldValue(item, options.filter) !== true) continue
+        const kiloFree = target.vendorId === 'kilo' ? at(item, 'isFree') === true : undefined
+        if (target.vendorId === 'kilo') {
+          // The public catalog includes paid and media models. Anonymous access is limited
+          // to free text models.
+          if (!target.key && !kiloFree) continue
+          const outputs = at(item, 'architecture.output_modalities')
+          if (!Array.isArray(outputs) || outputs.length !== 1 || outputs[0] !== 'text') continue
+        }
         const model = describe(item, id, options.fields)
+        if (kiloFree !== undefined) model.supportsAnonymousAccess = kiloFree
         model.source = root.toString()
         if (options.knownModelsOnly && !target.knownModelIds?.includes(id)) model.routes = {}
         if (options.routes) {

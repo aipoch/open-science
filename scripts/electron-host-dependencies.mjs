@@ -37,7 +37,66 @@ export const backendOnlyElectronDependencies = [
   '@tesseract.js-data/chi_sim'
 ]
 
-export function assertElectronHostDependencies(specifiers, root) {
+// Audited duplicate packages in the Electron archive. i18next still needs @babel/runtime.
+const auditedBackendDependencies = [
+  '@babel/code-frame',
+  '@babel/compat-data',
+  '@babel/core',
+  '@babel/generator',
+  '@babel/helper-compilation-targets',
+  '@babel/helper-globals',
+  '@babel/helper-module-imports',
+  '@babel/helper-module-transforms',
+  '@babel/helper-plugin-utils',
+  '@babel/helper-string-parser',
+  '@babel/helper-validator-identifier',
+  '@babel/helper-validator-option',
+  '@babel/helpers',
+  '@babel/parser',
+  '@babel/plugin-transform-modules-commonjs',
+  '@babel/template',
+  '@babel/traverse',
+  '@babel/types',
+  '@jridgewell/gen-mapping',
+  '@jridgewell/remapping',
+  '@jridgewell/resolve-uri',
+  '@jridgewell/sourcemap-codec',
+  '@jridgewell/trace-mapping',
+  'baseline-browser-mapping',
+  'browserslist',
+  'caniuse-lite',
+  'convert-source-map',
+  'diff',
+  'electron-to-chromium',
+  'entities',
+  'escalade',
+  'gensync',
+  'js-tokens',
+  'jsesc',
+  'json5',
+  'node-releases',
+  'parse5',
+  'picocolors',
+  'update-browserslist-db',
+  'zlibjs'
+]
+
+export function platformBackendOnlyElectronDependencies(platform, arch) {
+  return platform === 'darwin' || (platform === 'win32' && arch === 'x64')
+    ? auditedBackendDependencies
+    : []
+}
+
+export function assertElectronHostDependencies(
+  specifiers,
+  root,
+  platform = process.platform,
+  arch = process.arch
+) {
+  const excluded = new Set([
+    ...backendOnlyElectronDependencies,
+    ...platformBackendOnlyElectronDependencies(platform, arch)
+  ])
   const visited = new Set()
   const visit = (specifier, from, chain) => {
     if (
@@ -50,7 +109,7 @@ export function assertElectronHostDependencies(specifiers, root) {
       ? specifier.split('/').slice(0, 2).join('/')
       : specifier.split('/')[0]
     if (name === 'electron') return
-    if (backendOnlyElectronDependencies.includes(name))
+    if (excluded.has(name))
       throw new Error(
         `Electron host requires backend-only dependency: ${[...chain, name].join(' -> ')}`
       )

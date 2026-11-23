@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -35,9 +36,14 @@ export const createArtifactVersionRequest = (
   ...overrides
 })
 
-// Cache bytes only within this isolated test module. Every fixture still owns a fresh directory,
-// database and client; migration/upgrade behavior is covered by the database module's tests.
-let emptyDatabase: Promise<Buffer> | undefined
+// Cache a disconnected migrated SQLite file only within this isolated test module. Every fixture
+// still owns a fresh directory, database and client; migration/upgrade behavior is covered by the
+// database module's tests.
+let emptyDatabase: Promise<string> | undefined
+const databaseSeeds = new Set<string>()
+process.once('exit', () => {
+  for (const seed of databaseSeeds) rmSync(seed, { recursive: true, force: true })
+})
 
 export const createProvenanceTestFixture = async (
   options: Pick<ArtifactProvenanceRepositoryOptions, 'readLiteratureItems'> = {}
@@ -57,15 +63,25 @@ export const createProvenanceTestFixture = async (
   try {
     const databasePath = join(storageRoot, 'open-science.db')
     emptyDatabase ??= (async () => {
-      await migrateApplicationDatabase(client)
+      const seedRoot = await mkdtemp(join(tmpdir(), 'os-p-seed-'))
+      databaseSeeds.add(seedRoot)
+      const seedClient = createProjectDbClient(seedRoot)
+      try {
+        await migrateApplicationDatabase(seedClient)
+      } catch (error) {
+        await seedClient.$disconnect().catch(() => undefined)
+        databaseSeeds.delete(seedRoot)
+        await rm(seedRoot, { recursive: true, force: true })
+        throw error
+      }
       // Disconnect before copying so SQLite has flushed/closed any journal or WAL handles.
-      await client.$disconnect()
-      return readFile(databasePath)
+      await seedClient.$disconnect()
+      return join(seedRoot, 'open-science.db')
     })().catch((error) => {
       emptyDatabase = undefined
       throw error
     })
-    await writeFile(databasePath, await emptyDatabase)
+    await copyFile(await emptyDatabase, databasePath)
   } catch (error) {
     await client.$disconnect().catch(() => undefined)
     await rm(storageRoot, { recursive: true, force: true })

@@ -20,6 +20,7 @@ type ProviderCommands = Pick<
   | 'setAgentFramework'
   | 'validateProvider'
   | 'saveValidatedProvider'
+  | 'addOnboardingKiloProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
   | 'codeBuddyAccount'
@@ -103,6 +104,7 @@ const createCommands = (): CommandMocks => ({
   setActiveProvider: vi.fn().mockResolvedValue(snapshot()),
   setAgentFramework: vi.fn().mockResolvedValue(snapshot()),
   saveValidatedProvider: vi.fn(),
+  addOnboardingKiloProvider: vi.fn(),
   validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
   cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
   cancelClaudeLogin: vi.fn().mockResolvedValue(undefined),
@@ -318,16 +320,16 @@ describe('provider auth slice: persistence and validation', () => {
     expect(refreshPreflight).not.toHaveBeenCalled()
   })
 
-  it('activates a saved provider even when its connectivity probe is advisory-failed', async () => {
+  it('keeps the active model when the manual onboarding connection fails', async () => {
     const validation = { ok: false, category: 'network' } satisfies ValidateProviderResult
-    const saveProvider = vi.fn().mockResolvedValue({ providerId: 'new', validation })
+    const saveValidatedProvider = vi.fn().mockResolvedValue({ validation })
     const setActiveProvider = vi.fn().mockResolvedValue(undefined)
-    store.setState({ saveProvider, setActiveProvider })
+    store.setState({ saveValidatedProvider, setActiveProvider })
 
     await expect(
       store.getState().saveAndActivateProvider({ type: 'custom', name: 'new', model: ' model-a ' })
-    ).resolves.toEqual({ providerId: 'new', validation })
-    expect(setActiveProvider).toHaveBeenCalledWith('new', 'model-a')
+    ).resolves.toEqual({ providerId: '', validation })
+    expect(setActiveProvider).not.toHaveBeenCalled()
   })
 
   it('refreshes saved validation outcomes but leaves draft validation projection untouched', async () => {

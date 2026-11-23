@@ -47,6 +47,8 @@ import {
 } from '../storage/migration-state'
 import { createNotebookArtifactSourceScopeProvider } from './artifact-source-scope'
 import { NotebookLocalRpcServer } from './local-rpc-server'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
+import { NotebookExecutionIntent, notebookExecutionIntent } from './execution-intent'
 import {
   NotebookControlCompletionCapturedError,
   NotebookRuntimeService,
@@ -123,9 +125,69 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('activates the installed connection only for its current first-send owner', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project'
+    })
+    const execute = vi.spyOn(service, 'executeControl').mockImplementation(async () => {
+      throw new Error('admitted')
+    })
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    try {
+      const connection = await server.issueSessionConnection('session', 'project', 'root')
+      const prepare = connection.prepareInitialExecution!
+      const intent = (): NotebookExecutionIntent => {
+        const value = service.createExecutionIntent({ projectId: 'project', sessionId: 'session' })
+        value.prepareUserExecution()
+        return value
+      }
+      const dispatch = (): Promise<Response> =>
+        fetchLocalRpc(
+          connection,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${connection.token}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              method: 'executeControl',
+              params: { sessionId: 'session', workspaceCwd: root, code: 'return 1' }
+            })
+          },
+          'initial Notebook authority'
+        )
+      await dispatch()
+      expect(execute).not.toHaveBeenCalled()
+      expect(() =>
+        prepare(new NotebookExecutionIntent({ projectId: 'other', sessionId: 'session' }))
+      ).toThrow('does not belong')
+      const cancelled = prepare(intent())
+      expect((await dispatch()).status).toBe(409)
+      cancelled.release()
+      const current = prepare(intent())
+      expect(() => cancelled.commit()).toThrow('superseded')
+      current.commit()
+      cancelled.release()
+      expect((await dispatch()).status).toBe(500)
+      expect(execute).toHaveBeenCalledTimes(1)
+      await server.issueSessionConnection('session', 'project', 'root')
+      expect(() => prepare(intent())).toThrow('superseded')
+      expect((await dispatch()).status).toBe(401)
+    } finally {
+      await server.close()
+      await service.dispose()
+    }
+  })
+
   it('retries failed delegated lane cleanup without restoring its revoked capability', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'project',
@@ -175,6 +237,7 @@ describe('notebook local RPC server', () => {
     const missingDataRoot = join(parentRoot, 'missing-data-root')
     initializeDataRootWriteAvailability(true)
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: parentRoot,
       dataRoot: missingDataRoot,
       projectId: 'default-project',
@@ -226,11 +289,13 @@ describe('notebook local RPC server', () => {
 
   it.each(
     (['execute', 'runCell', 'executeControl', 'executeShell', 'restart'] as const).flatMap(
-      (method) => (['ended', 'replaced', 'active'] as const).map((turn) => ({ method, turn }))
+      (method) =>
+        (['ended', 'replaced', 'activated', 'active'] as const).map((turn) => ({ method, turn }))
     )
   )('scopes a slow $method body to its $turn turn', async ({ method, turn }) => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -243,7 +308,9 @@ describe('notebook local RPC server', () => {
     const connection = await server.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     const binding = {
       ownerExecutionId: 'turn-1',
@@ -297,6 +364,16 @@ describe('notebook local RPC server', () => {
     try {
       request.write(payload.slice(0, -1))
       await accepted
+      if (turn === 'activated') {
+        const activation = connection.prepareInitialExecution?.(
+          service.createExecutionIntent({
+            projectId: 'default-project',
+            sessionId: 'session-1'
+          })
+        )
+        expect(activation).toBeDefined()
+        activation!.commit()
+      }
       if (turn === 'ended') await server.clearArtifactTurnBinding('session-1', 'turn-1')
       if (turn === 'replaced') {
         server.setArtifactTurnBinding('session-1', { ...binding, ownerExecutionId: 'turn-2' })
@@ -332,6 +409,7 @@ describe('notebook local RPC server', () => {
     const finished = createDeferred()
     const heartbeat = join(root, 'cancellation-heartbeat.txt')
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -380,13 +458,19 @@ describe('notebook local RPC server', () => {
             messageBranchId: 'child-branch',
             runtimeSegmentId: 'child-runtime',
             promptMessageId: 'child-prompt',
+            executionIntent: service.createExecutionIntent({
+              projectId: 'default-project',
+              sessionId: 'session-1'
+            }),
             workspaceCwd: root,
             isAttemptWritable: () => true
           })
         : await server.issueSessionConnection(
             'session-1',
             'default-project',
-            'root-frame-session-1'
+            'root-frame-session-1',
+            true,
+            service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
           )
     server.setArtifactTurnBinding('session-1', {
       ownerExecutionId: 'turn-1',
@@ -500,6 +584,7 @@ describe('notebook local RPC server', () => {
       { cause: original }
     )
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -523,7 +608,9 @@ describe('notebook local RPC server', () => {
     const connection = await server.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     const bind = (id: string): void =>
       server.setArtifactTurnBinding('session-1', {
@@ -607,6 +694,7 @@ describe('notebook local RPC server', () => {
     const failStop = createDeferred()
     const stopError = new NotebookExecutionStopError()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -626,7 +714,9 @@ describe('notebook local RPC server', () => {
     const connection = await server.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     server.setArtifactTurnBinding('session-1', {
       ownerExecutionId: 'turn-1',
@@ -714,6 +804,7 @@ describe('notebook local RPC server', () => {
       const root = await createStorageRoot()
       const execute = vi.fn()
       const service = new NotebookRuntimeService({
+        memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
@@ -725,7 +816,9 @@ describe('notebook local RPC server', () => {
       const connection = await server.issueSessionConnection(
         'session-1',
         'default-project',
-        'root-frame-session-1'
+        'root-frame-session-1',
+        true,
+        service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
       )
       server.setArtifactTurnBinding('session-1', {
         ownerExecutionId: 'turn-1',
@@ -796,7 +889,9 @@ describe('notebook local RPC server', () => {
     const connection = await server.issueSessionConnection(
       'session-1',
       'project-1',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      new NotebookExecutionIntent({ projectId: 'project-1', sessionId: 'session-1' })
     )
 
     try {
@@ -1433,6 +1528,7 @@ describe('notebook local RPC server', () => {
       { role: 'main' },
       '/trusted/workspace'
     )
+    let invocationNonce: string | undefined
     const call = (params: Record<string, unknown>): Promise<Response> =>
       fetchLocalRpc(
         connection,
@@ -1440,7 +1536,8 @@ describe('notebook local RPC server', () => {
           method: 'POST',
           headers: {
             authorization: `Bearer ${connection.token}`,
-            'content-type': 'application/json'
+            'content-type': 'application/json',
+            ...(invocationNonce ? { 'x-open-science-control-invocation': invocationNonce } : {})
           },
           body: JSON.stringify({ method: 'viewImageCall', params })
         },
@@ -1453,7 +1550,8 @@ describe('notebook local RPC server', () => {
           method: 'POST',
           headers: {
             authorization: `Bearer ${connection.token}`,
-            'content-type': 'application/json'
+            'content-type': 'application/json',
+            ...(invocationNonce ? { 'x-open-science-control-invocation': invocationNonce } : {})
           },
           body: JSON.stringify({ method: 'capabilitiesCall', params: {} })
         },
@@ -1466,7 +1564,8 @@ describe('notebook local RPC server', () => {
           method: 'POST',
           headers: {
             authorization: `Bearer ${connection.token}`,
-            'content-type': 'application/json'
+            'content-type': 'application/json',
+            ...(invocationNonce ? { 'x-open-science-control-invocation': invocationNonce } : {})
           },
           body: JSON.stringify({
             method: 'hostSdkHelp',
@@ -1491,6 +1590,7 @@ describe('notebook local RPC server', () => {
         controlInvocationGeneration: 3,
         toolInvocationId: 'run-1'
       })
+      invocationNonce = release.nonce
       await expect(capabilities().then((response) => response.json())).resolves.toMatchObject({
         result: { viewImage: true }
       })
@@ -1634,7 +1734,9 @@ describe('notebook local RPC server', () => {
     const connection = await server.issueSessionConnection(
       'session-1',
       'project-1',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      new NotebookExecutionIntent({ projectId: 'project-1', sessionId: 'session-1' })
     )
 
     try {
@@ -1671,6 +1773,27 @@ describe('notebook local RPC server', () => {
   })
 
   it('injects only a fresh unambiguous app-owned execution authorization', async () => {
+    // Each trusted user turn owns one intent; repeated RPC dispatches keep that reference.
+    const executionIntents = new Map<string, NotebookExecutionIntent>(
+      [
+        'fresh',
+        'missing',
+        'stale',
+        'duplicate',
+        'mismatch',
+        'helper-mismatch',
+        'helper-normalized',
+        'repl-default',
+        'repl-background-mismatch',
+        'repl-background',
+        'shell-default',
+        'shell-background-mismatch',
+        'shell-background'
+      ].map((sessionId) => [
+        sessionId,
+        new NotebookExecutionIntent({ projectId: 'project-1', sessionId })
+      ])
+    )
     const server = new NotebookLocalRpcServer({
       execute: vi.fn(async (request: unknown) => request),
       executeControl: vi.fn(async (request: unknown) => request),
@@ -1687,7 +1810,9 @@ describe('notebook local RPC server', () => {
       const connection = await server.issueSessionConnection(
         sessionId,
         'project-1',
-        `root-frame-${sessionId}`
+        `root-frame-${sessionId}`,
+        true,
+        executionIntents.get(sessionId)
       )
       connections.push(connection)
       const response = await fetchLocalRpc(
@@ -1834,7 +1959,9 @@ describe('notebook local RPC server', () => {
       const replConnection = await server.issueSessionConnection(
         'repl-default',
         'project-1',
-        'root-frame-repl-default'
+        'root-frame-repl-default',
+        true,
+        executionIntents.get('repl-default')
       )
       connections.push(replConnection)
       const replResponse = await fetchLocalRpc(
@@ -1896,7 +2023,9 @@ describe('notebook local RPC server', () => {
       const mismatchConnection = await server.issueSessionConnection(
         'repl-background-mismatch',
         'project-1',
-        'root-frame-repl-background-mismatch'
+        'root-frame-repl-background-mismatch',
+        true,
+        executionIntents.get('repl-background-mismatch')
       )
       connections.push(mismatchConnection)
       const backgroundMismatch = await fetchLocalRpc(
@@ -1934,7 +2063,9 @@ describe('notebook local RPC server', () => {
       const backgroundConnection = await server.issueSessionConnection(
         'repl-background',
         'project-1',
-        'root-frame-repl-background'
+        'root-frame-repl-background',
+        true,
+        executionIntents.get('repl-background')
       )
       connections.push(backgroundConnection)
       const backgroundResponse = await fetchLocalRpc(
@@ -1973,7 +2104,9 @@ describe('notebook local RPC server', () => {
       const shellConnection = await server.issueSessionConnection(
         'shell-default',
         'project-1',
-        'root-frame-shell-default'
+        'root-frame-shell-default',
+        true,
+        executionIntents.get('shell-default')
       )
       connections.push(shellConnection)
       const shellResponse = await fetchLocalRpc(
@@ -1990,7 +2123,7 @@ describe('notebook local RPC server', () => {
               sessionId: 'shell-default',
               workspaceCwd: '/workspace',
               command: 'echo hi',
-              timeoutMs: 120_000
+              timeoutMs: 300_000
             }
           })
         },
@@ -2014,7 +2147,7 @@ describe('notebook local RPC server', () => {
               sessionId: 'shell-default',
               workspaceCwd: '/workspace',
               command: 'echo hi',
-              timeoutMs: 120_000
+              timeoutMs: 300_000
             }
           })
         },
@@ -2035,7 +2168,9 @@ describe('notebook local RPC server', () => {
       const shellMismatchConnection = await server.issueSessionConnection(
         'shell-background-mismatch',
         'project-1',
-        'root-frame-shell-background-mismatch'
+        'root-frame-shell-background-mismatch',
+        true,
+        executionIntents.get('shell-background-mismatch')
       )
       connections.push(shellMismatchConnection)
       const shellBackgroundMismatch = await fetchLocalRpc(
@@ -2072,7 +2207,9 @@ describe('notebook local RPC server', () => {
       const shellBackgroundConnection = await server.issueSessionConnection(
         'shell-background',
         'project-1',
-        'root-frame-shell-background'
+        'root-frame-shell-background',
+        true,
+        executionIntents.get('shell-background')
       )
       connections.push(shellBackgroundConnection)
       const dispatchShellBackground = async (): Promise<Record<string, unknown>> => {
@@ -2116,7 +2253,13 @@ describe('notebook local RPC server', () => {
   it('does not claim a delayed execution authorization after the owning turn is replaced', async () => {
     const execute = vi.fn(async (request: unknown) => request)
     const server = new NotebookLocalRpcServer({ execute } as never, { transport: 'tcp' })
-    const connection = await server.issueSessionConnection('session-1', 'project-1', 'root-frame-1')
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'project-1',
+      'root-frame-1',
+      true,
+      new NotebookExecutionIntent({ projectId: 'project-1', sessionId: 'session-1' })
+    )
     const provenanceContext: NotebookRunProvenanceContext = {
       rootFrameId: 'root-frame-1',
       agentFrameId: 'root-frame-1',
@@ -2185,6 +2328,7 @@ describe('notebook local RPC server', () => {
   it('does not let a root Frame capability write through another active Frame lane', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2195,7 +2339,9 @@ describe('notebook local RPC server', () => {
     const connection = await server.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     server.setArtifactTurnBinding('session-1', {
       ownerExecutionId: 'execution-1',
@@ -2240,6 +2386,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const call = vi.fn(async (input: unknown) => input)
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2300,6 +2447,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     let callSignal: AbortSignal | undefined
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2356,6 +2504,7 @@ describe('notebook local RPC server', () => {
       const callStarted = createDeferred<AbortSignal>()
       const pendingCall = createDeferred<unknown>()
       const service = new NotebookRuntimeService({
+        memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
@@ -2408,6 +2557,7 @@ describe('notebook local RPC server', () => {
     const callStarted = createDeferred<AbortSignal>()
     const pendingCall = createDeferred<unknown>()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2478,7 +2628,13 @@ describe('notebook local RPC server', () => {
       (method === 'execute' ? { execute } : { executeControl: execute }) as never,
       { transport }
     )
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1',
+      true,
+      new NotebookExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
+    )
     const disconnect = new AbortController()
 
     try {
@@ -2524,7 +2680,13 @@ describe('notebook local RPC server', () => {
       const server = new NotebookLocalRpcServer({ [method]: operation } as never, {
         transport: 'tcp'
       })
-      const connection = await server.ensureStarted()
+      const connection = await server.issueSessionConnection(
+        'session-1',
+        'default-project',
+        'root-frame-session-1',
+        true,
+        new NotebookExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
+      )
       const disconnect = new AbortController()
 
       try {
@@ -2568,6 +2730,7 @@ describe('notebook local RPC server', () => {
     const callStarted = createDeferred<AbortSignal>()
     const pendingCall = createDeferred<unknown>()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2628,6 +2791,7 @@ describe('notebook local RPC server', () => {
     const callStarted = createDeferred<AbortSignal>()
     const pendingCall = createDeferred<unknown>()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2700,6 +2864,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const call = vi.fn(async () => undefined)
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2760,6 +2925,7 @@ describe('notebook local RPC server', () => {
     const callStarted = createDeferred<AbortSignal>()
     const pendingCall = createDeferred<unknown>()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2822,6 +2988,7 @@ describe('notebook local RPC server', () => {
     const callStarted = createDeferred<void>()
     const pendingCall = createDeferred<unknown>()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2882,6 +3049,7 @@ describe('notebook local RPC server', () => {
       const callStarted = createDeferred<void>()
       const pendingCall = createDeferred<unknown>()
       const service = new NotebookRuntimeService({
+        memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
@@ -2951,6 +3119,7 @@ describe('notebook local RPC server', () => {
     async (transport) => {
       const root = await createStorageRoot()
       const service = new NotebookRuntimeService({
+        memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
@@ -3002,6 +3171,7 @@ describe('notebook local RPC server', () => {
   it('preserves structured Plan error codes across the session-bound RPC transport', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3047,6 +3217,7 @@ describe('notebook local RPC server', () => {
   it('propagates a local socket through every issued capability connection', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3096,6 +3267,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3136,7 +3308,13 @@ describe('notebook local RPC server', () => {
       resolveSpecialistSkillIds
     })
     server.registerSessionSpecialist('session-1', 'specialist-1')
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
+    )
 
     try {
       const unauthorized = await fetch(connection.endpoint, {
@@ -3153,7 +3331,7 @@ describe('notebook local RPC server', () => {
       const authorized = await fetch(connection.endpoint, {
         method: 'POST',
         headers: {
-          authorization: 'Bearer secret-token',
+          authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -3196,6 +3374,7 @@ describe('notebook local RPC server', () => {
     await writeFile(interpreter, '', 'utf8')
     writeReadyMarker(runtimeRoot, DEFAULT_ENV_VERSION, 'ready')
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3259,6 +3438,7 @@ describe('notebook local RPC server', () => {
   it('maps pre-start notebook session aliases to the final ACP session id', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3280,7 +3460,16 @@ describe('notebook local RPC server', () => {
       transport: 'tcp',
       token: 'secret-token'
     })
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection(
+      'notebook-session-1',
+      'default-project',
+      'root-frame-notebook-session-1',
+      true,
+      service.createExecutionIntent({
+        projectId: 'default-project',
+        sessionId: 'notebook-session-1'
+      })
+    )
 
     server.registerSessionAlias('notebook-session-1', 'real-session-1')
 
@@ -3288,7 +3477,7 @@ describe('notebook local RPC server', () => {
       const response = await fetch(connection.endpoint, {
         method: 'POST',
         headers: {
-          authorization: 'Bearer secret-token',
+          authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -3316,6 +3505,7 @@ describe('notebook local RPC server', () => {
     const connectorCall = vi.fn(async () => ({ ok: true }))
     const onSessionReleased = vi.fn()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3370,6 +3560,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const connectorCall = vi.fn(async () => ({ ok: true }))
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3425,6 +3616,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const agentsRead = vi.fn(async () => ({ ok: true }))
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3481,6 +3673,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const agentsRead = vi.fn(async () => ({ ok: true }))
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3535,6 +3728,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const agentsRead = vi.fn(async () => ({ ok: true }))
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3588,6 +3782,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const agentsRead = vi.fn(async () => ({ status: 'approved' }))
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3654,6 +3849,7 @@ describe('notebook local RPC server', () => {
     const releaseInvocation = control.beginControlInvocation({
       turnId: 'trusted-turn-1',
       controlInvocationGeneration: 7,
+      originatingUserMessageId: 'prompt-1',
       toolInvocationId: 'trusted-tool-1'
     })
 
@@ -3662,6 +3858,7 @@ describe('notebook local RPC server', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${control.token}`,
+          'x-open-science-control-invocation': releaseInvocation.nonce,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -3709,7 +3906,13 @@ describe('notebook local RPC server', () => {
       } as unknown as NotebookRuntimeService,
       { transport: 'tcp', token: 'secret-token' }
     )
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1',
+      true,
+      new NotebookExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
+    )
 
     try {
       await expect(
@@ -3734,6 +3937,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const connectorCall = vi.fn(async () => ({ ok: true }))
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -3781,6 +3985,7 @@ describe('notebook local RPC server', () => {
   it('binds complete Artifact saves to immutable capability scope and drains accepted work', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'project-1',
@@ -3867,6 +4072,7 @@ describe('notebook local RPC server', () => {
   it('rejects mismatched, expired, missing-scope and old split Artifact protocols before dispatch', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'project-1',
@@ -3965,6 +4171,7 @@ describe('notebook local RPC server', () => {
       } as never
     })
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -4014,7 +4221,13 @@ describe('notebook local RPC server', () => {
         clearSession: () => undefined
       }
     })
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
+    )
     rpcEndpoint = connection.endpoint
     rpcToken = connection.token
     server.setArtifactTurnBinding('session-1', {
@@ -4041,7 +4254,7 @@ describe('notebook local RPC server', () => {
       const response = await fetch(connection.endpoint, {
         method: 'POST',
         headers: {
-          authorization: 'Bearer secret-token',
+          authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -4122,7 +4335,13 @@ describe('notebook local RPC server', () => {
         clearSession: vi.fn()
       }
     })
-    const connection = await server.issueSessionConnection('session-1', 'project-1', 'root-frame-1')
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'project-1',
+      'root-frame-1',
+      true,
+      new NotebookExecutionIntent({ projectId: 'project-1', sessionId: 'session-1' })
+    )
     server.setArtifactTurnBinding('session-1', {
       ownerExecutionId: 'execution-1',
       projectId: 'project-1',
@@ -4217,7 +4436,9 @@ describe('notebook local RPC server', () => {
     const connection = await server.issueSessionConnection(
       'session-1',
       'project-from-root-owner',
-      'root-frame-1'
+      'root-frame-1',
+      true,
+      new NotebookExecutionIntent({ projectId: 'project-from-root-owner', sessionId: 'session-1' })
     )
 
     try {
@@ -4278,7 +4499,13 @@ describe('notebook local RPC server', () => {
         }
       }
     )
-    const connection = await server.issueSessionConnection('session-1', 'project-1', 'root-frame-1')
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'project-1',
+      'root-frame-1',
+      true,
+      new NotebookExecutionIntent({ projectId: 'project-1', sessionId: 'session-1' })
+    )
     const provenanceContext = (promptMessageId: string): NotebookRunProvenanceContext => ({
       rootFrameId: 'root-frame-1',
       agentFrameId: 'root-frame-1',
@@ -4364,7 +4591,13 @@ describe('notebook local RPC server', () => {
         clearSession: vi.fn()
       }
     })
-    const connection = await server.issueSessionConnection('session-1', 'project-1', 'root-frame-1')
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'project-1',
+      'root-frame-1',
+      true,
+      new NotebookExecutionIntent({ projectId: 'project-1', sessionId: 'session-1' })
+    )
     server.setArtifactTurnBinding('session-1', {
       ownerExecutionId: 'execution-1',
       projectId: 'project-1',
@@ -4416,6 +4649,7 @@ describe('notebook local RPC server', () => {
     let inputRunLeaseId: string | undefined
     const close = vi.fn()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -4439,7 +4673,13 @@ describe('notebook local RPC server', () => {
         clearSession: vi.fn()
       }
     })
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
+    )
     server.setArtifactTurnBinding('session-1', {
       ownerExecutionId: 'execution-1',
       projectId: 'default-project',
@@ -4463,7 +4703,7 @@ describe('notebook local RPC server', () => {
       const response = await fetch(connection.endpoint, {
         method: 'POST',
         headers: {
-          authorization: 'Bearer secret-token',
+          authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -4525,7 +4765,13 @@ describe('notebook local RPC server', () => {
           }
         }
       )
-      const connection = await server.ensureStarted()
+      const connection = await server.issueSessionConnection(
+        'session-1',
+        'default-project',
+        'root-frame-session-1',
+        true,
+        new NotebookExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
+      )
       server.setArtifactTurnBinding('session-1', {
         ownerExecutionId: 'execution-1',
         projectId: 'default-project',
@@ -4549,7 +4795,7 @@ describe('notebook local RPC server', () => {
         const response = await fetch(connection.endpoint, {
           method: 'POST',
           headers: {
-            authorization: 'Bearer secret-token',
+            authorization: `Bearer ${connection.token}`,
             'content-type': 'application/json'
           },
           body: JSON.stringify({
@@ -4600,6 +4846,7 @@ describe('notebook local RPC server', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
+          'x-open-science-control-invocation': release.nonce,
           'content-type': 'application/json'
         },
         body: JSON.stringify({ method: 'agentsCall', params: { op: 'switch', name: null } })
@@ -4620,6 +4867,7 @@ describe('notebook local RPC server', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
+          'x-open-science-control-invocation': release.nonce,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -4665,7 +4913,13 @@ describe('notebook local RPC server', () => {
         }
       }
     )
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection(
+      'session-shell',
+      'default-project',
+      'root-frame-session-shell',
+      true,
+      new NotebookExecutionIntent({ projectId: 'default-project', sessionId: 'session-shell' })
+    )
     server.setArtifactTurnBinding('session-shell', {
       ownerExecutionId: 'execution-shell',
       projectId: 'default-project',
@@ -4682,7 +4936,7 @@ describe('notebook local RPC server', () => {
       const response = await fetch(connection.endpoint, {
         method: 'POST',
         headers: {
-          authorization: 'Bearer secret-token',
+          authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -4810,6 +5064,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const server = new NotebookLocalRpcServer(
       new NotebookRuntimeService({
+        memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
@@ -4854,6 +5109,7 @@ describe('notebook local RPC server', () => {
     const root = await createStorageRoot()
     const calls: unknown[] = []
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -4874,13 +5130,19 @@ describe('notebook local RPC server', () => {
       transport: 'tcp',
       token: 'secret-token'
     })
-    const connection = await server.ensureStarted()
+    const connection = await server.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
+    )
 
     try {
       const response = await fetch(connection.endpoint, {
         method: 'POST',
         headers: {
-          authorization: 'Bearer secret-token',
+          authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -4916,6 +5178,7 @@ describe('notebook local RPC server', () => {
   it('dispatches manageEnvironments to the runtime service', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -4969,6 +5232,7 @@ describe('notebook local RPC server', () => {
   it('list_compute op returns the enabled hosts for the given session', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -5056,6 +5320,7 @@ describe('notebook local RPC server', () => {
   it('set_concurrency_limit op calls setSessionConcurrencyLimit with session_id and limit', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -5117,6 +5382,7 @@ describe('notebook local RPC server', () => {
   it('concurrency_status op calls getSessionConcurrencyStatus and returns the status dict', async () => {
     const root = await createStorageRoot()
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -5281,6 +5547,7 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
       })
     )
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'project',
@@ -5301,7 +5568,9 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
     const connection = await server.issueSessionConnection(
       'session',
       'project',
-      'root-frame-session'
+      'root-frame-session',
+      true,
+      service.createExecutionIntent({ projectId: 'project', sessionId: 'session' })
     )
     const setTurn = (): void =>
       server.setArtifactTurnBinding('session', {
@@ -5582,7 +5851,8 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
     h.state.profile = 'auto'
     await h.outer()
     h.runtimes[0] = { ...h.runtimes[0], provenance: 'user-own', condaEnv: undefined }
-    expect((await h.rpc()).body.result?.ok).toBe(false)
+    const response = await h.rpc()
+    expect(response.body.result?.ok, JSON.stringify(response)).toBe(false)
     expect(h.emitted).toHaveLength(0)
   })
 
@@ -5663,6 +5933,7 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
         runtimeSegmentId: 'segment',
         promptMessageId: `prompt-${frame}`,
         workspaceCwd: h.root,
+        executionIntent: notebookExecutionIntent(h.connection),
         isAttemptWritable: () => true
       })
     const child = await createChild('child')
@@ -5785,6 +6056,7 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
         runtimeSegmentId: 'segment',
         promptMessageId: 'child-prompt',
         workspaceCwd: h.root,
+        executionIntent: notebookExecutionIntent(h.connection),
         permissionPrompts: 'none',
         isAttemptWritable: () => true
       })
@@ -5816,6 +6088,7 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
       runtimeSegmentId: 'segment',
       promptMessageId: 'child-prompt',
       workspaceCwd: h.root,
+      executionIntent: notebookExecutionIntent(h.connection),
       isAttemptWritable: () => true
     })
     const pending = h.rpc(
@@ -5870,6 +6143,7 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
 it('rejects research generation through a conversation Artifact capability', async () => {
   const root = await createStorageRoot()
   const runtime = new NotebookRuntimeService({
+    memoryPolicy: healthyNotebookMemoryPolicy(),
     configRoot: root,
     dataRoot: root,
     projectId: 'project-1',

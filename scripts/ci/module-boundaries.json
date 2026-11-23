@@ -3187,7 +3187,9 @@
         "src/main/notebook/shell-process-ownership.windows-posix.ts",
         "src/main/notebook/shell-process.ts",
         "src/main/notebook/trust-bundle.ts",
-        "src/main/notebook/working-file-observer.ts"
+        "src/main/notebook/working-file-observer.ts",
+        "src/main/notebook/memory-policy-wsl.ts",
+        "src/main/notebook/memory-policy-wsl-reader.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -3344,7 +3346,12 @@
         "src/main/notebook/package-boundaries.architecture.test.ts",
         "src/main/notebook/powershell-search-parser.test.ts",
         "src/main/notebook/analysis-file-evidence.test.ts",
-        "src/main/notebook-payload.integration.test.ts"
+        "src/main/notebook-payload.integration.test.ts",
+        "src/main/notebook/memory-policy-wsl.test.ts",
+        "src/main/notebook/memory-policy-wsl-reader.test.ts",
+        "src/main/notebook/memory-policy-wsl-reader.integration.test.ts",
+        "src/main/notebook/execution-admission.test.ts",
+        "src/main/notebook/shell-wsl-admission.test.ts"
       ],
       "externalImports": [
         "@aipoch/diagnostics/node",
@@ -4109,6 +4116,7 @@
         "src/renderer/src/pages/literature/imports/useLiteraturePdfStaging.tsx",
         "src/renderer/src/pages/literature/list/useLiteratureTable.ts",
         "src/renderer/src/pages/literature/detail/LiteratureBibliographicDetails.tsx",
+        "src/renderer/src/pages/literature/detail/LiteratureIdentifiers.tsx",
         "src/renderer/src/pages/literature/list/LiteratureCandidateDialog.tsx",
         "src/renderer/src/pages/literature/imports/useLiteratureImport.ts",
         "src/renderer/src/pages/literature/list/LiteratureSelection.tsx",
@@ -4226,6 +4234,7 @@
         "src/renderer/src/pages/literature/imports/useLiteraturePdfStaging.tsx": "presentation-adapter",
         "src/renderer/src/pages/literature/list/useLiteratureTable.ts": "presentation-adapter",
         "src/renderer/src/pages/literature/detail/LiteratureBibliographicDetails.tsx": "presentation-adapter",
+        "src/renderer/src/pages/literature/detail/LiteratureIdentifiers.tsx": "presentation-adapter",
         "src/renderer/src/pages/literature/list/LiteratureCandidateDialog.tsx": "presentation-adapter",
         "src/renderer/src/pages/literature/imports/useLiteratureImport.ts": "presentation-adapter",
         "src/renderer/src/pages/literature/list/LiteratureSelection.tsx": "presentation-adapter",
@@ -4338,7 +4347,8 @@
         "src/renderer/src/pages/onboarding/environment-check-presentation.ts",
         "src/renderer/src/pages/onboarding/onboarding-error.ts",
         "src/renderer/src/pages/onboarding/onboarding-test-utils.ts",
-        "src/renderer/src/pages/onboarding/startup-gate.ts"
+        "src/renderer/src/pages/onboarding/startup-gate.ts",
+        "src/renderer/src/pages/onboarding/use-provider-step-operation.ts"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -4352,7 +4362,8 @@
         "src/renderer/src/pages/onboarding/environment-check-presentation.ts": "presentation-adapter",
         "src/renderer/src/pages/onboarding/onboarding-error.ts": "presentation-adapter",
         "src/renderer/src/pages/onboarding/onboarding-test-utils.ts": "presentation-adapter",
-        "src/renderer/src/pages/onboarding/startup-gate.ts": "presentation-adapter"
+        "src/renderer/src/pages/onboarding/startup-gate.ts": "presentation-adapter",
+        "src/renderer/src/pages/onboarding/use-provider-step-operation.ts": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -4823,6 +4834,7 @@
         "src/renderer/src/assets/provider-icons/codebuddy.svg",
         "src/renderer/src/assets/provider-icons/deepseek.svg",
         "src/renderer/src/assets/provider-icons/grok.svg",
+        "src/renderer/src/assets/provider-icons/kilo.svg",
         "src/renderer/src/assets/provider-icons/kimi.svg",
         "src/renderer/src/assets/provider-icons/minimax.svg",
         "src/renderer/src/assets/provider-icons/openai.svg",
@@ -6361,6 +6373,7 @@
         "src/renderer/src/assets/provider-icons/codebuddy.svg",
         "src/renderer/src/assets/provider-icons/deepseek.svg",
         "src/renderer/src/assets/provider-icons/grok.svg",
+        "src/renderer/src/assets/provider-icons/kilo.svg",
         "src/renderer/src/assets/provider-icons/kimi.svg",
         "src/renderer/src/assets/provider-icons/minimax.svg",
         "src/renderer/src/assets/provider-icons/openai.svg",
@@ -8158,20 +8171,25 @@
     "notebook_repository": {
       "sources": [
         "src/main/notebook/conditional-restore-script.ts",
+        "src/main/notebook/inline-run-window.ts",
         "src/main/notebook/input-staging.ts",
+        "src/main/notebook/pending-run-files.ts",
         "src/main/notebook/repository.ts",
         "src/main/notebook/run-document-data-path-codec.ts",
-        "src/main/notebook/run-document-data-paths.ts"
+        "src/main/notebook/run-document-data-paths.ts",
+        "src/main/notebook/run-record-reference.ts"
       ],
       "layer": "repository",
       "sourceLayers": {
         "src/main/notebook/conditional-restore-script.ts": "policy",
         "src/main/notebook/input-staging.ts": "host-infrastructure",
         "src/main/notebook/run-document-data-path-codec.ts": "record-codec",
-        "src/main/notebook/run-document-data-paths.ts": "application-service"
+        "src/main/notebook/run-document-data-paths.ts": "application-service",
+        "src/main/notebook/run-record-reference.ts": "record-codec"
       },
-      "consumerModules": [],
+      "consumerModules": ["main_session_package", "session_diagnostics"],
       "requiredTests": [
+        "src/main/notebook/inline-run-window.test.ts",
         "src/main/notebook/input-staging.test.ts",
         "src/main/notebook/repository.test.ts",
         "src/main/notebook/run-document-data-paths.test.ts",
@@ -8186,6 +8204,7 @@
         "@aipoch/diagnostics/node",
         "@aipoch/durable-files",
         "node:crypto",
+        "node:fs",
         "node:fs/promises",
         "node:path",
         "node:url"

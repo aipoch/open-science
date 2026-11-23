@@ -278,9 +278,9 @@ for (const concurrency of [1, 2, 4] as const) {
       await app.markResourceProfilePhase('translate-and-refresh')
       const translationStarted = performance.now()
       await panel.getByRole('button', { name: 'Translate document', exact: true }).click()
-      await expect(panel.getByRole('button', { name: 'New translation', exact: true })).toBeVisible(
-        { timeout: 300_000 }
-      )
+      await expect(
+        panel.getByRole('button', { name: `${pageCount * blocksPerPage} Translated`, exact: true })
+      ).toBeVisible({ timeout: 300_000 })
       const translationMs = performance.now() - translationStarted
       await expect(
         panel.getByRole('button', { name: 'View translated PDF', exact: true })

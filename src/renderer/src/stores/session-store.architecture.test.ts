@@ -116,6 +116,8 @@ const publicValueExports = [
   'getExternallyHydratedSessionAuthority',
   'hasLocalSessionWork',
   'hydrateSession',
+  'hydrateSessionSummary',
+  'stripTransientMessageState',
   'retainSessionRecoveryDrafts',
   'isArtifactFinalizationError',
   'isRetryableArtifactFinalizationError',

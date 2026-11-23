@@ -1,0 +1,52 @@
+{
+  "ownerPaths": [
+    "src/main/settings/lab-account-owner.ts",
+    "src/main/settings/lab-account-owner.test.ts",
+    "src/main/settings/lab-api.ts",
+    "src/main/settings/lab-api.test.ts",
+    "src/main/settings/lab-bridge-routing.test.ts",
+    "src/main/settings/lab-credential-privacy.test.ts",
+    "src/main/settings/lab-credential-store.ts",
+    "src/main/settings/lab-credential-store.test.ts",
+    "src/main/settings/lab-device-info.ts",
+    "src/main/settings/lab-fault-isolation.architecture.test.ts",
+    "src/main/settings/lab-model-routing.test.ts",
+    "src/main/settings/lab-oauth.ts",
+    "src/main/settings/lab-oauth.test.ts",
+    "src/main/settings/lab-provider.ts",
+    "src/main/settings/lab-resource-limits.ts",
+    "src/main/settings/lab-harness-routing.test.ts",
+    "src/main/settings/lab-e2e-routing.test.ts",
+    "src/main/settings/lab-provider.test.ts"
+  ],
+  "interfacePaths": [
+    "src/main/settings/lab-account-owner.ts",
+    "src/main/settings/lab-api.ts",
+    "src/main/settings/lab-credential-store.ts",
+    "src/main/settings/lab-provider.ts"
+  ],
+  "consumerModules": ["settings_service_facade"],
+  "testFiles": {
+    "owner": [
+      "src/main/settings/lab-account-owner.test.ts",
+      "src/main/settings/lab-api.test.ts",
+      "src/main/settings/lab-bridge-routing.test.ts",
+      "src/main/settings/lab-credential-privacy.test.ts",
+      "src/main/settings/lab-credential-store.test.ts",
+      "src/main/settings/lab-fault-isolation.architecture.test.ts",
+      "src/main/settings/lab-model-routing.test.ts",
+      "src/main/settings/lab-oauth.test.ts",
+      "src/main/settings/lab-harness-routing.test.ts",
+      "src/main/settings/lab-e2e-routing.test.ts",
+      "src/main/settings/lab-provider.test.ts"
+    ],
+    "contract": [
+      "src/main/settings/service.test.ts",
+      "src/preload/index.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts"
+    ],
+    "consumer": ["src/main/settings/ipc.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

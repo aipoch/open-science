@@ -22,14 +22,19 @@ import {
 
 const owners = new WeakMap<object, Set<string>>()
 
-// A failed cell or non-zero shell exit is a known outcome: its result carries the Run identity or
-// exit code. Transport and RPC errors carry neither, so their effects stay unknown.
+// Execution results carry a Run identity or a Shell exit code and, for null exits, a Run status.
+// Transport and RPC errors leave the execution outcome unknown.
 const reportsRunOutcome = (content: unknown): boolean => {
   const first = Array.isArray(content) ? (content[0] as { type?: unknown; text?: unknown }) : null
   if (first?.type !== 'text' || typeof first.text !== 'string') return false
   try {
     const parsed = JSON.parse(first.text) as Record<string, unknown> | null
-    return typeof parsed?.runId === 'string' || typeof parsed?.exitCode === 'number'
+    return (
+      typeof parsed?.runId === 'string' ||
+      typeof parsed?.exitCode === 'number' ||
+      (parsed?.exitCode === null &&
+        ['failed', 'timeout', 'interrupted'].includes(String(parsed.status)))
+    )
   } catch {
     return false
   }
@@ -59,7 +64,12 @@ export async function openNotebookHarnessTurn(input: {
 }): Promise<NotebookHarnessTurn> {
   const { authority, promptMessageId, ownerExecutionId } = input.execution
   if (!ownerExecutionId.trim()) throw new Error('Missing Notebook turn owner')
-  const bound = structuredClone({ ...input.environment, release: undefined })
+  const bound = structuredClone({
+    ...input.environment,
+    release: undefined,
+    deferExecution: undefined,
+    prepareInitialExecution: undefined
+  })
   const scope = authority.getArtifactTurnScope(bound.sessionId)
   if (
     !scope ||

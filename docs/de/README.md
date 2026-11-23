@@ -53,18 +53,18 @@
 
 > Dieses Dokument ist eine Übersetzung der englischen `README.md`. Bei Abweichungen ist die [englische Version](../../README.md) maßgeblich.
 
-### 💡 AIPOCH Open-Science v1.3.0 — Neuerungen
+### 💡 AIPOCH Open-Science v1.3.3 — Neuerungen
 
-_18. November 2026_
+_21. November 2026_
 
-- **Geplante Forschungsaufgaben**: Wiederkehrende oder einmalige Zeitpläne starten Sessions und Notebook-Aufgaben von selbst — jeder Lauf öffnet sich mit eigener Aufzeichnung im Arbeitsbereich.
-- **Bildgenerierung und -bearbeitung**: Generieren Sie Bilder über Ihren konfigurierten Anbieter und verbessern Sie sie mit Folgeanweisungen; jede Variante wird als neue Version gespeichert und kann verglichen und wiederverwendet werden.
-- **Bearbeitbare Präsentationen**: PowerPoint-Dateien lassen sich direkt bearbeiten — Text mit Schriftart, Größe, Farbe und Ausrichtung — während die Folienstruktur erhalten bleibt.
-- **Filme erneut abspielen**: Spielen Sie Filmoperationen auf neue Zweige ab und erhalten Sie unabhängige Ergebnisse, öffnen Sie Filme direkt aus dem Session-Menü und sehen Sie den Tokenverbrauch vor der Generierung.
-- **Klügere Agentenfragen**: Wenn der Agent eine Eingabe anfordert, zeigen die Optionen nun ihre Abwägungen, damit Sie mit Blick auf die Folgen entscheiden können.
-- **Zuverlässigkeit und Geschwindigkeit**: Lange Session-Verläufe werden schrittweise gespeichert, angehaltene Film- und Paketübertragungen erholen sich selbst, Windows-Installation und -Updates werden schlanker und die App erreicht Ihr Projekt beim Start schneller.
+- **Automatische Updates**: Unter macOS kann sich ein geeignetes Update beim Beenden der App selbst installieren; unter Windows und Linux kann ein Update für den nächsten Start vorbereitet werden, während Sie arbeiten — Hintergrund-Downloads erfordern ein uneingeschränktes Netzwerk und ausreichend Speicherplatz, und der manuelle Pfad bleibt verfügbar.
+- **Integrierter Agent als Standard**: Neue Projekte und Sitzungen starten überall mit dem integrierten Open-Science-Agenten, einschließlich sauberer CLI- und SDK-Installationen; externe Agent-Laufzeiten werden nur auf Wunsch bei Bedarf installiert.
+- **Eine schlankere App**: Die installierte Desktop-App ist unter macOS und Windows kleiner, und die gebündelte Offline-npm-Laufzeit wird für Node 22 kompiliert, statt über tausend lose Paketdateien mitzuliefern.
+- **Einheitliche Bildbearbeitung**: Bearbeitungsanweisungen befinden sich im Gesprächskomponisten, und Aktionen per Mauszeiger oder Tastatur starten die Bearbeitung in jeder Vorschau — mit Versionsnavigation währenddessen.
+- **Fehler erklären sich selbst**: Anfrage-, Lade-, Import- und Notebook-Fehler nennen nun, was tatsächlich passiert ist, und unterscheiden gestoppte Läufe von Arbeit, die nie geantwortet hat.
+- **Verknüpfungen in den Einstellungen wiederhergestellt**: Fähigkeiten, Spezialisten und Konnektoren sind in den Einstellungen zurück; jede öffnet ihre Kategorie und kehrt zu Ihrer vorherigen Position zurück.
 
-[Vollständige Versionshinweise v1.3.0](https://github.com/aipoch/open-science/releases/tag/v1.3.0)
+[Vollständige Versionshinweise v1.3.3](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +89,14 @@ Erstellen Sie aus einem abgeschlossenen Gesprächszweig in der Desktop-App einen
 | Linux ARM64                               | Linux ARM64 AppImage- oder Debian-Paket               |
 
 Hinweise zu Prüfungen vor der Installation finden Sie unter [Download überprüfen](../../SECURITY.md#verifying-your-download).
+
+Unter Windows 10/11 x64 können Sie die Desktop-App aus dem [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) installieren oder WinGet in PowerShell verwenden.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+Die verfügbare Version kann je nach Vertriebskanal abweichen. Weitere Informationen finden Sie im [Leitfaden zur Installation und zu Updates](https://aipoch.com/docs/guides/installation/).
 
 Die eigenständigen CLI-Archive für macOS, Linux und Windows enthalten Node.js und lassen sich ohne Homebrew oder npm verwenden.
 
@@ -170,6 +178,7 @@ AIPOCH hat AIPOCH Open-Science bei Aufgaben vom Auffinden einer Publikation übe
 | Fragen anhand der Literatur beantworten  | LitQA2-FullText        | In einem separaten LitQA2-FullText-Lauf beantwortete Open-Science **70 von 75 Testfragen richtig** (**93.33% Genauigkeit**, deepseek-flash mit Max-Reasoning).                                            |
 | Eine Antwort mit Quellen zusammenführen  | ScholarQA-CS2          | Auf 100 Validierungsfragen von ScholarQA-CS2 erreichte Open-Science mit deepseek-v4-flash einen **zusammengesetzten Qualitätswert von 0.9289/1**. Die offiziellen Testreferenzen verwenden andere Fragen. |
 | Forschungsabläufe ausführen              | ASI-Bench              | In lokalen ASI-Bench-Läufen mit demselben Modell erzielte Open-Science auf B4 **59.46**, Codex **55.45**. Auf B2 waren die Werte nahezu gleich (**56.11** und **56.09**).                                 |
+| ML-/NLP-Experimente reproduzieren        | AstaBench SUPER-Expert | **46.30%** bei output_match/mean in einem lokalen Lauf mit 45 Aufgaben und DeepSeek Flash/Max.                                                                                                            |
 | Wissenschaftliche Aufgaben ausführen     | TB-Science 0.1         | Bei 70 Aufgaben: **145/210** lokale Versuche bestanden (**69.05%**) mit GPT-6 Astra/max. Kein offizieller Ranglistenplatz; Einzelprotokolle sind nicht veröffentlicht.                                    |
 | Biomedizinische Daten analysieren        | BiomniBench-DA         | Auf BiomniBench-DA Public 50 bewerteten zwei Bewertungsmodelle die Ergebnisse mit **81.04** und **77.06**. Ihr gleich gewichteter Mittelwert betrug **79.05**.                                            |
 | Veröffentlichte Ergebnisse reproduzieren | CORE-Bench-Hard        | CORE-Bench-Hard — Im lokalen Test waren 36 von 37 Aufgaben korrekt (97,30 %). Die Auswertung enthält Wiederholungen.                                                                                      |
@@ -180,7 +189,7 @@ AIPOCH hat AIPOCH Open-Science bei Aufgaben vom Auffinden einer Publikation übe
 
 **Bewertungsumfang:** Die Berichte umfassen lokale oder interne Läufe von August bis November 2026 mit den angegebenen Modellen und Datensplits; für die aktuelle Version wurden sie nicht wiederholt. Referenzwerte sind historische Momentaufnahmen, keine Live-Ranglisten. Werte verschiedener Benchmark-Familien sind nicht direkt vergleichbar, und numerische Unterschiede belegen keine statistische Signifikanz.
 
-Details stehen im [AstaBench- und ASI-Bench-Bericht](https://aipoch.com/benchmark/open-science) sowie im [BiomniBench-DA-Bericht](https://aipoch.com/blog/open-science-biomnibench-da). Siehe auch das [lokale Ergebnis zu TB-Science 0.1](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result).
+Details stehen im [AstaBench- und ASI-Bench-Bericht](https://aipoch.com/benchmark/open-science) sowie im [BiomniBench-DA-Bericht](https://aipoch.com/blog/open-science-biomnibench-da). Siehe auch das [lokale Ergebnis zu TB-Science 0.1](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result). Siehe auch das [lokale SUPER-Expert-Ergebnis](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result).
 
 [CORE-Bench-Hard · Bericht zur Reproduzierbarkeit](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

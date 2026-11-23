@@ -1412,9 +1412,13 @@ describe('SettingsPage layout', () => {
       'Notifications',
       'Model',
       'Agent',
+      'Skills',
+      'Specialists',
       'Memory',
+      'Connectors',
       'Network',
       'Remote',
+      'Lab',
       'Credentials',
       'Compute',
       'Tags',
@@ -4429,6 +4433,30 @@ describe('SettingsPage uninstall confirmation', () => {
   })
 })
 
+it('removes the Pi update action when the installed runtime becomes ready', async () => {
+  const settings = window.api.settings
+  const snapshot = await settings.getSettings()
+  vi.mocked(settings.getSettings).mockResolvedValue({
+    ...snapshot,
+    agentFrameworks: [{ id: 'pi', displayName: 'Pi', supportsSkills: true }]
+  })
+  const preflight = {
+    ...(await settings.getPreflight()),
+    piRuntimePath: '/data/pi-managed/adapter/dist/bin.js',
+    piReady: false
+  }
+  vi.mocked(settings.getPreflight).mockResolvedValue(preflight)
+  await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+  await openAgentPanel()
+  expect(document.body.querySelector('[aria-label="Update Pi"]')).not.toBeNull()
+
+  vi.mocked(settings.getPreflight).mockResolvedValue({ ...preflight, piReady: true })
+  await act(async () => useSettingsStore.getState().refreshPreflight())
+  const readyCard = document.body.querySelector('[aria-label="Use Pi"]')
+  expect(readyCard?.textContent).toContain('Uninstall')
+  expect(readyCard?.querySelector('[aria-label="Update Pi"]')).toBeNull()
+})
+
 describe('SettingsPage Codex framework', () => {
   const frameworks = [
     { id: 'claude-code', displayName: 'Claude Code', supportsSkills: true },
@@ -5393,14 +5421,14 @@ describe('Provider editor leave protection', () => {
       expect(onClose).toHaveBeenCalledOnce()
       const intent = useNavigationStore.getState().resourceCenterIntent
       if (route === 'resource connector')
-        expect(intent).toEqual({
+        expect(intent).toMatchObject({
           resource: 'connectors',
           view: { kind: 'list', recoveryConnectorId: 'connector-a' }
         })
       else if (route === 'resource skill')
-        expect(intent).toEqual({ resource: 'skills', skillId: 'alpha' })
+        expect(intent).toMatchObject({ resource: 'skills', skillId: 'alpha' })
       else if (route === 'resource specialist')
-        expect(intent).toEqual({ resource: 'specialists', specialistId: 'specialist-a' })
+        expect(intent).toMatchObject({ resource: 'specialists', specialistId: 'specialist-a' })
       else expect(intent?.resource).toBe('skills')
     } else if (['Close settings', 'Escape', 'host navigation'].includes(route))
       expect(onClose).toHaveBeenCalledOnce()

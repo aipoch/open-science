@@ -5,15 +5,25 @@ import {
   Check,
   LoaderCircle,
   RefreshCw,
-  Search
+  Search,
+  X
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { ORG_CASE_MAX_QUERY_LENGTH } from '../../../../shared/org-cases'
+import { UseCaseSourceToggle } from '../home/OrgCaseCard'
+import { OrgCaseSectionContent } from '../home/OrgCaseSectionContent'
+import {
+  useOrgCaseSearchActions,
+  useOrgCaseStore,
+  type UseCaseSourceKind
+} from '@/stores/org-cases-store'
 import { ResourceCatalogHeader, ResourceCatalogToolbar } from './ResourceCenterModeTabs'
 import { useNoticeCountdown } from '@/components/use-notice-countdown'
 import { cn } from '@/lib/utils'
+import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import type { MarketplaceListSnapshot } from '@/stores/navigation-store'
 import type { UseCase } from '../../../../shared/use-cases'
 import { USE_CASE_BATCH_SIZE } from '../home/use-case-gallery-store'
@@ -56,6 +66,9 @@ export const UseCaseGalleryList = ({
   refreshCompletion,
   onResetRefreshCompletion,
   onRefresh,
+  source,
+  onChangeSource,
+  onOpenOrgCase,
   onOpenMarketplace,
   onFiltersChange,
   initialState
@@ -67,11 +80,21 @@ export const UseCaseGalleryList = ({
   refreshCompletion: number | null
   onResetRefreshCompletion: () => void
   onRefresh: () => void
+  source: UseCaseSourceKind
+  onChangeSource?: (source: UseCaseSourceKind) => void
+  onOpenOrgCase?: (caseId: string, opener?: HTMLElement | null) => void
   onOpenMarketplace?: (snapshot: MarketplaceListSnapshot) => void
   onFiltersChange?: (snapshot: MarketplaceListSnapshot) => void
   initialState?: MarketplaceListSnapshot
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const orgLoading = useOrgCaseStore((state) => state.loading)
+  const {
+    query: orgQuery,
+    setQuery: setOrgQuery,
+    submitSearch: submitOrgSearch,
+    refresh: refreshOrg
+  } = useOrgCaseSearchActions(source === 'organization')
   const compact = Boolean(onOpenMarketplace)
   useNoticeCountdown(
     refreshCompletion === null ? undefined : 2000,
@@ -171,6 +194,26 @@ export const UseCaseGalleryList = ({
     if (viewportRef.current) viewportRef.current.scrollTop = 0
   }
 
+  const openMarketplaceAction = onOpenMarketplace ? (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() =>
+        onOpenMarketplace({
+          search,
+          category: activeCategory,
+          count,
+          ...capturePosition(viewportRef.current)
+        })
+      }
+      aria-label={t('View in case library')}
+      title={t('View in case library')}
+    >
+      <ArrowUpRight aria-hidden="true" />
+      {t('View in case library')}
+    </Button>
+  ) : undefined
+
   return (
     <div
       className="@container flex min-h-0 flex-1 flex-col"
@@ -186,141 +229,205 @@ export const UseCaseGalleryList = ({
           icon={GalleryHorizontalEnd}
           title={t('Use Cases')}
           actions={
-            onOpenMarketplace ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  onOpenMarketplace({
-                    search,
-                    category: activeCategory,
-                    count,
-                    ...capturePosition(viewportRef.current)
-                  })
-                }
-                aria-label={t('View in case library')}
-                title={t('View in case library')}
-              >
-                <ArrowUpRight aria-hidden="true" />
-                {t('View in case library')}
-              </Button>
-            ) : undefined
+            onChangeSource ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <UseCaseSourceToggle source={source} onChange={onChangeSource} />
+                {openMarketplaceAction}
+              </div>
+            ) : (
+              openMarketplaceAction
+            )
           }
           toolbar={
-            <ResourceCatalogToolbar
-              search={
-                <div className="relative min-w-0">
-                  <Search
-                    className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden="true"
-                  />
-                  <Input
-                    className="h-8 pl-8"
-                    aria-label={t('Search examples')}
-                    placeholder={t('Search examples')}
-                    value={search}
-                    onChange={(event) => {
-                      setSearch(event.target.value)
-                      resetList()
-                    }}
-                  />
-                </div>
-              }
-              trailing={
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  className="shrink-0"
-                  aria-label={t('Refresh examples')}
-                  title={t('Refresh examples')}
-                  aria-busy={refreshing}
-                  disabled={refreshing}
-                  onClick={onRefresh}
-                >
-                  {refreshCompletion !== null && !refreshing ? (
-                    <Check className="size-4" aria-hidden="true" />
-                  ) : (
+            source === 'organization' ? (
+              <ResourceCatalogToolbar
+                search={
+                  <div className="relative min-w-0">
+                    <Search
+                      className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      className="h-8 pl-8 pr-8"
+                      maxLength={ORG_CASE_MAX_QUERY_LENGTH}
+                      aria-label={t('Search organization cases')}
+                      placeholder={t('Search by name or share code')}
+                      value={orgQuery}
+                      onChange={(event) => setOrgQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          submitOrgSearch()
+                        }
+                      }}
+                    />
+                    {orgQuery ? (
+                      <button
+                        type="button"
+                        aria-label={t('Clear search')}
+                        onClick={() => submitOrgSearch('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="size-3.5" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </div>
+                }
+                trailing={
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    className="shrink-0"
+                    aria-label={t('Refresh organization cases')}
+                    title={t('Refresh organization cases')}
+                    aria-busy={orgLoading}
+                    disabled={orgLoading}
+                    onClick={refreshOrg}
+                  >
                     <RefreshCw
                       className={cn(
                         'size-4',
-                        refreshing &&
+                        orgLoading &&
                           'animate-spin [animation-duration:600ms] motion-reduce:animate-none'
                       )}
                       aria-hidden="true"
                     />
-                  )}
-                </Button>
-              }
-            />
+                  </Button>
+                }
+              />
+            ) : (
+              <ResourceCatalogToolbar
+                search={
+                  <div className="relative min-w-0">
+                    <Search
+                      className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <Input
+                      className="h-8 pl-8"
+                      aria-label={t('Search examples')}
+                      placeholder={t('Search examples')}
+                      value={search}
+                      onChange={(event) => {
+                        setSearch(event.target.value)
+                        resetList()
+                      }}
+                    />
+                  </div>
+                }
+                trailing={
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    className="shrink-0"
+                    aria-label={t('Refresh examples')}
+                    title={t('Refresh examples')}
+                    aria-busy={refreshing}
+                    disabled={refreshing}
+                    onClick={onRefresh}
+                  >
+                    {refreshCompletion !== null && !refreshing ? (
+                      <Check className="size-4" aria-hidden="true" />
+                    ) : (
+                      <RefreshCw
+                        className={cn(
+                          'size-4',
+                          refreshing &&
+                            'animate-spin [animation-duration:600ms] motion-reduce:animate-none'
+                        )}
+                        aria-hidden="true"
+                      />
+                    )}
+                  </Button>
+                }
+              />
+            )
           }
         />
-        {/* Keep categories discoverable without taking vertical space from the case list. */}
-        <div
-          role="group"
-          aria-label={t('Category')}
-          className="flex gap-2 overflow-x-auto px-5 pt-4"
-        >
-          {[['', t('All categories')], ...categories].map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={activeCategory === key}
-              className={cn(
-                'shrink-0 cursor-pointer whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                activeCategory === key
-                  ? 'bg-muted font-medium text-foreground'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              )}
-              onClick={() => {
-                setCategory(key)
-                resetList()
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {source === 'official' ? (
+          /* Keep categories discoverable without taking vertical space from the case list. */
+          <div
+            role="group"
+            aria-label={t('Category')}
+            className="flex gap-2 overflow-x-auto px-5 pt-4"
+          >
+            {[['', t('All categories')], ...categories].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={activeCategory === key}
+                className={cn(
+                  'shrink-0 cursor-pointer whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                  activeCategory === key
+                    ? 'bg-muted font-medium text-foreground'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                )}
+                onClick={() => {
+                  setCategory(key)
+                  resetList()
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
       <div
         ref={viewportRef}
         className={cn('min-h-0 flex-1 overflow-y-auto p-4', !compact && 'p-5')}
         data-use-case-browser-scroll
       >
-        {/* Keep sparse search results at the same card width as a full row, including narrow panels. */}
-        <div className="grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
-          {renderCards(filtered.slice(0, count))}
-        </div>
-        {!items.length && catalogStatus === 'loading' ? (
-          <div
-            role="status"
-            className="flex items-center justify-center gap-2 py-16 text-sm text-text-200"
-          >
-            <LoaderCircle
-              className="size-4 animate-spin motion-reduce:animate-none"
-              aria-hidden="true"
-            />
-            {t('Loading examples…')}
-          </div>
-        ) : !items.length && catalogStatus === 'error' ? (
-          <div className="py-12">
-            <ErrorNotice
-              inline
-              role="alert"
-              tone="amber"
-              description={t('Could not load examples. Try again.')}
-              primaryButton={{ label: t('Try again'), onClick: onRefresh, loading: refreshing }}
-            />
-          </div>
-        ) : !items.length ? (
-          <p className="py-16 text-center text-sm text-text-200">
-            {t('No examples available yet.')}
-          </p>
+        {source === 'organization' ? (
+          <OrgCaseSectionContent
+            variant="marketplace"
+            showInlineToolbar={false}
+            importDisabled={!sessionPackageImportAvailable()}
+            onOpenDetails={(caseId, opener) => onOpenOrgCase?.(caseId, opener)}
+          />
         ) : (
-          !filtered.length && (
-            <p className="py-16 text-center text-sm text-text-200">{t('No matching examples')}</p>
-          )
+          <>
+            {/* Keep sparse search results at the same card width as a full row, including narrow panels. */}
+            <div className="grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
+              {renderCards(filtered.slice(0, count))}
+            </div>
+            {!items.length && catalogStatus === 'loading' ? (
+              <div
+                role="status"
+                className="flex items-center justify-center gap-2 py-16 text-sm text-text-200"
+              >
+                <LoaderCircle
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+                {t('Loading examples…')}
+              </div>
+            ) : !items.length && catalogStatus === 'error' ? (
+              <div className="py-12">
+                <ErrorNotice
+                  inline
+                  role="alert"
+                  tone="amber"
+                  description={t('Could not load examples. Try again.')}
+                  primaryButton={{ label: t('Try again'), onClick: onRefresh, loading: refreshing }}
+                />
+              </div>
+            ) : !items.length ? (
+              <p className="py-16 text-center text-sm text-text-200">
+                {t('No examples available yet.')}
+              </p>
+            ) : (
+              !filtered.length && (
+                <p className="py-16 text-center text-sm text-text-200">
+                  {t('No matching examples')}
+                </p>
+              )
+            )}
+            {count < filtered.length && (
+              <div ref={setSentinel} aria-hidden="true" className="h-px" />
+            )}
+          </>
         )}
-        {count < filtered.length && <div ref={setSentinel} aria-hidden="true" className="h-px" />}
       </div>
     </div>
   )

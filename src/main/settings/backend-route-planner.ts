@@ -12,6 +12,7 @@ import {
   CODEX_ISOLATED_PROVIDER_ID,
   DEFAULT_REASONING_EFFORT,
   isCodexSubscriptionProvider,
+  isLabProvider,
   isXaiSubscriptionProvider,
   preferredEndpoint,
   providerValidationRoute,
@@ -104,7 +105,7 @@ export type PiPlannedTarget = PlannedProviderTarget &
     wire: PiModelWire
     // Upstream URL for API-key providers. xAI subscription targets use the app OAuth bridge.
     endpoint?: string
-    oauth?: 'xai'
+    oauth?: 'xai' | 'lab'
   }>
 type BackendTransportPlan =
   | Readonly<{ kind: 'direct' }>
@@ -162,6 +163,16 @@ const piWireFor = (
 ): Pick<PiPlannedTarget, 'wire' | 'endpoint' | 'oauth'> | undefined => {
   if (isXaiSubscriptionProvider(target.provider.type)) {
     return { wire: 'chat-completions', oauth: 'xai' }
+  }
+  if (isLabProvider(target.provider.type)) {
+    const wire = preferredEndpoint(target.apiEndpoints, ['responses', 'chat-completions'])
+    const base = target.provider.baseUrl?.replace(/\/+$/u, '')
+    if (!wire || !base) return undefined
+    return {
+      wire,
+      endpoint: `${base}/${wire === 'responses' ? 'responses' : 'chat/completions'}`,
+      oauth: 'lab'
+    }
   }
   if (target.provider.type !== 'custom' && target.provider.type !== 'official') return undefined
   const wire = preferredEndpoint(target.apiEndpoints, ['responses', 'chat-completions', 'messages'])
@@ -489,6 +500,15 @@ class BackendRoutePlanner {
       if (
         frameworkId !== 'pi' &&
         !shareProviderTransportFamily(active.provider.type, candidate.provider.type)
+      )
+        return false
+      // A Pi session that is using a personal model must not start Lab's bridge. Lab forwarding is
+      // optional infrastructure; a Lab bridge failure must not take down an otherwise personal
+      // session. Lab is included only after the session has explicitly switched to Lab.
+      if (
+        frameworkId === 'pi' &&
+        !isLabProvider(active.provider.type) &&
+        isLabProvider(candidate.provider.type)
       )
         return false
       const endpoint =

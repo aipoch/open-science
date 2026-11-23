@@ -6,7 +6,6 @@ import type {
   AddSkillSourceRequest,
   RemoveSkillSourceRequest
 } from '../../shared/skill-sources'
-import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import { SkillReleaseInstallConflict as MarketplaceInstallConflict } from '@aipoch/skills'
 import { readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -41,6 +40,14 @@ import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { ClassificationSettingsOwner } from './classification-settings'
 import { ClassificationUsageRecorder } from './classification-usage'
 import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
+import type {
+  ListOrgCasesQuery,
+  OrgCaseDetail,
+  OrgCaseDownloadTicket,
+  OrgCasesPage
+} from '../../shared/org-cases'
+import { LabAccountOwner } from './lab-account-owner'
+import type { UploadOrgCaseInput } from './lab-api'
 import { ProviderTransportOwner } from './provider-transport-owner'
 import { providerNetworkDestinationIsTrusted } from '../../shared/provider-network-authorization'
 import {
@@ -74,6 +81,13 @@ import type { NotebookNetworkStatus } from '../../shared/notebook-network'
 import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
+import type {
+  LabCheckRequest,
+  LabSignInChallenge,
+  LabView,
+  SetLabServerRequest
+} from '../../shared/lab'
+import { LAB_PROVIDER_ID } from '../../shared/lab'
 
 import type {
   AddCustomServerRequest,
@@ -182,7 +196,11 @@ import { SkillCatalogModule, type SkillCatalogEntry } from '../skills/catalog'
 import { UserSkillRepository } from '../skills/user-skill-repository'
 import { resolveConfigRoot } from '../storage-root'
 import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
-import { AgentRuntimeManager, type ExecuteClaudeProbe } from './agent-runtime-manager'
+import {
+  AgentRuntimeManager,
+  type AgentRuntimeManagerOptions,
+  type ExecuteClaudeProbe
+} from './agent-runtime-manager'
 import {
   AgentBackendResolver,
   type AgentBackendResolutionContext,
@@ -261,6 +279,8 @@ export type SettingsServiceOptions = {
   withMarketplaceImpactLock?: <T>(operation: () => Promise<T>) => Promise<T>
   // OpenAlex validation transport. Production injects Electron net.fetch so proxy settings apply.
   onProviderHealthChanged?: () => Promise<void>
+  // Fired after a background Lab status change so the renderer receives a fresh settings snapshot.
+  onLabStateChanged?: () => Promise<void>
   onNotebookNetworkDomainAllowed?: () => Promise<void>
   openAlexFetch?: typeof fetch
   // One-shot Claude command runner, injectable so validation tests can inspect the exact auth env.
@@ -270,6 +290,7 @@ export type SettingsServiceOptions = {
     options: InstallManagedClaudeOptions
   ) => Promise<ManagedInstallOutcome>
   // Same for the managed OpenCode installer.
+  installManagedClaudeAcpImpl?: AgentRuntimeManagerOptions['installManagedClaudeAcpImpl']
   installManagedOpencodeImpl?: (
     options: InstallManagedOpencodeOptions
   ) => Promise<ManagedInstallOutcome>
@@ -474,6 +495,7 @@ class SettingsService {
   private readonly notebookRuntimeSettings: NotebookRuntimeSettingsModule
   private readonly skills: SkillCatalogModule
   private readonly connectors: ConnectorSettingsModule
+  private readonly lab: LabAccountOwner
   private readonly providers: ProviderAccountsModule
   private readonly runtimeManager: AgentRuntimeManager
   private readonly installCoordinator: SettingsInstallCoordinator
@@ -531,6 +553,7 @@ class SettingsService {
       this.skillMarketplaceQueue.dispose(),
       this.providerAcpValidator.dispose(),
       this.providers.dispose(),
+      this.lab.dispose(),
       this.classification.flushUsage(false),
       this.runtimeManager.dispose(),
       this.harnessSessions.dispose()
@@ -631,9 +654,19 @@ class SettingsService {
       allocateOpenCodeUsagePort: options.allocateOpenCodeUsagePort,
       executeClaudeProbe: options.executeClaudeProbe,
       installManagedClaudeImpl: options.installManagedClaudeImpl,
+      installManagedClaudeAcpImpl: options.installManagedClaudeAcpImpl,
       installManagedOpencodeImpl: options.installManagedOpencodeImpl,
       installManagedCodexImpl: options.installManagedCodexImpl,
       resolveCodexProxyEnvironment: options.resolveCodexProxyEnvironment
+    })
+    this.lab = new LabAccountOwner({
+      configRoot: this.configRoot,
+      repository: this.repository,
+      onChange: () => {
+        Promise.resolve()
+          .then(() => options.onLabStateChanged?.())
+          .catch(() => undefined)
+      }
     })
     this.providers = new ProviderAccountsModule({
       commitSharedDestination: (write) => this.notebookNetwork.commitSharedDestination(write),
@@ -658,7 +691,8 @@ class SettingsService {
         this.runtimeManager.runClaudeSubscriptionProbe(provider, settings),
       codexAuth: options.codexAuth,
       claudeIsolatedAuth: options.claudeIsolatedAuth,
-      claudeSharedAuth: options.claudeSharedAuth
+      claudeSharedAuth: options.claudeSharedAuth,
+      lab: { isUsable: () => this.lab.isUsable() }
     })
     const providerHealth = new ProviderRuntimeHealthOwner(
       this.repository,
@@ -677,7 +711,9 @@ class SettingsService {
           )
         },
         getXaiOAuthAccessToken: (forceRefresh) =>
-          this.providers.getXaiOAuthAccessToken(forceRefresh)
+          this.providers.getXaiOAuthAccessToken(forceRefresh),
+        getLabAccessToken: (forceRefresh, expectedServerUrl) =>
+          this.lab.getAccessToken(forceRefresh, expectedServerUrl)
       })
     )
     this.backendResolver = new AgentBackendResolver({
@@ -690,7 +726,9 @@ class SettingsService {
       userClaudeDir: this.userClaudeDir,
       skillRuntimeMcpEntryPath: options.skillRuntimeMcpEntryPath ?? process.argv[1] ?? '',
       bindCodexHarnessConnection: (target) => this.providers.bindCodexHarnessConnection(target),
-      getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh)
+      getXaiOAuthAccessToken: (forceRefresh) => this.providers.getXaiOAuthAccessToken(forceRefresh),
+      getLabAccessToken: (forceRefresh, expectedServerUrl) =>
+        this.lab.getAccessToken(forceRefresh, expectedServerUrl)
     })
     this.providerAcpValidator = new ProviderAcpValidator(
       this.configRoot,
@@ -724,7 +762,8 @@ class SettingsService {
       operation.phase('build-renderer-view')
       const snapshot = {
         ...buildSettingsSnapshot(settings, this.runtimeManager, this.providers),
-        credentialStore: getCredentialStore()
+        credentialStore: getCredentialStore(),
+        lab: this.lab.getView()
       }
       await Promise.all(
         snapshot.providers.map(async (view) => {
@@ -1131,7 +1170,10 @@ class SettingsService {
     return this.scenarioModels.vision.admit()
   }
 
-  get imageModels(): Pick<ScenarioModelOwner['image'], 'snapshot' | 'mutate' | 'resolve' | 'test'> {
+  get imageModels(): Pick<
+    ScenarioModelOwner['image'],
+    'snapshot' | 'mutate' | 'resolve' | 'test' | 'refreshCatalog'
+  > {
     return this.scenarioModels.image
   }
 
@@ -1594,39 +1636,43 @@ class SettingsService {
     try {
       if (request.action === 'status') {
         const settings = await this.repository.getSettings()
-        const canPrepareCodex =
-          settings.agentFrameworkId === 'codex' ||
-          (!settings.agentFrameworkId && settings.providers.length === 0)
+        const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+        const usingCodex = framework === 'codex'
         const provider =
           settings.providers.find(({ id }) => id === settings.activeProviderId) ??
           settings.providers[0]
-        const providerArgv = !provider
-          ? ['codex', 'login']
-          : provider.type === 'codex-isolated' && provider.codexAuthMode === 'isolated'
-            ? ['codex', 'login', '--force']
-            : provider.id === 'cli-openai' &&
-                provider.type === 'official' &&
-                provider.vendorId === 'openai' &&
-                provider.model
-              ? [
-                  'provider',
-                  'add',
-                  '--type',
-                  'official',
-                  '--vendor',
-                  'openai',
-                  '--model',
-                  settings.activeModel ?? provider.model,
-                  '--api-key-env',
-                  'OPENAI_API_KEY',
-                  '--json'
-                ]
-              : undefined
+        const providerArgv =
+          (usingCodex || framework === DEFAULT_AGENT_FRAMEWORK_ID) &&
+          provider?.id === 'cli-openai' &&
+          provider.type === 'official' &&
+          provider.vendorId === 'openai' &&
+          provider.model
+            ? [
+                'provider',
+                'add',
+                '--type',
+                'official',
+                '--vendor',
+                'openai',
+                '--model',
+                settings.activeModel ?? provider.model,
+                '--api-key-env',
+                'OPENAI_API_KEY',
+                '--json'
+              ]
+            : usingCodex && !provider
+              ? ['codex', 'login']
+              : usingCodex &&
+                  provider?.type === 'codex-isolated' &&
+                  provider.codexAuthMode === 'isolated'
+                ? ['codex', 'login', '--force']
+                : undefined
         return {
           ok: true,
-          next: canPrepareCodex
-            ? { runtime: ['runtime', 'install', 'codex', '--json'], provider: providerArgv }
-            : {}
+          next: {
+            ...(usingCodex ? { runtime: ['runtime', 'install', 'codex', '--json'] } : {}),
+            ...(providerArgv ? { provider: providerArgv } : {})
+          }
         }
       }
       if (request.action === 'runtime' || request.action === 'codex-prepare') {
@@ -1736,6 +1782,10 @@ class SettingsService {
     return { snapshot: await this.getSettingsView(), activeBackendAffected }
   }
 
+  async addOnboardingKiloProvider(): Promise<void> {
+    await this.repository.addOnboardingKiloProvider()
+  }
+
   // Records that first-run onboarding finished so later launches skip the wizard.
   async markOnboardingComplete(): Promise<SettingsSnapshot> {
     await this.preferences.markOnboardingComplete()
@@ -1810,6 +1860,60 @@ class SettingsService {
     return this.getSettingsView()
   }
 
+  // Optional Lab enterprise provider. Every method is local-only and bounded; failures are returned
+  // as LabView status instead of throwing a global error.
+  initializeLab(): Promise<void> {
+    return this.lab.initialize()
+  }
+
+  getLabView(): LabView {
+    return this.lab.getView()
+  }
+
+  listLabCases(query: ListOrgCasesQuery = {}, signal?: AbortSignal): Promise<OrgCasesPage> {
+    return this.lab.listCases(query, signal)
+  }
+
+  getLabCase(caseId: string, signal?: AbortSignal): Promise<OrgCaseDetail> {
+    return this.lab.getCase(caseId, signal)
+  }
+
+  getLabCaseDownload(caseId: string, signal?: AbortSignal): Promise<OrgCaseDownloadTicket> {
+    return this.lab.getCaseDownload(caseId, signal)
+  }
+
+  uploadLabCase(input: UploadOrgCaseInput, signal?: AbortSignal): Promise<OrgCaseDetail> {
+    return this.lab.uploadCase(input, signal)
+  }
+
+  async setLabServer(request: SetLabServerRequest): Promise<LabView> {
+    return this.lab.setServerUrl(request.serverUrl)
+  }
+
+  checkLab(request?: LabCheckRequest): Promise<LabView> {
+    return this.lab.check(request)
+  }
+
+  beginLabLogin(): Promise<LabSignInChallenge> {
+    return this.lab.beginLogin()
+  }
+
+  waitLabLogin(): Promise<LabView> {
+    return this.lab.waitLogin()
+  }
+
+  cancelLabLogin(): Promise<LabView> {
+    return this.lab.cancelLogin()
+  }
+
+  refreshLab(): Promise<LabView> {
+    return this.lab.refreshCatalog()
+  }
+
+  logoutLab(): Promise<LabView> {
+    return this.lab.logout()
+  }
+
   cancelCodexLogin(): void {
     this.providers.cancelCodexLogin()
   }
@@ -1855,6 +1959,15 @@ class SettingsService {
   }
 
   async setActiveProvider(id: string, model?: string): Promise<SettingsSnapshot> {
+    if (id === LAB_PROVIDER_ID) {
+      const settings = await this.repository.getSettings()
+      if (settings.activeProviderId && settings.activeProviderId !== LAB_PROVIDER_ID) {
+        await this.lab.capturePreviousSelection({
+          providerId: settings.activeProviderId,
+          ...(settings.activeModel ? { model: settings.activeModel } : {})
+        })
+      }
+    }
     await this.providers.setActiveProvider(id, model)
     return this.getSettingsView()
   }
@@ -1994,12 +2107,6 @@ class SettingsService {
   // Sets or clears the shared contact email and NCBI API key (encrypted at rest), returning state.
   async setNcbiCredentials(request: SetNcbiCredentialsRequest): Promise<ConnectorsSnapshot> {
     return this.connectors.setNcbiCredentials(request)
-  }
-
-  async setSemanticScholarCredential(
-    request: SetSemanticScholarCredentialRequest
-  ): Promise<ConnectorsSnapshot> {
-    return this.connectors.setSemanticScholarCredential(request)
   }
 
   async setOpenAlexCredential(request: SetOpenAlexCredentialRequest): Promise<ConnectorsSnapshot> {

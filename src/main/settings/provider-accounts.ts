@@ -20,6 +20,7 @@ import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
 import {
   customProviderRequiresKey,
+  providerAllowsAnonymousAccess,
   getCustomProviderBaseUrlError
 } from '../../shared/provider-url-policy'
 import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
@@ -27,6 +28,7 @@ import {
   providerNetworkDestination,
   providerNetworkDestinationIsTrusted
 } from '../../shared/provider-network-authorization'
+import { isModelStreamingCompatible } from '../../shared/agent-framework-id'
 
 import type {
   ProviderDeletionScenarioModelHandling,
@@ -46,6 +48,7 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   ENDPOINT_PATHS,
+  LAB_PROVIDER_ID,
   XAI_SUBSCRIPTION_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
@@ -53,6 +56,7 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  isLabProvider,
   isXaiSubscriptionProvider,
   DEFAULT_ENDPOINT_ORDER,
   preferredEndpoint,
@@ -126,12 +130,16 @@ type ProviderAccountsModuleOptions = {
   claudeIsolatedAuth?: ClaudeIsolatedAuthControllerPort
   claudeSharedAuth?: ClaudeSharedAuthControllerPort
   xaiOAuth?: XaiOAuthControllerPort
+  // The optional Lab account owner; supplies the "signed in" probe without owning provider records.
+  lab?: { isUsable: () => Promise<boolean> }
 }
 type PreparedProvider = {
   provider: StoredProvider
   settings: StoredSettings
   catalogBaseline?: ProviderCatalogState
 }
+
+const LAB_PROVIDER_MANAGED_MESSAGE = 'The Lab provider is managed in Settings → Lab.'
 
 // Owns durable provider records and every provider-specific validation/authentication lifecycle;
 // executable installation, runtime spawn, live ACP reconnect, and transports remain outside.
@@ -201,6 +209,7 @@ class ProviderAccountsModule {
   async prepareBootstrapCodex(): Promise<void> {
     await this.auth.serializeAccountMutation(async () => {
       const settings = await this.repository.getSettings()
+      if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
       const identity = codexSubscriptionProviderIdentity()
       const existing = settings.providers.find(({ id }) => id === identity.id)
       if (
@@ -231,6 +240,7 @@ class ProviderAccountsModule {
     return this.auth.serializeAccountMutation(async () => {
       const settings = await this.repository.getSettings()
       if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
+      if (settings.agentFrameworkId !== 'codex') throw new BootstrapError('configuration_conflict')
       const identity = codexSubscriptionProviderIdentity()
       const provider = settings.providers.find(({ id }) => id === identity.id)
       if (provider?.type !== 'codex-isolated' || provider.codexAuthMode !== 'isolated')
@@ -256,10 +266,11 @@ class ProviderAccountsModule {
 
   async bootstrapOpenAi(key: string, model: string): Promise<string> {
     const settings = await this.repository.getSettings()
+    const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
     const id = 'cli-openai'
     const existing = settings.providers.find((provider) => provider.id === id)
     if (
-      settings.agentFrameworkId !== 'codex' ||
+      (framework !== DEFAULT_AGENT_FRAMEWORK_ID && framework !== 'codex') ||
       settings.providers.some((provider) => provider.id !== id) ||
       (settings.activeProviderId && settings.activeProviderId !== id) ||
       (existing &&
@@ -323,6 +334,9 @@ class ProviderAccountsModule {
     )
   }
   private async prepareProvider(request: UpsertProviderRequest): Promise<PreparedProvider> {
+    if (isLabProvider(request.type) || request.id === LAB_PROVIDER_ID) {
+      throw new Error(LAB_PROVIDER_MANAGED_MESSAGE)
+    }
     assertProviderDraftLimits(request)
     const settings = await this.repository.getSettings()
     if (
@@ -459,7 +473,7 @@ class ProviderAccountsModule {
       ) {
         Object.assign(provider, providerCatalogState(existing))
       }
-      if (!carryKey()) throw new Error('API key is required for an official provider.')
+      carryKey()
       credentialsChanged =
         Boolean(request.key) ||
         provider.vendorId !== existing?.vendorId ||
@@ -510,6 +524,12 @@ class ProviderAccountsModule {
       provider,
       existing
     )
+    if (
+      provider.type === 'official' &&
+      !provider.keyRef &&
+      !providerAllowsAnonymousAccess({ ...provider, model: request.model ?? provider.model })
+    )
+      throw new Error('API key is required for an official provider.')
     return {
       provider: existing ? reconcileCatalogHealth(existing, provider) : provider,
       settings,
@@ -567,7 +587,11 @@ class ProviderAccountsModule {
     const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
     // Validation metadata can change without a configuration revision. A successful probe of the
     // same connection must not overwrite a newer health observation while waiting to commit.
-    const tested = this.resolveProvider(prepared.provider, undefined, true)
+    const tested = this.resolveProvider(
+      prepared.provider,
+      request.type === 'official' ? request.model?.trim() || undefined : undefined,
+      true
+    )
     const expectedValidationState =
       saved &&
       this.sameValidationTarget(
@@ -580,7 +604,7 @@ class ProviderAccountsModule {
             lastValidationFailure: saved.lastValidationFailure
           }
         : undefined
-    const validation = await this.validateProviderEdit(prepared.provider, prepared.settings)
+    const validation = await this.validateProviderEdit(prepared.provider, prepared.settings, tested)
     if (!validation.ok) return { validation }
     if (validation.applied === false)
       throw new Error(
@@ -639,6 +663,9 @@ class ProviderAccountsModule {
     scenarioModelHandling?: ProviderDeletionScenarioModelHandling
   ): Promise<void> {
     const settings = await this.repository.getSettings()
+    if (settings.providers.some((provider) => provider.id === id && isLabProvider(provider.type))) {
+      throw new Error(LAB_PROVIDER_MANAGED_MESSAGE)
+    }
     if (settings.providers.some((provider) => provider.id === id && isXaiRecord(provider))) {
       await this.xai.logout()
     }
@@ -888,6 +915,7 @@ class ProviderAccountsModule {
       return result
     }
     if (request.draft) {
+      if (isLabProvider(request.draft.type)) throw new Error(LAB_PROVIDER_MANAGED_MESSAGE)
       assertProviderDraftLimits(request.draft)
       if (request.draft.type === 'custom') {
         const baseUrlError = getCustomProviderBaseUrlError(request.draft.baseUrl?.trim() ?? '', {
@@ -898,19 +926,37 @@ class ProviderAccountsModule {
     }
     assertProviderModelLimit(request.model)
     const settings = await this.repository.getSettings()
-    const resolved = this.resolveValidationTarget(request, settings)
-    if (!resolved) {
-      return { ok: false, category: 'unknown', message: 'No provider to validate.' }
+    const stored = settings.providers.find((provider) => provider.id === request.providerId)
+    if (request.providerId === LAB_PROVIDER_ID || (stored && isLabProvider(stored.type))) {
+      return {
+        ok: false,
+        category: 'unknown',
+        message: LAB_PROVIDER_MANAGED_MESSAGE,
+        applied: false
+      }
     }
-
-    return this.validateResolvedProvider(request, settings, resolved)
+    if (stored) {
+      const model =
+        request.model ??
+        (settings.activeProviderId === stored.id ? settings.activeModel : undefined)
+      return this.validateResolvedProvider(request, settings, {
+        provider: this.resolveProvider(stored, model, request.allowInsecureHttp === true),
+        storedId: stored.id
+      })
+    }
+    if (request.draft) {
+      return this.validateResolvedProvider(request, settings, {
+        provider: this.resolveDraft(request.draft, request.allowInsecureHttp === true)
+      })
+    }
+    return { ok: false, category: 'unknown', message: 'No provider to validate.' }
   }
 
   private async validateProviderEdit(
     candidate: StoredProvider,
-    settings: StoredSettings
+    settings: StoredSettings,
+    provider = this.resolveProvider(candidate, undefined, true)
   ): Promise<ValidateProviderResult & { testedTarget: ProviderValidationTarget }> {
-    const provider = this.resolveProvider(candidate, undefined, true)
     const saved = settings.providers.find(({ id }) => id === candidate.id)
     // A failure belongs to the saved connection only when the tested input resolves to that exact
     // connection. Candidate credentials and routes must never change the original account's health.
@@ -1200,6 +1246,7 @@ class ProviderAccountsModule {
       )
     }
     if (isXaiSubscriptionProvider(provider.type)) return this.xai.isUsable()
+    if (isLabProvider(provider.type)) return (await this.options.lab?.isUsable()) ?? false
     if (!isCodexSubscriptionProvider(provider.type)) return this.auth.isProviderKeyUsable(provider)
     return this.auth.isProviderKeyUsable(
       provider,
@@ -1267,6 +1314,9 @@ class ProviderAccountsModule {
     provider: ResolvedProvider,
     framework: ReturnType<typeof getAgentFramework>
   ): string | undefined {
+    if (!isModelStreamingCompatible(framework.id, provider.streaming)) {
+      return `Not compatible with ${framework.displayName}: this model does not support streaming. Pick another model or switch the agent framework.`
+    }
     if (
       isProviderUsableByFramework(
         { apiEndpoints: provider.apiEndpoints, type: provider.type },

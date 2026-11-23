@@ -108,6 +108,28 @@ describe('useFollowScrollBottom', () => {
     expect(currentCallback.mock.calls).toEqual([[false], [true]])
   })
 
+  it('keeps a revealed history item in place across content resizes until the user returns to the bottom', () => {
+    const resize = stubResizeObserver()
+    const mounted = render(<Harness enabled contentHeight={1000} />)
+    const viewport = mounted.getByTestId('viewport') as HTMLDivElement
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1000, scrollTop: 600 })
+    mounted.rerender(
+      <Harness
+        enabled
+        contentHeight={1000}
+        options={{ resetKey: 'old-run', followOnReset: false }}
+      />
+    )
+    viewport.scrollTop = 100
+    resize()
+    expect(viewport.scrollTop).toBe(100)
+    viewport.scrollTop = 600
+    fireEvent.scroll(viewport)
+    setScrollGeometry(viewport, { clientHeight: 400, scrollHeight: 1200, scrollTop: 600 })
+    resize()
+    expect(viewport.scrollTop).toBe(800)
+  })
+
   it('keeps one observer while streamed content updates and still follows resize notifications', () => {
     const observers: { callback: ResizeObserverCallback; disconnect: ReturnType<typeof vi.fn> }[] =
       []

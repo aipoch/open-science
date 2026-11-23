@@ -24,7 +24,7 @@ test('measures large notebooks in the full reader and sidebar', async ({ app }, 
   )
   await openAllReferences(page)
   await page.getByText('Notebook capacity', { exact: true }).click()
-  await page.locator('input[aria-label="Add PDF"]').setInputFiles(path)
+  await page.locator('input[aria-label="Add files"]').setInputFiles(path)
   const preview = page.getByRole('button', { name: 'Preview capacity.pdf', exact: true })
   await expect(preview).toBeEnabled()
   // The fixture owns this isolated database; production/user data is never touched.

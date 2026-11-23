@@ -2,7 +2,11 @@ import type { CatalogSnapshot } from '@aipoch/providers'
 import * as codeBuddyAuth from './codebuddy-auth'
 import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { listAgentFrameworks } from '../agent-framework/registry'
-import { providerValidationRoute, providerValidationSucceeded } from '../../shared/settings-runtime'
+import {
+  LAB_PROVIDER_ID,
+  providerValidationRoute,
+  providerValidationSucceeded
+} from '../../shared/settings-runtime'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -19,6 +23,7 @@ import type { StoredSettings } from './types'
 import { getAgentFramework } from '../agent-framework'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
+import { buildLabProviderRecord } from './lab-provider'
 
 vi.mock('electron', () => ({
   net: {
@@ -647,6 +652,34 @@ describe('ProviderAccountsModule', () => {
     expect((await repository.getSettings()).providers).toEqual([])
   })
 
+  it('can switch to anonymous Kilo without forwarding the previous vendor key', async () => {
+    await repository.setAgentFramework('opencode')
+    await module.upsertProvider({
+      id: 'gateway',
+      type: 'official',
+      vendorId: 'deepseek',
+      key: 'previous-vendor-key'
+    })
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const saved = await module.saveValidatedProvider({
+      id: 'gateway',
+      type: 'official',
+      vendorId: 'kilo',
+      requireExisting: true
+    })
+    expect(saved.validation.ok).toBe(true)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://ai-gateway.kilo.ai/api/v1/chat/completions')
+    expect(new Headers(init?.headers).has('authorization')).toBe(false)
+    expect(JSON.parse(String(init?.body)).model).toBe('kilo-auto/free')
+    const [provider] = (await repository.getSettings()).providers
+    expect(provider.keyRef).toBeUndefined()
+    expect(await module.isProviderKeyUsable(provider)).toBe(true)
+  })
+
   it('tests form values with the stored key without changing the active custom provider', async () => {
     await repository.setAgentFramework('opencode')
     await module.upsertProvider({
@@ -1049,28 +1082,32 @@ describe('ProviderAccountsModule', () => {
     }
   )
 
-  it('publishes only validated API credentials, repeats safely, and refuses replacement', async () => {
-    await repository.setAgentFramework('codex')
-    const validate = vi
-      .spyOn(module, 'validateProvider')
-      .mockResolvedValue({ ok: true, category: 'ok' })
-    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
-    const first = await repository.getSettings()
-    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
-    const restored = await new SettingsRepository(dir).getSettings()
-    expect(restored.providers).toHaveLength(1)
-    expect(restored.providers[0].keyRef).toBe(first.providers[0].keyRef)
-    expect(restored.providers[0].lastValidatedTarget).toEqual({
-      model: 'gpt-5.4',
-      endpoint: 'responses'
-    })
-    expect(restored.activeProviderId).toBe('cli-openai')
-    await expect(module.bootstrapOpenAi('different-key', 'gpt-5.4')).rejects.toMatchObject({
-      code: 'configuration_conflict'
-    })
-    expect(await repository.getSettings()).toEqual(restored)
-    expect(validate).toHaveBeenCalledTimes(2)
-  })
+  it.each([undefined, 'codex'] as const)(
+    'publishes validated API credentials without changing the configured framework (%s)',
+    async (framework) => {
+      if (framework) await repository.setAgentFramework(framework)
+      const validate = vi
+        .spyOn(module, 'validateProvider')
+        .mockResolvedValue({ ok: true, category: 'ok' })
+      await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+      const first = await repository.getSettings()
+      await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+      const restored = await new SettingsRepository(dir).getSettings()
+      expect(restored.providers).toHaveLength(1)
+      expect(restored.providers[0].keyRef).toBe(first.providers[0].keyRef)
+      expect(restored.providers[0].lastValidatedTarget).toEqual({
+        model: 'gpt-5.4',
+        endpoint: 'responses'
+      })
+      expect(restored.agentFrameworkId).toBe(framework)
+      expect(restored.activeProviderId).toBe('cli-openai')
+      await expect(module.bootstrapOpenAi('different-key', 'gpt-5.4')).rejects.toMatchObject({
+        code: 'configuration_conflict'
+      })
+      expect(await repository.getSettings()).toEqual(restored)
+      expect(validate).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it('revalidates the selected model without replacing the provider default or key', async () => {
     await repository.setAgentFramework('codex')
@@ -1376,6 +1413,62 @@ describe('ProviderAccountsModule', () => {
         approvedAddresses: []
       }
     ])
+  })
+
+  it('protects the managed Lab record from generic saves and draft validation', async () => {
+    const lab = buildLabProviderRecord('https://lab.example.com', {
+      user: { id: 'user' },
+      device: { id: 'device' },
+      models: [{ id: 'research', protocol: 'openai' }]
+    })
+    await repository.upsertProvider(lab)
+    const before = await repository.getSettings()
+    const fetchProvider = vi.fn()
+    vi.stubGlobal('fetch', fetchProvider)
+
+    const custom = {
+      id: LAB_PROVIDER_ID,
+      type: 'custom' as const,
+      baseUrl: 'https://api.example.com/v1',
+      model: 'replacement'
+    }
+    const managed = 'The Lab provider is managed in Settings → Lab.'
+    await expect(module.upsertProvider({ type: 'lab' })).rejects.toThrow(managed)
+    await expect(module.upsertProvider(custom)).rejects.toThrow(managed)
+    await expect(module.saveValidatedProvider(custom)).rejects.toThrow(managed)
+    await expect(module.validateProvider({ edit: custom })).rejects.toThrow(managed)
+    await expect(module.validateProvider({ draft: { type: 'lab' } })).rejects.toThrow(managed)
+    expect(fetchProvider).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
+  })
+
+  it('redirects generic validation of saved or signed-out Lab to the Lab settings', async () => {
+    const fetchProvider = vi.fn()
+    vi.stubGlobal('fetch', fetchProvider)
+    const managed = {
+      ok: false,
+      category: 'unknown',
+      message: 'The Lab provider is managed in Settings → Lab.',
+      applied: false
+    }
+    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toEqual(managed)
+
+    const lab = buildLabProviderRecord('https://lab.example.com', {
+      user: { id: 'user' },
+      device: { id: 'device' },
+      models: [{ id: 'lab:research', protocol: 'openai' }],
+      default_model_id: 'lab:research'
+    })
+    await repository.upsertProvider(lab)
+    await repository.upsertProvider({ ...lab, id: 'legacy-lab' })
+    const before = await repository.getSettings()
+    await expect(module.validateProvider({ providerId: LAB_PROVIDER_ID })).resolves.toEqual(managed)
+    await expect(
+      module.validateProvider({ providerId: LAB_PROVIDER_ID, model: 'lab:lab:research' })
+    ).resolves.toEqual(managed)
+    await expect(module.validateProvider({ providerId: 'legacy-lab' })).resolves.toEqual(managed)
+    expect(fetchProvider).not.toHaveBeenCalled()
+    expect(await repository.getSettings()).toEqual(before)
   })
 
   it('disconnects and deletes shared CodeBuddy locally and requires an explicit reconnect', async () => {

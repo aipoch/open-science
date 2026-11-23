@@ -728,6 +728,39 @@ describe('file lineage identity and completeness guards', () => {
     ])
   })
 
+  it('keeps an exact frozen intermediate as an advisory dependency across partial cells', () => {
+    const root = join(tmpdir(), 'partial-analysis')
+    const path = 'results/gene_stability.csv'
+    const producer = run('fit', root, [
+      {
+        path: join(root, path),
+        relativePath: path,
+        kind: 'other',
+        change: 'created',
+        generationId: 'frozen-csv',
+        checksum: 'a'.repeat(64)
+      }
+    ])
+    const projection = projectNotebookFileDependencies([
+      { run: producer, facts, fileAccess: { ...access([], [path]), writeState: 'partial' } },
+      {
+        run: { ...run('plot', root), startedAt: 2 },
+        facts,
+        fileAccess: { ...access([path], ['results/figure.png']), readState: 'partial' }
+      }
+    ])
+    expect(projection.fileDependenciesByRunId.plot).toEqual([
+      {
+        producerRunId: 'fit',
+        path,
+        generationId: 'frozen-csv',
+        checksum: 'a'.repeat(64),
+        confidence: 'advisory'
+      }
+    ])
+    expect(projection.unresolvedFileReadRunIds).toContain('plot')
+  })
+
   it('does not alias a data-prefixed read to a different root file', () => {
     const root = join(tmpdir(), 'lineage-path-identity')
     const producer = run('producer', root, [

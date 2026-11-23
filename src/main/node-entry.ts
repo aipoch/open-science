@@ -1,3 +1,7 @@
+import {
+  bindLaunchLogReader,
+  restartWithLaunchLogReader
+} from '../../packages/open-science/launch-log.mjs'
 import { ResourceRecorder, installResourceRecorder } from './resource-diagnostics/recorder'
 import { ResourceLogStore } from './resource-diagnostics/store'
 import { resourceActivity } from './resource-diagnostics/activity'
@@ -158,6 +162,13 @@ async function main(): Promise<void> {
     configRoot,
     generation,
     pid: process.pid
+  })
+  const launchLogControl = await bindLaunchLogReader().catch((error: unknown) => {
+    createLogger('node-runtime').warn(
+      'Launch log ownership unavailable; update admission remains protected',
+      diagnosticErrorFields(error)
+    )
+    return undefined
   })
   const ownership = new RuntimeDirectoryOwnership()
   ownership.acquireSync(configRoot)
@@ -379,12 +390,7 @@ async function main(): Promise<void> {
       const exitCode = failed || credentialFailure ? 1 : (startupExitCode ?? 0)
       process.exitCode = exitCode
       if (restartRequested && !desktopWillRestart && exitCode === 0) {
-        const { spawn } = await import('node:child_process')
-        const child = spawn(process.execPath, process.argv.slice(1), {
-          detached: true,
-          stdio: 'inherit',
-          env: process.env
-        })
+        const child = restartWithLaunchLogReader(launchLogControl)
         child.once('error', (error) => {
           createLogger('node-runtime').error('restart failed', diagnosticErrorFields(error))
           process.exitCode = 1
@@ -535,9 +541,31 @@ async function main(): Promise<void> {
     const { prepareApplicationLocations } = await import('./storage/initialize-location')
     abortStartupIfStopping()
     const { settingsStore, repository } = await prepareApplicationLocations(configRoot)
+    const launchingDesktop = process.argv.includes('--desktop')
+    const existingSettings = await settingsStore.readExisting()
     abortStartupIfStopping()
-    const startupSettings = await repository.getSettings()
+    const startupSettings = existingSettings ?? (await repository.getSettings())
     abortStartupIfStopping()
+    let desktopKiloDefaults: Promise<void> | undefined
+    const initializeDesktopKiloDefaults = (): Promise<void> =>
+      (desktopKiloDefaults ??= (async () => {
+        // A desktop client can attach to a running CLI service. Check for settings saved
+        // since that service started.
+        const current =
+          !existingSettings && !launchingDesktop ? await repository.getSettings() : undefined
+        const upgrading =
+          existingSettings !== undefined ||
+          current?.onboardingCompletedAt !== undefined ||
+          Boolean(current?.providers.length)
+        if (runtime) await runtime.initializeDesktopKiloDefaults(upgrading)
+        else await repository.initializeDesktopKiloDefaults(upgrading)
+      })().catch((error) => {
+        desktopKiloDefaults = undefined
+        createLogger('settings').warn(
+          'Could not initialize desktop Kilo defaults.',
+          diagnosticErrorFields(error)
+        )
+      }))
     const localeOwner = new LocalePreferenceOwner(
       [Intl.DateTimeFormat().resolvedOptions().locale],
       repository,
@@ -581,7 +609,13 @@ async function main(): Promise<void> {
     const startupCommands: ApplicationCommandByNameDispatcher = {
       commandNames: () => runtime?.applicationCommands.desktop.commandNames() ?? earlyChannels,
       invoke: (name, invocation) => {
-        if (runtime) return runtime.applicationCommands.desktop.invoke(name, invocation)
+        if (runtime) {
+          const commands = runtime.applicationCommands.desktop
+          if (name === 'settings:get-settings') {
+            return initializeDesktopKiloDefaults().then(() => commands.invoke(name, invocation))
+          }
+          return commands.invoke(name, invocation)
+        }
         requireDesktopCaller(invocation.callerContext)
         switch (name) {
           case 'locale:initialize':
@@ -744,7 +778,7 @@ async function main(): Promise<void> {
             ].includes(channel)
           )
             throw new Error('Unknown desktop host command.')
-          return runtime.applicationCommands.desktop.invoke(channel, invocation)
+          return startupCommands.invoke(channel, invocation)
         }
       },
       permissionApprovalPresence: {
@@ -808,6 +842,7 @@ async function main(): Promise<void> {
     if (state.phase === 'blocked' && !process.argv.includes('--desktop'))
       throw Object.assign(new Error(state.error.message), state.error)
     await waitForVerifiedDatabaseStartup(databaseStartup, startupCancellation.signal)
+    if (launchingDesktop) await initializeDesktopKiloDefaults()
 
     abortStartupIfStopping()
     startupReporter.phase('runtime')

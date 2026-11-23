@@ -185,17 +185,11 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       descriptor: () => {
         const backend = base.backendGeneration.current
         const target =
-          backend.framework.id === 'opencode'
-            ? 'opencode'
-            : backend.framework.id === 'codebuddy'
-              ? 'codebuddy'
-              : backend.framework.id === 'pi'
-                ? 'pi'
-                : backend.framework.id === 'codex'
-                  ? backend.modelRoute === 'codex-bridge'
-                    ? 'codex-bridge'
-                    : 'codex-response'
-                  : 'claude-code'
+          backend.framework.id === 'codex'
+            ? backend.modelRoute === 'codex-bridge'
+              ? 'codex-bridge'
+              : 'codex-response'
+            : backend.framework.id
         return {
           target,
           ...(backend.context.window ? { contextWindow: backend.context.window } : {})
@@ -317,6 +311,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       currentInteractionSequence: (sessionId) =>
         base.sessionInteractions.current(sessionId)?.sequence,
       mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
+      webToolOperationFor: (sessionId, identity) =>
+        base.sessionCapabilities.webToolOperationFor(sessionId, identity),
       piPermissionContextFor,
       authorizeRuntimeBindingAdmission: options.notebook?.authorizeRuntimeBindingAdmission,
       canOwnRuntimeBindingDecision: options.notebook?.canOwnRuntimeBindingDecision,
@@ -434,7 +430,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       permissionContext.clearCorrelationsForSession(sessionId),
     currentSessionSetup: () => ({
       framework: base.backendGeneration.current.framework,
-      sessionOptions: base.backendGeneration.current.session.options
+      sessionOptions: base.backendGeneration.current.session.options,
+      supportsSessionClose: base.connectionResources.capabilities.close
     }),
     currentStartupGeneration: () => sessionRegistry.startupGeneration,
     isPrimarySessionIdClaimed: (sessionId) => sessionRegistry.isIdentityClaimed(sessionId),
@@ -466,6 +463,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     permission: permissionContext
   })
   const sessionUpdateProjector = new AcpSessionUpdateProjector({
+    webToolOperationFor: (sessionId, identity) =>
+      base.sessionCapabilities.webToolOperationFor(sessionId, identity),
     separateProviderNotices: options.separateProviderNotices,
     registry: sessionRegistry,
     contextUsage: base.contextUsageTracker,

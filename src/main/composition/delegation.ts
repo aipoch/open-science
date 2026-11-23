@@ -1,3 +1,4 @@
+import { notebookExecutionIntent, markNotebookExecutionIntent } from '../notebook/execution-intent'
 import { runtimeMetadata } from '../runtime-metadata'
 import { parseArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { parseUploadVersionReference } from '../../shared/uploads'
@@ -302,25 +303,28 @@ export function composeDelegation({
         ) {
           throw new Error('Parent message durable root provenance is unavailable.')
         }
+        const prompt = {
+          sessionId: delivery.session.sessionId,
+          text:
+            `[Delegated ${delivery.kind} from Frame ${delivery.sourceFrameId}, ` +
+            `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
+          suppressUserMessage: true,
+          provenanceContext: {
+            // Suppressed continuations create no user node; replies retain the durable origin.
+            promptMessageId: delivery.originMessageId,
+            originMessageId: delivery.originMessageId,
+            rootFrameId: graph.rootFrameId,
+            agentFrameId: graph.rootFrameId,
+            messageBranchId: delivery.rootBranchId,
+            messageBranchAncestry: [delivery.rootBranchId],
+            messageAncestry: [delivery.originMessageId],
+            runtimeSegmentId: `delegated-message-${delivery.messageId}`
+          }
+        }
+        const intent = notebookExecutionIntent(delivery)
+        if (intent) markNotebookExecutionIntent(prompt, intent)
         return runtime.startContinuationWhenDispatchAdmitted(
-          {
-            sessionId: delivery.session.sessionId,
-            text:
-              `[Delegated ${delivery.kind} from Frame ${delivery.sourceFrameId}, ` +
-              `Attempt ${delivery.sourceAttemptId}]\n\n${delivery.text}`,
-            suppressUserMessage: true,
-            provenanceContext: {
-              // Suppressed continuations create no user node; replies retain the durable origin.
-              promptMessageId: delivery.originMessageId,
-              originMessageId: delivery.originMessageId,
-              rootFrameId: graph.rootFrameId,
-              agentFrameId: graph.rootFrameId,
-              messageBranchId: delivery.rootBranchId,
-              messageBranchAncestry: [delivery.rootBranchId],
-              messageAncestry: [delivery.originMessageId],
-              runtimeSegmentId: `delegated-message-${delivery.messageId}`
-            }
-          },
+          prompt,
           async (resumeSession) => {
             let latest = await sessionRepository.loadSession(
               delivery.session.projectId,

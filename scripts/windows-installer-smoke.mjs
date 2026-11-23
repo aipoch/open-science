@@ -7,6 +7,7 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rm,
@@ -1089,11 +1090,11 @@ const launchAndProbe = async ({
   }
 }
 
-const assertDatabaseDowngradeBlocked = ({ becameHealthy, output }) => {
+const assertDatabaseDowngradeBlocked = ({ becameHealthy, output, blockedRecord }) => {
   if (becameHealthy) {
     throw new Error(`Ledger-aware downgrade unexpectedly became healthy.\n${output}`)
   }
-  if (!/database_newer_than_app|newer version of Open-Science/i.test(output)) {
+  if (!blockedRecord && !/database_newer_than_app|newer version of Open-Science/i.test(output)) {
     throw new Error(
       `Ledger-aware downgrade did not report the expected compatibility error.\n${output}`
     )
@@ -1116,7 +1117,55 @@ const assertWsl2RestartCleanupBlocked = ({ becameHealthy, output }) => {
   }
 }
 
-const launchAndCaptureBlockedStartup = async ({ installDirectory, env, description }) => {
+// The isolated profile is reused across install cycles. Start at its pre-launch EOF so an
+// earlier blocked startup cannot certify this rollback, including when the logger rotates.
+const watchRollbackLog = async (configRoot, expectedVersion) => {
+  const path = join(configRoot, 'logs', 'main.log')
+  const before = await stat(path).catch((error) => {
+    if (error.code !== 'ENOENT') throw error
+  })
+  return async () => {
+    const file = await open(path, 'r').catch((error) => {
+      if (error.code !== 'ENOENT') throw error
+    })
+    if (!file) return
+    try {
+      const current = await file.stat()
+      const start = before?.ino === current.ino && current.size >= before.size ? before.size : 0
+      if (current.size === start) return
+      const { buffer, bytesRead } = await file.read({
+        buffer: Buffer.alloc(current.size - start),
+        position: start
+      })
+      for (const line of buffer.toString('utf8', 0, bytesRead).split('\n')) {
+        if (!line.includes('database startup blocked')) continue
+        let record
+        try {
+          record = JSON.parse(line)
+        } catch {
+          continue // An in-progress write can end in a partial JSON record.
+        }
+        if (
+          record.scope === 'main' &&
+          record.msg === 'database startup blocked' &&
+          record.data?.code === 'database_newer_than_app' &&
+          record.data.appVersion === expectedVersion
+        ) {
+          return record
+        }
+      }
+    } finally {
+      await file.close()
+    }
+  }
+}
+
+const launchAndCaptureBlockedStartup = async ({
+  installDirectory,
+  env,
+  description,
+  readBlock
+}) => {
   const child = spawn(
     join(installDirectory, APP_EXECUTABLE),
     ['--open-science-headless', '--serve=0'],
@@ -1143,26 +1192,56 @@ const launchAndCaptureBlockedStartup = async ({ installDirectory, env, descripti
   )
 
   try {
-    await waitFor(description, async () => (closed ? true : undefined))
+    let blockedRecord
+    await waitFor(description, async () => {
+      blockedRecord = await readBlock?.()
+      return (
+        closed ||
+        Boolean(blockedRecord) ||
+        (readBlock && Boolean(parsePackagedAppEndpoint(output())))
+      )
+    })
     if (closeError) throw closeError
     return {
       becameHealthy: parsePackagedAppEndpoint(output()) !== undefined,
-      output: output()
+      output: output(),
+      blockedRecord
     }
-  } catch (error) {
-    await terminateProcessTree(child)
-    throw error
+  } finally {
+    if (!closed && child.exitCode === null && child.signalCode === null) {
+      await terminateProcessTree(child)
+      await waitFor('the blocked startup process to close', () => closed, TERMINATION_TIMEOUT_MS)
+    }
   }
 }
 
-const launchAndExpectDatabaseBlocked = async ({ installDirectory, env }) => {
-  assertDatabaseDowngradeBlocked(
-    await launchAndCaptureBlockedStartup({
-      installDirectory,
-      env,
-      description: 'the ledger-aware downgrade to block'
-    })
-  )
+const launchAndExpectDatabaseBlocked = async ({
+  installDirectory,
+  env,
+  configRoot,
+  expectedVersion
+}) => {
+  const result = await launchAndCaptureBlockedStartup({
+    installDirectory,
+    env,
+    description: 'the ledger-aware downgrade to block',
+    readBlock: await watchRollbackLog(configRoot, expectedVersion)
+  })
+  assertDatabaseDowngradeBlocked(result)
+  if (result.blockedRecord) {
+    const { t, runId, data } = result.blockedRecord
+    console.log(
+      'Rollback startup blocked:',
+      JSON.stringify({
+        t,
+        runId,
+        appVersion: data.appVersion,
+        code: data.code,
+        migrationId: data.migrationId
+      })
+    )
+  }
+  return result.blockedRecord
 }
 
 const launchAndExpectWsl2RestartCleanupBlocked = async ({ installDirectory, env }) => {
@@ -1682,7 +1761,11 @@ const deleteOwnedRegistryKey = async (key, run) => {
   }
 }
 
-const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = runProcess } = {}) => {
+const cleanupOwnedSmokeRegistrations = async (
+  root,
+  expectedVersions,
+  { run = runProcess } = {}
+) => {
   if (!win32.basename(root).startsWith(SMOKE_ROOT_PREFIX)) {
     throw new Error(`Refusing to clean registrations for unexpected smoke root: ${root}`)
   }
@@ -1698,7 +1781,7 @@ const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = run
     const installLocation = registryValue(uninstallOutput, 'InstallLocation')
     const ownedStaleRegistration =
       registryValue(uninstallOutput, 'DisplayName') === APP_DISPLAY_NAME &&
-      registryValue(uninstallOutput, 'DisplayVersion') === expectedVersion &&
+      expectedVersions.includes(registryValue(uninstallOutput, 'DisplayVersion')) &&
       (!installLocation || isOwnedSmokePath(root, installLocation)) &&
       isOwnedSmokePath(root, uninstallTarget) &&
       isOwnedSmokePath(root, quietUninstallTarget)
@@ -1717,12 +1800,12 @@ const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = run
 
 const cleanupSmokeRegistrations = async (
   root,
-  expectedVersion,
+  expectedVersions,
   primaryError,
   cleanup = cleanupOwnedSmokeRegistrations
 ) => {
   try {
-    await cleanup(root, expectedVersion)
+    await cleanup(root, expectedVersions)
   } catch (cleanupError) {
     if (!primaryError) throw cleanupError
     const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
@@ -1731,6 +1814,7 @@ const cleanupSmokeRegistrations = async (
 }
 
 const runOrphanedUninstallerLockSmoke = async (installer) => {
+  const version = installerVersion(installer)
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const installDirectory = join(root, 'installed app 程序')
   const profileDirectory = join(root, 'profile 数据 with spaces')
@@ -1747,7 +1831,7 @@ const runOrphanedUninstallerLockSmoke = async (installer) => {
   } catch (error) {
     primaryError = error
   }
-  await cleanupSmokeRegistrations(root, installerVersion(installer), primaryError)
+  await cleanupSmokeRegistrations(root, [version], primaryError)
   await cleanupSmokeRoot(root, primaryError)
   if (primaryError) throw primaryError
   console.log('Windows orphaned-uninstaller lock smoke completed successfully.')
@@ -1764,6 +1848,9 @@ const main = async () => {
   const previousInstaller = options.previousInstallerDirectory
     ? await findSetupInstaller(options.previousInstallerDirectory)
     : undefined
+  // A failure during upgrade or rollback can leave either installer registered.
+  const expectedVersions = [installerVersion(currentInstaller)]
+  if (previousInstaller) expectedVersions.push(installerVersion(previousInstaller))
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const installDirectory = join(root, 'installed app 程序')
   const lockedInstallDirectory = join(root, 'locked uninstaller 程序')
@@ -1886,7 +1973,12 @@ const main = async () => {
           console.log('Packaged WSL2 restart reconciliation smoke completed successfully.')
         }
         if (cycle.phase === 'rollback' && upgradeProfileGuard.shouldExpectDowngradeBlock()) {
-          await launchAndExpectDatabaseBlocked({ installDirectory, env })
+          await launchAndExpectDatabaseBlocked({
+            installDirectory,
+            env,
+            configRoot: currentConfigRoot,
+            expectedVersion: installerVersion(cycle.installer)
+          })
         }
         if (configRoot) await upgradeProfileGuard.verifyCycle(cycle.phase, configRoot)
         if (cycle.phase === 'previous') {
@@ -1946,11 +2038,7 @@ const main = async () => {
     sentinelCleanupError = error
   }
   if (!options.retainInstallation || primaryError || sentinelCleanupError) {
-    await cleanupSmokeRegistrations(
-      root,
-      installerVersion(currentInstaller),
-      primaryError ?? sentinelCleanupError
-    )
+    await cleanupSmokeRegistrations(root, expectedVersions, primaryError ?? sentinelCleanupError)
     await cleanupSmokeRoot(root, primaryError ?? sentinelCleanupError)
   }
   if (primaryError) throw primaryError
@@ -2007,6 +2095,7 @@ export {
   uninstallAndVerify,
   waitFor,
   waitForShutdownExit,
+  watchRollbackLog,
   windowsProfileEnvironment,
   writeUpgradeSentinel
 }

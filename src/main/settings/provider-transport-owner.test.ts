@@ -930,6 +930,61 @@ describe('ProviderTransportOwner generations', () => {
     await generation.release()
   })
 
+  it('routes CodeBuddy Lab skill selection through the local forwarding bridge', async () => {
+    const selector = makeResponsesToChatCompletionsBridge(0)
+    const bridge = makeOpenAiBridge(0)
+    let targets: readonly ProtocolForwardingBridgeTarget[] = []
+    const createResponsesToChatCompletionsBridge = vi.fn(() => selector)
+    const createProtocolForwardingBridge = vi.fn((registered) => {
+      targets = registered
+      return bridge
+    })
+    const owner = new ProviderTransportOwner({
+      createResponsesToChatCompletionsBridge,
+      createProtocolForwardingBridge,
+      getLabAccessToken: vi.fn(async () => 'lab-access-token')
+    })
+    const base = makeTarget()
+    const activeTarget: ProviderRuntimeTarget = {
+      ...base,
+      providerId: 'builtin-lab',
+      providerType: 'lab',
+      effectiveModel: 'lab:research-default',
+      provider: {
+        ...base.provider,
+        type: 'lab',
+        baseUrl: 'https://lab.example.com/v1',
+        chatCompletionsBaseUrl: 'https://lab.example.com/v1',
+        model: 'lab:research-default',
+        key: undefined,
+        labServerUrl: 'https://lab.example.com',
+        apiEndpoints: ['chat-completions']
+      }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: {
+        ...makePlan({ kind: 'direct' }),
+        modelRoute: 'codebuddy-openai'
+      }
+    })
+
+    expect(targets).toHaveLength(1)
+    expect(targets[0]).toMatchObject({
+      endpoint: 'https://lab.example.com/v1/chat/completions',
+      model: 'research-default'
+    })
+    expect(createResponsesToChatCompletionsBridge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'http://127.0.0.1:44000/v1',
+        model: 'lab:research-default'
+      }),
+      { skillSelectorFailureMode: 'throw' }
+    )
+    await generation.release()
+  })
+
   it('closes both CodeBuddy transports when its model bridge fails to start', async () => {
     const startError = new Error('CodeBuddy bridge start failed')
     const selector = makeResponsesToChatCompletionsBridge(0)
@@ -1191,6 +1246,51 @@ describe('ProviderTransportOwner generations', () => {
 
     expect(targetBaseUrl).toBe('https://api.deepseek.com')
     expect(targetVendorId).toBe('deepseek')
+    await generation.release()
+  })
+
+  it('prepares Lab credentials and wire model for the native Responses path', async () => {
+    const proxy = makeNativeProxy()
+    let captured:
+      { baseUrl?: string; model?: string; resolveKey?: () => Promise<string> } | undefined
+    const getLabAccessToken = vi.fn(async () => 'lab-access-token')
+    const owner = new ProviderTransportOwner({
+      createNativeResponsesProxy: (target) => {
+        captured = target
+        return proxy
+      },
+      getLabAccessToken
+    })
+    const activeTarget: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      providerId: 'builtin-lab',
+      providerType: 'lab',
+      effectiveModel: 'lab:research-default',
+      apiEndpoints: ['responses'],
+      needsChatResponsesToChatCompletionsBridge: false,
+      needsNativeResponsesCompatibility: true,
+      provider: {
+        type: 'lab',
+        baseUrl: 'https://lab.example.com/v1',
+        chatCompletionsBaseUrl: 'https://lab.example.com/v1',
+        labServerUrl: 'https://lab.example.com',
+        model: 'lab:research-default',
+        apiEndpoints: ['responses']
+      }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: makePlan({ kind: 'codex-responses-compatibility', targets: [] })
+    })
+
+    expect(captured).toMatchObject({
+      baseUrl: 'https://lab.example.com/v1',
+      model: 'research-default'
+    })
+    if (!captured?.resolveKey) throw new Error('expected a prepared Lab target')
+    await expect(captured.resolveKey()).resolves.toBe('lab-access-token')
+    expect(getLabAccessToken).toHaveBeenCalledWith(undefined, 'https://lab.example.com')
     await generation.release()
   })
 

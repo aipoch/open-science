@@ -178,6 +178,22 @@ it.each([true, false])('separates small-cap front headings with a matching face:
   expect(r.owner(7)).toBe(r.owner(9))
 })
 
+it.each([true, false])(
+  'separates front headings when the text returns to its rail: %s',
+  (returns) => {
+    const input = fixture('small-cap-front-headings'),
+      items = input.pages[0].items
+    for (const index of [4, 11]) {
+      items[index].transform[4] -= 0.42
+      items[index].width += 0.42
+    }
+    if (!returns) items[12].transform[4] -= 0.75
+    const r = read(input)
+    expect(r.owner(1) !== r.owner(4)).toBe(returns)
+    expect(r.owner(7) !== r.owner(11)).toBe(returns)
+  }
+)
+
 it.each([
   'new-paragraph',
   'different-process',
@@ -195,3 +211,66 @@ it.each([
   const r = read(f)
   expect(r.owner(0)).not.toBe(r.owner(5))
 })
+
+it.each(['shared emphasis', 'different face', 'intervening text'])(
+  'continues coordinated terms across the native page edge (%s)',
+  (proof) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      hasEOL = true
+    ): PdfLayoutPage['items'][number] => ({
+      str,
+      width,
+      height: 9,
+      fontName,
+      dir: 'ltr',
+      fontAscent: 0.76,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL,
+      transform: [9, 0, 0, 9, x, y]
+    })
+    const left = [
+      item('The preceding analysis gives the calibration results for all samples.', 54, 500, 239),
+      item('The independent measurements are summarized in the final section.', 54, 489, 238),
+      item('After collecting measurements across all conditions, we introduce', 321, 83, 239),
+      item('two related notions to distinguish the effects, namely', 316, 72, 175, 'Body', false),
+      item('Signal stability', 493, 72, 50, 'Emphasis', false),
+      item('and', 545, 72, 15, 'Body', false)
+    ]
+    const right = [
+      ...(proof === 'intervening text' ? [item('Independent notes', 54, 752, 69)] : []),
+      item(
+        'Signal-based control',
+        54,
+        736,
+        77,
+        proof === 'different face' ? 'Other' : 'Emphasis',
+        false
+      ),
+      item('which can be assessed independently with the', 133, 736, 161),
+      item('reported observations. We continue with the results from each trial.', 54, 725, 240)
+    ]
+    const pages = [left, right].map((items, index) => ({
+      page: index + 1,
+      width: 612,
+      height: 792,
+      rotation: 0,
+      items
+    }))
+    const result = groupPdfTranslationPages({ pages, pageCount: 2 })
+    const owner = result.units.find(({ items }) => items.includes('1:5'))
+    expect(owner?.fragments.map(({ page }) => page)).toEqual(
+      proof === 'shared emphasis' ? [1, 2] : [1]
+    )
+    if (proof === 'shared emphasis')
+      expect(owner?.source).toContain('Signal stability and Signal-based control which')
+    expect(result.units.flatMap(({ items }) => items).sort()).toEqual(
+      pages.flatMap(({ page, items }) => items.map((_, index) => `${page}:${index}`)).sort()
+    )
+  }
+)

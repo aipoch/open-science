@@ -1,3 +1,8 @@
+import {
+  notebookExecutionIntent,
+  markNotebookExecutionIntent,
+  type NotebookExecutionIntent
+} from '../notebook/execution-intent'
 import { randomUUID } from 'node:crypto'
 
 import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
@@ -101,6 +106,7 @@ const createDurableDelegatedWork = (
   const turnIdentity = (session: SessionKey, messageId: string): string =>
     `${session.projectId}\u0000${session.sessionId}\u0000${messageId}`
   const assertTurnOpen = async (caller: AuthenticatedDelegateCaller): Promise<void> => {
+    notebookExecutionIntent(caller)?.assertExecutable()
     const { session, originMessageId: messageId, rootExecutionId } = caller
     if (cancelledTurns.has(`${turnIdentity(session, messageId)}\u0000${rootExecutionId ?? ''}`)) {
       throw new DurableDelegatedWorkError(
@@ -130,6 +136,7 @@ const createDurableDelegatedWork = (
     options.resolveSpecialistReference,
     options.validateInput
   )
+  const attemptIntents = new Map<string, WeakRef<NotebookExecutionIntent>>()
   const running = new Map<
     string,
     {
@@ -157,13 +164,16 @@ const createDurableDelegatedWork = (
     task = child.task,
     continuation = false,
     executionBackendClaim?: DelegateExecutionBackendClaim,
-    permissionPrompts?: 'none'
+    permissionPrompts?: 'none',
+    executionIntent?: NotebookExecutionIntent
   ): Readonly<{
     completion: Promise<void>
     established: Promise<void>
     accepted: Promise<DelegateMessageAcceptanceEvidence>
   }> => {
     const attempt = currentAttempt(child)
+    executionIntent ??= attemptIntents.get(child.attempts.at(-2)?.id ?? '')?.deref()
+    if (executionIntent) attemptIntents.set(attempt.id, new WeakRef(executionIntent))
     const runtimeSegmentId = createId('runtime')
     let handle: ReturnType<DelegateExecution['run']> | undefined
     let resolveHandle!: (value: ReturnType<DelegateExecution['run']>) => void
@@ -257,6 +267,8 @@ const createDurableDelegatedWork = (
           continuation,
           turn: turnLifecycle.create(startedContext, true)
         }
+        executionIntent?.assertExecutable()
+        if (executionIntent) markNotebookExecutionIntent(executionInput, executionIntent)
         handle = options.execution.run(executionInput, slotId)
         resolveHandle(handle)
         markEstablished()
@@ -372,7 +384,7 @@ const createDurableDelegatedWork = (
           runtimeSegmentId: createId('runtime')
         }
         const lifecycle = turnLifecycle.create(pendingContext, false)
-        return (await deliveryHandle).sendMessage(message.text, {
+        const turn = {
           ...lifecycle,
           async begin() {
             context = await options.records.startPendingTurn(
@@ -384,7 +396,11 @@ const createDurableDelegatedWork = (
             )
             await lifecycle.begin?.()
           }
-        })
+        }
+        const messageIntent = notebookExecutionIntent(message) ?? executionIntent
+        messageIntent?.assertExecutable()
+        if (messageIntent) markNotebookExecutionIntent(turn, messageIntent)
+        return (await deliveryHandle).sendMessage(message.text, turn)
       },
       async setPermissionProfile(profile) {
         await (await deliveryHandle).setPermissionProfile(profile)
@@ -509,7 +525,8 @@ const createDurableDelegatedWork = (
             command.text.trim(),
             true,
             undefined,
-            caller.permissionPrompts
+            caller.permissionPrompts,
+            notebookExecutionIntent(caller)
           ),
         abort
       }
@@ -556,8 +573,19 @@ const createDurableDelegatedWork = (
       const active = running.get(frameId)
       if (active?.attemptId === attemptId) await active.completion
     },
-    launchContinuation: ({ child, session, reservation, message }) => {
-      launch(child, session, reservation, reservation.slotIds[0], message, true)
+    launchContinuation: (input) => {
+      const { child, session, reservation, message } = input
+      launch(
+        child,
+        session,
+        reservation,
+        reservation.slotIds[0],
+        message,
+        true,
+        undefined,
+        undefined,
+        notebookExecutionIntent(input)
+      )
     }
   })
 
@@ -740,6 +768,7 @@ const createDurableDelegatedWork = (
     requestOrRequests: DurableDelegateRequest | readonly DurableDelegateRequest[],
     delegateOptions: Readonly<{ wait?: boolean; timeoutSeconds?: number }>
   ): Promise<DurableDelegateOutcome> => {
+    notebookExecutionIntent(caller)?.assertExecutable()
     const admissionGeneration = stopGeneration
     if (
       delegateOptions.timeoutSeconds !== undefined &&
@@ -885,7 +914,8 @@ const createDurableDelegatedWork = (
         child.task,
         false,
         claims[index],
-        caller.permissionPrompts
+        caller.permissionPrompts,
+        notebookExecutionIntent(caller)
       )
     )
     const completions = launches.map(({ completion }) => completion)

@@ -870,11 +870,17 @@ const VisibleArtifactPreview = ({
         if (!canceled) setPreviewState({ requestKey, preview })
       })
       .catch((error: unknown) => {
-        // Missing or cross-root files are represented by the card badge, not noisy console errors.
+        // An in-flight thumbnail can settle after unmount or after desktop shutdown starts.
+        if (
+          canceled ||
+          (error instanceof Error &&
+            String(error).endsWith('ApplicationCommandError: The local service is stopping.'))
+        )
+          return
         if (!isUnavailableFileError(error) && !isManagedFilePublicationPendingError(error)) {
           console.error('Failed to read artifact preview', error)
         }
-        if (!canceled) setPreviewState({ requestKey, preview: undefined })
+        setPreviewState({ requestKey, preview: undefined })
       })
 
     return () => {

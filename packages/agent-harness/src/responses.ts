@@ -2,6 +2,7 @@ import { mediaCapabilities, nativeMedia, requestBody, type InputCapabilities } f
 import { ChatCompletionsError, dataEvents } from './chat-completions'
 import {
   normalizeProviderError,
+  type SummarizeProviderError,
   normalizeUpstreamError,
   responseErrorDiagnostics,
   type UpstreamErrorDiagnostics
@@ -22,6 +23,7 @@ export type ResponsesModelOptions = {
   id?: string
   apiKey(signal: AbortSignal): string | Promise<string>
   fetch?: typeof globalThis.fetch
+  summarizeProviderError?: SummarizeProviderError
   parameters?: Readonly<Record<string, Json>>
   maxResponseBytes?: number
   /** Serialized request limit; defaults to 32 MiB. Not a media-token budget. */
@@ -211,7 +213,11 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
         !response.ok ||
         !response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')
       ) {
-        const diagnostics = await normalizeUpstreamError(response, signal)
+        const diagnostics = await normalizeUpstreamError(
+          response,
+          signal,
+          input.summarizeProviderError
+        )
         throw new ResponsesError(response.ok ? 'protocol' : 'http', response.status, {
           ...diagnostics,
           phase: 'response'
@@ -330,7 +336,11 @@ export function createResponsesModel(input: ResponsesModelOptions): AgentModel {
               type === 'response.failed' ? object(event.response).error : (event.error ?? event)
             )
             // Preserve the four existing semantic codes; use protocol and fixed enums for other reasons.
-            const diagnostics = normalizeProviderError({ error: detail })
+            const diagnostics = normalizeProviderError(
+              { error: detail },
+              undefined,
+              input.summarizeProviderError
+            )
             const reason = diagnostics.reason
             const code =
               reason === 'insufficient_quota' ||

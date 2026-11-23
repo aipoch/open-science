@@ -1,16 +1,21 @@
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import type { ShellRuntimeBinding } from '../../shared/notebook'
+import type { NotebookRunStatus, ShellRuntimeBinding } from '../../shared/notebook'
 
 export type NotebookShellResult = {
+  kernelDispatched?: boolean
+  executionStarted?: boolean
   stdout: string
   stderr: string
   exitCode: number | null
+  // Foreground results carry the recorded outcome when there is no numeric exit code.
+  status?: NotebookRunStatus
   cwd?: string
   cwdBefore?: string
   truncated?: boolean
   cancelled?: boolean
-  // Runtime-private cleanup evidence. Public adapters project only the legacy result fields.
+  // Private evidence from the command deadline and process owner.
+  timedOut?: true
   ownedTreeReaped?: boolean
   runtimeStatus?: 'unavailable'
   recovery?: NotebookExecutionRecovery
@@ -19,6 +24,7 @@ export type NotebookShellResult = {
 }
 
 export type NotebookShellProcessRequest = {
+  executionAdmission?: import('./execution-admission').NotebookExecutionAdmission
   laneKey?: string
   runId?: string
   command: string

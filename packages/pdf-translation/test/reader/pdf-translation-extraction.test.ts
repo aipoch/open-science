@@ -976,6 +976,155 @@ describe('extractPdfTranslationSource', () => {
     })
   })
 
+  it.each(['reordered', 'mapped peer', 'another face'])(
+    'preserves only standalone native math runs with proved unmapped glyphs (%s)',
+    async (shape) => {
+      const math = ['\u0be1', '\u0bde']
+      const prose = 'This sentence provides independent context.'
+      const runs = math.map((symbol, i) => ({
+        ...text(symbol, 351, 130 + i * 30),
+        width: 8,
+        fontName: 'math'
+      }))
+      const items = [text(prose), ...runs]
+      if (shape === 'mapped peer') items.push({ ...runs[0], transform: [10, 0, 0, 10, 351, 610] })
+      const fixture = setup(items)
+      const missing = math.map((unicode, i) => ({
+        originalCharCode: unicode.charCodeAt(0),
+        unicode,
+        fontChar: String.fromCharCode(0xe100 + i),
+        isInFont: true
+      }))
+      const mapped = { ...missing[0], originalCharCode: 880, fontChar: '\ue102' }
+      const font = {
+        name: shape === 'another face' ? 'Body' : 'ABCDEF+CambriaMath',
+        type: 'CIDFontType2',
+        composite: true,
+        missingFile: false,
+        toUnicode: { _map: shape === 'mapped peer' ? { 880: math[0] } : {} },
+        toFontChar: Object.fromEntries(
+          [...missing, mapped].map((g) => [g.originalCharCode, g.fontChar.charCodeAt(0)])
+        )
+      }
+      Object.assign(fixture.page, {
+        commonObjs: { has: () => true, get: (name: string) => (name === 'math' ? font : {}) },
+        getOperatorList: vi.fn().mockResolvedValue({
+          fnArray: [OPS.setFont, OPS.showText, OPS.setFont, OPS.showText],
+          argsArray: [
+            ['body', 10],
+            [nativeGlyphs(prose)],
+            ['math', 10],
+            [shape === 'mapped peer' ? [missing[1], mapped, missing[0]] : [...missing].reverse()]
+          ]
+        })
+      })
+      const { source } = await extractPdfTranslationSource(fixture.context)
+      expect(source.units.find((unit) => unit.source === prose)?.sourceOnly).toBeUndefined()
+      const marks = source.units.filter((unit) => math.includes(unit.source))
+      expect(marks).toHaveLength(shape === 'mapped peer' ? 3 : 2)
+      for (const mark of marks) {
+        const proved = shape === 'reordered' || (shape === 'mapped peer' && mark.source === math[1])
+        expect(mark.sourceOnly).toBe(proved ? true : undefined)
+        expect(mark.preserve).toBe(proved ? 'formula' : undefined)
+      }
+    }
+  )
+
+  it.each([
+    ['uses a', true],
+    ['uses the', undefined]
+  ] as const)(
+    'keeps only matching unfinished math tails in the source (%s)',
+    async (second, kept) => {
+      const invalid = ['\u0bea', '\u0beb', '\u0bec']
+      const run = (
+        str: string,
+        x: number,
+        baseline: number,
+        width: number,
+        height: number,
+        fontName: string,
+        hasEOL = false
+      ) => ({
+        ...text(str, x, 800 - baseline),
+        width,
+        height,
+        fontName,
+        transform: [height, 0, 0, height, x, baseline],
+        hasEOL
+      })
+      const items = [
+        run(invalid[2], 499, 395, 4, 6, 'math'),
+        run('', 0, 0, 0, 0, 'math', true),
+        run(invalid[0], 495, 389, 5, 7.5, 'math'),
+        run('uses', 510, 393, 17, 11, 'body'),
+        run('a', 533, 393, 11, 11, 'body', true),
+        run(invalid[1], 494, 380, 10, 8, 'math'),
+        run(')', 504, 377, 5, 11, 'math'),
+        run(second, 513, 377, 31, 11, 'body', true)
+      ]
+      const fixture = setup(items)
+      fixture.page.getTextContent.mockResolvedValue({
+        items,
+        styles: {
+          math: { ascent: 0.78, descent: -0.22, vertical: false },
+          body: { ascent: 0.89, descent: -0.22, vertical: false }
+        }
+      })
+      const malformed = invalid.map((unicode, index) => ({
+        originalCharCode: unicode.charCodeAt(0),
+        unicode,
+        fontChar: String.fromCharCode(0xe110 + index),
+        isInFont: true
+      }))
+      const math = {
+        name: 'ABCDEF+CambriaMath',
+        type: 'CIDFontType2',
+        composite: true,
+        missingFile: false,
+        toUnicode: { _map: { 41: ')' } },
+        toFontChar: Object.fromEntries(
+          malformed.map((glyph) => [glyph.originalCharCode, glyph.fontChar.charCodeAt(0)])
+        )
+      }
+      Object.assign(fixture.page, {
+        commonObjs: { has: () => true, get: (name: string) => (name === 'math' ? math : {}) },
+        getOperatorList: vi.fn().mockResolvedValue({
+          fnArray: [OPS.setFont, OPS.showText, OPS.setFont, OPS.showText],
+          argsArray: [
+            ['math', 10],
+            [
+              [
+                malformed[2],
+                malformed[0],
+                malformed[1],
+                { unicode: ')', originalCharCode: 41, isInFont: true }
+              ]
+            ],
+            ['body', 10],
+            [nativeGlyphs('uses a' + second)]
+          ]
+        })
+      })
+      const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+      const owner = source.units.find(
+        (unit) => unit.source.includes('uses a') && unit.source.includes(second)
+      )!
+      expect(owner.source).toBe(`${invalid[0]} uses a ${invalid[1]}) ${second}`)
+      expect(owner.sourceOnly).toBe(kept)
+      expect(owner.preserve).toBeUndefined()
+      expect(owner.fragments.map(({ items: row }) => row.map(({ index }) => index))).toEqual([
+        [2, 3, 4],
+        [5, 6, 7]
+      ])
+      expect(coverage.excludedItemCount).toBe(0)
+      expect(coverage.warnings).toContainEqual({
+        unitId: owner.id,
+        reasons: ['unreliable-font-unicode']
+      })
+    }
+  )
+
   it('uses existing line regions when a merged caption box would enclose a neighboring column', async () => {
     const items = [
       { ...text('Table 1. Characteristics of trial participants', 40, 100), width: 480 },
@@ -1498,7 +1647,13 @@ it.each([
   ['different advance', 'txsys', 0.5, '\u0002', '\u0002'],
   ['different control slot', 'txsys', 0.636, '\u0003', '\u0003'],
   ['mixed run', 'txsys', 0.636, '2\u0002', '2\u0002'],
-  ['ordinary digit', 'txsys', 0.636, '2', '2']
+  ['ordinary digit', 'txsys', 0.636, '2', '2'],
+  ['subset CMEX10 display integral', 'ABCDEF+CMEX10', 0.5556, 'Z', '∫'],
+  ['ordinary letter Z', 'Body', 0.5556, 'Z', 'Z'],
+  ['different CMEX10 advance', 'CMEX10', 0.6, 'Z', 'Z'],
+  ['subset CMEX10 display summation', 'ABCDEF+CMEX10', 1.4444, 'X', '∑'],
+  ['ordinary letter X', 'Body', 1.4444, 'X', 'X'],
+  ['different summation advance', 'CMEX10', 1.4, 'X', 'X']
 ])('decodes only a proven legacy symbol: %s', async (_name, font, advance, str, expected) => {
   const item = { ...text(String(str)), fontName: 'symbol', width: Number(advance) * 10 }
   const content = { items: [item, text('Ordinary prose.')] }
@@ -1507,7 +1662,7 @@ it.each([
     getTextContent: vi.fn().mockResolvedValue(content),
     commonObjs: {
       has: () => loaded,
-      get: () => ({ name: font })
+      get: () => ({ name: font, type: 'Type1', missingFile: false })
     },
     getOperatorList: vi.fn(async () => {
       loaded = true
@@ -1674,3 +1829,225 @@ it('keeps short wrapped prose in separate physical rows outside its protected fo
   expect(coverage.excludedItemCount).toBe(0)
   expect(coverage.includedItemCount).toBe(7)
 })
+
+it.each([true, false])(
+  'separates labelled correspondence from the adjacent abstract (%s)',
+  async (matches) => {
+    const item = (
+      s: string,
+      x: number,
+      y: number,
+      width: number,
+      size: number,
+      fontName = 'body',
+      hasEOL = true
+    ) => ({
+      ...text(s, x, y),
+      transform: [size, 0, 0, size, x, 800 - y],
+      width,
+      height: size,
+      fontName,
+      hasEOL
+    })
+    const address =
+        'Department of Earth Sciences at Northern Valley College and Research Center, United States.',
+      caption = matches ? '*Corresponding author:' : '*Conference liaison:',
+      email = 'author@example.org',
+      prose = [
+        'Observers examined survey coverage along the northern line',
+        'under the available observing conditions. The first set',
+        'provided three examples along the central boundary.'
+      ]
+    const contents = [
+      item('A Study of Seasonal Survey Coverage', 50, 144, 480, 22, 'display'),
+      item('JORDAN EXAMPLE *', 50, 184, 208, 12, 'byline'),
+      item('1', 50, 207.5, 3, 6, 'front', false),
+      item(address, 54, 210, 349, 8.5, 'front'),
+      item(caption, 50, 230.8, 90, 8.5, 'front', false),
+      item(email, 143, 230.8, 87, 8.5, 'front'),
+      ...prose.map((value, i) => item(value, 50, 245.9 + i * 11.1, i === 2 ? 218 : 242, 9.45)),
+      item('The separate right column begins with its own brief text.', 311, 245.9, 240, 9.45),
+      item('This remains a separate source paragraph in either case.', 311, 257, 242, 9.45)
+    ]
+    const fixture = setup(contents)
+    fixture.page.getTextContent.mockResolvedValue({
+      items: contents,
+      styles: Object.fromEntries(
+        ['display', 'byline', 'front', 'body'].map((font) => [
+          font,
+          { vertical: false, ascent: 0.8, descent: -0.2 }
+        ])
+      )
+    })
+    const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+    const sub = source.units.find((unit) => unit.source.includes(prose[0]))
+    expect(sub?.source).toContain(prose[2])
+    expect(sub?.source.includes(email)).toBe(!matches)
+    expect(coverage.includedItemCount).toBe(contents.length)
+    const other = source.units.find((unit) => unit.source.startsWith('The separate right column'))!
+    expect(other.fragments.flatMap(({ items }) => items.map(({ index }) => index))).toEqual([9, 10])
+    expect(other.fragments.every(({ rect }) => rect.x === 311 / 600)).toBe(true)
+    if (matches) {
+      expect(sub?.fragments.map(({ items }) => items.map(({ index }) => index))).toEqual([
+        [6],
+        [7],
+        [8]
+      ])
+      expect(
+        source.units.find((unit) => unit.source === `${caption} ${email}`)?.fragments[0]?.items
+      ).toHaveLength(2)
+      expect(source.units.some((unit) => unit.source === `1 ${address}`)).toBe(true)
+    }
+  }
+)
+
+it('anchors the end of a protected relation to its original row', async () => {
+  const row = (str: string, x: number, width: number, fontName = 'body', y = 278, height = 11) => ({
+    ...text(str, x, y),
+    transform: [height, 0, 0, height, x, 800 - y],
+    width,
+    height,
+    fontName,
+    hasEOL: false
+  })
+  const closing =
+      '= 2) and later Rivera [6] obtained a general upper bound on the measured offsets',
+    items = [
+      row('f', 72.003, 5.335, 'math'),
+      row('(', 78.603, 4.233),
+      row('|', 82.803, 3.022, 'symbol'),
+      row('H', 85.803, 9.065, 'math'),
+      row('|', 95.763, 3.022, 'symbol'),
+      row(') is not explicit in [3], but', 98.763, 127.113),
+      row(') =', 250.683, 16.396),
+      row('4', 299.763, 4.232, 'script', 274, 8),
+      row(') follows from a separate calculation. Par', 304.563, 194.695),
+      { ...row('ker [4]', 493.804, 60.622), hasEOL: true },
+      row('(for', 72.003, 17.225, 'body', 291.56),
+      row('k', 92.883, 5.673, 'math', 291.56),
+      row(closing, 101.883, 452.455, 'body', 291.56),
+      { ...row('', 0, 0, 'body', 800, 0), hasEOL: true }
+    ]
+  const fixture = setup(items)
+  const style = { vertical: false, ascent: 0.75, descent: -0.25 }
+  fixture.page.getTextContent.mockResolvedValue({
+    items,
+    styles: {
+      body: style,
+      math: style,
+      symbol: { ...style, ascent: 0.772 },
+      script: { ...style, ascent: 0.675 }
+    }
+  })
+  const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+  const [opening, body, prefix, tail] = source.units
+  expect(opening.preserve).toBe('formula')
+  expect(prefix).toMatchObject({ source: '(for k', sourceOnly: true, preserve: 'formula' })
+  expect(body.fragments.map(({ items }) => items.map(({ index }) => index))).toEqual([
+    [5, 6, 7, 8, 9]
+  ])
+  expect(tail.source).toBe(closing)
+  expect(tail.fragments.map(({ items }) => items.map(({ index }) => index))).toEqual([[12]])
+  expect(coverage.includedItemCount).toBe(13)
+})
+
+it.each(['paired', 'serialized', 'nonzero advance', 'different position', 'different font'])(
+  'decodes a legacy slash only over its native equality (%s)',
+  async (shape) => {
+    const slash = {
+      ...text('6', 80),
+      width: shape === 'nonzero advance' ? 5 : 0,
+      fontName: 'mark',
+      hasEOL: false
+    }
+    const x = shape === 'different position' ? 80.002 : shape === 'serialized' ? 80.00012 : 80
+    const y = shape === 'serialized' ? 100.00003 : 100
+    const equal = { ...text('=', x, y), width: 7.77 }
+    const items = [slash, { ...text(' ', 80), height: 0, hasEOL: false }, equal]
+    const page = {
+      getTextContent: vi.fn().mockResolvedValue({ items }),
+      commonObjs: {
+        has: () => true,
+        get: (name: string) => ({
+          name: name === 'mark' && shape !== 'different font' ? 'ABCDEF+CMSY10' : 'CMR10'
+        })
+      }
+    }
+    const actual = await getPdfTranslationTextContent(page as unknown as PDFPageProxy)
+    expect(actual.items[0]).toEqual({
+      ...slash,
+      str: shape === 'paired' || shape === 'serialized' ? '\u0338' : '6'
+    })
+    expect(actual.items[2]).toBe(equal)
+  }
+)
+
+it.each([true, false])(
+  'retains a fragmented negative condition around a native fraction (%s)',
+  async (negative) => {
+    const row = (
+      str: string,
+      x: number,
+      width: number,
+      fontName = 'body',
+      y = 300,
+      height = 10,
+      hasEOL = false
+    ) => ({
+      ...text(str, x, y),
+      transform: [height, 0, 0, height, x, 800 - y],
+      width,
+      height,
+      fontName,
+      hasEOL
+    })
+    const items = [
+      row('op', 458.16, 11.88, 'operator'),
+      row('(', 470.04, 3.87),
+      row('A', 473.88, 7.83, 'math'),
+      row('). This', 481.68, 31.04, 'body', 300, 10, true),
+      row(
+        negative
+          ? 'limit does not remain valid if we change the constant'
+          : 'limit continues to apply if we change the constant',
+        99.24,
+        235.345,
+        'body',
+        312
+      ),
+      row('3', 340.92, 3.97, 'number', 308.2, 7),
+      row('q', 338.76, 4.23, 'lowered', 315.5, 7),
+      row('2', 343.08, 3.39, 'script', 313.4, 5),
+      row('−', 350.16, 7.74, 'symbol', 312),
+      row('5', 363.12, 3.97, 'number', 308.2, 7),
+      row('q', 360.96, 4.23, 'lowered', 315.5, 7),
+      row('3', 365.28, 3.39, 'script', 313.4, 5),
+      row('by any number larger than', 373.56, 122.53, 'body', 312),
+      row('6', 502.68, 3.97, 'number', 308.2, 7),
+      row('q', 500.52, 4.23, 'lowered', 315.5, 7),
+      row('4', 504.84, 3.39, 'script', 313.4, 5),
+      row('.', 510, 2.76, 'body', 312, 10, true)
+    ]
+    const style = { vertical: false, ascent: 0.75, descent: -0.25 }
+    const fixture = setup(items)
+    fixture.page.getTextContent.mockResolvedValue({
+      items,
+      styles: {
+        body: style,
+        math: style,
+        symbol: style,
+        operator: { ...style, ascent: 0.716, descent: -0.022 },
+        number: { ...style, ascent: 0.664, descent: -0.02 },
+        lowered: { ...style, ascent: 0.694, descent: -0.01 },
+        script: { ...style, ascent: 0.666, descent: -0.022 }
+      }
+    })
+    const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+    expect(
+      source.units
+        .filter((unit) => unit.preserve === 'literal')
+        .map((unit) => unit.fragments[0].items[0].index)
+    ).toEqual(negative ? [3, 4, 12] : [])
+    expect(coverage.includedItemCount).toBe(items.length)
+  }
+)

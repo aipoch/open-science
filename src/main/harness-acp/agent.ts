@@ -1,3 +1,4 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
 import { createHash, randomUUID } from 'node:crypto'
@@ -5,10 +6,12 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import {
   createJournalAgentStore,
+  createMemoryAgentStore,
   openAgentSession,
   type AgentSession,
   type AgentSessionInspection,
   type AgentEvent,
+  type AgentModel,
   type AgentMessage,
   type ContentBlock,
   type ModelRequest,
@@ -23,14 +26,17 @@ import { createResponsesModel, ResponsesError } from '@aipoch/agent-harness/resp
 import { createMessagesModel, MessagesError } from '@aipoch/agent-harness/messages'
 import {
   HARNESS_AUTH_METHOD,
+  HARNESS_EPHEMERAL_SESSION,
   HARNESS_INSTRUCTIONS,
   HARNESS_TOOL_LESS,
+  HARNESS_TRACE_ENABLED,
   HARNESS_OWNER,
   harnessOwnerSchema,
   harnessConfigSchema,
   type HarnessConfig
 } from './config'
 import { connectHarnessMcp } from './mcp'
+import type { HarnessSessionTracing, HarnessTracing } from './tracing'
 import { classifyFailure } from '../../shared/failure/classify'
 
 // Built-in Agent context accounting. The provider's reported input tokens are the authority; this
@@ -228,8 +234,10 @@ export function createToolResultClearing(
 
 type Entry = {
   model: string
+  cancelWebTools(): void
   setScheduleTurn(ref: string | undefined): void
   session: AgentSession
+  tracing?: HarnessSessionTracing
   /** True once per provider context-overflow rejection observed since the last call. */
   takeOverflow(): boolean
   takeOutputTruncation(): boolean
@@ -286,7 +294,10 @@ const isContextOverflowResponse = async (
   )
 }
 
-export function createHarnessAcpAgent(directory: string): {
+export function createHarnessAcpAgent(
+  directory: string,
+  tracing?: HarnessTracing
+): {
   app: acp.AgentApp
   dispose(): Promise<void>
 } {
@@ -356,16 +367,31 @@ export function createHarnessAcpAgent(directory: string): {
       return closing
     }
     try {
-      await mkdir(directory, { recursive: true, mode: 0o700 })
+      const ephemeral = params._meta?.[HARNESS_EPHEMERAL_SESSION] === true
       const bindingFile = join(directory, `${id}.json`)
       const rawOwner = params._meta?.[HARNESS_OWNER]
+      if (ephemeral && (resume || rawOwner !== undefined))
+        throw new Error('Ephemeral sessions cannot have a durable owner or be resumed')
+      if (!ephemeral) await mkdir(directory, { recursive: true, mode: 0o700 })
       const owner = rawOwner === undefined ? undefined : harnessOwnerSchema.parse(rawOwner)
       const binding = {
         cwd: resolve(params.cwd),
         ...(owner ? { owner: { ...owner, sessionId: owner.sessionId ?? id } } : {})
       }
       if (resume) {
-        const previous = JSON.parse(await readFile(bindingFile, 'utf8'))
+        let bindingText: string
+        try {
+          bindingText = await readFile(bindingFile, 'utf8')
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+          // A local Fork has durable host history but deliberately no provider checkpoint.
+          // Only a wholly absent native Session permits host adoption and history replay;
+          // a partial/corrupt checkpoint remains authoritative evidence requiring recovery.
+          if (await store.load(id))
+            throw new Error('Session binding is missing for an existing checkpoint')
+          throw acp.RequestError.resourceNotFound()
+        }
+        const previous = JSON.parse(bindingText)
         if (previous.cwd !== binding.cwd || !(await store.load(id)))
           throw new Error('Session resume identity mismatch')
         if (previous.owner && JSON.stringify(previous.owner) !== JSON.stringify(binding.owner))
@@ -375,7 +401,7 @@ export function createHarnessAcpAgent(directory: string): {
           await writeFile(temporary, JSON.stringify(binding), { flag: 'wx', mode: 0o600 })
           await rename(temporary, bindingFile)
         }
-      } else await writeFile(bindingFile, JSON.stringify(binding), { flag: 'wx', mode: 0o600 })
+      }
       const instructions = params._meta?.[HARNESS_INSTRUCTIONS] ?? ''
       if (typeof instructions !== 'string') throw new Error('Invalid host instructions')
       const toolLess = params._meta?.[HARNESS_TOOL_LESS] === true
@@ -388,6 +414,8 @@ export function createHarnessAcpAgent(directory: string): {
         signal,
         beforePermission: flush
       })
+      if (!resume && !ephemeral)
+        await writeFile(bindingFile, JSON.stringify(binding), { flag: 'wx', mode: 0o600 })
       const notify = (update: acp.SessionUpdate): void => {
         notifications = notifications
           .then(() => context.notify(acp.methods.client.session.update, { sessionId: id, update }))
@@ -396,6 +424,7 @@ export function createHarnessAcpAgent(directory: string): {
             controller.abort()
           })
       }
+      const pendingWebTools = new Map<string, string>()
       const announced = new Set<string>(),
         completed = new Set<string>()
       const meter = createContextMeter()
@@ -451,6 +480,9 @@ export function createHarnessAcpAgent(directory: string): {
           notify({
             sessionUpdate: 'tool_call_update',
             toolCallId: event.invocationId,
+            ...(pendingWebTools.has(event.invocationId)
+              ? { _meta: { toolName: pendingWebTools.get(event.invocationId) } }
+              : {}),
             status: 'in_progress',
             content: event.content
               .filter((block) => block.type === 'text')
@@ -461,12 +493,19 @@ export function createHarnessAcpAgent(directory: string): {
             if (!announced.has(tool.invocationId)) {
               announced.add(tool.invocationId)
               const toolName = mcp!.toolNames.get(tool.call.name) ?? tool.call.name
+              if (/^mcp__open_science_web__web_(fetch|search)$/.test(toolName))
+                pendingWebTools.set(tool.invocationId, toolName)
               notify({
                 sessionUpdate: 'tool_call',
                 toolCallId: tool.invocationId,
                 title: toolName,
                 _meta: { toolName },
-                kind: 'other',
+                kind:
+                  toolName === 'mcp__open_science_web__web_fetch'
+                    ? 'fetch'
+                    : toolName === 'mcp__open_science_web__web_search'
+                      ? 'search'
+                      : 'other',
                 status: 'pending',
                 rawInput: tool.call.arguments
               })
@@ -475,7 +514,10 @@ export function createHarnessAcpAgent(directory: string): {
               notify({
                 sessionUpdate: 'tool_call_update',
                 toolCallId: tool.invocationId,
-                status: 'in_progress'
+                status: 'in_progress',
+                ...(pendingWebTools.has(tool.invocationId)
+                  ? { _meta: { toolName: pendingWebTools.get(tool.invocationId) } }
+                  : {})
               })
           }
           for (const message of event.checkpoint.messages) {
@@ -487,9 +529,12 @@ export function createHarnessAcpAgent(directory: string): {
             )
               continue
             completed.add(message.invocationId)
+            const webToolName = pendingWebTools.get(message.invocationId)
+            pendingWebTools.delete(message.invocationId)
             notify({
               sessionUpdate: 'tool_call_update',
               toolCallId: message.invocationId,
+              ...(webToolName ? { _meta: { toolName: webToolName } } : {}),
               status: message.isError ? 'failed' : 'completed',
               content: message.content
                 .filter((block) => block.type === 'text')
@@ -499,6 +544,14 @@ export function createHarnessAcpAgent(directory: string): {
         }
       }
       const target = config
+      const sessionTracing = owner
+        ? tracing?.session(id, {
+            model: target.model,
+            protocol: target.protocol,
+            contextWindow: target.contextWindow,
+            inputBudget
+          })
+        : undefined
       const createModel =
         target.protocol === 'responses'
           ? createResponsesModel
@@ -514,10 +567,12 @@ export function createHarnessAcpAgent(directory: string): {
             ? target.modelIdentity
             : `${target.protocol}:${target.modelIdentity}`,
         apiKey: async () => target.token,
+        summarizeProviderError: providerErrorExcerpt,
         fetch: async (url, init) => {
           const headers = new Headers(init?.headers)
           headers.set('user-agent', 'open-science-agent/0.1.0')
           if (target.sessionHeader) headers.set(target.sessionHeader, id)
+          sessionTracing?.captureModelRequest(init?.body)
           let response = await fetch(url, { ...init, headers })
           if (
             !response.ok &&
@@ -554,21 +609,23 @@ export function createHarnessAcpAgent(directory: string): {
         )
           throw new Error(message)
       }
+      const tracedModel = sessionTracing?.wrapModel(model) ?? model
+      const sessionModel: AgentModel = {
+        ...model,
+        stream(request, signal) {
+          if (request.useProviderOutputDefault) return tracedModel.stream(request, signal)
+          const available = target.contextWindow - meter.measure(request)
+          return tracedModel.stream(
+            { ...request, maxOutputTokens: Math.min(request.maxOutputTokens, available) },
+            signal
+          )
+        }
+      }
       session = await openAgentSession({
         sessionId: id,
-        store,
-        model: {
-          ...model,
-          stream(request, signal) {
-            if (request.useProviderOutputDefault) return model.stream(request, signal)
-            const available = target.contextWindow - meter.measure(request)
-            return model.stream(
-              { ...request, maxOutputTokens: Math.min(request.maxOutputTokens, available) },
-              signal
-            )
-          }
-        },
-        tools: mcp.tools,
+        store: ephemeral ? createMemoryAgentStore() : store,
+        model: sessionModel,
+        tools: sessionTracing ? mcp.tools.map(sessionTracing.wrapTool) : mcp.tools,
         // Original results are already authorized evidence in this exact session; no external access.
         toolResults: toolLess
           ? undefined
@@ -589,6 +646,7 @@ export function createHarnessAcpAgent(directory: string): {
           admit: (request) => {
             admit(request, 'Summary exceeds the model context budget')
             meter.summarizing(request)
+            sessionTracing?.markCompaction(request.requestId)
           }
         },
         transformContext: (messages) => clearing.project(messages),
@@ -608,6 +666,7 @@ export function createHarnessAcpAgent(directory: string): {
       entries.set(id, {
         model: target.model,
         session,
+        tracing: sessionTracing,
         setScheduleTurn: mcp.setScheduleTurn,
         takeOverflow: () => {
           const observed = overflow
@@ -621,6 +680,18 @@ export function createHarnessAcpAgent(directory: string): {
         },
         close,
         reconcile: () => mcp!.reconcile(session!),
+        cancelWebTools: () => {
+          for (const [invocationId, toolName] of pendingWebTools) {
+            completed.add(invocationId)
+            notify({
+              sessionUpdate: 'tool_call_update',
+              toolCallId: invocationId,
+              status: 'failed',
+              _meta: { toolName, 'open-science/web-cancelled': true }
+            })
+          }
+          pendingWebTools.clear()
+        },
         active: false,
         cancelled: false,
         flush
@@ -732,6 +803,12 @@ export function createHarnessAcpAgent(directory: string): {
           entry.setScheduleTurn(references[0])
           entry.active = true
           entry.cancelled = false
+          const finishTrace =
+            context.params.prompt[0]?._meta?.[HARNESS_TRACE_ENABLED] === true
+              ? entry.tracing?.startTurn(context.params.prompt)
+              : undefined
+          let traceOutcome: acp.StopReason | 'error' = 'error'
+          let traceRequestCount: number | undefined
           try {
             await entry.reconcile()
             const assertKnown = (checkpoint: AgentSessionInspection): void => {
@@ -784,6 +861,9 @@ export function createHarnessAcpAgent(directory: string): {
                     protocol,
                     adapterCode: error.code,
                     ...(error.status === undefined ? {} : { status: error.status }),
+                    ...(diagnostics.providerExcerpt
+                      ? { providerExcerpt: diagnostics.providerExcerpt }
+                      : {}),
                     ...(diagnostics.reason ? { code: diagnostics.reason } : {}),
                     ...(diagnostics.requestId ? { requestId: diagnostics.requestId } : {}),
                     phase
@@ -799,16 +879,19 @@ export function createHarnessAcpAgent(directory: string): {
               throw new Error(
                 `Built-in Agent turn ${status}; recovery requires host reconciliation`
               )
+            const stopReason = entry.cancelled
+              ? 'cancelled'
+              : status === 'complete'
+                ? 'end_turn'
+                : status === 'cancelled'
+                  ? 'cancelled'
+                  : entry.takeOutputTruncation()
+                    ? 'max_tokens'
+                    : 'max_turn_requests'
+            traceOutcome = stopReason
+            traceRequestCount = requests.length
             return {
-              stopReason: entry.cancelled
-                ? 'cancelled'
-                : status === 'complete'
-                  ? 'end_turn'
-                  : status === 'cancelled'
-                    ? 'cancelled'
-                    : entry.takeOutputTruncation()
-                      ? 'max_tokens'
-                      : 'max_turn_requests',
+              stopReason,
               _meta: {
                 'open-science-agent/requests': requests.map(({ id, status, usage }) => ({
                   id,
@@ -820,6 +903,7 @@ export function createHarnessAcpAgent(directory: string): {
           } finally {
             entry.setScheduleTurn(undefined)
             entry.active = false
+            finishTrace?.(entry.cancelled ? 'cancelled' : traceOutcome, traceRequestCount)
           }
         })()
       )
@@ -829,6 +913,7 @@ export function createHarnessAcpAgent(directory: string): {
       if (!entry?.active) return
       // ACP cancellation acknowledges prompt release; uncertain effects stay blocked in the journal.
       entry.cancelled = true
+      entry.cancelWebTools()
       entry.session.cancel()
     })
     .onRequest(acp.methods.agent.session.close, (context) =>

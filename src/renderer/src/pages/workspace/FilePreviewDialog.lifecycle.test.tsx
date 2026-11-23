@@ -240,3 +240,25 @@ describe('FilePreviewDialog closing lifecycle', () => {
     expect(container.getAttribute('aria-hidden')).toBe('true')
   })
 })
+
+it('opens image previews with explicit editing activation', async () => {
+  await act(async () =>
+    root.render(
+      <FilePreviewDialog
+        item={{
+          id: 'image',
+          sessionId: 'session',
+          type: 'file',
+          format: 'image',
+          path: 'image.png',
+          name: 'image.png',
+          title: 'image.png'
+        }}
+        onClose={() => {}}
+      />
+    )
+  )
+  expect(previewSurfaceSpy).toHaveBeenCalledWith(
+    expect.objectContaining({ imageEditPresentation: 'dialog' })
+  )
+})

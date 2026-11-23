@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { ShellProcessOwnershipRegistry } from '../notebook/shell-process-ownership.windows-posix'
 import { BackendShutdownCoordinator } from '../lifecycle-shutdown'
@@ -39,6 +40,7 @@ it.each(['confirmed', 'changed', 'runtime-blocked', 'new-record', 'claimed', 'co
     const receipts = runIds.map((id) => join(root, 'shell-process-ownership', `${id}.json`))
     const originals = await Promise.all(receipts.map((path) => readFile(path)))
     const notebook = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'fixture'

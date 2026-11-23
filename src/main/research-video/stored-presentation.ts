@@ -89,12 +89,12 @@ export async function readResearchFilmCard(
   try {
     const prefix = Buffer.alloc(96)
     const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0)
-    const match = /^<!doctype html><!--open-science-film-card:(9?):(live|drawn|)-->/.exec(
+    const match = /^<!doctype html><!--open-science-film-card:([0-9]?):(live|drawn|)-->/.exec(
       prefix.toString('utf8', 0, bytesRead)
     )
     const mode = match?.[2]
     return {
-      ...(match?.[1] && { scriptScore: 9 }),
+      ...(match?.[1] && { scriptScore: Number(match[1]) }),
       ...((mode === 'live' || mode === 'drawn') && { sessionAppMode: mode })
     }
   } finally {

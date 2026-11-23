@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   defaultController,
-  KernelProcessLifecycleOwner
+  KernelProcessLifecycleOwner,
+  type KernelProcessSpawnIntent
 } from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from '@aipoch/environment'
 import {
@@ -189,15 +190,18 @@ describe('KernelProcessLifecycleOwner', () => {
   })
 
   it.each([
-    { probe: 'owned', reaped: true, foreign: false, removed: true },
-    { probe: 'dead', reaped: false, foreign: false, removed: true },
-    { probe: 'reused', reaped: false, foreign: false, removed: true },
-    { probe: 'owned', reaped: false, foreign: false, removed: false },
-    { probe: 'unknown', reaped: false, foreign: false, removed: false },
-    { probe: 'owned', reaped: true, foreign: true, removed: false }
+    { probe: 'owned', reaped: true, draft: 'matching', removed: true },
+    { probe: 'dead', reaped: false, draft: 'matching', removed: true },
+    { probe: 'reused', reaped: false, draft: 'matching', removed: true },
+    { probe: 'owned', reaped: false, draft: 'matching', removed: false },
+    { probe: 'unknown', reaped: false, draft: 'matching', removed: false },
+    { probe: 'owned', reaped: true, draft: 'foreign', removed: false },
+    { probe: 'owned', reaped: true, draft: 'empty', removed: false },
+    { probe: 'owned', reaped: true, draft: 'partial', removed: false },
+    { probe: 'unknown', reaped: false, draft: 'partial', removed: false }
   ] as const)(
-    'handles interrupted host receipt writes after recovery ($probe, reaped=$reaped, foreign=$foreign)',
-    async ({ probe, reaped, foreign, removed }) => {
+    'handles interrupted host receipt writes after recovery ($probe, reaped=$reaped, draft=$draft)',
+    async ({ probe, reaped, draft, removed }) => {
       root = await mkdtemp(join(tmpdir(), 'kernel-process-interrupted-receipt-'))
       const first = new KernelProcessLifecycleOwner({
         storageRoot: root,
@@ -212,16 +216,17 @@ describe('KernelProcessLifecycleOwner', () => {
       const receipt = first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
       const temporary = `${receipt.path}.4242.tmp`
       const contents = await readFile(receipt.path, 'utf8')
-      await writeFile(
-        temporary,
-        foreign
-          ? JSON.stringify({ ...JSON.parse(contents), ownerToken: 'different-owner' })
-          : contents
-      )
+      const draftContents = {
+        matching: contents,
+        foreign: JSON.stringify({ ...JSON.parse(contents), ownerToken: 'different-owner' }),
+        empty: '',
+        partial: contents.slice(0, contents.indexOf('ownerToken'))
+      }[draft]
+      await writeFile(temporary, draftContents)
       // The host publishes the active filename before persisting its PID in the receipt.
       await writeFile(receipt.path, JSON.stringify(intent.record))
       const terminate = vi.fn(async () => {
-        expect(await readFile(temporary, 'utf8')).toBeTruthy()
+        expect(await readFile(temporary, 'utf8')).toBe(draftContents)
         return { reaped }
       })
       const restarted = new KernelProcessLifecycleOwner({
@@ -233,12 +238,18 @@ describe('KernelProcessLifecycleOwner', () => {
         await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
       } else {
         await restarted.ensureReady()
+        const next = restarted.beginSpawn({
+          laneKey: intent.record.laneKey,
+          processKey: intent.record.processKey,
+          kernelEpochId: 'next-epoch'
+        })
+        restarted.abandonSpawn(next)
       }
       expect(terminate).toHaveBeenCalledTimes(probe === 'owned' ? 1 : 0)
       if (removed) {
         await expect(readFile(temporary, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
       } else {
-        expect(await readFile(temporary, 'utf8')).toBeTruthy()
+        expect(await readFile(temporary, 'utf8')).toBe(draftContents)
       }
     }
   )
@@ -486,6 +497,33 @@ describe('KernelProcessLifecycleOwner', () => {
     await expect(controller.probe(record)).resolves.toBe('unknown')
     await expect(controller.terminate(record)).resolves.toEqual({ reaped: false })
     expect(kill).not.toHaveBeenCalled()
+  })
+
+  it('admits the original Windows kernel only after observing a later boot on the same host', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-windows-reboot-'))
+    const options = { storageRoot: root, platform: 'win32' as const }
+    const previous = new KernelProcessLifecycleOwner(options)
+    const scope = {
+      laneKey: 'old-session',
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch'
+    }
+    previous.recordSpawned(previous.beginSpawn(scope), { pid: 4242 })
+    const host = 'a'.repeat(64)
+    const recover = (hostHash?: string, boot = bootA): Promise<KernelProcessSpawnIntent> => {
+      const owner = new KernelProcessLifecycleOwner({
+        ...options,
+        readWindowsBootObservation: async () =>
+          hostHash ? { hostHash, bootIdentity: `windows-boot:${boot}` } : undefined
+      })
+      return owner.ensureReady().then(() => owner.beginSpawn(scope))
+    }
+
+    await expect(recover(host)).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover(host)).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover('b'.repeat(64), bootB)).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover(host, bootB)).resolves.toMatchObject({ record: scope })
   })
 
   it.each(['started-and-reaped', 'never-started'] as const)(
@@ -1065,12 +1103,9 @@ describe('KernelProcessLifecycleOwner', () => {
           host.stdin!.end('start')
         }
         await vi.waitFor(async () => {
-          const names = await readdir(join(root!, 'runtime', 'kernel-processes'))
-          const name = names.find((name) => name.includes(`.active.${pid}.`))
-          expect(name).toBeDefined()
-          const record = JSON.parse(
-            await readFile(join(root!, 'runtime', 'kernel-processes', name!), 'utf8')
-          )
+          // The parent can publish the birth token first. Only the host writes its identity marker.
+          const record = JSON.parse(await readFile(intent.activePath(pid), 'utf8'))
+          expect(record.commandIdentityMarker).toBe(intent.record.receiptId)
           expect(record.posixBirthToken).toEqual(expect.any(String))
         })
 

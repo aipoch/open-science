@@ -793,7 +793,6 @@ const cancelWorkspaceRun = async (
   if (hasPendingWorkspacePromptRollback(sessionId)) {
     const retained = await retryPendingWorkspacePromptRollback(sessionId)
     if (retained.failure !== undefined) {
-      reportWorkspaceOperationError(sessionId, retained.failure)
       throw new Error(retained.failure)
     }
     if (retained.rolledBack) return
@@ -808,11 +807,16 @@ const cancelWorkspaceRun = async (
 
   const wasCompacting = session?.compacting === true
   if (wasCompacting) cancelledSessionIds?.add(sessionId)
-  const snapshot = await runtime.cancel(sessionId)
+  let snapshot
+  try {
+    snapshot = await runtime.cancel(sessionId)
+  } catch (error) {
+    cancelledSessionIds?.delete(sessionId)
+    throw error
+  }
 
   if (!snapshot) {
     cancelledSessionIds?.delete(sessionId)
-    reportWorkspaceOperationError(sessionId, 'Agent cancellation failed')
     throw new Error('Agent cancellation failed')
   }
 }

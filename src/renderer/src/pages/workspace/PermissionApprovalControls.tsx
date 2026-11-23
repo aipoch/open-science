@@ -17,7 +17,7 @@ import { ScopeDropdown, type PermissionScope } from './PermissionScopeButton'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import type { TFunction } from 'i18next'
-import { ChevronDown, ChevronRight, Info, TriangleAlert } from 'lucide-react'
+import { ChevronDown, ChevronRight, Info, Search, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -68,6 +68,8 @@ import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { SkillDocumentSheet } from './WorkspaceSkillLoadRow'
 import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
 import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
+import { searchInputSchema } from '../../../../shared/web-tools'
+import { WebSearchPermissionCard } from './WebSearchPermissionCard'
 
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
@@ -846,6 +848,14 @@ const PermissionApprovalCard = ({
     sourceLookupKey
   ])
   const permCode = codeReview || selectedLabel ? undefined : extractPermissionCode(request)
+  // Only the broker-resolved built-in identity gets this presentation. Unknown or invalid
+  // arguments keep the complete generic preview instead of silently losing approval context.
+  const webSearch =
+    isMcpPermissionRequest(request) &&
+    /^open[-_]science[-_]web\/web_search$/.test(request.mcpIdentity ?? '')
+      ? searchInputSchema.safeParse(notebookInput(request.rawInput))
+      : undefined
+  const webSearchInput = webSearch?.success ? webSearch.data : undefined
   // A skills/load_skill approval names the skill being loaded; the section resolves the SKILL.md
   // document (managed catalog first, then the connector-aware main resolver) and falls back to the
   // raw JSON input when no source provides the name.
@@ -901,9 +911,11 @@ const PermissionApprovalCard = ({
     ...sourcePresentation,
     actionTitle:
       schedule?.summary.title ??
-      t(sourcePresentation.actionTitleKey ?? sourcePresentation.actionTitle, {
-        ...sourcePresentation.actionTitleValues
-      }),
+      (webSearchInput
+        ? t('Allow web search?')
+        : t(sourcePresentation.actionTitleKey ?? sourcePresentation.actionTitle, {
+            ...sourcePresentation.actionTitleValues
+          })),
     categoryLabel: schedule ? t('Schedule') : t(sourcePresentation.categoryLabel),
     description: t(sourcePresentation.description)
   }
@@ -1042,6 +1054,7 @@ const PermissionApprovalCard = ({
       }
       className={cn(
         'flex w-full max-w-full flex-col gap-3 bg-card p-4 text-xs leading-5 text-card-foreground outline-none sm:p-5',
+        webSearchInput && 'gap-2.5 sm:p-4',
         !embedded &&
           'mb-2 rounded-xl border border-border shadow-dialog motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-200'
       )}
@@ -1068,7 +1081,9 @@ const PermissionApprovalCard = ({
           'flex min-w-0 items-center gap-2',
           codeReview && 'flex-col items-stretch gap-3',
           embedded &&
-            'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:-mt-5 sm:px-5 sm:pt-5'
+            'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:-mt-5 sm:px-5 sm:pt-5',
+          webSearchInput && 'flex-wrap',
+          webSearchInput && embedded && 'sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4'
         )}
       >
         {codeReview ? (
@@ -1098,7 +1113,16 @@ const PermissionApprovalCard = ({
         ) : (
           <>
             <div className="flex min-w-0 items-center gap-1.5">
-              <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
+              {webSearchInput ? (
+                <Search className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              ) : null}
+              <span
+                className={cn(
+                  dialogTitleClassName,
+                  'min-w-0 truncate',
+                  webSearchInput && 'text-sm'
+                )}
+              >
                 {presentation.actionTitle}
               </span>
               <PermissionImpactTip
@@ -1182,6 +1206,8 @@ const PermissionApprovalCard = ({
             </details>
           )}
         </div>
+      ) : webSearchInput ? (
+        <WebSearchPermissionCard key={requestId} input={webSearchInput} />
       ) : imageOperation ? (
         <WorkspaceImageToolCard
           key={requestId}
@@ -1238,7 +1264,9 @@ const PermissionApprovalCard = ({
         className={cn(
           'flex flex-wrap items-center justify-end gap-2',
           embedded &&
-            'sticky bottom-0 z-10 -mx-4 -mb-4 bg-card px-4 pb-4 pt-3 sm:-mx-5 sm:-mb-5 sm:px-5 sm:pb-5'
+            'sticky bottom-0 z-10 -mx-4 -mb-4 bg-card px-4 pb-4 pt-3 sm:-mx-5 sm:-mb-5 sm:px-5 sm:pb-5',
+          webSearchInput && 'border-t border-border-200/70 pt-2.5',
+          webSearchInput && embedded && 'sm:-mx-4 sm:-mb-4 sm:px-4 sm:pb-4'
         )}
       >
         {/* Split Allow button: main action + scope chevron; the menu anchors to this group's right edge.

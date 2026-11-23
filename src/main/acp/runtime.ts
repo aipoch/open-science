@@ -20,7 +20,6 @@ import {
   ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
-  type AcpCancelPromptRequest,
   type AcpCompactSessionRequest,
   type AcpConnectRequest,
   type AcpCreateSessionRequest,
@@ -101,6 +100,7 @@ import { type AppPermissionRequest, type RestoredPermissionContinuation } from '
 import type { AcpPermissionContext } from './permission-context'
 import { HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
+import { markNotebookExecutionIntent } from '../notebook/execution-intent'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
@@ -118,7 +118,11 @@ import type {
 } from './reviewer-session-owner'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
-import type { AcpRuntimeArtifactOptions, AcpRuntimeOptions } from './runtime-contract'
+import type {
+  AcpRuntimeArtifactOptions,
+  AcpRuntimeOptions,
+  RuntimeCancelPromptRequest
+} from './runtime-contract'
 import { composeAcpRuntimeContinuations } from './runtime-continuation-composition'
 import {
   PERMISSION_DENIED_CONTINUATION_TEXT,
@@ -401,6 +405,8 @@ class AcpRuntime {
       }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
+      refreshNotebookConnection: (input) =>
+        this.providerSessionResumer.refreshNotebookConnection(input),
       onProviderPromptAccepted: (sessionId) => {
         this.durableContinuationContext.clearContextReset(sessionId)
       },
@@ -488,7 +494,16 @@ class AcpRuntime {
       ...(this.options.notebook?.prepareTurnInputs
         ? { prepareTurnInputs: this.options.notebook.prepareTurnInputs }
         : {}),
-      publishUserMessage: ({ sessionId, messageId, text, uploads, parts }) =>
+      publishUserMessage: ({ sessionId, messageId, text, uploads, parts }) => {
+        // Native injection clarifies the currently running dispatch. It never mints another
+        // Notebook grant, including when its original intent has already been refused.
+        const intent = base.sessionCapabilities.notebookExecutionIntentFor(sessionId)
+        if (intent)
+          options.notebook?.rememberExecutionIntent?.(
+            { projectId: this.sessionEnvironment.projectId(sessionId), sessionId },
+            messageId,
+            intent
+          )
         this.publication.pushEvent({
           kind: 'message',
           level: 'info',
@@ -499,6 +514,7 @@ class AcpRuntime {
           ...(uploads && uploads.length > 0 ? { uploads: [...uploads] } : {}),
           ...(parts && parts.length > 0 ? { parts: [...parts] } : {})
         })
+      }
     })
     const lifecycle = composeAcpRuntimeLifecycleOwners(options, base, session, {
       connect: (request) => this.connect(request),
@@ -1234,6 +1250,9 @@ class AcpRuntime {
       this.connection === connection &&
       this.activeSessionFor(request.sessionId) === session
 
+    if (request.profile === 'ask') {
+      this.options.web?.cancelSession?.(request.sessionId)
+    }
     // Make the requested posture authoritative before the provider mode request can yield. A
     // downgrade from Full must affect broker decisions immediately, even while setMode is in flight.
     this.permissionContext.beginPermissionProfileTransition(
@@ -1292,6 +1311,12 @@ class AcpRuntime {
 
   // Revokes an app-owned session grant so the next matching tool call prompts again.
   async revokePermissionGrant(request: AcpRevokePermissionGrantRequest): Promise<AcpStateSnapshot> {
+    if (
+      request.categoryKey === 'builtin:web_search' ||
+      request.categoryKey === 'builtin:web_fetch'
+    ) {
+      this.options.web?.cancelSession?.(request.sessionId)
+    }
     await this.permissionContext.revokeGrant(request.sessionId, request.categoryKey)
     this.emitState()
 
@@ -1300,6 +1325,7 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    for (const sessionId of this.activeSessionIds()) this.options.web?.cancelSession?.(sessionId)
     const epoch = this.connectionResources.epoch
     recordResourceSnapshot(this.resourceRuntimeId, this, 'teardown-started')
     this.planContinuations.clearRetries()
@@ -1410,6 +1436,13 @@ class AcpRuntime {
       toolLess: this.sessionEnvironment.role() === 'restricted-inference',
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
       requestPermission: (params) => this.clientInteractions.requestPermission(params),
+      captureUserStop: (providerSessionId) => {
+        const appSessionId = this.sessionRegistry.resolveAppSessionId(providerSessionId)
+        const scope = this.sessionInteractions.current(appSessionId)
+        return scope?.kind === 'prompt'
+          ? () => this.sessionInteractions.isCancellationAccepted(scope, 'user')
+          : undefined
+      },
       observeSessionUpdate: (notification) => {
         this.providerSessionResumer.observeProgress(notification.sessionId)
         this.permissionContext.observeProviderUpdate(notification)
@@ -1603,6 +1636,39 @@ class AcpRuntime {
     })
   }
 
+  // Main's Task adapter calls this synchronously under TaskRunner's Session reservation. An
+  // automation prompt can inherit its root authority, but can never clear a previous refusal.
+  captureNotebookTaskIntent(request: AcpPromptRequest): AcpPromptRequest {
+    const notebook = this.options.notebook
+    if (!notebook) return request
+    const scope = {
+      projectId: this.sessionEnvironment.projectId(request.sessionId),
+      sessionId: request.sessionId,
+      messageBranchId: request.provenanceContext?.messageBranchId,
+      promptMessageId: request.provenanceContext?.promptMessageId
+    }
+    const origin = request.provenanceContext?.promptMessageId
+    let intent = origin ? notebook.resolveExecutionIntent?.(scope, origin) : undefined
+    intent ??= (
+      notebook.currentExecutionIntent
+        ? notebook.currentExecutionIntent(scope)
+        : this.sessionCapabilities.notebookExecutionIntentFor(request.sessionId)
+    )?.forDescendant(request.provenanceContext)
+    if (!intent && origin && notebook.createExecutionIntent) {
+      // TaskRunner has accepted this exact first root under its Session reservation. Generic
+      // resume, application prompts and later roots cannot replace an existing refused context.
+      intent = notebook.createExecutionIntent(scope)
+      intent.prepareUserExecution()
+    }
+    if (!intent)
+      throw new Error(
+        'Notebook Task execution context is unavailable. Execution was not started; repair the runtime before starting a new Task.'
+      )
+    markNotebookExecutionIntent(request, intent)
+    if (origin) notebook.rememberExecutionIntent?.(scope, origin, intent)
+    return request
+  }
+
   // Sends one prompt turn to the targeted session and streams updates until stop.
   async sendPrompt(
     request: AcpPromptRequest,
@@ -1762,7 +1828,8 @@ class AcpRuntime {
   }
 
   // Requests cancellation without clearing in-flight state before the agent stops.
-  async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+  async cancelPrompt(request: RuntimeCancelPromptRequest): Promise<AcpStateSnapshot> {
+    this.options.web?.cancelSession?.(request.sessionId)
     // A timed-out cancellation may already be closing the shared connection. Wait before taking
     // any early permission/continuation path so every caller observes the same teardown boundary.
     const pendingCancellationTeardown = this.cancellationTeardown
@@ -1839,6 +1906,7 @@ class AcpRuntime {
     if (connection && activeSession) {
       try {
         await this.sessionInteractions.cancelPrompt({
+          userInitiated: request.userInitiated,
           sessionId: request.sessionId,
           notify: () =>
             connection.agent.notify(acp.methods.agent.session.cancel, {

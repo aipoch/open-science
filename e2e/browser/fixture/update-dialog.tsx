@@ -181,6 +181,7 @@ if (params.has('refused-restart')) {
   let onStatus: ((status: UpdateStatus) => void) | undefined
   const update: typeof window.api.update = {
     ...manualApi,
+    setAutomaticDownloads: async (enabled) => (status = { ...status, automaticDownloads: enabled }),
     getAppInfo: async () => ({ name: 'Open-Science', version: '0.28.0', copyright: '' }),
     getStatus: async () => status,
     check: async () => status,

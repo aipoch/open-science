@@ -22,7 +22,11 @@ export type ProviderErrorReason =
   | 'server_error'
   | 'provider_error'
 
+/** Optional host policy. Only return a public, allowlisted excerpt suitable for diagnostics. */
+export type SummarizeProviderError = (message: string) => string | undefined
+
 export type UpstreamErrorDiagnostics = Readonly<{
+  providerExcerpt?: string
   phase?: AdapterErrorPhase
   reason?: ProviderErrorReason
   requestId?: string
@@ -84,10 +88,11 @@ const identifyReason = (codes: string[], message: string, status?: number): Prov
   return 'provider_error'
 }
 
-/** Recognize JSON/SSE errors internally; discard arbitrary messages, unknown codes, and extra fields. */
+/** Keep normalized evidence; arbitrary provider wording stays inside this boundary. */
 export const normalizeProviderError = (
   value: unknown,
-  status?: number
+  status?: number,
+  summarize?: SummarizeProviderError
 ): UpstreamErrorDiagnostics => {
   const root = object(value)
   const error = object(root?.error) ?? root
@@ -95,7 +100,11 @@ export const normalizeProviderError = (
     (code): code is string => typeof code === 'string'
   )
   const message = typeof error?.message === 'string' ? error.message : ''
-  return { reason: identifyReason(codes, message, status) }
+  const excerpt = summarize?.(message)
+  return {
+    reason: identifyReason(codes, message, status),
+    ...(excerpt && excerpt.length <= 300 ? { providerExcerpt: excerpt } : {})
+  }
 }
 
 /**
@@ -111,7 +120,8 @@ export const normalizeProviderError = (
  */
 export const normalizeUpstreamError = async (
   response: Response,
-  signal: AbortSignal
+  signal: AbortSignal,
+  summarize?: SummarizeProviderError
 ): Promise<UpstreamErrorDiagnostics> => {
   signal.throwIfAborted()
   const headers = {
@@ -167,11 +177,14 @@ export const normalizeUpstreamError = async (
   if (isJson) {
     if (!complete) return headers
     try {
-      return { ...headers, ...normalizeProviderError(JSON.parse(text), response.status) }
+      return { ...headers, ...normalizeProviderError(JSON.parse(text), response.status, summarize) }
     } catch {
       // Never use malformed or truncated JSON as a raw error message.
       return headers
     }
   }
-  return { ...headers, reason: identifyReason([], text, response.status) }
+  return {
+    ...headers,
+    ...normalizeProviderError({ message: text }, response.status, complete ? summarize : undefined)
+  }
 }

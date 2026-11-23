@@ -6,7 +6,16 @@ import { InlineNotice } from '@/components/ui/inline-notice'
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (semantic Settings tokens) · slop: pass
  */
-import { CircleHelp, Download, FileText, Globe, RefreshCw, Scale, Shield } from 'lucide-react'
+import {
+  CircleCheck,
+  CircleHelp,
+  Download,
+  FileText,
+  Globe,
+  RefreshCw,
+  Scale,
+  Shield
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useEffect, useRef } from 'react'
 
@@ -22,7 +31,7 @@ import {
   getDocumentationUrl,
   getInstallationDocumentationUrl
 } from '../../../../shared/app-config'
-import { SettingsRow } from './SettingsLayout'
+import { SettingsRow, SettingsToggle } from './SettingsLayout'
 import { SETTINGS_MANUAL_UPDATE_GUIDE_CLOSE } from './settings-manual-update-guide'
 
 export type AppVersionSectionPreviewState =
@@ -54,6 +63,7 @@ const AppVersionSection = ({
   const status = useUpdateStore((state) => state.status)
   const check = useUpdateStore((state) => state.check)
   const openDialog = useUpdateStore((state) => state.openDialog)
+  const setAutomaticDownloads = useUpdateStore((state) => state.setAutomaticDownloads)
   const manual = useManualUpdate(true)
   const sectionRef = useRef<HTMLDivElement>(null)
   const { closeGuide, guideOpenRef } = manual
@@ -69,7 +79,6 @@ const AppVersionSection = ({
   const version = appInfo?.version ?? status.current
   const isChecking = status.state === 'checking'
   const isDownloading = status.state === 'downloading'
-  const canCheck = !isChecking && !isDownloading
   const hasUpdate = status.state === 'available' || isDownloading || status.state === 'ready'
   const helpPreviewClassName =
     previewState === 'hover'
@@ -90,9 +99,11 @@ const AppVersionSection = ({
       case 'downloading':
         return t('Downloading… {{percent}}%', { percent: status.progress ?? 0 })
       case 'ready':
-        return status.applyKind === 'restart'
-          ? t('Restart to update')
-          : t('Update downloaded — open the installer to finish')
+        return status.applyKind === 'installer'
+          ? t('Update downloaded — open the installer to finish')
+          : t('Update ready')
+      case 'applying':
+        return t('Installing…')
       case 'up-to-date':
         return t('You are on the latest version')
       case 'error':
@@ -119,71 +130,30 @@ const AppVersionSection = ({
       ) : null}
       <div hidden={manual.guideOpen} className={manual.guideOpen ? 'hidden' : 'contents'}>
         <div role="region" data-settings-anchor="general.about" aria-label={t('App version')}>
-          <SettingsRow
-            label={
-              <div className="flex min-w-0 items-center gap-3">
-                <AppLogo className="size-16 shrink-0 rounded-xl" />
-                <div className="min-w-0 flex-1">
-                  <p className="flex flex-wrap items-baseline gap-x-2">
-                    <span className="text-sm font-semibold text-foreground">{APP.name}</span>
-                    <span className="text-xs text-muted-foreground tabular-nums">v{version}</span>
-                  </p>
-                  <p className="mt-0.5 text-xs font-normal text-muted-foreground">
-                    {APP.copyright}
-                  </p>
-                  {statusLine ? (
-                    !status.error && status.state !== 'error' ? (
-                      <p className="mt-1 text-xs text-muted-foreground" role="status">
-                        {statusLine}
-                      </p>
-                    ) : (
-                      <InlineNotice level="error" role="alert" className="mt-2">
-                        {statusLine}
-                      </InlineNotice>
-                    )
-                  ) : null}
-                </div>
-              </div>
-            }
-            className="py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:py-6"
-          >
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void check()}
-                disabled={!canCheck}
-              >
-                <RefreshCw
-                  className={isChecking ? 'size-4 animate-spin' : 'size-4'}
-                  aria-hidden="true"
-                />
-                {isChecking ? t('Checking…') : t('Check now')}
-              </Button>
-
-              {hasUpdate ? (
-                <Button type="button" onClick={() => openDialog()}>
-                  <Download className="size-4" aria-hidden="true" />
-                  {isDownloading
-                    ? t('Downloading {{percent}}%', { percent: status.progress ?? 0 })
-                    : status.state === 'ready'
-                      ? t('Update ready')
-                      : t('Update to {{version}}', { version: status.latest })}
-                </Button>
-              ) : null}
+          <div className="flex items-center gap-3 pb-3 pt-2">
+            <AppLogo className="size-14 shrink-0 rounded-xl" />
+            <div className="min-w-0">
+              <p className="flex flex-wrap items-baseline gap-x-2">
+                <span className="text-sm font-semibold text-foreground">{APP.name}</span>
+                <span className="text-xs text-muted-foreground tabular-nums">v{version}</span>
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{APP.copyright}</p>
             </div>
-          </SettingsRow>
-
-          {manual.installer || manual.feedback ? (
-            <div className="mb-6 pl-20">
-              <ManualUpdateLinks
-                manual={manual}
-                align="start"
-                showGuide={false}
-                showDownload={false}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void check()}
+              className="ml-auto shrink-0"
+              disabled={isChecking || isDownloading || status.state === 'applying'}
+            >
+              <RefreshCw
+                className={isChecking ? 'size-4 animate-spin motion-reduce:animate-none' : 'size-4'}
+                aria-hidden="true"
               />
-            </div>
-          ) : null}
+              {isChecking ? t('Checking…') : t('Check now')}
+            </Button>
+          </div>
 
           <div data-testid="about-resource-grid" className="grid gap-3 pt-2 sm:grid-cols-2">
             <ExternalTextLink
@@ -332,6 +302,70 @@ const AppVersionSection = ({
                 </span>
               </span>
             </ExternalTextLink>
+          </div>
+          <div className="mt-5 divide-y divide-border overflow-hidden rounded-lg border border-border bg-card empty:hidden">
+            {statusLine && (
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  {status.error || status.state === 'error' ? (
+                    <InlineNotice level="error" role="alert">
+                      {statusLine}
+                    </InlineNotice>
+                  ) : (
+                    <p
+                      role="status"
+                      className="flex flex-wrap items-baseline gap-x-2 text-sm font-medium text-foreground"
+                    >
+                      {(status.state === 'ready' || status.state === 'up-to-date') && (
+                        <CircleCheck
+                          className="size-4 self-center text-primary"
+                          aria-hidden="true"
+                        />
+                      )}
+                      {statusLine}
+                      {status.state === 'ready' && status.latest && (
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          v{status.latest}
+                        </span>
+                      )}
+                    </p>
+                  )}
+                  {(status.error || status.state === 'error') &&
+                    (manual.installer || manual.feedback) && (
+                      <ManualUpdateLinks
+                        manual={manual}
+                        align="start"
+                        showGuide={false}
+                        showDownload={false}
+                      />
+                    )}
+                </div>
+                {hasUpdate ? (
+                  <Button type="button" size="sm" variant="outline" onClick={() => openDialog()}>
+                    {status.state === 'ready'
+                      ? status.applyKind === 'restart'
+                        ? t('Restart to update')
+                        : t('Open installer')
+                      : isDownloading
+                        ? t('View details')
+                        : t('Update to {{version}}', { version: status.latest })}
+                  </Button>
+                ) : null}
+              </div>
+            )}
+
+            {status.automaticDownloads !== undefined && (
+              <SettingsRow
+                label={t('Automatically download updates')}
+                className="min-h-11 px-4 py-2.5 grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_auto]"
+              >
+                <SettingsToggle
+                  aria-label={t('Automatically download updates')}
+                  enabled={status.automaticDownloads}
+                  onToggle={() => void setAutomaticDownloads(!status.automaticDownloads)}
+                />
+              </SettingsRow>
+            )}
           </div>
         </div>
       </div>

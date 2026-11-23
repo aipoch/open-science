@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import { projectDiagnosticNotebook } from './notebook'
 
 it('keeps failure/recovery evidence while excluding unrequested code and research content', () => {
@@ -155,4 +156,29 @@ it('includes usable credential-redacted code only on opt-in and reports each ret
   expect(runs[3].script).toMatch(/\n…\[execution code truncated\]$/)
   expect(result.executionCodeCoverage).toEqual({ included: 2, missing: 1, truncated: 1 })
   expect(result.truncation).toMatchObject({ truncatedTextFields: 0 })
+})
+
+it('preserves a checksum-matching inline environment manifest', () => {
+  const manifest = {
+    schemaVersion: 1,
+    captureKind: 'completed-run',
+    packages: []
+  }
+  const contents = `${JSON.stringify(manifest, null, 2)}\n`
+  const checksum = createHash('sha256').update(contents).digest('hex')
+  const result = projectDiagnosticNotebook(
+    {
+      projectId: 'p',
+      sessionId: 's',
+      runs: [
+        { runId: 'run-1', environmentManifestChecksum: checksum, environmentManifest: manifest }
+      ]
+    },
+    { projectId: 'p', sessionId: 's' }
+  )
+  const run = (result.runs as Record<string, unknown>[])[0]
+  expect(run).toMatchObject({
+    environmentManifestChecksum: checksum,
+    environmentManifest: manifest
+  })
 })

@@ -1,5 +1,6 @@
 import { projectSessionEventPayload } from '../session-event-payload'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { RUNTIME_PAYLOAD_INLINE_BYTES } from '../../shared/runtime-payload-transfer'
 
 import { WEB_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 import { InternalWebEventStream } from './internal-web-event-stream'
@@ -34,6 +35,47 @@ describe('InternalWebEventStream', () => {
     }
   )
 
+  it.each([0, 1])('projects by payload UTF-8 bytes at the inline limit + %i', (excess) => {
+    const session = { id: 's', projectId: 'p', revision: 3, text: '漢😀"\\' }
+    const payload = { session, originClientId: 'client' }
+    session.text += 'x'.repeat(
+      RUNTIME_PAYLOAD_INLINE_BYTES - Buffer.byteLength(JSON.stringify(payload)) + excess
+    )
+    const stream = new InternalWebEventStream({ streamId: '流"\\' })
+    const serialized = stream.publish({ channel: 'session:updated', payload })
+    const frame = JSON.parse(serialized)
+    if (excess === 0) expect(frame.payload.session.text === session.text).toBe(true)
+    else
+      expect(frame.payload).toEqual({
+        kind: 'session-invalidation',
+        projectId: 'p',
+        sessionId: 's',
+        revision: 3,
+        originClientId: 'client'
+      })
+    session.text = 'edited after publication'
+    expect(stream.resume({ streamId: '流"\\', after: 0 })[0] === serialized).toBe(true)
+  })
+
+  it('serializes inline Session data once and replays the captured snapshot', () => {
+    const toJSON = vi.fn(() => 'first')
+    const stream = new InternalWebEventStream({ streamId: 's' })
+    const serialized = stream.publish({
+      channel: 'session:created',
+      payload: { session: { title: { toJSON } } }
+    })
+    toJSON.mockReturnValue('changed')
+    expect(JSON.parse(stream.resume({ streamId: 's', after: 0 })[0])).toEqual(
+      JSON.parse(serialized)
+    )
+    expect(JSON.parse(serialized).payload.session.title).toBe('first')
+    expect(toJSON).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([null, undefined])('encodes an absent Session payload as null', (payload) => {
+    const stream = new InternalWebEventStream({ streamId: 's' })
+    expect(JSON.parse(stream.publish({ channel: 'session:updated', payload })).payload).toBeNull()
+  })
   it('replays retained event frames in sequence before declaring the stream live', () => {
     const stream = new InternalWebEventStream({
       streamId: 'stream-1',

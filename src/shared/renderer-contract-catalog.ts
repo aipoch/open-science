@@ -25,6 +25,7 @@ import * as reviewer from './renderer-contracts/reviewer'
 import * as runtime from './renderer-contracts/runtime'
 import * as settingsConnectors from './renderer-contracts/settings-connectors'
 import * as settingsModels from './renderer-contracts/settings-models'
+import * as settingsLab from './renderer-contracts/settings-lab'
 import * as settingsSkills from './renderer-contracts/settings-skills'
 import * as settingsPreferences from './renderer-contracts/settings-preferences'
 import * as specialist from './renderer-contracts/specialist'
@@ -84,6 +85,7 @@ export const RENDERER_API_CONTRACT = composeRendererApiContract(
   settingsModels.settingsInstallClaudeContracts,
   settingsPreferences.settingsIsEncryptionAvailableContracts,
   settingsModels.settingsIsNpmAvailableContracts,
+  settingsLab.settingsLabContracts,
   settingsSkills.settingsListAgentHomeSkillsContracts,
   settingsPreferences.settingsListAppIconsContracts,
   settingsConnectors.settingsListConnectorsContracts,
