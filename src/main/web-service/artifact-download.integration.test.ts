@@ -30,6 +30,7 @@ import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
 import { createManagedPreviewProtocolHandler } from '../managed-preview-protocol'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
+import { SessionProjectionRepository } from '../session-persistence/projection'
 import { SessionRepository } from '../session-persistence/repository'
 import { startWebHttpServer } from './http-server'
 import { HeadlessTaskApi } from './task-api'
@@ -45,7 +46,8 @@ it.each(['historical', 'native'] as const)(
   async (identity) => {
     const fixture = await createProvenanceTestFixture()
     initDataRoot(fixture.storageRoot)
-    const sessions = new SessionRepository(fixture.storageRoot)
+    const projection = new SessionProjectionRepository(async () => fixture.client)
+    const sessions = new SessionRepository(fixture.storageRoot, {}, projection)
     const messages: PersistedChatSession['messages'] = [
       {
         id: 'prompt-1',
@@ -113,7 +115,11 @@ it.each(['historical', 'native'] as const)(
         commandNames: () => [],
         invoke: async (name, invocation) => {
           const { args, callerLease } = invocation
-          if (name === 'sessions:load-all') return sessions.loadAll()
+          if (name === 'sessions:list') return { sessions: await projection.list() }
+          if (name === 'sessions:load-one') {
+            const { projectId, sessionId } = args[0] as { projectId: string; sessionId: string }
+            return sessions.loadSession(projectId, sessionId)
+          }
           if (name === 'artifacts:resolve-version-descriptors') {
             return provenance.resolveVersionDescriptors(
               args[0] as ResolveArtifactVersionDescriptorsRequest

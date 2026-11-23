@@ -310,6 +310,8 @@ const TASK_COMMAND_NAMES = Object.freeze([
   'settings:get-settings',
   'settings:set-agent-routing',
   'sessions:load-all',
+  'sessions:list',
+  'sessions:load-one',
   'sessions:save-session',
   'sessions:bind-task-session',
   'sessions:admit-task-turn',
