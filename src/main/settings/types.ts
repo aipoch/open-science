@@ -12,6 +12,7 @@ import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type {
   ModelProtocol,
+  ModelReasoningEffort,
   OfficialVendorId,
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
@@ -128,6 +129,8 @@ export type StoredProvider = {
   labCatalogToken?: string
   // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
   modelCapabilities?: Record<string, LabModelCapabilities>
+  // Per-model reasoning levels advertised by CodeBuddy's ACP catalog.
+  modelReasoningEfforts?: Record<string, ModelReasoningEffort[]>
   // Non-secret identity returned by xAI after device authorization.
   accountEmail?: string
   keyRef?: string

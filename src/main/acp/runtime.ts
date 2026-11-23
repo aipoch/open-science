@@ -1,6 +1,7 @@
 import { PROJECT_RECORD_DIRECTORY } from '../storage/data-location-identity'
 import { realpath as resolveFileRoot } from 'node:fs/promises'
 import { mapProjectFolderAcpPath } from './project-folder-file-path'
+import { assertTaskRunTracingReady } from './task-run-tracing'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
   registerResourceObservation,
@@ -933,6 +934,16 @@ class AcpRuntime {
     beforePublish?: () => void
   ): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(() => this.providerSessionCreator.create(request, beforePublish))
+  }
+
+  async assertAttachedTracingReady(sessionId: string): Promise<void> {
+    const connection = this.connection
+    const session = this.activeSessionFor(sessionId)
+    if (!session || !connection) throw new Error('ACP session is no longer attached.')
+    await assertTaskRunTracingReady(this.backend.framework.id, connection)
+    this.assertCurrentConnectedConnection(connection)
+    if (this.activeSessionFor(sessionId) !== session)
+      throw new Error('ACP session startup was superseded.')
   }
 
   getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {

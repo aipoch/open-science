@@ -211,7 +211,7 @@ it('serializes fresh sources without proof and restores historical snapshots unc
   })
   rememberPdfTranslationExtraction(extraction)
   const snapshot = getPdfTranslationLayoutSnapshot(extraction.source)!
-  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-193')
+  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-271')
   const saved = JSON.parse(JSON.stringify(snapshot))
   expect(Object.keys(saved).sort()).toEqual(
     ['version', 'parserVersion', 'fingerprint', 'pages', 'units', 'coverage'].sort()
@@ -635,5 +635,101 @@ it.each(['centered', 'shifted tail', 'missing native break'] as const)(
     expect(caption?.source).toBe(shape === 'centered' ? first + ' ' + last : first)
     expect(caption?.fragments).toHaveLength(shape === 'centered' ? 2 : 1)
     expect(units.find((unit) => unit.items.includes('1:3'))?.items).toEqual(['1:3'])
+  }
+)
+
+it.each(['continuation', 'paragraph gap', 'different threshold'] as const)(
+  'keeps the native caption comparison together when its row is continuous: %s',
+  (shape) => {
+    const run = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL = false,
+      fontName = 'Caption'
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: 10,
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      fontAscent: 0.79,
+      fontDescent: -0.21,
+      hasEOL,
+      transform: [10, 0, 0, 10, x, y]
+    })
+    const heading = 'Figure 2: The reference curves use samples measured at steady state, with'
+    const middle = 'a common reference scale and a representative profile'
+    const tailY = shape === 'paragraph gap' ? 499 : 515
+    const threshold = shape === 'different threshold' ? '= 5' : '= 4'
+    const following = 'Samples were measured separately.'
+    const items = [
+      run(heading, 72, 540, 435, true),
+      run(middle, 72, 527.5, 435, true),
+      run('for', 72, tailY, 13),
+      run('q', 88, tailY, 5, false, 'Variable'),
+      run('≥', 96, tailY, 8, false, 'Operator'),
+      run('4', 107, tailY, 5, false, 'Operator'),
+      run('(shown for', 115, tailY, 51),
+      run('q', 169, tailY, 5, false, 'Variable'),
+      run(threshold, 177, tailY, 14, false, 'Operator'),
+      run(').', 191, tailY, 7, true),
+      run(following, 72, 484, 435, true)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 595, height: 842, rotation: 0, items }]
+    })
+    expect(units.map((u) => u.source)).toEqual(
+      shape === 'continuation'
+        ? [`${heading} ${middle} for q ≥ 4 (shown for q = 4).`, following]
+        : [`${heading} ${middle}`, 'for q ≥ 4', `(shown for q ${threshold}).`, following]
+    )
+    expect(units[0].sourceOnly).not.toBe(true)
+    expect(units.flatMap((u) => u.items)).toEqual(items.map((_, index) => `1:${index}`))
+  }
+)
+
+it.each(['continuous', 'other rail'] as const)(
+  'keeps the final panel locator in its caption (%s)',
+  (shape) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL = true
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: 8,
+      dir: 'ltr',
+      fontName: 'Caption',
+      fontVertical: false,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      hasEOL,
+      transform: [8, 0, 0, 8, x, y]
+    })
+    const captionRows = [
+      'Figure 4. Panel (a): The first measurement defines the baseline.',
+      'The shaded trace shows the range of values recorded at all stations.',
+      'Panel (b): the second measurement uses the same time scale.',
+      'The profile at the final station is shown in the lower panel (cf. Fig.'
+    ]
+    const locator = '2b).'
+    const items = [
+      ...captionRows.map((str, index) => row(str, 305, 413 - index * 10, 243)),
+      row(locator, shape === 'continuous' ? 305 : 317, 373, 13, false)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 595, height: 782, rotation: 0, items }]
+    })
+    const owner = units.find((unit) => unit.items.includes('1:3'))
+    expect(owner?.source).toBe(
+      [captionRows.join(' '), ...(shape === 'continuous' ? [locator] : [])].join(' ')
+    )
+    expect(owner?.items.includes('1:4')).toBe(shape === 'continuous')
   }
 )

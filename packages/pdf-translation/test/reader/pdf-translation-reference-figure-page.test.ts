@@ -212,20 +212,31 @@ it.each(['stacked', 'separated', 'body below'] as const)(
   }
 )
 
-it.each(['plot above caption', 'plot intersects caption', 'missing column evidence'] as const)(
+it.each([
+  'plot above caption',
+  'plot intersects caption',
+  'missing column evidence',
+  'folio only',
+  'folio with offset plot'
+] as const)(
   'restores a final-page raster caption above continuing references (%s)',
   async (shape) => {
+    const hasRunningTitle = shape !== 'folio only' && shape !== 'folio with offset plot'
+    const header = hasRunningTitle ? [{ str: 'Short Running Title', x: 37, y: 94, width: 26 }] : []
+    const captionStart = header.length + 1
+    const captionY = hasRunningTitle ? 0.43 : 0.31
+    const firstBaseline = hasRunningTitle ? 56 : 68
     const runs = [
-      { str: 'Short Running Title', x: 37, y: 94, width: 26 },
+      ...header,
       { str: '2', x: 91, y: 94, width: 1 },
-      { str: 'Figure 1.', x: 8, y: 56, width: 8, font: 'label' },
+      { str: 'Figure 1.', x: 8, y: firstBaseline, width: 8, font: 'label' },
       {
         str: 'The chart compares measurements for independently selected samples under three conditions.',
         x: 17,
-        y: 56,
+        y: firstBaseline,
         width: 75
       },
-      { str: 'The dotted line marks the reference value.', x: 8, y: 54, width: 50 }
+      { str: 'The dotted line marks the reference value.', x: 8, y: firstBaseline - 2, width: 50 }
     ].map(({ str, x, y, width, ...style }) => ({
       str,
       width,
@@ -251,12 +262,12 @@ it.each(['plot above caption', 'plot intersects caption', 'missing column eviden
     })
     const units = [
       owner('heading', 'References', 1, 0, 0.4, 0.7, 0.2),
-      owner('running', runs[0].str, 2, 0, 0.37, 0.05, 0.26),
-      owner('folio', runs[1].str, 2, 1, 0.91, 0.05, 0.01),
+      ...header.map(({ str }) => owner('running', str, 2, 0, 0.37, 0.05, 0.26)),
+      owner('folio', runs[header.length].str, 2, header.length, 0.91, 0.05, 0.01),
       {
         id: 'caption',
         source: runs
-          .slice(2)
+          .slice(captionStart)
           .map((run) => run.str)
           .join(' '),
         sourceOnly: true,
@@ -264,8 +275,10 @@ it.each(['plot above caption', 'plot intersects caption', 'missing column eviden
         fragments: [
           {
             pageNumber: 2,
-            rect: { x: 0.08, y: 0.43, width: 0.84, height: 0.035 },
-            items: runs.slice(2).map((run, i) => ({ index: i + 2, text: run.str }))
+            rect: { x: 0.08, y: captionY, width: 0.84, height: 0.035 },
+            items: runs
+              .slice(captionStart)
+              .map((run, i) => ({ index: i + captionStart, text: run.str }))
           }
         ]
       } satisfies PdfTranslationSource['units'][number],
@@ -274,18 +287,18 @@ it.each(['plot above caption', 'plot intersects caption', 'missing column eviden
           `entry-${lane}-first`,
           `Reader, A. 2021, Field Reports, 1, 2, doi: 10.9999/test-${lane}-a`,
           2,
-          5 + lane * 2,
+          runs.length + lane * 2,
           x,
-          0.48,
+          captionY + 0.05,
           0.35
         ),
         owner(
           `entry-${lane}-second`,
           `Reader, B. 2022, Field Reports, 3, 4${shape === 'missing column evidence' && lane === 1 ? '' : `, doi: 10.9999/test-${lane}-b`}`,
           2,
-          6 + lane * 2,
+          runs.length + lane * 2 + 1,
           x,
-          0.5,
+          captionY + 0.07,
           0.35
         )
       ])
@@ -310,7 +323,11 @@ it.each(['plot above caption', 'plot intersects caption', 'missing column eviden
                 ? {
                     fnArray: [OPS.transform, OPS.paintImageXObject],
                     argsArray: [
-                      [70, 0, 0, 33, 15, shape === 'plot intersects caption' ? 56 : 58],
+                      hasRunningTitle
+                        ? [70, 0, 0, 33, 15, shape === 'plot intersects caption' ? 56 : 58]
+                        : shape === 'folio only'
+                          ? [84, 0, 0, 21, 8, 70]
+                          : [82, 0, 0, 21, 9, 70],
                       ['plot']
                     ]
                   }
@@ -325,7 +342,7 @@ it.each(['plot above caption', 'plot intersects caption', 'missing column eviden
       skipTranslation: false
     })
     expect(result.source.units.filter((unit) => !unit.sourceOnly).map(({ id }) => id)).toEqual(
-      shape === 'plot above caption' ? ['caption'] : []
+      shape === 'plot above caption' || shape === 'folio only' ? ['caption'] : []
     )
     expect(result.source.units.map((unit) => unit.fragments)).toEqual(
       units.map((unit) => unit.fragments)

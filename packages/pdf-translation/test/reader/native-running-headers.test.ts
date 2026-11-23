@@ -855,6 +855,57 @@ test.each([true, false])(
   }
 )
 
+test.each(['matching footers', 'shifted imprint', 'folio mismatch', 'nearby prose'])(
+  'requires an isolated, mirrored four-page rail for a placeholder imprint (%s)',
+  (variant) => {
+    const imprint = 'VOLUME, NUMBER'
+    const pages: PdfLayoutPage[] = [1, 2, 3, 4].map((page) => ({
+      page,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: [
+        native('This separate paragraph belongs to the report body.', 84, 470, 275, 10, 'Body'),
+        ...(variant === 'nearby prose' && page === 4
+          ? [native('This final sentence sits close to the footer.', 84, 718, 230, 10, 'Body')]
+          : []),
+        native(
+          String(variant === 'folio mismatch' && page === 3 ? 8 : page),
+          page % 2 === 0 ? 84 : 511,
+          734,
+          5,
+          10,
+          'Body'
+        ),
+        ...(page % 2 === 0
+          ? [
+              native(
+                imprint,
+                variant === 'shifted imprint' && page === 4 ? 426 : 423,
+                734,
+                93,
+                10,
+                'Body'
+              )
+            ]
+          : [])
+      ]
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const footers = units.filter((unit) => unit.source === imprint)
+    expect(footers).toHaveLength(2)
+    expect(footers.map((unit) => Boolean(unit.sourceOnly))).toEqual(
+      Array(2).fill(variant === 'matching footers')
+    )
+    expect(
+      units.filter((unit) => unit.source.startsWith('This separate') && !unit.sourceOnly)
+    ).toHaveLength(4)
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      pages.flatMap(({ page, items }) => items.map((_, index) => `${page}:${index}`)).sort()
+    )
+  }
+)
+
 test.each([false, true])(
   'retains a repeated facing preprint imprint only when the native row agrees (drift=%s)',
   (drift) => {
@@ -977,6 +1028,35 @@ test.each([true, false])(
     const prose = units.filter((unit) => unit.source.startsWith('The recorded readings'))
     expect(prose).toHaveLength(3)
     expect(prose.every((unit) => !unit.sourceOnly)).toBe(true)
+  }
+)
+
+test.each([true, false])(
+  'retains a repeated submission prompt below its aligned folio (%s)',
+  (matching) => {
+    const prompt =
+      '> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <'
+    const pages: PdfLayoutPage[] = [1, 2, 3].map((page) => ({
+      page,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: [
+        { ...native(String(page), 552, 30, 5, 10), hasEOL: false },
+        { ...native('', 49, 42, 0, 0), transform: [10, 0, 0, 10, 49, 758] },
+        { ...native(prompt, !matching && page === 3 ? 51 : 49, 42, 430, 10), hasEOL: false },
+        native('The independent observations appear in the first chart.', 49, 78, 308, 10, 'Body')
+      ]
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const prompts = units.filter((unit) => unit.source === prompt)
+    expect(prompts).toHaveLength(3)
+    expect(prompts.map(({ sourceOnly }) => Boolean(sourceOnly))).toEqual(pages.map(() => matching))
+    expect(
+      units
+        .filter((unit) => unit.source.startsWith('The independent'))
+        .every((unit) => !unit.sourceOnly)
+    ).toBe(true)
   }
 )
 
@@ -1209,3 +1289,714 @@ test.each(['matched cover', 'unrelated byline', 'sloped label'] as const)(
     ).toBe(true)
   }
 )
+
+test.each(['matching', 'mismatched title', 'wrong folio'] as const)(
+  'joins the cover variable suffix only with a matching title and byline rail (%s)',
+  (variant) => {
+    const title = 'SHORT SURVEY OF FINITE GRID MODELS'
+    const tail = '-PATTERNS'
+    const headerAuthors = 'A. WELLS, E. TURNER, AND A. DAS'
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      size: number,
+      font: string,
+      hasEOL = false
+    ): PdfLayoutTextItem => ({ ...native(str, x, 800 - y, width, size, font), hasEOL })
+    const page = (page: number, items: PdfLayoutTextItem[]): PdfLayoutPage => ({
+      page,
+      width: 600,
+      height: 842,
+      rotation: 0,
+      items
+    })
+    const pages = [
+      page(1, [
+        row('', 144, 683, 0, 10, 'Title', true),
+        row(title, 144, 683, 312, 10, 'Title'),
+        row('', 268, 669, 0, 10, 'Variable', true),
+        row('q', 268, 669, 7, 10, 'Variable'),
+        row(tail, 275, 669, 57, 10, 'Title'),
+        row('', 151, 639, 0, 8, 'Name', true),
+        row('ANTONIA WELLS, ERIC TURNER, AND ARUN DAS', 151, 639, 298, 8, 'Name'),
+        row('', 153, 612, 0, 8, 'Abstract', true),
+        row('Abstract.', 153, 612, 41, 8, 'Abstract'),
+        row('We compare several families of representable grids.', 199, 612, 208, 8, 'Name', true)
+      ]),
+      ...[2, 3, 4, 5].map((folio) =>
+        page(folio, [
+          ...(folio % 2 === 0
+            ? [
+                row(String(folio), 120, 739, 4, 7, 'Running'),
+                row(headerAuthors, 222, 739, 156, 7, 'Running')
+              ]
+            : [
+                row(title, 175, 739, 205, 7, 'Running'),
+                row('q', 384, 739, 5, 7, 'RunningVariable'),
+                row(
+                  variant === 'mismatched title' && folio === 5 ? '-GROUPS' : tail,
+                  389,
+                  739,
+                  36,
+                  7,
+                  'Running'
+                ),
+                row(
+                  String(variant === 'wrong folio' && folio === 5 ? 8 : folio),
+                  476,
+                  739,
+                  4,
+                  7,
+                  'Running'
+                )
+              ]),
+          row('', 120, 715, 0, 10, 'Body', true),
+          row(
+            'The following text belongs to this page and remains editable.',
+            120,
+            715,
+            360,
+            10,
+            'Body',
+            true
+          )
+        ])
+      )
+    ]
+    const { units } = groupPdfTranslationPages({ pages })
+    const matching = variant === 'matching'
+    expect(units[0].source).toBe(matching ? `${title} q${tail}` : title)
+    expect(units[0].items).toEqual(matching ? ['1:1', '1:3', '1:4'] : ['1:1'])
+    expect(units[0].sourceOnly).toBeUndefined()
+    expect(units.flatMap((unit) => unit.items).toSorted()).toEqual(
+      pages
+        .flatMap(({ page, items }) =>
+          items.flatMap(({ str }, index) => (str ? [`${page}:${index}`] : []))
+        )
+        .toSorted()
+    )
+    for (const key of ['2:1', '3:0', '4:1', '5:0'])
+      expect(units.find((unit) => unit.items.includes(key))?.sourceOnly).toBe(
+        matching ? true : undefined
+      )
+    for (const key of ['2:3', '3:5', '4:3', '5:5'])
+      expect(units.find((unit) => unit.items.includes(key))?.sourceOnly).toBeUndefined()
+  }
+)
+
+test.each(['matching', 'unrelated byline', 'different lead'] as const)(
+  'joins centered title lines when paired running headers repeat the lead and initials (%s)',
+  (variant) => {
+    const title = 'A SHORT INVESTIGATION OF TWO BOUNDED SEQUENCES'
+    const tail = 'INVOLVING SUMS OF DISTINCT TERMS'
+    const centered = (
+      str: string,
+      y: number,
+      width: number,
+      height: number,
+      face: string
+    ): PdfLayoutTextItem => native(str, (600 - width) / 2, y, width, height, face)
+    const author = 'ELENA WELLS AND MARIE-LYNN HALE'
+    const initials =
+      variant === 'unrelated byline' ? 'R. PIERCE AND B.-T. LIU' : 'E. WELLS AND M.-L. HALE'
+    const pages: PdfLayoutPage[] = [1, 2, 3, 4, 5].map((page) => ({
+      page,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items:
+        page === 1
+          ? [
+              centered(title, 155, 340, 10, 'Title'),
+              centered(tail, 169, 320, 10, 'Title'),
+              native('', 0, 199, 0, 8, 'Author'),
+              centered(author, 199, 120, 8, 'Author'),
+              native('', 0, 225, 0, 8, 'Abstract'),
+              { ...native('Abstract.', 150, 225, 42, 8, 'Abstract'), hasEOL: false },
+              native(
+                'This note compares bounds for independent sequences.',
+                197,
+                225,
+                245,
+                8,
+                'Author'
+              )
+            ]
+          : [
+              ...(page % 2 === 0
+                ? [native(String(page), 120, 103, 4, 7), centered(initials, 103, 92, 7, 'Header')]
+                : [
+                    centered(
+                      variant === 'different lead'
+                        ? 'DIFFERENT WORDS PRINTED ON BOTH ODD PAGES'
+                        : title,
+                      103,
+                      228,
+                      7,
+                      'Header'
+                    ),
+                    native(String(page), 476, 103, 4, 7)
+                  ]),
+              native(
+                'The ordinary article text explains how the bounds follow.',
+                120,
+                128,
+                355,
+                10,
+                'Body'
+              )
+            ]
+    }))
+    const { units } = groupPdfTranslationPages({ pages })
+    const match = variant === 'matching'
+    expect(units[0].source).toBe(match ? `${title} ${tail}` : title)
+    expect(units[0].items).toEqual(match ? ['1:0', '1:1'] : ['1:0'])
+    expect(units[0].fragments).toHaveLength(match ? 2 : 1)
+    expect(units[0].sourceOnly).toBeUndefined()
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      pages
+        .flatMap(({ page, items }) =>
+          items.flatMap(({ str }, index) => (str ? [`${page}:${index}`] : []))
+        )
+        .sort()
+    )
+  }
+)
+
+test.each([0, 4])(
+  'separates a two-page proof from the running bibliography label (folio shift %s)',
+  (shift) => {
+    const proof = 'The bound follows by comparing the two positive quantities.'
+    const formula = 'x ≥ y + z'
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      face = 'Body'
+    ): PdfLayoutTextItem => native(str, x, y, width, 10, face)
+    const content = [
+      [
+        native('A Bound for Finite Regions', 72, 85, 190, 14, 'Section'),
+        item('The first comparison establishes the preliminary bound.', 72, 120, 350),
+        item('1', 297.5, 758, 5)
+      ],
+      [
+        { ...item('REFERENCES', 72, 47, 66, 'Running'), hasEOL: false },
+        item('2', 523 + shift, 47, 5),
+        { ...item('Proof.', 72, 82, 26, 'Emphasis'), hasEOL: false },
+        item(proof, 103, 82, 380),
+        item(formula, 267, 118, 55, 'Formula'),
+        item('This gives the desired bound for every finite region.', 72, 152, 355),
+        native('References', 72, 401, 75, 14, 'Section'),
+        ...['A. Example', 'B. Sample', 'C. Reader'].map((author, index) =>
+          item(
+            `[${index + 1}] ${author}, A bound in finite geometry (2008).`,
+            77,
+            423 + index * 20,
+            350
+          )
+        )
+      ]
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: content.map((items, index) => ({
+        page: index + 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        items
+      })),
+      pageCount: 2
+    })
+    const owner = (key: string): (typeof units)[number] | undefined =>
+      units.find((unit) => unit.items.includes(key))
+    expect(owner('2:0')?.sourceOnly).toBe(true)
+    expect(owner('2:1')?.sourceOnly).toBe(true)
+    expect(owner('2:3')?.source).toContain(proof)
+    expect(owner('2:3')?.sourceOnly).toBe(shift ? true : undefined)
+    expect(owner('2:4')?.preserve).toBe(shift ? 'reference' : 'formula')
+    expect(['2:6', '2:7', '2:8', '2:9'].map((key) => owner(key)?.preserve)).toEqual(
+      Array(4).fill('reference')
+    )
+  }
+)
+
+test.each(['full', 'short', 'unrelated'] as const)(
+  'checks alternating margin labels against a centered two-line cover (%s)',
+  (shape) => {
+    const title = 'METHODS FOR REPEATED FIELD SAMPLES'
+    const ending = 'WITH PARALLEL MEASUREMENTS'
+    const author = shape === 'full' ? 'ALEX SAMPLE AND SARA EXAMPLE' : 'ALEX SAMPLE'
+    const authorWidth = shape === 'full' ? 112 : 64
+    const authorX = 300 - authorWidth / 2
+    const odd =
+      shape === 'full'
+        ? title + ' ' + ending
+        : shape === 'short'
+          ? 'METHODS FOR PARALLEL MEASUREMENTS'
+          : 'METHODS FOR ALTERNATE MEASUREMENTS'
+    const pages: PdfLayoutPage[] = [1, 2, 3, 4].map((page) => ({
+      page,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items:
+        page === 1
+          ? [
+              native(title, 182, 160, 236, 10, 'Title'),
+              { ...native(ending, 214, 174, 172, 10, 'Title'), hasEOL: false },
+              native(author, authorX, 204, authorWidth, 8, 'Author'),
+              { ...native('Abstract.', 160, 232, 38, 8, 'Abstract'), hasEOL: false },
+              native('We discuss a reproducible method for sampling.', 202, 232, 230, 8, 'Author')
+            ]
+          : [
+              ...(page === 3
+                ? [native(odd, 207, 100, 186, 7), native('3', 476, 100, 4, 7)]
+                : [
+                    native(String(page), 120, 100, 4, 7),
+                    native(author, authorX, 100, authorWidth, 7)
+                  ]),
+              ...(page === 4
+                ? [
+                    native('References', 276, 126, 48, 10, 'Body'),
+                    ...['[Lab18]', '[Fit19]', '[Ref20]'].map((label, at) =>
+                      native(label, 120, 145 + 12 * at, 33, 8, 'Body')
+                    )
+                  ]
+                : [
+                    native(
+                      'The remaining results follow from the previous independent computations.',
+                      120,
+                      126,
+                      330,
+                      10,
+                      'Body'
+                    )
+                  ])
+            ]
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: 4 })
+    for (const key of ['2:1', '3:0', '4:1'])
+      expect(units.find((unit) => unit.items.includes(key))?.sourceOnly === true).toBe(
+        shape !== 'unrelated'
+      )
+    expect(units.find((unit) => unit.items.includes('1:2'))?.sourceOnly).toBeUndefined()
+    expect(units.find((unit) => unit.items.includes('2:2'))?.sourceOnly).toBeUndefined()
+  }
+)
+
+test.each(['matched', 'different title'])(
+  'protects three-page alternating labels when the title splits at an accent (%s)',
+  (variant) => {
+    const lead = 'A NOTE ON THE KO ˝'
+    const tail = 'R VARIATION PRINCIPLE'
+    const authors = 'MIRA SAMPLE, LEE EXAMPLE, AND JUN READER'
+    const body = 'Let the regions be separated by independent boundaries.'
+    const cover = [
+      native(lead, 110, 145, 150, 11, 'Title'),
+      native(tail, 253, 145, 253, 11, 'Title'),
+      native(authors, 170, 172, 276, 9, 'Authors'),
+      native('Abstract.', 104, 218, 42, 9, 'Body')
+    ]
+    const proof = [
+      native('2', 72, 90, 4, 8),
+      native(authors, 182, 90, 252, 8),
+      native('Proof of Theorem 1.', 72, 110, 96, 11, 'Proof'),
+      native(body, 72, 132, 350, 11, 'Body')
+    ]
+    const references = [
+      native(lead, 171, 90, 100, 8),
+      native(variant === 'matched' ? tail : 'R GEOMETRIC PRINCIPLE', 266, 90, 179, 8),
+      native('3', 540, 90, 4, 8),
+      native('References', 275, 110, 66, 11, 'Body'),
+      ...[1, 2, 3].map((n) =>
+        native(`[${n}] A. Reader, Variations of Regions, 2008.`, 72, 112 + n * 18, 270, 9, 'Body')
+      )
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [cover, proof, references].map((items, i) => ({
+        items,
+        page: i + 1,
+        width: 600,
+        height: 800,
+        rotation: 0
+      })),
+      pageCount: 3
+    })
+    const retained = (key: string): boolean =>
+      units.some((unit) => unit.items.includes(key) && unit.sourceOnly)
+    expect(retained('1:2')).toBe(false)
+    expect(retained('2:3')).toBe(false)
+    expect(['2:1', '3:0', '3:1'].map(retained)).toEqual(Array(3).fill(variant === 'matched'))
+  }
+)
+
+test.each([true, false])(
+  'preserves an alternating running title split across native fonts (%s)',
+  (matched) => {
+    const authors = 'NINA SAMPLE AND LEON READER'
+    const title = (cover: boolean, y: number, label = ', m'): PdfLayoutTextItem[] => {
+      const h = cover ? 10 : 7,
+        font = cover ? 'Title' : 'Header'
+      return [
+        native('A BOUND ON SYMBOLIC REGIONS', cover ? 176 : 210, y, cover ? 205 : 141, h, font),
+        native('SR', cover ? 386 : 355, y, cover ? 12 : 9, h, 'Variable'),
+        native('(3', cover ? 398 : 364, y, 8, h, font),
+        native(label, cover ? 406 : 372, y, cover ? 12 : 13, h, 'Variable'),
+        native(')', cover ? 418 : 385, y, cover ? 6 : 5, h, font)
+      ].map((item) => ({ ...item, hasEOL: false }))
+    }
+    const pages: PdfLayoutPage[] = Array.from({ length: 5 }, (_, n) => ({
+      page: n + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items:
+        n === 0
+          ? [
+              ...title(true, 158),
+              native(authors, 218, 188, 164, 8, 'Authors'),
+              native('Abstract.', 160, 215, 42, 8, 'Section'),
+              native(
+                'The paper proves the bound using a partition of each region.',
+                160,
+                228,
+                280,
+                8,
+                'Body'
+              )
+            ]
+          : [
+              ...(n % 2
+                ? [native(String(n + 1), 120, 100, 4, 7), native(authors, 223, 100, 154, 7)]
+                : [
+                    ...title(false, 100, !matched && n === 4 ? ', n' : ', m'),
+                    native(String(n + 1), 476, 100, 4, 7)
+                  ]
+              ).map((item) => ({ ...item, hasEOL: false })),
+              native(
+                'The rest of the proof follows from the estimates on each region.',
+                120,
+                125,
+                354,
+                10,
+                'Body'
+              )
+            ]
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const retained = (key: string): boolean =>
+      units.some((unit) => unit.items.includes(key) && unit.sourceOnly)
+    expect(retained('1:0')).toBe(false)
+    expect(retained('2:2')).toBe(false)
+    expect(['2:1', '3:0', '4:1'].map(retained)).toEqual(Array(3).fill(matched))
+  }
+)
+
+test.each([true, false])(
+  'joins centered title rows when the facing margins corroborate the title and author (%s)',
+  (matched) => {
+    const content = [
+      [
+        native('A BOUND ON FINITE REGIONS IMPLIES', 130, 168, 340, 12, 'Title'),
+        native('STABILITY OF REGIONS', 220, 182, 160, 12, 'Title'),
+        native('', 242, 212, 0, 10, 'Author'),
+        native('NORA SAMPLE', 242, 212, 116, 10, 'Author'),
+        native('This is an epigraph ...', 399, 253, 99, 12, 'Body')
+      ],
+      [
+        native('2', 124, 104, 4, 9),
+        native('Nora Sample', 252, 104, 96, 9),
+        native('The argument continues for every region on this page.', 124, 129, 320, 12, 'Body')
+      ],
+      [
+        native(matched ? 'Stability of regions' : 'Distribution of regions', 232, 104, 136, 9),
+        native('3', 472, 104, 4, 9),
+        native('REFERENCES', 250, 194, 100, 12, 'Title'),
+        native('[1] S. Writer, An estimate for regions, 2008.', 124, 225, 280, 12, 'Body')
+      ]
+    ]
+    const pages = content.map((items, index) => ({
+      page: index + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const owner = (key: string): (typeof units)[number] | undefined =>
+      units.find((unit) => unit.items.includes(key))
+    expect(owner('1:0')?.items.includes('1:1')).toBe(matched)
+    expect(owner('1:3')?.sourceOnly).toBeUndefined()
+    expect(owner('1:4')?.sourceOnly).toBeUndefined()
+    expect(['2:1', '3:0'].map((key) => owner(key)?.sourceOnly === true)).toEqual(
+      Array(2).fill(matched)
+    )
+  }
+)
+
+test.each([true, false])(
+  'retains a journal imprint and alternating labels corroborated by the cover (%s)',
+  (matched) => {
+    const imprint = (y: number, suffix: string): PdfLayoutTextItem[] => [
+      { ...native('F', 240, y, 6, 10), hasEOL: false },
+      { ...native('IELD NOTES', 246, y, 57, 8), hasEOL: false },
+      native(suffix, 303, y, 57, 10)
+    ]
+    const cover = [
+      ...imprint(123, ', 2020:8, 5 pp.'),
+      native('www.example.test', 257, 136, 86, 10, 'Website'),
+      native('A New Estimate for Sample Regions', 100, 211, 400, 24),
+      native('Nora Sample', 248, 246, 104, 14),
+      native('Received 11 March 2020; Published 22 April 2020', 170, 270, 260, 10),
+      native('We show the estimates from independent observations.', 80, 328, 330, 11, 'Body')
+    ]
+    const pages = [
+      cover,
+      ...[2, 3, 4, 5].map((page) => [
+        native(page % 2 ? 'A NEW ESTIMATE FOR SAMPLE REGIONS' : 'NORA SAMPLE', 192, 98, 216, 10),
+        native('The independent paragraphs record the measurements.', 80, 128, 360, 11, 'Body'),
+        ...imprint(728, !matched && page === 5 ? ', 2020:7, 5pp.' : ', 2020:8, 5pp.'),
+        native(String(page), 516, 728, 5, 10)
+      ])
+    ].map((items, index) => ({
+      page: index + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const preserved = (key: string): boolean =>
+      units.some((unit) => unit.items.includes(key) && unit.sourceOnly === true)
+    expect(['1:0', '2:0', '2:2', '3:0', '4:0', '5:0'].map(preserved)).toEqual(
+      Array(6).fill(matched)
+    )
+    expect(preserved('1:4')).toBe(false)
+    expect(preserved('2:1')).toBe(false)
+  }
+)
+
+test.each([true, false])(
+  'keeps a short author margin corroborated by the bibliography (%s)',
+  (matched) => {
+    const content = [
+      [
+        native('A NOTE ON MEASURED PLANAR REGIONS', 146, 101, 308, 11, 'Title'),
+        native('MAYA SAMPLE', 250, 131, 100, 9, 'Author'),
+        native('Abstract.', 85, 159, 44, 9, 'Abstract'),
+        native(
+          'The proof begins by measuring each region along the boundary.',
+          85,
+          176,
+          360,
+          11,
+          'Body'
+        )
+      ],
+      [
+        native('2', 55, 44, 4, 8),
+        native(matched ? 'MAYA SAMPLE' : 'IRIS READER', 253, 44, 94, 8),
+        native('The argument continues by separating each region.', 55, 68, 315, 11, 'Body')
+      ],
+      [
+        native('REFERENCES', 269, 44, 62, 8),
+        native('3', 541, 44, 4, 8),
+        native('References', 267, 415, 66, 11, 'Title'),
+        ...[1, 2, 3].flatMap((number) => [
+          native(`[${number}]`, 55, 418 + number * 17, 12, 11, 'Body'),
+          native('S. Reader, Measured regions, 2005.', 72, 418 + number * 17, 280, 11, 'Body')
+        ])
+      ]
+    ]
+    const pages = content.map((items, index) => ({
+      page: index + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: 3 })
+    expect(units.find((u) => u.items.includes('2:1'))?.sourceOnly === true).toBe(matched)
+    expect(units.find((u) => u.items.includes('1:1'))?.sourceOnly).toBeUndefined()
+    expect(units.find((u) => u.items.includes('2:2'))?.sourceOnly).toBeUndefined()
+  }
+)
+
+test.each(['matched', 'unrelated footer'])(
+  'retains a short proceedings margin pair corroborated on the cover (%s)',
+  (mode) => {
+    const event = 'Field Talks ’23, May 29 - June 02, 2023, Elm City'
+    const front = [
+      native('Signals Observed Along Two Independent Measurement Lines', 54, 100, 492, 17, 'Title'),
+      native('Taylor Reed', 135, 126, 80, 12, 'Body'),
+      native('Field Lab', 151, 139, 48, 10, 'Body'),
+      native('Elm City', 151, 152, 48, 10, 'Body'),
+      native('taylor@example.org', 120, 165, 110, 10, 'Body'),
+      native('Morgan Lane', 385, 126, 80, 12, 'Body'),
+      native('Field Lab', 401, 139, 48, 10, 'Body'),
+      native('Ord City', 401, 152, 48, 10, 'Body'),
+      native('morgan@example.org', 370, 165, 110, 10, 'Body'),
+      native(mode === 'matched' ? event : event.replace('Elm City', 'Ord City'), 54, 680, 170, 7)
+    ]
+    const body = [
+      native(event, 54, 68, 180, 7),
+      { ...native(' ', 234, 68, 202, 7), height: 0 },
+      native('Taylor Reed and Morgan Lane', 436, 68, 110, 7),
+      native('The ordinary continuation begins on a different baseline.', 54, 108, 231, 10, 'Body')
+    ]
+    const pages = [front, body].map((items, index) => ({
+      page: index + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: 2 })
+    for (const key of ['2:0', '2:2'])
+      expect(Boolean(units.find(({ items }) => items.includes(key))?.sourceOnly)).toBe(
+        mode === 'matched'
+      )
+    expect(units.find(({ items }) => items.includes('2:3'))?.sourceOnly).toBeUndefined()
+  }
+)
+
+test.each([true, false])(
+  'joins title rows when the running title includes its folio (%s)',
+  (matched) => {
+    const head = 'A SHORT PROOF FOR FINITE PARTITIONS OF',
+      tail = 'REGIONS IN PLANAR GRAPHS',
+      authors = 'ALEX SAMPLE AND ELLA READER'
+    const content = [
+      [
+        native(head, 98, 95, 404, 10, 'Title'),
+        native(tail, 198, 109, 204, 10, 'Title'),
+        native('', 220, 139, 0, 8, 'Author'),
+        native(authors, 220, 139, 160, 8, 'Author'),
+        native('', 121, 168, 0, 8, 'Abstract'),
+        native('Abstract.', 121, 168, 41, 8, 'Abstract'),
+        native(
+          'We prove a bound for the partitions considered in this paper.',
+          169,
+          168,
+          304,
+          8,
+          'Body'
+        )
+      ],
+      [
+        native('2', 85, 40, 4, 7),
+        native(authors, 226, 40, 148, 7),
+        native(
+          'The next argument considers the remaining independent regions.',
+          95,
+          64,
+          400,
+          10,
+          'Body'
+        )
+      ],
+      [
+        native(head + ' ' + tail + (matched ? ' 3' : ' 4'), 90, 40, 425, 7),
+        native('The proof continues by choosing a representative region.', 85, 64, 401, 10, 'Body')
+      ]
+    ]
+    const pages = content.map((items, index) => ({
+      page: index + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: 3 })
+    const owner = (key: string): (typeof units)[number] | undefined =>
+      units.find((unit) => unit.items.includes(key))
+    expect(owner('1:0')?.items.includes('1:1')).toBe(matched)
+    expect(owner('2:1')?.sourceOnly === true).toBe(matched)
+    expect(owner('3:0')?.sourceOnly === true).toBe(matched)
+    expect(owner('1:3')?.sourceOnly).toBeUndefined()
+  }
+)
+
+test.each([
+  ['split title', false],
+  ['split title', true],
+  ['author columns', false],
+  ['author columns', true]
+] as const)('checks the native cover before keeping alternate margins (%s, %s)', (shape, wrong) => {
+  const split = shape === 'split title'
+  const title = split
+    ? [
+        native('Methods for', 70, 96, 92, 17, 'Title'),
+        native('Longitudinal', 166, 96, 111, 17, 'Emphasis'),
+        native('Measurement Studies', 281, 96, 249, 17, 'Title')
+      ]
+    : [
+        native('Methods for Longitudinal', 70, 96, 460, 17, 'Title'),
+        native('Measurement Studies', 182, 116, 236, 17, 'Title')
+      ]
+  const names = split ? ['Sam Abel'] : ['Sam Abel', 'Devin Oak', 'Robin Lark']
+  const byline = split ? names[0] : 'Sam Abel, Devin Oak, and Robin Lark'
+  const margin = split
+    ? 'RSD ’32, April 20, 2032, Delta City'
+    : 'RSD Forum ’32, April 20–22, 2032, Delta City'
+  const authors = names.flatMap((name, n) => {
+    const center = split ? 300 : 120 + n * 180
+    const y = split ? 120 : 140
+    return [
+      native(name, center - 35, y, 70, 12, 'Author'),
+      native('Field Research Institute', center - 51, y + 12, 102, 10, 'Author'),
+      native('Delta City', center - 24, y + 24, 48, 10, 'Author'),
+      native(`research${n}@example.test`, center - 45, y + 36, 90, 10, 'Author')
+    ]
+  })
+  const unit = (page: number, items: PdfLayoutTextItem[]): PdfLayoutPage => ({
+    page,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items
+  })
+  const row = (page: number): PdfLayoutTextItem[] => {
+    const event = (x: number): PdfLayoutTextItem => native(margin, x, 68, 160, 7)
+    const peerName = wrong && page === 4 ? 'Morgan Bluff' : byline
+    const peer = native(peerName, split ? 505 : 250, 68, split ? 43 : 298, 7)
+    const rests = split
+      ? [
+          native('Methods for', 52, 68, 46, 7),
+          native('Longitudinal', 100, 68, 52, 7, 'Italic'),
+          native('Measurement Studies', 154, 68, 93, 7)
+        ]
+      : [native(title.map((item) => item.str).join(' '), 52, 68, 238, 7)]
+    const ink = page % 2 === 0 ? [event(52), peer] : [...rests, event(388)]
+    return ink.flatMap((item, index) => {
+      const next = ink[index + 1]
+      const end = item.transform[4] + item.width
+      return next ? [item, native(' ', end, 68, next.transform[4] - end, 0, item.fontName)] : [item]
+    })
+  }
+  const body = native('The native body begins below the margin.', 52, 104, 237, 10, 'Body')
+  const cover = unit(1, [
+    ...title,
+    ...authors,
+    native('ABSTRACT', 52, 225, 65, 10, 'Body'),
+    { ...body, transform: [10, 0, 0, 10, 52, 552] },
+    native(margin, 52, 685, 155, 7, 'Imprint')
+  ])
+  const tailPages = Array.from({ length: split ? 3 : 4 }, (_, n) =>
+    unit(n + 2, [...row(n + 2), body])
+  )
+  const pages = [cover, ...tailPages]
+  const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+  for (const page of tailPages) {
+    const target = units.find((owner) => owner.items.includes(`${page.page}:0`))
+    expect(target?.sourceOnly).toBe(wrong ? undefined : true)
+    expect(
+      units.find((owner) => owner.items.includes(`${page.page}:${page.items.length - 1}`))
+        ?.sourceOnly
+    ).toBeUndefined()
+  }
+})
