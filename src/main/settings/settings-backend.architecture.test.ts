@@ -753,6 +753,7 @@ describe('Settings backend ownership architecture', () => {
       'modelCatalog',
       'modelCatalogStatus',
       'modelProtocols',
+      'modelReasoningEfforts',
       'modelStreaming',
       'name',
       'reasoningEffortPreset',

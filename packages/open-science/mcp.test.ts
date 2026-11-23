@@ -193,7 +193,8 @@ describe('research MCP tools', () => {
       expect(tool.name).toMatch(/^[a-z]+(?:_[a-z]+)*$/)
       expect(tool.description!.length).toBeGreaterThan(30)
       expect(tool.inputSchema.additionalProperties).toBe(false)
-      expect(tool.outputSchema).toBeDefined()
+      expect(tool.outputSchema).toMatchObject({ type: 'object' })
+      expect(tool.outputSchema).not.toHaveProperty('$schema')
       expect(typeof tool.annotations?.readOnlyHint).toBe('boolean')
     }
     expect(connect).not.toHaveBeenCalled()

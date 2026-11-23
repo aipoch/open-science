@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
@@ -30,6 +31,7 @@ import {
   HARNESS_INSTRUCTIONS,
   HARNESS_TOOL_LESS,
   HARNESS_TRACE_ENABLED,
+  HARNESS_TRACE_READINESS_METHOD,
   HARNESS_OWNER,
   harnessOwnerSchema,
   harnessConfigSchema,
@@ -722,6 +724,9 @@ export function createHarnessAcpAgent(
         promptCapabilities: { image: true, audio: false, embeddedContext: true },
         sessionCapabilities: { resume: {}, close: {} }
       }
+    }))
+    .onRequest(HARNESS_TRACE_READINESS_METHOD, z.object({}).strict(), async () => ({
+      ready: (await tracing?.ready) === true
     }))
     .onRequest(acp.methods.agent.authenticate, (context) => {
       if (config || disposed || context.params.methodId !== HARNESS_AUTH_METHOD)

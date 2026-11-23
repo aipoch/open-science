@@ -3,6 +3,7 @@
   "alwaysLanes": ["policy"],
   "laneOrder": [
     "policy",
+    "update_occupancy_source",
     "docs",
     "format",
     "lint",
@@ -39,6 +40,7 @@
   ],
   "laneBundles": {
     "policy": "policy",
+    "update_occupancy_source": "policy",
     "docs": "static",
     "format": "static",
     "lint": "static",
@@ -148,6 +150,23 @@
         "CODEOWNERS"
       ],
       "capabilities": ["ci_integrity_surface"]
+    },
+    {
+      "id": "update_occupancy_surface",
+      "role": "overlay",
+      "paths": [
+        "src/main/update/installation-occupancy.ts",
+        "src/main/update/installation-occupancy.test.ts",
+        "src/main/update/installation-file-occupancy.integration.test.ts",
+        "src/main/update/installation-protection.ts",
+        "src/main/update/installation-protection.test.ts",
+        "src/main/update/installation-reboot-recovery.ts",
+        "src/main/update/installation-reboot-recovery.test.ts",
+        "packages/open-science/installation-startup.cjs",
+        "packages/open-science/installation-startup.d.cts",
+        ".github/workflows/update-occupancy.yml"
+      ],
+      "capabilities": ["update_occupancy_source"]
     },
     {
       "id": "documentation",
@@ -322,6 +341,7 @@
         "src/main/remote-access/remoteit.ts",
         "src/main/session-diagnostics/environment.ts",
         "src/main/session-diagnostics/projection.ts",
+        "src/main/system-process-manager.ts",
         "src/main/settings/agent-runtime-manager.ts",
         "src/main/settings/application-commands.ts",
         "src/main/settings/claude-cli-process.ts",
@@ -931,6 +951,10 @@
     "ci_integrity_surface": {
       "consumers": [],
       "lanes": []
+    },
+    "update_occupancy_source": {
+      "consumers": [],
+      "lanes": ["update_occupancy_source"]
     },
     "documentation": {
       "consumers": [],

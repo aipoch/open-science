@@ -346,3 +346,133 @@ it('keeps a bracketed TeX index and its raised suffix in one movable group', () 
   const detached = [...markers.slice(0, -1), { ...markers[4], bounds: [52, 100, 55, 103] as const }]
   expect(resolveNestedScriptGroups(source, translation, detached)).toEqual([])
 })
+
+it('keeps the asymmetric uncertainty attached to a generated measurement', () => {
+  const source = 'Run yielded 62+7−9 kHz.',
+    translation = '测得 62+7−9 kHz。',
+    label = '+7−9',
+    start = source.indexOf(label),
+    markers: ScientificScriptMarker[] = [
+      {
+        sourceOffset: 0,
+        label: 'Run yielded 62',
+        scale: 1,
+        rise: 0,
+        baseline: 30,
+        fontName: 'CMR10',
+        bounds: [10, 28, 85, 37],
+        sourceIndices: [9]
+      },
+      {
+        sourceOffset: start,
+        label: '+7',
+        scale: 0.7,
+        rise: 4,
+        baseline: 34,
+        fontName: 'CMR7',
+        bounds: [85.5, 34, 93, 39],
+        sourceIndices: [10]
+      },
+      {
+        sourceOffset: start + 2,
+        label: '−',
+        scale: 0.7,
+        rise: -2.5,
+        baseline: 27.5,
+        fontName: 'CMSY7',
+        bounds: [85.6, 29, 89, 30],
+        sourceIndices: [11]
+      },
+      {
+        sourceOffset: start + 3,
+        label: '9',
+        scale: 0.7,
+        rise: -2.5,
+        baseline: 27.5,
+        fontName: 'CMR7',
+        bounds: [89.5, 28, 93, 32],
+        sourceIndices: [12]
+      }
+    ]
+  expect(resolveNestedScriptGroups(source, translation, markers)).toEqual([
+    {
+      sourceOffset: start,
+      targetOffset: translation.indexOf(label),
+      label,
+      sourceIndices: [10, 11, 12],
+      baselineIndex: 9,
+      nativeScriptGroup: true,
+      needsInlineReflow: true
+    }
+  ])
+  expect(resolveNestedScriptGroups(source, translation.replace('62', '63'), markers)).toEqual([])
+  expect(resolveNestedScriptGroups(source, translation.replace('−9', '−8'), markers)).toEqual([])
+  expect(resolveNestedScriptGroups(source, translation + ' 62+7−9', markers)).toEqual([])
+  expect(resolveNestedScriptGroups(source, translation, markers.slice(0, -1))).toEqual([])
+  const [base, upper, minus, lower] = markers
+  expect(
+    resolveNestedScriptGroups(source, translation, [
+      base,
+      upper,
+      { ...minus, bounds: [90, 29, 94, 30] },
+      lower
+    ])
+  ).toEqual([])
+})
+
+it('moves all native glyphs of a raised fractional exponent as a unit', () => {
+  const source = 'Constrain x2/5 for the model.',
+    translation = '将 x2/5 用于模型。',
+    label = 'x2/5',
+    start = source.indexOf(label)
+  const markers: ScientificScriptMarker[] = [
+    {
+      label: 'x',
+      sourceOffset: start,
+      scale: 1,
+      rise: 0,
+      baseline: 100,
+      fontName: 'CMMI10',
+      bounds: [20, 100, 26, 106],
+      sourceIndices: [7]
+    },
+    ...(['2', '/', '5'] as const).map((digit, index): ScientificScriptMarker => ({
+      label: digit,
+      sourceOffset: start + index + 1,
+      scale: 0.73,
+      rise: 4.2,
+      baseline: 104.2,
+      fontName: digit === '/' ? 'CMMI8' : 'CMR8',
+      bounds: [26.5 + index * 4, digit === '/' ? 102 : 104, 29.5 + index * 4, 108],
+      sourceIndices: [8 + index]
+    }))
+  ]
+  expect(resolveNestedScriptGroups(source, translation, markers)).toEqual([
+    {
+      sourceOffset: start,
+      targetOffset: translation.indexOf(label),
+      label,
+      sourceIndices: [7, 8, 9, 10],
+      baselineIndex: 7,
+      nativeScriptGroup: true,
+      needsInlineReflow: true
+    }
+  ])
+  expect(resolveNestedScriptGroups(source, translation.replace('2/5', '2/7'), markers)).toEqual([])
+  expect(
+    resolveNestedScriptGroups(
+      source,
+      translation,
+      markers.map((marker) =>
+        marker.label === '/' ? { ...marker, baseline: 100, rise: 0 } : marker
+      )
+    )
+  ).toEqual([])
+  expect(
+    resolveNestedScriptGroups(
+      source,
+      translation,
+      markers.map((marker) => (marker.label === '/' ? { ...marker, baseline: NaN } : marker))
+    )
+  ).toEqual([])
+})

@@ -162,6 +162,9 @@ export class ResponsesToChatCompletionsBridge {
           ...(this.target.vendorId ? { vendorId: this.target.vendorId } : {}),
           ...(this.target.reasoningEffortTransport
             ? { reasoningEffortTransport: this.target.reasoningEffortTransport }
+            : {}),
+          ...(this.target.reasoningSupported !== undefined
+            ? { reasoningSupported: this.target.reasoningSupported }
             : {})
         },
         fetchImpl: this.fetchImpl,
@@ -188,6 +191,7 @@ export class ResponsesToChatCompletionsBridge {
       this.target.model !== target.model ||
       this.target.vendorId !== target.vendorId ||
       this.target.reasoningEffortTransport !== target.reasoningEffortTransport ||
+      this.target.reasoningSupported !== target.reasoningSupported ||
       this.target.key !== target.key
     this.target = target
     if (changed) {

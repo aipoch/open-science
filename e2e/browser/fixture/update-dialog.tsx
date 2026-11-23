@@ -9,7 +9,15 @@ import { useUpdateStore } from '@/stores/update-store'
 import type { UpdateInstaller, UpdateStatus } from '../../../src/shared/update'
 
 const params = new URLSearchParams(location.search)
-const actions = { download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 0 }
+const actions = {
+  download: 0,
+  apply: 0,
+  cancel: 0,
+  recover: 0,
+  check: 0,
+  reveal: 0,
+  openProcessManager: 0
+}
 const platform =
   params.get('platform') === 'win32'
     ? 'win32'
@@ -33,6 +41,10 @@ const manualApi = {
   revealInstaller: async () => {
     actions.reveal += 1
     return 'revealed' as const
+  },
+  openProcessManager: async () => {
+    actions.openProcessManager += 1
+    return true
   }
 }
 window.api = { platform, update: manualApi } as unknown as typeof window.api
@@ -73,6 +85,25 @@ useUpdateStore.setState({
     }
   }
 })
+if (params.has('blocker')) {
+  useUpdateStore.setState({
+    status: {
+      state: 'ready',
+      current: '1.3.2',
+      latest: '1.3.3',
+      reason: 'installation-busy',
+      recovery: {
+        phase: 'preparing',
+        runtime: 'running',
+        installation: 'unchanged',
+        canCancel: true,
+        canRetryInstall: false,
+        canRecover: false,
+        blockingProcesses: [{ pid: 33996, name: 'node.exe' }, { pid: 34001 }]
+      }
+    }
+  })
+}
 if (params.has('continuous')) {
   const status: UpdateStatus = {
     state: 'available',

@@ -2210,6 +2210,18 @@ const WorkspaceMessageScrollerImpl = ({
                   )
                 }
 
+                if (item.type === 'permission-denial') {
+                  return (
+                    <MessageScrollerItem key={item.id} messageId={item.id} className="min-w-0">
+                      <div className="px-4 pb-1 pt-2 md:px-6">
+                        <p className="mx-auto w-full max-w-[56rem] text-sm text-text-300">
+                          {t('Permission was denied. The blocked actions were not performed.')}
+                        </p>
+                      </div>
+                    </MessageScrollerItem>
+                  )
+                }
+
                 if (item.type === 'turn-outcome') {
                   // Main-panel notices are opt-in; isolated Subagent transcripts keep their own
                   // Attempt status and error presentation.

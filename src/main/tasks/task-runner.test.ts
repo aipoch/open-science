@@ -1,3 +1,4 @@
+import { TaskRunTracingError } from './task-control-ports'
 import { classifyFailure } from '../../shared/failure/classify'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import {
@@ -278,6 +279,111 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it.each(['new', 'resumed', 'attached'])(
+    'requires a durable request and scopes tracing to the %s Run',
+    async (route) => {
+      const saved = vi.fn(async (value: PersistedChatSession) => value)
+      const createSession = vi.fn(async () => ({ sessionId: session.id }))
+      const resumeSession = vi.fn(async () => ({ sessionId: session.id }))
+      const assertAttachedTracingReady = vi.fn(async () => undefined)
+      const prompt = vi.fn<TaskAgentPort['prompt']>(async (_request, observer) => {
+        await observer?.onPromptAdmitted?.()
+      })
+      const runner = createRunner({
+        sessions: { list: async () => (route === 'new' ? [] : [session]), save: saved },
+        agent: {
+          createSession,
+          resumeSession,
+          assertAttachedTracingReady,
+          listAttachedSessionIds: async () => (route === 'attached' ? [session.id] : []),
+          prompt
+        }
+      })
+      const input = {
+        project: project.id,
+        prompt: 'Trace this turn',
+        ...(route === 'new' ? {} : { sessionId: session.id })
+      }
+      const traced = { ...input, otelTraces: true as const }
+      await expect(runner.startRun(traced)).rejects.toMatchObject({ code: 'invalid_request' })
+      await expect(
+        runner.startRun(
+          {
+            ...input,
+            otelTraces: { endpoint: 'http://example.invalid' }
+          } as unknown as typeof traced,
+          'malformed'
+        )
+      ).rejects.toMatchObject({ code: 'invalid_request' })
+      const run = await runner.startRun(traced, 'trace-request')
+      await runner.waitForRun(run.id)
+      expect(prompt.mock.calls[0][0].otelTraces).toBe(true)
+      if (route === 'new')
+        expect(createSession).toHaveBeenCalledWith(expect.objectContaining({ otelTraces: true }))
+      if (route === 'resumed')
+        expect(resumeSession).toHaveBeenCalledWith(expect.objectContaining({ otelTraces: true }))
+      if (route === 'attached') expect(assertAttachedTracingReady).toHaveBeenCalledWith(session.id)
+      expect(saved.mock.calls.every(([value]) => !('otelTraces' in value))).toBe(true)
+      const ordinary = await runner.startRun(input)
+      await runner.waitForRun(ordinary.id)
+      expect(prompt.mock.calls[1][0]).not.toHaveProperty('otelTraces')
+    }
+  )
+
+  it('releases a refused trace submission without changing the attached Session', async () => {
+    const set = vi.fn()
+    const setPermissionProfile = vi.fn()
+    let reserved = false
+    const prompt = vi.fn<TaskAgentPort['prompt']>(async (_request, observer) => {
+      await observer?.onPromptAdmitted?.()
+    })
+    const runner = createRunner({
+      sessions: { list: async () => [session] },
+      agent: {
+        listAttachedSessionIds: async () => [session.id],
+        assertAttachedTracingReady: async () => {
+          expect(reserved).toBe(true)
+          throw new TaskRunTracingError()
+        },
+        setPermissionProfile,
+        prompt
+      },
+      computePreferences: {
+        set,
+        withReservation: async (ids, operation) => {
+          if (ids.includes('unknown'))
+            throw new ComputeHostPreferenceValidationError('host_not_found', 'unknown')
+          reserved = true
+          try {
+            return await operation([...ids])
+          } finally {
+            reserved = false
+          }
+        }
+      }
+    })
+    const input = { project: project.id, sessionId: session.id, prompt: 'Trace' }
+    await expect(
+      runner.startRun({ ...input, otelTraces: true, computeHostIds: ['unknown'] }, 'invalid-host')
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: 'Compute Host not found: unknown'
+    })
+    await expect(
+      runner.startRun({ ...input, otelTraces: true, computeHostIds: [] }, 'refused')
+    ).rejects.toMatchObject({
+      code: 'invalid_configuration',
+      message: expect.stringContaining('OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT')
+    })
+    expect(reserved).toBe(false)
+    expect(set).not.toHaveBeenCalled()
+    expect(setPermissionProfile).not.toHaveBeenCalled()
+    expect(prompt).not.toHaveBeenCalled()
+    const retry = await runner.startRun(input)
+    await runner.waitForRun(retry.id)
+    expect(prompt).toHaveBeenCalledOnce()
+  })
+
   it.each([
     { delayed: false, settlementFails: false },
     { delayed: true, settlementFails: false },

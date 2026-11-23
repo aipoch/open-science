@@ -767,6 +767,9 @@ class ProviderAccountsModule {
           model: outcome.authenticated ? (outcome.model ?? existing?.model) : undefined,
           fetchedModels: outcome.authenticated
             ? (outcome.models ?? existing?.fetchedModels)
+            : undefined,
+          modelReasoningEfforts: outcome.authenticated
+            ? (outcome.modelReasoningEfforts ?? existing?.modelReasoningEfforts)
             : undefined
         }
         await this.repository.upsertProvider({

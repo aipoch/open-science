@@ -970,6 +970,7 @@ describe('preload bridge — public surface inventory', () => {
       'update.getStatus',
       'update.onProgress',
       'update.onStatus',
+      'update.openProcessManager',
       'update.recheck',
       'update.recover',
       'update.revealInstaller',

@@ -16,3 +16,6 @@
 {"name": "model-opening-translation-tag-is-not-translated-content", "source": "Growth increased.", "output": "<translation>生长增加。", "accepted": false}
 {"name": "literal-source-tag-example-is-preserved", "source": "The code ends with </source>.", "output": "代码以 </source> 结尾。", "accepted": true}
 {"name": "scientific-comparison-signs-are-not-protocol-tags", "source": "Values satisfy 0 < x and x > 1.", "output": "数值满足 0 < x 和 x > 1。", "accepted": true}
+{"name": "assistant-serialized-reply-is-not-translation", "source": "Growth increased.", "output": "{\"assistant\": \"生长增加。\"}", "accepted": false}
+{"name": "assistant-reply-with-damaged-delimiters-is-not-translation", "source": "Growth increased.", "output": "{assistant \"生长增加。\"}", "accepted": false}
+{"name": "literal-assistant-reply-already-in-source", "source": "{\"assistant\":\"Keep this example.\"}", "output": "{\"assistant\":\"保留此示例。\"}", "accepted": true}

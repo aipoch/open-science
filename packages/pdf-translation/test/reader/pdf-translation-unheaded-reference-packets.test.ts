@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
   PDFDocument,
+  PDFNumber,
+  PDFRawStream,
   PDFOperator,
   PDFOperatorNames,
   pushGraphicsState,
@@ -673,7 +675,9 @@ async function generatedOwnedReferenceDocument(
   pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
   const regular = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf')),
     bold = await pdf.embedFont(await readFile(assets + 'LiberationSans-Bold.ttf')),
-    pages = Array.from({ length: 3 }, () => pdf.addPage([600, 800])),
+    splitEtAl = fault.endsWith('-et-al'),
+    terminal = splitEtAl && fault !== 'nonterminal-et-al',
+    pages = Array.from({ length: terminal ? 2 : 3 }, () => pdf.addPage([600, 800])),
     line = (page: number, text: string, x: number, top: number, heading = false): void => {
       pages[page - 1].drawText(text, {
         font: heading ? bold : regular,
@@ -717,18 +721,33 @@ async function generatedOwnedReferenceDocument(
   if (embedded) {
     const page = pages[1],
       marker = '[5] ',
-      text = 'E. Writer, Independent observations, Journal 14 (2024).'
+      text = 'E. Writer, Independent observations, Journal 14 (2024).',
+      face = page.node.newFontDictionary(regular.name, regular.ref)
     page.pushOperators(
       pushGraphicsState(),
       beginText(),
-      setFontAndSize(page.node.newFontDictionary(regular.name, regular.ref), 9),
+      setFontAndSize(face, 9),
       setTextMatrix(1, 0, 0, 1, 336, 700),
       showText(regular.encodeText(marker)),
       setFillingColor(rgb(0, 0, 0)),
       ...(fault === 'matrix-reset'
         ? [setTextMatrix(1, 0, 0, 1, 336 + regular.widthOfTextAtSize(marker, 9), 700)]
         : []),
-      showText(regular.encodeText(text)),
+      ...(splitEtAl
+        ? [
+            showText(regular.encodeText('E. Writer ')),
+            setFontAndSize(page.node.newFontDictionary(bold.name, bold.ref), 9),
+            showText(bold.encodeText('et al.')),
+            setFontAndSize(face, 9),
+            showText(
+              regular.encodeText(
+                fault === 'undated-et-al'
+                  ? ', Independent observations, Journal 14.'
+                  : ', Independent observations, Journal 14 (2024).'
+              )
+            )
+          ]
+        : [showText(regular.encodeText(text))]),
       endText(),
       popGraphicsState()
     )
@@ -744,8 +763,15 @@ async function generatedOwnedReferenceDocument(
     )
   }
   if (fault === 'foreign-overlap') line(2, 'An independent note.', 230, 65)
-  line(3, 'Appendix A', 56, 60, true)
-  line(3, 'This independent appendix paragraph remains eligible for ordinary translation.', 56, 90)
+  if (!terminal) {
+    line(3, 'Appendix A', 56, 60, true)
+    line(
+      3,
+      'This independent appendix paragraph remains eligible for ordinary translation.',
+      56,
+      90
+    )
+  }
   const loading = getDocument({
     data: await pdf.save(),
     fontExtraProperties: true,
@@ -887,6 +913,28 @@ it.each(['same text advance', 'matrix-reset', 'missing-eof'])(
   }
 )
 
+it.each(['split-et-al', 'undated-et-al', 'nonterminal-et-al'])(
+  'binds split author punctuation only in a closed terminal native bibliography: %s',
+  async (fault) => {
+    const f = await generatedOwnedReferenceProof(fault, true)
+    try {
+      const tail = f.pages[1].items.slice(-2)
+      expect(tail[0].str).toBe('et al.')
+      expect(tail[1].str).toMatch(/^, Independent observations/u)
+      const citation = f.units.find((unit) => unit.source.startsWith('[5]')),
+        prose = f.units.find((unit) => unit.source.startsWith('This complete ordinary'))
+      expect(citation).toBeDefined()
+      expect(prose).toBeDefined()
+      expect(ownedReferenceApi.hasNativeOwnedReferenceRole(f.proof, citation!)).toBe(
+        fault === 'split-et-al'
+      )
+      expect(ownedReferenceApi.hasNativeOwnedReferenceRole(f.proof, prose!)).toBe(false)
+    } finally {
+      await f.document.destroy()
+    }
+  }
+)
+
 it.each([
   'missing-terminal',
   'number-gap',
@@ -1014,7 +1062,19 @@ it('does not partially protect an owner that also contains ordinary native conte
   }
 })
 
-it.each(['closed', 'ordinal gap', 'centered folio', 'shifted folio', 'compact DOI', 'shifted DOI'])(
+const rightColumnBibliographyShapes = [
+  'closed',
+  'ordinal gap',
+  'centered folio',
+  'shifted folio',
+  'compact DOI',
+  'shifted DOI',
+  'terminal archive',
+  'terminal archive with ordinary line',
+  'terminal archive with row reset'
+]
+
+it.each(rightColumnBibliographyShapes)(
   'keeps only a closed terminal right-column native bibliography: %s',
   async (shape) => {
     const require = createRequire(import.meta.url),
@@ -1025,6 +1085,7 @@ it.each(['closed', 'ordinal gap', 'centered folio', 'shifted folio', 'compact DO
       bold = await pdf.embedFont(await readFile(assets + 'LiberationSans-Bold.ttf')),
       withFolio = shape.endsWith('folio'),
       compact = shape.endsWith('DOI'),
+      journalLane = shape.startsWith('terminal archive'),
       addFolio = (n: number): ReturnType<typeof pdf.addPage> => {
         const page = pdf.addPage([612, 792]),
           text = String(n)
@@ -1057,7 +1118,67 @@ it.each(['closed', 'ordinal gap', 'centered folio', 'shifted folio', 'compact DO
       y: 405
     })
     let compactY = 350
-    for (let i = 0; i < 8; i++) {
+    if (journalLane) {
+      const size = 9
+      const rail = 318
+      const continuation = 337
+      const print = (text: string, x: number, font = regular): void =>
+        page.drawText(text, { font, size, x, y: compactY })
+      for (let i = 1; i <= 8; i++) {
+        const author = `[${i}] ${i === 8 ? 'G. de Silva' : 'A. Reader'}, `
+        const wraps = i < 5
+        if (wraps) {
+          print(author + 'Earlier observations,', rail)
+          compactY -= 10.5
+        }
+        const lead = (wraps ? '' : author) + 'Journal of Examples '
+        const x0 = wraps ? continuation : rail
+        print(lead, x0)
+        const x = x0 + regular.widthOfTextAtSize(lead, size)
+        print('12', x, bold)
+        print(', 100 (2020).', x + bold.widthOfTextAtSize('12', size))
+        compactY -= 10.5
+      }
+      // Add one ordinary author after the particle witness. The journal cohort
+      // still needs eight independently recognized dated records.
+      const lead = '[9] A. Clerk, Journal of Examples '
+      print(lead, rail)
+      const volumeX = rail + regular.widthOfTextAtSize(lead, size)
+      print('3', volumeX, bold)
+      print(', 10 (2019).', volumeX + bold.widthOfTextAtSize('3', size))
+      compactY -= 10.5
+      const book = '[10] A. Reader, Handbook of Samples '
+      print(book, rail)
+      compactY -= 10.5
+      print('(Example Press, 2020), p. 8.', continuation, bold)
+      compactY -= 10.5
+      print('[11] B. Clerk, Citation statement (2012), math-', rail)
+      compactY -= 10.5
+      print('st/0000000.', continuation)
+      compactY -= 10.5
+      const final = shape.endsWith('ordinary line')
+          ? '[12] C. Reader, A final ordinary sentence about '
+          : '[12] C. Reader, Ph.D. thesis, Example College (202',
+        tail = shape.endsWith('ordinary line') ? 'cats.' : '1).',
+        advance = regular.widthOfTextAtSize(final, size)
+      page.pushOperators(
+        beginText(),
+        setFontAndSize(page.node.newFontDictionary(regular.name, regular.ref), size),
+        setTextMatrix(1, 0, 0, 1, rail, compactY),
+        showText(regular.encodeText(final)),
+        ...(shape.endsWith('row reset')
+          ? [setTextMatrix(1, 0, 0, 1, rail + advance, compactY)]
+          : [
+              PDFOperator.of(PDFOperatorNames.MoveText, [
+                pdf.context.obj(advance),
+                pdf.context.obj(0)
+              ])
+            ]),
+        showText(regular.encodeText(tail)),
+        endText()
+      )
+    }
+    for (let i = 0; i < (journalLane ? 0 : 8); i++) {
       if (compact) {
         const x = 318,
           size = 9,
@@ -1141,12 +1262,15 @@ it.each(['closed', 'ordinal gap', 'centered folio', 'shifted folio', 'compact DO
         signal: new AbortController().signal
       })
       const owners = source.units.filter((unit) =>
-        compact
+        compact || journalLane
           ? unit.fragments.every((fragment) => fragment.rect.x > 0.5 && fragment.rect.y > 0.54)
           : unit.source.includes('Complete independent study') ||
             unit.source.startsWith('Journal of Native Tests')
       )
-      if (compact) {
+      if (journalLane) {
+        expect(owners.filter((unit) => /^\[\d+\]/u.test(unit.source))).toHaveLength(12)
+        expect(owners.every((unit) => unit.sourceOnly)).toBe(shape === 'terminal archive')
+      } else if (compact) {
         expect(owners.length).toBeGreaterThanOrEqual(8)
         expect(owners.filter((unit) => /^\[\d+\]/u.test(unit.source))).toHaveLength(8)
         expect(owners.some((unit) => unit.source.includes('DOI:'))).toBe(true)
@@ -1266,6 +1390,96 @@ it.each([
         fault === 'complete' ? 10 : fault === 'embedded-note' ? 6 : 0
       )
       expect(references.every((unit) => unit.sourceOnly)).toBe(true)
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each(['complete', 'tilted divider', 'number gap'])(
+  'requires a closed raised bibliography below a native solid divider (%s)',
+  async (shape) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    const page = pdf.addPage([600, 800])
+    page.drawText('1', { font, size: 10, x: 540, y: 760 })
+    page.drawText('Acknowledgments', { font, size: 10, x: 388, y: 663 })
+    const prose = 'Independent prose remains eligible.'
+    page.drawText(prose, { font, size: 10, x: 322, y: 635 })
+    const mask = PDFRawStream.of(
+      pdf.context.obj({
+        Type: 'XObject',
+        Subtype: 'Image',
+        Width: 1,
+        Height: 1,
+        ImageMask: true,
+        BitsPerComponent: 1,
+        Length: 1
+      }),
+      Uint8Array.of(0)
+    )
+    const name = page.node.newXObject('Divider', pdf.context.register(mask))
+    page.pushOperators(
+      pushGraphicsState(),
+      PDFOperator.of(
+        PDFOperatorNames.ConcatTransformationMatrix,
+        [240, shape === 'tilted divider' ? 2 : 0, 0, -0.8, 180, 615].map(PDFNumber.of)
+      ),
+      PDFOperator.of(PDFOperatorNames.DrawObject, [name]),
+      popGraphicsState(),
+      beginText()
+    )
+    const face = page.node.newFontDictionary(font.name, font.ref)
+    const draw = (text: string, size: number, x: number, y: number): void =>
+      page.pushOperators(
+        setFontAndSize(face, size),
+        setTextMatrix(1, 0, 0, 1, x, y),
+        showText(font.encodeText(text))
+      )
+    for (let i = 0; i < 6; i++) {
+      const ordinal = String(shape === 'number gap' && i === 4 ? 8 : i + 1)
+      const y = 585 - (i % 3) * 22
+      const rail = i < 3 ? 64 : 324
+      draw(ordinal, 6, rail - font.widthOfTextAtSize(ordinal, 6) - 4.5, y + 3.8)
+      draw('A. Reader, A study of the spectral response,', 9, rail, y)
+      if (i === 3) {
+        draw('Term X', 9, rail, y - 11)
+        const script = rail + font.widthOfTextAtSize('Term X', 9)
+        draw('2', 6, script, y - 12)
+        draw('O, Example Journal 12 (2021)', 9, script + font.widthOfTextAtSize('2', 6), y - 11)
+      } else draw('Example Journal 12 (2021)', 9, rail, y - 11)
+    }
+    page.pushOperators(endText())
+
+    const loading = getDocument({
+      data: await pdf.save(),
+      disableFontFace: true,
+      fontExtraProperties: true,
+      isEvalSupported: false,
+      useSystemFonts: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const document = await loading.promise
+      expect((await (await document.getPage(1)).getOperatorList()).fnArray).toContain(
+        OPS.paintSolidColorImageMask
+      )
+      const { source } = await extractPdfTranslationSource({
+        document,
+        resourceRequestKey: 'anonymous',
+        signal: new AbortController().signal
+      })
+      const citations = source.units.filter((unit) =>
+        /A study of the spectral response|Example Journal/u.test(unit.source)
+      )
+      expect(citations).toHaveLength(8)
+      expect(citations.every((unit) => Boolean(unit.sourceOnly) === (shape === 'complete'))).toBe(
+        true
+      )
+      expect(source.units.find((unit) => unit.source === prose)?.sourceOnly).toBeUndefined()
     } finally {
       await loading.destroy()
     }
@@ -1753,9 +1967,14 @@ it.each(['closed', 'number gap', 'ordinary note'])(
   }
 )
 
-it.each([true, false])(
-  'protects complete final right-column references after acknowledgments (acknowledged=%s)',
-  async (acknowledged) => {
+it.each(['heading', 'prose', 'ordinary', 'bare without acknowledgment', 'compound', 'note gap'])(
+  'protects complete final right-column references after acknowledgments (%s)',
+  async (context) => {
+    const hasNote = context === 'compound' || context === 'note gap',
+      acknowledged = context === 'heading' || context === 'prose' || context === 'compound',
+      bareInitial = context === 'prose' || context === 'bare without acknowledgment',
+      prose = context === 'prose' || hasNote,
+      offset = hasNote ? 70 : 0
     const require = createRequire(import.meta.url)
     const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
     const pdf = await PDFDocument.create()
@@ -1766,17 +1985,51 @@ it.each([true, false])(
       page.drawText(source, { font, size, x, y })
     }
     line('Independent prose remains in the other column.', 42, 245, 10)
-    line(acknowledged ? 'Acknowledgments.' : 'Closing remarks.', 257, 389, 10)
-    line('The laboratory supported this work.', 251, 377, 10)
+    line(
+      context === 'heading'
+        ? 'Acknowledgments.'
+        : prose
+          ? 'The authors thank our colleagues,'
+          : 'Closing remarks.',
+      257,
+      389 + offset,
+      10
+    )
+    line(
+      prose ? 'and the laboratory supported this work.' : 'The laboratory supported this work.',
+      251,
+      377 + offset,
+      10
+    )
     for (let i = 0; i < 6; i++) {
-      const y = 322 - i * 21
-      line(`[${i + 1}] A. Writer, An independent study,`, 255, y, 9)
+      const y = 322 + offset - i * 21
       line(
-        i === 2 ? '[archive-example/9999999].' : 'Journal of Examples 12, 37 (2020).',
+        hasNote && i === 2
+          ? '[3] C. Reader. Alloy Studies 9, 75 (2020).'
+          : `[${i + 1}] ${bareInitial && i < 2 ? 'A' : 'A.'} Writer, An independent study,`,
+        255,
+        y,
+        9
+      )
+      line(
+        i === 2
+          ? hasNote
+            ? 'D. Sample. Foundry Notes 3, 98 (2021).'
+            : '[archive-example/9999999].'
+          : 'Journal of Examples 12, 37 (2020).',
         270,
         y - 10.5,
         9
       )
+    }
+    if (hasNote) {
+      line(
+        `[${context === 'note gap' ? 8 : 7}] This independent technical estimate uses the`,
+        255,
+        266,
+        9
+      )
+      line('adjacent surface area in its result.', 270, 255.5, 9)
     }
     const loading = getDocument({
       data: await pdf.save(),
@@ -1793,7 +2046,9 @@ it.each([true, false])(
         signal: new AbortController().signal
       })
       const units = source.units
-      expect(units.flatMap((unit) => unit.fragments.flatMap((f) => f.items))).toHaveLength(15)
+      expect(units.flatMap((unit) => unit.fragments.flatMap((f) => f.items))).toHaveLength(
+        hasNote ? 17 : 15
+      )
       expect(
         units
           .filter((unit) => unit.preserve === 'reference')
@@ -1802,6 +2057,16 @@ it.each([true, false])(
       expect(
         units.some((unit) => unit.source.includes('supported this work') && !unit.sourceOnly)
       ).toBe(true)
+      if (hasNote) {
+        expect(
+          units.some((unit) => unit.source.includes('technical estimate uses') && !unit.sourceOnly)
+        ).toBe(true)
+        expect(
+          units.some(
+            (unit) => unit.source.includes('surface area in its result') && !unit.sourceOnly
+          )
+        ).toBe(true)
+      }
     } finally {
       await loading.destroy()
     }
@@ -2058,27 +2323,37 @@ it.each([false, true])(
   }
 )
 
-it.each([false, true])(
-  'retains a continuous terminal bibliography while keeping its numbered explanatory note (%s)',
-  async (gap) => {
+it.each([
+  ['contact', false],
+  ['contact', true],
+  ['availability', false],
+  ['availability', true],
+  ['two contacts', false],
+  ['two contacts', true]
+] as const)(
+  'retains a continuous terminal bibliography while keeping its numbered explanatory note (%s, numbering gap=%s)',
+  async (boundary, gap) => {
+    const availability = boundary === 'availability'
+    const pairedContacts = boundary === 'two contacts'
     const require = createRequire(import.meta.url)
     const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
     const pdf = await PDFDocument.create()
     pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
     const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
-    const page = (number: number, rows: [string, number, number, number?][]): PDFPage => {
+    const bold = await pdf.embedFont(await readFile(assets + 'LiberationSans-Bold.ttf'))
+    const page = (number: number, rows: [string, number, number, number?, boolean?][]): PDFPage => {
       const p = pdf.addPage([600, 800])
       p.drawText(String(number), { x: 554, y: 755, size: 10, font })
       p.pushOperators(
         beginText(),
         PDFOperator.of(PDFOperatorNames.SetTextLineHeight, [pdf.context.obj(10.35)])
       )
-      const id = p.node.newFontDictionary(font.name, font.ref)
-      for (const [text, x, y, size = 9] of rows) {
+      for (const [text, x, y, size = 9, heading = false] of rows) {
+        const face = heading ? bold : font
         p.pushOperators(
-          setFontAndSize(id, size),
+          setFontAndSize(p.node.newFontDictionary(face.name, face.ref), size),
           setTextMatrix(1, 0, 0, 1, x, y),
-          showText(font.encodeText(text)),
+          showText(face.encodeText(text)),
           PDFOperator.of(PDFOperatorNames.NextLine)
         )
       }
@@ -2090,24 +2365,66 @@ it.each([false, true])(
       x,
       y
     ]
-    page(1, [
-      ['The subsequent measurements confirm the estimates.', 320, 230, 10],
-      ['Acknowledgments', 320, 205, 10],
-      ['We appreciate the facility staff.', 320, 190, 10],
-      ['*', 329, 154, 7],
-      ['example-one@example.com', 337, 150],
-      ['†', 329, 143.65, 7],
-      ['example-two@example.com', 337, 139.65],
-      record(1, 320, 129.3),
-      record(2, 320, 118.95)
-    ])
-    page(2, [
-      record(3, 54, 730),
-      ['[4] We applied the same calibration to the remaining experiments.', 54, 719.65],
-      record(5, 320, 730),
-      record(6, 320, 699)
-    ])
-    page(3, [record(gap ? 8 : 7, 54, 730), record(gap ? 9 : 8, 54, 719.65)])
+    if (pairedContacts) {
+      const markerRight = 339
+      page(1, [
+        ['The measurements agree with the earlier estimates.', 322, 205, 10],
+        ['*', markerRight - font.widthOfTextAtSize('*', 6), 154, 6],
+        ['reader@example.test', 343, 150],
+        ['†', markerRight - font.widthOfTextAtSize('†', 6), 143.65, 6],
+        ['writer@example.test', 343, 139.65],
+        record(1, 329, 129.3),
+        record(2, 329, 118.95),
+        record(3, 329, 108.6)
+      ])
+      page(2, [
+        record(4, 54, 730),
+        ['[5] We applied the same calibration to the remaining experiments.', 54, 719.65],
+        record(6, 329, 730),
+        record(gap ? 8 : 7, 329, 719.65),
+        record(gap ? 9 : 8, 329, 709.3)
+      ])
+    } else if (availability) {
+      page(1, [
+        ['We repeated the measurements under uniform conditions.', 320, 440, 10],
+        ['Data availability', 321, 390, 9, true],
+        ['See the complete archive online', 329, 379.65],
+        ['at https://doi.org/10.0000/example.', 320, 369.3],
+        record(1, 329, 349.5),
+        record(2, 329, 328.8),
+        record(3, 329, 308.1)
+      ])
+      page(2, [
+        record(4, 54, 730),
+        ['[5] We applied the same calibration to the remaining experiments.', 54, 709.3],
+        record(6, 329, 730),
+        [
+          `[${gap ? 8 : 7}] Id., in Collected Observations, p. 82 (Sample Press, 2022).`,
+          329,
+          709.3
+        ],
+        record(gap ? 9 : 8, 329, 688.6)
+      ])
+    } else {
+      page(1, [
+        ['The subsequent measurements confirm the estimates.', 320, 230, 10],
+        ['Acknowledgments', 320, 205, 10],
+        ['We appreciate the facility staff.', 320, 190, 10],
+        ['*', 329, 154, 7],
+        ['example-one@example.com', 337, 150],
+        ['†', 329, 143.65, 7],
+        ['example-two@example.com', 337, 139.65],
+        record(1, 320, 129.3),
+        record(2, 320, 118.95)
+      ])
+      page(2, [
+        record(3, 54, 730),
+        ['[4] We applied the same calibration to the remaining experiments.', 54, 719.65],
+        record(5, 320, 730),
+        record(6, 320, 699)
+      ])
+      page(3, [record(gap ? 8 : 7, 54, 730), record(gap ? 9 : 8, 54, 719.65)])
+    }
     const loading = getDocument({
       data: await pdf.save(),
       fontExtraProperties: true,
@@ -2123,8 +2440,14 @@ it.each([false, true])(
         signal: new AbortController().signal
       })
       const references = source.units.filter((unit) => unit.source.includes('R. Reader'))
-      expect(references).toHaveLength(7)
-      expect(references.filter((unit) => unit.preserve === 'reference')).toHaveLength(gap ? 0 : 7)
+      expect(references).toHaveLength(availability ? 6 : 7)
+      expect(references.filter((unit) => unit.preserve === 'reference')).toHaveLength(
+        gap ? 0 : availability ? 6 : 7
+      )
+      if (availability)
+        expect(
+          source.units.find((unit) => unit.source.includes('Collected Observations'))?.preserve
+        ).toBe(gap ? undefined : 'reference')
       expect(
         source.units.find((unit) => unit.source.includes('same calibration'))?.sourceOnly
       ).toBeUndefined()
@@ -2270,6 +2593,304 @@ it.each(['centered', 'shifted', 'incomplete'] as const)(
       ).toHaveLength(kind === 'centered' ? 8 : 0)
       expect(
         source.units.find((unit) => unit.source.includes('equipment support'))?.sourceOnly
+      ).toBeUndefined()
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each([false, true])(
+  'retains cited journal runs while leaving the numbered explanation eligible (ordinal gap=%s)',
+  async (gap) => {
+    const require = createRequire(import.meta.url),
+      assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/',
+      pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf')),
+      first = pdf.addPage([600, 800]),
+      last = pdf.addPage([600, 800]),
+      x = 316,
+      baseline = 360,
+      pitch = 10.5,
+      line = (text: string, x: number, y: number): void => {
+        first.drawText(text, { font, x, y, size: 9 })
+      }
+    first.drawText('*', { font, x: x + 3, y: baseline + pitch + 3, size: 6 })
+    line('Corresponding author: reader@example.org.', x + 15, baseline + pitch)
+    line('[1] A. Reader, Journal of Samples 8, 31', x, baseline)
+    line('(2020).', x + 15, baseline - pitch)
+    const lead = '[2] B. Ro¨'
+    line(lead, x, baseline - pitch * 2)
+    line(
+      'rer et al., Journal of Tests 9, 42 (2021).',
+      x + font.widthOfTextAtSize(lead, 9) - 3,
+      baseline - pitch * 2
+    )
+    for (let n = 3; n <= 6; n++)
+      line(
+        `[${gap && n === 4 ? 9 : n}] C. Writer, Sample Letters 10, ${n + 40} (2022).`,
+        x,
+        baseline - n * pitch
+      )
+    line('[7] A second independent method shows the result', x, baseline - pitch * 7)
+    last.drawText('and demonstrates its implications for the example.', {
+      font,
+      x: 74,
+      y: 730,
+      size: 9
+    })
+
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      useSystemFonts: false,
+      disableFontFace: true,
+      standardFontDataUrl: assets
+    })
+    const document = await loading.promise
+    try {
+      const page = await document.getPage(1),
+        content = await page.getTextContent(),
+        diacritic = content.items.findIndex((item) => 'str' in item && item.str === lead),
+        split = content.items[diacritic + 1]
+      expect(diacritic).toBeGreaterThanOrEqual(0)
+      expect(split).toMatchObject({ str: expect.stringMatching(/^rer et al\./u) })
+      const result = await extractPdfTranslationSource({
+        document,
+        resourceRequestKey: 'synthetic-journal-run',
+        signal: AbortSignal.timeout(10_000)
+      })
+      const units = result.source.units,
+        citations = units.filter((unit) =>
+          /Journal of Samples|Journal of Tests|Sample Letters/u.test(unit.source)
+        ),
+        explanation = units.find((unit) => /second independent method/u.test(unit.source))
+      expect(citations).toHaveLength(6)
+      expect(citations.filter((unit) => unit.preserve === 'reference')).toHaveLength(gap ? 0 : 6)
+      expect(explanation).toBeDefined()
+      expect(explanation?.sourceOnly).toBeUndefined()
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each([false, true])(
+  'retains a singular bibliography across the terminal folio (numbering gap=%s)',
+  (gap) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Citation'
+    ): PdfLayoutTextItem => ({
+      str,
+      dir: 'ltr',
+      width,
+      height: 12,
+      fontName,
+      transform: [12, 0, 0, 12, x, y],
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL: true
+    })
+    const opening = [
+      row('An unrelated observation concludes the discussion.', 85, 165, 260, 'Body'),
+      row('REFERENCE', 255, 110, 90, 'Title'),
+      row('1. A. West, Studies in field measurements', 95, 85, 400),
+      row('(Sample Press, 1980).', 108, 68, 122),
+      row('1', 297, 36, 6)
+    ]
+    const continued = [
+      row('2. M. North, Studies in the linear case', 95, 725, 400),
+      row('(Sample Press, 1990).', 108, 708, 122),
+      row(`${gap ? 4 : 3}. S. South, Journal of Results, 3, 61 (2001).`, 95, 680, 315),
+      row('4. F. East, Reports in Analysis, 12, 8 (2002).', 95, 655, 300),
+      row('2', 297, 36, 6)
+    ]
+    const pages = [opening, continued].map((items, index) => ({
+      page: index + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items,
+      ...(index
+        ? {
+            nativeSectionFontEvidence: {
+              complete: true,
+              fonts: {
+                Citation: { nativeMetrics: true, vertical: false, ascent: 0.8, descent: -0.2 }
+              }
+            }
+          }
+        : {})
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const owner = (key: string): (typeof units)[number] | undefined =>
+      units.find((unit) => unit.items.includes(key))
+    expect(owner('1:0')?.sourceOnly).toBeUndefined()
+    for (const key of ['1:1', '1:2', '1:3', '2:0', '2:1', '2:2', '2:3']) {
+      expect(owner(key)).toBeDefined()
+      expect(owner(key)?.preserve).toBe(gap ? undefined : 'reference')
+    }
+  }
+)
+
+it.each([true, false])(
+  'retains a two-page surname-first bibliography only after a closed disclosure (%s)',
+  async (hasDisclosure) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const body = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    const bold = await pdf.embedFont(await readFile(assets + 'LiberationSans-Bold.ttf'))
+    function buildPage(n: number): PDFPage {
+      const page = pdf.addPage([600, 800])
+      page.drawText(String(n), { x: 552, y: 755, size: 10, font: body })
+      page.pushOperators(
+        beginText(),
+        PDFOperator.of(PDFOperatorNames.SetTextLineHeight, [pdf.context.obj(10.5)])
+      )
+      return page
+    }
+    function line(page: PDFPage, value: string, x: number, y: number, year?: string): void {
+      page.pushOperators(
+        setFontAndSize(page.node.newFontDictionary(body.name, body.ref), 9),
+        setTextMatrix(1, 0, 0, 1, x, y),
+        showText(body.encodeText(value))
+      )
+      if (year)
+        page.pushOperators(
+          setFontAndSize(page.node.newFontDictionary(bold.name, bold.ref), 9),
+          showText(bold.encodeText(year)),
+          setFontAndSize(page.node.newFontDictionary(body.name, body.ref), 9),
+          showText(body.encodeText(', 12, 501.'))
+        )
+      page.pushOperators(PDFOperator.of(PDFOperatorNames.NextLine))
+    }
+    const first = buildPage(1)
+    const heading = hasDisclosure ? 'Competing interests' : 'Our numbered examples'
+    first.pushOperators(
+      setFontAndSize(first.node.newFontDictionary(bold.name, bold.ref), 10),
+      setTextMatrix(1, 0, 0, 1, 330, 574),
+      showText(bold.encodeText(heading)),
+      setFontAndSize(first.node.newFontDictionary(body.name, body.ref), 10),
+      setTextMatrix(1, 0, 0, 1, 450, 574),
+      showText(body.encodeText('The authors declare no com-')),
+      PDFOperator.of(PDFOperatorNames.NextLine),
+      setTextMatrix(1, 0, 0, 1, 320, 562.5),
+      showText(body.encodeText('peting interests.')),
+      PDFOperator.of(PDFOperatorNames.NextLine)
+    )
+    line(first, '[1] Reader, A. Studies of sample archives. Journal of Data ', 57, 507, '2020')
+    line(first, '[2] Writer, B. Notes from the field archive. Journal of Data ', 57, 496.5, '2021')
+    line(first, '[3] Editor, C. Design of a material archive. Journal of Data ', 320, 507, '2022')
+    line(first, '[4] Recorder, D. An annotated materials archive.', 320, 496.5)
+    first.pushOperators(endText())
+    const second = buildPage(2)
+    line(second, 'Journal of Measurements ', 72, 727, '2023')
+    line(second, '[5] Reader, A. Notes on the stored samples. Journal of Data ', 54, 716.5, '2022')
+    line(second, '[6] Editor, C. Storing observations in the archive.', 54, 706)
+    line(second, 'Journal of Measurements ', 338, 727, '2024')
+    line(second, '[7] Writer, B. Sample storage practices. Journal of Data ', 320, 716.5, '2021')
+    line(second, '[8] Recorder, D. An archive report. Journal of Data ', 320, 706, '2022')
+    second.pushOperators(endText())
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const { source } = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'anonymous',
+        signal: new AbortController().signal
+      })
+      const references = source.units.filter((unit) =>
+        /^\[\d+\]|^Journal of Measurements/u.test(unit.source)
+      )
+      expect(references).toHaveLength(9)
+      expect(references.filter((unit) => unit.preserve === 'reference')).toHaveLength(
+        hasDisclosure ? 5 : 0
+      )
+      expect(source.units.find((unit) => unit.source.includes(heading))?.sourceOnly).toBeUndefined()
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each([false, true])(
+  'preserves a terminal superscript bibliography continued across pages (numbering gap=%s)',
+  async (gap) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    const bold = await pdf.embedFont(await readFile(assets + 'LiberationSans-Bold.ttf'))
+    const text = 'A. Reader, Journal of Examples '
+    const write = (page: PDFPage, count: number, start: number, x: number, top: number): void => {
+      const regular = page.node.newFontDictionary(font.name, font.ref)
+      const strong = page.node.newFontDictionary(bold.name, bold.ref)
+      page.pushOperators(beginText())
+      for (let i = 0; i < count; i++) {
+        const label = String(start + i + (gap && start > 1 && i >= 2 ? 1 : 0))
+        const y = top - i * 9.2
+        const authorX = x + font.widthOfTextAtSize(label, 4.8) + 2
+        const volumeX = authorX + font.widthOfTextAtSize(text, 8)
+        page.pushOperators(
+          setFontAndSize(regular, 4.8),
+          setTextMatrix(1, 0, 0, 1, x, y + 3.6),
+          showText(font.encodeText(label)),
+          setFontAndSize(regular, 8),
+          setTextMatrix(1, 0, 0, 1, authorX, y),
+          showText(font.encodeText(text)),
+          setFontAndSize(strong, 8),
+          setTextMatrix(1, 0, 0, 1, volumeX, y),
+          showText(bold.encodeText('12')),
+          setFontAndSize(regular, 8),
+          showText(font.encodeText(', 70 (2021).'))
+        )
+      }
+      page.pushOperators(endText())
+    }
+    const first = pdf.addPage([600, 800])
+    first.drawText('The authors thank the local team for work under grant M-2.', {
+      font,
+      size: 10,
+      x: 313,
+      y: 159
+    })
+    write(first, 3, 1, 310, 139)
+    write(pdf.addPage([600, 800]), 5, 4, 52, 730)
+
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const { source } = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'anonymous-bibliography',
+        signal: new AbortController().signal
+      })
+      const citations = source.units.filter((unit) => unit.source.includes('Journal of Examples'))
+      expect(
+        citations.flatMap((unit) => [...unit.source.matchAll(/Journal of Examples/gu)])
+      ).toHaveLength(8)
+      expect(citations.every((unit) => (unit.preserve === 'reference') === !gap)).toBe(true)
+      expect(
+        source.units.find((unit) => unit.source.startsWith('The authors'))?.sourceOnly
       ).toBeUndefined()
     } finally {
       await loading.destroy()

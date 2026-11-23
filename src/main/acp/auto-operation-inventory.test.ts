@@ -208,8 +208,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: terminal status and diagnostics are projected after RPC dispatch. Background
         // query and cancel still require the registered action and its validated Run identity.
         // The read-only state request limits history to the ten runs its response can display.
+        // Directory discovery publishes its existing result fields using the MCP default dialect.
         'notebook/mcp-server.ts':
-          '80e9b1e4677caf0ac28706b3711c02340ae89f617bdd28fb6dade801c2cebbcf',
+          'e52fcccfae2e622414ce9a2d7124df62cabd62eb3cb54a038c71c49c480e5832',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
