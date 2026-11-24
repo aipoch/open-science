@@ -6,6 +6,7 @@ export {
   resolveChatCompletionsUrl
 } from './protocols/endpoints'
 export {
+  cloudflareGatewayAcceptsModel,
   cloudflareGatewayBase,
   cloudflareGatewayProtocol,
   foundryGatewayBase,

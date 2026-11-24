@@ -65,6 +65,7 @@ import {
   isProviderKindAvailable,
   localModelPresetPatch,
   providerFormApiEndpoints,
+  cloudflareModePatch,
   cloudModelRoutePatch,
   providerKindPatch,
   selectedKindKey,
@@ -1499,14 +1500,8 @@ const ProviderForm = ({
             <Select
               value={cloudflare.mode}
               onValueChange={(mode) => {
-                // Workers AI and the Anthropic gateway use different credentials and model IDs.
-                if (mode !== 'rest' && mode !== 'anthropic') return
-                const next: typeof cloudflare = { ...cloudflare, mode }
-                onChange({
-                  cloudflare: next,
-                  ...cloudModelRoutePatch(value, { cloudflare: next }),
-                  key: ''
-                })
+                if (mode === 'rest' || mode === 'anthropic')
+                  onChange(cloudflareModePatch(value, mode))
               }}
               disabled={disabled}
             >

@@ -2,6 +2,7 @@ import {
   isLocalProviderPresetId,
   type LocalProviderPresetId
 } from '../../../../shared/local-provider-preset'
+import { cloudflareGatewayAcceptsModel } from '@aipoch/providers/protocol'
 import { PROVIDER_MODEL_LIMIT } from '../../../../shared/configured-provider-model'
 import {
   providerModelFormRow,
@@ -95,6 +96,10 @@ export type ProviderFormValue = {
   vendorId?: OfficialVendorId
   region?: string
   cloudflare?: CloudflareGateway
+  // Draft rows are scoped to their connection mode. Only the active mode is saved.
+  cloudflareModelDrafts?: Partial<
+    Record<CloudflareGateway['mode'], Pick<ProviderFormValue, 'model' | 'manualModels'>>
+  >
   manualConnection?: ManualProviderConnection
   localPresetId?: LocalProviderPresetId
   localModels?: ProviderModelFormRow[]
@@ -227,14 +232,35 @@ export const cloudModelFormRows = (
   const presets = cloudPresetIds(value)
     .filter((id) => id !== model)
     .map((id) => providerModelFormRow({ id }))
-  if (model)
+  if (model && (!value.cloudflare || cloudflareGatewayAcceptsModel(value.cloudflare.mode, model)))
     return [providerModelFormRow({ id: model, contextWindow: value.contextWindow }), ...presets]
   return presets.length ? presets : [providerModelFormRow()]
 }
 
+export function cloudflareModePatch(
+  value: ProviderFormValue,
+  mode: CloudflareGateway['mode']
+): Partial<ProviderFormValue> {
+  if (!value.cloudflare || value.cloudflare.mode === mode) return {}
+  const cloudflare = { ...value.cloudflare, mode }
+  const draft = value.cloudflareModelDrafts?.[mode]
+  const manualModels =
+    draft?.manualModels ?? cloudModelFormRows({ vendorId: value.vendorId, cloudflare })
+  return {
+    cloudflare,
+    key: '',
+    model: draft?.model ?? manualModels[0].id,
+    manualModels,
+    cloudflareModelDrafts: {
+      ...value.cloudflareModelDrafts,
+      [value.cloudflare.mode]: { model: value.model, manualModels: value.manualModels }
+    }
+  }
+}
+
 export function cloudModelRoutePatch(
   value: ProviderFormValue,
-  next: Partial<Pick<CloudModelRoute, 'cloudflare' | 'manualConnection'>>
+  next: Pick<CloudModelRoute, 'manualConnection'>
 ): Partial<ProviderFormValue> {
   const previousPresets = cloudPresetIds(value)
   const nextPresets = cloudPresetIds({ ...value, ...next })
@@ -369,6 +395,7 @@ export type ProviderFormErrorKey =
   | CustomProviderBaseUrlError
   | 'Model is required.'
   | 'Model IDs must be unique.'
+  | 'A model ID is incompatible with the selected Cloudflare connection mode.'
   | 'Enter a valid Cloudflare Account ID.'
   | 'Enter a valid Gateway ID.'
   | 'Enter a valid provider endpoint.'
@@ -410,6 +437,10 @@ export const getProviderFormErrors = (
     if (!validCloudflareGatewayId(cloudflare.gatewayId))
       errors.gatewayId = 'Enter a valid Gateway ID.'
     if (!rows && !value.model.trim()) errors.model = 'Model is required.'
+    const ids = rows?.map(({ id }) => id.trim()) ?? [value.model.trim()]
+    if (ids.some((id) => id && !cloudflareGatewayAcceptsModel(cloudflare.mode, id))) {
+      errors.model = 'A model ID is incompatible with the selected Cloudflare connection mode.'
+    }
   }
 
   if (value.type === 'official' && value.vendorId && manualProviderDefinition(value.vendorId)) {
@@ -617,6 +648,7 @@ export const providerKindPatch = (
     key: '',
     catalogParameters: undefined,
     cloudflare: undefined,
+    cloudflareModelDrafts: undefined,
     manualConnection: undefined,
     localPresetId: undefined,
     localModels: undefined,

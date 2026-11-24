@@ -1,3 +1,4 @@
+import { cloudflareGatewayAcceptsModel } from '@aipoch/providers/protocol'
 import {
   cloudflareGatewayBase,
   cloudflareGatewayProtocol,
@@ -112,12 +113,15 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
     const protocol = cloudflareGatewayProtocol(cloudflare.mode)
     if (source.manualModels)
       return configuredCloudModels(
-        source.manualModels,
+        source.manualModels.filter(({ id }) => cloudflareGatewayAcceptsModel(cloudflare.mode, id)),
         vendorId,
         protocol,
         cloudflareGatewayBase(cloudflare)
       )
-    const ids = new Set([model, ...CLOUDFLARE_GATEWAY_MODELS[cloudflare.mode]])
+    const presets = CLOUDFLARE_GATEWAY_MODELS[cloudflare.mode]
+    const ids = new Set(
+      cloudflareGatewayAcceptsModel(cloudflare.mode, model) ? [model, ...presets] : presets
+    )
     return Array.from(ids, (id) => ({
       id,
       contextWindow:

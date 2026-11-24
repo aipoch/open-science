@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { resolveVendorModelApiEndpoints } from '@aipoch/providers'
+import { resolveOfficialModelCatalog } from '../../../../shared/provider-model-catalog'
 import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 
 import {
   LOCAL_MODEL_PRESETS,
   PROVIDER_KINDS,
+  cloudflareModePatch,
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
   defaultProviderKindKey,
@@ -12,6 +14,8 @@ import {
   hasProviderFormErrors,
   localModelPresetPatch,
   providerFormApiEndpoints,
+  providerFormManualModels,
+  providerFormModel,
   providerFormModelForFramework,
   providerKindPatch,
   selectedKindKey
@@ -24,6 +28,38 @@ describe('defaultProviderKindKey', () => {
     expect(defaultProviderKindKey('opencode')).toBe('official:deepseek')
     expect(defaultProviderKindKey('codebuddy')).toBe('official:minimax')
   })
+})
+
+it('keeps edited Cloudflare model rows on their original mode and ignores stale saved routes', () => {
+  const rest = createEmptyProviderFormValue(providerKindPatch('official:cloudflare-ai-gateway'))
+  const workersModel = rest.manualModels![0]
+  const edited = {
+    ...rest,
+    key: 'rest-test-key',
+    manualModels: [
+      { ...workersModel, displayName: 'My Workers AI model', contextWindow: '128000' },
+      ...rest.manualModels!.slice(1)
+    ]
+  }
+  const messages = { ...edited, ...cloudflareModePatch(edited, 'anthropic') }
+  const saved = {
+    vendorId: messages.vendorId,
+    cloudflare: messages.cloudflare,
+    model: providerFormModel(messages),
+    manualModels: providerFormManualModels(messages)
+  }
+  expect(messages.key).toBe('')
+  expect(saved.model).toBe('claude-sonnet-5-5')
+  expect(saved.manualModels?.some(({ id }) => id === workersModel.id)).toBe(false)
+
+  const stale = {
+    ...saved,
+    manualModels: [...saved.manualModels!, { id: workersModel.id }]
+  }
+  const catalog = resolveOfficialModelCatalog(stale)
+  expect(catalog.map(({ id }) => id)).toEqual(saved.manualModels?.map(({ id }) => id))
+  expect(catalog[0]?.routes).toHaveProperty('messages')
+  expect(cloudflareModePatch(messages, 'rest').manualModels).toEqual(edited.manualModels)
 })
 
 describe('defaultCustomApiEndpoint', () => {

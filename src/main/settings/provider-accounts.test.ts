@@ -137,6 +137,16 @@ describe('ProviderAccountsModule', () => {
     })
     expect(module.resolveProvider(await stored(cloudflare.id)).contextWindow).toBe(128_000)
 
+    const invalidSwitch = {
+      ...cloudflare,
+      cloudflare: { ...cloudflare.cloudflare, mode: 'anthropic' },
+      key: 'test-anthropic-key',
+      model: 'claude-sonnet-5-5',
+      manualModels: [{ id: 'claude-sonnet-5-5' }, { id: cloudflare.model }]
+    } as const
+    await expect(module.upsertProvider(invalidSwitch)).rejects.toThrow('incompatible')
+    expect((await stored(cloudflare.id)).cloudflare?.mode).toBe('rest')
+
     await module.upsertProvider({
       ...foundry,
       contextWindow: undefined,

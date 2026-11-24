@@ -5,6 +5,7 @@ import {
 } from '../../shared/local-provider-preset'
 import { sameManualProviderConnection, usesCloudProviderModels } from '../../shared/manual-provider'
 import { decodeProviderModels } from '../../shared/configured-provider-model'
+import { cloudflareGatewayAcceptsModel } from '@aipoch/providers/protocol'
 import { parseCloudflareGateway, sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
   decodeCatalogParameters,
@@ -498,6 +499,11 @@ class ProviderAccountsModule {
         )
         if (!cloudflare) throw new Error('Cloudflare Account ID and Gateway ID are required.')
         if (!configuredModel) throw new Error('Model is required.')
+        const modelIds = provider.manualModels?.map(({ id }) => id) ?? [configuredModel]
+        if (modelIds.some((id) => !cloudflareGatewayAcceptsModel(cloudflare.mode, id)))
+          throw new Error(
+            'A model ID is incompatible with the selected Cloudflare connection mode.'
+          )
         provider.cloudflare = cloudflare
         provider.model = configuredModel
       } else if (manualProviderDefinition(vendorId)) {

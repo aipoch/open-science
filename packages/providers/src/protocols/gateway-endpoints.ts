@@ -32,6 +32,12 @@ export const cloudflareGatewayProtocol = (
   mode: CloudflareGateway['mode']
 ): 'chat-completions' | 'messages' => (mode === 'rest' ? 'chat-completions' : 'messages')
 
+/** Keep Workers AI IDs and native Anthropic model IDs on their corresponding endpoints. */
+export const cloudflareGatewayAcceptsModel = (
+  mode: CloudflareGateway['mode'],
+  model: string
+): boolean => (mode === 'anthropic' ? !model.includes('/') : !/^claude-/i.test(model))
+
 export const cloudflareGatewayBase = ({ accountId, gatewayId, mode }: CloudflareGateway): string =>
   mode === 'rest'
     ? `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`

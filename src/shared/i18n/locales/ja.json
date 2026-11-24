@@ -2053,6 +2053,7 @@
     "e.g. deepseek-v4-flash": "例：deepseek-v4-flash",
     "Model is required.": "モデルは必須です。",
     "Model IDs must be unique.": "モデル ID は重複できません。",
+    "A model ID is incompatible with the selected Cloudflare connection mode.": "選択した Cloudflare 接続モードに対応していないモデル ID があります。",
     "Model not supported over the Codex bridge": "Codex ブリッジではサポートされていないモデル",
     "Model provider": "モデルプロバイダー",
     "Model provider error": "モデルプロバイダーのエラー",

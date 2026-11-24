@@ -2146,6 +2146,7 @@
     "e.g. deepseek-v4-flash": "例如 deepseek-v4-flash",
     "Model is required.": "必须填写模型。",
     "Model IDs must be unique.": "模型 ID 不能重复。",
+    "A model ID is incompatible with the selected Cloudflare connection mode.": "有模型 ID 与所选的 Cloudflare 连接模式不兼容。",
     "Model not supported over the Codex bridge": "该模型不支持通过 Codex 桥接使用",
     "Model provider": "模型提供方",
     "Model provider error": "模型供应商错误",

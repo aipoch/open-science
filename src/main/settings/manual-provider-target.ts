@@ -1,5 +1,6 @@
 import { resolveManualProviderConnection, type OfficialVendorId } from '@aipoch/providers'
 import {
+  cloudflareGatewayAcceptsModel,
   cloudflareGatewayBase,
   cloudflareGatewayProtocol,
   parseCloudflareGateway
@@ -16,6 +17,8 @@ export function resolveCloudflareGateway(
   const gateway = parseCloudflareGateway(config)
   if (!gateway) throw new Error('Cloudflare Account ID and Gateway ID are required.')
   if (!model?.trim()) throw new Error('Model is required.')
+  if (!cloudflareGatewayAcceptsModel(gateway.mode, model.trim()))
+    throw new Error('A model ID is incompatible with the selected Cloudflare connection mode.')
   const baseUrl = cloudflareGatewayBase(gateway)
   return {
     type: 'custom',

@@ -2126,6 +2126,7 @@
     "e.g. deepseek-v4-flash": "par ex. deepseek-v4-flash",
     "Model is required.": "Un modèle est requis.",
     "Model IDs must be unique.": "Les identifiants de modèle doivent être uniques.",
+    "A model ID is incompatible with the selected Cloudflare connection mode.": "Un identifiant de modèle est incompatible avec le mode de connexion Cloudflare sélectionné.",
     "Model not supported over the Codex bridge": "Modèle non pris en charge sur le pont Codex",
     "Model provider": "Fournisseur de modèles",
     "Model provider error": "Erreur du fournisseur de modèle",
