@@ -34,7 +34,11 @@ import { ProjectFolderFiles } from '../projects/project-folder-files'
 import { ArtifactOutputDelivery } from './output-delivery'
 import { ArtifactProvenanceRepository } from './provenance-repository'
 import { createPngBytes } from './artifact-test-fixtures'
-import { createPublishedArtifactCopyCheck } from './project-folder-mention-candidates'
+import {
+  findPublishedArtifactCopies,
+  type ReadPublishedArtifactFolderRecords
+} from './project-folder-mention-candidates'
+import * as boundedIo from '../bounded-file-io'
 
 configureTestRuntimeMetadata()
 const fixtures: Awaited<ReturnType<typeof createArtifactSaveFixture>>[] = []
@@ -447,7 +451,7 @@ it('offers published Notebook files through their Artifact heads and retains ind
   }
   const outputs = {
     'mention_result.py': Buffer.from('print(1)'),
-    'mention_result.png': createPngBytes('test plot'),
+    'mention_result.png': createPngBytes(Buffer.alloc(12 * 1024 * 1024)),
     'mention_result_unpublished.txt': Buffer.from('unpublished'),
     'mention_result_same_bytes.py': Buffer.from('print(1)')
   }
@@ -458,10 +462,10 @@ it('offers published Notebook files through their Artifact heads and retains ind
     workspaceCwd: workspace,
     provenanceContext: context,
     code: Object.entries(outputs)
-      .map(
-        ([filename, bytes]) =>
-          `require("node:fs").writeFileSync(require("node:path").join(process.env.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR, ${JSON.stringify(filename)}), Buffer.from(${JSON.stringify(bytes.toString('base64'))}, "base64"))`
-      )
+      .map(([filename, bytes]) => {
+        const prefix = JSON.stringify(bytes.subarray(0, 16).toString('base64'))
+        return `require("node:fs").writeFileSync(require("node:path").join(process.env.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR, ${JSON.stringify(filename)}), Buffer.concat([Buffer.from(${prefix}, "base64")], ${bytes.length}))`
+      })
       .join('\n')
   })
   expect(run.status, run.traceback || run.stderr).toBe('completed')
@@ -473,21 +477,25 @@ it('offers published Notebook files through their Artifact heads and retains ind
     { allowedImportRoots: [workspace], workspaceCwd: workspace },
     { ...context, notebookSessionId: sessionId }
   )
-  const filenames = ['mention_result.py', 'mention_result.png'] as const
+  const publications = [
+    { source: 'mention_result.py', filename: 'mention_result_code.py' },
+    { source: 'mention_result.png', filename: 'mention_result.png' }
+  ] as const
+  const readRecords = vi.fn<ReadPublishedArtifactFolderRecords>((...scope) =>
+    listPublishedArtifactFolderRecords(f.client, ...scope)
+  )
   const projectFolder = new ProjectFolderFiles(
     async () => ({ rootPath: folder }) as Project,
     () => f.storageRoot,
-    (projectId, root, storageRoot) =>
-      createPublishedArtifactCopyCheck(projectId, root, storageRoot, (...scope) =>
-        listPublishedArtifactFolderRecords(f.client, ...scope)
-      )
+    (projectId, root, storageRoot, candidates) =>
+      findPublishedArtifactCopies(projectId, root, storageRoot, candidates, readRecords)
   )
-  const search = (relativePath = ''): Promise<ProjectFolderListing> =>
+  const search = (relativePath = '', query = 'mention_result'): Promise<ProjectFolderListing> =>
     projectFolder.listFolder({
       projectId,
       relativePath,
       limit: 12,
-      query: 'mention_result',
+      query,
       searchDescendants: true,
       excludePublishedArtifactCopies: true
     })
@@ -496,10 +504,10 @@ it('offers published Notebook files through their Artifact heads and retains ind
     provenance: f.repository,
     runner: { captureTarget: vi.fn(), run: vi.fn() }
   })
-  for (const filename of filenames) {
+  for (const { source, filename } of publications) {
     const artifact = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
       filename,
-      source: { kind: 'localPath', path: join(folder, outputRelativePath, filename) }
+      source: { kind: 'localPath', path: join(folder, outputRelativePath, source) }
     })
     artifacts.push(artifact)
     const request = {
@@ -514,7 +522,7 @@ it('offers published Notebook files through their Artifact heads and retains ind
       execution: { producerRunId, runs: [{ runId: producerRunId }] }
     })
     const generation = run.workingFiles?.find(
-      (file) => file.relativePath === `data/${outputRelativePath}/${filename}`
+      (file) => file.relativePath === `data/${outputRelativePath}/${source}`
     )
     expect(generation?.generationId).toBeTruthy()
     const version = await f.client.artifactVersion.findUniqueOrThrow({
@@ -597,7 +605,25 @@ it('offers published Notebook files through their Artifact heads and retains ind
     projectId,
     sessionId
   )!.artifactDirectoryRelativePath
-  const folderPaths = (await search()).entries.map((entry) => entry.relativePath)
+  readRecords.mockClear()
+  const digest = vi.spyOn(boundedIo, 'digestOpenFileWithinBudget')
+  const folderPaths = (await search('', '')).entries.map((entry) => entry.relativePath)
+  expect(digest).not.toHaveBeenCalled()
+  digest.mockRestore()
+  expect(readRecords).toHaveBeenCalledTimes(1)
+  expect(readRecords).toHaveBeenCalledWith(
+    projectId,
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'notebook',
+        relativePath: `${outputRelativePath}/mention_result.png`
+      }),
+      expect.objectContaining({
+        kind: 'delivery',
+        relativePath: `${artifactDirectory}/mention_result.png`
+      })
+    ])
+  )
   expect(folderPaths.sort()).toEqual(
     [
       'mention_result.py',
@@ -610,15 +636,33 @@ it('offers published Notebook files through their Artifact heads and retains ind
     relativePath: artifactDirectory,
     limit: 20
   })
-  expect(browser.entries.map((entry) => entry.name).sort()).toEqual([...filenames].sort())
-  for (const [index, filename] of filenames.entries()) {
-    expect(await readFile(join(folder, artifactDirectory, filename))).toEqual(outputs[filename])
-    expect(await readFile(join(folder, outputRelativePath, filename))).toEqual(outputs[filename])
-    expect(await readFile(artifacts[index].path)).toEqual(outputs[filename])
-  }
-  // A later unpublished write, even with the former size, is an independent live candidate.
-  await writeFile(join(folder, outputRelativePath, filenames[0]), 'print(2)')
-  expect((await search(outputRelativePath)).entries.map((entry) => entry.name)).toContain(
-    filenames[0]
+  expect(browser.entries.map((entry) => entry.name).sort()).toEqual(
+    publications.map(({ filename }) => filename).sort()
   )
+  for (const [index, { filename, source }] of publications.entries()) {
+    const expectExact = expect.objectContaining({
+      publishedArtifacts: [
+        expect.objectContaining({
+          name: filename,
+          sourceFileId: artifacts[index].artifactId,
+          versionId: artifacts[index].versionId
+        })
+      ]
+    })
+    expect(await search(artifactDirectory, filename)).toEqual(expectExact)
+    expect(await search(outputRelativePath, source)).toEqual(expectExact)
+    expect(
+      (await readFile(join(folder, artifactDirectory, filename))).equals(outputs[source])
+    ).toBe(true)
+    expect((await readFile(join(folder, outputRelativePath, source))).equals(outputs[source])).toBe(
+      true
+    )
+    expect((await readFile(artifacts[index].path)).equals(outputs[source])).toBe(true)
+  }
+  // A rewrite of the large source keeps its size and uses the same path.
+  const changed = createPngBytes(Buffer.alloc(12 * 1024 * 1024, 1))
+  await writeFile(join(folder, outputRelativePath, 'mention_result.png'), changed)
+  const patched = await search(outputRelativePath, 'mention_result.png')
+  expect(patched.entries.map((entry) => entry.name)).toEqual(['mention_result.png'])
+  expect(patched.publishedArtifacts).toBeUndefined()
 }, 30_000)

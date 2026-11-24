@@ -15,7 +15,7 @@ import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { ArchiveCoordinator } from '../archive/coordinator'
 import { ArtifactReproducibilityAttemptOwner } from '../artifacts/artifact-reproducibility-lifecycle'
-import { createPublishedArtifactCopyCheck } from '../artifacts/project-folder-mention-candidates'
+import { findPublishedArtifactCopies } from '../artifacts/project-folder-mention-candidates'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { BackgroundResultDeliveryOwner } from '../background-result-delivery/owner'
 import { BookmarkRepository } from '../bookmarks/repository'
@@ -418,8 +418,8 @@ export function composeProjectLifecycle({
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     promptOptimization,
-    createPublishedArtifactCopyCheck: (projectId, root, storageRoot) =>
-      createPublishedArtifactCopyCheck(projectId, root, storageRoot, async (...scope) =>
+    findPublishedArtifactCopies: (projectId, root, storageRoot, candidates) =>
+      findPublishedArtifactCopies(projectId, root, storageRoot, candidates, async (...scope) =>
         listPublishedArtifactFolderRecords(await getProjectDbClient(configRoot), ...scope)
       ),
     afterProjectCreate: async (project) => {

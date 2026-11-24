@@ -14,6 +14,16 @@ export const listProjectFolderRequestSchema = folderFileScopeSchema
     excludePublishedArtifactCopies: z.boolean().optional()
   })
   .strict()
+const publishedArtifactAliasSchema = z
+  .object({
+    sourceFileId: z.string().min(1),
+    sessionId: z.string().min(1),
+    versionId: z.string().min(1),
+    name: z.string().min(1),
+    mimeType: z.string().optional(),
+    size: z.number().int().nonnegative()
+  })
+  .strict()
 export const projectFolderListingSchema = z
   .object({
     path: z.string(),
@@ -33,7 +43,9 @@ export const projectFolderListingSchema = z
       )
       .max(200),
     nextCursor: z.string().optional(),
-    truncated: z.boolean().optional()
+    truncated: z.boolean().optional(),
+    // Matches an exact path-qualified mention to the published Version represented at that path.
+    publishedArtifacts: z.array(publishedArtifactAliasSchema).max(200).optional()
   })
   .strict()
 export const readProjectFolderPreviewRequestSchema = folderFileScopeSchema
@@ -57,6 +69,7 @@ const previewSchema = z
   .strict()
 export type ListProjectFolderRequest = z.infer<typeof listProjectFolderRequestSchema>
 export type ProjectFolderListing = z.infer<typeof projectFolderListingSchema>
+export type PublishedArtifactAlias = z.infer<typeof publishedArtifactAliasSchema>
 export type ReadProjectFolderPreviewRequest = z.infer<typeof readProjectFolderPreviewRequestSchema>
 
 export const projectFolderFileCommandContracts = {

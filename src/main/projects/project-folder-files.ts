@@ -8,17 +8,19 @@ import type { Project } from '../../shared/projects'
 import type {
   ListProjectFolderRequest,
   ProjectFolderListing,
+  PublishedArtifactAlias,
   ReadProjectFolderPreviewRequest
 } from '../../shared/project-folder-files'
 import { getProjectRecordRoot, sameProjectFolderSpelling } from '../storage/data-location-identity'
 import { readBoundedManagedFilePreviewLease } from '../managed-file-preview'
 import { readExactRange, type ManagedPreviewTrustedLease } from '../managed-preview-resources'
 
-export type CreatePublishedArtifactCopyCheck = (
+export type FindPublishedArtifactCopies = (
   projectId: string,
   folderRoot: string,
-  storageRoot: string
-) => (path: string, info: Stats, signal: AbortSignal) => Promise<boolean>
+  storageRoot: string,
+  candidates: { path: string; info: Stats }[]
+) => Promise<Map<string, PublishedArtifactAlias[]>>
 
 type Candidate = { name: string; isDirectory: boolean }
 const projectPathSeparator = process.platform === 'win32' ? /[\\/]/ : /\//
@@ -75,7 +77,7 @@ export class ProjectFolderFiles {
   constructor(
     private readonly getProject: (id: string) => Promise<Project | null>,
     private readonly recordStorageRoot: () => string | undefined = () => undefined,
-    private readonly createPublishedArtifactCopyCheck?: CreatePublishedArtifactCopyCheck
+    private readonly findPublishedArtifactCopies?: FindPublishedArtifactCopies
   ) {}
 
   private assertRecordBinding(projectId: string, root: string): void {
@@ -242,15 +244,29 @@ export class ProjectFolderFiles {
     return this.within(request.projectId, async (root) => {
       const directory = await this.discoveryTarget(root, request.relativePath)
       const storageRoot = this.recordStorageRoot()
-      const isPublishedCopy =
+      const findPublishedCopies =
         request.excludePublishedArtifactCopies && storageRoot
-          ? this.createPublishedArtifactCopyCheck?.(request.projectId, root, storageRoot)
+          ? this.findPublishedArtifactCopies
           : undefined
-      const entries: ProjectFolderListing['entries'] = []
+      const candidates: {
+        path: string
+        info: Stats
+        entry: ProjectFolderListing['entries'][number]
+      }[] = []
+      // Leave room for excluded aliases while keeping Project records reads to one batch.
+      const candidateLimit = findPublishedCopies ? request.limit * 2 : request.limit
+      const exactCandidate =
+        findPublishedCopies &&
+        request.relativePath &&
+        request.query &&
+        !projectPathSeparator.test(request.query)
+          ? await this.discoveryTarget(root, `${request.relativePath}/${request.query}`)
+              .then(async (path) => ({ path, info: await stat(path) }))
+              .catch(() => undefined)
+          : undefined
       const pending = [directory]
       const visited = new Set<string>()
       const deadline = Date.now() + 250
-      const copyCheckSignal = AbortSignal.timeout(250)
       let examined = 0
       let truncated = false
       const query = (request.query ?? '').toLocaleLowerCase()
@@ -285,16 +301,18 @@ export class ProjectFolderFiles {
               const target = await this.discoveryTarget(root, relativePath)
               const info = await stat(target)
               if (!info.isFile()) continue
-              if (await isPublishedCopy?.(target, info, copyCheckSignal).catch(() => false))
-                continue
-              entries.push({
-                name: entry.name,
-                relativePath: relativePath.split(sep).join('/'),
-                isDirectory: false,
-                size: info.size,
-                mtimeMs: Math.round(info.mtimeMs)
+              candidates.push({
+                path: target,
+                info,
+                entry: {
+                  name: entry.name,
+                  relativePath: relativePath.split(sep).join('/'),
+                  isDirectory: false,
+                  size: info.size,
+                  mtimeMs: Math.round(info.mtimeMs)
+                }
               })
-              if (entries.length >= request.limit) {
+              if (candidates.length >= candidateLimit) {
                 truncated = true
                 break outer
               }
@@ -306,12 +324,25 @@ export class ProjectFolderFiles {
           if (current === directory) throw new Error('The Project folder could not be searched.')
         }
       }
+      const copies =
+        storageRoot &&
+        (await findPublishedCopies?.(request.projectId, root, storageRoot, [
+          ...(exactCandidate?.info.isFile() ? [exactCandidate] : []),
+          ...candidates
+        ]).catch(() => undefined))
+      const publishedArtifacts =
+        exactCandidate && copies
+          ? copies.get(exactCandidate.path)?.slice(0, request.limit)
+          : undefined
+      const live = candidates.filter(({ path }) => !copies || !copies.has(path))
+      const entries = live.slice(0, request.limit).map(({ entry }) => entry)
       return {
         path: directory,
         relativePath: request.relativePath,
         entries,
         totalCount: entries.length,
-        truncated
+        truncated: truncated || live.length > request.limit,
+        ...(publishedArtifacts?.length ? { publishedArtifacts } : {})
       }
     })
   }

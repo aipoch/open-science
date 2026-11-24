@@ -1,5 +1,8 @@
 import { Prisma, type FileOriginSession, type ManagedFile } from '@prisma/client'
-import type { PublishedArtifactFolderRecord } from '../artifacts/project-folder-mention-candidates'
+import type {
+  PublishedArtifactFolderLookup,
+  PublishedArtifactFolderRecord
+} from '../artifacts/project-folder-mention-candidates'
 
 import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import type {
@@ -558,34 +561,76 @@ const listAuthoritativeManagedFiles = async (
 export const listPublishedArtifactFolderRecords = async (
   client: ProjectFilesClient,
   projectId: string,
-  sessionId: string,
-  relativePath: string,
-  source: 'delivery' | 'notebook'
+  lookups: PublishedArtifactFolderLookup[]
 ): Promise<PublishedArtifactFolderRecord[]> => {
+  if (lookups.length === 0) return []
   requireIdentifier(projectId, 'projectId')
   await reconcileProjectRecordIndexes(client, [projectId])
-  const association =
-    source === 'delivery'
-      ? Prisma.sql`CASE WHEN json_valid(lineage."outputDeliveryJson")
-          THEN json_extract(lineage."outputDeliveryJson", '$.relativePath') = ${relativePath} END`
-      : Prisma.sql`instr(version."executionSnapshotJson", ${JSON.stringify(`data/${relativePath}`)}) > 0`
+  // Scope by the files found in this bounded walk. Project reconciliation runs once and only
+  // current Versions with a matching receipt path or graph entity cross into the host.
   return client.$queryRaw<PublishedArtifactFolderRecord[]>(Prisma.sql`
-    ${authoritativeCatalogCte([projectId])}
-    SELECT lineage."sessionId", version."id" AS "versionId", version."filename",
-      version."checksum", version."sizeBytes", version."agentFrameId",
-      version."producerRunId",
-      ${source === 'notebook' ? Prisma.sql`version."executionSnapshotJson"` : Prisma.sql`NULL`}
-        AS "executionSnapshotJson",
-      version."executionSnapshotChecksum",
-      lineage."outputDeliveryJson"
-    FROM "AuthoritativeFile" AS file
-    INNER JOIN "ArtifactLineage" AS lineage ON lineage."id" = file."sourceFileId"
-      AND lineage."projectId" = file."projectId"
-    INNER JOIN "ArtifactVersion" AS version ON version."id" = lineage."currentVersionId"
-      AND version."id" = file."sourceVersionId"
-    WHERE file."source" = 'artifact' AND version."state" = 'finalized'
-      AND lineage."sessionId" = ${sessionId}
-      AND ${association}
+    ${authoritativeCatalogCte([projectId])},
+    "FolderCandidate" AS MATERIALIZED (
+      SELECT json_extract(value, '$.sessionId') AS "sessionId",
+        json_extract(value, '$.relativePath') AS "relativePath",
+        json_extract(value, '$.kind') AS "kind",
+        json_extract(value, '$.size') AS "size"
+      FROM json_each(${JSON.stringify(lookups)})
+    ),
+    "ScopedArtifact" AS MATERIALIZED (
+      SELECT file."sourceFileId", lineage."sessionId", version."id" AS "versionId",
+        version."filename", file."displayName", file."mimeType",
+        version."checksum", version."sizeBytes", file."sortAtMs" AS "createdAtMs",
+        version."agentFrameId", version."producerRunId", version."executionSnapshotChecksum",
+        lineage."outputDeliveryJson"
+      FROM "AuthoritativeFile" AS file
+      INNER JOIN "ArtifactLineage" AS lineage ON lineage."id" = file."sourceFileId"
+        AND lineage."projectId" = file."projectId"
+      INNER JOIN "ArtifactVersion" AS version ON version."id" = lineage."currentVersionId"
+        AND version."id" = file."sourceVersionId"
+      WHERE file."source" = 'artifact' AND version."state" = 'finalized'
+        AND lineage."sessionId" IN (SELECT "sessionId" FROM "FolderCandidate")
+    ),
+    "NotebookMatch" AS MATERIALIZED (
+      SELECT artifact."versionId"
+      FROM "ScopedArtifact" AS artifact
+      JOIN "ArtifactVersion" AS version ON version."id" = artifact."versionId"
+      WHERE artifact."producerRunId" IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM "FolderCandidate" AS candidate
+          WHERE candidate."kind" = 'notebook' AND candidate."sessionId" = artifact."sessionId"
+            AND candidate."size" = artifact."sizeBytes"
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE WHEN json_valid(version."executionSnapshotJson")
+              THEN version."executionSnapshotJson" ELSE '{}' END,
+            '$.provenanceGraph.entities'
+          ) AS entity
+          JOIN "FolderCandidate" AS candidate
+            ON candidate."kind" = 'notebook' AND candidate."sessionId" = artifact."sessionId"
+            AND candidate."size" = artifact."sizeBytes"
+            AND 'data/' || candidate."relativePath" = CASE WHEN entity.type = 'object'
+              THEN json_extract(entity.value, '$.relativePath') END
+          WHERE CASE WHEN entity.type = 'object'
+            THEN json_extract(entity.value, '$.kind') = 'file-generation' END
+        )
+    )
+    SELECT artifact.*,
+      CASE WHEN notebook."versionId" IS NOT NULL THEN version."executionSnapshotJson" END
+        AS "executionSnapshotJson"
+    FROM "ScopedArtifact" AS artifact
+    JOIN "ArtifactVersion" AS version ON version."id" = artifact."versionId"
+    LEFT JOIN "NotebookMatch" AS notebook ON notebook."versionId" = artifact."versionId"
+    WHERE notebook."versionId" IS NOT NULL OR EXISTS (
+      SELECT 1 FROM "FolderCandidate" AS candidate
+      WHERE candidate."kind" = 'delivery' AND candidate."sessionId" = artifact."sessionId"
+        AND candidate."relativePath" = CASE WHEN json_valid(artifact."outputDeliveryJson")
+          THEN json_extract(artifact."outputDeliveryJson", '$.relativePath') END
+    )
+    ORDER BY artifact."createdAtMs" DESC, artifact."versionId" ASC
+    LIMIT ${lookups.length * 2}
   `)
 }
 

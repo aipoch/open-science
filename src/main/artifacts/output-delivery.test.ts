@@ -8,6 +8,7 @@ import {
   rm,
   stat,
   truncate,
+  utimes,
   writeFile,
   cp
 } from 'node:fs/promises'
@@ -31,9 +32,10 @@ import { createProvenanceTestFixture } from './provenance-test-fixtures'
 import { ArtifactOutputDelivery } from './output-delivery'
 import { listPublishedArtifactFolderRecords } from '../project-files/query-support'
 import {
-  createPublishedArtifactCopyCheck,
+  findPublishedArtifactCopies,
   type ReadPublishedArtifactFolderRecords
 } from './project-folder-mention-candidates'
+import * as boundedIo from '../bounded-file-io'
 
 let fixture: Awaited<ReturnType<typeof createProvenanceTestFixture>>
 let folder: string
@@ -192,7 +194,7 @@ it('publishes inline text/binary and allowed source files only after head activa
   expect(await readFile(source, 'utf8')).toBe('external allowed bytes')
 })
 
-it('recognizes a large delivered copy after the byte-read budget expires and preserves a replacement', async () => {
+it('recognizes a large delivered copy without reading bytes and preserves a replacement', async () => {
   const input = join(folder, 'original.bin')
   await writeFile(input, '')
   await truncate(input, 12 * 1024 * 1024)
@@ -200,25 +202,69 @@ it('recognizes a large delivered copy after the byte-read budget expires and pre
 
   const root = await realpath(folder)
   const path = await realpath(target('Report.bin'))
-  const original = await stat(path)
   const readRecords = vi.fn<ReadPublishedArtifactFolderRecords>((...scope) =>
     listPublishedArtifactFolderRecords(fixture.client, ...scope)
   )
-  const isCopy = createPublishedArtifactCopyCheck(
-    'project-1',
-    root,
-    fixture.storageRoot,
-    readRecords
-  )
-  const expired = AbortSignal.abort()
-  await expect(isCopy(await realpath(input), await stat(input), expired)).resolves.toBe(false)
+  const lookup = async (candidate: string): Promise<boolean> => {
+    const matches = await findPublishedArtifactCopies(
+      'project-1',
+      root,
+      fixture.storageRoot,
+      [{ path: candidate, info: await stat(candidate) }],
+      readRecords
+    )
+    return matches.has(candidate)
+  }
+  await expect(lookup(await realpath(input))).resolves.toBe(false)
   expect(readRecords).not.toHaveBeenCalled()
-  await expect(isCopy(path, original, expired)).resolves.toBe(true)
+  const digest = vi.spyOn(boundedIo, 'digestOpenFileWithinBudget')
+  try {
+    await expect(lookup(path)).resolves.toBe(true)
+    expect(digest).not.toHaveBeenCalled()
+  } finally {
+    digest.mockRestore()
+  }
 
   // Equal filename, size and bytes at the delivery path, but a different filesystem identity.
   await rename(path, join(folder, 'previous.bin'))
   await cp(input, path)
-  await expect(isCopy(path, await stat(path), expired)).resolves.toBe(false)
+  await expect(lookup(path)).resolves.toBe(false)
+})
+
+it('verifies stable delivery bytes when ctime is absent or metadata has changed', async () => {
+  const item = await prepare(1, 'first')
+  await publish(item)
+  const root = await realpath(folder)
+  const path = await realpath(target())
+  const aliases = async (): Promise<boolean> => {
+    const result = await findPublishedArtifactCopies(
+      'project-1',
+      root,
+      fixture.storageRoot,
+      [{ path, info: await stat(path) }],
+      (...scope) => listPublishedArtifactFolderRecords(fixture.client, ...scope)
+    )
+    return result.has(path)
+  }
+  const original = await stat(path)
+  // Changing only metadata must keep the established delivery association.
+  await utimes(path, original.atime, new Date(original.mtimeMs + 1000))
+  await expect(aliases()).resolves.toBe(true)
+
+  const where = { id: item.version.artifactId }
+  const lineage = await fixture.client.artifactLineage.findUniqueOrThrow({ where })
+  const legacy = JSON.parse(lineage.outputDeliveryJson!)
+  delete legacy.lastDelivered.ctimeMs
+  await fixture.client.artifactLineage.update({
+    where,
+    data: { outputDeliveryJson: JSON.stringify(legacy) }
+  })
+  await expect(aliases()).resolves.toBe(true)
+  await writeFile(path, 'other')
+  const changed = await stat(path)
+  expect(changed.ino).toBe(original.ino)
+  expect(changed.size).toBe(original.size)
+  await expect(aliases()).resolves.toBe(false)
 })
 
 it('isolates Sessions, retains the first filename spelling, and refuses late old-head retries', async () => {

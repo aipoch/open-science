@@ -1020,22 +1020,25 @@ describe('ArtifactMentionPopup', () => {
 })
 
 describe('bound Project folder mentions', () => {
+  beforeEach(() => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'default',
+          name: 'Research',
+          description: '',
+          isExample: false,
+          rootPath: '/research',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+  })
+
   it('queries nested live files on demand and selects the relative identity without a Version lookup', async () => {
     vi.useFakeTimers()
     try {
-      useProjectStore.setState({
-        projects: [
-          {
-            id: 'default',
-            name: 'Research',
-            description: '',
-            isExample: false,
-            rootPath: '/research',
-            createdAt: 1,
-            updatedAt: 1
-          }
-        ]
-      })
       const listFolder = vi.fn().mockResolvedValue({
         path: '/research',
         relativePath: '',
@@ -1089,6 +1092,83 @@ describe('bound Project folder mentions', () => {
         searchDescendants: true,
         excludePublishedArtifactCopies: true
       })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    ['artifacts/default/session-1/published.pdf', 'artifacts/default/session-1', 'published.pdf'],
+    [
+      'notebooks/default/session-1/data/working.pdf',
+      'notebooks/default/session-1/data',
+      'working.pdf'
+    ]
+  ])('pins the exact published output for %s', async (query, directory, basename) => {
+    vi.useFakeTimers()
+    try {
+      window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+        items: [
+          { ...defaultProjectFiles[1], name: 'published.pdf' },
+          {
+            ...defaultProjectFiles[1],
+            name: basename,
+            id: 'other-artifact',
+            sourceFileId: 'other-artifact',
+            sessionId: 'other-session'
+          }
+        ],
+        totalCount: 2
+      })
+      const listFolder = vi.fn().mockResolvedValue({
+        path: `/research/${directory}`,
+        relativePath: directory,
+        totalCount: 1,
+        entries: [
+          {
+            name: `another-${basename}`,
+            relativePath: `${directory}/another-${basename}`,
+            isDirectory: false,
+            size: 5,
+            mtimeMs: 1
+          }
+        ],
+        publishedArtifacts: [
+          {
+            sourceFileId: 'art-1',
+            sessionId: 'session-1',
+            versionId: 'published-v3',
+            name: 'published.pdf',
+            mimeType: 'application/pdf',
+            size: 4096
+          }
+        ]
+      })
+      window.api.projects = { listFolder } as unknown as typeof window.api.projects
+      const onSelect = vi.fn()
+      await renderPopup({ query, onSelect })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120)
+      })
+      expect(listFolder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          relativePath: directory,
+          query: basename
+        })
+      )
+      expect(options()).toHaveLength(1)
+      expect(options()[0].textContent).toContain('published.pdf')
+      pressKey('Enter')
+      expect(onSelect).toHaveBeenCalledWith({
+        id: 'art-1',
+        sourceFileId: 'art-1',
+        name: 'published.pdf',
+        source: 'artifact',
+        mimeType: 'application/pdf',
+        versionId: 'published-v3',
+        path: 'artifact-version:default/session-1/art-1/published-v3'
+      })
+      expect(window.api.managedFileVersions.inspect).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

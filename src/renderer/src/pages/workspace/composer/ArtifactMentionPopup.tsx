@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { formatByteSize } from '@/lib/utils'
 import { useProjectStore } from '@/stores/project-store'
 import type { ProjectFolderFileReference } from '../../../../../shared/artifacts'
+import { createArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ProjectFileItem } from '../../../../../shared/project-files'
 import type {
@@ -67,6 +68,7 @@ type ArtifactRow = {
   source?: PickedArtifact['source'] | 'literature'
   projectId?: string
   sourceFileId?: string
+  fixedVersionId?: string
   picked?: LiteratureReference | LiteratureScopeReference | ProjectFolderFileReference
   mimeType?: string
   size?: number
@@ -166,27 +168,46 @@ export const ArtifactMentionPopup = ({
               query,
               state: 'loaded',
               truncated: page.truncated,
-              rows: page.entries
-                .filter((entry) => !entry.isDirectory && entry.relativePath)
-                .map((entry) => {
-                  const path = entry.relativePath!
-                  const picked: ProjectFolderFileReference = {
-                    id: `project-folder:${activeProjectId}:${path}`,
-                    name: entry.name,
-                    source: 'project-folder',
+              rows: page.publishedArtifacts?.length
+                ? page.publishedArtifacts.map((artifact) => ({
+                    id: artifact.sourceFileId,
                     projectId: activeProjectId,
-                    path
-                  }
-                  return {
-                    id: picked.id,
-                    projectId: activeProjectId,
-                    name: entry.name,
-                    description: path,
-                    size: entry.size,
-                    tag: 'folder',
-                    picked
-                  }
-                })
+                    source: 'artifact',
+                    sourceFileId: artifact.sourceFileId,
+                    fixedVersionId: artifact.versionId,
+                    name: artifact.name,
+                    path: createArtifactVersionLocator({
+                      projectId: activeProjectId,
+                      appSessionId: artifact.sessionId,
+                      artifactId: artifact.sourceFileId,
+                      versionId: artifact.versionId
+                    }),
+                    mimeType: artifact.mimeType,
+                    size: artifact.size,
+                    description: normalized,
+                    tag: 'output'
+                  }))
+                : page.entries
+                    .filter((entry) => !entry.isDirectory && entry.relativePath)
+                    .map((entry) => {
+                      const path = entry.relativePath!
+                      const picked: ProjectFolderFileReference = {
+                        id: `project-folder:${activeProjectId}:${path}`,
+                        name: entry.name,
+                        source: 'project-folder',
+                        projectId: activeProjectId,
+                        path
+                      }
+                      return {
+                        id: picked.id,
+                        projectId: activeProjectId,
+                        name: entry.name,
+                        description: path,
+                        size: entry.size,
+                        tag: 'folder',
+                        picked
+                      }
+                    })
             })
           },
           () => {
@@ -369,6 +390,8 @@ export const ArtifactMentionPopup = ({
   // query preserves the incoming order within each section.
   const matches = useMemo<ArtifactRow[]>(() => {
     const needle = query.trim()
+    const exactOutputs = rows.filter((row) => row.fixedVersionId)
+    if (exactOutputs.length) return exactOutputs
 
     const rankSection = (tag: ArtifactRow['tag']): ArtifactRow[] =>
       needle.length === 0 || tag === 'library' || tag === 'folder'
@@ -450,6 +473,18 @@ export const ArtifactMentionPopup = ({
         return
       }
       setSelectionError(undefined)
+      if (row.fixedVersionId) {
+        onSelect({
+          id: row.id,
+          sourceFileId: row.sourceFileId,
+          name: row.name,
+          path: row.path ?? '',
+          source: row.source,
+          mimeType: row.mimeType,
+          versionId: row.fixedVersionId
+        })
+        return
+      }
       const inspect = window.api.managedFileVersions?.inspect
       if (!inspect) {
         setSelectionError(t('File version resolution is unavailable.'))
