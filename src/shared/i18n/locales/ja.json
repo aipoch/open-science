@@ -8908,6 +8908,12 @@
     "No providers match your search.": "一致するプロバイダーはありません。",
     "{{count}} regions_other": "{{count}} リージョン",
     "Sign in with your CodeBuddy account": "CodeBuddy アカウントでサインイン",
-    "Already added": "追加済み"
+    "Already added": "追加済み",
+    "Select versions to delete": "削除するバージョンを選択",
+    "The latest version is retained. Deleted content cannot be restored, and links to these versions in earlier messages will no longer open.": "最新バージョンは保持されます。削除した内容は復元できず、過去のメッセージ内の該当バージョンへのリンクは開けなくなります。",
+    "Failed to delete file versions": "ファイルのバージョンを削除できませんでした",
+    "Selected versions: {{total}} ({{size}} MB)": "選択したバージョン数：{{total}}（{{size}} MB）",
+    "Permanently delete the selected versions?": "選択したバージョンを完全に削除しますか？",
+    "Delete selected versions": "選択したバージョンを削除"
   }
 }

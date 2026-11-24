@@ -8908,6 +8908,12 @@
     "No providers match your search.": "沒有符合的服務商。",
     "{{count}} regions_other": "{{count}} 個區域",
     "Sign in with your CodeBuddy account": "使用 CodeBuddy 帳號登入",
-    "Already added": "已新增"
+    "Already added": "已新增",
+    "Select versions to delete": "選擇要刪除的版本",
+    "The latest version is retained. Deleted content cannot be restored, and links to these versions in earlier messages will no longer open.": "最新版本會保留。刪除的內容無法復原，歷史訊息中指向這些版本的連結將無法開啟。",
+    "Failed to delete file versions": "刪除檔案版本失敗",
+    "Selected versions: {{total}} ({{size}} MB)": "已選版本數：{{total}}（{{size}} MB）",
+    "Permanently delete the selected versions?": "永久刪除所選版本？",
+    "Delete selected versions": "刪除所選版本"
   }
 }

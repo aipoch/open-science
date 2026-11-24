@@ -145,7 +145,15 @@ const useManagedVersionWorkflow = ({
       : undefined
   const history = useVersionHistoryPages({
     historyKey:
-      source + ':' + projectId + ':' + identity?.fileId + ':' + previousInspect?.headVersionId,
+      source +
+      ':' +
+      projectId +
+      ':' +
+      identity?.fileId +
+      ':' +
+      previousInspect?.headVersionId +
+      ':' +
+      refresh,
     initial: inspect ?? previousInspect,
     loadPage: async (cursor) => {
       const result = await window.api.managedFileVersions.inspect({

@@ -9084,6 +9084,12 @@
     "{{count}} regions_one": "{{count}} Region",
     "{{count}} regions_other": "{{count}} Regionen",
     "Sign in with your CodeBuddy account": "Mit Ihrem CodeBuddy-Konto anmelden",
-    "Already added": "Bereits hinzugefügt"
+    "Already added": "Bereits hinzugefügt",
+    "Select versions to delete": "Zu löschende Versionen auswählen",
+    "The latest version is retained. Deleted content cannot be restored, and links to these versions in earlier messages will no longer open.": "Die neueste Version bleibt erhalten. Gelöschte Inhalte können nicht wiederhergestellt werden. Links zu diesen Versionen in früheren Nachrichten lassen sich anschließend nicht mehr öffnen.",
+    "Failed to delete file versions": "Dateiversionen konnten nicht gelöscht werden",
+    "Selected versions: {{total}} ({{size}} MB)": "Ausgewählte Versionen: {{total}} ({{size}} MB)",
+    "Permanently delete the selected versions?": "Ausgewählte Versionen dauerhaft löschen?",
+    "Delete selected versions": "Ausgewählte Versionen löschen"
   }
 }

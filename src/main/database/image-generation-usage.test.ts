@@ -60,7 +60,7 @@ it('preserves released usage, constraints and indexes, backs up, and rejects old
       }
     })
   ).resolves.toMatchObject({
-    applied: ['0060_image_models']
+    applied: ['0060_image_models', '0061_version_cleanup']
   })
   expect(backup).toBeTruthy()
   expect((await stat(backup!)).size).toBeGreaterThan(0)

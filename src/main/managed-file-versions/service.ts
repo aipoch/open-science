@@ -25,6 +25,7 @@ import {
   MANAGED_DIFF_MAX_INPUT_BYTES,
   MANAGED_TEXT_EDIT_MAX_BYTES,
   inspectManagedTextEditEligibility,
+  type ManagedFileVersionDeleteRequest,
   type ManagedFileIdentity,
   type ManagedFileSource,
   type ManagedFileVersionDescriptor,
@@ -469,6 +470,79 @@ class ManagedFileVersionService {
       return finalized
     })
     return this.toAdoptedLegacyArtifact(published)
+  }
+
+  async deleteVersions(request: ManagedFileVersionDeleteRequest): Promise<void> {
+    this.assertIdentity(request)
+    if (
+      !request.projectId ||
+      !Array.isArray(request.versionIds) ||
+      request.versionIds.length === 0 ||
+      request.versionIds.some((id) => typeof id !== 'string' || !SAFE_STORAGE_SEGMENT.test(id))
+    ) {
+      operationError('INVALID_REQUEST', 'Select at least one version.')
+    }
+    const client = await this.options.getClient()
+    const versions = await client.$transaction(async (tx) => {
+      const file = await this.loadLogicalFile(tx, request)
+      await this.assertPublicationAllowed(tx, file)
+      const selected: ManagedFileVersionRecord[] = []
+      for (const id of new Set(request.versionIds)) {
+        const version = await this.loadVersion(tx, file, id)
+        if (!version || version.fileId !== file.id)
+          throw new ManagedFileVersionError(
+            'VERSION_NOT_IN_FILE',
+            'Version does not belong to this file.'
+          )
+        if (id === file.currentVersionId)
+          operationError('INVALID_REQUEST', 'The latest version must be retained.')
+        if (
+          ![COMPLETE_STATE[request.source], 'cleaning', 'cleaned'].includes(version.state) ||
+          (request.source === 'artifact' && !isManagedVisibleArtifactVersion(version))
+        )
+          operationError('VERSION_NOT_FOUND', 'Version is not available for cleanup.')
+        selected.push(version)
+      }
+      // Keep durable tombstones so version numbers and provenance references remain stable.
+      // Admission and head validation share the publication transaction's SQLite write lock.
+      const ids = selected.filter((version) => version.state !== 'cleaned').map((v) => v.id)
+      if (request.source === 'artifact')
+        await tx.artifactVersion.updateMany({
+          where: { id: { in: ids } },
+          data: { state: 'cleaning' }
+        })
+      else
+        await tx.uploadVersion.updateMany({
+          where: { id: { in: ids } },
+          data: { state: 'cleaning' }
+        })
+      return selected
+    })
+    for (const version of versions) {
+      if (version.state !== 'cleaned')
+        await this.finishVersionCleanup(client, request.source, version)
+    }
+  }
+
+  private async finishVersionCleanup(
+    client: PrismaClient,
+    source: ManagedFileSource,
+    version: Pick<ManagedFileVersionRecord, 'id' | 'contentStorageKey' | 'sizeBytes' | 'checksum'>
+  ): Promise<void> {
+    await this.versionFileOperator.removeImmutable(version.contentStorageKey, {
+      sizeBytes: Number(version.sizeBytes),
+      checksum: version.checksum
+    })
+    if (source === 'artifact')
+      await client.artifactVersion.updateMany({
+        where: { id: version.id, state: 'cleaning' },
+        data: { state: 'cleaned' }
+      })
+    else
+      await client.uploadVersion.updateMany({
+        where: { id: version.id, state: 'cleaning' },
+        data: { state: 'cleaned' }
+      })
   }
 
   async inspect(
@@ -1049,6 +1123,20 @@ class ManagedFileVersionService {
       await new Promise<void>((resolveRecoveryYield) => setImmediate(resolveRecoveryYield))
     }
 
+    // A crash or a temporary filesystem error leaves the cleanup intent retryable.
+    for (const source of ['artifact', 'upload'] as const) {
+      const pending =
+        source === 'artifact'
+          ? await client.artifactVersion.findMany({ where: { state: 'cleaning' } })
+          : await client.uploadVersion.findMany({ where: { state: 'cleaning' } })
+      for (const version of pending) {
+        try {
+          await this.finishVersionCleanup(client, source, version)
+        } catch {
+          result.failed += 1
+        }
+      }
+    }
     await this.cleanupTerminalOperations(client)
     await this.rebuildHeadProjections(client)
     return result

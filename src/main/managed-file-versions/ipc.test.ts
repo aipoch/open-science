@@ -139,6 +139,7 @@ describe('managed file version IPC', () => {
       diffText: vi.fn(async () => diffResult),
       cancelDiff: vi.fn(() => true),
       saveTextEdit: vi.fn(async () => saveResult),
+      deleteVersions: vi.fn(async () => undefined),
       saveBinaryEdit: vi.fn(async () => saveResult)
     }
     const writeGateEntered = vi.fn()
@@ -180,6 +181,7 @@ describe('managed file version IPC', () => {
         saveTextEdit: vi.fn(async () => {
           throw new Error('unexpected implementation failure')
         }),
+        deleteVersions: vi.fn(async () => undefined),
         saveBinaryEdit: vi.fn(async () => {
           throw new Error('unexpected implementation failure')
         })
@@ -209,6 +211,7 @@ describe('managed file version IPC', () => {
         diffText: vi.fn(async () => diffResult),
         cancelDiff: vi.fn(() => false),
         saveTextEdit: vi.fn(async () => ({ ...saveResult, replayed: true })),
+        deleteVersions: vi.fn(async () => undefined),
         saveBinaryEdit: vi.fn(async () => ({ ...saveResult, replayed: true }))
       },
       { withDataRootWrite: async (write) => write(), onChanged }
@@ -227,12 +230,14 @@ describe('managed file version IPC', () => {
       diffText: vi.fn(async () => ({ ok: true as const, value: diffResult })),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
       saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
       saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
 
     expect([...registered.keys()].sort()).toEqual([
       'managed-file-versions:cancel-diff',
+      'managed-file-versions:delete-versions',
       'managed-file-versions:diff-text',
       'managed-file-versions:inspect',
       'managed-file-versions:save-binary-edit',
@@ -264,6 +269,7 @@ describe('managed file version IPC', () => {
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
       saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
       saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     })
     const destroyedListeners: Array<() => void> = []
@@ -307,6 +313,7 @@ describe('managed file version IPC', () => {
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
       saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
       saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
@@ -351,6 +358,7 @@ describe('managed file version IPC', () => {
       diffText: vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
       saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
       saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
@@ -393,6 +401,7 @@ describe('managed file version IPC', () => {
       ),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: true } })),
       saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
       saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
@@ -444,6 +453,7 @@ describe('managed file version IPC', () => {
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
       saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
       saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
@@ -484,6 +494,7 @@ describe('managed file version IPC', () => {
       ),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
       saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
       saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
@@ -520,6 +531,7 @@ describe('managed file version IPC', () => {
       diffText: vi.fn(() => pendingDiff),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
       saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
       saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)
@@ -551,6 +563,7 @@ describe('managed file version IPC', () => {
       diffText: vi.fn(async () => ({ ok: true as const, value: diffResult })),
       cancelDiff: vi.fn(() => ({ ok: true as const, value: { cancelled: false } })),
       saveTextEdit: vi.fn(async () => ({ ok: true as const, value: saveResult })),
+      deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
       saveBinaryEdit: vi.fn(async () => ({ ok: true as const, value: saveResult }))
     }
     registerManagedFileVersionIpcHandlers(handlers)

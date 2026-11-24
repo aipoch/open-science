@@ -52,9 +52,9 @@ describe('Compute Job operation migration', () => {
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 3`
       )
     ).resolves.toEqual([
+      { id: '0061_version_cleanup' },
       { id: '0060_image_models' },
-      { id: '0059_session_history' },
-      { id: '0058_session_schedules' }
+      { id: '0059_session_history' }
     ])
   })
 

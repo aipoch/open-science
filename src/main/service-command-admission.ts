@@ -7,6 +7,7 @@ const shutdownCommands = new Set([
   'sessions:load-usage',
   'lifecycle:claim-runtime-writer',
   'preview:save',
+  'managed-file-versions:delete-versions',
   'managed-file-versions:save-text-edit',
   'managed-file-versions:save-binary-edit',
   'pptx-edit:save',

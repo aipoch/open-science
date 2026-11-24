@@ -77,7 +77,7 @@ it('initializes only canonical table names and reopens without another migration
   client = createProjectDbClient(root)
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     applied: [],
-    to: '0060_image_models'
+    to: '0061_version_cleanup'
   })
   await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
 })
@@ -111,7 +111,8 @@ it('preserves every value, ID, relationship, receipt and unrelated trigger acros
       '0057_project_optimization_prompt',
       '0058_session_schedules',
       '0059_session_history',
-      '0060_image_models'
+      '0060_image_models',
+      '0061_version_cleanup'
     ]
   })
   for (const [index, [, table]] of names.entries())
@@ -185,7 +186,8 @@ it('rolls back names, records and the ledger on failure and restores FK enforcem
       '0057_project_optimization_prompt',
       '0058_session_schedules',
       '0059_session_history',
-      '0060_image_models'
+      '0060_image_models',
+      '0061_version_cleanup'
     ]
   })
 })

@@ -8908,6 +8908,12 @@
     "No providers match your search.": "没有匹配的服务商。",
     "{{count}} regions_other": "{{count}} 个区域",
     "Sign in with your CodeBuddy account": "使用 CodeBuddy 账号登录",
-    "Already added": "已添加"
+    "Already added": "已添加",
+    "Select versions to delete": "选择要删除的版本",
+    "The latest version is retained. Deleted content cannot be restored, and links to these versions in earlier messages will no longer open.": "最新版本会保留。删除的内容无法恢复，历史消息中指向这些版本的链接将无法打开。",
+    "Failed to delete file versions": "删除文件版本失败",
+    "Selected versions: {{total}} ({{size}} MB)": "已选版本数：{{total}}（{{size}} MB）",
+    "Permanently delete the selected versions?": "永久删除所选版本？",
+    "Delete selected versions": "删除所选版本"
   }
 }

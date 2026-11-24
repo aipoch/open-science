@@ -122,6 +122,10 @@ type ManagedFileVersionInspectRequest = Omit<ManagedFileIdentity, 'projectId'> &
   versionNumber?: number
   cursor?: string
 }
+export type ManagedFileVersionDeleteRequest = ManagedFileIdentity & {
+  versionIds: string[]
+}
+
 type ManagedFileVersionDiffRequest = ManagedFileIdentity & { versionId: string; requestId: string }
 type ManagedFileVersionCancelDiffRequest = { requestId: string }
 
