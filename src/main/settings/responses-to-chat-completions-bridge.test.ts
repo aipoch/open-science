@@ -29,7 +29,7 @@ describe('Responses-compatible bridge conversion', () => {
     )
     try {
       const connection = await bridge.start()
-      const send = () =>
+      const send = (): Promise<Response> =>
         fetch(connection.baseUrl + '/responses', {
           method: 'POST',
           headers: { authorization: 'Bearer ' + connection.token },
