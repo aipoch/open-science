@@ -696,8 +696,8 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   line-height: 1.65;
 }
 .onboarding-provider-card-actions {
-  min-height: 8.35rem;
-  padding: 2rem 1.35rem 1.25rem;
+  min-height: 7.5rem;
+  padding: 1.1rem 1.35rem 1.4rem;
   border-top: 0;
   background: linear-gradient(transparent, color-mix(in oklab, var(--bg-10) 46%, transparent));
   backdrop-filter: blur(18px) saturate(1.12);
@@ -1160,7 +1160,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     padding-block: 0.85rem;
   }
   .onboarding-provider-card-actions {
-    padding-block: 0.75rem;
+    padding-block: 0.6rem 0.85rem;
     min-height: 7rem;
   }
 }
