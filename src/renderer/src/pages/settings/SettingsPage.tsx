@@ -1216,15 +1216,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     navigate({ panel: 'model', view: { kind: 'create', providerKindKey } })
 
   // Return to the picker the user came from, keeping history linear; otherwise open a fresh one.
-  const changeProviderKind = (): void => {
-    const previous = history[historyIndex - 1]
-    if (
-      previous?.panel === 'model' &&
-      previous.view.kind === 'create' &&
-      !previous.view.providerKindKey
-    )
+  const navigateModel = (view: ModelView): void => {
+    const route: SettingsRoute = { panel: 'model', view }
+    const returningToPicker =
+      view.kind === modelView.kind &&
+      ((view.kind === 'create' && !view.providerKindKey) ||
+        (view.kind === 'image-service-create' && !view.vendorId))
+    if (returningToPicker && JSON.stringify(history[historyIndex - 1]) === JSON.stringify(route))
       goBack()
-    else navigate({ panel: 'model', view: { kind: 'create' } })
+    else navigate(route)
   }
 
   const openEdit = (provider: ProviderView): void => {
@@ -2152,7 +2152,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           encryptionAvailable={encryptionAvailable}
                           {...(modelView.kind === 'create' ? createKindAvailability : {})}
                           onChangeProviderKind={
-                            modelView.kind === 'create' ? changeProviderKind : undefined
+                            modelView.kind === 'create'
+                              ? () => navigateModel({ kind: 'create' })
+                              : undefined
                           }
                           defaultCustomApiEndpoint={customApiEndpoint}
                           framework={activeFramework}
@@ -2169,7 +2171,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     ) : (
                       <ModelPanel
                         view={modelView}
-                        navigate={(view) => navigate({ panel: 'model', view })}
+                        navigate={navigateModel}
                         local={modelView.kind === 'local-models'}
                         onChange={(local) =>
                           navigate({

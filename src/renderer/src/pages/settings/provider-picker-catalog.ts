@@ -89,9 +89,10 @@ const VENDOR_SEARCH_ALIASES: Partial<Record<OfficialVendorId, readonly string[]>
   tencenttokenplan: ['腾讯', '騰訊', '混元', 'hunyuan']
 }
 
-export type ProviderPickerEntry = {
+export type ProviderPickerEntry<Key extends string = string> = {
   // Provider kind key the form is seeded from (see providerKindPatch).
-  key: string
+  key: Key
+  iconKey?: string
   // A custom gateway is pinned above the sections rather than filed under one.
   category: ProviderPickerCategory | 'custom'
   // Proper nouns pass through; kinds with a labelKey are translated by the picker.

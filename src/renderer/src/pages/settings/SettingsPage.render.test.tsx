@@ -597,8 +597,17 @@ describe('SettingsPage layout', () => {
     expect(document.querySelector('[aria-label="Back to model"]')).not.toBeNull()
     expect(document.body.textContent).toContain('No model services added')
     await clickText('Add image service')
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Search image services')
+    const openai = document.querySelector<HTMLButtonElement>('[data-provider-kind="openai"]')!
+    await act(async () => openai.click())
+    expect(document.querySelector('[aria-label="Provider type"]')?.textContent).toContain('OpenAI')
     expect(document.querySelector('#image-service-name')).not.toBeNull()
     expect(document.body.textContent).toContain('Add image service')
+    await clickText('Change')
+    expect(document.querySelector('[aria-label="Search image services"]')).not.toBeNull()
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Forward"]')?.disabled).toBe(
+      false
+    )
     await act(async () =>
       document.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')!.click()
     )

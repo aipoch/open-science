@@ -75,7 +75,10 @@ it('deletes an image service from its row only after confirmation', async () => 
 
 it('saves a keyless local service with distinct presets and navigates back only on success', async () => {
   const { rerender } = render(
-    <ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'custom' }}
+      navigate={navigate}
+    />
   )
   fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Local images' } })
   fireEvent.change(screen.getByLabelText('Base URL'), {
@@ -221,15 +224,26 @@ it('marks the retained default and tests a refreshed match without changing the 
 })
 
 it('discards typed custom credentials when switching to an official account', async () => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
-  fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Official images' } })
-  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'must-not-be-sent' } })
-  fireEvent.pointerDown(screen.getByLabelText('Provider type'), {
-    button: 0,
-    pointerType: 'mouse',
-    ctrlKey: false
+  const { rerender } = render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'custom' }}
+      navigate={navigate}
+    />
+  )
+  fireEvent.change(await screen.findByLabelText('API key'), {
+    target: { value: 'must-not-be-sent' }
   })
-  fireEvent.click(await screen.findByRole('option', { name: officialVendor.label }))
+  fireEvent.click(screen.getByRole('button', { name: 'Change provider' }))
+  expect(navigate).toHaveBeenCalledWith({ kind: 'image-service-create' })
+  rerender(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
+  fireEvent.click(await screen.findByRole('button', { name: /MiniMax/ }))
+  expect(navigate).toHaveBeenLastCalledWith({ kind: 'image-service-create', vendorId: 'minimax' })
+  rerender(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'minimax' }}
+      navigate={navigate}
+    />
+  )
   expect((screen.getByLabelText('API key') as HTMLInputElement).value).toBe('••••1234')
   expect(screen.queryByLabelText('Base URL')).toBeNull()
   fireEvent.click(screen.getByText('Save'))
@@ -247,7 +261,25 @@ it('discards typed custom credentials when switching to an official account', as
 })
 
 it('switches provider models without carrying custom credentials and uses the account name by default', async () => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
+  vi.mocked(window.api.settings.getImageModels).mockResolvedValue({
+    ...snapshot,
+    services: [
+      {
+        id: 'custom-images',
+        name: '',
+        adapter: 'openai-images',
+        configured: false,
+        baseUrl: 'http://localhost:3000/v1',
+        models: [{ id: 'model', wireModelId: 'local/image', presetId: 'openai-images/generic' }]
+      }
+    ]
+  })
+  render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-edit', serviceId: 'custom-images' }}
+      navigate={navigate}
+    />
+  )
   const providerSelect = await screen.findByLabelText('Provider type')
   fireEvent.change(screen.getByLabelText('Base URL'), {
     target: { value: 'http://localhost:3000/v1' }
@@ -280,43 +312,43 @@ it.each([
   ['OpenAI', 'openai', 'GPT Image 2.6 Sunburst', 'openai-images'],
   ['Bailian', 'bailian', 'Qwen Image 3.0 Pro', 'qwen-images'],
   ['Volcengine Ark', 'volcengine', 'Seedream 5.5', 'seedream']
-])('configures %s without a conversation account', async (label, vendorId, model, adapter) => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
-  fireEvent.pointerDown(await screen.findByLabelText('Provider type'), {
-    button: 0,
-    pointerType: 'mouse',
-    ctrlKey: false
-  })
-  fireEvent.click(await screen.findByRole('option', { name: label }))
-  expect(screen.getByText(model)).toBeTruthy()
-  expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(true)
-  const workspaceUrl = 'https://llm-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
-  if (vendorId === 'bailian') {
-    fireEvent.change(screen.getByLabelText('Base URL'), {
-      target: { value: 'https://example.com' }
-    })
-    expect(screen.getByText('Enter a Bailian workspace URL.')).toBeTruthy()
+] as const)(
+  'configures %s without a conversation account',
+  async (_label, vendorId, model, adapter) => {
+    render(
+      <ImageServicesPanel view={{ kind: 'image-service-create', vendorId }} navigate={navigate} />
+    )
+    expect(await screen.findByText(model)).toBeTruthy()
     expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: workspaceUrl } })
+    const workspaceUrl = 'https://llm-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+    if (vendorId === 'bailian') {
+      fireEvent.change(screen.getByLabelText('Base URL'), {
+        target: { value: 'https://example.com' }
+      })
+      expect(screen.getByText('Enter a Bailian workspace URL.')).toBeTruthy()
+      expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(true)
+      fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: workspaceUrl } })
+    }
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'image-only-secret' } })
+    fireEvent.click(screen.getByText('Save'))
+    await waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ vendorId, adapter, apiKey: 'image-only-secret' })
+    )
+    expect(save.mock.calls[0][0]).not.toHaveProperty('providerId')
+    if (vendorId === 'bailian')
+      expect(save.mock.calls[0][0]).toMatchObject({ baseUrl: workspaceUrl })
   }
-  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'image-only-secret' } })
-  fireEvent.click(screen.getByText('Save'))
-  await waitFor(() => expect(save).toHaveBeenCalledOnce())
-  expect(save).toHaveBeenCalledWith(
-    expect.objectContaining({ vendorId, adapter, apiKey: 'image-only-secret' })
-  )
-  expect(save.mock.calls[0][0]).not.toHaveProperty('providerId')
-  if (vendorId === 'bailian') expect(save.mock.calls[0][0]).toMatchObject({ baseUrl: workspaceUrl })
-})
+)
 
 it('switches a reused credential to a separate image key without modifying the account', async () => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
-  fireEvent.pointerDown(await screen.findByLabelText('Provider type'), {
-    button: 0,
-    pointerType: 'mouse',
-    ctrlKey: false
-  })
-  fireEvent.click(await screen.findByRole('option', { name: officialVendor.label }))
+  render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'minimax' }}
+      navigate={navigate}
+    />
+  )
+  expect(((await screen.findByLabelText('API key')) as HTMLInputElement).readOnly).toBe(true)
   fireEvent.pointerDown(screen.getByLabelText('Credentials'), {
     button: 0,
     pointerType: 'mouse',
@@ -332,7 +364,12 @@ it('switches a reused credential to a separate image key without modifying the a
 })
 
 it('omits the preset selector when the API format has only one contract', async () => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
+  render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'custom' }}
+      navigate={navigate}
+    />
+  )
   fireEvent.pointerDown(await screen.findByLabelText('API format'), {
     button: 0,
     pointerType: 'mouse',
@@ -408,7 +445,12 @@ it('allows saving after an optional generation test fails', async () => {
     ok: false,
     error: { code: 'AUTHENTICATION_FAILED' }
   })
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
+  render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'custom' }}
+      navigate={navigate}
+    />
+  )
   fireEvent.change(await screen.findByLabelText('Base URL'), {
     target: { value: 'http://localhost:3000/v1' }
   })
