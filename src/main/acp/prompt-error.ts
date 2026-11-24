@@ -204,6 +204,16 @@ const isClaudeProviderApiError = (error: unknown): boolean =>
     classifyFailure({ origin: 'agent-runtime', text: error.message }).reason ===
       'service/response-interrupted')
 
+// codex-acp 1.6.2 flattens the bridge's 502 JSON after native retries are exhausted.
+const isCodexBridgeConnectionFailure = (error: unknown): boolean =>
+  error instanceof Error &&
+  error.name === 'RequestError' &&
+  errorCode(error) === -32603 &&
+  (error as { data?: { codexErrorInfo?: unknown } }).data?.codexErrorInfo === 'other' &&
+  error.message.startsWith(
+    `Internal error: unexpected status 502 Bad Gateway: ${PROVIDER_CONNECTION_FAILED_PREFIX}, url: http://127.0.0.1:`
+  )
+
 const connectionFailureDetail = (message: string): string | undefined =>
   message.match(/\(([A-Za-z][A-Za-z0-9_-]{0,63})\)\s*$/)?.[1]
 
@@ -215,8 +225,10 @@ export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}
   const detail = extractUpstreamDetail(raw)
 
   if (
-    isClaudeProviderApiError(error) &&
-    classifyFailure({ origin: 'agent-runtime', text: raw }).reason === 'service/connection-failed'
+    isCodexBridgeConnectionFailure(error) ||
+    (isClaudeProviderApiError(error) &&
+      classifyFailure({ origin: 'agent-runtime', text: raw }).reason ===
+        'service/connection-failed')
   ) {
     const modelPart = ctx.model ? ` for model "${ctx.model}"` : ''
     const connectionDetail = connectionFailureDetail(raw)
@@ -354,6 +366,15 @@ export const collectPromptFailureFacts = (
       ...readHarnessErrorDiagnostics(data),
       ...(model ? { model } : {}),
       ...(provider ? { provider } : {})
+    }
+  }
+  if (isCodexBridgeConnectionFailure(error)) {
+    return {
+      origin: 'provider',
+      status: 502,
+      adapterCode: 'network',
+      text: PROVIDER_CONNECTION_FAILED_PREFIX,
+      ...(context.model ? { model: context.model } : {})
     }
   }
   const text = rawErrorMessage(error)

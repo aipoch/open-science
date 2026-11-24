@@ -466,6 +466,19 @@ describe('native framework failure facts', () => {
 })
 
 describe('compatibility bridge upstream status preservation', () => {
+  it('recognizes the terminal connection failure reported by codex-acp 1.6.2 after 502 retries', () => {
+    const message =
+      'unexpected status 502 Bad Gateway: Could not connect to the model provider, url: http://127.0.0.1:43210/v1/responses'
+    const error = agentError('Internal error: ' + message, { message, codexErrorInfo: 'other' })
+    const failure = classifyFailure(collectPromptFailureFacts(error, { model: 'fixture' }))
+    expect(failure).toMatchObject({
+      reason: 'service/connection-failed',
+      diagnostics: { model: 'fixture' }
+    })
+    expect(JSON.stringify(failure)).not.toContain('127.0.0.1')
+    expect(describePromptError(error)).not.toContain('127.0.0.1')
+  })
+
   // Compose the bridge's tested HTTP body with each adapter's tested RequestError boundary.
   // These are deterministic boundary fixtures, not a captured native model invocation.
   for (const path of ['codex-bridge', 'claude-code'] as const) {

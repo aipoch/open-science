@@ -4,7 +4,8 @@ import { pipeline } from 'node:stream/promises'
 import { randomBytes } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
-import { observeProviderFailure } from './provider-failure-observation'
+import { PROVIDER_CONNECTION_FAILED_PREFIX } from '../../shared/failure/messages'
+import { observeProviderFailure, safeNetworkErrorCode } from './provider-failure-observation'
 import type {
   ResponsesConnection,
   ResponsesModelTarget,
@@ -490,6 +491,21 @@ export class ResponsesToChatCompletionsBridge {
       headers,
       body: chatRequestBody,
       signal: request.signal
+    }).catch((error: unknown) => {
+      const errorCode = safeNetworkErrorCode(error)
+      const fetchFailed =
+        error instanceof TypeError &&
+        error.message === 'fetch failed' &&
+        !(error.cause instanceof Error && error.cause.message === 'bad port')
+      if (request.signal.aborted || (!errorCode && !fetchFailed)) throw error
+      response.setHeader('x-open-science-provider-failure', 'connection')
+      log.warn('bridge upstream connection failed', {
+        model: chatRequest.model,
+        phase: 'fetch',
+        durationMs: Math.max(0, Date.now() - startedAt),
+        ...(errorCode ? { errorCode } : {})
+      })
+      throw new ResponsesProtocolError(PROVIDER_CONNECTION_FAILED_PREFIX, 502, 'upstream_error')
     })
     const logUpstreamFailure = (
       phase: 'upstream-http' | 'response',

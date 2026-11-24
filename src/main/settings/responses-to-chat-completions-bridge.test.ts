@@ -14,6 +14,43 @@ import { codexBridgeStaticMcpTools, createCodexBridgeMcpTools } from './codex-br
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
+  it('returns a retryable gateway error when the upstream fetch fails before headers', async () => {
+    const upstream = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(
+        new TypeError('fetch failed', {
+          cause: Object.assign(new Error('private network detail'), { code: 'ECONNRESET' })
+        })
+      )
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: 'ok' } }] }))
+    const bridge = new ResponsesToChatCompletionsBridge(
+      { baseUrl: 'https://upstream.test' },
+      upstream
+    )
+    try {
+      const connection = await bridge.start()
+      const send = () =>
+        fetch(connection.baseUrl + '/responses', {
+          method: 'POST',
+          headers: { authorization: 'Bearer ' + connection.token },
+          body: JSON.stringify({ input: 'retry fixture', stream: false })
+        })
+      const first = await send()
+      expect(first.status).toBe(502)
+      expect(await first.json()).toEqual({
+        error: {
+          type: 'upstream_error',
+          message: 'Could not connect to the model provider'
+        }
+      })
+      expect(upstream).toHaveBeenCalledTimes(1)
+      expect((await send()).status).toBe(200)
+      expect(upstream).toHaveBeenCalledTimes(2)
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it.each([undefined, '', ' ', 'a,b', 'bad\nsession'])(
     'rejects missing or ambiguous Go identity %s before forwarding',
     async (session) => {
