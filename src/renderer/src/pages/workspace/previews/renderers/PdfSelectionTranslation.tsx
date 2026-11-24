@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Cpu, X } from 'lucide-react'
+import { PDF_TRANSLATION_LANGUAGES } from '@aipoch/pdf-translation/text'
 import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 import { ErrorNotice } from '@/components/error-notice'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -15,10 +16,12 @@ import {
   SelectGroup,
   SelectItem,
   SelectLabel,
-  SelectTrigger
+  SelectTrigger,
+  SelectValue
 } from '@/components/ui/select'
 import {
-  defaultTargetLanguage,
+  initialSelectionTargetLanguage,
+  rememberSelectionTargetLanguage,
   useAgentModels,
   useAvailableApiModels
 } from './pdf-translation-model-options'
@@ -124,7 +127,9 @@ export function PdfSelectionTranslation({
   const apiModels = useAvailableApiModels()
   const [selected, setSelected] = useState({ key: 'main', model: mainModel })
   const [attempt, setAttempt] = useState(0)
-  const language = defaultTargetLanguage(i18n.resolvedLanguage ?? navigator.language)
+  const [language, setLanguage] = useState(() =>
+    initialSelectionTargetLanguage(i18n.resolvedLanguage ?? navigator.language)
+  )
   const activeModel = useSettingsStore((state) => state.activeModel)
   const mainProvider = catalog.providers.find((entry) => entry.id === catalog.activeProviderId)
   const mainModelName = resolveProviderEffectiveModel(mainProvider, activeModel)
@@ -165,7 +170,32 @@ export function PdfSelectionTranslation({
         model={selected.model}
         retry={() => setAttempt((n) => n + 1)}
       />
-      <div className="flex min-w-0 items-center border-t border-border/60 pt-1">
+      <div className="flex min-w-0 items-center justify-between gap-2 border-t border-border/60 pt-1">
+        <Select
+          value={language}
+          onValueChange={(value) => {
+            setLanguage(value)
+            rememberSelectionTargetLanguage(value)
+          }}
+        >
+          <SelectTrigger
+            aria-label={t('Target language')}
+            className="h-7 w-auto max-w-[45%] shrink-0 gap-1 border-0 bg-transparent px-1.5 text-xs text-muted-foreground [&>svg]:size-3"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent
+            align="start"
+            className="z-[120] min-w-28"
+            onEscapeKeyDown={(event) => event.stopPropagation()}
+          >
+            {PDF_TRANSLATION_LANGUAGES.map((option) => (
+              <SelectItem key={option} value={option}>
+                {option === 'English' ? option : t(option)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select
           value={selected.key}
           onValueChange={(key) => {

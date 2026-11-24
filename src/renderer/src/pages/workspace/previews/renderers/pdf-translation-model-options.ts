@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { PDF_TRANSLATION_LANGUAGES } from '@aipoch/pdf-translation/text'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { ModelProtocol } from '@aipoch/providers'
 import {
@@ -27,6 +28,28 @@ function defaultTargetLanguage(locale?: string): string {
       } as Record<string, string>
     )[language ?? ''] ?? 'English'
   )
+}
+
+const selectionLanguageKey = 'open-science:pdf-selection-translation-language'
+
+export function initialSelectionTargetLanguage(locale: string): string {
+  try {
+    const saved = localStorage.getItem(selectionLanguageKey)
+    const match = PDF_TRANSLATION_LANGUAGES.find((language) => language === saved)
+    if (match) return match
+  } catch {
+    // Storage can be unavailable in a restricted browser profile.
+  }
+  const fallback = defaultTargetLanguage(locale)
+  return PDF_TRANSLATION_LANGUAGES.find((language) => language === fallback) ?? 'English'
+}
+
+export function rememberSelectionTargetLanguage(language: string): void {
+  try {
+    localStorage.setItem(selectionLanguageKey, language)
+  } catch {
+    // The open popover still uses the selected language.
+  }
 }
 
 function useAvailableApiModels(): ReturnType<typeof pdfTranslationApiModels> {

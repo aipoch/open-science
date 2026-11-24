@@ -22,6 +22,10 @@ import {
 } from '../annotations/annotation-reveal'
 import { HighlightedCodeLines } from '../HighlightedCodeLines'
 import { SourcePreviewContent } from './renderers/SourcePreview'
+import {
+  initialSelectionTargetLanguage,
+  rememberSelectionTargetLanguage
+} from './renderers/pdf-translation-model-options'
 import { PdfSelectionTranslation } from './renderers/PdfSelectionTranslation'
 import { PreviewTextAnnotationSurface } from './PreviewTextAnnotationSurface'
 import { PdfAnnotationsProvider } from '../pdf-annotations/PdfAnnotationsProvider'
@@ -1076,6 +1080,19 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(create).toHaveBeenCalledTimes(2)
     expect(create.mock.calls[1][0]).toEqual(original)
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('uses a supported selection language and remembers the explicit choice across locales', () => {
+    const saved = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => saved.set(key, value)
+    })
+    expect(initialSelectionTargetLanguage('zh-Hans')).toBe('Chinese')
+    for (const locale of ['ko-KR', 'ar', 'hi-IN'])
+      expect(initialSelectionTargetLanguage(locale)).toBe('English')
+    rememberSelectionTargetLanguage('French')
+    expect(initialSelectionTargetLanguage('ko-KR')).toBe('French')
   })
 
   it('translates just the selected passage with the Main Agent and closes the operation on dismissal', async () => {
