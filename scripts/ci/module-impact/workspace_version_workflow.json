@@ -163,5 +163,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Selective version cleanup adds a deletion dialog and IPC consumer beyond the reviewed version workflow boundary; retain full CI validation until the expanded sources and behavior are reviewed."
 }
