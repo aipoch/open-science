@@ -42,9 +42,7 @@ it('identifies the session package format in the gzip comment', async () => {
   const bytes = await readFile(archive)
   expect([...bytes.subarray(0, 4)]).toEqual([0x1f, 0x8b, 8, 0x10])
   const commentEnd = bytes.indexOf(0, 10)
-  expect(bytes.toString('ascii', 10, commentEnd)).toBe(
-    'AIPOCH Open-Science session package (gzip-compress tar archive).'
-  )
+  expect(bytes.toString('ascii', 10, commentEnd)).toBe('AIPOCH Open-Science session package.')
   const paths: string[] = []
   await t({ file: archive, onReadEntry: (entry) => void paths.push(entry.path) })
   expect(paths).toEqual(['README.md', 'manifest.json', 'records.json', 'session.json'])

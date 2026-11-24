@@ -1444,22 +1444,13 @@ it('forwards imported historical Plan state while retaining runtime admission an
   await readPackageArchive(forwarded, unpacked, new AbortController().signal)
   expect(await readFile(join(unpacked, 'session.json'), 'utf8')).not.toContain('historical-plan')
   const readme = await readFile(join(unpacked, 'README.md'), 'utf8')
-  expect(readme.match(/^## .+$/gm)).toEqual([
-    '## Opening this file',
-    '## 1. Install AIPOCH Open-Science',
-    '## 2. Import and open the session'
-  ])
+  expect(readme.match(/^## .+$/gm)).toEqual(['## Opening this file'])
+  expect(readme).toContain('Open the original `.science` file')
   expect(readme).toContain(
-    'If the app is already installed, import the original `.science` file and open the imported session.'
+    '[Opening Guide](https://raw.githubusercontent.com/bobo-xxx/open-science/refs/heads/feat/session-package-opening-guide/docs/science-package-opening-guide.md)'
   )
-  expect(readme).toContain('If the app is missing, install it from the official download page')
-  expect(readme).toContain(
-    'If an assistant is handling the installation, it should confirm with the user before proceeding.'
-  )
-  expect(readme).toContain('https://aipoch.com/open-science/download')
-  expect(readme).toContain('npm install --global @aipoch/open-science')
-  expect(readme).toContain('**Import Session package**')
-  expect(readme).toContain('open-science session import')
+  expect(readme).not.toContain('npm install')
+  expect(readme).not.toContain('open-science session import')
   await expect(importer.inspect(forwarded)).resolves.toMatchObject({ title: 'History' })
   await exporter.close()
   await importer.close()

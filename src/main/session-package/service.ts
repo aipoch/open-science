@@ -246,21 +246,7 @@ const PACKAGE_README = `# AIPOCH Open-Science session package
 
 ## Opening this file
 
-Use AIPOCH Open-Science Desktop to open this \`.science\` session package. If the app is already installed, import the original \`.science\` file and open the imported session. If the app is missing, install it from the official download page, then follow the same steps.
-
-If an assistant is handling the installation, it should confirm with the user before proceeding.
-
-## 1. Install AIPOCH Open-Science
-
-- **Desktop (recommended).** Get the installer for your operating system from the [official download page](https://aipoch.com/open-science/download).
-- **CLI.** For terminal-based workflows, install the [official npm package](https://www.npmjs.com/package/@aipoch/open-science) using \`npm install --global @aipoch/open-science\` with Node.js 22.13.0 or later.
-
-The official project is [aipoch/open-science](https://github.com/aipoch/open-science).
-
-## 2. Import and open the session
-
-- **Desktop.** Launch AIPOCH Open-Science. Choose **Import Session package**, select the original \`.science\` file, then open the imported session in the app.
-- **CLI.** Start the local service with \`open-science start --no-open\`. Run \`open-science session import "path/to/session.science" --non-interactive\` with the original file path. This imports the session into a new project. To view it, run \`open-science url\` and open the printed URL in a browser.
+Open the original \`.science\` file with a compatible AIPOCH Open-Science installation. See the [Opening Guide](https://raw.githubusercontent.com/bobo-xxx/open-science/refs/heads/feat/session-package-opening-guide/docs/science-package-opening-guide.md) to choose Desktop or CLI and find the installation and import steps.
 
 AIPOCH Open-Science can inspect and import this archive as read-only research history. Import does not execute code or restore account credentials. Checksums verify bytes, not scientific claims or the identity of the sender.
 `

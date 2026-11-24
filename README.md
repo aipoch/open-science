@@ -68,6 +68,7 @@ _November 22, 2026_
 ## A research record to share, a film to watch
 
 **Hand off a result with a [`.science` package](https://aipoch.com/docs/guides/research-packages/).** Export the conversation branches, file versions, Notebook records, and verification evidence you want to share. Recipients can import the package into their own projects, open the read-only record, and trace a figure or table back to its inputs. Verification records describe the sender’s checks. In the desktop app, **Fork to continue** creates a writable copy.
+The [Opening Guide](docs/science-package-opening-guide.md) covers choosing Desktop or CLI and opening a received package.
 
 **Present the same work as a [Research Film](https://aipoch.com/docs/guides/research-films/).** In the desktop app, choose **Generate research film** on a completed conversation branch. Your configured model prepares the presentation from the recorded session, and the local speech engine generates English narration. Review the film, then download the HTML player or export an MP4. A `.science` package can also carry the player for a film already generated on an included branch.
 

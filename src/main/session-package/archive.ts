@@ -47,10 +47,7 @@ const ENTRY_PATH =
   /^(manifest\.json|session\.json|records\.json|ro-crate-metadata\.json|README\.md|objects\/[a-f0-9]{64})$/
 const GZIP_COMMENT_FLAG = 0x10
 const GZIP_HEADER_BYTES = 10
-const gzipComment = Buffer.from(
-  'AIPOCH Open-Science session package (gzip-compress tar archive).\0',
-  'ascii'
-)
+const gzipComment = Buffer.from('AIPOCH Open-Science session package.\0', 'ascii')
 
 async function* addGzipComment(source: AsyncIterable<Buffer>): AsyncGenerator<Buffer> {
   const header = Buffer.alloc(GZIP_HEADER_BYTES)
