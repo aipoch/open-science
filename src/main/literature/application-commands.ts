@@ -1,3 +1,8 @@
+import {
+  literatureSynthesisContract,
+  type LiteratureSynthesisRequest,
+  type LiteratureSynthesisResult
+} from '../../shared/literature-synthesis'
 import type { OverviewBatchRequest, OverviewBatch } from '../../shared/literature-overview-batch'
 import type {
   LiteratureOverviewRequest,
@@ -72,6 +77,7 @@ import {
 import { withDataRootWrite } from '../storage/migration-state'
 
 type LiteratureCommandOwner = Readonly<{
+  synthesis(request: LiteratureSynthesisRequest): Promise<LiteratureSynthesisResult>
   overviewBatch(request: OverviewBatchRequest, signal?: AbortSignal): Promise<OverviewBatch | null>
   studySnapshot(
     request: LiteratureOverviewRequest,
@@ -127,6 +133,11 @@ type LiteratureCommandOwner = Readonly<{
 }>
 
 const literatureApplicationCommands = Object.freeze({
+  synthesis: defineApplicationCommand<
+    'literature:synthesis',
+    readonly [LiteratureSynthesisRequest],
+    LiteratureSynthesisResult
+  >('literature:synthesis', literatureSynthesisContract),
   getCandidateStates: defineApplicationCommand<
     'literature:get-candidate-states',
     readonly [LiteratureCandidateStatesRequest],
@@ -268,6 +279,7 @@ const literatureApplicationCommands = Object.freeze({
 })
 
 const literatureApplicationCommandGroup = defineApplicationCommandGroup('literature', [
+  literatureApplicationCommands.synthesis,
   literatureApplicationCommands.getCandidateStates,
   literatureApplicationCommands.journals,
   literatureApplicationCommands.collect,
@@ -353,6 +365,7 @@ const registerLiteratureApplicationCommands = (
   }
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
+      'literature:synthesis': ({ args }) => run(() => owner.synthesis(args[0])),
       'literature:collect': ({ args, callerLease }) =>
         run(() => owner.collect(args[0], AbortSignal.any([callerLease.signal, lifetime.signal]))),
       'literature:get-candidate-states': ({ args }) => run(() => owner.getCandidateStates(args[0])),

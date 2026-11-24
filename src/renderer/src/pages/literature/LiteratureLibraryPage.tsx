@@ -1,3 +1,4 @@
+import { LiteratureSynthesisWorkspace } from './synthesis/LiteratureSynthesisWorkspace'
 import { LiteratureOverviewBatch } from './detail/LiteratureOverviewBatch'
 import { FileDropZone } from '@/components/FileDropZone'
 import { ErrorNotice } from '@/components/error-notice'
@@ -228,6 +229,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const listenTags = useTagStore((state) => state.listen)
   const tagRevision = useTagStore((state) => state.revision)
   const [relatedDirection, setRelatedDirection] = useState<'references' | 'citations'>('references')
+  const [synthesisEntry, setSynthesisEntry] = useState<'list' | 'create'>()
   const [section, setSection] = useState<LibrarySection>('inbox')
   const [inboxState, setInboxState] = useState<'pending' | 'dismissed'>('pending')
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
@@ -1663,6 +1665,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <LiteratureLibrarySidebar
           navigation={{
+            openSynthesisNotes: () => setSynthesisEntry('list'),
             section,
             collectionId,
             projectId,
@@ -2148,6 +2151,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     )}
                                     {hasSelection && (
                                       <LiteratureSelectionToolbar
+                                        onCreateSynthesis={() => setSynthesisEntry('create')}
                                         overviewActions={overviewActions}
                                         overviewMenuAction={generateOverviews}
                                         selectedItemCount={selectedItemCount}
@@ -2596,6 +2600,13 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           </FileDropZone>
         </section>
 
+        {synthesisEntry ? (
+          <LiteratureSynthesisWorkspace
+            createFromSelection={synthesisEntry === 'create'}
+            resolveSelectedItemIds={resolveSelectedItemIds}
+            onClose={() => setSynthesisEntry(undefined)}
+          />
+        ) : null}
         <LiteratureMergeDialog
           mergeOpen={mergeOpen}
           isBatching={isBatching}

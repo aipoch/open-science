@@ -41,6 +41,7 @@ const LITERATURE_BATCH_COMMAND_SIZE = 200
 
 export function LiteratureSelectionToolbar({
   overviewActions,
+  onCreateSynthesis,
   overviewMenuAction,
   selectedItemCount,
   selection,
@@ -80,6 +81,7 @@ export function LiteratureSelectionToolbar({
   runLifecycleAction,
   requestPermanentDeletion
 }: {
+  onCreateSynthesis?: () => void
   overviewActions?: React.ReactNode
   overviewMenuAction?: React.ReactNode
   selectedItemCount: number
@@ -164,6 +166,11 @@ export function LiteratureSelectionToolbar({
         >
           <X className="size-3.5" aria-hidden="true" />
         </Button>
+        {section === 'library' && onCreateSynthesis ? (
+          <Button variant="outline" size="sm" disabled={isBatching} onClick={onCreateSynthesis}>
+            {t('Create synthesis note')}
+          </Button>
+        ) : null}
         {overviewActions}
         {smartDecisionBatch.progress &&
         smartDecisionBatch.progress.collectionId === collectionId ? (

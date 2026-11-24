@@ -1,3 +1,4 @@
+import type { LiteratureSynthesisRequest, LiteratureSynthesisResult } from '../literature-synthesis'
 import type { OverviewBatchRequest, OverviewBatch } from '../literature-overview-batch'
 import type { CollectorRequest, CollectorResult } from '../literature-collector'
 import type { LiteratureOverviewRequest, LiteratureOverviewResult } from '../literature-overview'
@@ -83,6 +84,9 @@ import {
 } from './definition'
 
 export const contracts = {
+  'literature.synthesis': callable<
+    (request: LiteratureSynthesisRequest) => Promise<LiteratureSynthesisResult>
+  >()('literature', ['literature:synthesis', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.collect': callable<(request: CollectorRequest) => Promise<CollectorResult>>()(
     'literature',
     ['literature:collect', WEB, undefined, undefined, RUNTIME_VALIDATED]

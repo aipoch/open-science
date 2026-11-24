@@ -21,6 +21,22 @@ const FilePreviewDialog = lazy(() =>
   }))
 )
 
+const PdfAnnotationPreviewDialog = lazy(() =>
+  import('@/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog').then((module) => ({
+    default: module.PdfAnnotationPreviewDialog
+  }))
+)
+
+function LiteratureAnnotationPreview(
+  props: ComponentProps<LiteratureRendererHost['PdfAnnotationPreviewDialog']>
+): ReactElement {
+  return createElement(
+    Suspense,
+    { fallback: null },
+    createElement(PdfAnnotationPreviewDialog, props)
+  )
+}
+
 function LiteratureFilePreview(
   props: ComponentProps<LiteratureRendererHost['FilePreviewDialog']>
 ): ReactElement {
@@ -61,6 +77,7 @@ export const literatureRendererHost: LiteratureRendererHost = {
     }
   },
   FilePreviewDialog: memo(LiteratureFilePreview),
+  PdfAnnotationPreviewDialog: memo(LiteratureAnnotationPreview),
   createBookmarkPreviewItem(target) {
     const item = createBookmarkPreviewItem(target)
     return item?.format === 'pdf' ? { ...item, format: 'pdf' } : undefined

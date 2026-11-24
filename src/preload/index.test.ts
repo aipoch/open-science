@@ -442,6 +442,7 @@ describe('preload bridge — public surface inventory', () => {
       'literature.supplementAttachment',
       'literature.supplementAttachmentProgress',
       'literature.supplements',
+      'literature.synthesis',
       'literature.transact',
       'localFs.getRoots',
       'localFs.grantRoot',

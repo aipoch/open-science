@@ -2541,7 +2541,13 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
       />
     )
   }
-  if (currentState?.status === 'ready' && currentState.document.numPages === 1) {
+  // Saved annotations need the reader's text/evidence layers even on a one-page PDF.
+  // The image-only preview cannot acknowledge an exact source reveal.
+  if (
+    currentState?.status === 'ready' &&
+    currentState.document.numPages === 1 &&
+    !props.pdfBookmarkSource
+  ) {
     return (
       <SinglePagePdfPreview
         key={resourceRequestKey}

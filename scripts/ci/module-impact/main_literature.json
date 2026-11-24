@@ -82,7 +82,15 @@
     "src/main/literature/pdf-structure/ocr.test.ts",
     "src/main/literature/overview-batch.ts",
     "src/main/literature/overview-batch.test.ts",
-    "src/main/literature/citation-provenance.ts"
+    "src/main/literature/citation-provenance.ts",
+    "src/main/literature/synthesis.ts",
+    "src/main/literature/synthesis-store.ts",
+    "src/main/literature/synthesis-sources.ts",
+    "src/main/literature/synthesis.test.ts",
+    "src/main/literature/synthesis-sources.test.ts",
+    "src/main/literature/synthesis-sharing.test.ts",
+    "scripts/literature-synthesis-ablation.mjs",
+    "scripts/literature-synthesis-ablation.test.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -113,7 +121,10 @@
     "src/main/literature/full-text-index-sqlite-fixture.ts",
     "src/main/literature/collector.ts",
     "src/main/literature/overview.ts",
-    "src/main/literature/overview-batch.ts"
+    "src/main/literature/overview-batch.ts",
+    "src/main/literature/synthesis.ts",
+    "src/main/literature/synthesis-sources.ts",
+    "src/main/literature/synthesis-store.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -157,7 +168,11 @@
       "src/main/literature/collector-identity.test.ts",
       "src/main/literature/overview.test.ts",
       "src/main/literature/pdf-structure/ocr.test.ts",
-      "src/main/literature/overview-batch.test.ts"
+      "src/main/literature/overview-batch.test.ts",
+      "src/main/literature/synthesis.test.ts",
+      "src/main/literature/synthesis-sources.test.ts",
+      "src/main/literature/synthesis-sharing.test.ts",
+      "scripts/literature-synthesis-ablation.test.ts"
     ],
     "contract": [
       "src/main/acp/auto-operation-inventory.test.ts",
