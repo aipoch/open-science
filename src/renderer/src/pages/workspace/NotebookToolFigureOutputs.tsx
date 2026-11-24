@@ -42,29 +42,34 @@ const NotebookToolFigureCard = ({
   onOpen
 }: NotebookToolFigureCardProps): React.JSX.Element => {
   const { t } = useTranslation()
-  // Notebook runs already retain bounded capture payloads. Keep those large base64 strings out of
-  // the DOM and image decoder until the individual card enters the transcript's viewport overscan.
   const [setCardElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
 
   const [loaded, setLoaded] = useState<string | null>()
-  const [attempt, setAttempt] = useState(0)
+  const requested = useRef(false)
   const { outputIndex, mimeType, payload: captured } = figure
   const sessionId = reference?.sessionId
   const projectId = reference && resolveProjectId(reference)
   const workspaceCwd = reference?.workspaceCwd
   useEffect(() => {
-    if (captured !== undefined || !sessionId || !projectId || workspaceCwd === undefined) return
-    let current = true
-    const finish = (result: string | null): void => {
-      if (current) setLoaded(result)
-    }
+    if (!isNearViewport || captured !== undefined || loaded !== undefined || requested.current)
+      return
+    if (!sessionId || !projectId || workspaceCwd === undefined) return
+    // A card is keyed to one figure. Let its read finish if it scrolls away and reuse it on return.
+    requested.current = true
     void window.api.notebook
       .runFigure({ sessionId, projectId, workspaceCwd, runId, outputIndex, mimeType })
-      .then(finish, () => finish(null))
-    return () => {
-      current = false
-    }
-  }, [captured, sessionId, projectId, workspaceCwd, runId, outputIndex, mimeType, attempt])
+      .then(setLoaded, () => setLoaded(null))
+  }, [
+    isNearViewport,
+    captured,
+    loaded,
+    sessionId,
+    projectId,
+    workspaceCwd,
+    runId,
+    outputIndex,
+    mimeType
+  ])
   const payload = captured ?? loaded
   if (payload === null)
     return (
@@ -74,17 +79,11 @@ const NotebookToolFigureCard = ({
         primaryButton={{
           label: t('Retry'),
           onClick: () => {
+            requested.current = false
             setLoaded(undefined)
-            setAttempt((n) => n + 1)
           }
         }}
       />
-    )
-  if (payload === undefined)
-    return (
-      <span role="status" className="text-sm text-text-200">
-        {t('Loading image…')}
-      </span>
     )
   return (
     <div className="rounded-2xl bg-bg-000 p-2 shadow-sm">
@@ -94,10 +93,11 @@ const NotebookToolFigureCard = ({
         data-testid="notebook-tool-figure-button"
         className="group relative block w-fit max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0"
         aria-label={t('Preview {{name}}', { name: filename })}
+        disabled={payload === undefined}
         onClick={(event) => onOpen({ ...figure, payload }, event.currentTarget)}
       >
         <span className="flex max-w-full items-center justify-center">
-          {isNearViewport ? (
+          {isNearViewport && payload !== undefined ? (
             <img
               data-testid="notebook-tool-figure-image"
               src={`data:${figure.mimeType};base64,${payload}`}
@@ -107,7 +107,13 @@ const NotebookToolFigureCard = ({
               draggable={false}
             />
           ) : (
-            <span className="h-36 w-60 max-w-full bg-bg-100" aria-hidden="true" />
+            <span className="flex h-36 w-60 max-w-full items-center justify-center bg-bg-100">
+              {isNearViewport && (
+                <span role="status" className="text-sm text-text-200">
+                  {t('Loading image…')}
+                </span>
+              )}
+            </span>
           )}
         </span>
         <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-gradient-to-t from-black/55 to-transparent px-2 pb-1 pt-3.5 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
