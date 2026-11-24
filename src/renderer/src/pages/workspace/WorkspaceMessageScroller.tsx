@@ -132,6 +132,7 @@ import {
 import type { SendEditedMessage } from './workspace-edited-message'
 import { useWorkspaceMessageEditState } from './workspace-message-edit-state-context'
 import { setWorkspacePresentationRevealing } from './workspace-presentation-revealing'
+import { hasTerminalNotebookReceipt, isNotebookExecutionActivity } from './tool-execution-phase'
 import { getNotebookRunIdFromActivity } from './workspace-tool-activity-details'
 import type { ActivityExpansionOverrides } from './workspace-tool-activity-groups'
 
@@ -882,9 +883,26 @@ const WorkspaceMessageScrollerImpl = ({
     () => conversationItems.some((item) => item.type === 'activity-group'),
     [conversationItems]
   )
-  const notebookRunsById = useNotebookRunsById(
+  const needsRecentRuns = useMemo(
+    () =>
+      conversationItems.some((item) => {
+        const activities =
+          item.type === 'activity-group'
+            ? item.activities
+            : item.type === 'activity'
+              ? [item.activity]
+              : []
+        return activities.some(
+          (activity) =>
+            isNotebookExecutionActivity(activity) && !hasTerminalNotebookReceipt(activity)
+        )
+      }),
+    [conversationItems]
+  )
+  const { runsById: notebookRunsById, retries: notebookRunRetries } = useNotebookRunsById(
     hasActivityGroup ? notebookReference : undefined,
-    requestedNotebookRunIds
+    requestedNotebookRunIds,
+    needsRecentRuns
   )
   const handleNotebookRunNearViewport = useCallback(
     (runId: string, isNearViewport: boolean): void => {
@@ -1013,24 +1031,23 @@ const WorkspaceMessageScrollerImpl = ({
       setHistoryLoadFailedSessionId(currentSessionId)
     }
   }, [currentProjectId, currentSessionId, partialHistory])
-  const previousHistoryPageRef = useRef({
-    sessionId: currentSessionId,
-    page: activeSession?.historyPage
-  })
+  const requestedEarlierPage = useRef<{ scopeId?: string; page: ChatSession['historyPage'] }>(
+    undefined
+  )
   const revealEarlier = transcriptWindow.revealEarlier
   useLayoutEffect(() => {
-    const previous = previousHistoryPageRef.current
+    const previous = requestedEarlierPage.current
     const next = activeSession?.historyPage
-    previousHistoryPageRef.current = { sessionId: currentSessionId, page: next }
-    if (
-      previous.sessionId === currentSessionId &&
-      previous.page &&
-      next &&
-      previous.page !== next &&
-      previous.page.revision === next.revision
-    )
-      revealEarlier()
-  }, [activeSession?.historyPage, currentSessionId, revealEarlier])
+    if (previous && (next !== previous.page || currentPresentationScopeId !== previous.scopeId)) {
+      requestedEarlierPage.current = undefined
+      if (
+        next &&
+        previous.scopeId === currentPresentationScopeId &&
+        previous.page?.revision === next.revision
+      )
+        revealEarlier()
+    }
+  }, [activeSession?.historyPage, currentPresentationScopeId, revealEarlier])
   const searchFocus = useSearchMessageFocusStore((state) => state.pending)
   const navigationRevision = useNavigationStore((state) => state.userNavigationRevision)
   useEffect(() => {
@@ -1892,7 +1909,17 @@ const WorkspaceMessageScrollerImpl = ({
                   messageId={`history-load-${activeSession.id}`}
                   className="min-w-0"
                 >
-                  <SessionHistoryLoadButton key={activeSession.id} session={activeSession} />
+                  <SessionHistoryLoadButton
+                    onRequestEarlier={() => {
+                      requestedEarlierPage.current = {
+                        scopeId: currentPresentationScopeId,
+                        page: activeSession.historyPage
+                      }
+                    }}
+                    viewport={messageScrollerViewport}
+                    key={currentPresentationScopeId}
+                    session={activeSession}
+                  />
                 </MessageScrollerItem>
               ) : null}
               {reviewLoadError ? (
@@ -2404,6 +2431,8 @@ const WorkspaceMessageScrollerImpl = ({
                       onToggleGroup={toggleActivityGroup}
                       expansionOverrides={activityExpansionOverrides}
                       onToggleRow={toggleActivityRow}
+                      notebookRunRetries={notebookRunRetries}
+                      notebookReference={notebookReference}
                       notebookRunsById={notebookRunsById}
                       onNotebookRunNearViewport={handleNotebookRunNearViewport}
                       permission={activeSession?.runtimeContext?.permission}

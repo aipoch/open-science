@@ -477,7 +477,7 @@ describe('display-only session history pages', () => {
       await loadSessionHistoryPage(request, true, api)
       expect(current().messages.map(({ id }) => id)).toEqual(['replacement'])
       expect(current().historyPage?.revision).toBe(5)
-      expect(api.loadHistoryPage).toHaveBeenLastCalledWith(request)
+      expect(api.loadHistoryPage).toHaveBeenLastCalledWith({ ...request, limit: 8 })
     }
   )
 

@@ -3472,6 +3472,7 @@ describe('startWebHttpServer', () => {
       'notebook:retry-resource-release',
       'notebook:run-cell',
       'notebook:run-evidence',
+      'notebook:run-figure',
       'notebook:run-index',
       'notebook:shutdown',
       'notebook:state'

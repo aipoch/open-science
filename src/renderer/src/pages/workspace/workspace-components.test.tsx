@@ -638,7 +638,9 @@ describe('conversation message scroller integration', () => {
     const workspaceToolCodeBlockSource = readFileSync(workspaceToolCodeBlockPath, 'utf8')
     const workspaceToolRowButtonSource = readFileSync(workspaceToolRowButtonPath, 'utf8')
 
-    expect(workspaceActivityGroupSource).toContain('buildToolActivityDetails(activity, t)')
+    expect(workspaceActivityGroupSource).toContain(
+      'buildToolActivityDetails(activity, t, expandedRun)'
+    )
     expect(workspaceActivityGroupSource).toContain('<WorkspaceToolDetailsRow')
     expect(workspaceToolDetailsRowSource).toContain('const WorkspaceToolDetailsRow')
     expect(workspaceToolDetailsRowSource).toContain('<WorkspaceToolActivityRowButton')

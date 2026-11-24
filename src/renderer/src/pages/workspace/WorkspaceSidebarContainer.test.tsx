@@ -196,7 +196,8 @@ describe('WorkspaceSidebarContainer Session previews', () => {
       expect(loadHistoryPage).toHaveBeenCalledOnce()
       expect(loadHistoryPage).toHaveBeenCalledWith({
         projectId: 'project-1',
-        sessionId: 'lazy-session'
+        sessionId: 'lazy-session',
+        limit: 8
       })
       expect(loadOne).not.toHaveBeenCalled()
 
