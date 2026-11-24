@@ -856,7 +856,9 @@ const ProviderForm = ({
             disabled={disabled || (isCodeBuddySubscription && !codeBuddyProviders)}
             onValueChange={(key) => {
               setAdvancedOpen(false)
-              onChange(providerKindPatch(key, defaultCustomApiEndpoint, framework?.supportedApiTypes))
+              onChange(
+                providerKindPatch(key, defaultCustomApiEndpoint, framework?.supportedApiTypes)
+              )
             }}
           >
             <SelectTrigger aria-label={t('Provider type')}>

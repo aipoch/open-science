@@ -19,7 +19,7 @@ import type { ClaudeSharedAuthControllerPort, ClaudeSharedAuthStatus } from './c
 import type { XaiOAuthControllerPort } from './xai-oauth'
 import type { ValidateProviderResult } from '../../shared/settings'
 import type { ResolvedProvider } from './provider-env'
-import type { StoredSettings } from './types'
+import type { StoredProvider, StoredSettings } from './types'
 import { getAgentFramework } from '../agent-framework'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
@@ -117,7 +117,7 @@ describe('ProviderAccountsModule', () => {
 
     await module.upsertProvider(cloudflare)
     await module.upsertProvider(foundry)
-    const stored = async (id: string) =>
+    const stored = async (id: string): Promise<StoredProvider> =>
       (await new SettingsRepository(dir).getSettings()).providers.find((p) => p.id === id)!
     expect(module.resolveProvider(await stored(cloudflare.id)).contextWindow).toBe(24_000)
     const workers = await stored(cloudflare.id)
@@ -162,7 +162,7 @@ describe('ProviderAccountsModule', () => {
       key: 'test-vectrust-key'
     } as const
     const location = 'api.openai-next.com'
-    const read = async () => {
+    const read = async (): Promise<ResolvedProvider> => {
       const { providers } = await new SettingsRepository(dir).getSettings()
       return module.resolveProvider(providers.find(({ id }) => id === provider.id)!)
     }

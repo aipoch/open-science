@@ -245,7 +245,10 @@ export function publishedManualProviderContextWindow(
 }
 
 /** Derive the endpoint from the vendor rules and persist only the public location and protocol. */
-export function resolveManualProviderConnection(vendorId: OfficialVendorId, value: unknown) {
+export function resolveManualProviderConnection(
+  vendorId: OfficialVendorId,
+  value: unknown
+): { connection: ManualProviderConnection; baseUrl: string } | undefined {
   const definition = manualProviderDefinition(vendorId)
   if (!definition || !value || typeof value !== 'object') return undefined
   const { location, protocol } = value as Partial<ManualProviderConnection>

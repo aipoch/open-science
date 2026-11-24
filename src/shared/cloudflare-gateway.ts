@@ -53,8 +53,9 @@ export function sameCloudflareGateway(
   )
 }
 
-export const cloudflareGatewayProtocol = (mode: CloudflareGateway['mode']) =>
-  mode === 'rest' ? 'chat-completions' : 'messages'
+export const cloudflareGatewayProtocol = (
+  mode: CloudflareGateway['mode']
+): 'chat-completions' | 'messages' => (mode === 'rest' ? 'chat-completions' : 'messages')
 
 export const cloudflareGatewayBase = ({ accountId, gatewayId, mode }: CloudflareGateway): string =>
   mode === 'rest'
