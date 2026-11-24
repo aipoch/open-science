@@ -69,6 +69,7 @@ const saveTextVersion = async (
   await expect(saveButton.locator('svg')).toHaveCount(0)
   if (markdown) {
     await editor.press('ControlOrMeta+a')
+    await editor.press('Backspace')
     await editor.evaluate((element, content) => {
       const clipboardData = new DataTransfer()
       clipboardData.setData('text/plain', content)

@@ -204,6 +204,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   let editor = preview.getByTestId('markdown-plate-editor')
   await expect(editor).toContainText('Original result.')
   await editor.press('ControlOrMeta+a')
+  await editor.press('Backspace')
   await editor.evaluate((element, content) => {
     const clipboardData = new DataTransfer()
     clipboardData.setData('text/plain', content)
@@ -213,6 +214,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   }, edited)
   await preview.getByRole('button', { name: 'Save changes' }).click()
   await expect(preview.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+  await expect.poll(async () => (await inspect()).selectedVersion?.versionNumber).toBe(2)
   const second = await inspect()
   expect(second.selectedVersion?.versionNumber).toBe(2)
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
@@ -283,7 +285,9 @@ test('new Markdown publications replace the head while edits, restoration and dr
   )
   await preview.getByRole('button', { name: 'Save changes' }).click()
   await expect(preview.getByRole('button', { name: 'Save changes' })).toBeDisabled()
-  expect(await inspect()).toMatchObject({ text: edited, selectedVersion: { versionNumber: 4 } })
+  await expect
+    .poll(() => inspect())
+    .toMatchObject({ text: edited, selectedVersion: { versionNumber: 4 } })
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
     'v4 contains manual edits'
   )
