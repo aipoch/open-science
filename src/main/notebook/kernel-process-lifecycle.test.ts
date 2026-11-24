@@ -367,7 +367,10 @@ describe('KernelProcessLifecycleOwner', () => {
     await restarted.ensureReadyForLane(target.laneKey)
 
     expect(probe).toHaveBeenCalledOnce()
-    expect(probe).toHaveBeenCalledWith(expect.objectContaining({ laneKey: target.laneKey }))
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({ laneKey: target.laneKey }),
+      ...(process.platform === 'darwin' ? [expect.any(Function)] : [])
+    )
     expect(() => restarted.beginSpawn(target)).toThrow('KERNEL_STARTUP_FENCE')
   })
 

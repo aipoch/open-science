@@ -172,3 +172,55 @@ test('keeps analysis options visible for a cached singleton figure on desktop', 
   await page.getByRole('button', { name: 'Analyze again', exact: true }).click()
   await expect(page.getByRole('table', { name: 'Candidate table' })).toBeVisible()
 })
+
+test('previews a cached figure from its native link while staying at the passage', async ({
+  page
+}) => {
+  await page.goto('/uploaded-pdf.html?figure')
+  const link = page.locator('[data-pdf-native-links] a').first()
+  const reader = page.locator('[data-pdf-cursor-mode]').first()
+  await expect(link).toBeVisible()
+  await link.scrollIntoViewIfNeeded()
+  const start = await reader.evaluate((node) => node.scrollTop)
+  await link.click()
+  const caption = page.getByText('Figure 3. Observed results.', { exact: true })
+  await expect(caption).toBeVisible()
+  expect(await reader.evaluate((node) => node.scrollTop)).toBe(start)
+  await page.keyboard.press('Escape')
+  await expect(caption).toBeHidden()
+  expect(await reader.evaluate((node) => node.scrollTop)).toBe(start)
+  await link.focus()
+  await page.keyboard.press('Enter')
+  await expect(caption).toBeVisible()
+  await page.getByRole('button', { name: 'Show in PDF', exact: true }).click()
+  await expect(caption).toBeHidden()
+  await expect.poll(() => reader.evaluate((node) => node.scrollTop)).toBeGreaterThan(start)
+})
+
+test('indexes plain-text figure references without parsing pages until the first click', async ({
+  page
+}) => {
+  await page.goto('/uploaded-pdf.html')
+  const link = page.getByRole('link', { name: 'Figure 9', exact: true })
+  await expect(link).toHaveCount(1)
+  const requests = (): Promise<number[]> =>
+    page.evaluate(() =>
+      (
+        window as unknown as { uploadedPdfAudit: { requests: { page: number }[] } }
+      ).uploadedPdfAudit.requests.map((item) => item.page)
+    )
+  expect(await requests()).toEqual([])
+  await link.focus()
+  await page.keyboard.press('Enter')
+  const preview = page.getByRole('region', { name: 'Figure 9', exact: true })
+  await expect(preview.getByRole('img', { name: 'Page 2' })).toBeVisible()
+  expect(await requests()).toEqual([2])
+  await page.keyboard.press('Escape')
+  await expect(link).toBeFocused()
+  // The hit area leaves the text layer in charge of normal pointer selection.
+  const bounds = await link.boundingBox()
+  if (!bounds) throw new Error('Missing indexed link geometry')
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  await expect(preview).toBeVisible()
+  expect(await requests()).toEqual([2])
+})
