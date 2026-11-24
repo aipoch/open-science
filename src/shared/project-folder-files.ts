@@ -10,7 +10,8 @@ export const listProjectFolderRequestSchema = folderFileScopeSchema
     limit: z.number().int().min(1).max(200),
     cursor: z.string().max(65536).optional(),
     query: z.string().max(256).optional(),
-    searchDescendants: z.boolean().optional()
+    searchDescendants: z.boolean().optional(),
+    excludePublishedArtifactCopies: z.boolean().optional()
   })
   .strict()
 export const projectFolderListingSchema = z

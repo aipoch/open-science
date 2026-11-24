@@ -18,8 +18,23 @@ import { createArtifactSaveFixture } from './save-test-fixtures'
 import { writeArtifactFileForCurrentRun } from './mcp-server'
 import { getNotebookDataRoot, getNotebookSessionRoot } from '../notebook/repository'
 import { createRootNotebookLane } from '../notebook/lane-identity'
-import { getNotebookSessionOutputRelativePath } from '../projects/session-output-layout'
+import {
+  getNotebookSessionOutputRelativePath,
+  getProjectSessionOutputLayout
+} from '../projects/session-output-layout'
 import { ArtifactCodeReconstructionService } from './code-reconstruction'
+import { createLinearConversationGraph } from '../../shared/conversation-graph'
+import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { Project } from '../../shared/projects'
+import type { ProjectFolderListing } from '../../shared/project-folder-files'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
+import { ProjectFilesQueryOwner } from '../project-files/query-owner'
+import { listPublishedArtifactFolderRecords } from '../project-files/query-support'
+import { ProjectFolderFiles } from '../projects/project-folder-files'
+import { ArtifactOutputDelivery } from './output-delivery'
+import { ArtifactProvenanceRepository } from './provenance-repository'
+import { createPngBytes } from './artifact-test-fixtures'
+import { createPublishedArtifactCopyCheck } from './project-folder-mention-candidates'
 
 configureTestRuntimeMetadata()
 const fixtures: Awaited<ReturnType<typeof createArtifactSaveFixture>>[] = []
@@ -384,16 +399,17 @@ it('publishes relative, absolute and data paths into durable Project Artifact re
     expect(await readFile(artifact.path, 'utf8')).toBe('durable output')
 }, 30_000)
 
-it('retains execution evidence when publishing from the Project Notebook output directory', async () => {
+it('offers published Notebook files through their Artifact heads and retains independent folder files', async () => {
   let folder = ''
   const f = await createArtifactSaveFixture(undefined, {
     assertProjectFolderHealthy: async () => folder
   })
   fixtures.push(f)
-  const { projectId, appSessionId: sessionId, rootFrameId } = f.binding
-  folder = join(await realpath(f.storageRoot), 'output-project')
+  const { projectId, appSessionId: sessionId } = f.binding
+  folder = await realpath(await mkdtemp(join(tmpdir(), 'os-notebook-mention-')))
+  externalFolders.push(folder)
   const workspace = join(f.storageRoot, 'workspace')
-  await Promise.all([mkdir(folder), mkdir(workspace)])
+  await mkdir(workspace)
   await initializeProjectRecordStorage(f.storageRoot, folder, {
     format: 'open-science-project',
     version: 1,
@@ -401,55 +417,208 @@ it('retains execution evidence when publishing from the Project Notebook output 
     name: 'Research',
     createdAt: 1
   })
-  const context = { ...f.binding, agentFrameId: rootFrameId }
+  await f.client.project.create({ data: { id: projectId, name: 'Research', rootPath: folder } })
+  const messages: PersistedChatSession['messages'] = (['user', 'agent'] as const).map(
+    (role, index) => ({
+      id: index === 0 ? 'prompt' : 'answer',
+      role,
+      content: 'Publish results',
+      status: 'complete',
+      eventIds: [],
+      createdAt: index + 1,
+      updatedAt: index + 1
+    })
+  )
+  const graph = createLinearConversationGraph({
+    sessionId,
+    messages,
+    frameworkId: 'codex',
+    createdAt: 1,
+    updatedAt: 2
+  })
+  const rootFrameId = graph.rootFrameId
+  const context = {
+    ...f.binding,
+    rootFrameId,
+    agentFrameId: graph.activeFrameId,
+    messageBranchId: graph.branches[0].id,
+    runtimeSegmentId: graph.runtimeSegments[0].id,
+    promptMessageId: 'prompt'
+  }
+  const outputs = {
+    'mention_result.py': Buffer.from('print(1)'),
+    'mention_result.png': createPngBytes('test plot'),
+    'mention_result_unpublished.txt': Buffer.from('unpublished'),
+    'mention_result_same_bytes.py': Buffer.from('print(1)')
+  }
+  await writeFile(join(folder, 'mention_result.py'), outputs['mention_result.py'])
   const run = await f.service.executeControl({
     projectId,
     sessionId,
     workspaceCwd: workspace,
     provenanceContext: context,
-    code: 'require("node:fs").writeFileSync(require("node:path").join(process.env.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR, "result.txt"), "output")'
+    code: Object.entries(outputs)
+      .map(
+        ([filename, bytes]) =>
+          `require("node:fs").writeFileSync(require("node:path").join(process.env.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR, ${JSON.stringify(filename)}), Buffer.from(${JSON.stringify(bytes.toString('base64'))}, "base64"))`
+      )
+      .join('\n')
   })
   expect(run.status, run.traceback || run.stderr).toBe('completed')
   const lane = createRootNotebookLane(projectId, sessionId, rootFrameId)
   const notebook = await f.notebookRepository.findExisting(projectId, sessionId, lane)
   const producerRunId = notebook!.runs.at(-1)!.runId
   const outputRelativePath = getNotebookSessionOutputRelativePath(projectId, sessionId)
-  const output = join(folder, outputRelativePath, 'result.txt')
   const env = await f.environment(
     { allowedImportRoots: [workspace], workspaceCwd: workspace },
     { ...context, notebookSessionId: sessionId }
   )
-  const artifact = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
-    filename: 'result.txt',
-    source: { kind: 'localPath', path: output }
-  })
-  const request = {
-    projectId,
-    appSessionId: sessionId,
-    artifactId: artifact.artifactId!,
-    versionId: artifact.versionId!
-  }
+  const filenames = ['mention_result.py', 'mention_result.png'] as const
+  const projectFolder = new ProjectFolderFiles(
+    async () => ({ rootPath: folder }) as Project,
+    () => f.storageRoot,
+    (projectId, root, storageRoot) =>
+      createPublishedArtifactCopyCheck(projectId, root, storageRoot, (...scope) =>
+        listPublishedArtifactFolderRecords(f.client, ...scope)
+      )
+  )
+  const search = (relativePath = ''): Promise<ProjectFolderListing> =>
+    projectFolder.listFolder({
+      projectId,
+      relativePath,
+      limit: 12,
+      query: 'mention_result',
+      searchDescendants: true,
+      excludePublishedArtifactCopies: true
+    })
+  const artifacts = []
   const reconstruction = new ArtifactCodeReconstructionService({
     provenance: f.repository,
     runner: { captureTarget: vi.fn(), run: vi.fn() }
   })
-  const state = await reconstruction.get(request)
-  expect(state, JSON.stringify(state)).toMatchObject({ state: 'ready' })
-  await expect(f.repository.getVersionExecution(request)).resolves.toMatchObject({
-    execution: { producerRunId, runs: [{ runId: producerRunId }] }
-  })
-  const generation = run.workingFiles?.find(
-    (file) => file.relativePath === `data/${outputRelativePath}/result.txt`
-  )
-  expect(generation?.generationId).toBeTruthy()
-  const version = await f.client.artifactVersion.findUniqueOrThrow({
-    where: { id: artifact.versionId }
-  })
-  expect(JSON.parse(version.executionSnapshotJson!).provenanceGraph.edges).toContainEqual(
-    expect.objectContaining({
-      kind: 'used',
-      entityId: `file-generation:${generation!.generationId}`,
-      evidenceSource: 'artifact-publication'
+  for (const filename of filenames) {
+    const artifact = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, {
+      filename,
+      source: { kind: 'localPath', path: join(folder, outputRelativePath, filename) }
     })
+    artifacts.push(artifact)
+    const request = {
+      projectId,
+      appSessionId: sessionId,
+      artifactId: artifact.artifactId!,
+      versionId: artifact.versionId!
+    }
+    const state = await reconstruction.get(request)
+    expect(state, JSON.stringify(state)).toMatchObject({ state: 'ready' })
+    await expect(f.repository.getVersionExecution(request)).resolves.toMatchObject({
+      execution: { producerRunId, runs: [{ runId: producerRunId }] }
+    })
+    const generation = run.workingFiles?.find(
+      (file) => file.relativePath === `data/${outputRelativePath}/${filename}`
+    )
+    expect(generation?.generationId).toBeTruthy()
+    const version = await f.client.artifactVersion.findUniqueOrThrow({
+      where: { id: artifact.versionId }
+    })
+    expect(JSON.parse(version.executionSnapshotJson!).provenanceGraph.edges).toContainEqual(
+      expect.objectContaining({
+        kind: 'used',
+        entityId: `file-generation:${generation!.generationId}`,
+        evidenceSource: 'artifact-publication'
+      })
+    )
+  }
+
+  const managed = new ManagedFileVersionService({
+    storageRoot: f.storageRoot,
+    getClient: async () => f.client
+  })
+  const delivery = new ArtifactOutputDelivery({
+    storageRoot: f.storageRoot,
+    getClient: async () => f.client,
+    openVersion: (request, versionId) => managed.openVersion(request, versionId),
+    getLayout: async (projectId, sessionId) =>
+      getProjectSessionOutputLayout(f.storageRoot, projectId, sessionId)
+  })
+  managed.setArtifactOutputDelivery(delivery)
+  const publisher = new ArtifactProvenanceRepository({
+    ...f.repositoryOptions,
+    managedFileVersions: managed,
+    onHeadActivated: (versions) => delivery.deliverActivated(versions),
+    loadSession: async () => ({
+      id: sessionId,
+      projectId,
+      title: 'Research',
+      cwd: workspace,
+      status: 'idle',
+      messages,
+      conversationGraph: graph,
+      createdAt: 1,
+      updatedAt: 2
+    })
+  })
+  const proof = {
+    projectId,
+    appSessionId: sessionId,
+    artifactRunId: context.artifactRunId,
+    rootFrameId,
+    agentFrameId: context.agentFrameId,
+    messageBranchId: context.messageBranchId,
+    runtimeSegmentId: context.runtimeSegmentId,
+    promptMessageId: context.promptMessageId,
+    messageId: 'answer',
+    artifactVersionIds: artifacts.map((artifact) => artifact.versionId!)
+  }
+  await publisher.finalizeRun(proof)
+  expect((await search()).entries).toHaveLength(5)
+  await publisher.activateFinalizedRun(proof)
+  const catalog = new ProjectFilesQueryOwner(
+    async () => f.client,
+    () => true
+  )
+  const { items } = await catalog.listFiles({ projectId, collection: { kind: 'all' }, limit: 12 })
+  expect(items.map((item) => item.sourceVersionId).sort()).toEqual(
+    proof.artifactVersionIds.toSorted()
+  )
+  for (const artifact of artifacts) {
+    const inspected = await managed.inspect({
+      source: 'artifact',
+      projectId,
+      fileId: artifact.artifactId!
+    })
+    expect(inspected, JSON.stringify(inspected.outputDelivery)).toMatchObject({
+      headVersionId: artifact.versionId,
+      outputDelivery: { state: 'delivered' }
+    })
+  }
+
+  const artifactDirectory = getProjectSessionOutputLayout(
+    f.storageRoot,
+    projectId,
+    sessionId
+  )!.artifactDirectoryRelativePath
+  const folderPaths = (await search()).entries.map((entry) => entry.relativePath)
+  expect(folderPaths.sort()).toEqual(
+    [
+      'mention_result.py',
+      `${outputRelativePath}/mention_result_same_bytes.py`,
+      `${outputRelativePath}/mention_result_unpublished.txt`
+    ].sort()
+  )
+  const browser = await projectFolder.listFolder({
+    projectId,
+    relativePath: artifactDirectory,
+    limit: 20
+  })
+  expect(browser.entries.map((entry) => entry.name).sort()).toEqual([...filenames].sort())
+  for (const [index, filename] of filenames.entries()) {
+    expect(await readFile(join(folder, artifactDirectory, filename))).toEqual(outputs[filename])
+    expect(await readFile(join(folder, outputRelativePath, filename))).toEqual(outputs[filename])
+    expect(await readFile(artifacts[index].path)).toEqual(outputs[filename])
+  }
+  // A later unpublished write, even with the former size, is an independent live candidate.
+  await writeFile(join(folder, outputRelativePath, filenames[0]), 'print(2)')
+  expect((await search(outputRelativePath)).entries.map((entry) => entry.name)).toContain(
+    filenames[0]
   )
 }, 30_000)

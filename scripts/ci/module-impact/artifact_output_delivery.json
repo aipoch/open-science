@@ -1,10 +1,14 @@
 {
   "ownerPaths": [
     "src/main/artifacts/output-delivery.ts",
+    "src/main/artifacts/project-folder-mention-candidates.ts",
     "src/main/artifacts/output-delivery.test.ts",
     "src/main/artifacts/project-folder-publication.integration.test.ts"
   ],
-  "interfacePaths": ["src/main/artifacts/output-delivery.ts"],
+  "interfacePaths": [
+    "src/main/artifacts/output-delivery.ts",
+    "src/main/artifacts/project-folder-mention-candidates.ts"
+  ],
   "testFiles": {
     "owner": [
       "src/main/artifacts/output-delivery.test.ts",

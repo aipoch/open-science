@@ -15,6 +15,7 @@ import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { ArchiveCoordinator } from '../archive/coordinator'
 import { ArtifactReproducibilityAttemptOwner } from '../artifacts/artifact-reproducibility-lifecycle'
+import { createPublishedArtifactCopyCheck } from '../artifacts/project-folder-mention-candidates'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { BackgroundResultDeliveryOwner } from '../background-result-delivery/owner'
 import { BookmarkRepository } from '../bookmarks/repository'
@@ -30,6 +31,7 @@ import { createNotificationInboxController } from '../notifications/notification
 import { bindNotificationInboxDeletionRuntime } from '../notifications/notification-inbox-runtime'
 import { createPermissionGrantRegistry } from '../permission-grants/registry'
 import { createProjectFilesHandlers } from '../project-files/ipc'
+import { listPublishedArtifactFolderRecords } from '../project-files/query-support'
 import { createManagedFileIndexRepository } from '../project-files/repository'
 import {
   ProjectDeletionCoordinator,
@@ -416,6 +418,10 @@ export function composeProjectLifecycle({
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
     promptOptimization,
+    createPublishedArtifactCopyCheck: (projectId, root, storageRoot) =>
+      createPublishedArtifactCopyCheck(projectId, root, storageRoot, async (...scope) =>
+        listPublishedArtifactFolderRecords(await getProjectDbClient(configRoot), ...scope)
+      ),
     afterProjectCreate: async (project) => {
       if (!project.rootPath) return
       await restoreProjectRecordSessions({

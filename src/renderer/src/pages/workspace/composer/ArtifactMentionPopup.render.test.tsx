@@ -808,7 +808,7 @@ describe('ArtifactMentionPopup', () => {
     })
   })
 
-  it('uses the Project Files artifact projection instead of Session metadata', async () => {
+  it('offers one published output in the default project and pins the head on selection', async () => {
     const onSelect = vi.fn()
     window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
       items: [
@@ -831,6 +831,7 @@ describe('ArtifactMentionPopup', () => {
 
     await renderPopup({ onSelect })
 
+    expect(options()).toHaveLength(1)
     expect(document.body.textContent).toContain('other-session-result.pdf')
     pressKey('Enter')
     await flushSelection()
@@ -1073,7 +1074,8 @@ describe('bound Project folder mentions', () => {
         relativePath: '',
         query: 'sample',
         limit: 50,
-        searchDescendants: true
+        searchDescendants: true,
+        excludePublishedArtifactCopies: true
       })
       await renderPopup({ query: 'nested/sample', onSelect })
       await act(async () => {
@@ -1084,7 +1086,8 @@ describe('bound Project folder mentions', () => {
         relativePath: 'nested',
         query: 'sample',
         limit: 50,
-        searchDescendants: true
+        searchDescendants: true,
+        excludePublishedArtifactCopies: true
       })
     } finally {
       vi.useRealTimers()

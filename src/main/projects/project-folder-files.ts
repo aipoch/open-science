@@ -1,4 +1,4 @@
-import { constants, type BigIntStats } from 'node:fs'
+import { constants, type BigIntStats, type Stats } from 'node:fs'
 import { open, opendir, realpath, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import type { ArtifactPreviewResult } from '../../shared/artifacts'
@@ -13,6 +13,12 @@ import type {
 import { getProjectRecordRoot, sameProjectFolderSpelling } from '../storage/data-location-identity'
 import { readBoundedManagedFilePreviewLease } from '../managed-file-preview'
 import { readExactRange, type ManagedPreviewTrustedLease } from '../managed-preview-resources'
+
+export type CreatePublishedArtifactCopyCheck = (
+  projectId: string,
+  folderRoot: string,
+  storageRoot: string
+) => (path: string, info: Stats, signal: AbortSignal) => Promise<boolean>
 
 type Candidate = { name: string; isDirectory: boolean }
 const projectPathSeparator = process.platform === 'win32' ? /[\\/]/ : /\//
@@ -68,7 +74,8 @@ const offer = (heap: Candidate[], entry: Candidate, capacity: number): void => {
 export class ProjectFolderFiles {
   constructor(
     private readonly getProject: (id: string) => Promise<Project | null>,
-    private readonly recordStorageRoot: () => string | undefined = () => undefined
+    private readonly recordStorageRoot: () => string | undefined = () => undefined,
+    private readonly createPublishedArtifactCopyCheck?: CreatePublishedArtifactCopyCheck
   ) {}
 
   private assertRecordBinding(projectId: string, root: string): void {
@@ -234,10 +241,16 @@ export class ProjectFolderFiles {
   private searchFiles(request: ListProjectFolderRequest): Promise<ProjectFolderListing> {
     return this.within(request.projectId, async (root) => {
       const directory = await this.discoveryTarget(root, request.relativePath)
+      const storageRoot = this.recordStorageRoot()
+      const isPublishedCopy =
+        request.excludePublishedArtifactCopies && storageRoot
+          ? this.createPublishedArtifactCopyCheck?.(request.projectId, root, storageRoot)
+          : undefined
       const entries: ProjectFolderListing['entries'] = []
       const pending = [directory]
       const visited = new Set<string>()
       const deadline = Date.now() + 250
+      const copyCheckSignal = AbortSignal.timeout(250)
       let examined = 0
       let truncated = false
       const query = (request.query ?? '').toLocaleLowerCase()
@@ -272,6 +285,8 @@ export class ProjectFolderFiles {
               const target = await this.discoveryTarget(root, relativePath)
               const info = await stat(target)
               if (!info.isFile()) continue
+              if (await isPublishedCopy?.(target, info, copyCheckSignal).catch(() => false))
+                continue
               entries.push({
                 name: entry.name,
                 relativePath: relativePath.split(sep).join('/'),

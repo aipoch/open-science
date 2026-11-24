@@ -154,7 +154,8 @@ export const ArtifactMentionPopup = ({
           relativePath,
           query: filename,
           limit: 50,
-          searchDescendants: true
+          searchDescendants: true,
+          excludePublishedArtifactCopies: true
         })
         .then(
           (page) => {
@@ -312,8 +313,7 @@ export const ArtifactMentionPopup = ({
       ? collections.state
       : 'loading'
 
-  // ManagedFile supplies a logical file identity. The consumer resolves its current DB head when the
-  // turn starts; only an explicit history action may attach an immutable Version id.
+  // ManagedFile supplies the logical identity. Selection resolves and pins its current Version.
   const rows = useMemo<ArtifactRow[]>(() => {
     const projectRows =
       projectFiles.projectId === activeProjectId

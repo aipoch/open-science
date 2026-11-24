@@ -52,6 +52,7 @@ export type ProjectFolderDeliveryBaseline = {
   size: number
   identity: string
   rootIdentity: string
+  ctimeMs?: number
 }
 type CreatedFileRecord = Pick<
   ProjectFolderDeliveryBaseline,
@@ -96,6 +97,7 @@ const hasCode = (error: unknown, code: string): boolean =>
   typeof error === 'object' && error !== null && 'code' in error && error.code === code
 const identity = (info: Awaited<ReturnType<typeof stat>>): string =>
   `${info.dev}:${info.ino}:${info.birthtimeMs}`
+export { identity as projectFolderFileIdentity }
 const inside = (root: string, path: string): boolean => {
   for (let current = path; ; current = dirname(current)) {
     if (current === root) return true

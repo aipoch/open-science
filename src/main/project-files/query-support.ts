@@ -1,4 +1,5 @@
 import { Prisma, type FileOriginSession, type ManagedFile } from '@prisma/client'
+import type { PublishedArtifactFolderRecord } from '../artifacts/project-folder-mention-candidates'
 
 import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import type {
@@ -553,6 +554,40 @@ const listAuthoritativeManagedFiles = async (
   client: ProjectFilesClient,
   projectIds: string[]
 ): Promise<ManagedFile[]> => queryAuthoritativeFiles(client, { projectIds })
+
+export const listPublishedArtifactFolderRecords = async (
+  client: ProjectFilesClient,
+  projectId: string,
+  sessionId: string,
+  relativePath: string,
+  source: 'delivery' | 'notebook'
+): Promise<PublishedArtifactFolderRecord[]> => {
+  requireIdentifier(projectId, 'projectId')
+  await reconcileProjectRecordIndexes(client, [projectId])
+  const association =
+    source === 'delivery'
+      ? Prisma.sql`CASE WHEN json_valid(lineage."outputDeliveryJson")
+          THEN json_extract(lineage."outputDeliveryJson", '$.relativePath') = ${relativePath} END`
+      : Prisma.sql`instr(version."executionSnapshotJson", ${JSON.stringify(`data/${relativePath}`)}) > 0`
+  return client.$queryRaw<PublishedArtifactFolderRecord[]>(Prisma.sql`
+    ${authoritativeCatalogCte([projectId])}
+    SELECT lineage."sessionId", version."id" AS "versionId", version."filename",
+      version."checksum", version."sizeBytes", version."agentFrameId",
+      version."producerRunId",
+      ${source === 'notebook' ? Prisma.sql`version."executionSnapshotJson"` : Prisma.sql`NULL`}
+        AS "executionSnapshotJson",
+      version."executionSnapshotChecksum",
+      lineage."outputDeliveryJson"
+    FROM "AuthoritativeFile" AS file
+    INNER JOIN "ArtifactLineage" AS lineage ON lineage."id" = file."sourceFileId"
+      AND lineage."projectId" = file."projectId"
+    INNER JOIN "ArtifactVersion" AS version ON version."id" = lineage."currentVersionId"
+      AND version."id" = file."sourceVersionId"
+    WHERE file."source" = 'artifact' AND version."state" = 'finalized'
+      AND lineage."sessionId" = ${sessionId}
+      AND ${association}
+  `)
+}
 
 const encodeCursor = (cursor: FileCursor | GroupCursor | SearchArtifactCursor): string =>
   Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')

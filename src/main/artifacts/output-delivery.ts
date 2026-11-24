@@ -23,6 +23,27 @@ type DeliveryRecord = ArtifactOutputDeliveryStatus & {
   lastDelivered?: ProjectFolderDeliveryBaseline
   receiptId?: string
 }
+
+export function parseArtifactOutputDelivery(text: string | null): DeliveryRecord | undefined {
+  if (!text) return undefined
+  const value = JSON.parse(text) as DeliveryRecord
+  if (
+    !value ||
+    value.format !== 1 ||
+    typeof value.relativePath !== 'string' ||
+    typeof value.versionId !== 'string' ||
+    !['pending', 'delivered', 'conflict', 'failed', 'cancelled'].includes(value.state)
+  )
+    throw new Error('Unsupported Artifact output delivery record.')
+  return value
+}
+
+export function isArtifactOutputDeliveryPath(directory: string, relativePath: string): boolean {
+  return (
+    relativePath.startsWith(directory + '/') &&
+    isSafeManagedFileBasename(relativePath.slice(directory.length + 1))
+  )
+}
 export type ArtifactOutputMutation = {
   projectId: string
   sessionId: string
@@ -110,18 +131,6 @@ export class ArtifactOutputDelivery {
         }).catch(() => undefined)
       }
     }
-  }
-  private parse(text: string | null): DeliveryRecord | undefined {
-    if (!text) return undefined
-    const value = JSON.parse(text) as DeliveryRecord
-    if (
-      value.format !== 1 ||
-      typeof value.relativePath !== 'string' ||
-      typeof value.versionId !== 'string' ||
-      !['pending', 'delivered', 'conflict', 'failed', 'cancelled'].includes(value.state)
-    )
-      throw new Error('Unsupported Artifact output delivery record.')
-    return value
   }
   private publicStatus(record: DeliveryRecord): ArtifactOutputDeliveryStatus {
     return {
@@ -226,7 +235,7 @@ export class ArtifactOutputDelivery {
     if (!lineage?.currentVersionId) return undefined
     const layout = await this.options.getLayout(request.projectId, lineage.sessionId)
     if (!layout) return undefined
-    const record = this.parse(lineage.outputDeliveryJson) ?? {
+    const record = parseArtifactOutputDelivery(lineage.outputDeliveryJson) ?? {
       format: 1 as const,
       state: 'pending' as const,
       versionId: lineage.currentVersionId,
@@ -296,7 +305,7 @@ export class ArtifactOutputDelivery {
     })
     const layout = await this.options.getLayout(request.projectId, lineage.sessionId)
     if (!layout) return undefined
-    const old = this.parse(lineage.outputDeliveryJson)
+    const old = parseArtifactOutputDelivery(lineage.outputDeliveryJson)
     if (!isSafeManagedFileBasename(lineage.filename))
       throw new ManagedFileVersionError(
         'INVALID_REQUEST',
@@ -306,13 +315,7 @@ export class ArtifactOutputDelivery {
       old?.relativePath ??
       join(layout.artifactDirectoryRelativePath, lineage.filename).split('\\').join('/')
     // A portable index must not be able to redirect a delivery outside its declared Session tree.
-    if (
-      !relativePath.startsWith(layout.artifactDirectoryRelativePath + '/') ||
-      relativePath.slice(layout.artifactDirectoryRelativePath.length + 1).includes('/') ||
-      !isSafeManagedFileBasename(
-        relativePath.slice(layout.artifactDirectoryRelativePath.length + 1)
-      )
-    )
+    if (!isArtifactOutputDeliveryPath(layout.artifactDirectoryRelativePath, relativePath))
       throw new ManagedFileVersionError(
         'INVALID_REQUEST',
         'Artifact output association is invalid.'

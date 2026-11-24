@@ -5,7 +5,7 @@ import type {
   OptimizationEvent
 } from '../../shared/prompt-optimization'
 import type { PromptOptimizationService } from './prompt-optimization'
-import { ProjectFolderFiles } from './project-folder-files'
+import { ProjectFolderFiles, type CreatePublishedArtifactCopyCheck } from './project-folder-files'
 import type {
   ListProjectFolderRequest,
   ProjectFolderListing,
@@ -109,6 +109,7 @@ type ProjectCrudRepository = Pick<ProjectRepository, 'list' | 'get' | 'create' |
     >
   >
 type ProjectHandlerEffects = Pick<ProjectHandlers, 'updateArchive'> & {
+  createPublishedArtifactCopyCheck?: CreatePublishedArtifactCopyCheck
   afterProjectCreate?: (project: Project) => Promise<void>
   withFolderRelocation?: <Result>(
     projectId: string,
@@ -155,7 +156,8 @@ const createProjectHandlers = (
       await deletionCoordinator.waitForProjectOperations([id])
       return repository.get(id)
     },
-    () => repository.projectRecordStorageRoot?.()
+    () => repository.projectRecordStorageRoot?.(),
+    effects.createPublishedArtifactCopyCheck
   )
   return {
     checkFolder: async (request) => {

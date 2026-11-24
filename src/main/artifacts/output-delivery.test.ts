@@ -1,4 +1,16 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile, cp } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  truncate,
+  writeFile,
+  cp
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -17,6 +29,11 @@ import { withProjectRecordIndexes } from '../projects/record-indexes'
 import { ArtifactProvenanceRepository } from './provenance-repository'
 import { createProvenanceTestFixture } from './provenance-test-fixtures'
 import { ArtifactOutputDelivery } from './output-delivery'
+import { listPublishedArtifactFolderRecords } from '../project-files/query-support'
+import {
+  createPublishedArtifactCopyCheck,
+  type ReadPublishedArtifactFolderRecords
+} from './project-folder-mention-candidates'
 
 let fixture: Awaited<ReturnType<typeof createProvenanceTestFixture>>
 let folder: string
@@ -173,6 +190,35 @@ it('publishes inline text/binary and allowed source files only after head activa
   await publish(external)
   expect(await readFile(target('external.txt'), 'utf8')).toBe('external allowed bytes')
   expect(await readFile(source, 'utf8')).toBe('external allowed bytes')
+})
+
+it('recognizes a large delivered copy after the byte-read budget expires and preserves a replacement', async () => {
+  const input = join(folder, 'original.bin')
+  await writeFile(input, '')
+  await truncate(input, 12 * 1024 * 1024)
+  await publish(await prepare(1, '', 'Report.bin', 'session-1', input))
+
+  const root = await realpath(folder)
+  const path = await realpath(target('Report.bin'))
+  const original = await stat(path)
+  const readRecords = vi.fn<ReadPublishedArtifactFolderRecords>((...scope) =>
+    listPublishedArtifactFolderRecords(fixture.client, ...scope)
+  )
+  const isCopy = createPublishedArtifactCopyCheck(
+    'project-1',
+    root,
+    fixture.storageRoot,
+    readRecords
+  )
+  const expired = AbortSignal.abort()
+  await expect(isCopy(await realpath(input), await stat(input), expired)).resolves.toBe(false)
+  expect(readRecords).not.toHaveBeenCalled()
+  await expect(isCopy(path, original, expired)).resolves.toBe(true)
+
+  // Equal filename, size and bytes at the delivery path, but a different filesystem identity.
+  await rename(path, join(folder, 'previous.bin'))
+  await cp(input, path)
+  await expect(isCopy(path, await stat(path), expired)).resolves.toBe(false)
 })
 
 it('isolates Sessions, retains the first filename spelling, and refuses late old-head retries', async () => {
