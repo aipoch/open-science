@@ -36,14 +36,31 @@ export async function bindNativeReferenceRolePage(
     raw.items
       .filter((item) => item.str.trim())
       .filter((item, i, items) => isCompactRaisedReferenceOrdinal(item, items[i + 1])).length >= 3
-  if (!bracketed && !invertedBibliography && !compactBibliography) {
+  const terminalFullNames =
+    raw.page >= document.numPages - 1 &&
+    content.items.filter(
+      (item) => 'str' in item && /^\[\d{1,4}\] \p{Lu}[\p{L}\p{M}’'–-]+/u.test(item.str)
+    ).length >= 3
+  if (!bracketed && !invertedBibliography && !compactBibliography && !terminalFullNames) {
     if (raw.page !== document.numPages) return
-    const right = raw.items.filter((item) => item.str.trim() && item.transform[4] > raw.width / 2)
-    const superscripts = right.filter((item, i) =>
-      isTightRaisedReferenceOrdinal(item, right[i + 1])
-    )
-    if (superscripts.length < 5 || superscripts.some((item, i) => Number(item.str) !== i + 1))
-      return
+    const entries = raw.items.filter((item) => item.str.trim())
+    const first = entries[0]
+    const flatOrdinals =
+      first?.str === '1'
+        ? entries.filter(
+            (item) => item.transform[4] === first.transform[4] && /^\d{1,3}$/u.test(item.str)
+          )
+        : []
+    const hangingBibliography =
+      flatOrdinals.length >= 4 && flatOrdinals.every((item, i) => Number(item.str) === i + 1)
+    if (!hangingBibliography) {
+      const right = entries.filter((item) => item.transform[4] > raw.width / 2)
+      const superscripts = right.filter((item, i) =>
+        isTightRaisedReferenceOrdinal(item, right[i + 1])
+      )
+      if (superscripts.length < 5 || superscripts.some((item, i) => Number(item.str) !== i + 1))
+        return
+    }
   }
   let endTextAtEOF = false
   let eofCurrent = (): boolean => false

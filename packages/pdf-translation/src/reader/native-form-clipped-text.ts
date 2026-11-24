@@ -124,6 +124,7 @@ export async function readNativeFormClippedText(
       ),
       matched = new Map<number, { hidden: boolean }[]>(),
       uncertain = new Set<string>(),
+      ambiguousOrigins = new Set<number>(),
       whollyClippedFonts = new Map<string, boolean>()
     // The PDF reader can combine or divide the runs of a font when exposing text.
     // A font is eligible only when every show on the page has proved clipped ink.
@@ -375,7 +376,14 @@ export async function readNativeFormClippedText(
               Math.abs(item.height - transform[3]) < 0.002
           )
         if (matches.length !== 1) {
-          uncertain.add(key)
+          // PDF.js omits some Form shows outside the page. A positioned show at a
+          // different origin cannot compete with a complete, measured occurrence.
+          for (const { item, index } of candidates)
+            if (
+              Math.abs(item.transform[4] - transform[4]) < 0.002 &&
+              Math.abs(item.transform[5] - transform[5]) < 0.002
+            )
+              ambiguousOrigins.add(index)
           continue
         }
         const source = matches[0],
@@ -425,7 +433,7 @@ export async function readNativeFormClippedText(
             g.operatorListId != null ||
             typeof g.fontChar !== 'string' ||
             !g.fontChar ||
-            (g.unicode.trim() && g.isInFont !== true)
+            (g.unicode.trim() && typeof g.isInFont !== 'boolean')
           ) {
             valid = false
             break
@@ -441,6 +449,8 @@ export async function readNativeFormClippedText(
             valid = false
             break
           }
+          // Include a measured fallback outline in the enclosure even when
+          // PDF.js marks the glyph absent from this embedded font.
           if (outline)
             boxes.push(
               bounds(
@@ -484,6 +494,7 @@ export async function readNativeFormClippedText(
           return (
             whollyClippedFonts.get(item.fontName) === true ||
             (!uncertain.has(item.fontName + '\n' + item.str) &&
+              !ambiguousOrigins.has(index) &&
               occurrences?.length === 1 &&
               occurrences[0].hidden)
           )

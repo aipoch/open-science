@@ -18,26 +18,32 @@ import {
 } from '../../src/reader/native-form-clipped-text.js'
 import { getPdfTranslationTextContent } from '../../src/reader/text-content.js'
 
-it('excludes only the complete clipped occurrence and accounts visible repeated text', async () => {
-  const document = await formPage()
-  try {
-    const result = await extractPdfTranslationSource({
-      document,
-      resourceRequestKey: 'anonymous',
-      signal: new AbortController().signal
-    })
-    expect(result.coverage.exclusions).toEqual([
-      { reason: 'occluded-native-text', items: [{ pageNumber: 1, index: 0, text: 'Panel label' }] }
-    ])
-    expect(result.coverage.includedItemCount).toBe(2)
-    expect(result.coverage.textItemCount).toBe(3)
-    expect(
-      result.source.units.flatMap((u) => u.fragments.flatMap((f) => f.items.map((i) => i.index)))
-    ).toEqual([1, 2])
-  } finally {
-    await document.destroy()
+it.each(['', 'off-page-repeat'])(
+  'excludes only the complete clipped occurrence and accounts visible repeated text (%s)',
+  async (variant) => {
+    const document = await formPage(variant)
+    try {
+      const result = await extractPdfTranslationSource({
+        document,
+        resourceRequestKey: 'anonymous',
+        signal: new AbortController().signal
+      })
+      expect(result.coverage.exclusions).toEqual([
+        {
+          reason: 'occluded-native-text',
+          items: [{ pageNumber: 1, index: 0, text: 'Panel label' }]
+        }
+      ])
+      expect(result.coverage.includedItemCount).toBe(2)
+      expect(result.coverage.textItemCount).toBe(3)
+      expect(
+        result.source.units.flatMap((u) => u.fragments.flatMap((f) => f.items.map((i) => i.index)))
+      ).toEqual([1, 2])
+    } finally {
+      await document.destroy()
+    }
   }
-})
+)
 
 it.each([
   'clipped-font',
@@ -239,6 +245,32 @@ it('retains an item whose glyph ink enters the clip despite an outside metric bo
     await document.destroy()
   }
 })
+
+it.each([true, false])(
+  'requires a complete enclosure even when a glyph is absent from the embedded font (outside=%s)',
+  async (outside) => {
+    const document = await formPage()
+    try {
+      const page = await document.getPage(1),
+        content = await getPdfTranslationTextContent(page),
+        operators = await page.getOperatorList(),
+        item = content.items[0]
+      if (!('str' in item)) throw Error('Missing source')
+      const glyph = operators.argsArray[operators.fnArray.indexOf(OPS.showText)][0][0],
+        outline = page.commonObjs.get(`${item.fontName}_path_${glyph.fontChar}`)
+      glyph.isInFont = false
+      if (!outside)
+        Object.defineProperty(outline, 'path', {
+          value: new Float32Array([0, 0, 0, 1, 0.5, 0, 1, 0.5, 3, 1, 0, 3, 4]),
+          configurable: true
+        })
+      const proof = await readNativeFormClippedText(page, content, page.getViewport({ scale: 1 }))
+      expect([...(proof?.indexes ?? [])]).toEqual(outside ? [0] : [])
+    } finally {
+      await document.destroy()
+    }
+  }
+)
 
 it('abstains when outline bytes change during asynchronous page verification', async () => {
   const document = await formPage()
