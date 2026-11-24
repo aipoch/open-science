@@ -84,7 +84,9 @@ const ExtensionPreservingFileName = ({
       update(root.getBoundingClientRect().width)
       return
     }
-    const observer = new ResizeObserver(([entry]) => update(entry.contentRect.width))
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) update(entry.contentRect.width)
+    })
     observer.observe(root)
     const fonts = root.ownerDocument.fonts
     const onFontLoaded = (): void => {
