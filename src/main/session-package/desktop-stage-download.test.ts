@@ -35,7 +35,7 @@ await (
 ).configureTestElectronHost(await import('electron'))
 
 type ExportToOptions = {
-  allowSensitiveContent?: boolean
+  onSensitiveContent?: (finding: PackageSensitiveContentError) => void
   signal: AbortSignal
   selectFiles?: (
     files: unknown[],
@@ -85,23 +85,18 @@ const dateStamp = (now = new Date()): string =>
     String(now.getDate()).padStart(2, '0')
   ].join('-')
 
-type DesktopHandle = {
-  desktop: SessionPackageDesktop
-  rememberedLastExports: unknown[]
-}
-
-const createDesktop = (exportTo: ExportTo): DesktopHandle => {
-  const rememberedLastExports: unknown[] = []
+const createDesktop = (exportTo: ExportTo): { desktop: SessionPackageDesktop } => {
   const desktop = new SessionPackageDesktop({
     service: { exportTo } as unknown as SessionPackageService,
     translate: englishNativeTranslator,
     withDataRootWrite: (work) => work(),
     afterImport: async () => undefined,
     onOperationChanged: (snapshot) => {
-      // lastExport is private and cleared on success; capture it while an export holds it.
-      const remembered = (desktop as unknown as { lastExport?: unknown }).lastExport
-      if (remembered) rememberedLastExports.push(remembered)
-      if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection')
+      if (
+        snapshot.kind === 'export' &&
+        snapshot.state === 'awaiting-selection' &&
+        snapshot.progress.phase === 'selecting'
+      )
         queueMicrotask(() => {
           void desktop.respond({
             action: 'select',
@@ -111,11 +106,8 @@ const createDesktop = (exportTo: ExportTo): DesktopHandle => {
         })
     }
   })
-  return { desktop, rememberedLastExports }
+  return { desktop }
 }
-
-const stageDownloadPolicy = (desktop: SessionPackageDesktop): boolean =>
-  (desktop as unknown as { stageDownloadForRetries: boolean }).stageDownloadForRetries
 
 afterEach(async () => {
   vi.clearAllMocks()
@@ -134,7 +126,7 @@ it('stages the .science download for stageDownload callers without a native dial
       return writeArchive(archive)
     }
   )
-  const { desktop, rememberedLastExports } = createDesktop(exportTo)
+  const { desktop } = createDesktop(exportTo)
   try {
     const first = await desktop.export(request, undefined, undefined, { stageDownload: true })
     expect(first).toMatchObject({ saved: true })
@@ -146,10 +138,6 @@ it('stages the .science download for stageDownload callers without a native dial
     expect(await readFile(firstPath, 'utf8')).toBe('package-bytes')
     // The renderer downloads this path, so main never opens the native save dialog.
     expect(dialog.showSaveDialog).not.toHaveBeenCalled()
-    expect(
-      rememberedLastExports.some((entry) => (entry as { filePath?: string }).filePath === firstPath)
-    ).toBe(true)
-    expect(stageDownloadPolicy(desktop)).toBe(true)
 
     const second = await desktop.export(request, undefined, undefined, { stageDownload: true })
     expect(second).toMatchObject({ saved: true })
@@ -162,11 +150,11 @@ it('stages the .science download for stageDownload callers without a native dial
   }
 })
 
-it('keeps the sensitive-content retry on the staged path instead of the native dialog', async () => {
+it('keeps the confirmed Web export on its browser download path', async () => {
   const exportTo = vi.fn(
     async (_request: SessionPackageRequest, archive: string, options: ExportToOptions) => {
-      if (!options.allowSensitiveContent)
-        throw new PackageSensitiveContentError(
+      options.onSensitiveContent?.(
+        new PackageSensitiveContentError(
           'session.json @0?token=synthetic-private-value',
           'token',
           buildSensitiveContentEvidence(
@@ -175,27 +163,24 @@ it('keeps the sensitive-content retry on the staged path instead of the native d
             'session.json'
           )
         )
+      )
       await selectEverything(options, 'Private Session')
       return writeArchive(archive)
     }
   )
   const { desktop } = createDesktop(exportTo)
   try {
-    await expect(
-      desktop.export(request, undefined, undefined, { stageDownload: true })
-    ).rejects.toThrow('Sensitive content detected')
-    const failed = desktop.operations.snapshot!
-    expect(failed.sensitiveContent).toHaveLength(1)
-    expect(stageDownloadPolicy(desktop)).toBe(true)
-
-    await expect(
-      desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
-    ).resolves.toMatchObject({ state: 'succeeded' })
-    // respond() passes no export options: the retry must inherit the staged policy and never
-    // fall into the headless native-dialog branch.
-    expect(stageDownloadPolicy(desktop)).toBe(true)
-    expect(exportTo).toHaveBeenCalledTimes(2)
-    expect(exportTo.mock.calls[1][2].allowSensitiveContent).toBe(true)
+    const exporting = desktop.export(request, undefined, undefined, { stageDownload: true })
+    await expect.poll(() => desktop.operations.snapshot?.sensitiveExportReview).toBeDefined()
+    const pending = desktop.operations.snapshot!
+    expect(pending.sensitiveExportReview?.destination).toBeUndefined()
+    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 1, checkboxChecked: false })
+    await desktop.respond(
+      { action: 'export-with-sensitive-content', operationId: pending.id },
+      'desktop'
+    )
+    await expect(exporting).resolves.toMatchObject({ saved: true })
+    expect(exportTo).toHaveBeenCalledOnce()
     expect(dialog.showSaveDialog).not.toHaveBeenCalled()
     const stagedPath = desktop.operations.snapshot!.result!.filePath!
     expect(dirname(dirname(dirname(stagedPath)))).toBe(stagingDirectory)
@@ -219,7 +204,6 @@ it('keeps the Electron save-dialog path when stageDownload is not requested', as
   try {
     await expect(desktop.export(request)).resolves.toEqual({ saved: true, filePath: destination })
     expect(dialog.showSaveDialog).toHaveBeenCalledOnce()
-    expect(stageDownloadPolicy(desktop)).toBe(false)
     expect(await readFile(destination, 'utf8')).toBe('package-bytes')
   } finally {
     await desktop.close()
@@ -241,7 +225,6 @@ it('keeps explicit-destination CLI exports dialog-free and outside the staging d
       filePath: destination
     })
     expect(dialog.showSaveDialog).not.toHaveBeenCalled()
-    expect(stageDownloadPolicy(desktop)).toBe(false)
     expect(await readFile(destination, 'utf8')).toBe('package-bytes')
   } finally {
     await desktop.close()
@@ -341,9 +324,10 @@ it('keeps the admitted export policy when a concurrent desktop export is rejecte
   try {
     const pending = desktop.export(request, undefined, undefined, { stageDownload: true })
     await expect(desktop.export(request)).rejects.toThrow('already in progress')
-    expect(stageDownloadPolicy(desktop)).toBe(true)
     release()
-    await pending
+    const result = await pending
+    expect(result.filePath).toContain(stagingDirectory)
+    expect(dialog.showSaveDialog).not.toHaveBeenCalled()
   } finally {
     release()
     await desktop.close()

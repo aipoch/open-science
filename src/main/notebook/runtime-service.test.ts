@@ -13492,6 +13492,23 @@ describe('v4 runtime bindings & agent tools', () => {
       expect(probedLanguages).not.toContain(language === 'python' ? 'r' : 'python')
     })
 
+    it('does not replace the Task target with a default or change an existing binding', async () => {
+      const h = await makeApprovalHarness(true)
+      const signal = new AbortController().signal
+      const selected = { ...h.request, runtimeId: h.external.envId }
+      h.external.runnable = false
+      await expect(h.service.bindTaskRuntime(selected, signal)).rejects.toThrow(/not ready/)
+      expect((await h.service.listRuntimes(h.request)).bindings[language]).toBeUndefined()
+
+      h.external.runnable = true
+      await h.service.bindTaskRuntime(selected, signal)
+      await expect(h.service.bindTaskRuntime(h.request, signal)).rejects.toThrow(/already bound/)
+      expect((await h.service.listRuntimes(h.request)).bindings[language]?.runtimeId).toBe(
+        h.external.envId
+      )
+      expect(h.terminations).toEqual([])
+    })
+
     it.each([false, true])(
       'Auto admits the verified default with multiple=%s and preserves the other binding',
       async (multiple) => {

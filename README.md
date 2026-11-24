@@ -119,7 +119,7 @@ open-science start --no-open
 open-science url
 ```
 
-Open the printed URL to complete setup, or follow the [terminal setup guide](packages/open-science/CLI.md#first-run-setup-codex). npm supports macOS ARM64/x64, glibc Linux ARM64/x64 and Windows x64; the desktop app is not required. Keep npm optional dependencies enabled and review the [Linux prerequisites and upgrade instructions](docs/standalone-runtime.md#install-from-npm). The URL contains an authentication token; keep it private.
+Open the printed URL to complete setup, or follow the [terminal setup guide](packages/open-science/CLI.md#first-run-setup). npm supports macOS ARM64/x64, glibc Linux ARM64/x64 and Windows x64; the desktop app is not required. Keep npm optional dependencies enabled and review the [Linux prerequisites and upgrade instructions](docs/standalone-runtime.md#install-from-npm). The URL contains an authentication token; keep it private.
 
 Windows reinstalls preserve research data. For a full cleanup, see the [data reset tool](scripts/windows-reset/README.md), which permanently deletes local data after confirmation.
 
@@ -154,9 +154,9 @@ The former Model settings tab is now **Local capabilities**, covering PDF extrac
 
 ### Connect your own agent through MCP
 
-If your agent can configure local MCP servers, copy this prompt into its chat:
+If your agent can configure local MCP servers, copy this setup prompt into its chat.
 
-> Follow https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp to connect this client to Open-Science and list my projects. Ask me to sign in only when an operation I request needs it.
+> Follow https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp to connect this client to Open-Science and check the Core, Research, and Literature MCP servers. Discover what the installed version supports, check whether Open-Science and its Notebook are ready, and report what is missing and the next step. Keep the browser closed during this check; ask me to sign in only when an operation I request needs it.
 
 Choose your agent to see its setup options. For clients with local command access, the Open-Science CLI is also available.
 
@@ -191,6 +191,13 @@ Connecting starts the standalone Open-Science service or reuses the one already 
 your profile. You can open the desktop app later. The published 1.3.0 CLI requires an existing
 service; with that version, open Open-Science or run `npx --yes @aipoch/open-science@1.3.0 start --no-open` first.
 
+For local file delivery, run the agent, MCP server, and Open-Science service on the same machine
+with access to the same files. The MCP process needs access to the selected profile and the
+local service's loopback connection. Use that same profile for setup, sign-in, and research.
+On headless Linux, [start the service with your configured OS credential store](docs/standalone-runtime.md#linux-prerequisites)
+before connecting MCP. See the [Notebook prerequisites](docs/standalone-runtime.md#notebook-readiness-for-agents)
+for sandbox and runtime setup.
+
 In your agent client's custom MCP settings, add a local **stdio** server. For clients that
 accept `mcpServers` JSON, use the following macOS/Linux configuration with Node.js 22.13.0
 or later and npm on the client's PATH:
@@ -198,22 +205,36 @@ or later and npm on the client's PATH:
 ```json
 {
   "mcpServers": {
-    "open-science": {
+    "open-science-core": {
       "command": "npx",
-      "args": ["--yes", "@aipoch/open-science@latest", "mcp"]
+      "args": ["--yes", "@aipoch/open-science@latest", "mcp", "--group", "core"]
+    },
+    "open-science-research": {
+      "command": "npx",
+      "args": ["--yes", "@aipoch/open-science@latest", "mcp", "--group", "research"]
+    },
+    "open-science-literature": {
+      "command": "npx",
+      "args": ["--yes", "@aipoch/open-science@latest", "mcp", "--group", "literature"]
     }
   }
 }
 ```
 
-On Windows, set `"command": "cmd.exe"` and use
-`"args": ["/d", "/c", "npx", "--yes", "@aipoch/open-science@latest", "mcp"]`
-so the client can launch npm's command shim.
+If your client edits the whole MCP configuration, merge the three `open-science-*` entries into
+its existing `mcpServers` object. Some clients, including WorkBuddy, ask you to trust the local
+servers before they will connect to them. Check the commands and arguments before trusting them.
 
-Ask your agent to **list my Open-Science projects**. A successful `list_projects` call
-confirms it can reach your profile, even if the list is empty. You can then submit a research
-task and check its results from the agent or Open-Science. See the [MCP guide](packages/open-science/CLI.md#external-agents-through-mcp)
-for custom profiles, available tools and permissions.
+On Windows, use the same three server entries with `"command": "cmd.exe"`. Each entry uses
+`["/d", "/c", "npx", "--yes", "@aipoch/open-science@latest", "mcp", "--group", "<group>"]`
+as its arguments so the client can launch npm's command shim.
+
+If you've already installed a particular build, point each MCP entry at that `open-science`
+executable with `mcp --group core`, `mcp --group research`, or `mcp --group literature`. Use the
+[MCP guide](packages/open-science/CLI.md#external-agents-through-mcp) for custom profiles and
+capability discovery. A file written inside a Notebook is a working file;
+publish it as an Artifact to download it through MCP. A `.science` package is the research handoff
+for a separate installation, where you configure your own model provider.
 
 <a id="core-capabilities"></a>
 
@@ -338,7 +359,7 @@ open-science run --project "Systematic review" \
 
 # Download a generated artifact
 open-science artifacts list <session-id> --json
-open-science artifacts download <artifact-id> --output ./report.md
+open-science artifacts download <download-id> --session <session-id> --output ./report.md
 ```
 
 See the [CLI guide](packages/open-science/CLI.md) for the full command reference, JSON/JSONL output formats, exit codes, and headless service options.

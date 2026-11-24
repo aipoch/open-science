@@ -210,7 +210,7 @@ export const loadSessionHistoryPage = (
   if (pending) return pending
   const beforeCursor = earlier ? source.historyPage?.beforeCursor : undefined
   const load = (async (): Promise<void> => {
-    const pageRequest = { projectId: request.projectId, sessionId: request.sessionId }
+    const pageRequest = { projectId: source.projectId, sessionId: source.id }
     let page: SessionHistoryPage | undefined
     let append = earlier
     try {

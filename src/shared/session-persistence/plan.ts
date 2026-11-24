@@ -52,9 +52,11 @@ export const sanitizeSessionPlanRuntimeContext = (
           'artifactChecksum',
           'document',
           'originatingPromptMessageId',
+          'originatingTaskRunId',
           'materializedAt',
           'approval',
           'reviewFeedbackMessageId',
+          'externalResponse',
           'delivery',
           'continuation',
           'stepStatuses'
@@ -81,12 +83,14 @@ export const sanitizeSessionPlanRuntimeContext = (
       : asString(value.originatingPromptMessageId)
   const materializedAt =
     value.materializedAt === undefined ? undefined : asNumber(value.materializedAt)
+  const originatingTaskRunId = asString(value.originatingTaskRunId)
   const approval = asString(value.approval) as SessionPlanApproval | undefined
   if (
     !artifactId ||
     !artifactVersionId ||
     !artifactChecksum ||
     (value.originatingPromptMessageId !== undefined && !originatingPromptMessageId) ||
+    (value.originatingTaskRunId !== undefined && !originatingTaskRunId) ||
     (value.materializedAt !== undefined && (materializedAt === undefined || materializedAt < 0)) ||
     !approval ||
     !SESSION_PLAN_APPROVALS.has(approval) ||
@@ -96,6 +100,7 @@ export const sanitizeSessionPlanRuntimeContext = (
   }
   const reviewFeedbackMessageId =
     approval === 'pending' ? asString(value.reviewFeedbackMessageId) : undefined
+  const externalResponse = sanitizeExternalPlanResponse(value.externalResponse)
 
   const stepStatuses: Record<
     string,
@@ -188,11 +193,44 @@ export const sanitizeSessionPlanRuntimeContext = (
     artifactChecksum,
     ...(document ? { document } : {}),
     ...(originatingPromptMessageId ? { originatingPromptMessageId } : {}),
+    ...(originatingTaskRunId ? { originatingTaskRunId } : {}),
     ...(materializedAt !== undefined ? { materializedAt } : {}),
     approval,
     ...(reviewFeedbackMessageId ? { reviewFeedbackMessageId } : {}),
+    ...(externalResponse ? { externalResponse } : {}),
     ...(delivery ? { delivery } : {}),
     stepStatuses
+  }
+}
+
+const sanitizeExternalPlanResponse = (
+  value: unknown
+): SessionPlanRuntimeContext['externalResponse'] => {
+  if (!isRecord(value)) return undefined
+  const { action, source, reviewedRevision } = value
+  const commandId = asString(value.commandId)
+  const promptMessageId = asString(value.promptMessageId)
+  const feedbackChecksum = asString(value.feedbackChecksum)
+  if (
+    (source !== 'user_relay' && source !== 'delegated_agent') ||
+    (action !== 'approved' && action !== 'rejected' && action !== 'revise') ||
+    typeof reviewedRevision !== 'number' ||
+    !Number.isSafeInteger(reviewedRevision) ||
+    reviewedRevision < 0 ||
+    !commandId ||
+    !promptMessageId ||
+    (action === 'revise' && !feedbackChecksum?.match(/^[a-f0-9]{64}$/))
+  ) {
+    return undefined
+  }
+  return {
+    source,
+    reviewedRevision,
+    action,
+    commandId,
+    promptMessageId,
+    ...(value.handedOff === true ? { handedOff: true as const } : {}),
+    ...(action === 'revise' && feedbackChecksum ? { feedbackChecksum } : {})
   }
 }
 
@@ -227,6 +265,7 @@ const sanitizeHistoricalPlanProjection = (
     artifactVersionId: sanitizedJson.artifactVersionId,
     artifactChecksum: sanitizedJson.artifactChecksum,
     originatingPromptMessageId,
+    originatingTaskRunId: sanitizedJson.originatingTaskRunId,
     approval: sanitizedJson.approval,
     stepStatuses: sanitizedJson.stepStatuses
   })
@@ -239,6 +278,7 @@ const sanitizeHistoricalPlanProjection = (
     return undefined
   }
   const titles = planStepTitles(document)
+  const externalResponse = sanitizeExternalPlanResponse(sanitizedJson.externalResponse)
   return {
     jsonChars,
     projection: {
@@ -246,7 +286,11 @@ const sanitizeHistoricalPlanProjection = (
       artifactVersionId: runtimePlan.artifactVersionId,
       artifactChecksum: runtimePlan.artifactChecksum,
       originatingPromptMessageId,
+      ...(runtimePlan.originatingTaskRunId
+        ? { originatingTaskRunId: runtimePlan.originatingTaskRunId }
+        : {}),
       revision,
+      ...(externalResponse ? { externalResponse } : {}),
       approval: runtimePlan.approval,
       lifecycle: derivePlanLifecycle(document, runtimePlan.approval, runtimePlan.stepStatuses),
       document,

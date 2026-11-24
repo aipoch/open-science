@@ -3,7 +3,7 @@ import { initDataRoot } from '../storage-root'
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
 import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
 // @ts-expect-error The public CLI entry is JavaScript.
-import { runTaskCommand } from '../../../packages/open-science/cli.mjs'
+import { parseCliArgs, runTaskCommand } from '../../../packages/open-science/cli.mjs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -17,7 +17,7 @@ vi.mock('electron', () => ({
 }))
 
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { LoadSessionRequest, PersistedChatSession } from '../../shared/session-persistence'
 import type { ResolveArtifactVersionDescriptorsRequest } from '../../shared/artifacts'
 import type {
   AcquireManagedPreviewRequest,
@@ -119,9 +119,10 @@ it.each(['historical', 'native'] as const)(
           const { args, callerLease } = invocation
           if (name === 'sessions:list') return { sessions: await projection.list() }
           if (name === 'sessions:load-one') {
-            const { projectId, sessionId } = args[0] as { projectId: string; sessionId: string }
+            const { projectId, sessionId } = args[0] as LoadSessionRequest
             openedSessionIds.push(sessionId)
-            return sessions.loadSession(projectId, sessionId)
+            const owner = projectId ?? (await sessions.locateSession(sessionId))?.projectId
+            return owner ? sessions.loadSession(owner, sessionId) : undefined
           }
           if (name === 'artifacts:resolve-version-descriptors') {
             return provenance.resolveVersionDescriptors(
@@ -341,7 +342,14 @@ it.each(['historical', 'native'] as const)(
       expect(openedSessionIds).toEqual([])
       const listed = await client.listArtifacts(session.id)
       expect(listed).toHaveLength(1)
-      expect(listed[0].id).toBe(version.versionId)
+      expect(listed[0]).toMatchObject({
+        id: version.versionId,
+        artifactId: version.artifactId,
+        versionId: version.versionId,
+        artifactRunId: 'run-1',
+        size: Buffer.byteLength(content),
+        sha256: version.checksum
+      })
       const httpResponse = await fetch(`${baseUrl}/api/v1/artifacts/${listed[0].id}/content`, {
         headers: { authorization: 'Bearer paired-fixture' }
       })
@@ -359,15 +367,21 @@ it.each(['historical', 'native'] as const)(
       expect(createHash('sha256').update(bytes).digest('hex')).toBe(version.checksum)
       expect(response.headers.get('content-disposition')).toContain('report.html')
       const output = join(fixture.storageRoot, 'downloaded-report.md')
-      await runTaskCommand(
-        {
-          command: 'artifacts',
-          subcommand: 'download',
-          positionals: [listed[0].id],
-          options: { output, json: true }
-        },
-        { connect: async () => client, log: () => undefined }
-      )
+      const log = vi.fn()
+      await runTaskCommand(parseCliArgs(['tools', 'call', 'download_artifact', '--json']), {
+        connect: async () => client,
+        stdinIsTTY: false,
+        readStdin: async () =>
+          JSON.stringify({
+            sessionId: session.id,
+            downloadId: listed[0].id,
+            outputPath: output
+          }),
+        log
+      })
+      expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+        result: { path: output, bytes: bytes.length, sha256: version.checksum, verified: true }
+      })
       expect(await readFile(output)).toEqual(bytes)
       expect(acquiredIds).toHaveLength(3)
       for (const resourceId of acquiredIds) {

@@ -2,6 +2,7 @@
   "ownerPaths": [
     "scripts/inspect-session-fork-snapshots.mjs",
     "scripts/inspect-session-fork-snapshots.test.ts",
+    "src/main/session-package/agent-export.integration.test.ts",
     "src/main/session-package/archive.test.ts",
     "src/main/session-package/capacity.test.ts",
     "src/main/session-package/archive.ts",
@@ -108,6 +109,7 @@
   "testFiles": {
     "owner": [
       "scripts/inspect-session-fork-snapshots.test.ts",
+      "src/main/session-package/agent-export.integration.test.ts",
       "src/main/session-package/archive.test.ts",
       "src/main/session-package/capacity.test.ts",
       "src/main/session-package/deletion.test.ts",

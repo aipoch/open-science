@@ -26,6 +26,7 @@ import {
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
+import { DelegationSettlementAdmissionError } from '../../shared/task-continuation'
 import { matchPlanDelivery } from '../session-plan/plan-delivery'
 import type { RuntimeSessionMutationOptions } from './runtime-session-mutation'
 
@@ -73,6 +74,8 @@ export type RuntimeSessionAdmission = {
     beforeSessionWrite?: () => Promise<void>
   }
   approvedHandoffContinuation?: boolean
+  // Set only for a wake emitted by Main's live child settlement dispatcher.
+  delegationSettlement?: boolean
 }
 
 export type RuntimeSessionContinuationAdmission = {
@@ -452,6 +455,51 @@ const continuationRunFor = (
   }
 }
 
+const delegationSettlementRunFor = (
+  session: PersistedChatSession,
+  scope: RuntimeSessionTurnScope,
+  now: number
+): PersistedActiveRun => {
+  const graph = session.conversationGraph
+  const previous = session.runtimeTranscriptLastRun
+  // The settlement scheduler captures the prompt's own Segment. Reliable message delivery can
+  // create a new Segment on the same branch; an older wake must not borrow that execution scope.
+  const segment = graph?.runtimeSegments.findLast(
+    ({ agentFrameId }) => agentFrameId === scope.agentFrameId
+  )
+  if (
+    !graph ||
+    graph.rootFrameId !== scope.agentFrameId ||
+    graph.activeFrameId !== scope.agentFrameId ||
+    graph.frames.find(({ id }) => id === scope.agentFrameId)?.activeBranchId !==
+      scope.messageBranchId ||
+    segment?.id !== scope.runtimeSegmentId ||
+    segment.endedAt !== undefined ||
+    previous?.promptMessageId !== scope.promptMessageId
+  )
+    throw new DelegationSettlementAdmissionError()
+  const prompt = resolveActiveConversationMessages(graph).findLast(({ role }) => role === 'user')
+  if (prompt?.id !== scope.promptMessageId) throw new DelegationSettlementAdmissionError()
+  if (hasPendingSandboxNetworkApproval(session))
+    throw new DelegationSettlementAdmissionError('network_approval_pending')
+  if (
+    prompt.turnOutcome?.kind !== 'completed' ||
+    session.activeRun ||
+    session.status !== 'idle' ||
+    session.archivedAt !== undefined ||
+    session.packageOrigin ||
+    session.resumeRecovery ||
+    session.promptPreparation ||
+    session.runtimeContext?.permission?.state === 'pending' ||
+    session.runtimeContext?.plan?.approval === 'pending'
+  )
+    throw new Error('The parent Session is not ready for a background continuation.')
+  return {
+    promptMessageId: scope.promptMessageId,
+    startedAt: Math.max(now, previous.startedAt + 1)
+  }
+}
+
 // A reliable parent delivery starts another execution of its originating turn. Its durable
 // command is the authority; a caller-supplied provenance Segment alone cannot re-arm a turn.
 const admitDelegatedMessage = (
@@ -751,9 +799,14 @@ export class RuntimeSessionOwner {
       loaded = admitApplicationPrompt(loaded, scope, admission, this.now())
       loaded = admitDelegatedMessage(loaded, scope, admission, this.now())
     }
-    const continuationRun =
-      continuationRunFor(loaded, scope, this.now(), admission.planDeliveryCommandId) ??
-      this.approvedHandoffRunFor(loaded, scope, admission)
+    const resolveContinuationRun = (
+      session: PersistedChatSession
+    ): PersistedActiveRun | undefined =>
+      admission.delegationSettlement && !sameExecution
+        ? delegationSettlementRunFor(session, scope, this.now())
+        : (continuationRunFor(session, scope, this.now(), admission.planDeliveryCommandId) ??
+          this.approvedHandoffRunFor(session, scope, admission))
+    const continuationRun = resolveContinuationRun(loaded)
     const promptRuntimeSegmentId = sameExecution
       ? previousTurn.promptRuntimeSegmentId
       : admission.delegatedMessageId
@@ -803,11 +856,9 @@ export class RuntimeSessionOwner {
       for (const { turn, batch } of priorBatches) latest = this.applyTurnEvents(latest, turn, batch)
       latest = admitApplicationPrompt(latest, scope, admission, this.now())
       latest = admitDelegatedMessage(latest, scope, admission, this.now())
-      // Re-derive against the durable record Main is about to write: only a still-parked turn may
-      // be continued, and its re-armed run has to be newer than the run it replaces.
-      const resumedRun =
-        continuationRunFor(latest, scope, this.now(), admission.planDeliveryCommandId) ??
-        this.approvedHandoffRunFor(latest, scope, admission)
+      // Recheck against the durable record Main is about to write, including the parent path for
+      // a settlement wake. A re-armed run must be newer than the run it replaces.
+      const resumedRun = resolveContinuationRun(latest)
       if (
         !admission.delegatedMessageId &&
         resolvePromptRuntimeSegmentId(latest, scope) !== promptRuntimeSegmentId
@@ -820,12 +871,14 @@ export class RuntimeSessionOwner {
         delegatedMessageId: _delegatedMessageId,
         applicationPrompt: _applicationPrompt,
         approvedHandoffContinuation: _approvedHandoffContinuation,
+        delegationSettlement: _delegationSettlement,
         ...runtimeBinding
       } = admission
       void _planDeliveryCommandId
       void _delegatedMessageId
       void _applicationPrompt
       void _approvedHandoffContinuation
+      void _delegationSettlement
       const durableAdmission = {
         executionId: scope.executionId,
         promptMessageId: scope.promptMessageId,

@@ -378,7 +378,10 @@ export const validatePackageDirectory = async (
       details.size !== entry.sizeBytes ||
       (await verifyContent(file, entry.sizeBytes, signal)).checksum !== entry.checksum
     ) {
-      throw new Error('Session package content checksum or size mismatch.')
+      // The inspection worker already preserves this archive classification across processes.
+      throw Object.assign(new Error('Session package content checksum or size mismatch.'), {
+        tarCode: 'TAR_BAD_ARCHIVE'
+      })
     }
     onProgress?.({
       phase: 'validating',

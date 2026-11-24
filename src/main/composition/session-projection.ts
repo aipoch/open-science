@@ -329,11 +329,20 @@ export function composeSessionProjection({
       )
       if (!recovery.isComplete) {
         const session = recovery.result.sessions.find(
-          (session) => session.projectId === projectId && session.id === sessionId
+          (session) =>
+            session.id === sessionId && (projectId === undefined || session.projectId === projectId)
         )
         return session && sessionPersistenceCoordinator.projectRuntimeSession(session)
       }
-      const session = await sessionRepository.loadSession(projectId, sessionId, reportReadFailure)
+      const resolvedProjectId =
+        projectId ?? (await sessionRepository.locateSession(sessionId))?.projectId
+      if (!resolvedProjectId) return undefined
+      const session = await sessionRepository.loadSession(
+        resolvedProjectId,
+        sessionId,
+        reportReadFailure
+      )
+      if (!session || (projectId !== undefined && session.projectId !== projectId)) return undefined
       const reconciled =
         session && sessionEnabledComputeHostsOwnerRef.current
           ? await sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
@@ -351,7 +360,7 @@ export function composeSessionProjection({
         sessionPersistenceCoordinator
       )
       if (!recovery.isComplete) return undefined
-      return sessionRepository.loadSessionHistoryPage(request, true)
+      return sessionRepository.loadSessionHistoryPage(request)
     },
     saveSession: async (session, options, authority) => {
       const created =

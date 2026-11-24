@@ -128,7 +128,12 @@ import {
   hasComputeLogEvidence,
   inheritedComputeChecksums
 } from './execution-evidence'
-import { ForkRecoveryRequiredError, createForkSession, nextForkTitle } from './fork-session'
+import {
+  ForkPendingApprovalError,
+  ForkRecoveryRequiredError,
+  createForkSession,
+  nextForkTitle
+} from './fork-session'
 import { preserveLocalForkWebEvidence } from '../web/fork-evidence'
 import { capturePackageHistory, type PackageHistory } from './history'
 import { assertSettledHistory, inspectSessionPackage, preview, readSession } from './inspection'
@@ -261,6 +266,7 @@ type PackageOptions = {
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
   reserveExport?: (request: SessionPackageRequest, signal: AbortSignal) => Promise<() => void>
+  assertForkExecutionAllowed?: (request: SessionPackageRequest) => void
   readImageTasks?: (scope: ImageTaskScope) => Promise<ImageTask[]>
   inspectPackage?: typeof inspectSessionPackage
   runSessionPublication?: (
@@ -274,8 +280,10 @@ type PackageOptions = {
 }
 
 type PackageExportOptions = {
-  // Per-attempt policy; the desktop owner requires explicit acknowledgement of a failed export.
+  // Internal fixture/consumer policy; no application command accepts it.
   allowSensitiveContent?: boolean
+  // Only for a candidate written to private staging, before any external publication.
+  onSensitiveContent?: (finding: PackageSensitiveContentError) => void
   selectFiles?: (
     files: PackageSelectableFile[],
     signal: AbortSignal,
@@ -518,20 +526,49 @@ const portableMessage = <T extends PersistedChatSession['messages'][number]>(mes
 // in the main conversation graph and remain exportable; the auxiliary transcripts and queue do not.
 // A similarly named key inside research evidence must still be inspected and rejected when
 // sensitive, never silently removed from the evidence.
+const portableActivity = <T extends NonNullable<PersistedChatSession['activities']>[number]>(
+  activity: T
+): T =>
+  activity.elicitation &&
+  (activity.elicitation.taskResponse ||
+    activity.elicitation.taskRequestId ||
+    activity.elicitation.taskRunId ||
+    activity.elicitation.durable?.provenanceContext?.taskRunId)
+    ? {
+        ...activity,
+        elicitation: {
+          ...activity.elicitation,
+          taskRequestId: undefined,
+          taskRunId: undefined,
+          taskResponse: undefined,
+          durable: undefined,
+          continuationPending: undefined,
+          continuationRecovery: undefined
+        }
+      }
+    : activity
+
 const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSession => ({
   ...session,
   parentSessionId: undefined,
   deletedDiscussionSourceId: undefined,
   messages: session.messages.map(portableMessage),
+  activities: session.activities?.map(portableActivity),
   conversationGraph: session.conversationGraph
     ? {
         ...session.conversationGraph,
-        messages: session.conversationGraph.messages.map(portableMessage)
+        messages: session.conversationGraph.messages.map(portableMessage),
+        activities: session.conversationGraph.activities.map(portableActivity)
       }
     : undefined,
   promptPreparation: undefined,
   providerSessionId: undefined,
   providerContinuityToken: undefined,
+  planHistoryProjections: session.planHistoryProjections?.map((plan) => ({
+    ...plan,
+    externalResponse: undefined,
+    originatingTaskRunId: undefined
+  })),
   runtimeContext: session.runtimeContext
     ? {
         ...session.runtimeContext,
@@ -540,6 +577,34 @@ const withoutPrivateAuthority = (session: PersistedChatSession): PersistedChatSe
         sideChat: undefined,
         sideChats: undefined,
         sideChatRelays: undefined,
+        ...(session.runtimeContext.delegatedWork
+          ? {
+              delegatedWork: {
+                ...session.runtimeContext.delegatedWork,
+                questionRequests: session.runtimeContext.delegatedWork.questionRequests?.map(
+                  (question) => ({ ...question, taskResponse: undefined })
+                ),
+                // Quarantine may still contain local receipts that the codec could not verify.
+                questionRequestsQuarantine: undefined
+              }
+            }
+          : {}),
+        ...(session.runtimeContext.plan &&
+        (session.runtimeContext.plan.externalResponse ||
+          session.runtimeContext.plan.originatingTaskRunId)
+          ? {
+              plan: {
+                ...session.runtimeContext.plan,
+                ...(session.runtimeContext.plan.externalResponse &&
+                session.runtimeContext.plan.delivery?.commandId ===
+                  session.runtimeContext.plan.externalResponse.commandId
+                  ? { delivery: undefined }
+                  : {}),
+                externalResponse: undefined,
+                originatingTaskRunId: undefined
+              }
+            }
+          : {}),
         // Local reading links are not part of a portable Session package.
         sessionContext: undefined
       }
@@ -563,7 +628,51 @@ const requiresPrivateAuthorityRemoval = (envelope: unknown): boolean => {
   )
     return true
   if (JSON.stringify(session).includes('session-replay:')) return true
+  if (
+    [
+      session.activities,
+      isRecord(session.conversationGraph) ? session.conversationGraph.activities : undefined
+    ].some(
+      (activities) =>
+        Array.isArray(activities) &&
+        activities.some(
+          (activity) =>
+            isRecord(activity) &&
+            isRecord(activity.elicitation) &&
+            (Object.hasOwn(activity.elicitation, 'taskRequestId') ||
+              Object.hasOwn(activity.elicitation, 'taskRunId') ||
+              (isRecord(activity.elicitation.durable) &&
+                isRecord(activity.elicitation.durable.provenanceContext) &&
+                Object.hasOwn(activity.elicitation.durable.provenanceContext, 'taskRunId')) ||
+              Object.hasOwn(activity.elicitation, 'taskResponse'))
+        )
+    )
+  )
+    return true
   const runtimeContext = session.runtimeContext
+  if (
+    isRecord(runtimeContext) &&
+    isRecord(runtimeContext.delegatedWork) &&
+    (Object.hasOwn(runtimeContext.delegatedWork, 'questionRequestsQuarantine') ||
+      (Array.isArray(runtimeContext.delegatedWork.questionRequests) &&
+        runtimeContext.delegatedWork.questionRequests.some(
+          (question) => isRecord(question) && Object.hasOwn(question, 'taskResponse')
+        )))
+  )
+    return true
+  if (
+    (isRecord(runtimeContext) &&
+      isRecord(runtimeContext.plan) &&
+      (Object.hasOwn(runtimeContext.plan, 'externalResponse') ||
+        Object.hasOwn(runtimeContext.plan, 'originatingTaskRunId'))) ||
+    (Array.isArray(session.planHistoryProjections) &&
+      session.planHistoryProjections.some(
+        (plan) =>
+          isRecord(plan) &&
+          (Object.hasOwn(plan, 'externalResponse') || Object.hasOwn(plan, 'originatingTaskRunId'))
+      ))
+  )
+    return true
   return (
     isRecord(runtimeContext) &&
     [
@@ -968,6 +1077,16 @@ export class SessionPackageService {
     if (!loaded.session.packageOrigin) assertSettledHistory(loaded.session)
     // Remove local selectors before collecting annotation file dependencies as well.
     const session = withoutPrivateAuthority(loaded.session)
+    const checkSensitive = async (scan: () => Promise<void>): Promise<void> => {
+      if (options.consumeSnapshot || options.allowSensitiveContent) return
+      try {
+        await scan()
+      } catch (error) {
+        if (!(error instanceof PackageSensitiveContentError) || !options.onSensitiveContent)
+          throw error
+        options.onSensitiveContent(error)
+      }
+    }
     const filmOrigin =
       session.packageOrigin || session.forkOrigin ? await this.readOrigin(request) : undefined
     const capturedFilms = await captureResearchFilms(
@@ -1006,17 +1125,17 @@ export class SessionPackageService {
         onProgress: options.onProgress,
         checkFile: async (path, storageKey, checksum) => {
           await assertWebShareableFile(path, webProjection, this.signal)
-          if (!options.consumeSnapshot && !options.allowSensitiveContent)
-            await assertShareableFile(path, this.signal, storageKey, storageKey, {
+          await checkSensitive(() =>
+            assertShareableFile(path, this.signal, storageKey, storageKey, {
               storageKey,
               root: directory,
               relativePath: `objects/${checksum}`,
               checksum
             })
+          )
         }
       })
-      if (!options.consumeSnapshot && !options.allowSensitiveContent)
-        await assertShareable(records, this.signal, 'records.json')
+      await checkSensitive(() => assertShareable(records, this.signal, 'records.json'))
     }
     if (session.packageOrigin && !filmOrigin?.nativeLogOrigin) {
       diagnostic.phase('validate-retained-package')
@@ -1041,8 +1160,7 @@ export class SessionPackageService {
       )
       if (manifest.source.projectId !== origin.sourceManifest.source.projectId)
         throw new Error('Session package source identity mismatch.')
-      if (!options.consumeSnapshot && !options.allowSensitiveContent)
-        await assertShareable(manifest, this.signal, 'manifest.json')
+      await checkSensitive(() => assertShareable(manifest, this.signal, 'manifest.json'))
       const sourceSessionEnvelope = await readPackageJson(join(source, 'session.json'))
       const sourceSession = await readSession(source)
       let forwardedSession = withoutPrivateAuthority(
@@ -1063,8 +1181,7 @@ export class SessionPackageService {
       )
       if (forwardedWeb) forwardedSession = projectWebSessionCopies(forwardedWeb)
       const records = projectWebRecords(sourceRecords, forwardedWeb)
-      if (!options.consumeSnapshot && !options.allowSensitiveContent)
-        await assertShareable(forwardedSession, this.signal, 'session.json')
+      await checkSensitive(() => assertShareable(forwardedSession, this.signal, 'session.json'))
       // Inspect the raw envelope so malformed legacy Side Chat data dropped by the Session
       // sanitizer cannot bypass the rewrite and be copied into the forwarded package.
       const forwardedSessionJson =
@@ -1085,8 +1202,7 @@ export class SessionPackageService {
           [...capturedFilms.files].map(([key, file]) => [remapStorageKey(key, inverseIds), file])
         )
       }
-      if (!options.consumeSnapshot && !options.allowSensitiveContent)
-        await assertShareable(records, this.signal, 'records.json')
+      await checkSensitive(() => assertShareable(records, this.signal, 'records.json'))
       const alreadyExcluded = validateExcludedFiles(records, manifest.excludedFiles)
       const notebooks = await Promise.all(
         manifest.inventory
@@ -1234,8 +1350,8 @@ export class SessionPackageService {
             }
             if (!options.consumeSnapshot)
               await assertWebShareableFile(join(source, entry.path), forwardedWeb, this.signal)
-            if (!options.consumeSnapshot && !options.allowSensitiveContent)
-              await assertShareableFile(
+            await checkSensitive(() =>
+              assertShareableFile(
                 join(source, entry.path),
                 this.signal,
                 entry.storageKey ?? entry.path,
@@ -1249,6 +1365,7 @@ export class SessionPackageService {
                     }
                   : undefined
               )
+            )
             await copyFileWithinBudget(
               join(source, entry.path),
               join(staging, entry.path),
@@ -1560,8 +1677,7 @@ export class SessionPackageService {
     if (excludedKeys.size !== excludedFiles.length)
       throw new Error('Invalid package content selection.')
     validateExcludedFiles(records, excludedFiles)
-    if (!options.consumeSnapshot && !options.allowSensitiveContent)
-      await assertShareable(sharedSession, this.signal, 'session.json')
+    await checkSensitive(() => assertShareable(sharedSession, this.signal, 'session.json'))
     const directory = await mkdtemp(
       join(
         options.consumeSnapshot ? this.options.storageRoot : tmpdir(),
@@ -1589,8 +1705,7 @@ export class SessionPackageService {
         const sourcePath = (key: string): string =>
           notebookSources.get(key) ?? resolveStorageKey(this.options.storageRoot, sourceKey(key))
         diagnostic.phase('copy-content')
-        if (!options.consumeSnapshot && !options.allowSensitiveContent)
-          await assertShareable(publicRecords, this.signal, 'records.json')
+        await checkSensitive(() => assertShareable(publicRecords, this.signal, 'records.json'))
         const totalBytes = metadataBytes
         const storageKeys = [
           ...new Set([
@@ -1740,8 +1855,8 @@ export class SessionPackageService {
               webProjection,
               this.signal
             )
-            if (!options.allowSensitiveContent)
-              await assertShareableFile(
+            await checkSensitive(() =>
+              assertShareableFile(
                 join(directory, objectPathForEntry),
                 this.signal,
                 storageKey,
@@ -1753,6 +1868,7 @@ export class SessionPackageService {
                   checksum: copied.checksum
                 }
               )
+            )
           }
           inventory.push({
             path: objectPathForEntry,
@@ -2003,12 +2119,13 @@ export class SessionPackageService {
           safe.sessionId
         )
         if (!source) throw new Error('Session not found or unreadable.')
+        this.options.assertForkExecutionAllowed?.(safe)
         if (
           source.runtimeContext?.networkApprovals?.some(({ state }) => state === 'pending') ||
           source.runtimeContext?.permission?.state === 'pending' ||
           source.runtimeContext?.plan?.approval === 'pending'
         )
-          throw new Error('Wait for pending approvals before forking this Session.')
+          throw new ForkPendingApprovalError()
         let result: SessionPackageRequest | undefined
         await this.exportNow(safe, '', {
           onProgress,
@@ -2405,7 +2522,11 @@ export class SessionPackageService {
               // Local reading links are not part of a portable Session package.
               sessionContext: undefined,
               plan: mappedSession.runtimeContext.plan
-                ? { ...mappedSession.runtimeContext.plan, delivery: undefined }
+                ? {
+                    ...mappedSession.runtimeContext.plan,
+                    delivery: undefined,
+                    externalResponse: undefined
+                  }
                 : undefined
             }
           : undefined,

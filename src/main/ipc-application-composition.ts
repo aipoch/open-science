@@ -182,6 +182,12 @@ export type ApplicationRuntimeInterfaces = {
     preference: Parameters<WindowSettingsCapabilities['setClosePreference']>[0]
   ) => Promise<void>
   taskAgent: TaskAgentPort
+  taskNotebook: Pick<
+    import('./notebook/runtime-service').NotebookRuntimeService,
+    'inspectTaskExecution'
+  >
+  taskNotebookEnvironment: import('./notebook/environment-lifecycle-workflows').ManagedNotebookSetup
+  taskNotebookRuntimes: import('./web-service/task-api').TaskNotebookRuntimes
   taskControls: TaskControlPorts
   computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>
   sessionDeletionCapability: Pick<SessionDeletion, 'setSessionDeletionHandlers'>
@@ -1066,6 +1072,9 @@ export const createApplicationModules = async (
       )
     },
     taskAgent: agentWorkflows.taskAgent,
+    taskNotebook: notebookRuntime.notebookService,
+    taskNotebookEnvironment: notebookSurfaces.notebookEnvironmentLifecycle.managedSetup,
+    taskNotebookRuntimes: notebookSurfaces.runtimeWorkflows,
     taskControls: {
       findSessionAfterCatalogHydration: (sessionId) =>
         withDataRootWrite(() => sessionProjection.findSessionAfterCatalogHydration(sessionId)),

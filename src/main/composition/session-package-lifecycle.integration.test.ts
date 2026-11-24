@@ -412,6 +412,8 @@ it.each(['export', 'fork'] as const)(
     const f = await createLifecycleFixture()
     const request = { projectId: f.scope.projectId, sessionId: f.scope.sessionId }
     const { sessionPackageDesktop } = f.surfaces()
+    const reserveSource = vi.spyOn(f.archive, 'reserveSessionExport')
+    const reservePersistence = vi.spyOn(f.persistence, 'reserveSessionExport')
     f.readImageTasks.mockImplementationOnce(async ({ projectId, sessionId }) => {
       expect(f.archive.isSessionExporting(projectId, sessionId)).toBe(true)
       await f.persistence.runSessionMutation(projectId, sessionId, async () => undefined)
@@ -443,7 +445,11 @@ it.each(['export', 'fork'] as const)(
         expect(child?.sessionId).not.toBe(request.sessionId)
         expect(await f.persistence.sessionProjectId(child!.sessionId)).toBe(request.projectId)
       }
-      expect(f.getExportOwners).toHaveBeenCalledOnce()
+      expect(reserveSource).toHaveBeenCalledOnce()
+      expect(reservePersistence).toHaveBeenCalledExactlyOnceWith(
+        request.projectId,
+        request.sessionId
+      )
       expect(f.readImageTasks).toHaveBeenCalledExactlyOnceWith(request)
       expect(f.archive.isSessionExporting(request.projectId, request.sessionId)).toBe(false)
       await expect(

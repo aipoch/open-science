@@ -9,7 +9,6 @@ import { RemoteAccessRepository } from '../remote-access/repository'
 import { requirePairingManager } from '../remote-access/ipc'
 import { remoteAccessApplicationCommandContracts } from '../../shared/remote-access'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { packWebAssets } from '../../../scripts/pack-web-assets.mjs'
 import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -48,6 +47,7 @@ import {
   type RunningWebServer
 } from './http-server'
 import { HeadlessTaskApi, TaskApiError } from './task-api'
+import { createNotebookEnvironmentLifecycle } from '../notebook/environment-lifecycle-workflows'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
@@ -55,6 +55,7 @@ import type {
   AcquireManagedPreviewRequest,
   ReadManagedPreviewRangeRequest
 } from '../../shared/preview-resources'
+import { packWebAssets } from '../../../scripts/pack-web-assets.mjs'
 
 const roots: string[] = []
 const servers: RunningWebServer[] = []
@@ -847,15 +848,9 @@ describe('startWebHttpServer', () => {
   })
 
   it('serves static resources with browser security policies', async () => {
-    const output = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
-    roots.push(output)
-    const staticRoot = join(output, 'web')
-    const input = join(output, 'source')
-    await mkdir(join(input, 'assets'), { recursive: true })
-    const asset = 'export default 42\n'.repeat(100)
-    await writeFile(join(input, 'assets/module.js'), asset)
-    await writeFile(join(input, 'index.html'), '<!doctype html><title>Web test</title>')
-    await packWebAssets(input, staticRoot)
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    await writeFile(join(staticRoot, 'index.html'), '<!doctype html><title>Web test</title>')
     await writeFile(join(staticRoot, 'app.js'), 'window.__staticTest = true')
     await writeFile(join(staticRoot, 'worker.mjs'), 'export const ready = true')
     const server = await startTestWebHttpServer({
@@ -911,21 +906,69 @@ describe('startWebHttpServer', () => {
       headers: { authorization: 'Bearer test-token' }
     })
     expect(moduleResponse.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
-    const packedUrl = `http://127.0.0.1:${server.port}/assets/module.js`
-    const headers = { authorization: 'Bearer test-token', 'accept-encoding': 'gzip' }
-    const indexPath = join(output, 'web-assets.json')
-    const index = await readFile(indexPath)
-    await rm(indexPath)
-    expect((await fetch(packedUrl, { headers })).status).toBe(503)
-    await writeFile(indexPath, index)
-    const packed = await fetch(packedUrl, { headers })
-    expect(packed.headers.get('content-encoding')).toBe('gzip')
-    expect(await packed.text()).toBe(asset)
-    const head = await fetch(packedUrl, { headers, method: 'HEAD' })
-    expect(head.headers.get('content-length')).toBe(packed.headers.get('content-length'))
+  })
+
+  it('serves packed Desktop web assets through HTTP after packaging removes the assets directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-packed-web-'))
+    roots.push(root)
+    const source = join(root, 'source')
+    const staticRoot = join(root, 'package', 'web')
+    const html = '<!doctype html><script type="module" src="/assets/app.js"></script>'
+    const script = `window.__packed = "${'a'.repeat(5_000)}"`
+    const css = 'body { color: teal; }'
+    await mkdir(join(source, 'assets'), { recursive: true })
+    await Promise.all([
+      writeFile(join(source, 'index.html'), html),
+      writeFile(join(source, 'assets', 'app.js'), script),
+      writeFile(join(source, 'assets', 'app.css'), css)
+    ])
+    await packWebAssets(source, staticRoot)
+    await expect(readFile(join(staticRoot, 'assets', 'app.js'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const headers = { authorization: 'Bearer test-token', 'accept-encoding': 'identity' }
+    for (const [path, content, mime] of [
+      ['/assets/app.js', script, 'text/javascript; charset=utf-8'],
+      ['/assets/app.css', css, 'text/css; charset=utf-8']
+    ]) {
+      const response = await fetch(`${base}${path}`, { headers })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe(mime)
+      expect(response.headers.get('cache-control')).toBe('public, max-age=31536000')
+      expect(response.headers.get('content-security-policy')).toContain("default-src 'self'")
+      expect(await response.text()).toBe(content)
+    }
+    const head = await fetch(`${base}/assets/app.js`, { method: 'HEAD', headers })
+    expect(head.status).toBe(200)
+    expect(head.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
+    expect(Number(head.headers.get('content-length'))).toBe(Buffer.byteLength(script))
     expect(await head.text()).toBe('')
-    await writeFile(join(output, 'web-assets.asar'), 'truncated')
-    expect((await fetch(packedUrl, { headers })).status).toBe(503)
+    const compressed = await fetch(`${base}/assets/app.js`, {
+      headers: { ...headers, 'accept-encoding': 'gzip' }
+    })
+    expect(compressed.headers.get('content-encoding')).toBe('gzip')
+    expect(compressed.headers.get('vary')).toBe('Accept-Encoding')
+    expect(await compressed.text()).toBe(script)
+    const navigation = await fetch(`${base}/projects/fixture`, { headers })
+    expect(navigation.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(navigation.headers.get('cache-control')).toBe('no-store')
+    expect(await navigation.text()).toBe(html)
   })
 
   it('dispatches local Web RPC through the narrow application command view', async () => {
@@ -1030,6 +1073,7 @@ describe('startWebHttpServer', () => {
       ['session-details-conflict', 409],
       ['session-revision-conflict', 409],
       ['session-package-busy', 409],
+      ['session-package-operation-conflict', 409],
       ['csl-undefined-macro', 400]
     ] as const) {
       directInvoke.mockRejectedValueOnce(
@@ -1336,7 +1380,7 @@ describe('startWebHttpServer', () => {
       rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
       rpcCapabilities: WEB_RPC_CAPABILITIES,
       rpcChannels: ['projects:list'],
-      taskCapabilities: ['permission-prompts-none']
+      taskCapabilities: ['permission-prompts-none', 'task-artifacts']
     })
 
     const compressedStatic = await fetch(`${base}/app.js`, {
@@ -3431,6 +3475,54 @@ describe('startWebHttpServer', () => {
     expect(rpc.invoke).not.toHaveBeenCalled()
   })
 
+  it('keeps Notebook continuation out of Web RPC for every local credential kind', async () => {
+    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(staticRoot)
+    const channel = 'acp:continue-notebook-execution'
+    const invoke = vi.fn(async () => ({ accepted: true }))
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'local-token',
+      staticRoot,
+      rpc: { channels: () => [channel], invoke: vi.fn(), releaseClient: vi.fn(), dispose: vi.fn() },
+      applicationCommands: {
+        localWeb: { commandNames: () => [channel], invoke },
+        remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() }
+      },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const url = `http://127.0.0.1:${server.port}`
+    const call = (headers: Record<string, string>, suffix = ''): Promise<Response> =>
+      fetch(`${url}/rpc/${encodeURIComponent(channel)}${suffix}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          args: [{ projectId: 'p1', sessionId: 's1', refusalId: 'r1', text: 'Continue.' }]
+        })
+      })
+    for (const response of [
+      await call({ cookie: 'open_science_web_token=local-token', origin: url }),
+      await call({ authorization: 'Bearer local-token' }),
+      await call({}, '?token=local-token')
+    ]) {
+      expect(response.status).toBe(404)
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        error: { code: 'method_not_found' }
+      })
+    }
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('pins the remote Web Notebook capability matrix', () => {
     const channelsFor = (prefix: string): string[] =>
       Object.entries(WEB_INVOKE_CHANNELS)
@@ -3517,7 +3609,8 @@ describe('startWebHttpServer', () => {
       .filter(([path]) => path.startsWith('acp.'))
       .map(([, channel]) => channel)
       .sort()
-    expect(acpChannels).toHaveLength(21)
+    expect(acpChannels).toHaveLength(20)
+    expect(acpChannels).not.toContain('acp:continue-notebook-execution')
     const permissionChannels = [
       'permissions:extend-undo',
       'permissions:list',
@@ -4355,6 +4448,8 @@ describe('startWebHttpServer', () => {
         lifecycle: 'awaiting_approval'
       }),
       respondSessionPlan: vi.fn().mockResolvedValue({ changed: true }),
+      supportsTaskQuestions: () => true,
+      answerQuestion: vi.fn().mockResolvedValue({ changed: true }),
       startRun: vi.fn().mockResolvedValue({
         id: 'run-1',
         sessionId: 'session-1',
@@ -4425,6 +4520,31 @@ describe('startWebHttpServer', () => {
     })
     expect(unauthorizedBootstrap.status).toBe(401)
     expect(tasks.bootstrap).toHaveBeenCalledOnce()
+
+    const cookie = { cookie: 'open_science_web_token=test-token' }
+    const browserProviderSetup = await fetch(`${base}/api/v1/bootstrap`, {
+      method: 'POST',
+      headers: cookie,
+      body: JSON.stringify({ action: 'provider-options' })
+    })
+    expect(browserProviderSetup.status).toBe(403)
+    const browserCredentialTarget = await fetch(`${base}/api/v1/bootstrap`, {
+      method: 'POST',
+      headers: cookie,
+      body: JSON.stringify({ action: 'provider-credential-target' })
+    })
+    expect(browserCredentialTarget.status).toBe(403)
+    expect(tasks.bootstrap).toHaveBeenCalledOnce()
+    const browserDiscovery = await fetch(`${base}/api/bootstrap`, { headers: cookie })
+    const browserCapabilities = (await browserDiscovery.json()).taskCapabilities
+    expect(browserCapabilities).not.toContain('provider-setup')
+    expect(browserCapabilities).not.toContain('provider-terminal-setup')
+    expect(browserCapabilities).not.toContain('task-questions')
+    expect((await sdk.health()).taskCapabilities).toEqual(
+      expect.arrayContaining(['provider-setup', 'provider-terminal-setup'])
+    )
+    expect(await sdk.bootstrap({ action: 'provider-options' })).toEqual({ ok: true })
+    expect(tasks.bootstrap).toHaveBeenLastCalledWith({ action: 'provider-options' })
 
     const doctor = await fetch(`${base}/api/v1/doctor`, { headers })
     expect(doctor.status).toBe(200)
@@ -4549,22 +4669,27 @@ describe('startWebHttpServer', () => {
     expect(await sessions.json()).toEqual({ data: [{ id: 'session/1', title: 'Review' }] })
     expect(tasks.listSessions).toHaveBeenCalledWith('project-1')
 
-    const session = await fetch(`${base}/api/v1/sessions/session%2F1`, { headers })
-    expect(await session.json()).toEqual({ data: { id: 'session/1', title: 'Review' } })
-    expect(tasks.getSession).toHaveBeenCalledWith('session/1')
-
-    const sessionConfiguration = await fetch(`${base}/api/v1/sessions/session%2F1/config`, {
+    const session = await fetch(`${base}/api/v1/sessions/session%2F1?project=project%2F1`, {
       headers
     })
+    expect(await session.json()).toEqual({ data: { id: 'session/1', title: 'Review' } })
+    expect(tasks.getSession).toHaveBeenCalledWith('session/1', 'project/1')
+
+    const sessionConfiguration = await fetch(
+      `${base}/api/v1/sessions/session%2F1/config?project=project%2F1`,
+      { headers }
+    )
     expect(await sessionConfiguration.json()).toMatchObject({ data: { revision: 3 } })
+    expect(tasks.getSessionConfiguration).toHaveBeenCalledWith('session/1', 'project/1')
     const updatedSessionConfiguration = await fetch(`${base}/api/v1/sessions/session%2F1/config`, {
       method: 'PATCH',
       headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ expectedRevision: 3, memoryEnabled: false })
+      body: JSON.stringify({ expectedRevision: 3, projectId: 'project/1', memoryEnabled: false })
     })
     expect(await updatedSessionConfiguration.json()).toMatchObject({ data: { revision: 4 } })
     expect(tasks.updateSessionConfiguration).toHaveBeenCalledWith('session/1', {
       expectedRevision: 3,
+      projectId: 'project/1',
       memoryEnabled: false
     })
 
@@ -4598,14 +4723,18 @@ describe('startWebHttpServer', () => {
       body: JSON.stringify({
         decision: 'approved',
         artifactVersionId: 'plan-version',
-        expectedRevision: 2
+        expectedRevision: 2,
+        expectedBranchId: 'branch-1',
+        source: 'user_relay'
       })
     })
     expect(await approvedPlan.json()).toEqual({ data: { changed: true } })
     expect(tasks.respondSessionPlan).toHaveBeenCalledWith('session/1', {
       decision: 'approved',
       artifactVersionId: 'plan-version',
-      expectedRevision: 2
+      expectedRevision: 2,
+      expectedBranchId: 'branch-1',
+      source: 'user_relay'
     })
 
     tasks.respondSessionPlan.mockClear()
@@ -4630,6 +4759,40 @@ describe('startWebHttpServer', () => {
       })
     }
     expect(tasks.respondSessionPlan).not.toHaveBeenCalled()
+
+    expect((await sdk.health()).taskCapabilities).toContain('task-questions')
+    const answerUrl = `${base}/api/v1/interactions/question%3Aquestion-1/answer?runId=run-1`
+    const answer = {
+      expectedRevision: 2,
+      expectedBranchId: 'branch-1',
+      source: 'user_relay',
+      action: 'accept',
+      answers: [{ fieldId: 'group', value: 'Control' }]
+    }
+    const unauthorizedAnswer = await fetch(answerUrl, {
+      method: 'POST',
+      headers: { ...cookie, 'content-type': 'application/json' },
+      body: JSON.stringify(answer)
+    })
+    expect(unauthorizedAnswer.status).toBe(403)
+    const forgedAnswer = await fetch(answerUrl, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...answer, fields: [] })
+    })
+    expect(forgedAnswer.status).toBe(400)
+    expect(tasks.answerQuestion).not.toHaveBeenCalled()
+    const acceptedAnswer = await fetch(answerUrl, {
+      method: 'POST',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify(answer)
+    })
+    expect(await acceptedAnswer.json()).toEqual({ data: { changed: true } })
+    expect(tasks.answerQuestion).toHaveBeenCalledExactlyOnceWith(
+      'question:question-1',
+      { runId: 'run-1' },
+      answer
+    )
 
     const artifacts = await fetch(`${base}/api/v1/sessions/session%2F1/artifacts`, { headers })
     expect(await artifacts.json()).toEqual({
@@ -5237,6 +5400,161 @@ describe('Web preview reconnect owner contract', () => {
   })
 })
 
+it('advertises managed Notebook setup locally and returns the outcome for the original operation', async () => {
+  const lifecycle = createNotebookEnvironmentLifecycle({
+    root: '/unused',
+    provisioner: undefined,
+    projectProgress: () => undefined
+  })
+  const tasks = new HeadlessTaskApi({
+    commands: { commandNames: () => [], invoke: async () => undefined },
+    agent: {} as never,
+    notebookEnvironment: lifecycle.managedSetup
+  })
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: '/unused',
+    tasks,
+    externalAccess: {
+      authorizeHttp: async () => accessOnlyExternalAccess(),
+      authorizeWebSocket: async () => undefined
+    },
+    rpc: { channels: () => [], invoke: async () => undefined },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: 'test',
+      configRoot: '/unused',
+      platform: 'test',
+      versions: { node: 'test' }
+    }
+  })
+  servers.push(server)
+  const baseUrl = `http://127.0.0.1:${server.port}`
+  const client = new OpenScienceClient({ baseUrl, token: 'test-token' })
+  const target = { language: 'r', operationId: 'r-setup' } as const
+  try {
+    expect((await client.health()).taskCapabilities).toContain('notebook-setup-operations')
+    const remote = new OpenScienceClient({ baseUrl, token: 'remote-token' })
+    expect((await remote.health()).taskCapabilities).not.toContain('notebook-setup-operations')
+    await expect(
+      remote.startNotebookEnvironmentOperation({ ...target, action: 'prepare' })
+    ).rejects.toMatchObject({ status: 403 })
+    await expect(client.getNotebookEnvironmentOperation(target)).resolves.toMatchObject({
+      status: 'unconfirmed'
+    })
+
+    await expect(
+      client.startNotebookEnvironmentOperation({ ...target, action: 'prepare' })
+    ).resolves.toMatchObject({
+      ...target,
+      status: 'preparing'
+    })
+    await expect(client.getNotebookEnvironmentOperation(target)).resolves.toEqual({
+      ...target,
+      action: 'prepare',
+      status: 'failed',
+      reason: 'notebook_setup_failed'
+    })
+    await expect(
+      client.startNotebookEnvironmentOperation({ ...target, action: 'repair' })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'notebook_environment_operation_conflict'
+    })
+    await expect(
+      client.cancelNotebookEnvironmentOperation({ ...target, language: 'python' })
+    ).resolves.toMatchObject({ status: 'unconfirmed' })
+  } finally {
+    await tasks.dispose()
+  }
+})
+
+it('enables only an explicitly selected available Notebook runtime on the local Task connection', async () => {
+  const existing = {
+    language: 'r',
+    envId: '/existing/bin/R',
+    interpreterPath: '/existing/bin/R',
+    label: 'External R',
+    provenance: 'user-own',
+    version: '4.5.0',
+    runnable: true
+  } as const
+  const enablement = { enabled: {} as Record<string, boolean>, installAuthorized: {} }
+  const tasks = new HeadlessTaskApi({
+    commands: { commandNames: () => [], invoke: async () => undefined },
+    agent: {} as never,
+    notebookRuntimes: {
+      listLanguageEnvironments: async (language) => (language === 'r' ? [existing] : []),
+      registerCheckedInterpreter: async ({ language, path }) =>
+        language === 'r' && path === existing.interpreterPath ? existing : undefined,
+      getEnablement: async () => enablement,
+      setEnvironmentEnabled: async ({ envId, enabled }) => {
+        enablement.enabled[envId] = enabled
+        return enablement
+      }
+    }
+  })
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: '/unused',
+    tasks,
+    externalAccess: {
+      authorizeHttp: async () => accessOnlyExternalAccess(),
+      authorizeWebSocket: async () => undefined
+    },
+    rpc: { channels: () => [], invoke: async () => undefined },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: 'test',
+      configRoot: '/unused',
+      platform: 'test',
+      versions: { node: 'test' }
+    }
+  })
+  servers.push(server)
+  const baseUrl = `http://127.0.0.1:${server.port}`
+  const local = new OpenScienceClient({ baseUrl, token: 'test-token' })
+  const remote = new OpenScienceClient({ baseUrl, token: 'remote-token' })
+  const target = { language: 'r', runtimeId: existing.envId }
+  try {
+    expect((await local.health()).taskCapabilities).toContain('notebook-runtime-selection')
+    expect((await remote.health()).taskCapabilities).not.toContain('notebook-runtime-selection')
+    await expect(remote.enableNotebookRuntime(target)).rejects.toMatchObject({ status: 403 })
+    await expect(
+      local.registerNotebookInterpreter({ language: 'r', path: '/wrong/path' })
+    ).rejects.toMatchObject({ code: 'notebook_runtime_unavailable' })
+    await expect(
+      local.registerNotebookInterpreter({ language: 'r', path: existing.interpreterPath })
+    ).resolves.toMatchObject({ ...target, enabled: false, source: 'external' })
+    await expect(
+      local.enableNotebookRuntime({ ...target, language: 'python' })
+    ).rejects.toMatchObject({ code: 'notebook_runtime_unavailable' })
+    const response = await fetch(`${baseUrl}/api/v1/notebook-runtimes`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'enable', ...target, installAuthorized: true })
+    })
+    expect(response.status).toBe(400)
+    await expect(local.listNotebookRuntimes('r')).resolves.toMatchObject([
+      { ...target, enabled: false }
+    ])
+    await expect(local.enableNotebookRuntime(target)).resolves.toMatchObject({
+      ...target,
+      enabled: true
+    })
+    await expect(local.listNotebookRuntimes('python')).resolves.toEqual([])
+    await expect(local.listNotebookRuntimes('r')).resolves.toMatchObject([
+      { ...target, enabled: true }
+    ])
+  } finally {
+    await tasks.dispose()
+  }
+})
+
 describe('Connector Task HTTP routes', () => {
   it('routes authenticated SDK reads and writes to the same Settings snapshot', async () => {
     const snapshot = {
@@ -5594,7 +5912,7 @@ it('recovers a lost submission response through the real SDK and CLI without sta
       listSessions: vi.fn(),
       getSession: vi.fn(),
       startRun: vi.fn(),
-      getRun: () => run,
+      getRun: async () => run,
       cancelRun: vi.fn(),
       listArtifacts: vi.fn(),
       acquireArtifact: vi.fn()
@@ -5635,31 +5953,22 @@ it('recovers a lost submission response through the real SDK and CLI without sta
         { requestId: 'request-receipt' }
       )
     ).rejects.toMatchObject({ code: 'timeout', requestId: 'request-receipt' })
-    expect(
-      await client.submitRun('request-receipt', {
-        project: 'project',
+    const identical = { project: 'project', prompt: 'Research', otelTraces: true }
+    const [first, duplicate] = await Promise.all([
+      client.submitRun('request-receipt', identical),
+      client.submitRun('request-receipt', {
         prompt: 'Research',
+        project: 'project',
         otelTraces: true
       })
-    ).toMatchObject({ status: 'pending' })
+    ])
+    expect(first).toMatchObject({ requestId: 'request-receipt', status: 'pending' })
+    expect(duplicate).toEqual(first)
     await expect(
-      client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
-    ).rejects.toMatchObject({ code: 'submission_conflict' })
+      client.submitRun('request-receipt', { ...identical, prompt: 'Changed study' })
+    ).rejects.toMatchObject({ code: 'submission_conflict', requestId: 'request-receipt' })
     expect(startRun).toHaveBeenCalledOnce()
-    expect(startRun).toHaveBeenCalledWith(
-      { project: 'project', prompt: 'Research', otelTraces: true },
-      'request-receipt'
-    )
-    const remote = await (await fetch(`${baseUrl}/api/bootstrap`)).json()
-    expect(remote.taskCapabilities).not.toContain('run-otel-traces')
-    expect(
-      (
-        await fetch(`${baseUrl}/api/v1/run-submissions/remote`, {
-          method: 'PUT',
-          body: JSON.stringify({ project: 'project', prompt: 'Trace', otelTraces: true })
-        })
-      ).status
-    ).toBe(403)
+    expect(startRun).toHaveBeenCalledWith(identical, 'request-receipt')
     expect((await fetch(`${baseUrl}/api/v1/run-submissions/request-receipt`)).status).toBe(403)
     finish()
     const log = vi.fn()

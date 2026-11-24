@@ -139,7 +139,10 @@ const createSessionDelegatedWorkRecords = (
           resolvedAgent: input.resolvedAgent,
           executionModel: input.executionModel,
           startedAt: input.startedAt,
-          initiatingTurnMessageId: input.initiatingTurnMessageId
+          initiatingTurnMessageId: input.initiatingTurnMessageId,
+          ...(input.taskResponse
+            ? { taskResponse: input.taskResponse, assertTaskCurrent: input.assertTaskCurrent }
+            : {})
         })
       )
     },
