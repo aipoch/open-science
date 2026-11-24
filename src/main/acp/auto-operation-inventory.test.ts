@@ -209,8 +209,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // query and cancel still require the registered action and its validated Run identity.
         // The read-only state request limits history to the ten runs its response can display.
         // Directory discovery publishes its existing result fields using the MCP default dialect.
+        // Output paging reads one persisted Run through the existing session-scoped state route.
+        // Paging and handoff extraction project results only; no Auto operation branch changed.
         'notebook/mcp-server.ts':
-          'e52fcccfae2e622414ce9a2d7124df62cabd62eb3cb54a038c71c49c480e5832',
+          '50084b6f6d7bfdc5660aa65dbe33147c52d24a0301c237f0c68fb2520fdca81a',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.

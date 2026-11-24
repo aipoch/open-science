@@ -1175,7 +1175,7 @@ describe('notebook_execute tool', () => {
     })
     expect(tool?.description).toMatch(/save the returned runId/i)
     expect(tool?.description).toContain('dependency-point query guidance')
-    expect(tool?.description).toContain('explicitly cancel')
+    expect(tool?.description).toContain('cancel with background_run')
     const receipt = {
       runId: 'run-1',
       executionType: 'python-notebook-run',
@@ -2266,7 +2266,7 @@ describe('bash_execute tool', () => {
     })
     expect(() => schema.parse({})).toThrow()
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['command', 'background', 'timeoutMs'])
-    expect(tool?.description).toContain('explicitly cancel')
+    expect(tool?.description).toContain('cancel with background_run')
     expect(tool?.description).toContain('nohup')
 
     const receipt = {
@@ -2289,10 +2289,8 @@ describe('bash_execute tool', () => {
 
   it('describes shell continuity and the boundaries that reset its state', () => {
     expect(tool?.description).toBe(BASH_EXECUTE_DOC)
-    expect(tool?.description).toContain('retain variables, exports, functions, and cwd')
-    expect(tool?.description).toContain('earlier commands are never replayed')
-    expect(tool?.description).toContain('resets state')
-    expect(tool?.description).toContain('idle reclamation resets state')
+    expect(tool?.description).toContain('share variables, exports, functions and cwd')
+    expect(tool?.description).toContain('idle reclamation reset state without replay')
   })
 
   it.each(['5.1', '7.6'] as const)(
@@ -2313,10 +2311,10 @@ describe('bash_execute tool', () => {
       expect(windowsDoc).toContain('unhandled cmdlet failure')
       expect(windowsDoc).toContain('native programs must emit UTF-8')
       expect(windowsDoc).toContain('write_artifact_file')
-      expect(windowsDoc).toContain('Do NOT copy a generated notebook output into the workspace')
+      expect(windowsDoc).toContain('Do not copy them via Shell')
       // Aligned with the relative-path artifact flow: point at the saved relative filename, not the
       // old "generated file's absolute local path" wording.
-      expect(windowsDoc).toContain('same relative filename you saved with')
+      expect(windowsDoc).toContain('Publish Notebook files by relative filename')
       expect(windowsDoc).not.toContain("generated file's absolute local path")
     }
   )

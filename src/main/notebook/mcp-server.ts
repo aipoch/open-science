@@ -334,14 +334,13 @@ const buildShellExecuteDoc = (
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, launch-context change or idle reclamation resets state; earlier commands are never replayed. Data-kernel cwd; TEMP/TMP may vanish. Handoff: ${handoffVariable}, never relative to cwd.`,
+    `Calls share variables, exports, functions and cwd per lane/runtime. Cancellation, timeout, exit, restart, context changes or idle reclamation reset state without replay. Data-kernel cwd; TEMP/TMP may vanish. Handoff: ${handoffVariable}, never relative to cwd.`,
     exitCodeContract,
-    'stdoutHandoff, when present, is the complete _handoff object parsed from stdout. Retain workflow identifiers in the tool result, not only Shell variables. After timeout/reset, read saved output with notebook_state using runIds:[runId], outputStream and outputOffset; never repeat a generation command merely to recover its result. A timeout does not establish whether a remote operation completed; reconcile its status before retrying.',
     NOTEBOOK_TOOL_REJECTION_GUIDANCE,
-    'For exitCode:null inspect status and recovery. Follow recovery retry prerequisites/guidance. Recovery describes that attempt, not current health; exitCode:null never authorizes repetition.',
-    'Foreground for needed results; background:true for independent work. Accepted background Runs survive Turn end/MCP disconnect; explicitly cancel with background_run.',
-    'Keep commands application-managed: background:true, never &, nohup, setsid, disown, Start-Process, Start-Job or equivalent detachment.',
-    'Do NOT copy a generated notebook output into the workspace here. Publish with `write_artifact_file`, using the same relative filename you saved with; it resolves against session data across platforms.',
+    'For exitCode:null follow status and recovery. Verify remote completion before retrying a timeout.',
+    'Use background:true for independent work. Accepted Runs survive turn end and disconnect; cancel with background_run.',
+    'Never detach with &, nohup, setsid, disown, Start-Process, Start-Job or equivalents.',
+    'Publish Notebook files by relative filename with `write_artifact_file`. Do not copy them via Shell.',
     'One managed command. Python/R: notebook_execute; JavaScript: repl_execute; installs: manage_packages. Never run analysis scripts, inline code or installers here.'
   ].join('\n')
 }
@@ -1018,7 +1017,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
             ? resultCompacted
               ? 'Notebook output was truncated during capture and shortened again for this agent-facing result.'
               : 'Notebook output was truncated during capture.'
-            : 'Agent-facing result shortened. Read saved output with notebook_state using runIds:[runId], outputStream:"stdout", outputOffset:0 and follow nextOffset. Do not repeat the original operation to retrieve its result.'
+            : 'Agent-facing result shortened. Read saved output with notebook_state using runIds:[runId], outputStream:"stdout", outputOffset:0 and follow nextOffset. Preserve workflow identifiers from stdoutHandoff or the saved stream for later steps. Do not repeat the original operation to retrieve its result.'
         }
       : {})
   }
@@ -1831,8 +1830,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   {
     name: 'notebook_state',
     title: 'Get notebook state',
-    description:
-      'Return compact session state. To recover saved output after truncation or a Shell reset, pass exactly one runIds entry and outputStream (stdout, stderr, traceback), with outputOffset (UTF-16 characters, default 0) and outputLimit (default 2000). Follow nextOffset until the needed content is read. Reads never execute code. Capture-truncated output cannot be recovered beyond what was saved.',
+    description: 'Get session state or page saved output by run ID and stream. Follow nextOffset.',
     method: 'state',
     inputSchema: {
       runIds: z.array(z.string().min(1).max(256)).length(1).optional(),
