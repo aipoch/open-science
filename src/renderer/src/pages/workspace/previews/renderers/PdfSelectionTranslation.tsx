@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Languages, X } from 'lucide-react'
+import { Cpu, X } from 'lucide-react'
 import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 import { ErrorNotice } from '@/components/error-notice'
+import { useSettingsStore } from '@/stores/settings-store'
+import { ProviderKindIcon } from '@/pages/settings/provider-icons'
+import { providerKindKey } from '@/pages/settings/provider-form-value'
+import { resolveProviderEffectiveModel } from '../../../../../../shared/provider-reasoning-effort'
 import { Button } from '@/components/ui/button'
 import { PopoverContent } from '@/components/ui/popover'
 import {
@@ -11,8 +15,7 @@ import {
   SelectGroup,
   SelectItem,
   SelectLabel,
-  SelectTrigger,
-  SelectValue
+  SelectTrigger
 } from '@/components/ui/select'
 import {
   defaultTargetLanguage,
@@ -90,7 +93,17 @@ function TranslationResult({
       role="status"
       className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed"
     >
-      {result?.text ?? t('Translating…')}
+      {result ? (
+        result.text
+      ) : (
+        <>
+          <span className="sr-only">{t('Translating…')}</span>
+          <div aria-hidden="true" className="space-y-2 py-1.5 motion-safe:animate-pulse">
+            <div className="h-2.5 w-full rounded-full bg-muted" />
+            <div className="h-2.5 w-2/3 rounded-full bg-muted" />
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -111,15 +124,44 @@ export function PdfSelectionTranslation({
   const [selected, setSelected] = useState({ key: 'main', model: mainModel })
   const [attempt, setAttempt] = useState(0)
   const language = defaultTargetLanguage(i18n.resolvedLanguage ?? navigator.language)
+  const activeModel = useSettingsStore((state) => state.activeModel)
+  const mainProvider = catalog.providers.find((entry) => entry.id === catalog.activeProviderId)
+  const mainModelName = resolveProviderEffectiveModel(mainProvider, activeModel)
+  const picked = selected.model.agentModel ?? selected.model.apiModel
+  const provider = picked
+    ? catalog.providers.find((entry) => entry.id === picked.providerId)
+    : mainProvider
+  const model = picked ? picked.modelId : mainModelName
+  const label = [provider?.name, model].filter(Boolean).join(' · ') || t('Main model')
+  const icon = provider ? (
+    <ProviderKindIcon
+      kindKey={providerKindKey(provider.type, provider.vendorId)}
+      className="size-4"
+    />
+  ) : (
+    <Cpu className="size-4 shrink-0" aria-hidden="true" />
+  )
   return (
     <PopoverContent
       align="start"
       collisionPadding={8}
       aria-label={t('Translation')}
-      className="annotation-popover z-[110] flex w-80 flex-col gap-2.5 rounded-xl p-3"
+      className="annotation-popover z-[110] flex w-80 flex-col gap-2 rounded-xl px-3 pb-1.5 pt-3"
     >
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Languages aria-hidden="true" className="size-4 shrink-0" />
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+        <TranslationResult
+          key={JSON.stringify([selectionId, selected.key, language, attempt])}
+          text={text}
+          selectionId={selectionId}
+          language={language}
+          model={selected.model}
+          retry={() => setAttempt((n) => n + 1)}
+        />
+        <Button variant="ghost" size="icon-xs" aria-label={t('Close')} onClick={onClose}>
+          <X />
+        </Button>
+      </div>
+      <div className="flex min-w-0 items-center border-t border-border/60 pt-1">
         <Select
           value={selected.key}
           onValueChange={(key) => {
@@ -146,45 +188,70 @@ export function PdfSelectionTranslation({
             })
           }}
         >
-          <SelectTrigger aria-label={t('Model')} className="h-7 min-w-0 flex-1 text-xs">
-            <SelectValue />
+          <SelectTrigger
+            aria-label={t('Model')}
+            title={label}
+            className="h-7 w-auto min-w-0 max-w-full justify-start gap-1.5 border-0 bg-transparent px-1.5 text-xs text-muted-foreground"
+          >
+            {icon}
+            <span className="truncate">
+              {provider && model && <>{provider.name} · </>}
+              <span className="font-medium text-foreground">{model ?? label}</span>
+            </span>
           </SelectTrigger>
-          <SelectContent className="z-[120]" onEscapeKeyDown={(event) => event.stopPropagation()}>
-            <SelectItem value="main">{t('Main model')}</SelectItem>
-            {agentModels.length > 0 && (
-              <SelectGroup>
-                <SelectLabel>{t('Agent')}</SelectLabel>
-                {agentModels.map((entry) => (
-                  <SelectItem key={entry.key} value={'agent:' + entry.key}>
-                    {entry.providerName} · {entry.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            )}
-            {apiModels.length > 0 && (
-              <SelectGroup>
-                <SelectLabel>{t('Direct API')}</SelectLabel>
-                {apiModels.map((entry) => (
-                  <SelectItem key={entry.key} value={'api:' + entry.key}>
-                    {entry.providerName} · {entry.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
+          <SelectContent
+            align="start"
+            className="z-[120] w-72 max-w-[var(--radix-select-content-available-width)] [&_[data-slot=select-item]>span]:truncate"
+            onEscapeKeyDown={(event) => event.stopPropagation()}
+          >
+            <SelectGroup>
+              {mainProvider && <SelectLabel>{t('Main model')}</SelectLabel>}
+              <SelectItem
+                value="main"
+                icon={
+                  mainProvider ? (
+                    <ProviderKindIcon
+                      kindKey={providerKindKey(mainProvider.type, mainProvider.vendorId)}
+                      className="size-4"
+                    />
+                  ) : (
+                    <Cpu aria-hidden="true" className="size-4" />
+                  )
+                }
+              >
+                {[mainProvider?.name, mainModelName].filter(Boolean).join(' · ') || t('Main model')}
+              </SelectItem>
+            </SelectGroup>
+            {[
+              { route: 'agent', label: t('Agent'), models: agentModels },
+              { route: 'api', label: t('Direct API'), models: apiModels }
+            ].map(
+              ({ route, label, models }) =>
+                models.length > 0 && (
+                  <SelectGroup key={route}>
+                    <SelectLabel>{label}</SelectLabel>
+                    {models.map((entry) => (
+                      <SelectItem
+                        key={entry.key}
+                        value={route + ':' + entry.key}
+                        icon={
+                          <ProviderKindIcon
+                            kindKey={providerKindKey(entry.providerType, entry.vendorId)}
+                            className="size-4"
+                          />
+                        }
+                      >
+                        {entry.model
+                          ? entry.providerName + ' · ' + entry.label
+                          : entry.providerName}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )
             )}
           </SelectContent>
         </Select>
-        <Button variant="ghost" size="icon-xs" aria-label={t('Close')} onClick={onClose}>
-          <X />
-        </Button>
       </div>
-      <TranslationResult
-        key={JSON.stringify([selectionId, selected.key, language, attempt])}
-        text={text}
-        selectionId={selectionId}
-        language={language}
-        model={selected.model}
-        retry={() => setAttempt((n) => n + 1)}
-      />
     </PopoverContent>
   )
 }

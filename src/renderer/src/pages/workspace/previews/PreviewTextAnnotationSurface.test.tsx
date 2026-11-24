@@ -1104,6 +1104,8 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(begin).toHaveBeenCalledWith(
       expect.objectContaining({ targetId: 'agent', sources: ['confidence intervals overlap'] })
     )
+    expect(screen.getByRole('status').textContent).toBe('Translating…')
+    expect(screen.getByRole('combobox', { name: 'Model' })).toBeTruthy()
     expect(begin.mock.calls[0][0]).not.toHaveProperty('agentModel')
     expect(begin.mock.calls[0][0]).not.toHaveProperty('documentSource')
     expect(translate).toHaveBeenCalledWith({
