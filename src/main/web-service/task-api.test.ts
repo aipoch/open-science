@@ -98,6 +98,7 @@ type TaskAgentMock = {
 >
 
 const createAgent = (overrides: Partial<TaskAgentMock> = {}): TaskAgentMock => ({
+  assertAttachedTracingReady: vi.fn(async () => undefined),
   withSessionAvailable: async (_projectId, _sessionId, operation) => operation(),
   listAttachedSessionIds: vi.fn<TaskAgentPort['listAttachedSessionIds']>(async () => []),
   createSession: vi.fn<TaskAgentPort['createSession']>(async () => ({
@@ -3165,7 +3166,17 @@ describe('HeadlessTaskApi adapter', () => {
       if (channel === 'preview-resources:release') return undefined
       throw new Error(`Unexpected Task command: ${channel}`)
     })
-    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+    const findArtifactSessions = vi.fn(async () => [
+      { projectId: project.id, sessionId: session.id }
+    ])
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(invoke),
+      agent: createAgent(),
+      controls: {
+        specialists: { resolve: async (id) => ({ id }) },
+        findArtifactSessions
+      }
+    })
 
     await expect(
       api.createProject({ name: 'Created', agentContext: 'Always cite sources.' })
@@ -3188,6 +3199,7 @@ describe('HeadlessTaskApi adapter', () => {
     })
     await expect(api.listArtifacts(session.id)).resolves.toEqual(session.artifacts)
     const acquired = await api.acquireArtifact('artifact-query')
+    expect(findArtifactSessions).toHaveBeenCalledWith('artifact-query')
     expect(acquired).toMatchObject({
       resourceId: 'resource-query',
       name: 'query.csv'

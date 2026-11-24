@@ -1383,6 +1383,13 @@ class SessionRepository {
     let locator = await this.ensureSessionLocator()
     let entry = locator.entries.find((candidate) => candidate.sessionId === sessionId)
     if (!entry && !this.sessionLocatorRemovedSessionIds.has(sessionId)) {
+      const ownership = await this.readSessionIdentityOwners(sessionId)
+      if (
+        ownership.isComplete &&
+        ownership.projectIds.length === 1 &&
+        (await isSessionPackagePending(this.storageDir, ownership.projectIds[0]))
+      )
+        return undefined
       const rebuild = (this.sessionLocatorMissingEntryRebuild ??=
         this.rebuildSessionLocator('missing-entry'))
       locator = await rebuild
@@ -1398,6 +1405,7 @@ class SessionRepository {
       locator = await this.rebuildSessionLocator('stale')
       entry = locator.entries.find((candidate) => candidate.sessionId === sessionId)
     }
+    if (entry && (await isSessionPackagePending(this.storageDir, entry.projectId))) return undefined
     return entry
   }
 

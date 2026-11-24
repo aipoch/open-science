@@ -97,6 +97,7 @@ export function composeSessionProjection({
     recoveredSessions?: PersistedChatSession[]
     sessions: SessionSummary[]
   }>
+  findSessionAfterCatalogHydration: (sessionId: string) => Promise<SessionSummary | undefined>
   sessionPersistenceBackend: ReturnType<typeof coordinateSessionPersistenceWithProjectDeletions>
 } {
   const log = createLogger('session-network-approval')
@@ -258,6 +259,16 @@ export function composeSessionProjection({
     )
     return startupProjection
   }
+  const findSessionAfterCatalogHydration = async (
+    sessionId: string
+  ): Promise<SessionSummary | undefined> => {
+    // Share the initial build if it is still running. If it settled after a partial read,
+    // consult the current authority rather than relying on the retained startup snapshot.
+    const catalog = await (startupProjectionSettled
+      ? ensureSessionProjection()
+      : beginStartupProjection())
+    return catalog.sessions.find((session) => session.id === sessionId)
+  }
   const listSessionProjection = async (): Promise<{
     projection: SessionProjectionLoad
     catalogHydrationPending: boolean
@@ -311,7 +322,7 @@ export function composeSessionProjection({
       await settingsService.classification.flushUsage()
       return sessionRepository.loadSessionUsageProjection()
     },
-    loadOne: async ({ projectId, sessionId }) => {
+    loadOne: async ({ projectId, sessionId, reportReadFailure }) => {
       const recovery = await recoverProjectDeletionsForSessionRead(
         projectDeletionCoordinator,
         sessionPersistenceCoordinator
@@ -326,7 +337,11 @@ export function composeSessionProjection({
       const resolvedProjectId =
         projectId ?? (await sessionRepository.locateSession(sessionId))?.projectId
       if (!resolvedProjectId) return undefined
-      const session = await sessionRepository.loadSession(resolvedProjectId, sessionId)
+      const session = await sessionRepository.loadSession(
+        resolvedProjectId,
+        sessionId,
+        reportReadFailure
+      )
       if (!session || (projectId !== undefined && session.projectId !== projectId)) return undefined
       const reconciled =
         session && sessionEnabledComputeHostsOwnerRef.current
@@ -551,6 +566,7 @@ export function composeSessionProjection({
     beginStartupProjection,
     createDeferredRecovery,
     ensureSessionProjection,
+    findSessionAfterCatalogHydration,
     sessionPersistenceBackend
   }
 }

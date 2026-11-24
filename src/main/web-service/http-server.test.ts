@@ -3482,6 +3482,7 @@ describe('startWebHttpServer', () => {
     ).toEqual([
       'notebook:abort-code-cell',
       'notebook:append-code-cell',
+      'notebook:background-tasks',
       'notebook:begin-code-cell',
       'notebook:cancel-background-run',
       'notebook:execute',
@@ -3498,6 +3499,7 @@ describe('startWebHttpServer', () => {
       'notebook:restart',
       'notebook:retry-resource-release',
       'notebook:run-cell',
+      'notebook:run-evidence',
       'notebook:run-index',
       'notebook:shutdown',
       'notebook:state'

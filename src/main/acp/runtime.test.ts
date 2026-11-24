@@ -27989,6 +27989,10 @@ describe('ACP runtime session management', () => {
                   return { providers: [], agentFrameworkId: framework.id, agentFrameworks: [] }
                 case 'sessions:load-all':
                   return sessions.loadAllReadOnly()
+                case 'sessions:load-one': {
+                  const { projectId, sessionId } = arg as { projectId: string; sessionId: string }
+                  return repository.loadSession(projectId, sessionId)
+                }
                 case 'sessions:save-session': {
                   const candidate = arg as PersistedChatSession
                   const saved = await sessions.saveSession(

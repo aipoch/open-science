@@ -8,7 +8,7 @@ import {
   writeDurableJsonFile
 } from '@aipoch/durable-files'
 import type {
-  StartTaskRunRequest,
+  SubmitTaskRunRequest,
   TaskNotebookContinuation,
   TaskNotebookContinuationRequest,
   TaskRun,
@@ -98,7 +98,7 @@ export class TaskSubmissions {
     configRoot: string,
     private readonly dependencies: {
       loadRuns(): Promise<TaskRunJournalEntry[]>
-      startRun(request: StartTaskRunRequest, requestId: string): Promise<TaskRun>
+      startRun(request: SubmitTaskRunRequest, requestId: string): Promise<TaskRun>
       now?: () => number
       capacity?: number
     }
@@ -174,7 +174,7 @@ export class TaskSubmissions {
     return next
   }
 
-  async submit(requestId: string, request: StartTaskRunRequest): Promise<TaskSubmission> {
+  async submit(requestId: string, request: SubmitTaskRunRequest): Promise<TaskSubmission> {
     if (!request || typeof request !== 'object' || Array.isArray(request))
       throw new TaskRunnerError('invalid_request', 'Run request must be an object.')
     return this.submitPrepared(requestId, request, (prepared) =>

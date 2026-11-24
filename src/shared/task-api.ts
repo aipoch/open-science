@@ -28,6 +28,14 @@ import type {
   SubagentModelConfiguration
 } from './settings'
 
+export class TaskRunTracingError extends Error {
+  constructor(
+    message = 'Set OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT to a full HTTP(S) traces URL and check the OTLP headers or credentials for that configuration. Restart the backend and retry --otel-traces.'
+  ) {
+    super(message)
+  }
+}
+
 export type TaskAgentRuntime = Readonly<{
   framework: AgentFrameworkId
   status: ReadinessStatus
@@ -210,6 +218,8 @@ export type StartTaskRunRequest = {
   /** Enabled execution targets; selected ids must be a subset. Used by Project defaults. */
   enabledComputeHostIds?: string[]
 }
+
+export type SubmitTaskRunRequest = StartTaskRunRequest & { otelTraces?: true }
 
 export type TaskRunAttention =
   | { kind: 'plan-approval'; plan: ActivePlanProjection }

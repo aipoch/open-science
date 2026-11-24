@@ -349,8 +349,13 @@ export class SessionPackageDeletion {
         signal.throwIfAborted()
         const project = entry.name
         await assertPackageSourcePath(root, project)
-        // This is navigation state, not a Project directory or research authority.
-        if (rootName === 'sessions' && project === 'manifest.json' && entry.isFile()) continue
+        // Navigation and lookup indexes contain no research history.
+        if (
+          rootName === 'sessions' &&
+          ['manifest.json', 'session-locator.json'].includes(project) &&
+          entry.isFile()
+        )
+          continue
         if (!entry.isDirectory()) return undefined
         const directory = join(root, project)
         const names = (await readdir(directory)).sort()

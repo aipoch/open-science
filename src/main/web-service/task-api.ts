@@ -72,6 +72,7 @@ import type {
 import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
+  SubmitTaskRunRequest,
   TaskAgentRouting,
   TaskAgentRuntime,
   TaskDoctorReport,
@@ -423,6 +424,17 @@ class HeadlessTaskApi {
           ) as Promise<Project>
       },
       sessions: {
+        findArtifact: async (artifactId) => {
+          const candidates = this.ports.controls?.findArtifactSessions
+          if (!candidates) throw new Error('Task artifact lookup is unavailable.')
+          for (const candidate of await candidates(artifactId)) {
+            const session = (await this.invoke('sessions:load-one', candidate)) as
+              PersistedChatSession | undefined
+            const artifact = session?.artifacts?.find((item) => item.id === artifactId)
+            if (session && artifact) return { session, artifact }
+          }
+          return undefined
+        },
         list: async () => {
           const result = (await this.invoke('sessions:load-all')) as {
             sessions: PersistedChatSession[]
@@ -458,6 +470,14 @@ class HeadlessTaskApi {
         get: () => this.invoke('settings:get-settings') as Promise<SettingsSnapshot>
       },
       agent: {
+        ...(this.ports.agent.assertAttachedTracingReady
+          ? {
+              assertAttachedTracingReady: (sessionId: string) =>
+                this.withCurrentCaller(() =>
+                  this.ports.agent.assertAttachedTracingReady!(sessionId)
+                )
+            }
+          : {}),
         withSessionAvailable: (projectId, sessionId, operation) =>
           this.withCurrentCaller(() =>
             this.ports.agent.withSessionAvailable(projectId, sessionId, operation)
@@ -2501,7 +2521,7 @@ class HeadlessTaskApi {
 
   submitRun(
     requestId: string,
-    request: StartTaskRunRequest
+    request: SubmitTaskRunRequest
   ): Promise<import('../../shared/task-api').TaskSubmission> {
     if (request?.interactionMode === 'delegate' || request?.notebookRuntime !== undefined)
       this.requireTaskRelay()

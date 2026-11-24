@@ -1186,11 +1186,7 @@ export class OpenScienceClient {
     options: { nonInteractive: true },
     rpcOptions?: RequestOptions
   ): Promise<{ projectId: string; sessionId: string } | null>
-  submitRun(
-    requestId: string,
-    request: RunRequest,
-    options?: RequestOptions
-  ): Promise<Submission>
+  submitRun(requestId: string, request: RunRequest, options?: RequestOptions): Promise<Submission>
   continueNotebook(
     requestId: string,
     request: NotebookContinuationRequest,
@@ -1210,7 +1206,6 @@ export class OpenScienceClient {
     options: RequestOptions & { requestId: string }
   ): Promise<Run>
   startRun(request: RunRequest & { otelTraces?: never }, options?: RequestOptions): Promise<Run>
-  ): Promise<Run>
   getRun(runId: string, options?: RequestOptions): Promise<Run>
   /** Explicitly cancels the server run and waits for finalization. */
   cancelRun(runId: string, options?: RequestOptions): Promise<Run>

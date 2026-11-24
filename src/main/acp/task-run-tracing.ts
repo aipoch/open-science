@@ -1,5 +1,5 @@
 import { setTimeout as wait } from 'node:timers/promises'
-import { TaskRunTracingError } from '../tasks/task-control-ports'
+import { TaskRunTracingError } from '../../shared/task-api'
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { HARNESS_TRACE_READINESS_METHOD } from '../harness-acp/config'

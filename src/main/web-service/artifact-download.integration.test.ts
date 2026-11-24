@@ -17,7 +17,7 @@ vi.mock('electron', () => ({
 }))
 
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { LoadSessionRequest, PersistedChatSession } from '../../shared/session-persistence'
 import type { ResolveArtifactVersionDescriptorsRequest } from '../../shared/artifacts'
 import type {
   AcquireManagedPreviewRequest,
@@ -119,9 +119,10 @@ it.each(['historical', 'native'] as const)(
           const { args, callerLease } = invocation
           if (name === 'sessions:list') return { sessions: await projection.list() }
           if (name === 'sessions:load-one') {
-            const { projectId, sessionId } = args[0] as { projectId: string; sessionId: string }
+            const { projectId, sessionId } = args[0] as LoadSessionRequest
             openedSessionIds.push(sessionId)
-            return sessions.loadSession(projectId, sessionId)
+            const owner = projectId ?? (await sessions.locateSession(sessionId))?.projectId
+            return owner ? sessions.loadSession(owner, sessionId) : undefined
           }
           if (name === 'artifacts:resolve-version-descriptors') {
             return provenance.resolveVersionDescriptors(

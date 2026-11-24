@@ -276,6 +276,7 @@ export type PackageOperationSnapshot = {
   cleanupPending?: boolean
   transferBytesPerSecond?: number
   ioBytesPerSecond?: number
+  exportBlocked?: boolean
 }
 
 export const packageOperationRequestSchema = z
@@ -669,7 +670,8 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .optional(),
     cleanupPending: z.boolean().optional(),
     transferBytesPerSecond: transferRateSchema.optional(),
-    ioBytesPerSecond: z.number().nonnegative().optional()
+    ioBytesPerSecond: z.number().nonnegative().optional(),
+    exportBlocked: z.boolean().optional()
   })
   .strict()
 export const sessionPackageCommandContracts = {

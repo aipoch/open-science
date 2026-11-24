@@ -1,3 +1,4 @@
+import { TaskRunTracingError } from './task-control-ports'
 import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { constants } from 'node:fs'
 import { access, realpath, stat } from 'node:fs/promises'
@@ -80,6 +81,7 @@ import type {
   AcquiredTaskArtifact,
   CreateTaskProjectRequest,
   StartTaskRunRequest,
+  SubmitTaskRunRequest,
   TaskProject,
   TaskProjectSessionDefaults,
   TaskRun,
@@ -133,6 +135,10 @@ type TaskSessionReadRequest = {
 }
 
 type TaskSessionPort = {
+  find?(sessionId: string): Promise<PersistedChatSession | undefined>
+  findArtifact?(
+    artifactId: string
+  ): Promise<{ session: PersistedChatSession; artifact: PersistedArtifact } | undefined>
   list(): Promise<PersistedChatSession[]>
   get?(request: TaskSessionReadRequest): Promise<PersistedChatSession | undefined>
   save(session: PersistedChatSession): Promise<PersistedChatSession>
@@ -193,6 +199,7 @@ type TaskAgentSession = {
 }
 
 type TaskAgentCreateSessionRequest = {
+  otelTraces?: true
   projectId: string
   permissionProfile: PermissionProfileId
   cwd?: string
@@ -202,6 +209,7 @@ type TaskAgentCreateSessionRequest = {
 }
 
 type TaskAgentResumeSessionRequest = {
+  otelTraces?: true
   sessionId: string
   providerSessionId?: string
   providerContinuityToken?: string
@@ -218,6 +226,7 @@ type TaskAgentResumeSessionRequest = {
 }
 
 type TaskAgentPromptRequest = {
+  otelTraces?: true
   permissionPrompts?: 'none'
   sessionId: string
   taskRunId?: string
@@ -239,6 +248,7 @@ type TaskAgentPromptObserver = {
 }
 
 type TaskAgentPort = {
+  assertAttachedTracingReady?(sessionId: string): Promise<void>
   delegateInteractions?: import('../delegation/durable-delegated-work-contract').TaskDelegateInteractions
   questions?: {
     list(sessionId: string): import('../acp/elicitation-owner').LiveTaskQuestion[]
@@ -1308,11 +1318,13 @@ class TaskRunner {
   }
 
   async acquireArtifact(artifactId: string): Promise<TaskArtifactLease> {
-    const sessions = await this.dependencies.sessions.list()
-    const candidates = sessions.flatMap((session) =>
-      (session.artifacts ?? []).map((artifact) => ({ session, artifact }))
-    )
-    const owner = candidates.find((candidate) => candidate.artifact.id === artifactId)
+    const owner = this.dependencies.sessions.findArtifact
+      ? await this.dependencies.sessions.findArtifact(artifactId)
+      : (await this.dependencies.sessions.list())
+          .flatMap((session) =>
+            (session.artifacts ?? []).map((artifact) => ({ session, artifact }))
+          )
+          .find((candidate) => candidate.artifact.id === artifactId)
     if (!owner?.artifact) {
       throw new TaskRunnerError('artifact_not_found', `Artifact not found: ${artifactId}`)
     }
@@ -1356,7 +1368,7 @@ class TaskRunner {
   }
 
   async startRun(
-    request: StartTaskRunRequest,
+    request: SubmitTaskRunRequest,
     requestId?: string,
     continuation?: Omit<NotebookTaskContinuationOperation, 'assertCurrent'> & {
       originalRunId: string
@@ -1367,6 +1379,12 @@ class TaskRunner {
     this.assertAcceptingRuns()
     if (!request || typeof request !== 'object') {
       throw new TaskRunnerError('invalid_request', 'Run request must be an object.')
+    }
+    if (request.otelTraces !== undefined && (!requestId || request.otelTraces !== true)) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'otelTraces must be true and requires a local durable Run submission.'
+      )
     }
     if (typeof request.project !== 'string' || !request.project.trim()) {
       throw new TaskRunnerError('invalid_request', 'Project is required.')
@@ -1693,28 +1711,33 @@ class TaskRunner {
         }
         return { prepared, session, run }
       }
-      if (existing) {
-        accepted = await this.dependencies.agent.withSessionAvailable(
-          project.id,
-          existing.id,
-          async () => acceptPrepared(await prepare())
-        )
-      } else if (normalizedRequest.computeHostIds !== undefined) {
-        accepted = await this.dependencies.computePreferences.withReservation(
+      const prepareWithReservation = async (): Promise<typeof accepted> => {
+        if (normalizedRequest.computeHostIds === undefined || (existing && !request.otelTraces))
+          return acceptPrepared(await prepare())
+        return this.dependencies.computePreferences.withReservation(
           normalizedRequest.computeHostIds,
           async (computeHostIds) => {
             normalizedRequest = { ...normalizedRequest, computeHostIds }
             return acceptPrepared(await prepare(normalizedRequest))
           }
         )
+      }
+      if (existing) {
+        accepted = await this.dependencies.agent.withSessionAvailable(
+          project.id,
+          existing.id,
+          prepareWithReservation
+        )
       } else {
-        accepted = await acceptPrepared(await prepare())
+        accepted = await prepareWithReservation()
       }
     } catch (error) {
       if (existing) this.releaseSession(existing.id, runId)
       if (error instanceof ComputeHostPreferenceValidationError) {
         throw new TaskRunnerError('invalid_request', error.message)
       }
+      if (error instanceof TaskRunTracingError)
+        throw new TaskRunnerError('invalid_configuration', error.message)
       if (error instanceof ArchiveAvailabilityError) {
         throw new TaskRunnerError(
           error.code === 'project-archived' ? 'project_archived' : 'session_archived',
@@ -2246,7 +2269,7 @@ class TaskRunner {
   private async prepareSession(
     project: Project,
     existing: PersistedChatSession | undefined,
-    request: StartTaskRunRequest,
+    request: SubmitTaskRunRequest,
     prompt: string,
     userMessageId: string
   ): Promise<{
@@ -2281,7 +2304,7 @@ class TaskRunner {
     const autoReviewEnabled = request.autoReviewEnabled ?? existing?.autoReviewEnabled ?? false
     const delegationPolicy: DelegationPolicy =
       request.delegationPolicy ?? existing?.delegationPolicy ?? 'allow'
-    if (existing && request.computeHostIds !== undefined) {
+    if (existing && request.computeHostIds !== undefined && !request.otelTraces) {
       existing = await this.dependencies.computePreferences.set(existing.id, request.computeHostIds)
     }
     let sessionInfo: TaskAgentSession
@@ -2293,6 +2316,10 @@ class TaskRunner {
         !existing.agentConfiguration &&
         !existing.agentBackendId
       ) {
+        if (request.otelTraces) {
+          if (!this.dependencies.agent.assertAttachedTracingReady) throw new TaskRunTracingError()
+          await this.dependencies.agent.assertAttachedTracingReady(existing.id)
+        }
         await this.dependencies.agent.setPermissionProfile(existing.id, permissionProfile)
         await this.dependencies.agent.setMemoryEnabled(
           existing.id,
@@ -2308,6 +2335,7 @@ class TaskRunner {
         }
       } else {
         sessionInfo = await this.dependencies.agent.resumeSession({
+          ...(request.otelTraces ? { otelTraces: true } : {}),
           sessionId: existing.id,
           cwd: existing.cwd,
           projectId: project.id,
@@ -2337,6 +2365,7 @@ class TaskRunner {
         )
       }
       sessionInfo = await this.dependencies.agent.createSession({
+        ...(request.otelTraces ? { otelTraces: true } : {}),
         projectId: project.id,
         permissionProfile,
         ...(request.cwd ? { cwd: request.cwd } : {}),
@@ -2350,6 +2379,12 @@ class TaskRunner {
 
     this.assertAcceptingRuns()
     if (existing) {
+      if (request.computeHostIds !== undefined && request.otelTraces) {
+        existing = await this.dependencies.computePreferences.set(
+          existing.id,
+          request.computeHostIds
+        )
+      }
       const cwd = sessionInfo.cwd ?? existing.cwd
       const agentFrameworkId = sessionInfo.frameworkId ?? existing.agentFrameworkId
       const agentBackendId = sessionInfo.backendId ?? existing.agentBackendId
@@ -2504,7 +2539,7 @@ class TaskRunner {
   private async executeRun(
     run: MutableTaskRun,
     session: PersistedChatSession,
-    request: StartTaskRunRequest,
+    request: SubmitTaskRunRequest,
     prompt: string,
     historyPreamble?: string,
     contextReset?: boolean,
@@ -2529,6 +2564,7 @@ class TaskRunner {
         {
           sessionId: session.id,
           taskRunId: run.id,
+          ...(request.otelTraces ? { otelTraces: true } : {}),
           promptMessageId,
           provenanceContext,
           text: prompt,
@@ -3482,6 +3518,7 @@ class TaskRunner {
       if (session || projectId === undefined) return session
       return this.dependencies.sessions.get({ sessionId })
     }
+    if (this.dependencies.sessions.find) return this.dependencies.sessions.find(sessionId)
     return (await this.dependencies.sessions.list()).find((candidate) => candidate.id === sessionId)
   }
 

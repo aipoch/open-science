@@ -1550,8 +1550,11 @@ describe('production delegated-work composition', () => {
         new HeadlessTaskApi(
           {
             commands: {
-              commandNames: () => ['sessions:load-all'],
-              invoke: async () => ({ sessions: [harness.durable()] })
+              commandNames: () => ['sessions:load-all', 'sessions:load-one'],
+              invoke: async (channel) =>
+                channel === 'sessions:load-one'
+                  ? harness.durable()
+                  : { sessions: [harness.durable()] }
             },
             notebook,
             agent: {
@@ -3139,9 +3142,10 @@ describe('production delegated-work composition', () => {
       new HeadlessTaskApi(
         {
           commands: {
-            commandNames: () => ['sessions:load-all'],
+            commandNames: () => ['sessions:load-all', 'sessions:load-one'],
             invoke: async (channel: string) => {
               if (channel === 'sessions:load-all') return { sessions: [harness.durable()] }
+              if (channel === 'sessions:load-one') return harness.durable()
               throw new Error(`Unexpected command: ${channel}`)
             }
           },
@@ -3334,9 +3338,10 @@ describe('production delegated-work composition', () => {
     const api = new HeadlessTaskApi(
       {
         commands: {
-          commandNames: () => ['sessions:load-all'],
+          commandNames: () => ['sessions:load-all', 'sessions:load-one'],
           invoke: async (channel: string) => {
             if (channel === 'sessions:load-all') return { sessions: [harness.durable()] }
+            if (channel === 'sessions:load-one') return harness.durable()
             throw new Error(`Unexpected command: ${channel}`)
           }
         },

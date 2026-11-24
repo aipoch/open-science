@@ -249,6 +249,27 @@ describe('session persistence repository (per-session files)', () => {
     await expect(repository.locateSession(session.id)).resolves.toBeUndefined()
   })
 
+  it('keeps pending imports hidden in warm and restarted Session locators', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    await repository.saveSession(createSession())
+    const importId = 'a3ad8350-0011-4c89-8001-800000000001'
+    const pending = join(root, 'session-package-imports', importId)
+    await mkdir(pending, { recursive: true })
+    const imported = createSession({ id: 'imported-session', projectId: `import-${importId}` })
+    await repository.saveSession(imported)
+    const restarted = new SessionRepository(root)
+    await expect(repository.locateSession(imported.id)).resolves.toBeUndefined()
+    await expect(restarted.locateSession(imported.id)).resolves.toBeUndefined()
+    await rm(pending, { recursive: true })
+    await expect(repository.locateSession(imported.id)).resolves.toMatchObject({
+      projectId: imported.projectId
+    })
+    await expect(restarted.locateSession(imported.id)).resolves.toMatchObject({
+      projectId: imported.projectId
+    })
+  })
+
   it('keeps the authoritative Session save when locator maintenance fails', async () => {
     const root = await createStorageRoot()
     const failure = Object.assign(new Error('locator disk failure'), { code: 'EIO' })

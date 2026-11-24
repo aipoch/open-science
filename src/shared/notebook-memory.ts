@@ -1,6 +1,13 @@
 // Live policy/notification data only. These values never belong to run.json or portable packages.
 export type NotebookMemoryPolicyDiagnostic = 'linux-procfs' | 'linux-cgroup-visibility'
 
+export type NotebookMemoryCgroupConstraint = Readonly<{
+  path: string
+  currentBytes: number
+  maxBytes?: number
+  highBytes?: number
+}>
+
 export type NotebookMemoryPolicyState = Readonly<{
   status: 'healthy' | 'pressured' | 'unavailable'
   reason: string
@@ -12,7 +19,10 @@ export type NotebookMemoryPolicyState = Readonly<{
   sampleAgeMs?: number
   retryAfterMs?: number
   recoveryRemainingMs?: number
+  remainingThresholdRatio?: number
   pressureLevel?: 'normal' | 'warning' | 'critical'
+  limitingCgroupPath?: string
+  cgroupConstraints?: NotebookMemoryCgroupConstraint[]
   availableBytes?: number
   totalBytes?: number
   committedBytes?: number

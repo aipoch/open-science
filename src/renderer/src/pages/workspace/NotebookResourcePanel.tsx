@@ -1,6 +1,15 @@
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUpRight } from 'lucide-react'
+import {
+  ArrowUpRight,
+  BookOpen,
+  ChevronRight,
+  Clock3,
+  MemoryStick,
+  RefreshCw,
+  Square
+} from 'lucide-react'
 
 import type {
   NotebookProjectResources,
@@ -27,8 +36,8 @@ import {
 import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
-import { formatDisplayNumber } from '@/lib/locale-format'
-import { isDesktopRenderer } from '@/lib/interface-scale'
+import { ComputePanel } from './ComputePanel'
+import { formatComputeUptime } from './compute-monitor-presentation'
 import { formatByteSize } from '@/lib/utils'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 
@@ -168,60 +177,93 @@ const ResourceDetails = ({
     ready: t('Ready'),
     'cleanup-pending': t('Cleanup pending')
   }[resource.phase]
-  const bytes = (value: number | undefined): string => formatByteSize(value) ?? t('Unknown')
+  const residentMemory = formatByteSize(
+    memory.metric === 'rss' ? memory.rssBytes : memory.workingSetBytes
+  )
+  const duration =
+    resource.startedAt === undefined
+      ? undefined
+      : formatComputeUptime((observedAt - resource.startedAt) / 1000, t)
+  const partial = memory.coverage === 'partial'
+  const phaseColor = {
+    idle: 'bg-muted-foreground/60',
+    ready: 'bg-status-success-foreground dark:bg-status-success-dark-foreground',
+    running: 'bg-status-info-foreground dark:bg-status-info-dark-foreground',
+    starting: 'bg-status-info-foreground dark:bg-status-info-dark-foreground',
+    'cleanup-pending': 'bg-status-warning-foreground dark:bg-status-warning-dark-foreground'
+  }[resource.phase]
   return (
-    <li className="min-w-0 space-y-1 rounded-md bg-bg-10 px-3 py-2 [overflow-wrap:anywhere]">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="font-medium">
-          {resourceLabel(resource, t)}
-          {resource.environment ? ` · ${resource.environment}` : ''}
-        </span>
-        <span className="rounded bg-bg-100 px-2 py-0.5 text-[10px]">{phase}</span>
-      </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-100">
-        {resource.laneKey ? <span>{t('Lane: {{lane}}', { lane: resource.laneKey })}</span> : null}
-        <span>
-          {t('Started: {{time}}', {
-            time:
-              resource.startedAt === undefined ? t('Unknown') : formatDateTime(resource.startedAt)
-          })}
-        </span>
-        <span>
-          {t('Runtime: {{duration}}', {
-            duration:
-              resource.startedAt === undefined
-                ? t('Unknown')
-                : formatDisplayNumber(
-                    Math.max(0, Math.floor((observedAt - resource.startedAt) / 60_000)),
-                    {
-                      style: 'unit',
-                      unit: 'minute',
-                      unitDisplay: 'short'
-                    }
-                  )
-          })}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-100">
-        {memory.metric === 'rss' ? (
-          <span>{t('RSS: {{value}}', { value: bytes(memory.rssBytes) })}</span>
-        ) : (
-          <>
-            <span>{t('Private Bytes: {{value}}', { value: bytes(memory.privateBytes) })}</span>
-            <span>{t('Working Set: {{value}}', { value: bytes(memory.workingSetBytes) })}</span>
-          </>
-        )}
-        <span>
-          {memory.coverage === 'complete'
-            ? t('Complete data')
-            : memory.coverage === 'partial'
-              ? t('Partial data')
-              : t('Unknown')}
-        </span>
-        {memory.sampledAt !== undefined && (
-          <span>{t('Sampled: {{time}}', { time: formatDateTime(memory.sampledAt) })}</span>
-        )}
-      </div>
+    <li className="min-w-0">
+      <details className="group/resource">
+        <summary className="grid cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-2 gap-y-1 rounded-md px-2 py-2 outline-none hover:bg-muted/60 focus-visible:keyboard-focus [&::-webkit-details-marker]:hidden">
+          <ChevronRight
+            aria-hidden="true"
+            className="size-3 self-center text-muted-foreground transition-transform motion-reduce:transition-none group-open/resource:rotate-90"
+          />
+          <span className="font-medium [overflow-wrap:anywhere]">
+            {resourceLabel(resource, t)}
+            {resource.environment ? ` · ${resource.environment}` : ''}
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${phaseColor}`} />
+            {phase}
+          </span>
+          {(duration || residentMemory) && (
+            <span className="col-span-2 col-start-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
+              {residentMemory && (
+                <span className="inline-flex items-center gap-1" title={t('Memory usage')}>
+                  <MemoryStick aria-hidden="true" className="size-3.5" />
+                  <span className="sr-only">{t('Memory usage')} </span>
+                  {residentMemory}
+                  {partial && <> · {t('Partial data')}</>}
+                </span>
+              )}
+              {duration && (
+                <span className="inline-flex items-center gap-1" title={t('Elapsed time')}>
+                  <Clock3 aria-hidden="true" className="size-3" />
+                  <span className="sr-only">{t('Elapsed time')} </span>
+                  {duration}
+                </span>
+              )}
+            </span>
+          )}
+        </summary>
+        <div className="mx-2 mb-2 ml-3.5 space-y-1 border-l border-border pl-4 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+          {resource.laneKey && <p>{t('Lane: {{lane}}', { lane: resource.laneKey })}</p>}
+          {resource.startedAt !== undefined && (
+            <p>{t('Started: {{time}}', { time: formatDateTime(resource.startedAt) })}</p>
+          )}
+          {memory.metric === 'rss' ? (
+            <p>{t('RSS: {{value}}', { value: residentMemory ?? t('Unknown') })}</p>
+          ) : (
+            <>
+              <p>{t('Working Set: {{value}}', { value: residentMemory ?? t('Unknown') })}</p>
+              <p>
+                {t('Private Bytes: {{value}}', {
+                  value: formatByteSize(memory.privateBytes) ?? t('Unknown')
+                })}
+              </p>
+            </>
+          )}
+          <p>
+            {memory.coverage === 'complete'
+              ? t('Complete data')
+              : partial
+                ? t('Partial data')
+                : t('Unknown')}
+          </p>
+          {memory.sampledAt !== undefined && (
+            <p>{t('Sampled: {{time}}', { time: formatDateTime(memory.sampledAt) })}</p>
+          )}
+          {memory.metric === 'rss' && residentMemory && (
+            <p>
+              {t(
+                'RSS may include shared pages and does not predict how much memory will be released.'
+              )}
+            </p>
+          )}
+        </div>
+      </details>
     </li>
   )
 }
@@ -326,7 +368,7 @@ const NotebookResourcePanel = ({
         : t('Notebook resources released')
 
   return (
-    <section aria-labelledby="notebook-resources-title" className="space-y-3">
+    <div className="space-y-3">
       {readError !== undefined && (
         <ErrorNotice
           inline
@@ -358,23 +400,31 @@ const NotebookResourcePanel = ({
           dismissButton={{ label: t('Dismiss'), onClick: () => setError(undefined) }}
         />
       ) : null}
-      <div className="overflow-hidden rounded-lg border border-border-200 bg-bg-000">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-200 px-3.5 py-3">
-          <h2 id="notebook-resources-title" className="text-sm font-semibold">
-            {t('Notebook resources')}
+      <ComputePanel
+        title={t('Notebook resources')}
+        icon={BookOpen}
+        description={
+          <>
+            {t('Current project')}
             {observedAt !== undefined && (
               <> · {t('Sessions: {{sessions}}', { sessions: snapshot.groups.length })}</>
             )}
-          </h2>
-          <Button type="button" size="sm" variant="ghost" onClick={refresh}>
-            {t('Refresh')}
+          </>
+        }
+        action={
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            className="text-muted-foreground"
+            aria-label={t('Refresh Notebook resources')}
+            title={t('Refresh Notebook resources')}
+            onClick={refresh}
+          >
+            <RefreshCw aria-hidden="true" />
           </Button>
-        </div>
-        <p className="px-3.5 py-2 text-[11px] text-text-100">
-          {t(
-            'Only Notebooks in the current project are listed. Switch projects to manage other Notebooks.'
-          )}
-        </p>
+        }
+      >
         {snapshot.groups.length === 0 && readError === undefined && (
           <p role="status" className="px-3 py-6 text-center text-xs text-text-100">
             {observedAt === undefined ? t('Loading…') : t('No running Notebooks')}
@@ -384,10 +434,15 @@ const NotebookResourcePanel = ({
           <section
             key={group.sessionId}
             aria-label={sessionTitle(group.sessionId)}
-            className="space-y-3 border-t border-border-200 px-3.5 py-3 text-xs first:border-t-0"
+            className="space-y-2 border-b border-border px-4 py-3 text-xs last:border-b-0"
           >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="min-w-0 font-semibold">{sessionTitle(group.sessionId)}</h3>
+            <div className="flex items-center gap-1">
+              <h3
+                className="min-w-0 truncate text-sm font-medium"
+                title={sessionTitle(group.sessionId)}
+              >
+                {sessionTitle(group.sessionId)}
+              </h3>
               <Button
                 type="button"
                 size="icon-xs"
@@ -403,8 +458,24 @@ const NotebookResourcePanel = ({
               >
                 <ArrowUpRight aria-hidden="true" />
               </Button>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                className="ml-auto"
+                title={t('Stop and release Notebook')}
+                aria-label={t('Stop and release Notebook')}
+                disabled={Boolean(group.releaseBlockedReason)}
+                aria-describedby={
+                  group.releaseBlockedReason ? `release-blocked-${group.sessionId}` : undefined
+                }
+                onClick={() => setConfirmation(group)}
+              >
+                <Square aria-hidden="true" />
+                {t('Stop')}
+              </Button>
             </div>
-            <ul className="space-y-2">
+            <ul className="divide-y divide-border/60 rounded-md bg-muted/40">
               {group.resources.map((resource) => (
                 <ResourceDetails
                   key={resource.id}
@@ -413,15 +484,6 @@ const NotebookResourcePanel = ({
                 />
               ))}
             </ul>
-            <p className="text-text-100">
-              {t('Interpreters: {{interpreters}}', {
-                interpreters: group.resources.filter(
-                  (resource) => resource.group === 'kernel' || resource.group === 'shell'
-                ).length
-              })}
-              {' · '}
-              {t('Resources: {{resources}}', { resources: group.resources.length })}
-            </p>
             {backgroundRuns
               .filter((run) => run.sessionId === group.sessionId)
               .map((run) => (
@@ -429,19 +491,6 @@ const NotebookResourcePanel = ({
                   {t('Background')} · {run.title}
                 </p>
               ))}
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-auto max-w-full whitespace-normal text-left"
-              disabled={Boolean(group.releaseBlockedReason)}
-              aria-describedby={
-                group.releaseBlockedReason ? `release-blocked-${group.sessionId}` : undefined
-              }
-              onClick={() => setConfirmation(group)}
-            >
-              {t('Stop and release Notebook')}
-            </Button>
             {group.releaseBlockedReason ? (
               <p id={`release-blocked-${group.sessionId}`} className="text-text-100">
                 {releaseBlockedLabel(group.releaseBlockedReason, t)}
@@ -449,10 +498,7 @@ const NotebookResourcePanel = ({
             ) : null}
           </section>
         ))}
-        <p className="border-t border-border-200 px-3.5 py-2 text-[11px] text-text-100">
-          {t('RSS may include shared pages and does not predict how much memory will be released.')}
-        </p>
-      </div>
+      </ComputePanel>
 
       {decisions.size > 0 ? (
         <section aria-labelledby="notebook-decisions-title" className="space-y-2">
@@ -652,7 +698,7 @@ const NotebookResourcePanel = ({
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
-    </section>
+    </div>
   )
 }
 
