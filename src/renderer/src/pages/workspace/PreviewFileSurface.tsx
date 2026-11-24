@@ -2229,6 +2229,17 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           ? MANAGED_PDF_PREVIEW_MENU_RECIPE
           : MANAGED_PREVIEW_MENU_RECIPE
     const previewActionTargetId = 'preview-file-content'
+    const docxVersionNavigation =
+      !provenanceFocused &&
+      !lineageFailed &&
+      mode === 'view' &&
+      canEditDocx &&
+      managedNavigationInspect ? (
+        <ManagedVersionNavigation
+          inspect={managedNavigationInspect}
+          onSelect={selectManagedVersion}
+        />
+      ) : undefined
 
     return (
       <ActionMenuProvider
@@ -2530,17 +2541,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   />
                   <VersionHistoryLoadButton history={managedWorkflow.history} />
                 </>
-              ) : !provenanceFocused &&
-                mode === 'view' &&
-                canEditDocx &&
-                managedNavigationInspect ? (
-                <>
-                  <ManagedVersionNavigation
-                    inspect={managedNavigationInspect}
-                    onSelect={selectManagedVersion}
-                  />
-                  <VersionHistoryLoadButton history={managedWorkflow.history} />
-                </>
+              ) : docxVersionNavigation ? (
+                <VersionHistoryLoadButton history={managedWorkflow.history} />
               ) : !provenanceFocused &&
                 !managedIdentity &&
                 lineage &&
@@ -2814,6 +2816,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                       <PreviewFileContent
                         key={previewContentKey}
                         item={contentItem}
+                        docxVersionNavigation={docxVersionNavigation}
                         onImageEditorVersionChange={reportImageEditorVersion}
                         onPinImageSource={() => applyVersionItem(contentItem, true)}
                         downloadVersionContext={managedWorkflow.downloadVersionContext}

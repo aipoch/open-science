@@ -8377,8 +8377,6 @@
     "Before edit": "편집 전",
     "Comparison position": "비교 구분선 위치",
     "Compare with input image": "입력 이미지와 비교",
-    "Active kernels, active Compute Jobs, and Compute Jobs completed in the last 48 hours.": "활성 커널, 활성 Compute Job 및 최근 48시간 내에 완료된 Compute Job입니다.",
-    "This agent has no native auto mode. Open-Science auto-approves only edits to files inside the workspace — commands, network, and MCP tools still ask.": "이 에이전트는 자체 자동 모드를 지원하지 않습니다. Open-Science는 워크스페이스 안의 파일 편집만 자동으로 승인하며, 명령, 네트워크, MCP 도구는 계속 확인을 요청합니다.",
     "Save before sending a selection.": "선택 영역을 보내기 전에 저장하세요.",
     "This selection could not be anchored safely.": "이 선택 영역을 안전하게 고정할 수 없습니다.",
     "This selection could not be added to the conversation.": "이 선택 영역을 대화에 추가할 수 없습니다.",

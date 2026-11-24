@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { waitFor } from '@testing-library/react'
 import JSZip from 'jszip'
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PlateEditor } from 'platejs/react'
@@ -49,10 +49,14 @@ vi.mock('./ArtifactProvenancePanel', () => ({
 }))
 
 vi.mock('./previews/PreviewFileContent', () => ({
-  PreviewFileContent: (props: { item: PreviewFileItem }) => {
+  PreviewFileContent: (props: {
+    item: PreviewFileItem
+    docxVersionNavigation?: ReactNode
+  }) => {
     previewContentSpy(props)
     return (
       <div data-testid="preview-content" data-path={props.item.path}>
+        {props.docxVersionNavigation}
         Word preview content
       </div>
     )

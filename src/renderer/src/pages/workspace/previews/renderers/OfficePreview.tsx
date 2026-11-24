@@ -1,3 +1,4 @@
+import '../docx-version-layout.css'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { FileWarning } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -171,10 +172,12 @@ const RemoteOfficePreviewContent = ({
   source,
   staged,
   slideRequest,
-  onSlideView
+  onSlideView,
+  reserveVersionSpace = false
 }: {
   item: PreviewFileItem
   source: OfficePreviewSource
+  reserveVersionSpace?: boolean
   staged?: StagedOfficePreview
   slideRequest?: OfficeSlideRequest
   onSlideView?: (view: OfficePreviewSlideView) => void
@@ -442,6 +445,18 @@ const RemoteOfficePreviewContent = ({
     frameRef.current?.contentWindow?.postMessage(message, OFFICE_PREVIEW_RUNTIME_ORIGIN)
   }, [frame, stagedKey, state.kind])
 
+  useEffect(() => {
+    if (!frame || extension !== 'docx' || state.kind !== 'ready') return
+    const message: OfficePreviewHostMessage = {
+      channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+      version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+      type: 'version-space',
+      sessionId: frame.sessionId,
+      reserved: reserveVersionSpace
+    }
+    frameRef.current?.contentWindow?.postMessage(message, OFFICE_PREVIEW_RUNTIME_ORIGIN)
+  }, [extension, frame, reserveVersionSpace, state.kind])
+
   const requestedSlide = slideRequest?.slideIndex
   const requestSerial = slideRequest?.serial
   // A reopened frame must not replay a jump the user has since navigated away from.
@@ -531,10 +546,12 @@ export const OfficePreviewContent = ({
   source = 'artifact',
   staged,
   slideRequest,
-  onSlideView
+  onSlideView,
+  reserveVersionSpace = false
 }: {
   item: PreviewFileItem
   source?: PreviewFileSource
+  reserveVersionSpace?: boolean
   staged?: StagedOfficePreview
   slideRequest?: OfficeSlideRequest
   onSlideView?: (view: OfficePreviewSlideView) => void
@@ -568,12 +585,34 @@ export const OfficePreviewContent = ({
       item={item}
       source={source}
       staged={staged}
+      reserveVersionSpace={reserveVersionSpace}
       slideRequest={slideRequest}
       onSlideView={onSlideView}
     />
   )
 }
 
-export const OfficePreviewRenderer = ({ item }: PreviewFileRendererProps): React.JSX.Element => (
-  <OfficePreviewContent item={item} source={item.source} />
-)
+export const OfficePreviewRenderer = ({
+  item,
+  docxVersionNavigation
+}: PreviewFileRendererProps): React.JSX.Element => {
+  const content = (
+    <OfficePreviewContent
+      item={item}
+      source={item.source}
+      reserveVersionSpace={Boolean(docxVersionNavigation)}
+    />
+  )
+  return item.format === 'word' ? (
+    <div className="docx-versioned-preview">
+      {docxVersionNavigation && (
+        <div key="version" className="docx-version-slot">
+          {docxVersionNavigation}
+        </div>
+      )}
+      <div className="min-h-0 flex-1">{content}</div>
+    </div>
+  ) : (
+    content
+  )
+}

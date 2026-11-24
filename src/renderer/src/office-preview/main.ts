@@ -1,5 +1,6 @@
 import '../assets/main.css'
 import './office-preview.css'
+import '../pages/workspace/previews/docx-version-layout.css'
 
 import { connectOfficePreviewRuntime } from './office-preview-controller'
 import { createOfficePreviewFrameBridge } from './office-preview-frame-bridge'
@@ -30,7 +31,11 @@ const openOfficeFind = (): boolean => {
 }
 
 // The cross-site frame uses structured messages; no Electron API is exposed inside the runtime.
-const bridge = createOfficePreviewFrameBridge({ runtimeWindow: window, sessionId })
+const bridge = createOfficePreviewFrameBridge({
+  runtimeWindow: window,
+  sessionId,
+  onVersionSpace: (reserved) => container.toggleAttribute('data-version-space', reserved)
+})
 bridge.onFind(() => {
   openOfficeFind()
 })

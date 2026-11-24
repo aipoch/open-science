@@ -63,6 +63,9 @@ export async function createBackendBuilder({
 } = {}) {
   const out = join(root, desktop ? 'out/desktop-backend-build' : 'out/backend')
   const external = desktop ? desktopExternalClosure(root) : undefined
+  // Rebuilds must not retain artifacts from a previous mode/build, especially desktop source maps
+  // after switching the production desktop bundle to sourcemap-free output.
+  await rm(out, { recursive: true, force: true })
   await mkdir(out, { recursive: true })
   const workers = new Map()
   const contexts = new Map()
@@ -80,7 +83,9 @@ export async function createBackendBuilder({
         format: 'cjs',
         ...(desktop ? {} : { packages: 'external' }),
         metafile: true,
-        sourcemap: true,
+        // Desktop bundles are shipped as production artifacts; source maps add tens of megabytes
+        // without being consumed by the packaged runtime. Keep them for the standalone/CLI build.
+        sourcemap: !desktop,
         loader: { '.md': 'text' },
         define: {
           'import.meta.url': '__entryUrl',

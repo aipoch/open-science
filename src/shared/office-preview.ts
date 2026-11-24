@@ -160,6 +160,13 @@ export type OfficePreviewHostMessage =
   | {
       channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
       version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
+      type: 'version-space'
+      sessionId: string
+      reserved: boolean
+    }
+  | {
+      channel: typeof OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL
+      version: typeof OFFICE_PREVIEW_FRAME_MESSAGE_VERSION
       type: 'find'
       sessionId: string
     }
@@ -307,6 +314,9 @@ export const isOfficePreviewHostMessage = (value: unknown): value is OfficePrevi
       'start' in message &&
       isOfficePreviewRuntimeStart(message.start)) ||
       (message.type === 'find' && 'sessionId' in message && isNonEmptyString(message.sessionId)) ||
+      (message.type === 'version-space' &&
+        isNonEmptyString(message.sessionId) &&
+        typeof message.reserved === 'boolean') ||
       (message.type === 'goto-slide' &&
         'sessionId' in message &&
         isNonEmptyString(message.sessionId) &&

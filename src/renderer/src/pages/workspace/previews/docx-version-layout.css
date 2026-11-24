@@ -1,0 +1,29 @@
+/* Shared by the host and the isolated DOCX frame. Only the small version slot
+ * overlays the frame; the document and all reader controls stay interactive. */
+:root {
+  --docx-version-slot-width: 8rem;
+}
+
+.docx-versioned-preview {
+  container-type: inline-size;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+@container (min-width: 480px) {
+  .docx-versioned-preview:has([data-office-preview-state='ready']) > .docx-version-slot {
+    position: absolute;
+    inset: 0 auto auto 0;
+    z-index: 1;
+    width: var(--docx-version-slot-width);
+    border-inline-end: 1px solid var(--border);
+  }
+}
+
+@media (min-width: 480px) {
+  [data-version-space] > .docx-review-toolbar {
+    padding-left: calc(var(--docx-version-slot-width) + 0.5rem);
+  }
+}

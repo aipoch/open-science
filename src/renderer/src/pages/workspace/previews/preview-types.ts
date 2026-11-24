@@ -15,6 +15,7 @@ export type ActivePdfTranslation = {
 
 export type PreviewFileRendererProps = {
   item: PreviewFileItem
+  docxVersionNavigation?: React.ReactNode
   onPinImageSource?: () => void
   onImageEditorVersionChange?: (item: PreviewFileItem | undefined) => void
   readOnly?: boolean

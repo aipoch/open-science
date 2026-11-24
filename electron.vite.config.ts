@@ -148,6 +148,13 @@ export default defineConfig(({ command }) => ({
         ]
       },
       rollupOptions: {
+        output: {
+          manualChunks: {
+            // DOCX editing and existing archive/spreadsheet previews share JSZip. Keep one
+            // copy across their lazy chunks instead of duplicating it at the split boundary.
+            'shared-jszip': ['jszip']
+          }
+        },
         input: {
           index: resolve('src/renderer/index.html'),
           'installation-assistant': resolve('src/renderer/installation-assistant.html'),

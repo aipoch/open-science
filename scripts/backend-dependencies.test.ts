@@ -549,6 +549,7 @@ describe('desktop-only dependency contents', () => {
     const dependencies = {
       '@radix-ui/react-focus-scope': '1',
       '@rc-component/qrcode': '1',
+      '@platejs/markdown': '1',
       'react-markdown': '1',
       'react-remove-scroll': '1',
       tiff: '1',
@@ -561,7 +562,7 @@ describe('desktop-only dependency contents', () => {
       '@aipoch/credential-identity-probe-native',
       'future-runtime-package'
     ])
-    expect(Object.keys(dependencies)).toHaveLength(8)
+    expect(Object.keys(dependencies)).toHaveLength(9)
   })
 
   it('retains a renderer root when a backend worker imports its subpath', () => {

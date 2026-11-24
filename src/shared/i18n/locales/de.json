@@ -8551,8 +8551,6 @@
     "Before edit": "Vor der Bearbeitung",
     "Comparison position": "Vergleichsposition",
     "Compare with input image": "Mit Eingabebild vergleichen",
-    "Active kernels, active Compute Jobs, and Compute Jobs completed in the last 48 hours.": "Aktive Kernel, aktive Compute-Jobs und in den letzten 48 Stunden abgeschlossene Compute-Jobs.",
-    "This agent has no native auto mode. Open-Science auto-approves only edits to files inside the workspace — commands, network, and MCP tools still ask.": "Dieser Agent hat keinen nativen automatischen Modus. Open-Science gibt nur Änderungen an Dateien im Arbeitsbereich automatisch frei; Befehle, Netzwerkzugriffe und MCP-Tools erfordern weiterhin eine Freigabe.",
     "Save before sending a selection.": "Speichern Sie, bevor Sie eine Auswahl senden.",
     "This selection could not be anchored safely.": "Diese Auswahl konnte nicht sicher verankert werden.",
     "This selection could not be added to the conversation.": "Diese Auswahl konnte der Konversation nicht hinzugefügt werden.",

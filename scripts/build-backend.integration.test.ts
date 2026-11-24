@@ -61,6 +61,15 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
       }
     }
     const cli = await readFile(join(root, 'out/backend/index.cjs'), 'utf8')
+    expect((await readdir(join(root, 'out/desktop-backend-build'))).filter((file) => file.endsWith('.map'))).toEqual([])
+    await writeFile(join(root, 'out/desktop-backend-build/stale.cjs.map'), 'stale')
+    const staleFree = await createBackendBuilder({ root, desktop: true })
+    try {
+      await staleFree.rebuild()
+    } finally {
+      await staleFree.dispose()
+    }
+    expect(await readFile(join(root, 'out/desktop-backend-build/stale.cjs.map')).catch(() => undefined)).toBeUndefined()
     const metadata = JSON.parse(
       await readFile(join(root, 'out/desktop-backend-build/dependencies.json'), 'utf8')
     )

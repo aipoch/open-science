@@ -8884,8 +8884,6 @@
     "Before edit": "До редактирования",
     "Comparison position": "Положение разделителя",
     "Compare with input image": "Сравнить с исходным изображением",
-    "Active kernels, active Compute Jobs, and Compute Jobs completed in the last 48 hours.": "Активные ядра, активные вычислительные задания и задания, завершённые за последние 48 часов.",
-    "This agent has no native auto mode. Open-Science auto-approves only edits to files inside the workspace — commands, network, and MCP tools still ask.": "У этого агента нет встроенного автоматического режима. Open-Science автоматически разрешает только изменение файлов в рабочем пространстве; для команд, сетевых операций и инструментов MCP по-прежнему требуется разрешение.",
     "Save before sending a selection.": "Сохраните файл перед отправкой выделения.",
     "This selection could not be anchored safely.": "Не удалось безопасно привязать это выделение.",
     "This selection could not be added to the conversation.": "Не удалось добавить это выделение в диалог.",

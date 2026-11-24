@@ -27,6 +27,7 @@ type OfficePreviewFrameWindow = {
 
 type CreateOfficePreviewFrameBridgeOptions = {
   runtimeWindow: OfficePreviewFrameWindow
+  onVersionSpace?: (reserved: boolean) => void
   sessionId: string
 }
 
@@ -60,6 +61,7 @@ const createOfficePreviewFrameBridge = (
       return
     }
     if (event.data.type === 'find') findListeners.forEach((listener) => listener())
+    else if (event.data.type === 'version-space') options.onVersionSpace?.(event.data.reserved)
     else if (event.data.type === 'goto-slide') {
       const { slideIndex } = event.data
       gotoSlideListeners.forEach((listener) => listener(slideIndex))

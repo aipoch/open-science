@@ -99,6 +99,7 @@ export function desktopBackendDependencies(dependencies, metafiles, allowed = ne
   const rendererRoots = new Set([
     '@radix-ui/react-focus-scope',
     '@rc-component/qrcode',
+    '@platejs/markdown',
     'react-markdown',
     'react-remove-scroll',
     'tiff'

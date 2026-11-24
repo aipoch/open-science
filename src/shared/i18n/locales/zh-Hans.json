@@ -8379,8 +8379,6 @@
     "Before edit": "修改前",
     "Comparison position": "对比分隔位置",
     "Compare with input image": "与输入图对比",
-    "Active kernels, active Compute Jobs, and Compute Jobs completed in the last 48 hours.": "活跃内核、活跃 Compute 作业以及过去 48 小时内完成的 Compute 作业。",
-    "This agent has no native auto mode. Open-Science auto-approves only edits to files inside the workspace — commands, network, and MCP tools still ask.": "此智能体没有原生自动模式。Open-Science 仅自动批准工作区内的文件编辑——命令、网络请求和 MCP 工具仍需询问。",
     "Save before sending a selection.": "发送选择前请先保存。",
     "This selection could not be anchored safely.": "无法安全定位此选择。",
     "This selection could not be added to the conversation.": "无法将此选择添加到对话中。",

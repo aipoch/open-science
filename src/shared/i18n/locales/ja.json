@@ -8379,8 +8379,6 @@
     "Before edit": "編集前",
     "Comparison position": "比較の境界位置",
     "Compare with input image": "入力画像と比較",
-    "Active kernels, active Compute Jobs, and Compute Jobs completed in the last 48 hours.": "アクティブなカーネル、アクティブな Compute Job、過去48時間に完了した Compute Job。",
-    "This agent has no native auto mode. Open-Science auto-approves only edits to files inside the workspace — commands, network, and MCP tools still ask.": "このエージェントにはネイティブの自動モードがありません。Open-Science が自動的に許可するのはワークスペース内のファイル編集だけです。コマンド、ネットワーク、MCP ツールには引き続き確認が必要です。",
     "Save before sending a selection.": "選択範囲を送信する前に保存してください。",
     "This selection could not be anchored safely.": "この選択範囲を安全に固定できませんでした。",
     "This selection could not be added to the conversation.": "この選択範囲を会話に追加できませんでした。",
