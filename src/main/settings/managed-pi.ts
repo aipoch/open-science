@@ -58,11 +58,13 @@ export const installManagedPi = async ({
   configRoot,
   installId,
   onEvent,
+  registries = DEFAULT_REGISTRIES,
   signal
 }: {
   configRoot: string
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
+  registries?: readonly string[]
   signal: AbortSignal
 }): Promise<ClaudeInstallResult> => {
   const root = managedPiRoot(configRoot)
@@ -106,7 +108,7 @@ export const installManagedPi = async ({
       const archive = join(staging, 'download.tgz')
       let downloaded = false
       let downloadError: unknown
-      for (const registry of DEFAULT_REGISTRIES) {
+      for (const registry of registries) {
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           try {
             await downloadAndVerify({

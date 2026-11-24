@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  resolveInstallRegistries,
   runEnvironmentCheck,
   verifyStorageAccess,
   type EnvironmentCheckDeps
@@ -600,5 +601,109 @@ describe('runEnvironmentCheck', () => {
     expect(nativeCheck?.status).toBe('warning')
     expect(adapterCheck?.status).toBe('warning')
     expect(result.ready).toBe(true) // Non-selected framework doesn't block
+  })
+})
+
+describe('resolveInstallRegistries', () => {
+  it('orders the fastest reachable registry first with the other as fallback', async () => {
+    const probeRegistry = vi.fn(async (registry: 'npmjs' | 'npmmirror') =>
+      registry === 'npmmirror' ? 35 : 420
+    )
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'opencode',
+      probeRegistry
+    })
+
+    expect(probeRegistry).toHaveBeenCalledTimes(2)
+    expect(probeRegistry).toHaveBeenCalledWith(
+      'npmjs',
+      '/opencode-ai/latest',
+      expect.any(AbortSignal)
+    )
+    expect(probeRegistry).toHaveBeenCalledWith(
+      'npmmirror',
+      '/opencode-ai/latest',
+      expect.any(AbortSignal)
+    )
+    expect(registries).toEqual(['https://registry.npmmirror.com', 'https://registry.npmjs.org'])
+  })
+
+  it('picks the first successful registry immediately and aborts a stalled sibling probe', async () => {
+    let npmjsSignal: AbortSignal | undefined
+    const probeRegistry = vi.fn(
+      (registry: 'npmjs' | 'npmmirror', _path?: string, signal?: AbortSignal) => {
+        if (registry === 'npmjs') {
+          npmjsSignal = signal
+          return new Promise<number>(() => undefined)
+        }
+        return Promise.resolve(25)
+      }
+    )
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'opencode',
+      probeRegistry
+    })
+
+    expect(registries).toEqual(['https://registry.npmmirror.com', 'https://registry.npmjs.org'])
+    expect(npmjsSignal?.aborted).toBe(true)
+  })
+
+  it('falls back to the remaining reachable registry when the other fails', async () => {
+    const probeRegistry = vi.fn(async (registry: 'npmjs' | 'npmmirror') => {
+      if (registry === 'npmmirror') throw new Error('HTTP 502')
+      return 180
+    })
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'codex',
+      probeRegistry
+    })
+
+    expect(registries).toEqual(['https://registry.npmjs.org', 'https://registry.npmmirror.com'])
+  })
+
+  it('falls back to default registry order when both probes fail', async () => {
+    const probeRegistry = vi.fn().mockRejectedValue(new Error('offline'))
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'pi',
+      probeRegistry
+    })
+
+    expect(registries).toEqual(['https://registry.npmjs.org', 'https://registry.npmmirror.com'])
+  })
+
+  it('honors an explicit preferredRegistry without probing', async () => {
+    const probeRegistry = vi.fn()
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'claude-code',
+      preferredRegistry: 'npmmirror',
+      probeRegistry
+    })
+
+    expect(probeRegistry).not.toHaveBeenCalled()
+    expect(registries).toEqual(['https://registry.npmmirror.com', 'https://registry.npmjs.org'])
+  })
+
+  it('propagates caller abort cancellation', async () => {
+    const controller = new AbortController()
+    const probeRegistry = vi.fn(
+      (_registry: 'npmjs' | 'npmmirror', _path?: string, signal?: AbortSignal) =>
+        new Promise<number>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+    )
+
+    const pending = resolveInstallRegistries({
+      agentFrameworkId: 'opencode',
+      probeRegistry,
+      signal: controller.signal
+    })
+    controller.abort(new Error('cancelled'))
+
+    await expect(pending).rejects.toThrow('cancelled')
   })
 })

@@ -41,6 +41,7 @@ import type {
   InstallPiRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
+  ManagedClaudeRegistry,
   ReadinessPreflight,
   ValidateProviderResult
 } from '../../shared/settings'
@@ -120,7 +121,6 @@ import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 import { provisionAppClaudePrivateProfile } from './claude-config-provision'
 import { provisionClaudeRuntime, type ClaudeRuntimeAssets } from './claude-runtime-provisioner'
 import {
-  DEFAULT_REGISTRIES,
   installManagedClaude,
   isManagedClaudePath,
   managedClaudeDir,
@@ -151,7 +151,11 @@ import {
   type InstallManagedCodexOptions,
   type ManagedCodexInstallOutcome
 } from './managed-codex'
-import { runEnvironmentCheck } from './environment-check'
+import {
+  resolveInstallRegistries,
+  runEnvironmentCheck,
+  type RegistryProbe
+} from './environment-check'
 import { computePreflight } from './preflight'
 import { isEncryptionAvailable } from './crypto'
 import { getCredentialStore } from './credential-store-mode'
@@ -510,6 +514,8 @@ export type AgentRuntimeManagerOptions = {
   installManagedCodexImpl?: (
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
+  installManagedPiImpl?: typeof installManagedPi
+  probeRegistry?: RegistryProbe
   resolveCodexProxyEnvironment?: () => Promise<SystemProxyEnvironment | undefined>
   installCoordinator?: SettingsInstallCoordinator
 }
@@ -553,6 +559,8 @@ export class AgentRuntimeManager {
   private readonly installManagedCodexImpl: (
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
+  private readonly installManagedPiImpl: typeof installManagedPi
+  private readonly probeRegistry: RegistryProbe | undefined
   private readonly resolveProxyEnvironment: () => Promise<SystemProxyEnvironment | undefined>
 
   hasActiveInstall(): boolean {
@@ -636,6 +644,8 @@ export class AgentRuntimeManager {
     this.installManagedCodeBuddyImpl =
       options.installManagedCodeBuddyImpl ?? installManagedCodeBuddy
     this.installManagedCodexImpl = options.installManagedCodexImpl ?? installManagedCodex
+    this.installManagedPiImpl = options.installManagedPiImpl ?? installManagedPi
+    this.probeRegistry = options.probeRegistry
     this.resolveProxyEnvironment =
       options.resolveCodexProxyEnvironment ?? resolveSystemProxyEnvironment
   }
@@ -1009,6 +1019,19 @@ export class AgentRuntimeManager {
     await this.repository.selectBootstrapCodex()
   }
 
+  private resolveManagedRegistries(
+    agentFrameworkId: AgentFrameworkId,
+    signal: AbortSignal,
+    preferredRegistry?: ManagedClaudeRegistry
+  ): Promise<string[]> {
+    return resolveInstallRegistries({
+      agentFrameworkId,
+      preferredRegistry,
+      probeRegistry: this.probeRegistry,
+      signal
+    })
+  }
+
   async installClaude(
     request: InstallClaudeRequest,
     onEvent: (event: ClaudeInstallEvent) => void
@@ -1016,10 +1039,11 @@ export class AgentRuntimeManager {
     const installId = `install-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
     return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
-      const registries =
-        request.managedRegistry === 'npmmirror'
-          ? [DEFAULT_REGISTRIES[1], DEFAULT_REGISTRIES[0]]
-          : DEFAULT_REGISTRIES
+      const registries = await this.resolveManagedRegistries(
+        'claude-code',
+        signal,
+        request.managedRegistry
+      )
       const complete = async (result: ClaudeInstallResult): Promise<ClaudeInstallResult> => {
         if (!result.ok) return result
         try {
@@ -1093,10 +1117,12 @@ export class AgentRuntimeManager {
 
     return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
       if (request.source === 'managed') {
+        const registries = await this.resolveManagedRegistries('opencode', signal)
         const outcome = await this.installManagedOpencodeImpl({
           installId,
           onEvent,
           dataRoot: this.configRoot,
+          registries,
           signal
         })
         if (outcome.result.ok && outcome.resolvedPath) {
@@ -1123,9 +1149,16 @@ export class AgentRuntimeManager {
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
     const installId = `install-pi-${Date.now()}-${this.allocateSettingsIdSequence()}`
-    return this.runExclusiveInstall(installId, (signal) =>
-      installManagedPi({ configRoot: this.configRoot, installId, onEvent, signal })
-    )
+    return this.runExclusiveInstall(installId, async (signal) => {
+      const registries = await this.resolveManagedRegistries('pi', signal)
+      return this.installManagedPiImpl({
+        configRoot: this.configRoot,
+        installId,
+        onEvent,
+        registries,
+        signal
+      })
+    })
   }
 
   async uninstallPi(): Promise<RuntimeUninstallResult> {
@@ -1145,10 +1178,12 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-codebuddy-${Date.now()}-${this.allocateSettingsIdSequence()}`
     return this.runExclusiveInstall(installId, async (signal) => {
+      const registries = await this.resolveManagedRegistries('codebuddy', signal)
       const outcome = await this.installManagedCodeBuddyImpl({
         installId,
         onEvent,
         dataRoot: this.configRoot,
+        registries,
         signal
       })
       if (outcome.result.ok && outcome.resolvedPath) {
@@ -1180,10 +1215,12 @@ export class AgentRuntimeManager {
             ? externalCodexPath
             : undefined
         signal.throwIfAborted()
+        const registries = await this.resolveManagedRegistries('codex', signal)
         const outcome = await this.installManagedCodexImpl({
           installId,
           onEvent,
           dataRoot: this.configRoot,
+          registries,
           signal,
           ...(existingCodexPath ? { existingCodexPath } : {})
         })
