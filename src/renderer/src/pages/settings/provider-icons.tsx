@@ -59,8 +59,26 @@ export const AgentFrameworkIcon = ({
   return <CodexMono size={size} className={cn('text-foreground', className)} />
 }
 
+// Some external SVGs have dark ink on transparency, including currentColor that
+// resolves to black inside an img. Give the original artwork a light backing.
+const darkLogoBacking = 'dark:rounded-xs dark:bg-foreground dark:ring-2 dark:ring-foreground'
+const logosWithDarkInk = new Set([
+  anthropicLogo,
+  apodexLogo,
+  openaiLogo,
+  grokLogo,
+  kimiLogo,
+  openrouterLogo,
+  stepfunLogo,
+  zhipuLogo
+])
+
 export const TypeSafeIcon = ({ className }: { className?: string }): React.JSX.Element => (
-  <img src={typesafeLogo} alt="" className={cn('size-3 shrink-0 object-contain', className)} />
+  <img
+    src={typesafeLogo}
+    alt=""
+    className={cn('size-3 shrink-0 object-contain', darkLogoBacking, className)}
+  />
 )
 
 // Official vendor brand marks, bundled as assets. Providers from the same vendor share one mark:
@@ -113,7 +131,9 @@ export const ProviderKindIcon = ({
     kindKey === 'codex-shared' ||
     kindKey === 'codex-isolated'
   ) {
-    return <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', className)} />
+    return (
+      <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', darkLogoBacking, className)} />
+    )
   }
 
   if (kindKey === 'codebuddy-subscription' || codeBuddySiteForId(kindKey)) {
@@ -123,7 +143,9 @@ export const ProviderKindIcon = ({
   }
 
   if (kindKey === 'xai-subscription') {
-    return <img src={grokLogo} alt="" className={cn('size-5 shrink-0', className)} />
+    return (
+      <img src={grokLogo} alt="" className={cn('size-5 shrink-0', darkLogoBacking, className)} />
+    )
   }
 
   // Local model servers have no bundled brand marks; a neutral server glyph avoids guessing one.
@@ -185,7 +207,13 @@ export const ProviderKindIcon = ({
   const logo = VENDOR_LOGO[vendorId]
 
   if (logo) {
-    return <img src={logo} alt="" className={cn('size-5 shrink-0', className)} />
+    return (
+      <img
+        src={logo}
+        alt=""
+        className={cn('size-5 shrink-0', logosWithDarkInk.has(logo) && darkLogoBacking, className)}
+      />
+    )
   }
 
   // No official asset bundled for this vendor yet (e.g. GLM/Z.AI): neutral placeholder, not a guess.
