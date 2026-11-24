@@ -37,6 +37,7 @@ function markdownFilename(title: string): string {
     if (bytes > 255 || stem.length + character.length > 100) break
     stem += character
   }
+  if (/^(?:con|prn|aux|nul|(?:com|lpt)[1-9¹²³])$/i.test(stem)) stem = '_' + stem
   return (stem || 'synthesis') + extension
 }
 

@@ -92,10 +92,10 @@ async function fixture(): Promise<{
     resolve: vi.fn(async () => (source ? structuredClone(source) : undefined))
   }
   const service = new LiteratureSynthesisService(new LiteratureSynthesisStore(() => path), sources)
-  const create = async (): Promise<SynthesisNote> => {
+  const create = async (title = 'Synthesis'): Promise<SynthesisNote> => {
     const result = await service.run({
       action: 'create',
-      title: 'Synthesis',
+      title,
       itemIds: ['paper'],
       excerpts: [
         {
@@ -1169,6 +1169,26 @@ describe('literature synthesis persistence and provenance', () => {
     expect(html).toContain('<p>第一组\n====</p>')
     expect(html).toContain('<p>&nbsp;&nbsp;&nbsp;&nbsp;第二组</p>')
     expect(html).toContain('<p>&#9;第三组</p>')
+  })
+
+  it.each([
+    ['CON', '_CON.md'],
+    ['pRn', '_pRn.md'],
+    ['aux', '_aux.md'],
+    ['NUL', '_NUL.md'],
+    ['COM1', '_COM1.md'],
+    ['lpt9', '_lpt9.md'],
+    ['COM¹', '_COM¹.md'],
+    ['LPT³', '_LPT³.md'],
+    ['CON-study', 'CON-study.md'],
+    ['COM10', 'COM10.md'],
+    ['con.notes', 'con-notes.md']
+  ])('exports the title %s with the portable filename %s', async (title, filename) => {
+    const f = await fixture()
+    const note = await f.create(title)
+    await expect(
+      f.service.run({ action: 'export', noteId: note.id, expectedRevision: note.revision })
+    ).resolves.toMatchObject({ action: 'export', filename })
   })
 
   it('saves the suggested Markdown filename at a complete Unicode character boundary', async () => {
