@@ -40,7 +40,13 @@ import {
   providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
-import { describeValidation, localizeProviderResourceMessage } from '../settings/validation-message'
+import { onboardingErrorMessage } from './onboarding-error'
+import { OnboardingErrorNotice, type OnboardingFailure } from './OnboardingErrorNotice'
+import {
+  CATEGORY_KEYS,
+  describeValidation,
+  localizeProviderResourceMessage
+} from '../settings/validation-message'
 import type { ProviderStepOperation } from './use-provider-step-operation'
 
 const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
@@ -84,7 +90,7 @@ type ProviderStepProps = {
   onAdvanced?: () => void
   onSkip?: () => void | Promise<void>
   isSkipping?: boolean
-  skipError?: string
+  skipError?: OnboardingFailure & { onDismiss: () => void }
   operation: ProviderStepOperation
 }
 
@@ -221,7 +227,7 @@ const ProviderStep = ({
   const [authStage, setAuthStage] = useState<'detect' | 'install' | 'auth'>()
   const [installError, setInstallError] = useState<{
     cardId: 'openai' | 'anthropic'
-    message: string
+    failure: OnboardingFailure
   }>()
   const [quickCardId, setQuickCardId] = useState<string>()
   const progress = useSettingsStore(
@@ -254,16 +260,13 @@ const ProviderStep = ({
   // Required-field errors stay hidden until the user first tries to submit, so an untouched form is
   // not littered with "required" messages. A `*` on each label signals the requirement up front.
   const [showProviderErrors, setShowProviderErrors] = useState(false)
-  const [feedback, setValidationMessage] = useState<
-    string | { summary: string; details?: string }
-  >()
+  const [feedback, setValidationMessage] = useState<string | OnboardingFailure>()
   const validationMessage = typeof feedback === 'object' ? feedback.summary : feedback
-  const codexImportFailure = (cause: unknown): { summary: string; details?: string } => {
-    const details =
-      cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : undefined
+  const codexImportFailure = (cause: unknown): OnboardingFailure => {
+    const details = onboardingErrorMessage(cause, 'codex-shared')
     const signIn = t('Sign in with Open-Science')
     const summary =
-      details && unwrapIpcErrorDetail(details) === CODEX_IMPORT_FILE_MISSING_MESSAGE
+      unwrapIpcErrorDetail(details) === CODEX_IMPORT_FILE_MISSING_MESSAGE
         ? t(
             'No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.',
             { signIn }
@@ -273,6 +276,20 @@ const ProviderStep = ({
             { signIn }
           )
     return { summary, details }
+  }
+  const validationFeedback = (
+    result: ValidateProviderResult,
+    signInFailure?: string
+  ): string | OnboardingFailure => {
+    if (variant !== 'quick' || result.ok) return describeValidation(result, tSettings)
+    const details = [result.category, result.status && `HTTP ${result.status}`, result.message]
+      .filter(Boolean)
+      .join('\n')
+    return {
+      summary:
+        (result.category === 'auth' && signInFailure) || tSettings(CATEGORY_KEYS[result.category]),
+      details
+    }
   }
   const [validationOk, setValidationOk] = useState(false)
   const [hoveredQuickCardId, setHoveredQuickCardId] = useState<string>()
@@ -356,7 +373,7 @@ const ProviderStep = ({
       }
 
       setValidationOk(result.ok)
-      setValidationMessage(describeValidation(result, tSettings))
+      setValidationMessage(validationFeedback(result, t('Could not sign in to Claude. Try again.')))
 
       if (result.ok) {
         if (claudeProviderIdRef.current) {
@@ -373,7 +390,11 @@ const ProviderStep = ({
           ? localizeProviderResourceMessage(error.message, tSettings)
           : t('Could not save the Claude token.')
       setValidationOk(false)
-      setValidationMessage(message)
+      setValidationMessage(
+        variant === 'quick'
+          ? { summary: t('Could not save the Claude token.'), details: message }
+          : message
+      )
       return { ok: false, category: 'unknown', message }
     }
   }
@@ -474,7 +495,7 @@ const ProviderStep = ({
         }
 
         setValidationOk(validation.ok)
-        setValidationMessage(describeValidation(validation, tSettings))
+        setValidationMessage(validationFeedback(validation, t('Could not sign in to Codex.')))
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
@@ -513,7 +534,9 @@ const ProviderStep = ({
         }
 
         setValidationOk(validation.ok)
-        setValidationMessage(describeValidation(validation, tSettings))
+        setValidationMessage(
+          validationFeedback(validation, t('Could not sign in to Claude. Try again.'))
+        )
 
         if (validation.ok) {
           setIsClaudeSignInOpen(false)
@@ -547,7 +570,9 @@ const ProviderStep = ({
         }
 
         setValidationOk(validation.ok)
-        setValidationMessage(describeValidation(validation, tSettings))
+        setValidationMessage(
+          validationFeedback(validation, t('Could not sign in to Claude. Try again.'))
+        )
 
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
@@ -583,7 +608,7 @@ const ProviderStep = ({
           return
         }
         setValidationOk(validation.ok)
-        setValidationMessage(describeValidation(validation, tSettings))
+        setValidationMessage(validationFeedback(validation, t('Could not sign in to xAI.')))
         if (validation.ok) {
           await setActiveProvider(providerId)
           signal?.throwIfAborted()
@@ -622,7 +647,7 @@ const ProviderStep = ({
       setValidationMessage(
         variant === 'quick' && value.type === 'codex-shared' && !validation.ok
           ? codexImportFailure(validation.message)
-          : describeValidation(validation, tSettings)
+          : validationFeedback(validation)
       )
 
       if (validation.ok) {
@@ -643,11 +668,31 @@ const ProviderStep = ({
         setValidationMessage(codexImportFailure(error))
         return
       }
-      setValidationMessage(
-        error instanceof Error
-          ? localizeProviderResourceMessage(error.message, tSettings)
-          : t('Could not save provider.')
-      )
+      if (variant === 'quick') {
+        const details = onboardingErrorMessage(error, value.type)
+        let summary = t('Could not save provider.')
+        if (value.type === 'codex-isolated') summary = t('Could not sign in to Codex.')
+        if (value.type === 'xai-subscription') {
+          switch (unwrapIpcErrorDetail(details)) {
+            case 'expired_token':
+              summary = t('Authorization expired')
+              break
+            case 'access_denied':
+            case 'xAI sign-in was denied.':
+              summary = t('Permission denied')
+              break
+            default:
+              summary = t('Could not sign in to xAI.')
+          }
+        }
+        setValidationMessage({ summary, details })
+      } else {
+        setValidationMessage(
+          error instanceof Error
+            ? localizeProviderResourceMessage(error.message, tSettings)
+            : t('Could not save provider.')
+        )
+      }
     } finally {
       operation.finish()
       if (!signal) setIsSaving(false)
@@ -673,7 +718,7 @@ const ProviderStep = ({
       if (!signal.aborted)
         setInstallError({
           cardId,
-          message: error instanceof Error ? error.message : failureMessage
+          failure: { summary: failureMessage, details: onboardingErrorMessage(error, cardId) }
         })
       throw error
     } finally {
@@ -736,11 +781,20 @@ const ProviderStep = ({
       signal.throwIfAborted()
     }
     if (validation.cancelled) return
-    if (validation.applied === false)
-      throw new Error(
+    if (validation.applied === false) {
+      setValidationOk(false)
+      setValidationMessage(
         t('The Claude provider changed during sign-in. Review the selection and try again.')
       )
-    if (!validation.ok) throw new Error(describeValidation(validation, tSettings))
+      return
+    }
+    if (!validation.ok) {
+      setValidationOk(false)
+      setValidationMessage(
+        validationFeedback(validation, t('Could not sign in to Claude. Try again.'))
+      )
+      return
+    }
     await setActiveProvider(providerId)
     signal.throwIfAborted()
     advanceIfMounted('account')
@@ -813,11 +867,13 @@ const ProviderStep = ({
         return
       }
       setValidationOk(false)
-      setValidationMessage(
-        error instanceof Error
-          ? localizeProviderResourceMessage(error.message, tSettings)
-          : t('Could not save provider.')
-      )
+      setValidationMessage({
+        summary:
+          card.id === 'anthropic'
+            ? t('Could not sign in to Claude. Try again.')
+            : t('Could not sign in to Codex.'),
+        details: onboardingErrorMessage(error, card.id)
+      })
     } finally {
       if (quickAuth.current === attempt) {
         if (!attempt.signal.aborted) {
@@ -852,11 +908,10 @@ const ProviderStep = ({
       }
     } catch (error) {
       setValidationOk(false)
-      setValidationMessage(
-        error instanceof Error
-          ? localizeProviderResourceMessage(error.message, tSettings)
-          : t('Could not save provider.')
-      )
+      setValidationMessage({
+        summary: t('Could not cancel. Try again.'),
+        details: onboardingErrorMessage(error, 'cancelQuickAuthorization')
+      })
     } finally {
       quickAuth.current = undefined
       setAuthStage(undefined)
@@ -1108,12 +1163,9 @@ const ProviderStep = ({
 
         <div className="onboarding-quick-feedback">
           {installError && installCard && (
-            <ErrorNotice
-              inline
-              level="warning"
-              role="alert"
-              description={installError.message}
-              primaryButton={
+            <OnboardingErrorNotice
+              failure={installError.failure}
+              retry={
                 installCard.id === 'openai'
                   ? {
                       label: t('Retry'),
@@ -1121,12 +1173,9 @@ const ProviderStep = ({
                     }
                   : undefined
               }
-              dismissButton={{
-                label: t('Dismiss'),
-                onClick: () => {
-                  setInstallError(undefined)
-                  setValidationMessage(undefined)
-                }
+              onDismiss={() => {
+                setInstallError(undefined)
+                setValidationMessage(undefined)
               }}
             />
           )}
@@ -1137,22 +1186,21 @@ const ProviderStep = ({
                 {validationMessage}
               </p>
             ) : (
-              <ErrorNotice
-                level="warning"
-                role="alert"
-                description={validationMessage}
-                errorCode={typeof feedback === 'object' ? feedback.details : undefined}
-                diagnosticsLabel={t('Error details')}
-                inline
-                dismissButton={{
-                  label: t('Dismiss'),
-                  onClick: () => setValidationMessage(undefined)
-                }}
+              <OnboardingErrorNotice
+                failure={
+                  typeof feedback === 'object'
+                    ? feedback
+                    : {
+                        summary: validationMessage,
+                        details: [quickCardId, agentFrameworkId].filter(Boolean).join(' / ')
+                      }
+                }
+                onDismiss={() => setValidationMessage(undefined)}
               />
             ))}
 
           {skipError ? (
-            <ErrorNotice inline level="warning" role="alert" description={skipError} />
+            <OnboardingErrorNotice failure={skipError} onDismiss={skipError.onDismiss} />
           ) : null}
           <footer className="onboarding-quick-footer">
             <Button type="button" variant="ghost" onClick={onBack} disabled={isSaving}>

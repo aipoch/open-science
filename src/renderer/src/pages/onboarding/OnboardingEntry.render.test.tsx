@@ -221,6 +221,31 @@ describe('Onboarding entry flow', () => {
     expect(setActiveProvider).not.toHaveBeenCalled()
   })
 
+  it('summarizes a failed quick skip and lets the user inspect and dismiss the cause', async () => {
+    const cause = 'IPC settings:add-onboarding-kilo-provider failed: ECONNRESET'
+    useSettingsStore.setState({
+      addOnboardingKiloProvider: vi.fn().mockRejectedValue(new Error(cause))
+    })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/free Kilo models/)
+    const region = container.querySelector('.onboarding-quick-feedback')!
+    expect(region.querySelector('[role="alert"]')?.textContent).toBe(
+      'Could not skip setup. You can retry or use Advanced options.'
+    )
+    const details = region.querySelector('details')!
+    expect(details.open).toBe(false)
+    await act(async () => details.querySelector('summary')!.click())
+    expect(details.open).toBe(true)
+    expect(details.querySelector('pre')?.textContent).toBe(cause)
+    await act(async () =>
+      region.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')!.click()
+    )
+    expect(region.querySelector('[role="alert"]')).toBeNull()
+    expect(region.querySelector('[data-onboarding-action="advanced"]')).not.toBeNull()
+  })
+
   it('keeps the second-stage feedback and navigation inside one scrollable content region', async () => {
     await renderEntry()
     await finishWelcomeAnimation()

@@ -195,19 +195,26 @@ describe('ProviderStep', () => {
     useSettingsStore.setState({
       installClaude: install,
       detectClaude: vi.fn().mockResolvedValue({ found: false }),
-      saveValidatedProvider: vi
-        .fn()
-        .mockResolvedValue({ validation: { ok: false, category: 'auth', status: 401 } })
+      saveValidatedProvider: vi.fn().mockResolvedValue({
+        validation: { ok: false, category: 'auth', status: 401, message: 'upstream diagnostic' }
+      })
     })
     await renderStep({ variant: 'quick' })
     await clickButton(/Continue with Anthropic/)
     const message = (): string | undefined =>
       container.querySelector('.onboarding-quick-feedback [role="alert"]')?.textContent
-    expect(message()).toContain('Installation interrupted')
+    expect(message()).toBe('Could not install Claude Code. Try again.')
+    const details = (): HTMLDetailsElement =>
+      container.querySelector('.onboarding-quick-feedback details')!
+    expect(details().open).toBe(false)
+    expect(details().textContent).toContain('Installation interrupted')
     const input = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
     await act(async () => fireEvent.change(input, { target: { value: 'rejected' } }))
     await act(async () => fireEvent.submit(input.form!))
-    expect(message()).toMatch(/auth|401/i)
+    expect(message()).toBe('Authentication failed. Check the API key.')
+    expect(details().open).toBe(false)
+    expect(details().textContent).toContain('HTTP 401')
+    expect(details().textContent).toContain('upstream diagnostic')
     expect(install).toHaveBeenCalledTimes(1)
     expect(container.querySelector('.onboarding-quick-feedback')?.textContent).not.toContain(
       'Installation interrupted'
@@ -351,9 +358,9 @@ describe('ProviderStep', () => {
     await renderStep({ variant: 'quick', onAdvance })
     const card = container.querySelector('.onboarding-provider-card-anthropic')!
     await clickButton(/Continue with Anthropic/)
-    expect(
-      container.querySelector('.onboarding-quick-feedback [role="alert"]')?.textContent
-    ).toContain('Download interrupted')
+    expect(container.querySelector('.onboarding-quick-feedback details pre')?.textContent).toBe(
+      'Download interrupted'
+    )
     expect(login).not.toHaveBeenCalled()
     await clickButton(/Continue with Anthropic/)
     expect(card.querySelector('progress')?.hasAttribute('value')).toBe(false)
@@ -432,9 +439,9 @@ describe('ProviderStep', () => {
     await renderStep({ variant: 'quick', onAdvance })
     const card = container.querySelector('.onboarding-provider-card-openai')!
     await clickButton(/^Sign in with Open-Science$/)
-    expect(
-      container.querySelector('.onboarding-quick-feedback [role="alert"]')?.textContent
-    ).toContain('Download interrupted')
+    expect(container.querySelector('.onboarding-quick-feedback details pre')?.textContent).toBe(
+      'Download interrupted'
+    )
     await clickButton(/^Retry$/)
     await act(async () => {
       const states = useSettingsStore.getState().installStates
@@ -1341,7 +1348,10 @@ describe('ProviderStep', () => {
       expect(document.body.textContent).toContain('FIRST-CODE')
       await act(async () => first.reject(new Error(failure)))
       expect(document.body.textContent).not.toContain('FIRST-CODE')
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(failure)
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+        failure === 'access_denied' ? 'Permission denied' : 'Authorization expired'
+      )
+      expect(container.querySelector('details pre')?.textContent).toBe(failure)
       expect(onAdvance).not.toHaveBeenCalled()
       await clickButton(/Continue with xAI/)
       expect(document.body.textContent).toContain('SECOND-CODE')

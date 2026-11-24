@@ -18,6 +18,7 @@ import { EnvironmentStep } from './EnvironmentStep'
 import { LocationStep, type LocationDraft } from './LocationStep'
 import { NotebookStep } from './NotebookStep'
 import { OnboardingReadyStep, OnboardingWelcome } from './OnboardingEntry'
+import type { OnboardingFailure } from './OnboardingErrorNotice'
 import { onboardingErrorMessage } from './onboarding-error'
 import { ProviderStep } from './ProviderStep'
 import { useProviderStepOperation } from './use-provider-step-operation'
@@ -214,7 +215,7 @@ const OnboardingWizard = ({
     environmentCheck?.ready === true &&
     environmentCheck.agentFrameworkId === agentFrameworkId
   const [isSkipping, setIsSkipping] = useState(false)
-  const [skipError, setSkipError] = useState<string | undefined>(undefined)
+  const [skipError, setSkipError] = useState<OnboardingFailure>()
   const dialogRef = useRef<HTMLDivElement>(null)
   const previousDialogFocus = useRef<HTMLElement | null>(null)
   const providerOperation = useProviderStepOperation()
@@ -309,12 +310,11 @@ const OnboardingWizard = ({
       await addOnboardingKiloProvider()
       await completeOnboarding()
     } catch (error) {
-      setSkipError(
-        onboardingErrorMessage(
-          error,
-          t('Could not skip setup. You can retry or use Advanced options.')
-        )
-      )
+      setSkipError({
+        summary: t('Could not skip setup. You can retry or use Advanced options.'),
+        details: onboardingErrorMessage(error, 'addOnboardingKiloProvider / completeOnboarding')
+      })
+      setEntryPhase('connect')
       setIsSkipping(false)
     }
   }, [addOnboardingKiloProvider, completeOnboarding, isSkipping, t])
@@ -580,7 +580,7 @@ const OnboardingWizard = ({
               onAdvanced={openAdvancedEntry}
               onSkip={skipEntry}
               isSkipping={isSkipping}
-              skipError={skipError}
+              skipError={skipError && { ...skipError, onDismiss: () => setSkipError(undefined) }}
             />
           ) : entryPhase === 'advanced' ? (
             <section className="onboarding-advanced" data-onboarding-entry="advanced">
