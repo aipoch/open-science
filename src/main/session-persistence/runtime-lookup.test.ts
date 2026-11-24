@@ -79,6 +79,16 @@ afterEach(async () => {
 })
 
 describe('runtime Session lookup', () => {
+  it('uses the persisted locator before startup hydration', async () => {
+    const { repository, findSessions } = await createLookup(false)
+    const loadAll = vi.spyOn(repository, 'loadAll').mockRejectedValue(
+      new Error('Runtime lookup must not hydrate the Session catalog.')
+    )
+
+    await expect(findSessions('current')).resolves.toMatchObject([{ id: 'current' }])
+    expect(loadAll).not.toHaveBeenCalled()
+  })
+
   it('shares concurrent reads but releases success and failure before delivering settlement', async () => {
     const loadSession = vi.fn().mockResolvedValue(session('current'))
     const repository = {

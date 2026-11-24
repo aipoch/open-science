@@ -68,7 +68,10 @@ export async function composeSessionPackages({
   getSessionExportOwners: () => {
     archiveCoordinator: Pick<ArchiveCoordinator, 'reserveSessionExport'>
     sessionPersistenceCoordinator: Pick<SessionPersistenceCommands, 'reserveSessionExport'>
-    notebookService: Pick<NotebookRuntimeService, 'waitForSessionTeardown'>
+    notebookService: Pick<
+      NotebookRuntimeService,
+      'waitForSessionTeardown' | 'currentExecutionIntent'
+    >
   }
   readImageTasks: (scope: ImageTaskScope) => Promise<ImageTask[]>
   modules: ApplicationModuleBuilder
@@ -209,6 +212,10 @@ export async function composeSessionPackages({
       getClient: () => getProjectDbClient(resolveConfigRoot()),
       reserveExport: (request, signal) =>
         reserveSessionExport(request, signal, () => service.prepareExport(request)),
+      assertForkExecutionAllowed: (request) =>
+        getSessionExportOwners()
+          .notebookService.currentExecutionIntent(request)
+          ?.assertExecutable(),
       isSessionActive: (projectId, sessionId) =>
         getDetectSessionExportBlockingSessions()().some(
           (item) => item.projectId === projectId && item.sessionId === sessionId

@@ -4,7 +4,6 @@ export const WEB_INVOKE_CHANNELS = {
   'acp.compactSession': 'acp:compact-session',
   'acp.connect': 'acp:connect',
   'acp.continueInterruptedTurn': 'acp:continue-interrupted-turn',
-  'acp.continueNotebookExecution': 'acp:continue-notebook-execution',
   'acp.createSession': 'acp:create-session',
   'acp.deleteSession': 'acp:delete-session',
   'acp.discardUnavailablePlan': 'acp:discard-unavailable-plan',

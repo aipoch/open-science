@@ -33,7 +33,9 @@ export const registerBootstrapApplicationCommands = (
       'settings:bootstrap': ({ args, callerContext }) => {
         if (callerContext.location !== 'local') return { ok: false, code: 'invalid_request' }
         const pending = dependencies.service.bootstrap(args[0], dependencies.emitInstallEvent)
-        return args[0]?.action === 'status'
+        return args[0]?.action === 'status' ||
+          args[0]?.action === 'provider-options' ||
+          args[0]?.action === 'provider-credential-target'
           ? pending
           : dependencies.snapshotCommits.projectAfter(pending)
       }

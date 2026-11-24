@@ -4,6 +4,7 @@ import { ActionToast } from '@/components/ActionToast'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import {
   dialogBodyClassName,
   dialogFooterClassName,
@@ -17,7 +18,6 @@ import {
   dismissNotebookMemoryPressure,
   observeNotebookMemoryPolicy,
   presentNotebookMemoryRejection,
-  recordNotebookMemoryCheck,
   useNotebookMemoryNoticeStore
 } from '@/stores/notebook-memory-notice-store'
 import {
@@ -25,149 +25,6 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import type { NotebookMemoryRejectedEvent } from '../../../../shared/notebook-memory'
-
-type MemoryReading = NotebookMemoryRejectedEvent['memory']
-
-function MemoryCheckDetails({
-  trigger,
-  latest
-}: {
-  trigger: MemoryReading
-  latest?: MemoryReading
-}): React.JSX.Element {
-  const { t, i18n } = useTranslation()
-  const readings = latest ? [trigger, latest] : [trigger]
-  const formatted = new Intl.NumberFormat(i18n?.language, { maximumFractionDigits: 2 })
-  const bytes = (value: number): string =>
-    value < 1024 ** 3
-      ? `${formatted.format(value / 1024 ** 2)} MiB`
-      : `${formatted.format(value / 1024 ** 3)} GiB`
-  // An ancestor can block a healthy-looking leaf. Compare the same group and limit across checks.
-  const cgroupRows = readings
-    .flatMap(({ reason, limitingCgroupPath }) =>
-      limitingCgroupPath && (reason === 'linux-cgroup-high' || reason === 'linux-cgroup-low')
-        ? [{ path: limitingCgroupPath, high: reason === 'linux-cgroup-high' }]
-        : []
-    )
-    .filter(
-      (entry, index, all) =>
-        all.findIndex((other) => other.path === entry.path && other.high === entry.high) === index
-    )
-  const result = (reading: MemoryReading): string => {
-    if (reading.status === 'healthy') return t('Memory has recovered')
-    if (reading.status === 'unavailable') return t('Unavailable')
-    if (reading.reason === 'windows-commit-low' || reading.reason === 'linux-commit-low')
-      return t('Low remaining commit capacity')
-    if (reading.reason === 'windows-physical-low' || reading.reason === 'linux-memory-low')
-      return t('Low available RAM')
-    switch (reading.reason) {
-      case 'mac-memory-warning':
-        return t('Memory pressure warning')
-      case 'mac-memory-critical':
-        return t('Critical memory pressure')
-      case 'mac-memory-recovering':
-        return t('Waiting for stable memory pressure')
-      case 'linux-cgroup-high':
-        return t('cgroup throttling threshold')
-      case 'linux-cgroup-low':
-        return t('Low cgroup memory headroom')
-      default:
-        return t('System memory is under pressure')
-    }
-  }
-  const row = (
-    label: string,
-    value: (reading: MemoryReading) => string | undefined
-  ): React.JSX.Element | null => {
-    const cells = readings.map(value)
-    if (cells.every((cell) => cell === undefined)) return null
-    return (
-      <tr key={label} className="border-t border-border">
-        <th scope="row" className="py-2 pr-2 text-left font-normal text-muted-foreground">
-          {label}
-        </th>
-        {cells.map((cell, index) => (
-          <td key={index} className="px-1 py-2 align-top tabular-nums">
-            {cell ?? '—'}
-          </td>
-        ))}
-      </tr>
-    )
-  }
-  return (
-    <details className="mt-2 border-t border-border pt-2 text-xs leading-5">
-      <summary className="cursor-pointer rounded-sm text-muted-foreground underline decoration-dotted underline-offset-4">
-        {t('Memory check details')}
-      </summary>
-      <table className="mt-2 w-full table-fixed text-left">
-        <thead>
-          <tr>
-            <td />
-            <th scope="col" className="px-1 py-1 font-medium">
-              {t('When execution was blocked')}
-            </th>
-            {latest && (
-              <th scope="col" className="px-1 py-1 font-medium">
-                {t('Latest check')}
-              </th>
-            )}
-          </tr>
-        </thead>
-        <tbody>
-          {row(t('Checked at'), (r) => new Date(r.checkedAt).toLocaleTimeString(i18n?.language))}
-          {row(t('Status'), result)}
-          {row(t('Recovery time remaining'), (r) =>
-            r.recoveryRemainingMs === undefined
-              ? undefined
-              : Math.ceil(r.recoveryRemainingMs / 1000).toLocaleString(i18n?.language, {
-                  style: 'unit',
-                  unit: 'second',
-                  unitDisplay: 'short'
-                })
-          )}
-          {cgroupRows.map(({ path, high }) => {
-            const metric = high
-              ? t('cgroup usage / throttling limit')
-              : t('cgroup usage / hard limit')
-            return row(cgroupRows.length > 1 ? `${metric} (${path})` : metric, (r) => {
-              const constraint = r.cgroupConstraints?.find((entry) => entry.path === path)
-              const limit = high ? constraint?.highBytes : constraint?.maxBytes
-              return constraint && limit !== undefined
-                ? `${bytes(constraint.currentBytes)} / ${bytes(limit)}`
-                : undefined
-            })
-          })}
-          {row(t('Remaining capacity threshold'), (r) => {
-            if (r.remainingThresholdRatio === undefined) return undefined
-            const percent = r.remainingThresholdRatio.toLocaleString(i18n?.language, {
-              style: 'percent',
-              maximumFractionDigits: 2
-            })
-            return r.reason === 'windows-physical-low' && r.totalBytes !== undefined
-              ? `${bytes(r.remainingThresholdRatio * r.totalBytes)} (${percent})`
-              : percent
-          })}
-          {row(t('Available RAM / total'), (r) =>
-            r.availableBytes !== undefined && r.totalBytes !== undefined
-              ? `${bytes(r.availableBytes)} / ${bytes(r.totalBytes)}`
-              : undefined
-          )}
-          {row(t('Committed / limit'), (r) =>
-            r.committedBytes !== undefined && r.commitLimitBytes !== undefined
-              ? `${bytes(r.committedBytes)} / ${bytes(r.commitLimitBytes)}`
-              : undefined
-          )}
-        </tbody>
-      </table>
-      <details className="mt-2 text-muted-foreground">
-        <summary className="cursor-pointer">{t('Technical details')}</summary>
-        <pre className="mt-1 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-muted p-2">
-          {JSON.stringify({ trigger, latest }, null, 2)}
-        </pre>
-      </details>
-    </details>
-  )
-}
 
 export const NotebookMemoryNoticeBridge = ({
   projectId,
@@ -179,21 +36,25 @@ export const NotebookMemoryNoticeBridge = ({
   onContinue?: (event: NotebookMemoryRejectedEvent) => void | Promise<void>
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const { rejection, latestCheck, terminal, rejectedTerminalId } = useNotebookMemoryNoticeStore()
+  const { rejection, terminal, rejectedTerminalId } = useNotebookMemoryNoticeStore()
   const reproductionRejection = rejection?.source === 'reproduction'
   const terminalRejection = rejection?.source === 'user' && rejection.inputKind === 'terminal'
+  const needsDesktop =
+    !isDesktopRenderer() &&
+    Boolean(rejection?.refusalId) &&
+    !terminalRejection &&
+    !reproductionRejection
   const retryTerminal =
     terminalRejection && terminal && terminal.id === rejectedTerminalId && terminal.enabled
       ? terminal.retry
       : undefined
   useEffect(() => window.api.notebook?.onMemoryRejected?.(presentNotebookMemoryRejection), [])
 
-  const memory = latestCheck ?? rejection?.memory
+  const memory = rejection?.memory
   const polling = useRef(false)
   const retrying = useRef(false)
   const [busy, setBusy] = useState(false)
-  const [failedCheck, setFailedCheck] = useState<NotebookMemoryRejectedEvent>()
-  const refreshFailed = Boolean(rejection && failedCheck === rejection)
+  const [refreshFailed, setRefreshFailed] = useState(false)
   const [actionError, setActionError] = useState<{ owner: string; message: string }>()
   const noticeScope = memory?.executionScope
   const noticeOwner = rejection
@@ -201,7 +62,7 @@ export const NotebookMemoryNoticeBridge = ({
     : undefined
   useEffect(() => {
     const read = window.api.notebook?.getMemoryPolicyState
-    if (!noticeScope || !rejection || !read) return
+    if (!noticeScope || !noticeOwner || !read) return
     let current = true
     let timer: ReturnType<typeof setTimeout> | undefined
     const refresh = async (): Promise<void> => {
@@ -213,24 +74,24 @@ export const NotebookMemoryNoticeBridge = ({
       try {
         const next = await read({ executionScope: noticeScope })
         if (!current) return
-        setFailedCheck(undefined)
+        setRefreshFailed(false)
         const state = useNotebookMemoryNoticeStore.getState()
-        if (state.rejection !== rejection) return
-        recordNotebookMemoryCheck(rejection, next)
-        if (
-          next.status === 'healthy' &&
-          useNotebookMemoryNoticeStore.getState().latestCheck === next
-        ) {
-          useNotebookMemoryNoticeStore.setState({
-            dismissedPressureScopes: state.dismissedPressureScopes.filter(
-              (scope) => scope !== noticeScope
-            ),
-            pressure:
-              state.pressure?.memory.executionScope === noticeScope ? undefined : state.pressure
-          })
-        }
+        useNotebookMemoryNoticeStore.setState({
+          ...(next.status === 'healthy'
+            ? {
+                dismissedPressureScopes: state.dismissedPressureScopes.filter(
+                  (scope) => scope !== noticeScope
+                ),
+                pressure:
+                  state.pressure?.memory.executionScope === noticeScope ? undefined : state.pressure
+              }
+            : {}),
+          ...(state.rejection?.memory.executionScope === noticeScope
+            ? { rejection: { ...state.rejection, memory: next } }
+            : {})
+        })
       } catch {
-        if (current) setFailedCheck(rejection)
+        if (current) setRefreshFailed(true)
       } finally {
         polling.current = false
         if (current) timer = setTimeout(() => void refresh(), 5000)
@@ -241,7 +102,7 @@ export const NotebookMemoryNoticeBridge = ({
       current = false
       clearTimeout(timer)
     }
-  }, [noticeScope, rejection])
+  }, [noticeScope, noticeOwner])
 
   const recovered = memory?.status === 'healthy' && !refreshFailed
   const unavailable = memory?.status === 'unavailable'
@@ -320,14 +181,18 @@ export const NotebookMemoryNoticeBridge = ({
               <ErrorNotice
                 inline
                 tone="amber"
-                description={t(
-                  'This code did not run. Choose whether to retry or manage Notebook resources.'
-                )}
-              >
-                {rejection && (
-                  <MemoryCheckDetails trigger={rejection.memory} latest={latestCheck} />
-                )}
-              </ErrorNotice>
+                description={
+                  needsDesktop
+                    ? t(
+                        'Open the same Session and branch in the Open-Science desktop app, then choose Continue Notebook work in Compute.'
+                      )
+                    : t(
+                        'This code did not run. Choose whether to retry or manage Notebook resources.'
+                      )
+                }
+                errorCode={memory ? JSON.stringify(memory, null, 2) : undefined}
+                diagnosticsLabel={t('Memory check details')}
+              />
               {repairRequired ? (
                 <p className="mt-3 text-sm text-text-200">
                   {t(
@@ -372,7 +237,7 @@ export const NotebookMemoryNoticeBridge = ({
               <Button variant="secondary" disabled={manageDisabled || busy} onClick={manage}>
                 {t('Manage Notebook resources')}
               </Button>
-              {rejection ? (
+              {rejection && !needsDesktop ? (
                 <Button
                   aria-busy={busy || undefined}
                   disabled={

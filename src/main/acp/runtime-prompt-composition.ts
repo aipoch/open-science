@@ -4,6 +4,11 @@ import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import { isDelegationSettlementPrompt } from '../../shared/task-continuation'
+import {
+  markTrustedNotebookBindingPermissionPrompts,
+  taskNotebookRuntimeSelection
+} from '../notebook/runtime-binding-admission'
 import type { AgentFramework } from '../agent-framework/types'
 import type { NotebookWorkingFile } from './artifact-publication-continuation'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
@@ -454,6 +459,42 @@ const composeAcpRuntimePromptOwners = (
           text
         }),
       beforePromptDispatch: beforeFrameworkPromptDispatch,
+      prepareTaskNotebookRuntime: async (request, workspaceCwd, signal) => {
+        const target = taskNotebookRuntimeSelection(request)
+        if (!target) return
+        const bind = options.notebook?.bindTaskRuntime
+        const { rootFrameId, agentFrameId, messageBranchId, runtimeSegmentId, promptMessageId } =
+          request.provenanceContext ?? {}
+        if (
+          !bind ||
+          !rootFrameId ||
+          !agentFrameId ||
+          !messageBranchId ||
+          !runtimeSegmentId ||
+          !promptMessageId
+        )
+          throw new Error('Notebook runtime selection is unavailable for this Task branch.')
+        notebookExecutionIntent(request)?.assertExecutable()
+        await bind(
+          markTrustedNotebookBindingPermissionPrompts(
+            {
+              ...target,
+              projectId: projectId(request.sessionId),
+              sessionId: request.sessionId,
+              workspaceCwd,
+              provenanceContext: {
+                rootFrameId,
+                agentFrameId,
+                messageBranchId,
+                runtimeSegmentId,
+                promptMessageId
+              }
+            },
+            request.permissionPrompts
+          ),
+          signal
+        )
+      },
       commitNotebookDispatch: (appSessionId) =>
         base.sessionCapabilities.commitNotebookDispatch(appSessionId),
       prepareNotebookIntent: (request, mode) => {
@@ -476,23 +517,46 @@ const composeAcpRuntimePromptOwners = (
         const humanTurn =
           mode.kind === 'user' &&
           mode.runtimeReviewOwner !== 'task' &&
+          !operation?.task &&
           !request.continuation &&
           !request.suppressUserMessage
-        if (humanTurn && operation && notebook.createExecutionIntent) {
+        const taskContinuation =
+          mode.kind === 'user' &&
+          mode.runtimeReviewOwner === 'task' &&
+          !request.continuation &&
+          !request.suppressUserMessage &&
+          operation?.task &&
+          operation.refusalId
+        if ((humanTurn || taskContinuation) && operation && notebook.createExecutionIntent) {
           operation.assertCurrent()
           if (operation.projectId && operation.projectId !== scope.projectId)
             throw new Error('Notebook continuation does not belong to this Project.')
           if (
             operation.refusalId &&
             (current?.refusalId !== operation.refusalId ||
-              current.scope.messageBranchId !== scope.messageBranchId)
+              current.scope.messageBranchId !== scope.messageBranchId ||
+              current.hasClaimedContinuation)
           )
             throw new Error('The Notebook refusal changed. Refresh it before continuing execution.')
-          // Ordinary chat may explain a refusal; only the purpose-owned human command creates
-          // another executable context after rejection.
+          if (taskContinuation && operation.task) {
+            const { branchId, promptMessageId } = operation.task
+            if (
+              branchId !== scope.messageBranchId ||
+              !request.provenanceContext?.messageAncestry?.includes(promptMessageId) ||
+              (current?.scope.promptMessageId !== promptMessageId &&
+                notebook.resolveExecutionIntent?.(scope, promptMessageId) !== current)
+            )
+              throw new Error('The original Notebook stop is no longer in this Task branch.')
+            // A late turn can rebind the old intent, but the decision cannot grant execution twice.
+            current?.claimContinuation()
+          }
+          // Ordinary chat may explain the refusal. An explicit continuation creates a new intent.
           if (current?.refusalId && !operation.refusalId) intent = current
           else {
-            intent = notebook.createExecutionIntent(scope)
+            intent = notebook.createExecutionIntent({
+              ...scope,
+              ...(operation.refusalId ? { continuedFromRefusalId: operation.refusalId } : {})
+            })
             intent.prepareUserExecution(operation.refusalId ? operation.assertCurrent : undefined)
           }
         } else if (!intent) {
@@ -688,6 +752,9 @@ const composeAcpRuntimePromptOwners = (
                 ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
                 ...(delegatedMessageId ? { delegatedMessageId } : {}),
                 ...(applicationPrompt ? { applicationPrompt } : {}),
+                ...(continuationAdmission && isDelegationSettlementPrompt(request)
+                  ? { delegationSettlement: true }
+                  : {}),
                 ...(approvedHandoffContinuation ? { approvedHandoffContinuation } : {})
               },
               continuationAdmission

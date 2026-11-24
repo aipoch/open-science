@@ -25,6 +25,8 @@ type PermissionDiagnostic = {
     | 'automatic_policy'
     | 'legacy_session'
     | 'human'
+    | 'user_relay'
+    | 'delegated_agent'
     | 'system'
     | 'restored_once'
     | 'provider_native'

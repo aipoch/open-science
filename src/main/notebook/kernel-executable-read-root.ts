@@ -1,7 +1,21 @@
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
 
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+
+/** Conda Rscript loads its launcher, interpreter, and shared libraries from its own lib tree. */
+export const condaRLibraryReadRoot = (executable: string, platform: NodeJS.Platform): string => {
+  if (platform === 'win32' || !posix.isAbsolute(executable) || !executable.endsWith('/bin/Rscript'))
+    return ''
+  const prefix = posix.dirname(posix.dirname(executable))
+  const lib = posix.join(prefix, 'lib')
+  if (!existsSync(posix.join(prefix, 'conda-meta/history'))) return ''
+  try {
+    return realpathSync(posix.join(lib, 'R/bin/exec/R')).startsWith(`${lib}/`) ? lib : ''
+  } catch {
+    return ''
+  }
+}
 
 /** Shared read boundary for kernel and package-installer executables. */
 export const kernelExecutableReadRoot = (

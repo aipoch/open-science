@@ -205,12 +205,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
         // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
         // Main-only initial connection preparation changes no tool schemas, handlers or Auto dispositions.
-        // Reviewed: terminal status and diagnostics are projected after RPC dispatch. Background
-        // query and cancel still require the registered action and its validated Run identity.
-        // The read-only state request limits history to the ten runs its response can display.
-        // Directory discovery publishes its existing result fields using the MCP default dialect.
+        // Reviewed: default runtime advice and no-retry guidance for declines and stops only change
+        // tool text. RPC dispatch, input schemas and Auto authorization remain unchanged.
         'notebook/mcp-server.ts':
-          'e52fcccfae2e622414ce9a2d7124df62cabd62eb3cb54a038c71c49c480e5832',
+          '20a588b8780c1163ad2423253dca6f057401f58ad6e72473213847b86973823a',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.

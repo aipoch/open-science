@@ -3,6 +3,7 @@
     "src/main/tasks/task-control-ports.ts",
     "src/main/tasks/task-run-journal.test.ts",
     "src/main/tasks/task-run-journal.ts",
+    "src/main/tasks/task-runner-error.ts",
     "src/main/tasks/task-runner.test.ts",
     "src/main/tasks/task-runner.ts",
     "src/main/tasks/task-submissions.test.ts",

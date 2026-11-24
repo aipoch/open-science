@@ -477,7 +477,10 @@ describe('createWebServiceController', () => {
     await h.controller.ensureStarted(44100, { attached: true })
     const restartedTasks = h.lastOptions().tasks!
     expect(restartedTasks).toBe(firstTasks)
-    expect(restartedTasks.getRun(run.id)).toMatchObject({ id: run.id, sessionId: run.sessionId })
+    await expect(restartedTasks.getRun(run.id)).resolves.toMatchObject({
+      id: run.id,
+      sessionId: run.sessionId
+    })
   })
 
   it.each([false, true])(
@@ -583,16 +586,16 @@ describe('createWebServiceController', () => {
             ).toMatchObject({ status: 'accepted' })
           })
         const started = durable
-          ? first
+          ? await first
               .lastOptions()
               .tasks!.getRun(
                 (await first.lastOptions().tasks!.getSubmission!('request-restart')).runId!
               )
           : await first.lastOptions().tasks!.startRun(request)
-        await vi.waitFor(() => {
-          expect(first.lastOptions().tasks!.getRun(started.id).status).toBe('completed')
+        await vi.waitFor(async () => {
+          expect((await first.lastOptions().tasks!.getRun(started.id)).status).toBe('completed')
         })
-        const terminal = first.lastOptions().tasks!.getRun(started.id)
+        const terminal = await first.lastOptions().tasks!.getRun(started.id)
         expect(terminal.status).toBe('completed')
         await first.controller.dispose()
 
@@ -615,7 +618,7 @@ describe('createWebServiceController', () => {
           ).toMatchObject({ status: 'accepted', runId: started.id })
           expect(taskAgent.prompt).toHaveBeenCalledOnce()
         }
-        expect(second.lastOptions().tasks!.getRun(started.id)).toMatchObject({
+        await expect(second.lastOptions().tasks!.getRun(started.id)).resolves.toMatchObject({
           id: started.id,
           sessionId: started.sessionId,
           projectId: project.id,
@@ -655,7 +658,7 @@ describe('createWebServiceController', () => {
       await h.lastOptions().waitUntilTasksReady?.()
       const tasks = h.lastOptions().tasks!
 
-      expect(tasks.getRun('run-interrupted')).toMatchObject({
+      await expect(tasks.getRun('run-interrupted')).resolves.toMatchObject({
         status: 'failed',
         failureCode: 'process_restarted',
         error: 'Run interrupted because Open-Science restarted.'

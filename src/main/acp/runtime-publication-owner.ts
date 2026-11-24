@@ -5,7 +5,10 @@ import type {
   AcpStateSnapshot,
   AcpStateUpdate
 } from '../../shared/acp'
-import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import {
+  isAppOwnedNotebookRuntimeReview,
+  type AcpPermissionRequest
+} from '../../shared/acp-permission-contract'
 import {
   sanitizeNotebookCodeReviewPayload,
   sanitizeRawToolPayload,
@@ -66,7 +69,8 @@ const projectPermissionRequest = (request: AcpPermissionRequest): AcpPermissionR
   const { rawInput, ...requestProjection } = request
   const sanitizedProjection = {
     ...requestProjection,
-    title: sanitizeToolDetailText(request.title)
+    title: sanitizeToolDetailText(request.title),
+    ...(isAppOwnedNotebookRuntimeReview(request) ? { notebookRuntimeReview: true as const } : {})
   }
   const notebookReview =
     request.appOwned === true &&
@@ -82,6 +86,7 @@ const projectPermissionRequest = (request: AcpPermissionRequest): AcpPermissionR
   if (notebookReview && sanitizedRawInput === undefined)
     return {
       ...sanitizedProjection,
+      notebookCodeReview: true,
       options: request.options.filter((option) => option.kind.startsWith('reject_'))
     }
 
