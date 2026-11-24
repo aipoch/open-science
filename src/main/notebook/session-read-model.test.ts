@@ -778,3 +778,54 @@ it.each(['live', 'imported'])(
     expect(ids.sort()).toEqual(['large-0', 'large-1', 'large-2'])
   }
 )
+
+it('recovers an old Shell receipt from disk after a timeout and a fresh read model', async () => {
+  const storageRoot = await createRoot()
+  const session = makeSession(storageRoot)
+  const { projectId, sessionId, lane } = session
+  const writer = new NotebookRunRepository(storageRoot)
+  await writer.loadOrCreate({ projectId, sessionId, lane, workspaceCwd: storageRoot })
+  const stdout = JSON.stringify({ data: 'x'.repeat(18000), _handoff: { orderId: 'saved-order' } })
+  await writer.appendRun({
+    projectId,
+    sessionId,
+    lane,
+    run: makeRun({
+      runId: 'outline',
+      kernelKind: 'bash',
+      text: { stdout, stderr: '', traceback: '', plain: [] }
+    })
+  })
+  for (let index = 0; index < 12; index++) {
+    await writer.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: makeRun({
+        runId: `later-${index}`,
+        startedAt: index + 2,
+        kernelKind: 'bash',
+        status: index === 11 ? 'timeout' : 'completed'
+      })
+    })
+  }
+  // Reopen the repository without any original interpreter or in-memory run cache.
+  const reader = new NotebookRunRepository(storageRoot)
+  const model = makeReadModel(storageRoot, undefined, reader)
+  const recovered = await model.importedState(
+    { projectId, sessionId, workspaceCwd: storageRoot },
+    ['outline'],
+    undefined,
+    undefined,
+    10
+  )
+  expect(recovered.runs.find((run) => run.runId === 'outline')?.text.stdout).toBe(stdout)
+  const foreign = await model.importedState(
+    { projectId, sessionId: 'other-session', workspaceCwd: storageRoot },
+    ['outline'],
+    undefined,
+    undefined,
+    10
+  )
+  expect(foreign.runs).toEqual([])
+})
