@@ -356,7 +356,7 @@ export type InstallManagedCodeBuddyOptions = {
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
   dataRoot: string
-  registries?: string[]
+  registries?: readonly string[]
   version?: string
   platform?: NodeJS.Platform
   execPath?: string

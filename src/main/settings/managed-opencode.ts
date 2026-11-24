@@ -407,7 +407,7 @@ export type InstallManagedOpencodeOptions = {
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
   dataRoot: string
-  registries?: string[]
+  registries?: readonly string[]
   version?: string
   platform?: OpencodePlatform
   fetchJson?: FetchJson

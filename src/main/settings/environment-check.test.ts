@@ -605,10 +605,14 @@ describe('runEnvironmentCheck', () => {
 })
 
 describe('resolveInstallRegistries', () => {
-  it('orders the fastest reachable registry first with the other as fallback', async () => {
-    const probeRegistry = vi.fn(async (registry: 'npmjs' | 'npmmirror') =>
-      registry === 'npmmirror' ? 35 : 420
-    )
+  it('orders the first reachable registry first with the other as fallback', async () => {
+    const probeRegistry = vi.fn(async (registry: 'npmjs' | 'npmmirror') => {
+      if (registry === 'npmjs') {
+        await new Promise((resolve) => setTimeout(resolve, 35))
+        return 35
+      }
+      return 5
+    })
 
     const registries = await resolveInstallRegistries({
       agentFrameworkId: 'opencode',
@@ -650,7 +654,28 @@ describe('resolveInstallRegistries', () => {
     expect(npmjsSignal?.aborted).toBe(true)
   })
 
-  it('falls back to the remaining reachable registry when the other fails', async () => {
+  it('keeps waiting for the second registry when the first rejects early', async () => {
+    let mirrorSignal: AbortSignal | undefined
+    const probeRegistry = vi.fn(
+      async (registry: 'npmjs' | 'npmmirror', _path?: string, signal?: AbortSignal) => {
+        if (registry === 'npmjs') throw new Error('HTTP 502')
+        mirrorSignal = signal
+        await new Promise((resolve) => setTimeout(resolve, 15))
+        expect(signal?.aborted).toBe(false)
+        return 15
+      }
+    )
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'opencode',
+      probeRegistry
+    })
+
+    expect(registries).toEqual(['https://registry.npmmirror.com', 'https://registry.npmjs.org'])
+    expect(mirrorSignal?.aborted).toBe(true)
+  })
+
+  it('falls back to the remaining reachable registry when the mirror fails', async () => {
     const probeRegistry = vi.fn(async (registry: 'npmjs' | 'npmmirror') => {
       if (registry === 'npmmirror') throw new Error('HTTP 502')
       return 180
@@ -675,17 +700,57 @@ describe('resolveInstallRegistries', () => {
     expect(registries).toEqual(['https://registry.npmjs.org', 'https://registry.npmmirror.com'])
   })
 
-  it('honors an explicit preferredRegistry without probing', async () => {
-    const probeRegistry = vi.fn()
+  it.each([
+    ['npmmirror', ['https://registry.npmmirror.com', 'https://registry.npmjs.org']],
+    ['npmjs', ['https://registry.npmjs.org', 'https://registry.npmmirror.com']]
+  ] as const)(
+    'honors an explicit %s preferredRegistry without probing',
+    async (preferredRegistry, expected) => {
+      const probeRegistry = vi.fn()
+
+      const registries = await resolveInstallRegistries({
+        agentFrameworkId: 'claude-code',
+        preferredRegistry,
+        probeRegistry
+      })
+
+      expect(probeRegistry).not.toHaveBeenCalled()
+      expect(registries).toEqual(expected)
+    }
+  )
+
+  it('ignores an untrusted preferredRegistry value and probes normally', async () => {
+    const probeRegistry = vi.fn(async (registry: 'npmjs' | 'npmmirror') => {
+      if (registry === 'npmjs') {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return 20
+      }
+      return 5
+    })
 
     const registries = await resolveInstallRegistries({
       agentFrameworkId: 'claude-code',
-      preferredRegistry: 'npmmirror',
+      preferredRegistry: 'toString' as never,
       probeRegistry
     })
 
-    expect(probeRegistry).not.toHaveBeenCalled()
+    expect(probeRegistry).toHaveBeenCalledTimes(2)
     expect(registries).toEqual(['https://registry.npmmirror.com', 'https://registry.npmjs.org'])
+  })
+
+  it('rejects immediately when signal is already aborted before probing', async () => {
+    const controller = new AbortController()
+    controller.abort(new Error('already cancelled'))
+    const probeRegistry = vi.fn()
+
+    await expect(
+      resolveInstallRegistries({
+        agentFrameworkId: 'opencode',
+        probeRegistry,
+        signal: controller.signal
+      })
+    ).rejects.toThrow('already cancelled')
+    expect(probeRegistry).not.toHaveBeenCalled()
   })
 
   it('propagates caller abort cancellation', async () => {
@@ -705,5 +770,21 @@ describe('resolveInstallRegistries', () => {
     controller.abort(new Error('cancelled'))
 
     await expect(pending).rejects.toThrow('cancelled')
+  })
+
+  it('rejects when caller aborts concurrently with an uncooperative probe resolving', async () => {
+    const controller = new AbortController()
+    const probeRegistry = vi.fn(async () => {
+      controller.abort(new Error('late cancel'))
+      return 10
+    })
+
+    await expect(
+      resolveInstallRegistries({
+        agentFrameworkId: 'opencode',
+        probeRegistry,
+        signal: controller.signal
+      })
+    ).rejects.toThrow('late cancel')
   })
 })

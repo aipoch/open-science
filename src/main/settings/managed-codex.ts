@@ -1246,7 +1246,7 @@ export type InstallManagedCodexOptions = {
   // When Codex CLI is user-owned, update only the app-controlled adapter and verify it against this
   // existing binary. The caller keeps the user's persisted CLI path/version instead of replacing it.
   existingCodexPath?: string
-  registries?: string[]
+  registries?: readonly string[]
   platform?: ManagedCodexPlatform
   fetchJson?: FetchJson
   fetchTarball?: FetchTarball

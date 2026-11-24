@@ -296,6 +296,8 @@ export type SettingsServiceOptions = {
   installManagedCodexImpl?: (
     options: InstallManagedCodexOptions
   ) => Promise<ManagedCodexInstallOutcome>
+  installManagedPiImpl?: AgentRuntimeManagerOptions['installManagedPiImpl']
+  probeRegistry?: AgentRuntimeManagerOptions['probeRegistry']
   codexAuth?: CodexAuthControllerPort
   // Resolves the user's current native/PAC proxy for Codex subscription traffic. Injectable so
   // tests do not depend on the host machine's Electron session configuration.
@@ -656,6 +658,8 @@ class SettingsService {
       installManagedClaudeAcpImpl: options.installManagedClaudeAcpImpl,
       installManagedOpencodeImpl: options.installManagedOpencodeImpl,
       installManagedCodexImpl: options.installManagedCodexImpl,
+      installManagedPiImpl: options.installManagedPiImpl,
+      probeRegistry: options.probeRegistry,
       resolveCodexProxyEnvironment: options.resolveCodexProxyEnvironment
     })
     this.lab = new LabAccountOwner({

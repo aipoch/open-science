@@ -846,7 +846,9 @@ export class AgentRuntimeManager {
             : [])
         ],
         encryptionAvailable: isEncryptionAvailable(),
-        credentialStore: getCredentialStore()
+        credentialStore: getCredentialStore(),
+        ...(this.probeRegistry ? { deps: { probeRegistry: this.probeRegistry } } : {}),
+        signal
       })
       signal.throwIfAborted()
       return result
@@ -1039,24 +1041,31 @@ export class AgentRuntimeManager {
     const installId = `install-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
     return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
-      const registries = await this.resolveManagedRegistries(
-        'claude-code',
-        signal,
-        request.managedRegistry
-      )
+      let resolvedRegistries: Promise<string[]> | undefined
+      const getRegistries = (): Promise<string[]> =>
+        (resolvedRegistries ??= this.resolveManagedRegistries(
+          'claude-code',
+          signal,
+          request.managedRegistry
+        ))
+
       const complete = async (result: ClaudeInstallResult): Promise<ClaudeInstallResult> => {
         if (!result.ok) return result
         try {
+          if (managedClaudeAcpEntryAt(managedClaudeAcpRoot(this.configRoot))) return result
           await this.installManagedClaudeAcpImpl({
             configRoot: this.configRoot,
             installId,
             onEvent,
-            registries,
+            registries: await getRegistries(),
             signal
           })
           return result
         } catch (cause) {
           if (cause instanceof VerificationProcessUnsettledError) onCleanupFailure(cause)
+          if (signal.aborted) {
+            return { installId, ok: false, error: 'Installation cancelled.' }
+          }
           const error = cause instanceof Error ? cause.message : String(cause)
           onEvent({
             kind: 'log',
@@ -1073,7 +1082,7 @@ export class AgentRuntimeManager {
           installId,
           onEvent,
           dataRoot: this.configRoot,
-          registries,
+          registries: await getRegistries(),
           verifyBinary: this.detectDeps.getVersion,
           signal
         })
@@ -1286,6 +1295,11 @@ export class AgentRuntimeManager {
       return await install(controller.signal, (error) => {
         cleanupFailure = error
       })
+    } catch (error) {
+      if (controller.signal.aborted) {
+        return { installId, ok: false, error: 'Installation cancelled.' }
+      }
+      throw error
     } finally {
       this.activeInstallAbort = undefined
       this.activeInstallCompletion = undefined

@@ -523,7 +523,7 @@ export type InstallManagedClaudeOptions = {
   // Root under which the binary is placed (<dataRoot>/claude-code/bin/<binName>). Pass the app's
   // configurable storage root, not a hardcoded userData path.
   dataRoot: string
-  registries?: string[]
+  registries?: readonly string[]
   version?: string
   platform?: ManagedPlatform
   fetchJson?: FetchJson

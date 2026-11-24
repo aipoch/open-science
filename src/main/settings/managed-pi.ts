@@ -107,7 +107,7 @@ export const installManagedPi = async ({
       log(`Installing ${path}`)
       const archive = join(staging, 'download.tgz')
       let downloaded = false
-      let downloadError: unknown
+      let downloadError: unknown = new Error('no registries configured')
       for (const registry of registries) {
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           try {
