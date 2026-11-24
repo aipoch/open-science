@@ -8,7 +8,7 @@ import { RemoteSessionPairingManager } from '../remote-access/pairing'
 import { RemoteAccessRepository } from '../remote-access/repository'
 import { requirePairingManager } from '../remote-access/ipc'
 import { remoteAccessApplicationCommandContracts } from '../../shared/remote-access'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -55,6 +55,7 @@ import type {
   AcquireManagedPreviewRequest,
   ReadManagedPreviewRangeRequest
 } from '../../shared/preview-resources'
+import { packWebAssets } from '../../../scripts/pack-web-assets.mjs'
 
 const roots: string[] = []
 const servers: RunningWebServer[] = []
@@ -905,6 +906,69 @@ describe('startWebHttpServer', () => {
       headers: { authorization: 'Bearer test-token' }
     })
     expect(moduleResponse.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
+  })
+
+  it('serves packed Desktop web assets through HTTP after packaging removes the assets directory', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-packed-web-'))
+    roots.push(root)
+    const source = join(root, 'source')
+    const staticRoot = join(root, 'package', 'web')
+    const html = '<!doctype html><script type="module" src="/assets/app.js"></script>'
+    const script = `window.__packed = "${'a'.repeat(5_000)}"`
+    const css = 'body { color: teal; }'
+    await mkdir(join(source, 'assets'), { recursive: true })
+    await Promise.all([
+      writeFile(join(source, 'index.html'), html),
+      writeFile(join(source, 'assets', 'app.js'), script),
+      writeFile(join(source, 'assets', 'app.css'), css)
+    ])
+    await packWebAssets(source, staticRoot)
+    await expect(readFile(join(staticRoot, 'assets', 'app.js'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    const server = await startTestWebHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token',
+      staticRoot,
+      rpc: { channels: () => [], invoke: vi.fn() },
+      bootstrap: {
+        appName: 'Open-Science',
+        appVersion: '0.0.0',
+        configRoot: '/fake/root',
+        platform: 'test',
+        versions: { electron: '1', chrome: '1', node: '1' }
+      }
+    })
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.port}`
+    const headers = { authorization: 'Bearer test-token', 'accept-encoding': 'identity' }
+    for (const [path, content, mime] of [
+      ['/assets/app.js', script, 'text/javascript; charset=utf-8'],
+      ['/assets/app.css', css, 'text/css; charset=utf-8']
+    ]) {
+      const response = await fetch(`${base}${path}`, { headers })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe(mime)
+      expect(response.headers.get('cache-control')).toBe('public, max-age=31536000')
+      expect(response.headers.get('content-security-policy')).toContain("default-src 'self'")
+      expect(await response.text()).toBe(content)
+    }
+    const head = await fetch(`${base}/assets/app.js`, { method: 'HEAD', headers })
+    expect(head.status).toBe(200)
+    expect(head.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
+    expect(Number(head.headers.get('content-length'))).toBe(Buffer.byteLength(script))
+    expect(await head.text()).toBe('')
+    const compressed = await fetch(`${base}/assets/app.js`, {
+      headers: { ...headers, 'accept-encoding': 'gzip' }
+    })
+    expect(compressed.headers.get('content-encoding')).toBe('gzip')
+    expect(compressed.headers.get('vary')).toBe('Accept-Encoding')
+    expect(await compressed.text()).toBe(script)
+    const navigation = await fetch(`${base}/projects/fixture`, { headers })
+    expect(navigation.headers.get('content-type')).toBe('text/html; charset=utf-8')
+    expect(navigation.headers.get('cache-control')).toBe('no-store')
+    expect(await navigation.text()).toBe(html)
   })
 
   it('dispatches local Web RPC through the narrow application command view', async () => {
