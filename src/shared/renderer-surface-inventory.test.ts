@@ -104,6 +104,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'locale.onChanged',
   'locale.setPreference',
   'managedFileVersions.cancelDiff',
+  'managedFileVersions.deleteVersions',
   'managedFileVersions.diffText',
   'managedFileVersions.saveBinaryEdit',
   'managedFileVersions.saveTextEdit',
