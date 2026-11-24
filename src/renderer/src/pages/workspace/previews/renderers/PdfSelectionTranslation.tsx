@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Cpu, X } from 'lucide-react'
 import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
@@ -118,6 +118,7 @@ export function PdfSelectionTranslation({
   onClose: () => void
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
+  const titleId = useId()
   const catalog = useAgentModels()
   const agentModels = catalog.models.filter((entry) => entry.selectable)
   const apiModels = useAvailableApiModels()
@@ -145,22 +146,25 @@ export function PdfSelectionTranslation({
     <PopoverContent
       align="start"
       collisionPadding={8}
-      aria-label={t('Translation')}
+      aria-labelledby={titleId}
       className="annotation-popover z-[110] flex w-80 flex-col gap-2 rounded-xl px-3 pb-1.5 pt-3"
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
-        <TranslationResult
-          key={JSON.stringify([selectionId, selected.key, language, attempt])}
-          text={text}
-          selectionId={selectionId}
-          language={language}
-          model={selected.model}
-          retry={() => setAttempt((n) => n + 1)}
-        />
+      <div className="flex items-center justify-between gap-2">
+        <h2 id={titleId} className="text-xs font-medium text-muted-foreground">
+          {t('Translation')}
+        </h2>
         <Button variant="ghost" size="icon-xs" aria-label={t('Close')} onClick={onClose}>
           <X />
         </Button>
       </div>
+      <TranslationResult
+        key={JSON.stringify([selectionId, selected.key, language, attempt])}
+        text={text}
+        selectionId={selectionId}
+        language={language}
+        model={selected.model}
+        retry={() => setAttempt((n) => n + 1)}
+      />
       <div className="flex min-w-0 items-center border-t border-border/60 pt-1">
         <Select
           value={selected.key}
