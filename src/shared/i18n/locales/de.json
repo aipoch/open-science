@@ -7794,6 +7794,7 @@
     "{{count}} previous messages_other": "{{count}} vorherige Nachrichten",
     "Could not continue the task": "Die Aufgabe konnte nicht fortgesetzt werden",
     "End this wait": "Wartephase beenden",
+    "Select “End this wait”, then choose an available model in the message composer.": "Klicken Sie auf „Wartephase beenden“ und wählen Sie dann ein verfügbares Modell im Nachrichteneingabefeld aus.",
     "Retry continuation": "Fortsetzung erneut versuchen",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "Dieses Lesezeichen konnte nicht entfernt werden. Ihre gespeicherten Repositorys bleiben erhalten.",
     "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "Das Entfernen eines Lesezeichens behält installierte Fähigkeiten bei. Gespeicherte Repositorys aktualisieren Fähigkeiten nicht automatisch.",

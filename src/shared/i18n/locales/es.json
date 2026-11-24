@@ -7964,6 +7964,7 @@
     "{{count}} previous messages_other": "{{count}} mensajes anteriores",
     "Could not continue the task": "No se pudo continuar la tarea",
     "End this wait": "Finalizar esta espera",
+    "Select “End this wait”, then choose an available model in the message composer.": "Seleccione «Finalizar esta espera» y elija un modelo disponible en la barra de redacción del mensaje.",
     "Retry continuation": "Reintentar la continuación",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "No se pudo eliminar este marcador. Se han conservado los repositorios guardados.",
     "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "Al eliminar un marcador, se conservan sus habilidades instaladas. Los repositorios guardados no actualizan las habilidades automáticamente.",

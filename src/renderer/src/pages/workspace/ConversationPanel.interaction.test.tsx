@@ -4,6 +4,7 @@ import {
   useWorkspaceElicitationFailures
 } from '@/lib/acp/useWorkspaceElicitation'
 import { applyWorkspaceRuntimeEvent } from '@/lib/acp/workspace-events'
+import type { ElicitationResponse } from '../../../../shared/elicitation'
 import {
   EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE
@@ -3952,7 +3953,7 @@ describe('ConversationPanel composer intake', () => {
     'shows the current question recovery even when older questions still appear to be waiting (%s)',
     async (providerError) => {
       const prompts = ['old-wait', 'old-error', 'current']
-      let stored = materializeSessionConversationGraph({
+      let stored: PersistedChatSession = materializeSessionConversationGraph({
         id: 'saved-ask-user-recovery',
         projectId: 'project-a',
         title: 'Saved Ask User recovery',
@@ -4010,21 +4011,16 @@ describe('ConversationPanel composer intake', () => {
           return structuredClone(stored)
         }
       })
-      const respond = vi.fn(
-        async (response: {
-          action: 'cancel'
-          requestId: string
-          request: { toolCallId: string }
-        }) => {
-          await owner.prepareElicitation({
-            projectId: stored.projectId,
-            sessionId: stored.id,
-            toolCallId: response.request.toolCallId,
-            requestId: response.requestId,
-            action: response.action
-          })
-        }
-      )
+      const respond = vi.fn(async ({ action, request, requestId }: ElicitationResponse) => {
+        if (!request) throw new Error('Missing question request')
+        await owner.prepareElicitation({
+          projectId: stored.projectId,
+          sessionId: stored.id,
+          toolCallId: request.toolCallId,
+          requestId,
+          action
+        })
+      })
       const activeSession = hydrateSession(stored)
       expect(pendingWorkspaceElicitations(activeSession).map(({ requestId }) => requestId)).toEqual(
         ['current-request']
@@ -4049,9 +4045,12 @@ describe('ConversationPanel composer intake', () => {
       const recovery = container.querySelector('[data-testid="elicitation-recovery"]')
       expect(recovery?.textContent).toContain('Session model unavailable')
       expect(recovery?.textContent).toContain('Your response was saved.')
+      expect(recovery?.textContent).toContain(
+        'Select “End this wait”, then choose an available model in the message composer.'
+      )
       expect(recovery?.textContent).toContain(providerError)
       expect(recovery?.textContent).not.toContain('Previous question failed')
-      expect(recovery?.querySelector('[data-testid="mock-model-picker"]')).not.toBeNull()
+      expect(recovery?.querySelector('[data-testid="mock-model-picker"]')).toBeNull()
       expect(recovery?.textContent).not.toContain('Retry continuation')
 
       await act(async () =>
@@ -4074,6 +4073,9 @@ describe('ConversationPanel composer intake', () => {
       renderPanel({ view: { activeSession: settled }, elicitation: { requests: [], respond } })
       expect(pendingWorkspaceElicitations(settled)).toEqual([])
       expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+      const composer = container.querySelector('[data-testid="ordinary-composer-form"]')
+      expect(composer?.hasAttribute('inert')).toBe(false)
+      expect(composer?.querySelector('[data-testid="mock-model-picker"]')).not.toBeNull()
     }
   )
 

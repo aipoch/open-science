@@ -8107,6 +8107,7 @@
     "{{count}} previous messages_other": "{{count}} предыдущего сообщения",
     "Could not continue the task": "Не удалось продолжить задачу",
     "End this wait": "Завершить ожидание",
+    "Select “End this wait”, then choose an available model in the message composer.": "Нажмите «Завершить ожидание», затем выберите доступную модель в области ввода сообщения.",
     "Retry continuation": "Повторить продолжение",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "Не удалось удалить закладку. Сохранённые репозитории оставлены без изменений.",
     "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "Удаление закладки не удаляет установленные навыки. Сохранённые репозитории не обновляют навыки автоматически.",

@@ -7632,6 +7632,7 @@
     "{{count}} previous messages_other": "先前的 {{count}} 則訊息",
     "Could not continue the task": "無法繼續任務",
     "End this wait": "結束本次等待",
+    "Select “End this wait”, then choose an available model in the message composer.": "點選「結束本次等待」，再到訊息輸入列選擇可用的模型。",
     "Retry continuation": "重試繼續",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "無法移除此書籤，已儲存的儲存庫已保留。",
     "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "移除書籤不會刪除已安裝的技能。已儲存的儲存庫不會自動更新技能。",

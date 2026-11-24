@@ -7964,6 +7964,7 @@
     "{{count}} previous messages_other": "{{count}} messages précédents",
     "Could not continue the task": "Impossible de poursuivre la tâche",
     "End this wait": "Terminer cette attente",
+    "Select “End this wait”, then choose an available model in the message composer.": "Sélectionnez « Terminer cette attente », puis choisissez un modèle disponible dans la zone de rédaction.",
     "Retry continuation": "Réessayer de poursuivre",
     "Could not remove this bookmark. Your saved repositories have been preserved.": "Impossible de supprimer ce favori. Vos dépôts enregistrés ont été conservés.",
     "Removing a bookmark keeps its installed Skills. Saved repositories do not update Skills automatically.": "La suppression d’un favori conserve ses compétences installées. Les dépôts enregistrés ne mettent pas les compétences à jour automatiquement.",
