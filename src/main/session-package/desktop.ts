@@ -16,7 +16,7 @@ import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { formatPackageBytes, packageImportPercent } from '../../shared/session-package'
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdtemp, opendir, readdir, realpath, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, opendir, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type {
@@ -673,7 +673,9 @@ export class SessionPackageDesktop {
   ): Promise<T> {
     this.busy = true
     try {
-      const directory = await mkdtemp(join(tmpdir(), 'open-science-package-dialog-'))
+      const packageTemporaryRoot = this.options.service.packageTemporaryRoot ?? tmpdir()
+      await mkdir(packageTemporaryRoot, { recursive: true, mode: 0o700 })
+      const directory = await mkdtemp(join(packageTemporaryRoot, 'open-science-package-dialog-'))
       return await this.acceptCleanup(() =>
         withPackageCleanup(
           async () => {
@@ -1315,7 +1317,8 @@ export class SessionPackageDesktop {
               useCase,
               signal,
               (completedBytes, totalBytes) =>
-                this.operations.reportUseCaseDownload(completedBytes, totalBytes)
+                this.operations.reportUseCaseDownload(completedBytes, totalBytes),
+              this.options.service.packageTemporaryRoot ?? tmpdir()
             ).catch((error) => this.failOperation(error))
             this.pendingUseCase = undefined
             sourcePath = downloaded.path

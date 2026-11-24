@@ -164,6 +164,7 @@ it.each(['inspect', 'import'] as const)(
         ).toHaveLength(1)
       }
       expect(workers).toHaveLength(1)
+      expect(validationRoots[0]).toContain(target.storageRoot)
       for (const root of validationRoots)
         await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
