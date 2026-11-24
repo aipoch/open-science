@@ -85,6 +85,8 @@ type KernelProcessReceipt = Readonly<{
 
 type KernelProcessProbe = 'dead' | 'owned' | 'reused' | 'unknown'
 
+const SCOPED_RECOVERY_CACHE_MAX = 256
+
 type KernelProcessRecoveryController = Readonly<{
   probe(
     record: Readonly<KernelProcessRecord>,
@@ -407,7 +409,7 @@ class KernelProcessLifecycleOwner {
   private recovery: Promise<void> | undefined
   private scopedRecoveryTail: Promise<void> = Promise.resolve()
   private readonly scopedRecoveries = new Map<string, Promise<void>>()
-  private readonly scopedRecoveryResults = new Set<string>()
+  private readonly scopedRecoveryResults = new Map<string, true>()
   private readonly invalidatedScopedRecoveries = new Set<string>()
 
   constructor(options: KernelProcessLifecycleOwnerOptions) {
@@ -431,14 +433,18 @@ class KernelProcessLifecycleOwner {
   }
 
   ensureReadyForLane(laneKey: string): Promise<void> {
-    if (this.scopedRecoveryResults.has(laneKey)) return Promise.resolve()
+    if (this.scopedRecoveryResults.has(laneKey)) {
+      this.scopedRecoveryResults.delete(laneKey)
+      this.scopedRecoveryResults.set(laneKey, true)
+      return Promise.resolve()
+    }
     const existing = this.scopedRecoveries.get(laneKey)
     if (existing) return existing
     // Session admission may happen concurrently for several lanes. Serialize the filesystem scan,
     // while sharing duplicate callers for the same lane.
     const queued = this.scopedRecoveryTail.then(async () => {
       await this.recoverRecords({ allowUnverifiedReceipts: true, targetLaneKey: laneKey })
-      if (!this.invalidatedScopedRecoveries.delete(laneKey)) this.scopedRecoveryResults.add(laneKey)
+      if (!this.invalidatedScopedRecoveries.delete(laneKey)) this.rememberScopedRecovery(laneKey)
     })
     this.scopedRecoveryTail = queued.catch(() => undefined)
     this.scopedRecoveries.set(laneKey, queued)
@@ -583,6 +589,16 @@ class KernelProcessLifecycleOwner {
   private invalidateLaneRecovery(laneKey: string): void {
     this.scopedRecoveryResults.delete(laneKey)
     if (this.scopedRecoveries.has(laneKey)) this.invalidatedScopedRecoveries.add(laneKey)
+  }
+
+  private rememberScopedRecovery(laneKey: string): void {
+    this.scopedRecoveryResults.delete(laneKey)
+    this.scopedRecoveryResults.set(laneKey, true)
+    while (this.scopedRecoveryResults.size > SCOPED_RECOVERY_CACHE_MAX) {
+      const oldest = this.scopedRecoveryResults.keys().next().value
+      if (oldest === undefined) return
+      this.scopedRecoveryResults.delete(oldest)
+    }
   }
 
   private async recoverRecords(options: KernelProcessRecoveryOptions = {}): Promise<void> {
