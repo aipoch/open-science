@@ -12,11 +12,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import {
   buildConfiguredModelCatalog,
-  parseConfiguredModelKey
+  parseConfiguredModelKey,
+  type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
 import { modelUnavailableReason } from '../workspace/composer-model-picker-utils'
+
+const mainModelLabel = (option: ConfiguredModelCatalogEntry): string =>
+  option.providerType === 'lab' ? option.model || option.providerName : option.label
 
 // The single "active model" selector for settings: one selected model, grouped and tagged by its
 // source provider. Mirrors the composer picker (both drive activeProviderId + activeModel), so
@@ -81,7 +85,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 className="size-4"
               />
               <span className="truncate">
-                {current.localPresetId ? current.label : current.model || current.providerName}{' '}
+                {mainModelLabel(current)}{' '}
                 {(!current.localPresetId ||
                   current.label !== `${current.providerName} · ${current.model}`) && (
                   <span className="ml-1.5 text-muted-foreground">{current.providerName}</span>
@@ -124,7 +128,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                         />
                       }
                     >
-                      {option.localPresetId ? option.label : option.model || option.providerName}
+                      {mainModelLabel(option)}
                     </SelectItem>
                   )
                 }
@@ -157,9 +161,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                             />
                           }
                         >
-                          {option.localPresetId
-                            ? option.label
-                            : option.model || option.providerName}
+                          {mainModelLabel(option)}
                         </SelectItem>
                       </TooltipTrigger>
                       <TooltipContent side="right" className="max-w-72 leading-5">

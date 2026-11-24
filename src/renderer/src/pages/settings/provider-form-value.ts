@@ -2,6 +2,7 @@ import {
   isLocalProviderPresetId,
   type LocalProviderPresetId
 } from '../../../../shared/local-provider-preset'
+import { PROVIDER_MODEL_LIMIT } from '../../../../shared/configured-provider-model'
 import {
   providerModelFormRow,
   providerModelsFromForm,
@@ -210,9 +211,9 @@ export const providerFormModel = (value: ProviderFormValue): string => {
   return ids.includes(value.model) ? value.model : (ids[0] ?? '')
 }
 
-const cloudPresetIds = (
-  value: Pick<ProviderFormValue, 'vendorId' | 'cloudflare' | 'manualConnection'>
-): readonly string[] =>
+type CloudModelRoute = Pick<ProviderFormValue, 'vendorId' | 'cloudflare' | 'manualConnection'>
+
+const cloudPresetIds = (value: CloudModelRoute): readonly string[] =>
   value.cloudflare
     ? CLOUDFLARE_GATEWAY_MODELS[value.cloudflare.mode]
     : value.manualConnection
@@ -220,34 +221,52 @@ const cloudPresetIds = (
       : []
 
 export const cloudModelFormRows = (
-  value: Pick<ProviderFormValue, 'vendorId' | 'cloudflare' | 'manualConnection'>
+  value: CloudModelRoute & { model?: string; contextWindow?: number }
 ): ProviderModelFormRow[] => {
-  const ids = cloudPresetIds(value)
-  return ids.length ? ids.map((id) => providerModelFormRow({ id })) : [providerModelFormRow()]
+  const model = value.model?.trim()
+  const presets = cloudPresetIds(value)
+    .filter((id) => id !== model)
+    .map((id) => providerModelFormRow({ id }))
+  if (model)
+    return [providerModelFormRow({ id: model, contextWindow: value.contextWindow }), ...presets]
+  return presets.length ? presets : [providerModelFormRow()]
 }
 
 export function cloudModelRoutePatch(
   value: ProviderFormValue,
-  next: Partial<Pick<ProviderFormValue, 'cloudflare' | 'manualConnection'>>
+  next: Partial<Pick<CloudModelRoute, 'cloudflare' | 'manualConnection'>>
 ): Partial<ProviderFormValue> {
-  const defaults = cloudPresetIds(value)
-  const ids = defaults.length ? defaults : ['']
-  // 只替换未编辑的默认行，避免切换区域或协议时丢掉手填模型。
+  const previousPresets = cloudPresetIds(value)
+  const nextPresets = cloudPresetIds({ ...value, ...next })
   if (
-    value.manualModels &&
-    (value.manualModels.length !== ids.length ||
-      value.manualModels.some(
-        (row, index) =>
-          row.id !== ids[index] ||
-          row.displayName ||
-          row.contextWindow ||
-          row.reasoningEffortPreset !== 'unsupported'
-      ))
+    previousPresets.length === nextPresets.length &&
+    previousPresets.every((id, index) => id === nextPresets[index])
   )
     return {}
 
-  const manualModels = cloudModelFormRows({ ...value, ...next })
-  return { model: manualModels[0].id, manualModels }
+  // 丢弃旧协议的默认行，并优先使用新协议的预设测试连接。手填行和自定义参数保留。
+  const retained = (value.manualModels ?? []).filter(
+    (row) =>
+      !previousPresets.includes(row.id.trim()) ||
+      row.displayName ||
+      row.contextWindow ||
+      row.reasoningEffortPreset !== 'unsupported'
+  )
+  const presets: ProviderModelFormRow[] = []
+  let availableRows = PROVIDER_MODEL_LIMIT - retained.length
+  for (const id of nextPresets) {
+    const existing = retained.find((row) => row.id.trim() === id)
+    if (existing) {
+      presets.push(existing)
+    } else if (availableRows > 0) {
+      presets.push({ ...providerModelFormRow(), id })
+      availableRows -= 1
+    }
+  }
+
+  const manualModels = [...presets, ...retained.filter((row) => !presets.includes(row))]
+  if (!manualModels.length) manualModels.push(providerModelFormRow())
+  return { model: manualModels[0].id.trim(), manualModels }
 }
 
 // Chooses the framework's preferred wire protocol for a new custom gateway. This mirrors runtime
