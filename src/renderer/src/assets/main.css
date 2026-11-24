@@ -481,6 +481,9 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 .onboarding-quick-footer {
   flex: none;
 }
+.onboarding-quick-feedback > [data-notice-level='warning'] + .onboarding-quick-footer {
+  padding-top: 0.25rem;
+}
 .onboarding-quick-header {
   display: flex;
   align-items: flex-start;
