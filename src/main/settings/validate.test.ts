@@ -463,7 +463,7 @@ describe('validate: provider dispatch', () => {
           headers: { 'x-open-science-provider-failure': 'connection' }
         })
       )
-    const probe = () =>
+    const probe = (): ReturnType<typeof validateProvider> =>
       validateProvider(
         {
           type: 'custom',
