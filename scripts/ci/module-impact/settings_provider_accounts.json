@@ -2,7 +2,6 @@
   "ownerPaths": [
     "src/main/settings/provider-accounts.ts",
     "src/main/settings/provider-auth-lifecycle.ts",
-    "src/main/settings/manual-provider-target.ts",
     "src/main/settings/provider-draft-projection.ts",
     "src/main/settings/provider-model-catalog-owner.ts",
     "src/main/settings/provider-runtime-projection.ts",
@@ -29,7 +28,6 @@
     "src/main/settings/claude-shared-auth.ts",
     "src/main/settings/codex-auth.ts",
     "src/main/settings/crypto.ts",
-    "src/main/settings/manual-provider-target.ts",
     "src/main/settings/provider-draft-projection.ts",
     "src/main/settings/provider-env.ts",
     "src/main/settings/provider-runtime-projection.ts",
@@ -589,6 +587,5 @@
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime",
-  "fullTestReason": "Manual cloud targets add route and credential projection to the reviewed settings-account boundary. Run full validation until that boundary is reviewed."
+  "fallbackCapability": "main_runtime"
 }

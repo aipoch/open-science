@@ -1,0 +1,29 @@
+{
+  "ownerPaths": [
+    "src/main/settings/cloudflare-gateway-transport.ts",
+    "src/main/settings/manual-provider-target.ts",
+    "src/main/settings/provider-gateway-fetch.ts"
+  ],
+  "interfacePaths": [
+    "src/main/settings/cloudflare-gateway-transport.ts",
+    "src/main/settings/manual-provider-target.ts",
+    "src/main/settings/provider-gateway-fetch.ts"
+  ],
+  "consumerModules": [
+    "main_pdf_translation",
+    "provider_transport",
+    "settings_backend_resolution",
+    "settings_provider_accounts"
+  ],
+  "testFiles": {
+    "owner": [],
+    "contract": [
+      "src/main/settings/provider-accounts.test.ts",
+      "src/main/settings/provider-transport-owner.test.ts",
+      "src/main/settings/validate.test.ts"
+    ],
+    "consumer": ["src/main/literature/pdf-translation/api-target.test.ts"]
+  },
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "fallbackCapability": "main_runtime"
+}
