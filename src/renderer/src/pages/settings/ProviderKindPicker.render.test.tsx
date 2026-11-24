@@ -63,6 +63,18 @@ describe('ProviderKindPicker', () => {
     expect(deepseek?.textContent).toContain('platform.deepseek.com')
   })
 
+  it('gives every provider icon a light backing in dark mode', () => {
+    render({ codeBuddyProviders: [], showClaudeIsolated: true, showCodexSubscriptions: true })
+
+    for (const card of container.querySelectorAll('[data-provider-kind]')) {
+      const icon = card.querySelector('img, svg')
+      expect(
+        icon?.classList.contains('dark:bg-foreground'),
+        card.getAttribute('data-provider-kind') ?? ''
+      ).toBe(true)
+    }
+  })
+
   it('selects a provider kind from its card', () => {
     const onSelect = render()
     act(() =>
