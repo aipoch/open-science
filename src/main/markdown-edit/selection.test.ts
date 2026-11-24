@@ -17,9 +17,9 @@ it('exposes only handle-scoped read and stage operations on the mounted project'
       'propose_replacement',
       'read_selection'
     ])
-    const read = (handle: string) =>
+    const read = (handle: string): ReturnType<Client['callTool']> =>
       client.callTool({ name: 'read_selection', arguments: { handle } })
-    const propose = (handle: string, markdown: string) =>
+    const propose = (handle: string, markdown: string): ReturnType<Client['callTool']> =>
       client.callTool({ name: 'propose_replacement', arguments: { handle, markdown } })
     expect((await read(handle)).content).toEqual([
       { type: 'text', text: JSON.stringify({ markdown: '**selected**' }) }

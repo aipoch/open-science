@@ -82,9 +82,7 @@ export const MarkdownSelectionToolbar = ({
   const setError = (message?: string, range = savedRange.current): void => {
     setFailure(message && range ? { range, message } : undefined)
   }
-  useEffect(() => {
-    if (failure && selection && !RangeApi.equals(failure.range, selection)) setFailure(undefined)
-  }, [selection, failure])
+  if (failure && selection && !RangeApi.equals(failure.range, selection)) setFailure(undefined)
   const [pending, setPending] = useState(false)
 
   useEffect(() => {

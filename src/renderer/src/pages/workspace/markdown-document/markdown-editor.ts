@@ -101,10 +101,10 @@ const MarkdownLiveInputPlugin = createSlatePlugin({
     }),
     // Consume the separator as the trigger so it does not become task text.
     // Also accept a full-width space typed as the separator or inside an unchecked marker.
-    ...[' ', '　'].map((trigger) =>
+    ...[' ', '\u3000'].map((trigger) =>
       createBlockStartInputRule({
         trigger,
-        match: /^\[([ xX　])\]$/u,
+        match: /^\[([ xX\u3000])\]$/u,
         resolveMatch: ({ match }) => ({ checked: match[1].toLowerCase() === 'x' }),
         enabled: (context) => {
           const entry = context.getBlockEntry()
