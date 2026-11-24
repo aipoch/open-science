@@ -6,6 +6,8 @@ type ExtensionPreservingFileNameParts = {
 }
 
 const DEFAULT_TAIL_LENGTH = 5
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+const words = new Intl.Segmenter(undefined, { granularity: 'word' })
 
 // Measured surfaces prefer complete filename words around the omission marker.
 const getExtensionPreservingFileNameParts = (
@@ -16,8 +18,6 @@ const getExtensionPreservingFileNameParts = (
   const hasExtension = extensionIndex > 0
   const basename = hasExtension ? name.slice(0, extensionIndex) : name
   const extension = hasExtension ? name.slice(extensionIndex) : ''
-  const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-  const basenameCharacters = Array.from(segmenter.segment(basename), ({ segment }) => segment)
 
   if (layout) {
     const { width, measure } = layout
@@ -28,13 +28,9 @@ const getExtensionPreservingFileNameParts = (
     const budget = Math.max(0, width - Math.min(measure(extension), width / 2) - measure('…'))
     // Filename separators should be word boundaries too (Unicode treats underscores as
     // part of a word). Equal-length replacement retains offsets into the original name.
-    const words = Array.from(
-      new Intl.Segmenter(undefined, { granularity: 'word' }).segment(
-        basename.replace(/[_\-.]/g, ' ')
-      )
-    )
+    const segments = Array.from(words.segment(basename.replace(/[_\-.]/g, ' ')))
     const separator = /^[_\s.-]+$/u
-    const fragments = words.filter(({ segment }) => !separator.test(segment))
+    const fragments = segments.filter(({ segment }) => !separator.test(segment))
     const heads = [
       '',
       ...fragments.map(({ index, segment }) => basename.slice(0, index + segment.length))
@@ -52,7 +48,7 @@ const getExtensionPreservingFileNameParts = (
       return eligible[low]
     }
     // Reserve a readable prefix before allocating room to the ending.
-    const first = heads.find((head) => Array.from(segmenter.segment(head)).length >= 3) ?? basename
+    const first = heads.find((head) => Array.from(graphemes.segment(head)).length >= 3) ?? basename
     const last = tails[1] ?? basename
     const minimumHeadWidth = measure(first)
     const minimumTailWidth = measure(last)
@@ -70,12 +66,14 @@ const getExtensionPreservingFileNameParts = (
     // graphemes, retaining the beginning rather than an arbitrary slice of its ending.
     if (!head) {
       const prefixes = ['']
-      for (const character of basenameCharacters) prefixes.push(prefixes.at(-1)! + character)
+      for (const { segment } of graphemes.segment(basename))
+        prefixes.push(prefixes.at(-1)! + segment)
       head = fit(prefixes, budget)
     }
     return { head, tail, extension, isAbbreviated: true }
   }
 
+  const basenameCharacters = Array.from(graphemes.segment(basename), ({ segment }) => segment)
   return {
     head: basenameCharacters.slice(0, -DEFAULT_TAIL_LENGTH).join(''),
     tail: basenameCharacters.slice(-DEFAULT_TAIL_LENGTH).join(''),
