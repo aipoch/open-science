@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 import {
   type ModelProtocol,
-  manualProviderDefinition,
+  resolveProviderProbePolicy,
   usesVendorMessagesApiKeyHeader
 } from '@aipoch/providers'
 
@@ -38,11 +38,6 @@ import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completion
 // Default probe timeout; a stuck gateway should fail fast rather than hang the wizard.
 const DEFAULT_VALIDATE_TIMEOUT_MS = 20_000
 const ANTHROPIC_VERSION = '2023-06-01'
-// Reasoning providers may spend the first few output tokens on an internal block. With a one-token
-// budget Kimi k3 returns a 200 response whose message envelope is incomplete (`type`/`role` empty),
-// even though normal Claude Code requests work. Sixteen tokens is still a cheap probe while allowing
-// the provider to finish the Anthropic envelope that validation checks below.
-const ANTHROPIC_PROBE_MAX_TOKENS = 16
 // Keep an unmodified loopback fetch for the temporary local bridge. Tests and callers may inject/mock
 // the upstream fetch, but that must not intercept the request from the validator into 127.0.0.1.
 const loopbackFetch = globalThis.fetch.bind(globalThis)
@@ -151,7 +146,7 @@ const buildMessagesValidationRequest = (provider: ResolvedProvider): ValidationH
 
   const body = JSON.stringify({
     model: provider.model ?? '',
-    max_tokens: ANTHROPIC_PROBE_MAX_TOKENS,
+    max_tokens: resolveProviderProbePolicy(provider.vendorId).messages.maxOutputTokens,
     messages: [{ role: 'user', content: 'ping' }]
   })
 
@@ -193,14 +188,8 @@ const buildChatCompletionsValidationRequest = (
         })
       : {
           model: provider.model ?? '',
-          // Requesty rejects Chat probes below 16 output tokens, including for OpenAI models.
-          max_tokens:
-            provider.vendorId === 'cloudflare-ai-gateway' ||
-            manualProviderDefinition(provider.vendorId)
-              ? 64
-              : provider.vendorId === 'requesty'
-                ? 16
-                : 1,
+          max_tokens: resolveProviderProbePolicy(provider.vendorId)['chat-completions']
+            .maxOutputTokens,
           messages: [{ role: 'user', content: 'ping' }],
           stream: false
         }
@@ -239,74 +228,8 @@ const buildResponsesValidationRequest = (provider: ResolvedProvider): Validation
     body: JSON.stringify({
       model: provider.model ?? '',
       input: 'ping',
-      max_output_tokens: provider.vendorId === 'vectrust' ? 128 : 16
+      max_output_tokens: resolveProviderProbePolicy(provider.vendorId).responses.maxOutputTokens
     })
-  }
-}
-
-const hasValidMessagesResponse = (bodyText: string): boolean => {
-  try {
-    const parsed = JSON.parse(bodyText) as {
-      type?: unknown
-      role?: unknown
-      content?: unknown
-      usage?: { input_tokens?: unknown; output_tokens?: unknown }
-    }
-
-    return (
-      parsed.type === 'message' &&
-      parsed.role === 'assistant' &&
-      Array.isArray(parsed.content) &&
-      typeof parsed.usage?.input_tokens === 'number' &&
-      typeof parsed.usage?.output_tokens === 'number'
-    )
-  } catch {
-    return false
-  }
-}
-
-/** Check for a usable Chat Completions reply. */
-const hasValidChatResponse = (bodyText: string): boolean => {
-  try {
-    const { choices } = JSON.parse(bodyText) as {
-      choices?: Array<{ message?: { role?: unknown; content?: unknown } }>
-    }
-    if (!Array.isArray(choices)) return false
-    const message = choices[0]?.message
-    return (
-      message?.role === 'assistant' &&
-      typeof message.content === 'string' &&
-      message.content.trim().length > 0
-    )
-  } catch {
-    return false
-  }
-}
-
-/** Require a completed text reply from the Responses API. */
-const hasValidResponsesReply = (bodyText: string): boolean => {
-  try {
-    const { status, output } = JSON.parse(bodyText) as {
-      status?: unknown
-      output?: { type?: unknown; content?: { type?: unknown; text?: unknown }[] }[]
-    }
-    return (
-      status === 'completed' &&
-      Array.isArray(output) &&
-      output.some(
-        (item) =>
-          item?.type === 'message' &&
-          Array.isArray(item.content) &&
-          item.content.some(
-            (part) =>
-              part?.type === 'output_text' &&
-              typeof part.text === 'string' &&
-              part.text.trim().length > 0
-          )
-      )
-    )
-  } catch {
-    return false
   }
 }
 
@@ -793,13 +716,8 @@ const validateCustomProvider = async (
       })
     }
 
-    const isMessagesProbe = request.endpoint === 'messages'
-    const requiresChatReply =
-      request.endpoint === 'chat-completions' &&
-      (provider.vendorId === 'cloudflare-ai-gateway' || manualProviderDefinition(provider.vendorId))
-    const requiresResponsesReply =
-      request.endpoint === 'responses' && provider.vendorId === 'vectrust'
-    if (category === 'ok' && (isMessagesProbe || requiresChatReply || requiresResponsesReply)) {
+    const { validateResponse } = resolveProviderProbePolicy(provider.vendorId)[request.endpoint]
+    if (category === 'ok' && validateResponse) {
       let bodyText = ''
       try {
         bodyText = await readBoundedResponseText(
@@ -816,17 +734,13 @@ const validateCustomProvider = async (
         }
         // An unreadable body cannot prove that the model endpoint is working.
       }
-      const hasExpectedResponse = isMessagesProbe
-        ? hasValidMessagesResponse(bodyText)
-        : requiresResponsesReply
-          ? hasValidResponsesReply(bodyText)
-          : hasValidChatResponse(bodyText)
-      if (!hasExpectedResponse) {
+      if (!validateResponse(bodyText)) {
         return toResult('unknown', {
           status: response.status,
-          message: isMessagesProbe
-            ? 'The provider returned success without a valid Anthropic message.'
-            : 'The provider returned an unexpected response. Check the API settings before retrying.'
+          message:
+            request.endpoint === 'messages'
+              ? 'The provider returned success without a valid Anthropic message.'
+              : 'The provider returned an unexpected response. Check the API settings before retrying.'
         })
       }
     }
@@ -872,12 +786,11 @@ const validateProviderUnredacted = (
   provider: ResolvedProvider,
   deps: ValidateProviderDeps = {}
 ): Promise<ValidateProviderResult> => {
-  if (provider.vendorId !== 'opencode-go') return validateCustomProvider(provider, deps)
+  const { sessionHeader } = resolveProviderProbePolicy(provider.vendorId)
+  if (!sessionHeader) return validateCustomProvider(provider, deps)
 
-  // Settings probes do not run through OpenCode's chat.headers plugin. Give each independent probe
-  // its own session, stable for every upstream request within that invocation. Decorate the upstream
-  // fetch (not the loopback request) so Messages, Chat Completions, Responses, and both Codex adapters
-  // all satisfy Go's routing contract without changing real conversation session identities.
+  // Scope the session to this probe invocation and decorate each upstream request,
+  // including requests sent through a local bridge.
   const sessionId = `open-science-probe-${randomUUID()}`
   const fetchImpl = deps.fetchImpl ?? fetch
   return validateCustomProvider(provider, {
@@ -886,7 +799,7 @@ const validateProviderUnredacted = (
       const headers = new Headers(
         init?.headers ?? (input instanceof Request ? input.headers : undefined)
       )
-      headers.set('x-opencode-session', sessionId)
+      headers.set(sessionHeader, sessionId)
       headers.set('user-agent', 'open-science/provider-validation')
       return fetchImpl(input, { ...init, headers })
     }

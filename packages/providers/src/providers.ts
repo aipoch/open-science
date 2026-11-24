@@ -30,6 +30,7 @@ export {
   sameManualProviderCredentialScope,
   type ManualProviderConnection
 } from './providers/manual-connections'
+export { resolveProviderProbePolicy } from './providers/probe-policy'
 export type {
   ModelProtocol,
   ModelReasoningEffort,

@@ -22,6 +22,7 @@
     "packages/providers/src/providers/lookup.test.ts",
     "packages/providers/src/providers/lookup.ts",
     "packages/providers/src/providers/manual-connections.ts",
+    "packages/providers/src/providers/probe-policy.ts",
     "packages/providers/src/providers/types.ts",
     "packages/providers/src/responses/adapter.test.ts",
     "packages/providers/src/responses/adapter.ts",
