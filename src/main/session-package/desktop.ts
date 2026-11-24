@@ -655,13 +655,14 @@ export class SessionPackageDesktop {
   private staged<T>(
     work: (directory: string) => Promise<T>,
     request?: SessionPackageRequest,
-    temporaryRoot = tmpdir()
+    temporaryRoot = tmpdir(),
+    beforeStage?: () => Promise<void>
   ): Promise<T> {
     if (this.shutdown.signal.aborted) return Promise.reject(this.shutdown.signal.reason)
     if (this.busy)
       return Promise.reject(new Error('A Session package operation is already in progress.'))
     const result = withPackageTransfer(
-      () => this.stagedNow(work, request, temporaryRoot),
+      () => this.stagedNow(work, request, temporaryRoot, beforeStage),
       () => this.operations.transferBytesPerSecond,
       this.operations.reportIo
     )
@@ -672,10 +673,12 @@ export class SessionPackageDesktop {
   private async stagedNow<T>(
     work: (directory: string) => Promise<T>,
     request?: SessionPackageRequest,
-    temporaryRoot = tmpdir()
+    temporaryRoot = tmpdir(),
+    beforeStage?: () => Promise<void>
   ): Promise<T> {
     this.busy = true
     try {
+      await beforeStage?.()
       if (temporaryRoot === this.options.service.packageTemporaryRoot)
         await this.options.service.ensurePackageTemporaryRoot()
       else await mkdir(temporaryRoot, { recursive: true, mode: 0o700 })
@@ -1419,25 +1422,11 @@ export class SessionPackageDesktop {
           const release = target.projectId
             ? await this.options.reserveImport?.(target.projectId, signal)
             : undefined
+          let selectedInput: string | undefined
           try {
             return await this.staged(
               async (directory) => {
-                const options = {
-                  title: this.options.translate('Import Session package'),
-                  properties: ['openFile'] as ['openFile'],
-                  filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
-                }
-                const selected = sourcePath
-                  ? { canceled: false, filePaths: [sourcePath] }
-                  : await this.nativeDialog(
-                      desktopFileInteraction().chooseFiles(options, callerId),
-                      signal
-                    )
-                if (selected.canceled || !selected.filePaths[0]) {
-                  this.operations.cancel()
-                  signal.throwIfAborted()
-                }
-                const input = selected.filePaths[0]
+                const input = sourcePath ?? selectedInput!
                 rememberSource(input)
                 const info = await stat(input).catch((error: NodeJS.ErrnoException) => {
                   if (['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code ?? ''))
@@ -1498,7 +1487,24 @@ export class SessionPackageDesktop {
                 return completeImport(result)
               },
               undefined,
-              this.options.service.packageTemporaryRoot ?? tmpdir()
+              this.options.service.packageTemporaryRoot ?? tmpdir(),
+              async () => {
+                if (sourcePath) return
+                const options = {
+                  title: this.options.translate('Import Session package'),
+                  properties: ['openFile'] as ['openFile'],
+                  filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
+                }
+                const selected = await this.nativeDialog(
+                  desktopFileInteraction().chooseFiles(options, callerId),
+                  signal
+                )
+                if (selected.canceled || !selected.filePaths[0]) {
+                  this.operations.cancel()
+                  signal.throwIfAborted()
+                }
+                selectedInput = selected.filePaths[0]
+              }
             )
           } finally {
             release?.()
