@@ -191,6 +191,40 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
     if (from.length !== to.length) continue
     pushNativeGroup(start, end, parts, base, to[from.indexOf(token)].index + token[1].length, true)
   }
+
+  // PDF.js can insert spaces around a native symbolic superscript.
+  for (const match of source.matchAll(/∼ [A-Z] [a-z](?![\p{L}\p{M}\p{N}_])/gu)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 3)
+    if (!parts) continue
+    const [relation, base, exponent] = parts,
+      face = /^(?:[A-Z]{6}\+)?CMMI(9|10)$/u.exec(base.fontName)?.[1],
+      relationFace = /^(?:[A-Z]{6}\+)?CMSY(9|10)$/u.exec(relation.fontName)?.[1],
+      exponentFace = /^(?:[A-Z]{6}\+)?CMMI(6|7)$/u.exec(exponent.fontName)?.[1],
+      gap = exponent.bounds[0] - base.bounds[2],
+      height = base.bounds[3] - base.bounds[1]
+    if (
+      !face ||
+      relationFace !== face ||
+      Number(face) - Number(exponentFace) !== 3 ||
+      occurrences(source, match[0]).length !== 1 ||
+      !body(relation) ||
+      !body(base) ||
+      !small(exponent) ||
+      [relation, base, exponent].some((part, i) => part.sourceOffset !== start + 2 * i) ||
+      Math.abs(relation.baseline - base.baseline) >= 0.01 ||
+      Math.abs(exponent.baseline - base.baseline - exponent.rise) >= 0.01 ||
+      exponent.rise < height * 0.45 ||
+      exponent.rise > height * 0.7 ||
+      !(gap >= 0 && gap <= height * 0.2) ||
+      center(exponent) <= center(base) ||
+      relation.bounds[2] >= base.bounds[0] ||
+      base.bounds[0] - relation.bounds[2] > height * 0.7
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
   // Latin Modern can draw a complete symbolic exponent as three separate objects.
   for (const match of source.matchAll(
     /(?<![\p{L}\p{M}\p{N}_])[2-9][a-z]−[1-9](?![\p{L}\p{M}\p{N}_])/gu
@@ -1884,8 +1918,15 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
 // Equal occurrence counts allow each proven occurrence to retain its own styling.
 // Extra target occurrences need consistent evidence for every source occurrence.
 export const resolveScientificScriptSpans = (source, translation, markers) => {
-  const sourceTokens = identifiers(source),
-    targetTokens = identifiers(translation),
+  // Two Latin indices separated by a comma require the native lowered-index witness below.
+  const tokens = (text) => [
+    ...identifiers(text),
+    ...text.matchAll(
+      /(?<![A-Za-z\p{Script=Greek}\d])[A-Za-z]{2},[A-Za-z](?![A-Za-z\p{Script=Greek}\d])/gu
+    )
+  ]
+  const sourceTokens = tokens(source),
+    targetTokens = tokens(translation),
     groups = new Map(),
     runs = []
   for (const marker of [...markers].sort((a, b) => a.sourceOffset - b.sourceOffset)) {
@@ -1924,7 +1965,11 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
   for (const run of runs) run.label = run.label.replace(/[,.;:]+$/u, '')
   // Prove the lowered index against its complete native base.
   const hasNativeLoweredIndex = (match, run) => {
-    if (run.rise >= 0 || !/^[A-Za-z\p{Script=Greek}\d]{1,3}$/u.test(run.label)) return false
+    if (
+      run.rise >= 0 ||
+      !/^(?:[A-Za-z\p{Script=Greek}\d]{1,3}|[A-Za-z],[A-Za-z])$/u.test(run.label)
+    )
+      return false
     const bases = markers.filter(
       (base) =>
         base.sourceOffset === match.index &&
@@ -2011,6 +2056,7 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
       )
     )
       continue
+    if (/^[A-Za-z],[A-Za-z]$/u.test(run.label) && !hasNativeLoweredIndex(token, run)) continue
     const prefixLength = run.sourceOffset - token.index,
       prefix = token[0].slice(0, prefixLength).trimEnd(),
       nativeDifferenceIndex = prefix === '∆' && hasNativeLoweredIndex(token, run),

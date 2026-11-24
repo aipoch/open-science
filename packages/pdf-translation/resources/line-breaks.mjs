@@ -24,6 +24,8 @@ export function pdfTranslationLineEnds(text) {
     protectedSpans = [
       /第\s*(?:\d+|[A-Za-z][.．]\d+)(?:[.．]\d+)*\s*[节節]/gu,
       new RegExp(number, 'gu'),
+      /\bexp\([−-]\d+(?:\.\d+)?[A-Za-z][2²]\)/gu,
+      new RegExp(`${number}[ \u00a0\u202f]+nm(?![A-Za-z0-9_])`, 'gu'),
       new RegExp(`${number}\\s*\\^\\s*(?:\\([+−-]?\\d+\\)|[+−-]?\\d+)`, 'gu'),
       new RegExp(`${number}\\s*[±∓–−-]\\s*${number}`, 'gu'),
       new RegExp(`(?:${number}|${identifier})\\s*[+−±∓×÷/-]\\s*(?:${number}|${identifier})`, 'gu'),

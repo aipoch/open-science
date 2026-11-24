@@ -88,6 +88,7 @@ export async function formPage(fault = '', disableFontFace = true): Promise<PDFD
     const resources = page.node.Resources()!
     resources.set(PDFName.of('XObject'), pdf.context.obj({ Panel: panel, ...images }))
   }
+  const omitted = fault === 'off-page-repeat' ? 'q 0.5 0 0 0.5 -190 100 cm /Panel Do Q' : ''
   const matrix = fault === 'rotation' ? '0 1 -1 0 200 100' : '0.5 0 0 0.5 20 100',
     invoke = `q ${matrix} cm /Panel Do Q`,
     visible = fault.startsWith('clipped-font') ? '' : `BT ${fontKey} 12 Tf 20 70 Td ${label} Tj ET`,
@@ -96,7 +97,7 @@ export async function formPage(fault = '', disableFontFace = true): Promise<PDFD
     PDFName.of('Contents'),
     pdf.context.register(
       pdf.context.flateStream(
-        `${fault === 'images' ? 'q 40 0 0 40 230 150 cm /Image0 Do Q q 40 0 0 40 180 150 cm /Image1 Do Q' : ''}\n${invoke}\n${fault === 'same-position' ? invoke : fault === 'repeated-form' ? 'q 0.5 0 0 0.5 150 100 cm /Panel Do Q' : ''}\n${visible}\n${caption}`
+        `${fault === 'images' ? 'q 40 0 0 40 230 150 cm /Image0 Do Q q 40 0 0 40 180 150 cm /Image1 Do Q' : ''}\n${invoke}\n${fault === 'same-position' ? invoke : fault === 'repeated-form' ? 'q 0.5 0 0 0.5 150 100 cm /Panel Do Q' : ''}\n${omitted}\n${visible}\n${caption}`
       )
     )
   )

@@ -476,3 +476,37 @@ it('moves all native glyphs of a raised fractional exponent as a unit', () => {
     )
   ).toEqual([])
 })
+
+it.each(['exact', 'detached', 'different target'])(
+  'uses exact text and geometry for a lowered Latin index pair (%s)',
+  (shape) => {
+    const source = 'See the node pk,h near the boundary.'
+    const target = shape === 'different target' ? '请查看节点 pk,g。' : '请查看节点 pk,h。'
+    const at = source.indexOf('pk,h')
+    const markers: ScientificScriptMarker[] = [
+      {
+        label: 'p',
+        sourceOffset: at,
+        scale: 1,
+        rise: 0,
+        bounds: [100, 100, 108, 107],
+        sourceIndices: [8]
+      },
+      {
+        label: 'k,h',
+        sourceOffset: at + 1,
+        scale: 0.66,
+        rise: -1.8,
+        bounds: shape === 'detached' ? [116, 98, 124, 105] : [108.2, 98, 116, 105],
+        sourceIndices: [9]
+      }
+    ]
+    const spans = resolveScientificScriptSpans(source, target, markers)
+    if (shape === 'exact') {
+      expect(spans).toHaveLength(1)
+      expect(target.slice(spans[0].start, spans[0].end)).toBe('k,h')
+      expect(spans[0].sourceIndices).toEqual([9])
+      expect(spans[0].rise).toBe(-1.8)
+    } else expect(spans).toEqual([])
+  }
+)

@@ -735,7 +735,11 @@
     "packages/pdf-translation/test/reader/pdf-translation-terminal-paired-rate.test.ts",
     "packages/pdf-translation/test/reader/pdf-translation-wrapped-induction-premise.test.ts",
     "packages/pdf-translation/test/reader/wrapped-inline-table-reference.test.ts",
-    "packages/pdf-translation/test/reader/wrapped-roman-column-headings.test.ts"
+    "packages/pdf-translation/test/reader/wrapped-roman-column-headings.test.ts",
+    "packages/pdf-translation/test/writer-backdrop-scripts.test.ts",
+    "packages/pdf-translation/test/writer-indexed-operator.test.ts",
+    "packages/pdf-translation/test/writer-legacy-double-acute.test.ts",
+    "packages/pdf-translation/test/writer-native-ket.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-translation/src/index.ts",
@@ -997,7 +1001,11 @@
       "packages/pdf-translation/test/reader/pdf-translation-terminal-paired-rate.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-wrapped-induction-premise.test.ts",
       "packages/pdf-translation/test/reader/wrapped-inline-table-reference.test.ts",
-      "packages/pdf-translation/test/reader/wrapped-roman-column-headings.test.ts"
+      "packages/pdf-translation/test/reader/wrapped-roman-column-headings.test.ts",
+      "packages/pdf-translation/test/writer-backdrop-scripts.test.ts",
+      "packages/pdf-translation/test/writer-indexed-operator.test.ts",
+      "packages/pdf-translation/test/writer-legacy-double-acute.test.ts",
+      "packages/pdf-translation/test/writer-native-ket.test.ts"
     ],
     "contract": ["scripts/pdf-package-fixtures.test.ts"],
     "consumer": [
