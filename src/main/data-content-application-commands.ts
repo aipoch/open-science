@@ -15,11 +15,13 @@ import { ImageModelError } from './image-model/contract'
 import type { LocalModelSnapshot } from '../shared/local-models'
 import type {
   ResearchVideoActiveSession,
+  ResearchVideoPresentation,
   ResearchVideoPresentationRequest,
   ResearchVideoStartRequest,
   ResearchVideoStatusRequest,
   ResearchVideoPresentationStatus
 } from '../shared/research-video-presentation'
+import { redactAbsoluteDiagnosticPaths } from '@aipoch/diagnostics/node'
 import type { createResearchVideoPresentationOwner } from './research-video/presentation'
 import type {
   ResearchVideoProgress,
@@ -1031,6 +1033,36 @@ const assertElectronOrLocalWebCaller = (
   throw new Error(`Channel only available from the desktop app or local Web session: ${name}`)
 }
 
+// A non-local Web caller cannot open a local-source preview, so host filesystem paths are kept on
+// the machine and diagnostics are redacted, mirroring the public Task API projection in
+// web-service/research-film-api.ts. The status type still declares the paths as present for the
+// desktop surface, so the reduced card is cast once here (issue #4666).
+const projectFilmStatusForCaller = (
+  invocation: ApplicationInvocation<readonly unknown[]>,
+  status: ResearchVideoPresentationStatus
+): ResearchVideoPresentationStatus => {
+  if (invocation.callerContext.location === 'local') return status
+  const { result, error, preflightError, ...rest } = status
+  const card = result
+    ? ({
+        id: result.id,
+        title: result.title,
+        duration: result.duration,
+        ...(result.scriptScore === undefined ? {} : { scriptScore: result.scriptScore }),
+        ...(result.sessionAppMode === undefined ? {} : { sessionAppMode: result.sessionAppMode })
+      } as ResearchVideoPresentation)
+    : undefined
+  const projected = {
+    ...rest,
+    ...(card ? { result: card } : {}),
+    ...(error === undefined ? {} : { error: redactAbsoluteDiagnosticPaths(error) }),
+    ...(preflightError === undefined
+      ? {}
+      : { preflightError: redactAbsoluteDiagnosticPaths(preflightError) })
+  }
+  return projected as ResearchVideoPresentationStatus
+}
+
 const assertSessionDelegationPolicyCaller = (
   invocation: ApplicationInvocation<readonly unknown[]>,
   name: string
@@ -1194,19 +1226,25 @@ const registerDataContentApplicationCommands = (
         assertElectronOrWebFilmCaller(invocation, 'research-video:start')
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
-        return dependencies.researchVideoPresentation.start(invocation.args[0])
+        return dependencies.researchVideoPresentation
+          .start(invocation.args[0])
+          .then((status) => projectFilmStatusForCaller(invocation, status))
       },
       'research-video:status': (invocation) => {
         assertElectronOrWebFilmCaller(invocation, 'research-video:status')
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
-        return dependencies.researchVideoPresentation.status(invocation.args[0])
+        return dependencies.researchVideoPresentation
+          .status(invocation.args[0])
+          .then((status) => projectFilmStatusForCaller(invocation, status))
       },
       'research-video:remove': (invocation) => {
         assertElectronOrWebFilmCaller(invocation, 'research-video:remove')
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
-        return dependencies.researchVideoPresentation.remove(invocation.args[0])
+        return dependencies.researchVideoPresentation
+          .remove(invocation.args[0])
+          .then((status) => projectFilmStatusForCaller(invocation, status))
       },
       'research-video:cancel': (invocation) => {
         assertElectronOrWebFilmCaller(invocation, 'research-video:cancel')

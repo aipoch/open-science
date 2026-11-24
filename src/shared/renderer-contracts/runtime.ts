@@ -83,18 +83,15 @@ export const runtimeDescribeUsageContracts = {
 } as const
 
 export const localModelsGetSnapshotContracts = {
-  // Snapshot/install/cancel reach the same server-side model manager on every surface, so a paired
-  // remote browser can install Research narration for the film it is about to generate (issue
-  // #4666). Removing models and choosing OCR languages stay local-only.
   'localModels.getSnapshot': callable<
     (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
-  >()('local-models', ['local-models:get-snapshot']),
+  >()('local-models', ['local-models:get-snapshot', LOCAL]),
   'localModels.install': callable<
     (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
-  >()('local-models', ['local-models:install']),
+  >()('local-models', ['local-models:install', LOCAL]),
   'localModels.cancel': callable<
     (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
-  >()('local-models', ['local-models:cancel']),
+  >()('local-models', ['local-models:cancel', LOCAL]),
   'localModels.remove': callable<
     (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
   >()('local-models', ['local-models:remove', LOCAL]),

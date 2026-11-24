@@ -35,6 +35,9 @@ export type ResearchVideoStatusRequest = z.infer<typeof researchVideoStatusReque
 export type ResearchVideoPresentation = {
   id: string
   title: string
+  // Host filesystem paths. The Web projection for non-local callers omits them, so the renderer
+  // must treat them as absent there; see projectFilmStatusForCaller in
+  // main/data-content-application-commands.ts.
   playerPath: string
   sourcePath: string
   duration: number

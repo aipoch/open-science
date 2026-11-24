@@ -616,6 +616,9 @@ function ResearchVideoModeButton({
     }
   }
   const preview = (result: ResearchVideoPresentation): void => {
+    // A non-local Web caller receives the status without host paths and cannot open a local-source
+    // preview, so the play action stays hidden there (issue #4666).
+    if (!result.playerPath) return
     usePreviewWorkbenchStore.getState().upsertAndActivateItem({
       id: `research-video-${result.id}-player`,
       type: 'file',
@@ -969,13 +972,15 @@ function ResearchVideoModeButton({
                       </p>
                     )}
                   </div>
-                  <Button
-                    className="min-h-10 w-full whitespace-normal"
-                    onClick={() => preview(playableResult)}
-                  >
-                    <Play className="size-4" aria-hidden="true" />
-                    {t('Play research film')}
-                  </Button>
+                  {playableResult.playerPath && (
+                    <Button
+                      className="min-h-10 w-full whitespace-normal"
+                      onClick={() => preview(playableResult)}
+                    >
+                      <Play className="size-4" aria-hidden="true" />
+                      {t('Play research film')}
+                    </Button>
+                  )}
                 </section>
               )}
               {pending && !busy && !installing && (

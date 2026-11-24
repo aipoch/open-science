@@ -99,6 +99,46 @@ const registeredCommands = (): Array<{ name: string }> => {
   return commands
 }
 
+it('keeps Research Film host paths off a remote Web status projection', async () => {
+  const deps = createDependencies()
+  const filmStatus = {
+    result: {
+      id: 'film-1',
+      title: 'Research explanation',
+      playerPath: '/data-root/research-films/scope/film-1/output/player.html',
+      sourcePath: '/data-root/research-films/scope/film-1/output/sources.zip',
+      duration: 68
+    },
+    error: 'Failed reading /data-root/research-films/scope/film-1/output/player.html'
+  }
+  const film = {
+    activeSessions: vi.fn(async () => []),
+    start: vi.fn(async () => filmStatus),
+    status: vi.fn(async () => filmStatus),
+    remove: vi.fn(async () => filmStatus),
+    cancel: vi.fn(async () => undefined)
+  }
+  const router = createApplicationCommandRouter()
+  registerDataContentApplicationCommands(router.registrar, {
+    ...deps.dependencies,
+    researchVideoPresentation: film as never
+  })
+  const request = { projectId: 'project-1', sessionId: 'session-1' }
+  const local = await router.dispatcher.invoke(
+    dataContentApplicationCommands.researchVideoPresentationStatus,
+    invocation([request])
+  )
+  expect(local.result?.playerPath).toBe('/data-root/research-films/scope/film-1/output/player.html')
+  const remote = await router.dispatcher.invoke(
+    dataContentApplicationCommands.researchVideoPresentationStatus,
+    invocation([request], remoteCaller)
+  )
+  expect(remote.result?.id).toBe('film-1')
+  expect(remote.result?.playerPath).toBeUndefined()
+  expect(remote.result?.sourcePath).toBeUndefined()
+  expect(remote.error).not.toContain('/data-root/research-films')
+})
+
 it('routes research video export to the connected desktop document save dialog', async () => {
   const deps = createDependencies()
   const content = Buffer.from('<meta name="open-science-research-video" content="1">')
