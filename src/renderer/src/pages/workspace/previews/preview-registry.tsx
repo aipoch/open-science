@@ -133,9 +133,7 @@ export const renderPreviewFile = ({
     case 'presentation':
       return <PptxAnnotatedPreviewRenderer {...props} />
     case 'word':
-      return (
-        <OfficePreviewRenderer docxVersionNavigation={docxVersionNavigation} {...props} />
-      )
+      return <OfficePreviewRenderer docxVersionNavigation={docxVersionNavigation} {...props} />
     case 'spreadsheet':
       return <OfficePreviewRenderer item={item} />
     case 'unknown':

@@ -1,0 +1,17 @@
+{
+  "ownerPaths": [
+    "src/main/markdown-edit/ipc.ts",
+    "src/main/markdown-edit/mcp-server.ts",
+    "src/main/markdown-edit/selection.test.ts",
+    "src/main/markdown-edit/store.ts"
+  ],
+  "interfacePaths": ["src/main/markdown-edit/ipc.ts", "src/main/markdown-edit/mcp-server.ts"],
+  "consumerModules": ["acp_runtime", "ipc_surfaces", "settings_backend_resolution"],
+  "testFiles": {
+    "owner": ["src/main/markdown-edit/selection.test.ts"],
+    "contract": ["src/main/acp/auto-operation-inventory.test.ts"],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

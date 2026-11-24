@@ -1,0 +1,52 @@
+{
+  "ownerPaths": [
+    "src/renderer/src/pages/workspace/markdown-document/MarkdownAgentPrompt.tsx",
+    "src/renderer/src/pages/workspace/markdown-document/MarkdownAgentReview.tsx",
+    "src/renderer/src/pages/workspace/markdown-document/MarkdownBlockElement.tsx",
+    "src/renderer/src/pages/workspace/markdown-document/MarkdownEditorSurface.test.tsx",
+    "src/renderer/src/pages/workspace/markdown-document/MarkdownEditorSurface.tsx",
+    "src/renderer/src/pages/workspace/markdown-document/MarkdownSelectionToolbar.test.tsx",
+    "src/renderer/src/pages/workspace/markdown-document/MarkdownSelectionToolbar.tsx",
+    "src/renderer/src/pages/workspace/markdown-document/docx-codec.test.ts",
+    "src/renderer/src/pages/workspace/markdown-document/docx-codec.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-blocks.test.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-blocks.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-codec.test.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-codec.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-editor.test.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-editor.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-list-rules.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-list-transforms.test.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-list-transforms.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-selection-toolbar-utils.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-selection.test.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-selection.ts",
+    "src/renderer/src/pages/workspace/use-markdown-edit-request.ts"
+  ],
+  "interfacePaths": [
+    "src/renderer/src/pages/workspace/markdown-document/MarkdownEditorSurface.tsx",
+    "src/renderer/src/pages/workspace/markdown-document/docx-codec.ts",
+    "src/renderer/src/pages/workspace/markdown-document/markdown-selection.ts",
+    "src/renderer/src/pages/workspace/use-markdown-edit-request.ts"
+  ],
+  "consumerModules": ["workspace_preview_composition"],
+  "testFiles": {
+    "owner": [
+      "src/renderer/src/pages/workspace/markdown-document/MarkdownEditorSurface.test.tsx",
+      "src/renderer/src/pages/workspace/markdown-document/MarkdownSelectionToolbar.test.tsx",
+      "src/renderer/src/pages/workspace/markdown-document/docx-codec.test.ts",
+      "src/renderer/src/pages/workspace/markdown-document/markdown-blocks.test.ts",
+      "src/renderer/src/pages/workspace/markdown-document/markdown-codec.test.ts",
+      "src/renderer/src/pages/workspace/markdown-document/markdown-editor.test.ts",
+      "src/renderer/src/pages/workspace/markdown-document/markdown-list-transforms.test.ts",
+      "src/renderer/src/pages/workspace/markdown-document/markdown-selection.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "src/renderer/src/pages/workspace/PreviewFileSurface.docx.test.tsx",
+      "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "renderer_view"
+}

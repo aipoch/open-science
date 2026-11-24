@@ -49,10 +49,7 @@ vi.mock('./ArtifactProvenancePanel', () => ({
 }))
 
 vi.mock('./previews/PreviewFileContent', () => ({
-  PreviewFileContent: (props: {
-    item: PreviewFileItem
-    docxVersionNavigation?: ReactNode
-  }) => {
+  PreviewFileContent: (props: { item: PreviewFileItem; docxVersionNavigation?: ReactNode }) => {
     previewContentSpy(props)
     return (
       <div data-testid="preview-content" data-path={props.item.path}>

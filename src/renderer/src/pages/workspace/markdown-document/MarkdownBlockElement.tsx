@@ -774,12 +774,15 @@ export const MarkdownBlockElement = (props: PlateElementProps): React.JSX.Elemen
     type === 'code_block' && element.lang === DROPDOWN_LANGUAGE
       ? decodeDropdownDefinition(NodeApi.string(element))
       : undefined
-  const dateBlock = type === 'p' && (element.dateBlock === true || isMarkdownDate(NodeApi.string(element)))
+  const dateBlock =
+    type === 'p' && (element.dateBlock === true || isMarkdownDate(NodeApi.string(element)))
   let content: React.ReactNode = dateBlock ? (
     <MarkdownDateElement element={element} path={path}>
       {children}
     </MarkdownDateElement>
-  ) : children
+  ) : (
+    children
+  )
   let tag: keyof HTMLElementTagNameMap = 'p'
   if (/^h[1-6]$/u.test(type)) tag = type as keyof HTMLElementTagNameMap
   else if (['blockquote', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th'].includes(type))

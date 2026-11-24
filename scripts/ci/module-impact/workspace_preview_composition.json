@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/workspace/PreviewFileSurface.docx.test.tsx",
     "src/renderer/src/pages/workspace/FilePreviewDialog.escape.test.tsx",
     "src/renderer/src/pages/workspace/FilePreviewDialog.focus.test.tsx",
     "src/renderer/src/pages/workspace/FilePreviewDialog.lifecycle.test.tsx",
@@ -28,6 +29,7 @@
   ],
   "testFiles": {
     "owner": [
+      "src/renderer/src/pages/workspace/PreviewFileSurface.docx.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.escape.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.focus.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.lifecycle.test.tsx",

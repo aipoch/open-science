@@ -1,5 +1,8 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/workspace/previews/docx-version-layout.css",
+    "src/renderer/src/pages/workspace/previews/read-managed-preview-bytes.test.ts",
+    "src/renderer/src/pages/workspace/previews/read-managed-preview-bytes.ts",
     "src/renderer/src/pages/workspace/previews/PreviewFallback.test.tsx",
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",
     "src/renderer/src/pages/workspace/previews/PreviewFileContent.test.tsx",
@@ -335,6 +338,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/renderer/src/pages/workspace/previews/read-managed-preview-bytes.test.ts",
       "src/renderer/src/pages/workspace/previews/PreviewFallback.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewFileContent.test.tsx",
       "src/renderer/src/pages/workspace/previews/PreviewTextAnnotationSurface.test.tsx",

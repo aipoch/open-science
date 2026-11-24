@@ -23,8 +23,13 @@
       "src/renderer/src/assets/pdf-text-layer.test.ts",
       "src/renderer/src/assets/provider-icons.packaging.test.ts"
     ],
-    "consumer": ["src/renderer/src/pages/workspace/previews/office-behavior-regressions.test.ts"]
+    "consumer": [
+      "src/renderer/src/pages/workspace/PreviewFileSurface.docx.test.tsx",
+      "src/renderer/src/pages/workspace/previews/office-behavior-regressions.test.ts",
+      "src/renderer/src/pages/workspace/previews/renderers/OfficePreview.test.tsx"
+    ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The Office iframe imports the shared DOCX version layout stylesheet outside its reviewed resource imports; run full validation until the resource boundary is reviewed."
 }
