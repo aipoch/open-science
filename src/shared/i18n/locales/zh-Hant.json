@@ -8169,6 +8169,8 @@
     "Task deleted": "任務已刪除",
     "Delete task": "刪除任務",
     "Edit presentation": "編輯簡報",
+    "Edit document": "編輯文件",
+    "Could not open this document for editing.": "無法開啟此文件進行編輯。",
     "New text": "新文字",
     "Add text box": "新增文字方塊",
     "Add slide": "新增投影片",

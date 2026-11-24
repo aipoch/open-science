@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { availableParallelism, cpus } from 'node:os'
 import { basename, dirname, resolve } from 'path'
 import { configDefaults, defineConfig } from 'vitest/config'
@@ -203,7 +204,8 @@ export default defineConfig({
     alias: {
       '@': resolve('src/renderer/src'),
       '@renderer': resolve('src/renderer/src'),
-      'e-virt-table/dist/index.es.js': resolve('test/fixtures/fake-e-virt-table.ts')
+      'e-virt-table/dist/index.es.js': resolve('test/fixtures/fake-e-virt-table.ts'),
+      mammoth: createRequire(import.meta.url).resolve('mammoth/mammoth.browser.js')
     }
   },
   test: {
@@ -217,7 +219,7 @@ export default defineConfig({
     silent: 'passed-only',
     server: {
       deps: {
-        inline: ['@file-viewer/renderer-spreadsheet']
+        inline: ['@file-viewer/renderer-spreadsheet', '@platejs/docx-io']
       }
     },
     // Loads .env into process.env before tests run. Integration tests gated on RUN_COMPUTE_JOBS=1

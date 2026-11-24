@@ -56,11 +56,14 @@ import { previewLeaveGuards } from '@/stores/preview-leave-guard'
 import type { ArtifactLineageProvenance } from '../../../../shared/artifact-provenance'
 import {
   MANAGED_TEXT_EDIT_EXTENSIONS,
+  isSafeManagedFileBasename,
   type ManagedFileVersionDescriptor,
   type ManagedFileVersionErrorCode,
   type ManagedFileVersionInspectResult,
+  type ManagedFileVersionSaveBinaryEditRequest,
   type ManagedFileVersionSaveTextEditRequest
 } from '../../../../shared/managed-file-versions'
+import { readManagedPreviewBytes } from './previews/read-managed-preview-bytes'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -129,6 +132,9 @@ const MarkdownEditorSurface = lazy(() =>
     })
   )
 )
+
+const loadDocxCodec = (): Promise<typeof import('./markdown-document/docx-codec')> =>
+  import('./markdown-document/docx-codec')
 
 type PreviewFileSurfaceProps = PreviewInteractionPort & {
   item: PreviewFileItem
@@ -850,6 +856,13 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const saveGenerationRef = useRef(0)
     const draftRef = useRef(draft)
     const pendingSaveRef = useRef<ManagedFileVersionSaveTextEditRequest | undefined>(undefined)
+    const pendingBinarySaveRef = useRef<
+      { key: string; request: ManagedFileVersionSaveBinaryEditRequest } | undefined
+    >(undefined)
+    const docxBaseBytesRef = useRef<Uint8Array | undefined>(undefined)
+    const [docxEditing, setDocxEditing] = useState(false)
+    const [docxOpening, setDocxOpening] = useState(false)
+    const [docxOpenError, setDocxOpenError] = useState<string>()
     const acceptedIdentityTransitionRef = useRef<string | undefined>(undefined)
     const mountedRef = useRef(false)
     const retryGenerationRef = useRef(0)
@@ -912,6 +925,16 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       managedIdentity !== undefined &&
       managedInspect !== undefined &&
       window.api.pptxEdit !== undefined
+    const canEditDocx =
+      previewItem.format === 'word' &&
+      managedIdentity !== undefined &&
+      managedInspect !== undefined &&
+      managedInspect.unavailableReason !== 'PROJECT_NOT_WRITABLE' &&
+      managedInspect.unavailableReason !== 'FILE_DELETED' &&
+      isSafeManagedFileBasename(managedInspect.displayName) &&
+      typeof window.api.managedFileVersions?.saveBinaryEdit === 'function' &&
+      typeof window.api.previewResources?.acquire === 'function' &&
+      typeof window.api.previewResources?.readRange === 'function'
     const pptxDraft = usePptxDraft(canEditPptx ? managedIdentity : undefined)
     const [reviewedDraftId, setReviewedDraftId] = useState<string>()
     const [pptxRebaseFailedFor, setPptxRebaseFailedFor] = useState<string>()
@@ -1302,20 +1325,32 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     const discardEdit = useCallback((): void => {
       saveGenerationRef.current += 1
       pendingSaveRef.current = undefined
+      pendingBinarySaveRef.current = undefined
+      docxBaseBytesRef.current = undefined
+      setDocxEditing(false)
+      setDocxOpening(false)
+      setDocxOpenError(undefined)
       setSaving(false)
       setMode((current) => (current === 'diff' ? current : 'view'))
       setDraft('')
       setEditBaseline(undefined)
       setEditError(undefined)
       setConflictHead(undefined)
+      setMarkdownDraftRevision(0)
     }, [])
     const invalidateSave = (): void => {
       saveGenerationRef.current += 1
       pendingSaveRef.current = undefined
+      pendingBinarySaveRef.current = undefined
+      setDocxOpening(false)
       setSaving(false)
     }
     const finishVersionSelection = (preserveDiffMode: boolean): void => {
       invalidateSave()
+      docxBaseBytesRef.current = undefined
+      setDocxEditing(false)
+      setDocxOpenError(undefined)
+      setMarkdownDraftRevision(0)
       managedWorkflow.resetForVersionSelection(preserveDiffMode)
       setDraft('')
       setEditBaseline(undefined)
@@ -1361,6 +1396,12 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       }
       const generation = ++saveGenerationRef.current
       pendingSaveRef.current = undefined
+      pendingBinarySaveRef.current = undefined
+      docxBaseBytesRef.current = undefined
+      setDocxEditing(false)
+      setDocxOpening(false)
+      setDocxOpenError(undefined)
+      setMarkdownDraftRevision(0)
       setMode('view')
       setDraft('')
       setEditBaseline(undefined)
@@ -1608,8 +1649,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
 
     const copyEditDraft = async (): Promise<void> => {
       const generation = saveGenerationRef.current
+      const currentDraft = markdownEditorRef.current?.flush() ?? draft
       try {
-        await navigator.clipboard.writeText(draft)
+        await navigator.clipboard.writeText(currentDraft)
         if (saveGenerationRef.current !== generation) return
         setCopied(true)
         clearTimeout(copiedTimer.current)
@@ -1817,6 +1859,154 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
         return false
       }
       return onSendDocumentRequest({ projectId, text, annotations: [] })
+    }
+
+    const beginDocxEdit = async (): Promise<void> => {
+      if (!canEditDocx || !managedIdentity || !managedInspect || docxOpening) return
+      const generation = ++saveGenerationRef.current
+      const selectedVersionId = managedInspect.selectedVersionId
+      const headVersionId = managedInspect.headVersionId
+      const baselineItem = contentItem
+      setDocxOpening(true)
+      setDocxOpenError(undefined)
+      setEditError(undefined)
+      setConflictHead(undefined)
+      try {
+        const [bytes, { convertDocxBytesToMarkdown }] = await Promise.all([
+          readManagedPreviewBytes(
+            {
+              ...managedIdentity,
+              versionId: selectedVersionId
+            },
+            () => !mountedRef.current || saveGenerationRef.current !== generation
+          ),
+          loadDocxCodec()
+        ])
+        if (!mountedRef.current || saveGenerationRef.current !== generation) return
+        const markdown = await convertDocxBytesToMarkdown(bytes)
+        if (!mountedRef.current || saveGenerationRef.current !== generation) return
+        docxBaseBytesRef.current = bytes
+        draftRef.current = markdown
+        setDraft(markdown)
+        setEditBaseline({
+          text: markdown,
+          expectedHeadVersionId: headVersionId,
+          basedOnVersionId: selectedVersionId,
+          item: baselineItem
+        })
+        setDocxEditing(true)
+        setDocxOpening(false)
+        setMarkdownDraftRevision(0)
+        setMarkdownEditorRevision((revision) => revision + 1)
+        setMode('edit')
+      } catch (error) {
+        if (!mountedRef.current || saveGenerationRef.current !== generation) return
+        setDocxOpening(false)
+        setDocxOpenError(errorDetail(error) ?? '')
+      }
+    }
+
+    const saveDocxEdit = async (): Promise<void> => {
+      const flushedDraft = markdownEditorRef.current?.flush()
+      const currentDraft = flushedDraft ?? draft
+      if (
+        !docxEditing ||
+        !canEditDocx ||
+        !managedIdentity ||
+        !managedInspect ||
+        !editBaseline ||
+        (currentDraft === editBaseline.text && !restoringHistory) ||
+        saving
+      ) {
+        return
+      }
+      setSaving(true)
+      setEditError(undefined)
+      const saveGeneration = saveGenerationRef.current
+      let result
+      try {
+        const isUneditedRestore =
+          restoringHistory &&
+          currentDraft === editBaseline.text &&
+          docxBaseBytesRef.current !== undefined
+        const key = JSON.stringify([
+          managedIdentity.source,
+          managedIdentity.projectId,
+          managedIdentity.fileId,
+          editBaseline.basedOnVersionId,
+          editBaseline.expectedHeadVersionId,
+          restoringHistory,
+          isUneditedRestore,
+          currentDraft
+        ])
+        let pending = pendingBinarySaveRef.current
+        if (!pending || pending.key !== key) {
+          const content = isUneditedRestore
+            ? docxBaseBytesRef.current!
+            : await (await loadDocxCodec()).convertMarkdownToDocxBytes(currentDraft)
+          if (!mountedRef.current || saveGenerationRef.current !== saveGeneration) return
+          pending = {
+            key,
+            request: {
+              ...managedIdentity,
+              ...(restoringHistory ? { restore: true } : {}),
+              basedOnVersionId: editBaseline.basedOnVersionId,
+              expectedHeadVersionId: editBaseline.expectedHeadVersionId,
+              operationId: crypto.randomUUID(),
+              content,
+              actor: 'user',
+              summary: isUneditedRestore ? 'restore' : 'Edited document',
+              opCount: isUneditedRestore ? 0 : 1
+            }
+          }
+          pendingBinarySaveRef.current = pending
+        }
+        result = await window.api.managedFileVersions.saveBinaryEdit(pending.request)
+      } catch {
+        if (saveGenerationRef.current !== saveGeneration) return
+        setSaving(false)
+        setEditError(t('Changes could not be saved.'))
+        return
+      }
+      if (saveGenerationRef.current !== saveGeneration) return
+      setSaving(false)
+      if (!result.ok) {
+        if (result.error.code === 'STORAGE_COLLISION' || result.error.code === 'OPERATION_FAILED') {
+          pendingBinarySaveRef.current = undefined
+        }
+        setEditError(managedSaveErrorMessage(result.error.code, t))
+        return
+      }
+      const saved = result.value
+      if (saved.kind === 'conflict') {
+        setConflictHead(saved.actualHead)
+        setEditError(t('This file has a newer version.'))
+        return
+      }
+      const sessionId = managedInspect.sessionId
+      pendingBinarySaveRef.current = undefined
+      docxBaseBytesRef.current = undefined
+      setDocxEditing(false)
+      setMode('view')
+      setEditBaseline(undefined)
+      setDraft('')
+      setMarkdownDraftRevision(0)
+      if (saved.kind === 'created' && projectId) {
+        applyVersionItem(
+          {
+            ...createPreviewFileItemForManagedVersion({
+              item: previewItem,
+              version: saved.version,
+              projectId,
+              sessionId
+            }),
+            selectedVersionId: undefined
+          },
+          true
+        )
+      }
+      setReloadToken((token) => token + 1)
+      managedWorkflow.refreshInspect()
     }
 
     const beginPptxEdit = (): void => {
@@ -2111,6 +2301,12 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                                 return
                               }
                               invalidateSave()
+                              docxBaseBytesRef.current = undefined
+                              setDocxEditing(false)
+                              setDocxOpenError(undefined)
+                              setEditError(undefined)
+                              setConflictHead(undefined)
+                              setMarkdownDraftRevision(0)
                               setMode('view')
                               setDraft('')
                               setEditBaseline(undefined)
@@ -2127,11 +2323,19 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                             pptxEditing
                               ? (!pptxSession.dirty && !pptxSession.restoring) ||
                                 pptxSession.phase !== 'ready'
-                              : (!isDirty && !restoringHistory) ||
-                                saving ||
-                                !managedInspect?.canEdit
+                              : docxEditing
+                                ? (!isDirty && !restoringHistory) || saving || !canEditDocx
+                                : (!isDirty && !restoringHistory) ||
+                                  saving ||
+                                  !managedInspect?.canEdit
                           }
-                          onClick={() => void (pptxEditing ? savePptxEdit() : saveEdit())}
+                          onClick={() =>
+                            void (pptxEditing
+                              ? savePptxEdit()
+                              : docxEditing
+                                ? saveDocxEdit()
+                                : saveEdit())
+                          }
                         >
                           {pptxEditing
                             ? pptxSession.restoring && !pptxSession.dirty
@@ -2226,6 +2430,38 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
+                    ) : mode !== 'edit' && canEditDocx && managedControlsInspect ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger
+                            asChild
+                            onFocus={(event) => {
+                              if (!event.currentTarget.matches(':focus-visible')) {
+                                event.preventDefault()
+                              }
+                            }}
+                          >
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              className={previewHeaderActionClassName}
+                              aria-label={t('Edit {{name}}', { name: resolvedPreviewItem.name })}
+                              disabled={docxOpening}
+                              onClick={() => void beginDocxEdit()}
+                            >
+                              {docxOpening ? (
+                                <Loader2 className="animate-spin" aria-hidden="true" />
+                              ) : (
+                                <Pencil aria-hidden="true" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent className={tooltipClassName}>
+                            {t('Edit document')}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     ) : null}
                   </>
                 }
@@ -2295,6 +2531,17 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   <VersionHistoryLoadButton history={managedWorkflow.history} />
                 </>
               ) : !provenanceFocused &&
+                mode === 'view' &&
+                canEditDocx &&
+                managedNavigationInspect ? (
+                <>
+                  <ManagedVersionNavigation
+                    inspect={managedNavigationInspect}
+                    onSelect={selectManagedVersion}
+                  />
+                  <VersionHistoryLoadButton history={managedWorkflow.history} />
+                </>
+              ) : !provenanceFocused &&
                 !managedIdentity &&
                 lineage &&
                 hasManagedTextEditExtension(resolvedPreviewItem.name) ? (
@@ -2306,6 +2553,23 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   />
                   <VersionHistoryLoadButton history={lineageHistory} />
                 </>
+              ) : null}
+              {!provenanceFocused && docxOpenError !== undefined && mode === 'view' ? (
+                <div className="max-h-64 shrink-0 overflow-y-auto border-b border-border-300/50 p-3">
+                  <ErrorNotice
+                    role="alert"
+                    title={t('Could not open this document for editing.')}
+                    description={docxOpenError || undefined}
+                    dismissButton={{
+                      label: t('Dismiss'),
+                      onClick: () => setDocxOpenError(undefined)
+                    }}
+                    primaryButton={{
+                      label: t('Retry'),
+                      onClick: () => void beginDocxEdit()
+                    }}
+                  />
+                </div>
               ) : null}
               {localActionFailure ? (
                 <div className="shrink-0 max-h-[40%] overflow-y-auto">
@@ -2365,7 +2629,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                             saving={saving}
                           />
                         </div>
-                      ) : resolvedPreviewItem.format === 'markdown' ? (
+                      ) : resolvedPreviewItem.format === 'markdown' || docxEditing ? (
                         <Suspense
                           fallback={
                             <div

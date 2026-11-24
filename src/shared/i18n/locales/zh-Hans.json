@@ -8169,6 +8169,8 @@
     "Task deleted": "任务已删除",
     "Delete task": "删除任务",
     "Edit presentation": "编辑演示文稿",
+    "Edit document": "编辑文档",
+    "Could not open this document for editing.": "无法打开此文档进行编辑。",
     "New text": "新文本",
     "Add text box": "添加文本框",
     "Add slide": "添加幻灯片",

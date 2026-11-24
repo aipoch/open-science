@@ -8169,6 +8169,8 @@
     "Task deleted": "タスクは削除されました",
     "Delete task": "タスクを削除",
     "Edit presentation": "プレゼンテーションを編集",
+    "Edit document": "ドキュメントを編集",
+    "Could not open this document for editing.": "編集のためにこのドキュメントを開けませんでした。",
     "New text": "新しいテキスト",
     "Add text box": "テキストボックスを追加",
     "Add slide": "スライドを追加",

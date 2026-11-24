@@ -43,7 +43,7 @@ const unsupportedDiagnostics = (source: string): MarkdownDiagnostic[] => {
       severity: 'warning'
     })
   }
-  if (/<[A-Za-z][^>]*>/u.test(source)) {
+  if (/(?<!\\)(?:\\\\)*<[A-Za-z][^>]*>/u.test(source)) {
     diagnostics.push({
       code: 'unsupported-html',
       message: 'Raw HTML is preserved in source mode.',
@@ -132,7 +132,8 @@ export const serializeMarkdownDocument = (value: Value): string => {
       bullet: '-',
       fence: '`',
       fences: true,
-      listItemIndent: 'one'
+      listItemIndent: 'one',
+      resourceLink: true
     }
   })
 }

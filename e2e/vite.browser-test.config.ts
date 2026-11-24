@@ -15,6 +15,7 @@ export default defineConfig({
       'decode-named-character-reference': createRequire(import.meta.url).resolve(
         'decode-named-character-reference'
       ),
+      mammoth: createRequire(import.meta.url).resolve('mammoth/mammoth.browser.js'),
       '@': resolve('src/renderer/src'),
       '@renderer': resolve('src/renderer/src')
     }

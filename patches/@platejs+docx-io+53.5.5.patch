@@ -1,0 +1,39 @@
+diff --git a/node_modules/@platejs/docx-io/dist/index.js b/node_modules/@platejs/docx-io/dist/index.js
+index e3ae611..364e07a 100644
+--- a/node_modules/@platejs/docx-io/dist/index.js
++++ b/node_modules/@platejs/docx-io/dist/index.js
+@@ -167,6 +167,12 @@ var namespaces_default = namespaces;
+ 
+ //#endregion
+ //#region src/lib/internal/utils/image-dimensions.ts
++function decodeBase64ToBytes(base64String) {
++	const binaryString = atob(base64String);
++	const bytes = new Uint8Array(binaryString.length);
++	for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
++	return bytes;
++}
+ /**
+ * Get image dimensions from a buffer
+ * Supports PNG, JPEG, GIF, BMP, WebP
+@@ -824,7 +830,7 @@ const buildRun = async (vNode, attributes, docxDocumentInstance) => {
+ 		const base64Uri = decodeURIComponent(vn.properties?.src || "");
+ 		if (base64Uri && docxDocumentInstance) response = docxDocumentInstance.createMediaFile(base64Uri);
+ 		if (response && docxDocumentInstance) {
+-			docxDocumentInstance.zip.folder("word").folder("media").file(response.fileNameWithExtension, Buffer.from(response.fileContent, "base64"), { createFolders: false });
++			docxDocumentInstance.zip.folder("word").folder("media").file(response.fileNameWithExtension, decodeBase64ToBytes(response.fileContent), { createFolders: false });
+ 			const documentRelsId = docxDocumentInstance.createDocumentRelationships(docxDocumentInstance.relationshipFilename, imageType, `media/${response.fileNameWithExtension}`, internalRelationship);
+ 			attributes.inlineOrAnchored = true;
+ 			attributes.relationshipId = documentRelsId;
+@@ -1996,9 +2002,10 @@ const buildImage = async (docxDocumentInstance, vNode, attributes = {}) => {
+ 		if (base64Uri) response = docxDocumentInstance.createMediaFile(base64Uri);
+ 	} catch (_error) {}
+ 	if (response) {
+-		docxDocumentInstance.zip.folder("word").folder("media").file(response.fileNameWithExtension, Buffer.from(response.fileContent, "base64"), { createFolders: false });
++		const imageBytes = decodeBase64ToBytes(response.fileContent);
++		docxDocumentInstance.zip.folder("word").folder("media").file(response.fileNameWithExtension, imageBytes, { createFolders: false });
+ 		const documentRelsId = docxDocumentInstance.createDocumentRelationships(docxDocumentInstance.relationshipFilename, imageType, `media/${response.fileNameWithExtension}`, internalRelationship);
+-		const imageProperties = getImageDimensions(Buffer.from(response.fileContent, "base64"));
++		const imageProperties = getImageDimensions(imageBytes);
+ 		return await buildParagraph(vNode, {
+ 			...attributes,
+ 			type: "picture",

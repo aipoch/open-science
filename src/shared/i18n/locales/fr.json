@@ -8517,6 +8517,8 @@
     "Task deleted": "Tâche supprimée",
     "Delete task": "Supprimer la tâche",
     "Edit presentation": "Modifier la présentation",
+    "Edit document": "Modifier le document",
+    "Could not open this document for editing.": "Impossible d’ouvrir ce document pour le modifier.",
     "New text": "Nouveau texte",
     "Add text box": "Ajouter une zone de texte",
     "Add slide": "Ajouter une diapositive",

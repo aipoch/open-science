@@ -1,10 +1,13 @@
+import { MessageChannel, MessagePort } from 'node:worker_threads'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
-import { build, normalizePath } from 'vite'
+import { JSDOM } from 'jsdom'
+import { build, normalizePath, type PluginOption } from 'vite'
 import { runInNewContext } from 'node:vm'
 import type { UserConfig } from 'electron-vite'
 import { describe, expect, it } from 'vitest'
 
+import browserTestConfig from '../e2e/vite.browser-test.config'
 import config from '../electron.vite.config'
 import webConfig from '../vite.web.config'
 
@@ -203,5 +206,125 @@ describe('linked Providers package browser consumption', () => {
         'high'
       ])
     }
+  )
+})
+
+describe('DOCX rich-editor codec browser bundle', () => {
+  it('aliases mammoth to its self-contained browser bundle across renderer, web, and browser-test configs', () => {
+    const expectedMammothBrowser = createRequire(import.meta.url).resolve(
+      'mammoth/mammoth.browser.js'
+    )
+    expect(resolvedConfig.renderer?.resolve?.alias).toMatchObject({
+      mammoth: expectedMammothBrowser
+    })
+    expect(webConfig.resolve?.alias).toMatchObject({
+      mammoth: expectedMammothBrowser
+    })
+    expect(browserTestConfig.resolve?.alias).toMatchObject({
+      mammoth: expectedMammothBrowser
+    })
+  })
+
+  it.each(['renderer', 'web'] as const)(
+    'round-trips DOCX markdown and embedded PNG media inside a Node-free %s browser bundle',
+    async (surface) => {
+      const targetConfig = surface === 'web' ? webConfig : resolvedConfig.renderer!
+      const plugins = (targetConfig.plugins ?? []).filter((plugin): plugin is PluginOption => {
+        if (!plugin || typeof plugin !== 'object' || !('name' in plugin)) return true
+        return plugin.name !== 'electron-vite:dev-build-watch'
+      })
+
+      const result = await build({
+        configFile: false,
+        logLevel: 'silent',
+        define: {
+          'process.env.NODE_ENV': '"production"'
+        },
+        resolve: targetConfig.resolve,
+        plugins,
+        build: {
+          write: false,
+          minify: false,
+          commonjsOptions: targetConfig.build?.commonjsOptions,
+          lib: {
+            entry: resolve('src/renderer/src/pages/workspace/markdown-document/docx-codec.ts'),
+            name: 'DocxCodecBundle',
+            formats: ['iife']
+          }
+        }
+      })
+
+      const outputs = (Array.isArray(result) ? result : [result]).flatMap((output) =>
+        'output' in output ? output.output : []
+      )
+      const chunk = outputs.find((output) => output.type === 'chunk')
+      expect(chunk).toBeDefined()
+      expect(chunk!.code).not.toContain(
+        'DOMParser.parseFromString: the provided mimeType "\' + mimeType + \'" is not valid.'
+      )
+
+      const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+        url: 'https://app.local/',
+        runScripts: 'outside-only'
+      })
+      const openChannels: MessageChannel[] = []
+      class TrackedMessageChannel extends MessageChannel {
+        constructor() {
+          super()
+          openChannels.push(this)
+        }
+      }
+
+      try {
+        // JSDOM's WindowProxy postMessage sets event.source !== Window; let setimmediate use MessageChannel/setTimeout.
+        Object.defineProperty(dom.window, 'postMessage', { value: undefined, configurable: true })
+        Object.assign(dom.window, {
+          MessageChannel: TrackedMessageChannel,
+          MessagePort,
+          TextEncoder,
+          TextDecoder,
+          structuredClone
+        })
+        expect(dom.window.eval('typeof Buffer')).toBe('undefined')
+        expect(dom.window.eval('typeof process')).toBe('undefined')
+        expect(dom.window.eval('typeof require')).toBe('undefined')
+
+        dom.window.eval(chunk!.code)
+        const bundle = (
+          dom.window as unknown as {
+            DocxCodecBundle: {
+              convertMarkdownToDocxBytes: (markdown: string) => Promise<Uint8Array>
+              convertDocxBytesToMarkdown: (bytes: Uint8Array) => Promise<string>
+            }
+          }
+        ).DocxCodecBundle
+
+        const onePixelPng =
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+        const source = [
+          '# Bundled Report',
+          '',
+          'Paragraph with **bold**, *italic*, `code`, and [link](https://example.com).',
+          '',
+          `![Embedded chart](${onePixelPng})`
+        ].join('\n')
+
+        const docxBytes = await bundle.convertMarkdownToDocxBytes(source)
+        expect(docxBytes.byteLength).toBeGreaterThan(1000)
+
+        const roundTripped = await bundle.convertDocxBytesToMarkdown(docxBytes)
+        expect(roundTripped).toContain('# Bundled Report')
+        expect(roundTripped).toContain('**bold**')
+        expect(roundTripped).toContain('[link](https://example.com)')
+        expect(roundTripped).toContain(`![Embedded chart](${onePixelPng})`)
+      } finally {
+        for (const channel of openChannels) {
+          channel.port1.close()
+          channel.port2.close()
+        }
+        dom.window.close()
+      }
+    },
+    30000
   )
 })

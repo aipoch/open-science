@@ -8339,6 +8339,8 @@
     "Task deleted": "Aufgabe gelöscht",
     "Delete task": "Aufgabe löschen",
     "Edit presentation": "Präsentation bearbeiten",
+    "Edit document": "Dokument bearbeiten",
+    "Could not open this document for editing.": "Dieses Dokument konnte nicht zur Bearbeitung geöffnet werden.",
     "New text": "Neuer Text",
     "Add text box": "Textfeld hinzufügen",
     "Add slide": "Folie hinzufügen",

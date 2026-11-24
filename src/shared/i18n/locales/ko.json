@@ -8167,6 +8167,8 @@
     "Task deleted": "작업 삭제됨",
     "Delete task": "작업 삭제",
     "Edit presentation": "프레젠테이션 편집",
+    "Edit document": "문서 편집",
+    "Could not open this document for editing.": "편집하기 위해 이 문서를 열 수 없습니다.",
     "New text": "새 텍스트",
     "Add text box": "텍스트 상자 추가",
     "Add slide": "슬라이드 추가",

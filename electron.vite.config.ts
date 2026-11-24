@@ -111,6 +111,9 @@ export default defineConfig(({ command }) => ({
         'decode-named-character-reference': createRequire(import.meta.url).resolve(
           'decode-named-character-reference'
         ),
+        // Use Mammoth's self-contained browser bundle so @file-viewer/vite-plugin's
+        // @xmldom/xmldom@0.9 alias (which rejects omitted mimeType arguments) never leaks in.
+        mammoth: createRequire(import.meta.url).resolve('mammoth/mammoth.browser.js'),
         '@': resolve('src/renderer/src'),
         '@renderer': resolve('src/renderer/src')
       }

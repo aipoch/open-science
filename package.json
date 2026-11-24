@@ -230,6 +230,8 @@
     "@file-viewer/core": "3.0.3",
     "@file-viewer/renderer-spreadsheet": "3.0.3",
     "@file-viewer/vite-plugin": "2.2.3",
+    "@platejs/docx": "53.0.0",
+    "@platejs/docx-io": "53.5.5",
     "@playwright/test": "^1.62.1",
     "@shadcn/react": "^0.3.0",
     "@streamdown/cjk": "^1.0.3",
