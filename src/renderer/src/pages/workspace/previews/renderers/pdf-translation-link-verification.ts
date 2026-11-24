@@ -10,7 +10,6 @@ import {
   type PdfTranslationResults
 } from '@aipoch/pdf-translation/reader'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
-import type { PdfTranslationRenderUnit } from './pdf-translation-verification'
 
 // A figure prefix may govern exactly two coordinated panels. Only the second
 // digit is implicit; the complete ordered pair and its occurrence stay fixed.
@@ -296,7 +295,7 @@ type PageLinkVerification = Readonly<{
   targetAnnotations: readonly AnnotationSnapshot[]
   documentSource: PdfTranslationResults['source']
   units: PdfTranslationResults['source']['units']
-  renderUnits: readonly PdfTranslationRenderUnit[]
+  renderUnits: readonly { readonly translation: string }[]
   canRetainLinks: boolean
   originalLinkOwners: ReadonlyMap<number, ReadonlyMap<number, string>>
   preservedIds: ReadonlySet<string>
