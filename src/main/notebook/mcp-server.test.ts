@@ -3697,7 +3697,7 @@ describe('compactNotebookStateResult', () => {
 
   it('requests only the recent runs used by the notebook_state projection', async () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_state')
-    expect(tool?.mapResult).toBe(compactNotebookStateResult)
+    expect(tool?.mapResult?.({ runs: [] }, {})).toEqual(compactNotebookStateResult({ runs: [] }))
     expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
     await callNotebookRpc(
       {
@@ -3978,5 +3978,130 @@ describe('manual kernel termination feedback', () => {
           )
       )
     ).rejects.toThrow('Use smaller batches')
+  })
+})
+
+describe('saved Shell workflow output recovery', () => {
+  const stateTool = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'notebook_state')!
+  const shellTool = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'bash_execute')!
+  const handoff = { orderId: 'synthetic-order', workflowRunId: 'synthetic-run', cacheReady: true }
+  const stdout = JSON.stringify({
+    data: { outline: '提纲'.repeat(4500), stream: { outline: '提纲'.repeat(4500) } },
+    _handoff: handoff
+  })
+
+  it('preserves a trailing handoff through the actual Shell projection and final serializer', () => {
+    const raw = { runId: 'outline-run', status: 'completed', stdout, stderr: '\0'.repeat(10000) }
+    const projected = shellTool.mapResult!(raw, {})
+    const reply = JSON.parse(
+      serializeNotebookToolResult(projected, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    )
+    expect(reply.stdoutHandoff).toEqual(handoff)
+    expect(reply.truncated).toBe(true)
+    expect(raw.stdout).toBe(stdout)
+    const fallback = JSON.parse(
+      serializeNotebookToolResult(
+        { ...(projected as object), extra: 'x'.repeat(50000) },
+        NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
+      )
+    )
+    expect(fallback.stdoutHandoff).toEqual(handoff)
+    expect(JSON.stringify(fallback).length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+  })
+
+  it('pages original stdout after reset without repeating the generation', () => {
+    const state = {
+      kernelStatus: 'idle',
+      runs: [
+        { runId: 'outline-run', status: 'completed', text: { stdout } },
+        { runId: 'timeout-run', status: 'timeout', text: { stdout: '' } }
+      ]
+    }
+    let offset = 0
+    let recovered = ''
+    for (;;) {
+      const reply = JSON.parse(
+        serializeNotebookToolResult(
+          stateTool.mapResult!(state, {
+            runIds: ['outline-run'],
+            outputStream: 'stdout',
+            outputOffset: offset
+          }),
+          NOTEBOOK_MCP_STATE_RESULT_LIMIT
+        )
+      )
+      recovered += reply.text
+      expect(reply.captureTruncated).toBe(false)
+      if (reply.nextOffset === null) break
+      expect(reply.nextOffset).toBeGreaterThan(offset)
+      offset = reply.nextOffset
+    }
+    expect(recovered).toBe(stdout)
+    expect(JSON.parse(recovered)._handoff).toEqual(handoff)
+    expect(() =>
+      stateTool.mapResult!(state, { runIds: ['foreign-run'], outputStream: 'stdout' })
+    ).toThrow('unavailable')
+    expect(() => stateTool.mapResult!(state, { outputStream: 'stdout' })).toThrow('exactly one')
+    expect(() =>
+      stateTool.mapResult!(state, {
+        runIds: ['outline-run'],
+        outputStream: 'stdout',
+        outputOffset: stdout.length + 1
+      })
+    ).toThrow('offset')
+  })
+
+  it('forwards the targeted run through the strict RPC boundary without page-only fields', async () => {
+    const { resolveNotebookLocalRpcHandler } = await import('./local-rpc-notebook-adapter')
+    const input = {
+      runIds: ['old-run'],
+      outputStream: 'stdout',
+      outputOffset: 8000,
+      outputLimit: 1000
+    }
+    const raw = await callNotebookRpc(
+      {
+        endpoint: 'http://localhost',
+        token: 'token',
+        sessionId: 'bound-session',
+        projectId: 'project',
+        workspaceCwd: '/work'
+      },
+      'state',
+      input,
+      async (_endpoint, init) => {
+        const params = JSON.parse(String(init.body)).params
+        const state = vi.fn(async (request: unknown) => request)
+        const handler = resolveNotebookLocalRpcHandler({ state } as never, 'state', params)
+        await handler(params)
+        expect(state).toHaveBeenCalledWith(
+          expect.objectContaining({ sessionId: 'bound-session', runIds: ['old-run'] })
+        )
+        expect(params).not.toHaveProperty('outputOffset')
+        expect(params).not.toHaveProperty('outputStream')
+        return Response.json({ result: { runs: [{ runId: 'old-run', text: { stdout } }] } })
+      }
+    )
+    const result = stateTool.mapResult!(raw, input) as { text: string }
+    expect(result.text).toBe(stdout.slice(8000, 9000))
+  })
+
+  it('bounds escaped output pages and reports capture loss without fabricating metadata', () => {
+    const raw = { runId: 'r', truncated: true, text: { stdout: '\0'.repeat(4000) } }
+    const reply = stateTool.mapResult!(
+      { runs: [raw] },
+      { runIds: ['r'], outputStream: 'stdout' }
+    ) as { text: string; nextOffset: number; captureTruncated: boolean }
+    expect(reply.captureTruncated).toBe(true)
+    expect(reply.nextOffset).toBe(reply.text.length)
+    expect(serializeNotebookToolResult(reply, NOTEBOOK_MCP_STATE_RESULT_LIMIT)).not.toContain(
+      'preview truncated'
+    )
+    for (const text of [
+      '{ "_handoff":',
+      JSON.stringify({ _handoff: { value: 'x'.repeat(3000) } })
+    ]) {
+      expect(shellTool.mapResult!({ stdout: text }, {})).not.toHaveProperty('stdoutHandoff')
+    }
   })
 })
