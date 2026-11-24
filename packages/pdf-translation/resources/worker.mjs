@@ -6428,7 +6428,7 @@ async function generate({
           top = 0,
           bottom = 0
         for (const { text, fontIndex } of runs) {
-          const runFace = fontIndex === fontCount ? latinFace : face,
+          const runFace = fontIndex < fontCount ? face : latinFace,
             run = runFace.layout(shapeText(text), { liga: false, kern: false }),
             ratio = face.unitsPerEm / runFace.unitsPerEm
           run.glyphs.forEach((glyph, i) => {

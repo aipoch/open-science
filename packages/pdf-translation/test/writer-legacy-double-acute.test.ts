@@ -9,12 +9,19 @@ import { PdfTranslationWriter } from '../src/writer.js'
 import { resolve } from './paths.js'
 
 it.each([
-  { name: 'carried overprint', detached: false, word: 'Lem˝os', placed: true },
-  { name: 'detached mark', detached: true, word: 'Lem˝os', placed: false },
-  { name: 'changed word', detached: false, word: 'Lem˝ot', placed: false }
+  { name: 'carried overprint', detached: false, word: 'Lem˝os', placed: true, mixed: false },
+  { name: 'detached mark', detached: true, word: 'Lem˝os', placed: false, mixed: false },
+  { name: 'changed word', detached: false, word: 'Lem˝ot', placed: false, mixed: false },
+  {
+    name: 'mixed Latin subsets in a tight row',
+    detached: false,
+    word: 'Lem˝os',
+    placed: true,
+    mixed: true
+  }
 ])(
   'checks native ink before composing a double acute in $name',
-  async ({ detached, word, placed }) => {
+  async ({ detached, word, placed, mixed }) => {
     const pdf = await PDFDocument.create()
     const page = pdf.addPage([300, 200])
     pdf.registerFontkit(fontkit)
@@ -28,7 +35,7 @@ it.each([
     const font = await pdf.embedFont(fontBytes, { subset: false, customName: 'URWPalladioL-Roma' })
     const key = page.node.newFontDictionary('URWPalladioL-Roma', font.ref)
     const source = 'Field Lem˝os relations'
-    const translation = `静态 ${word} 结果 ő`
+    const translation = mixed ? `静态 ${word} 观测值 ć` : `静态 ${word} 结果 ő`
     const mark = face.glyphForCodePoint(0x2dd).bbox
     const vowel = face.glyphForCodePoint(0x6f).bbox
     const offset = ((mark.minX + mark.maxX - vowel.minX - vowel.maxX) * 500) / face.unitsPerEm
@@ -48,19 +55,23 @@ it.each([
     )
 
     const data = await pdf.save()
-    const readText = async (bytes: Uint8Array): Promise<{ index: number; text: string }[]> => {
+    const readText = async (
+      bytes: Uint8Array
+    ): Promise<{ index: number; text: string; point: number }[]> => {
       const task = getDocument({ data: bytes.slice(), useSystemFonts: true })
       try {
         const { items } = await (await (await task.promise).getPage(1)).getTextContent()
         return items.flatMap((item, index) =>
-          'str' in item && item.str.trim() ? [{ index, text: item.str }] : []
+          'str' in item && item.str.trim()
+            ? [{ index, text: item.str, point: item.transform[3] }]
+            : []
         )
       } finally {
         await task.destroy()
       }
     }
     const compact = (text: string): string => text.replace(/\s/gu, '')
-    const items = await readText(data)
+    const items = (await readText(data)).map(({ index, text }) => ({ index, text }))
     expect(compact(items.map(({ text }) => text).join(''))).toBe(compact(source))
     const writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
     const output = await writer.generateDetailed(
@@ -77,7 +88,12 @@ it.each([
             fragments: [
               {
                 pageNumber: 1,
-                rect: { x: 24 / 300, y: 39 / 200, width: 151 / 300, height: 18 / 200 },
+                rect: {
+                  x: 24 / 300,
+                  y: 39 / 200,
+                  width: (mixed ? 115.5 : 151) / 300,
+                  height: 18 / 200
+                },
                 items
               }
             ]
@@ -92,7 +108,10 @@ it.each([
       }
     )
     expect(output?.layoutFailures.map(({ code }) => code)).toEqual(placed ? [] : ['font'])
-    const written = (await readText(output!.data)).map(({ text }) => text).join('')
-    expect(compact(written)).toBe(compact(placed ? translation : source))
+    const written = await readText(output!.data)
+    expect(compact(written.map(({ text }) => text).join(''))).toBe(
+      compact(placed ? translation : source)
+    )
+    if (mixed) expect(written.find(({ text }) => text.includes('静态'))?.point).toBeCloseTo(12, 2)
   }
 )
