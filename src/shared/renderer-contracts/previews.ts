@@ -204,24 +204,24 @@ export const previewDeleteContracts = {
   >()('preview-resources', ['preview-resources:export-research-video', ELECTRON]),
   'researchVideo.activeSessions': callable<() => Promise<readonly ResearchVideoActiveSession[]>>()(
     'preview-resources',
-    ['research-video:active-sessions', ELECTRON]
+    ['research-video:active-sessions']
   ),
   'researchVideo.start': callable<
     (request: ResearchVideoStartRequest) => Promise<ResearchVideoPresentationStatus>
-  >()('preview-resources', ['research-video:start', ELECTRON]),
+  >()('preview-resources', ['research-video:start']),
   'researchVideo.status': callable<
     (request: ResearchVideoStatusRequest) => Promise<ResearchVideoPresentationStatus>
-  >()('preview-resources', ['research-video:status', ELECTRON]),
+  >()('preview-resources', ['research-video:status']),
   'researchVideo.remove': callable<
     (request: ResearchVideoPresentationRequest) => Promise<ResearchVideoPresentationStatus>
-  >()('preview-resources', ['research-video:remove', ELECTRON]),
+  >()('preview-resources', ['research-video:remove']),
   'researchVideo.cancel': callable<(request: ResearchVideoPresentationRequest) => Promise<void>>()(
     'preview-resources',
-    ['research-video:cancel', ELECTRON]
+    ['research-video:cancel']
   ),
   'researchVideo.onActivityChanged': callable<
     (listener: (sessions: readonly ResearchVideoActiveSession[]) => void) => RemoveListener
-  >()('preview-resources', ['research-video:activity-changed', ELECTRON_EVENT]),
+  >()('preview-resources', ['research-video:activity-changed', EVENT]),
   'previewResources.researchVideoExportProgress': callable<
     (request: { resourceId: string }) => Promise<ResearchVideoProgress | null>
   >()('preview-resources', ['preview-resources:research-video-progress', ELECTRON]),

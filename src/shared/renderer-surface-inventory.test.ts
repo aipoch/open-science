@@ -54,12 +54,6 @@ const GENERATED_SOURCE_OMISSIONS = [
   'previewResources.cancelResearchVideoExport',
   'previewResources.exportResearchVideo',
   'previewResources.researchVideoExportProgress',
-  'researchVideo.activeSessions',
-  'researchVideo.cancel',
-  'researchVideo.onActivityChanged',
-  'researchVideo.remove',
-  'researchVideo.start',
-  'researchVideo.status',
   'backgroundResultDelivery.getProjectActivity',
   'backgroundResultDelivery.getSessionActivity',
   'backgroundResultDelivery.onChanged',
@@ -243,7 +237,7 @@ const WEB_UNAVAILABLE_CHANNELS = [
 
 const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   'pdf-structure': ['read-cached', 'parse', 'cancel', 'read-thumbnail', 'clear-cache'],
-  'local-models': ['get-snapshot', 'install', 'cancel', 'remove', 'set-ocr-languages'],
+  'local-models': ['remove', 'set-ocr-languages'],
   artifacts: ['open-file'],
   cli: ['install', 'uninstall'],
   compute: [

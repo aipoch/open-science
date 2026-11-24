@@ -177,11 +177,9 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'resource-recording:get-state',
   'resource-recording:start',
   'resource-recording:stop',
-  'research-video:active-sessions',
-  'research-video:start',
-  'research-video:status',
-  'research-video:remove',
-  'research-video:cancel',
+  // Research Film generation, status, cancellation and the activity subscription run entirely in
+  // the shared Node backend, so the Web surfaces install them too (issue #4666). MP4 export stays
+  // desktop-native: it owns the Electron render window and the save dialog.
   ...pdfTranslationApplicationCommandGroup.commands.map(({ name }) => name),
   'office-preview:open',
   'office-preview:attach-frame',
