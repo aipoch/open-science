@@ -1035,6 +1035,20 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         }
         const projected = withTransientSessionState(authority, current)
         projected.interrupted = hydrateSession(authority).interrupted
+        // A rejected continuation can leave its transient segment pointing outside the
+        // restored graph. Keep it only for the same live run and its owning frame.
+        if (
+          !projected.activeRun ||
+          projected.activeRun.promptMessageId !== current.activeRun?.promptMessageId ||
+          projected.activeRun.startedAt !== current.activeRun.startedAt ||
+          !projected.conversationGraph?.runtimeSegments.some(
+            (segment) =>
+              segment.id === projected.activeRunRuntimeSegmentId &&
+              segment.agentFrameId === projected.conversationGraph?.activeFrameId
+          )
+        ) {
+          projected.activeRunRuntimeSegmentId = undefined
+        }
         projected.branchContextResetRequired = authority.branchContextResetRequired
         projected.agentStatus = undefined
         projected.awaitingFirstAgentOutput = undefined

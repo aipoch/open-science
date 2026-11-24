@@ -614,11 +614,28 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
       false
     )
     await h.resume()
-    const firstError = useWorkspaceOperationErrors.getState().errors['session-1']
-    if (firstError) await h.resume()
-    const secondError = useWorkspaceOperationErrors.getState().errors['session-1']
-    expect({ firstError, secondError }).toEqual({ firstError: undefined, secondError: undefined })
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBeUndefined()
+    const admittedSegment =
+      h.providerDispatch.mock.calls[0]?.[0].provenanceContext?.runtimeSegmentId
+    expect(admittedSegment).not.toBe(localSegment)
+    expect(
+      h.durable().conversationGraph!.runtimeSegments.some(({ id }) => id === admittedSegment)
+    ).toBe(true)
     expect(h.providerDispatch).toHaveBeenCalledOnce()
+  })
+
+  it('releases the rejected run segment and reuses its durable segment on retry', async () => {
+    const h = harness(true)
+    h.continuation.mockRejectedValueOnce(new Error('Continuation rejected'))
+    await h.resume()
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toContain(
+      'Continuation rejected'
+    )
+    expect(useSessionStore.getState().sessions[0].activeRunRuntimeSegmentId).toBeUndefined()
+    const segmentId = h.continuation.mock.calls[0][0].contextReset!.runtimeSegmentId
+    await h.resume()
+    expect(h.providerDispatch).toHaveBeenCalledOnce()
+    expect(h.providerDispatch.mock.calls[0][0].provenanceContext?.runtimeSegmentId).toBe(segmentId)
   })
 
   it('keeps failed persistence retryable and never dispatches before admission commits', async () => {
