@@ -1328,7 +1328,8 @@ class NotebookRuntimeService {
       assertPrefixRecoverable: (prefix) => this.assertPrefixRecoverable(prefix),
       environmentOperations: this.environmentOperations,
       runtimeRepair: this.runtimeRepair,
-      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled,
+      invalidateDiscovery: (language) => this.runtimeBindingOwner.invalidateDiscovery(language)
     })
     this.environmentStateTracker =
       options.environmentStateTracker ??
@@ -1361,6 +1362,7 @@ class NotebookRuntimeService {
       environmentOperations: this.environmentOperations,
       recovery: this.recoveryCoordinator,
       environmentStateTracker: this.environmentStateTracker,
+      invalidateDiscovery: (language) => this.runtimeBindingOwner.invalidateDiscovery(language),
       installPackages: options.installPackagesImpl ?? installEnvironmentPackages,
       ...(options.processSandbox
         ? {
@@ -3313,6 +3315,7 @@ class NotebookRuntimeService {
         await Promise.allSettled(recoveries)
         throw error
       })
+      this.runtimeBindingOwner.invalidateDiscovery()
       if (this.options.onBackgroundRunTerminal) {
         await Promise.all(
           recoveredRuns.map(async ({ projectId, sessionId, run }) => {
@@ -3442,8 +3445,10 @@ class NotebookRuntimeService {
   // This is deliberately separate from managePackages(): an ordinary install may clear an
   // interrupted-install marker, but it must never release a protected-identity quarantine.
   async completeRuntimeRepair(language: NotebookLanguage): Promise<void> {
+    this.runtimeBindingOwner.invalidateDiscovery(language)
     const replacement = await this.runtimeBindingOwner.requireManagedDefault(language)
     await this.runtimeRepair.completeExplicitRepair(language, replacement)
+    this.runtimeBindingOwner.invalidateDiscovery(language)
   }
 
   // Releases ONE prefix from the global corrupt-journal write barrier. Called by a force Reset (via the

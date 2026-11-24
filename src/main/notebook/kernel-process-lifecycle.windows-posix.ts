@@ -10,6 +10,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
@@ -80,9 +81,16 @@ type KernelProcessSpawnIntent = Readonly<{
 type KernelProcessReceipt = Readonly<{
   path: string
   receiptId: string
+  laneKey: string
 }>
 
 type KernelProcessProbe = 'dead' | 'owned' | 'reused' | 'unknown'
+
+const SCOPED_RECOVERY_CACHE_MAX = 256
+
+type ScopedRecoveryResult = Readonly<{
+  directoryMtimeMs: number | undefined
+}>
 
 type KernelProcessRecoveryController = Readonly<{
   probe(
@@ -406,6 +414,8 @@ class KernelProcessLifecycleOwner {
   private recovery: Promise<void> | undefined
   private scopedRecoveryTail: Promise<void> = Promise.resolve()
   private readonly scopedRecoveries = new Map<string, Promise<void>>()
+  private readonly scopedRecoveryResults = new Map<string, ScopedRecoveryResult>()
+  private readonly invalidatedScopedRecoveries = new Set<string>()
 
   constructor(options: KernelProcessLifecycleOwnerOptions) {
     this.ownerInstanceId = options.ownerInstanceId ?? randomUUID()
@@ -428,18 +438,34 @@ class KernelProcessLifecycleOwner {
   }
 
   ensureReadyForLane(laneKey: string): Promise<void> {
+    const cached = this.scopedRecoveryResults.get(laneKey)
+    if (cached && cached.directoryMtimeMs === this.receiptDirectoryMtimeMs()) {
+      this.scopedRecoveryResults.delete(laneKey)
+      this.scopedRecoveryResults.set(laneKey, cached)
+      return Promise.resolve()
+    }
+    this.scopedRecoveryResults.delete(laneKey)
     const existing = this.scopedRecoveries.get(laneKey)
     if (existing) return existing
     // Session admission may happen concurrently for several lanes. Serialize the filesystem scan,
     // while sharing duplicate callers for the same lane.
-    const queued = this.scopedRecoveryTail.then(() =>
-      this.recoverRecords({ allowUnverifiedReceipts: true, targetLaneKey: laneKey })
-    )
+    const queued = this.scopedRecoveryTail.then(async () => {
+      const directoryMtimeBefore = this.receiptDirectoryMtimeMs()
+      await this.recoverRecords({ allowUnverifiedReceipts: true, targetLaneKey: laneKey })
+      const directoryMtimeAfter = this.receiptDirectoryMtimeMs()
+      if (
+        directoryMtimeBefore === directoryMtimeAfter &&
+        !this.invalidatedScopedRecoveries.delete(laneKey)
+      ) {
+        this.rememberScopedRecovery(laneKey, directoryMtimeAfter)
+      }
+    })
     this.scopedRecoveryTail = queued.catch(() => undefined)
     this.scopedRecoveries.set(laneKey, queued)
     void queued
       .finally(() => {
         if (this.scopedRecoveries.get(laneKey) === queued) this.scopedRecoveries.delete(laneKey)
+        if (!this.scopedRecoveries.has(laneKey)) this.invalidatedScopedRecoveries.delete(laneKey)
       })
       .catch(() => undefined)
     return queued
@@ -468,6 +494,7 @@ class KernelProcessLifecycleOwner {
     windowsProcessTreeProof?: WindowsProcessTreeProof,
     ownWindowsJob = false
   ): KernelProcessSpawnIntent {
+    this.invalidateLaneRecovery(scope.laneKey)
     const prefix = recordFilePrefix(scope)
     mkdirSync(this.directory, { recursive: true })
     // Unpublished .tmp writes cannot authorize a host; recovery only reads published JSON receipts.
@@ -515,6 +542,7 @@ class KernelProcessLifecycleOwner {
       commandIdentityMarker?: string
     }>
   ): KernelProcessReceipt {
+    this.invalidateLaneRecovery(intent.record.laneKey)
     if (!isPositivePid(child.pid)) throw new Error('Kernel process did not expose a valid pid.')
     const activePath = intent.activePath(child.pid)
     try {
@@ -544,16 +572,18 @@ class KernelProcessLifecycleOwner {
     }
     writeRecordSync(activePath, record)
     this.pendingReceiptIds.delete(record.receiptId)
-    return { path: activePath, receiptId: record.receiptId }
+    return { path: activePath, receiptId: record.receiptId, laneKey: record.laneKey }
   }
 
   abandonSpawn(intent: KernelProcessSpawnIntent): void {
+    this.invalidateLaneRecovery(intent.record.laneKey)
     this.pendingReceiptIds.delete(intent.record.receiptId)
     this.removeIfOwned(intent.path, intent.record.receiptId)
   }
 
   complete(receipt: KernelProcessReceipt, reaped: boolean): void {
     if (!reaped) return
+    this.invalidateLaneRecovery(receipt.laneKey)
     let proof: WindowsProcessTreeProof | undefined
     try {
       const record = decodeRecord(readFileSync(receipt.path, 'utf8'))
@@ -568,6 +598,30 @@ class KernelProcessLifecycleOwner {
 
   environment(ownerToken: string): NodeJS.ProcessEnv {
     return { [OWNER_TOKEN_ENV]: ownerToken }
+  }
+
+  private invalidateLaneRecovery(laneKey: string): void {
+    this.scopedRecoveryResults.delete(laneKey)
+    if (this.scopedRecoveries.has(laneKey)) this.invalidatedScopedRecoveries.add(laneKey)
+  }
+
+  private rememberScopedRecovery(laneKey: string, directoryMtimeMs: number | undefined): void {
+    this.scopedRecoveryResults.delete(laneKey)
+    this.scopedRecoveryResults.set(laneKey, { directoryMtimeMs })
+    while (this.scopedRecoveryResults.size > SCOPED_RECOVERY_CACHE_MAX) {
+      const oldest = this.scopedRecoveryResults.keys().next().value
+      if (oldest === undefined) return
+      this.scopedRecoveryResults.delete(oldest)
+    }
+  }
+
+  private receiptDirectoryMtimeMs(): number | undefined {
+    try {
+      return statSync(this.directory).mtimeMs
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
+    }
   }
 
   private async recoverRecords(options: KernelProcessRecoveryOptions = {}): Promise<void> {
