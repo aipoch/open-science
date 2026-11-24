@@ -244,7 +244,7 @@ export function cloudModelRoutePatch(
   )
     return {}
 
-  // 丢弃旧协议的默认行，并优先使用新协议的预设测试连接。手填行和自定义参数保留。
+  // Prefer the new protocol's presets for the connection test. Keep manually added rows and edits.
   const retained = (value.manualModels ?? []).filter(
     (row) =>
       !previousPresets.includes(row.id.trim()) ||

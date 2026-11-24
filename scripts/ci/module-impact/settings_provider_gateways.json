@@ -1,14 +1,6 @@
 {
-  "ownerPaths": [
-    "src/main/settings/cloudflare-gateway-transport.ts",
-    "src/main/settings/manual-provider-target.ts",
-    "src/main/settings/provider-gateway-fetch.ts"
-  ],
-  "interfacePaths": [
-    "src/main/settings/cloudflare-gateway-transport.ts",
-    "src/main/settings/manual-provider-target.ts",
-    "src/main/settings/provider-gateway-fetch.ts"
-  ],
+  "ownerPaths": ["src/main/settings/manual-provider-target.ts"],
+  "interfacePaths": ["src/main/settings/manual-provider-target.ts"],
   "consumerModules": [
     "main_pdf_translation",
     "provider_transport",

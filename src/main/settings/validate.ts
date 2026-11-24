@@ -1,5 +1,4 @@
 import { manualProviderDefinition } from '../../shared/manual-provider'
-import { providerGatewayFetch } from './provider-gateway-fetch'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { randomUUID } from 'node:crypto'
 
@@ -18,7 +17,8 @@ import {
 import {
   ResponseBodyLimitError,
   readBoundedResponseText,
-  fetchProviderRequest
+  fetchProviderRequest,
+  withProviderRequestPolicy
 } from '@aipoch/providers/transport'
 
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
@@ -192,7 +192,8 @@ const buildChatCompletionsValidationRequest = (
           model: provider.model ?? '',
           // Requesty rejects Chat probes below 16 output tokens, including for OpenAI models.
           max_tokens:
-            provider.cloudflare || manualProviderDefinition(provider.vendorId)
+            provider.vendorId === 'cloudflare-ai-gateway' ||
+            manualProviderDefinition(provider.vendorId)
               ? 64
               : provider.vendorId === 'requesty'
                 ? 16
@@ -664,8 +665,7 @@ const validateProviderThroughResponsesToChatCompletionsBridge = async (
       baseUrl: targetBaseUrl,
       key: provider.key,
       model: provider.model,
-      ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
-      ...(provider.azureChatBaseUrl && { azureChatBaseUrl: provider.azureChatBaseUrl })
+      ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy })
     },
     fetchImpl
   )
@@ -755,7 +755,7 @@ const validateCustomProvider = async (
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const fetchUpstream = providerGatewayFetch(fetchImpl, provider)
+    const fetchUpstream = withProviderRequestPolicy(fetchImpl, provider.requestPolicy, provider.key)
     const response = await fetchProviderRequest(fetchUpstream, request.url, {
       method: 'POST',
       headers: request.headers,
@@ -793,7 +793,7 @@ const validateCustomProvider = async (
     const isMessagesProbe = request.endpoint === 'messages'
     const requiresChatReply =
       request.endpoint === 'chat-completions' &&
-      (provider.cloudflare?.mode === 'rest' || manualProviderDefinition(provider.vendorId))
+      (provider.vendorId === 'cloudflare-ai-gateway' || manualProviderDefinition(provider.vendorId))
     const requiresResponsesReply =
       request.endpoint === 'responses' && provider.vendorId === 'vectrust'
     if (category === 'ok' && (isMessagesProbe || requiresChatReply || requiresResponsesReply)) {

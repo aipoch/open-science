@@ -1,5 +1,3 @@
-import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
-import { providerGatewayFetch } from './provider-gateway-fetch'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -9,7 +7,9 @@ import type { ServerResponse } from 'node:http'
 import {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   readBoundedResponseText,
-  fetchProviderRequest
+  fetchProviderRequest,
+  withProviderRequestPolicy,
+  type ProviderRequestPolicy
 } from '@aipoch/providers/transport'
 import {
   ProviderLoopbackHttpHost,
@@ -33,8 +33,7 @@ export type ChatCompletionsCompatibilityTarget = Readonly<{
   onProviderFailure?: ProviderFailureObserver
   endpoint: string
   key?: string
-  cloudflare?: CloudflareGateway
-  azureChatBaseUrl?: string
+  requestPolicy?: ProviderRequestPolicy
   model: string
   wire: CompatibilityWire
   maxOutputTokens?: number
@@ -103,7 +102,11 @@ export class ChatCompletionsCompatibilityBridge {
     if (this.target.key) headers.authorization = `Bearer ${this.target.key}`
     if (this.target.wire === 'messages') headers['anthropic-version'] = '2023-06-01'
     const startedAt = Date.now()
-    const fetchUpstream = providerGatewayFetch(this.fetchImpl, this.target)
+    const fetchUpstream = withProviderRequestPolicy(
+      this.fetchImpl,
+      this.target.requestPolicy,
+      this.target.key
+    )
     const upstream = await fetchProviderRequest(fetchUpstream, this.target.endpoint, {
       method: 'POST',
       headers,

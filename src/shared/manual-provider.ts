@@ -1,4 +1,5 @@
 import type { ModelProtocol, OfficialVendorId } from '@aipoch/providers'
+import { foundryGatewayBase, parseFoundryLocation } from '@aipoch/providers/protocol'
 
 export type ManualProviderConnection = Readonly<{
   location: string
@@ -16,35 +17,6 @@ type ManualProviderDefinition = Readonly<{
   parseLocation: (location: string, protocol: ModelProtocol) => string | undefined
   baseUrl: (location: string, protocol: ModelProtocol) => string
 }>
-
-/** Accept a resource name or a public-cloud inference URI matching the selected protocol. */
-function parseFoundryLocation(location: string, protocol: ModelProtocol): string | undefined {
-  const resourceName = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
-  const serviceHost = 'services.ai.azure.com'
-  if (resourceName.test(location)) return `${location}.${serviceHost}`
-
-  const url = URL.parse(location.includes('://') ? location : `https://${location}`)
-  if (
-    !url ||
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.port ||
-    url.hash ||
-    (url.search && (protocol !== 'chat-completions' || url.search !== '?api-version=v1'))
-  )
-    return undefined
-
-  const suffixes = protocol === 'messages' ? [serviceHost] : [serviceHost, 'openai.azure.com']
-  const suffix = suffixes.find((domain) => url.hostname.endsWith(`.${domain}`))
-  if (!suffix || !resourceName.test(url.hostname.slice(0, -(suffix.length + 1)))) return undefined
-  const path = url.pathname.replace(/\/$/, '')
-  const validPaths =
-    protocol === 'messages'
-      ? ['', '/anthropic', '/anthropic/v1/messages']
-      : ['', '/openai/v1', '/openai/v1/chat/completions']
-  return validPaths.includes(path) ? url.hostname : undefined
-}
 
 const vectrustLocations = ['api.openai-next.com', 'us.api.openai-next.com'] as const
 
@@ -145,8 +117,7 @@ const definitions: Partial<Record<OfficialVendorId, ManualProviderDefinition>> =
     defaultConnection: { location: '', protocol: 'messages' },
     protocols: ['messages', 'chat-completions'],
     parseLocation: parseFoundryLocation,
-    baseUrl: (hostname, protocol) =>
-      `https://${hostname}/${protocol === 'messages' ? 'anthropic' : 'openai/v1'}`
+    baseUrl: foundryGatewayBase
   },
   'aws-bedrock': {
     defaultConnection: { location: 'us-east-1', protocol: 'messages' },

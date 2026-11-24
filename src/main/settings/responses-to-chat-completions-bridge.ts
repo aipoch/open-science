@@ -1,8 +1,8 @@
-import { providerGatewayFetch } from './provider-gateway-fetch'
 import { Readable } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { pipeline } from 'node:stream/promises'
 import { randomBytes } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import type { ServerResponse } from 'node:http'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { observeProviderFailure } from './provider-failure-observation'
@@ -35,7 +35,8 @@ import {
 import {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   ResponseBodyLimitError,
-  fetchProviderRequest
+  fetchProviderRequest,
+  withProviderRequestPolicy
 } from '@aipoch/providers/transport'
 
 import { selectChatSkills } from './chat-skill-selector'
@@ -168,7 +169,11 @@ export class ResponsesToChatCompletionsBridge {
             ? { reasoningSupported: this.target.reasoningSupported }
             : {})
         },
-        fetchImpl: providerGatewayFetch(this.fetchImpl, this.target),
+        fetchImpl: withProviderRequestPolicy(
+          this.fetchImpl,
+          this.target.requestPolicy,
+          this.target.key
+        ),
         timeoutMs: this.options.skillSelectorTimeoutMs ?? 15_000,
         maxResponseBytes: this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
         signal: signal
@@ -193,6 +198,7 @@ export class ResponsesToChatCompletionsBridge {
       this.target.vendorId !== target.vendorId ||
       this.target.reasoningEffortTransport !== target.reasoningEffortTransport ||
       this.target.reasoningSupported !== target.reasoningSupported ||
+      !isDeepStrictEqual(this.target.requestPolicy, target.requestPolicy) ||
       this.target.key !== target.key
     this.target = target
     if (changed) {
@@ -486,7 +492,11 @@ export class ResponsesToChatCompletionsBridge {
       return
     }
     const startedAt = Date.now()
-    const fetchUpstream = providerGatewayFetch(this.fetchImpl, target)
+    const fetchUpstream = withProviderRequestPolicy(
+      this.fetchImpl,
+      target.requestPolicy,
+      target.key
+    )
     const upstream = await fetchProviderRequest(fetchUpstream, chatUrl(target.baseUrl), {
       method: 'POST',
       headers,

@@ -1,5 +1,3 @@
-import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
-import { providerGatewayFetch } from './provider-gateway-fetch'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -27,8 +25,10 @@ import {
 } from './provider-error-replay'
 import {
   fetchProviderRequest,
+  withProviderRequestPolicy,
   readSseRecords,
-  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  type ProviderRequestPolicy
 } from '@aipoch/providers/transport'
 
 const WIRE_PATH = {
@@ -47,8 +47,7 @@ export type ProtocolForwardingBridgeTarget = Readonly<{
   wire: keyof typeof WIRE_PATH
   endpoint: string
   key?: string
-  cloudflare?: CloudflareGateway
-  azureChatBaseUrl?: string
+  requestPolicy?: ProviderRequestPolicy
   model: string
   /** Host-only OAuth resolution. These requests never replay errors or expose upstream diagnostics. */
   resolveConnection?: (
@@ -281,7 +280,7 @@ export class ProtocolForwardingBridge {
       ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
       : this.fetchImpl
     const fetchUpstream = withProviderConnectionMarker(
-      providerGatewayFetch(transport, target),
+      withProviderRequestPolicy(transport, target.requestPolicy, target.key),
       response
     )
     const send = (url: URL, headers: Headers): Promise<Response> =>

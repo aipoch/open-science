@@ -5,8 +5,7 @@ import {
   isLocalProviderPresetId
 } from '../../shared/local-provider-preset'
 import { resolveOfficialModelCatalog } from '../../shared/provider-model-catalog'
-import { resolveManualProviderTarget } from './manual-provider-target'
-import { resolveCloudflareGateway } from './cloudflare-gateway-transport'
+import { resolveCloudflareGateway, resolveManualProviderTarget } from './manual-provider-target'
 import type { ProviderDraft } from '../../shared/settings'
 import {
   isOfficialVendorId,

@@ -5,6 +5,16 @@ export {
   resolveChatCompletionsBaseUrl,
   resolveChatCompletionsUrl
 } from './protocols/endpoints'
+export {
+  cloudflareGatewayBase,
+  cloudflareGatewayProtocol,
+  foundryGatewayBase,
+  parseCloudflareGateway,
+  parseFoundryLocation,
+  validCloudflareAccountId,
+  validCloudflareGatewayId,
+  type CloudflareGateway
+} from './protocols/gateway-endpoints'
 export { normalizeChatCompletionsUsage } from './protocols/usage'
 export type { ProviderTokenUsage } from './protocols/usage'
 export {

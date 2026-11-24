@@ -1207,7 +1207,12 @@ class ProviderAccountsModule {
     const fields = {
       vendorId: resolved.provider.vendorId,
       localPresetId: resolved.localPresetId,
-      cloudflareMode: resolved.provider.cloudflare?.mode,
+      cloudflareMode:
+        resolved.provider.vendorId === 'cloudflare-ai-gateway' && resolved.provider.requestPolicy
+          ? resolved.provider.apiEndpoints?.includes('messages')
+            ? 'anthropic'
+            : 'rest'
+          : undefined,
       frameworkId: framework.id,
       endpoint:
         result.testedTarget?.endpoint ??
@@ -1441,7 +1446,7 @@ class ProviderAccountsModule {
       left.chatCompletionsBaseUrl === right.chatCompletionsBaseUrl &&
       left.responsesBaseUrl === right.responsesBaseUrl &&
       left.model === right.model &&
-      sameCloudflareGateway(left.cloudflare, right.cloudflare) &&
+      isDeepStrictEqual(left.requestPolicy, right.requestPolicy) &&
       left.key === right.key &&
       (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')
     )

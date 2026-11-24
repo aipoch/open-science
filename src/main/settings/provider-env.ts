@@ -1,4 +1,4 @@
-import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
+import type { ProviderRequestPolicy } from '@aipoch/providers/transport'
 import type { CodeBuddyAuthMode, CodeBuddySite } from '../../shared/codebuddy-subscription'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -34,8 +34,7 @@ export type ResolvedProvider = {
   // Retained for official providers even though they use the custom credential path at runtime.
   // Transport adapters need this stable identity because `none` has vendor-specific wire semantics.
   vendorId?: OfficialVendorId
-  cloudflare?: CloudflareGateway
-  azureChatBaseUrl?: string
+  requestPolicy?: ProviderRequestPolicy
   // Anthropic /v1/messages base (also the sole base for a custom provider). Claude always uses this.
   baseUrl?: string
   // Exact Lab deployment address; host-owned credential resolution must match this address.

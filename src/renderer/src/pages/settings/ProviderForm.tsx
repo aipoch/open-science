@@ -489,7 +489,7 @@ const ProviderForm = ({
   }
 
   const selectedKind = PROVIDER_KINDS.find((kind) => kind.key === selectedKey)
-  // 已选的本地预设在端点改变后仍保留自己的名称和图标。
+  // Keep the selected local preset's name and icon when its endpoint changes.
   const localPreset = isCustom
     ? LOCAL_MODEL_PRESETS.find((preset) =>
         value.localPresetId
@@ -1501,7 +1501,7 @@ const ProviderForm = ({
             <Select
               value={cloudflare.mode}
               onValueChange={(mode) => {
-                // Workers AI 和 Anthropic 网关使用不同的凭据和模型 ID。
+                // Workers AI and the Anthropic gateway use different credentials and model IDs.
                 if (mode !== 'rest' && mode !== 'anthropic') return
                 const next: typeof cloudflare = { ...cloudflare, mode }
                 onChange({

@@ -414,10 +414,7 @@ class ProviderTransportOwner {
                     id: route.id,
                     baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
                     key: provider.key,
-                    ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
-                    ...(provider.azureChatBaseUrl && {
-                      azureChatBaseUrl: provider.azureChatBaseUrl
-                    }),
+                    ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
                     model,
                     useApiKeyHeader:
                       provider.vendorId === 'anthropic' ||
@@ -434,10 +431,7 @@ class ProviderTransportOwner {
                     wire,
                     endpoint: endpoint!,
                     key: provider.key,
-                    ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
-                    ...(provider.azureChatBaseUrl && {
-                      azureChatBaseUrl: provider.azureChatBaseUrl
-                    }),
+                    ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
                     model
                   }
                 ],
@@ -546,9 +540,8 @@ class ProviderTransportOwner {
         if (!model) continue
         const credentials = {
           ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-          ...(candidate.provider.cloudflare && { cloudflare: candidate.provider.cloudflare }),
-          ...(candidate.provider.azureChatBaseUrl && {
-            azureChatBaseUrl: candidate.provider.azureChatBaseUrl
+          ...(candidate.provider.requestPolicy && {
+            requestPolicy: candidate.provider.requestPolicy
           })
         }
         const bridge =
@@ -606,6 +599,7 @@ class ProviderTransportOwner {
           ...candidate.provider,
           agentProviderId: piModelId(candidate.providerId, model),
           baseUrl: connection.baseUrl,
+          requestPolicy: undefined,
           chatCompletionsBaseUrl: undefined,
           responsesBaseUrl: undefined,
           model,
@@ -667,8 +661,7 @@ class ProviderTransportOwner {
             ...this.healthObservation(input.activeTarget),
             wire: transport.wire,
             endpoint: codeBuddyCompatibilityEndpoint(provider, transport.wire),
-            ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
-            ...(provider.azureChatBaseUrl && { azureChatBaseUrl: provider.azureChatBaseUrl }),
+            ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
             ...(provider.key ? { key: provider.key } : {}),
             model,
             ...(transport.wire === 'messages' && maxOutputTokens !== undefined
@@ -714,10 +707,7 @@ class ProviderTransportOwner {
                       wire: 'chat-completions',
                       endpoint,
                       ...(provider.key ? { key: provider.key } : {}),
-                      ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
-                      ...(provider.azureChatBaseUrl && {
-                        azureChatBaseUrl: provider.azureChatBaseUrl
-                      }),
+                      ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
                       model,
                       adaptRequest: adaptCodeBuddyChatCompletionsRequest
                     }
@@ -738,6 +728,7 @@ class ProviderTransportOwner {
       const routedProvider = Object.freeze({
         ...provider,
         baseUrl: connection.baseUrl,
+        requestPolicy: undefined,
         chatCompletionsBaseUrl: `${connection.baseUrl}/v1`,
         model,
         key: connection.token,
@@ -746,7 +737,7 @@ class ProviderTransportOwner {
       selector ??= createCodeBuddySkillSelectorTransport({
         activeTarget: {
           ...input.activeTarget,
-          provider: { ...routedProvider, cloudflare: undefined, azureChatBaseUrl: undefined },
+          provider: routedProvider,
           apiEndpoints: ['chat-completions']
         },
         ...(input.plan.sessionEffort ? { reasoningEffort: input.plan.sessionEffort } : {}),
@@ -821,6 +812,7 @@ class ProviderTransportOwner {
         provider: Object.freeze({
           ...input.activeTarget.provider,
           baseUrl: connection.baseUrl,
+          requestPolicy: undefined,
           chatCompletionsBaseUrl: `${connection.baseUrl}/v1`,
           responsesBaseUrl: `${connection.baseUrl}/v1`,
           model: activeModel,
@@ -892,11 +884,8 @@ class ProviderTransportOwner {
                         endpoint: resolveChatCompletionsUrl(candidate.provider)!,
                         adaptStream: bufferChatCompletionsToolNames,
                         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                        ...(candidate.provider.cloudflare && {
-                          cloudflare: candidate.provider.cloudflare
-                        }),
-                        ...(candidate.provider.azureChatBaseUrl && {
-                          azureChatBaseUrl: candidate.provider.azureChatBaseUrl
+                        ...(candidate.provider.requestPolicy && {
+                          requestPolicy: candidate.provider.requestPolicy
                         }),
                         model
                       }
@@ -910,11 +899,8 @@ class ProviderTransportOwner {
                         id: targetId,
                         baseUrl: normalizeMessagesRootUrl(candidate.provider.baseUrl ?? ''),
                         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                        ...(candidate.provider.cloudflare && {
-                          cloudflare: candidate.provider.cloudflare
-                        }),
-                        ...(candidate.provider.azureChatBaseUrl && {
-                          azureChatBaseUrl: candidate.provider.azureChatBaseUrl
+                        ...(candidate.provider.requestPolicy && {
+                          requestPolicy: candidate.provider.requestPolicy
                         }),
                         model,
                         ...(candidate.provider.vendorId &&
@@ -936,6 +922,7 @@ class ProviderTransportOwner {
           ...candidate.provider,
           agentProviderId: opencodeTransportProviderId(candidate.providerId, model),
           baseUrl: connection.baseUrl,
+          requestPolicy: undefined,
           ...(transport.kind === 'opencode-openai'
             ? { chatCompletionsBaseUrl: `${connection.baseUrl}/v1` }
             : { chatCompletionsBaseUrl: undefined }),
@@ -1233,9 +1220,8 @@ class ProviderTransportOwner {
         baseUrl: targetBaseUrl,
         key: candidate.provider.key,
         vendorId: candidate.provider.vendorId,
-        ...(candidate.provider.cloudflare && { cloudflare: candidate.provider.cloudflare }),
-        ...(candidate.provider.azureChatBaseUrl && {
-          azureChatBaseUrl: candidate.provider.azureChatBaseUrl
+        ...(candidate.provider.requestPolicy && {
+          requestPolicy: candidate.provider.requestPolicy
         }),
         reasoningEffortTransport: candidate.provider.reasoningEffortTransport,
         model: candidate.effectiveModel ?? candidate.provider.model,

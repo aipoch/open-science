@@ -1,4 +1,4 @@
-import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
+import type { ProviderRequestPolicy } from '@aipoch/providers/transport'
 import type {
   OfficialVendorId,
   CustomReasoningEffortTransport,
@@ -13,8 +13,7 @@ export type ResponsesToChatCompletionsBridgeTarget = {
   onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
-  cloudflare?: CloudflareGateway
-  azureChatBaseUrl?: string
+  requestPolicy?: ProviderRequestPolicy
   vendorId?: OfficialVendorId
   reasoningEffortTransport?: CustomReasoningEffortTransport
   reasoningSupported?: boolean

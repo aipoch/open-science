@@ -23,7 +23,7 @@ public static class OpenScienceBootIdentity {
 '@
 [OpenScienceBootIdentity]::Read()`
 
-// 冷启动时 PowerShell 还要通过 Add-Type 编译查询代码，给繁忙机器留出时间。
+// A cold PowerShell process must compile the query via Add-Type, which can take longer on busy machines.
 const WINDOWS_BOOT_QUERY_TIMEOUT_MS = 15_000
 
 const WINDOWS_POWERSHELL_ARGS = [

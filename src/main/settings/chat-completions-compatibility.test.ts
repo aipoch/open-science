@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatCompletionsCompatibilityBridge } from './chat-completions-compatibility'
+import { resolveManualProviderTarget } from './manual-provider-target'
 
 const bridges: ChatCompletionsCompatibilityBridge[] = []
 
@@ -9,6 +10,56 @@ afterEach(async () => {
 })
 
 describe('ChatCompletionsCompatibilityBridge', () => {
+  it.each([true, false])(
+    'sends the Foundry Messages key only to the configured resource (endpoint matches: %s)',
+    async (matches) => {
+      const target = resolveManualProviderTarget(
+        'microsoft-foundry',
+        { location: 'research', protocol: 'messages' },
+        'claude-deployment',
+        'resource-key'
+      )
+      const endpoint = matches
+        ? `${target.baseUrl}/v1/messages`
+        : 'https://other.services.ai.azure.com/anthropic/v1/messages'
+      const upstream = vi.fn<typeof fetch>(async () =>
+        Response.json({ type: 'message', role: 'assistant', content: [] })
+      )
+      const bridge = new ChatCompletionsCompatibilityBridge(
+        {
+          wire: 'messages',
+          endpoint,
+          model: target.model!,
+          key: target.key,
+          requestPolicy: target.requestPolicy
+        },
+        upstream
+      )
+      bridges.push(bridge)
+      const connection = await bridge.start()
+      const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }] })
+      })
+      expect(response.status).toBe(matches ? 200 : 502)
+      if (!matches) {
+        expect(upstream).not.toHaveBeenCalled()
+        return
+      }
+      expect(upstream).toHaveBeenCalledOnce()
+      const [url, init] = upstream.mock.calls[0]
+      expect(url).toBe(endpoint)
+      const headers = new Headers(init?.headers)
+      expect(headers.get('x-api-key')).toBe('resource-key')
+      expect(headers.has('authorization')).toBe(false)
+      expect(init?.redirect).toBe('error')
+    }
+  )
+
   it('observes upstream authentication failure without exposing upstream diagnostics', async () => {
     const onProviderFailure = vi.fn()
     const bridge = new ChatCompletionsCompatibilityBridge(

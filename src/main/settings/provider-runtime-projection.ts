@@ -1,6 +1,5 @@
 import { manualProviderDefinition } from '../../shared/manual-provider'
-import { resolveManualProviderTarget } from './manual-provider-target'
-import { resolveCloudflareGateway } from './cloudflare-gateway-transport'
+import { resolveCloudflareGateway, resolveManualProviderTarget } from './manual-provider-target'
 import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
   catalogModelApiEndpoints,

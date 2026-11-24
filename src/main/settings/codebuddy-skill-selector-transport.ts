@@ -48,8 +48,7 @@ export function createCodeBuddySkillSelectorTransport(input: {
       baseUrl,
       model,
       ...(provider.key ? { key: provider.key } : {}),
-      ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
-      ...(provider.azureChatBaseUrl && { azureChatBaseUrl: provider.azureChatBaseUrl }),
+      ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
       ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
       ...(provider.reasoningEffortTransport
         ? { reasoningEffortTransport: provider.reasoningEffortTransport }

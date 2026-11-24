@@ -360,11 +360,8 @@ class BackendRoutePlanner {
                   runtimeTarget: candidate,
                   baseUrl,
                   ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
-                  ...(candidate.provider.cloudflare && {
-                    cloudflare: candidate.provider.cloudflare
-                  }),
-                  ...(candidate.provider.azureChatBaseUrl && {
-                    azureChatBaseUrl: candidate.provider.azureChatBaseUrl
+                  ...(candidate.provider.requestPolicy && {
+                    requestPolicy: candidate.provider.requestPolicy
                   }),
                   model,
                   ...(candidate.provider.vendorId === 'apodex'
