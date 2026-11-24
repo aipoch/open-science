@@ -17,7 +17,7 @@ import { readFileWithinLimit } from '@aipoch/durable-files'
 import { assertRegularStoragePath as assertPackageSourcePath } from '../artifacts/provenance-storage'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { pacedFileTransform } from '../file-io-pacing'
-import { assertPackageCapacity, packageCapacityChecker } from './capacity'
+import { assertPackageCapacity, packageCapacityChecker, packageDiskReserveBytes } from './capacity'
 import { createPackageContentVerifier } from './materialize'
 
 // Keep this diagnostic stable across the inspection worker's error-message boundary.
@@ -187,7 +187,7 @@ export const readPackageArchive = async (
     if (!metadata.isFile() || metadata.size > PACKAGE_MAX_BYTES)
       throw new Error('Session package exceeds the archive limit.')
     await mkdir(directory, { recursive: true, mode: 0o700 })
-    const checkCapacity = await packageCapacityChecker(directory)
+    const checkCapacity = await packageCapacityChecker(directory, packageDiskReserveBytes)
     const entries = new Set<string>()
     let total = 0
     let unknownEntries = false

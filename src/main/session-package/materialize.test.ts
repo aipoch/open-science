@@ -9,6 +9,7 @@ import type {
 } from '../../shared/session-package'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import * as usage from '../storage/usage'
+import { packageDiskReserveBytes } from './capacity'
 import { createPackageMaterializer } from './materialize'
 import { parseNativeRecords, prepareNativeImport } from './native-snapshot'
 import { COLUMNS } from './records-contract'
@@ -144,7 +145,7 @@ it.each(['notebook-file-evidence', 'file-evidence'])(
   'shares verified %s legacy run and project-pool blobs within one-copy capacity',
   async (namespace) => {
     vi.mocked(usage.availableBytes).mockResolvedValue(
-      LOCAL_RESOURCE_BUDGETS.diskReserveBytes + payload.length
+      packageDiskReserveBytes(payload.length) + payload.length
     )
     const entries = ['one', 'two'].map((run) =>
       entry(`${namespace}/project/session/frames/frame/run-${run}/blobs/sha256-${checksum}`)
@@ -174,7 +175,7 @@ it.each(['EXDEV', 'EPERM', 'ENOTSUP', 'EMLINK'])(
 
 it('budgets unique blobs initially and reserves additional space before fallback writes', async () => {
   vi.mocked(usage.availableBytes).mockResolvedValue(
-    LOCAL_RESOURCE_BUDGETS.diskReserveBytes + payload.length
+    packageDiskReserveBytes(payload.length * 2) + payload.length * 2 - 1
   )
   const entries = [entry(blobKey('one')), entry(blobKey('two')), entry(blobKey('three'))]
   const copy = await createPackageMaterializer(source, destination, entries)

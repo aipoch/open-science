@@ -256,6 +256,7 @@ type PackageOptions = {
   literatureSource?: PackageLiteratureSource
   storageRoot: string
   configRoot?: string
+  packageTemporaryRoot?: string
   getDefaultPermissionProfile?: () => Promise<PermissionProfileId>
   getClient: () => Promise<PrismaClient>
   isSessionActive?: (projectId: string, sessionId: string) => boolean
@@ -732,6 +733,39 @@ export class SessionPackageService {
       ...options,
       configRoot: options.configRoot ?? options.storageRoot
     })
+  }
+
+  get packageTemporaryRoot(): string {
+    return (
+      this.options.packageTemporaryRoot ?? join(this.options.storageRoot, 'session-package-temp')
+    )
+  }
+
+  async ensurePackageTemporaryRoot(): Promise<void> {
+    await mkdir(this.packageTemporaryRoot, { recursive: true, mode: 0o700 })
+  }
+
+  async preparePackageTemporaryRoot(): Promise<void> {
+    await this.ensurePackageTemporaryRoot()
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000
+    const prefixes = [
+      'open-science-package-dialog-',
+      'open-science-package-inspect-',
+      'open-science-package-inspection-',
+      'open-science-package-validation-',
+      'open-science-use-case-'
+    ]
+    for (const entry of await readdir(this.packageTemporaryRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !prefixes.some((prefix) => entry.name.startsWith(prefix)))
+        continue
+      const path = join(this.packageTemporaryRoot, entry.name)
+      try {
+        if ((await stat(path)).mtimeMs < cutoff)
+          await rm(path, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 })
+      } catch {
+        // A racing operation or unreadable entry must not block the package operation.
+      }
+    }
   }
 
   async prepareSessionDeletion(session: PersistedChatSession): Promise<void> {
@@ -1235,8 +1269,16 @@ export class SessionPackageService {
           await writeFile(join(staging, 'manifest.json'), JSON.stringify(forwarded))
           options.onProgress?.({ phase: 'validating' })
           diagnostic.phase('validate-package')
+          await this.preparePackageTemporaryRoot()
           await validatePackageDirectory(staging, this.signal)
-          await validatePackageRecords(staging, forwarded, records, this.signal)
+          await validatePackageRecords(
+            staging,
+            forwarded,
+            records,
+            this.signal,
+            undefined,
+            this.packageTemporaryRoot
+          )
           diagnostic.phase('publish-snapshot')
           if (options.consumeSnapshot) await options.consumeSnapshot(staging)
           else {
@@ -1790,7 +1832,15 @@ export class SessionPackageService {
         await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
         options.onProgress?.({ phase: 'validating' })
         diagnostic.phase('validate-package')
-        await validatePackageRecords(directory, manifest, publicRecords, this.signal)
+        await this.preparePackageTemporaryRoot()
+        await validatePackageRecords(
+          directory,
+          manifest,
+          publicRecords,
+          this.signal,
+          undefined,
+          this.packageTemporaryRoot
+        )
         assertSettled()
         if (JSON.stringify(await readNotebookKeys()) !== JSON.stringify(notebookKeys))
           throw new Error('The Session changed during export. Try again.')
@@ -1990,14 +2040,17 @@ export class SessionPackageService {
     path: string,
     onProgress?: (progress: PackageProgress) => void
   ): Promise<SessionPackagePreview> {
-    const directory = await mkdtemp(join(tmpdir(), 'open-science-package-inspect-'))
+    await this.preparePackageTemporaryRoot()
+    const directory = await mkdtemp(
+      join(this.packageTemporaryRoot, 'open-science-package-inspect-')
+    )
     return withPackageCleanup(
       () =>
         (this.options.inspectPackage ?? inspectSessionPackage)(
           path,
           directory,
           this.signal,
-          undefined,
+          this.packageTemporaryRoot,
           onProgress
         ),
       () => rm(directory, { recursive: true, force: true })
@@ -2213,11 +2266,12 @@ export class SessionPackageService {
         await rename(path, sourceRoot)
         await validatePackageDirectory(sourceRoot, this.signal)
       } else {
+        await this.preparePackageTemporaryRoot()
         const inspected = await (this.options.inspectPackage ?? inspectSessionPackage)(
           path,
           sourceRoot,
           this.signal,
-          undefined,
+          this.packageTemporaryRoot,
           onProgress
         )
         if (confirm) await this.waitForUser(() => confirm(inspected, this.signal))
@@ -2473,7 +2527,7 @@ export class SessionPackageService {
         native.records,
         this.signal,
         manifest.source,
-        undefined,
+        this.packageTemporaryRoot,
         onProgress,
         true
       )
