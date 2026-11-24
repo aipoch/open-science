@@ -834,8 +834,10 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   align-items: flex-end;
   justify-content: space-between;
   gap: 1rem;
-  margin-top: auto;
   padding-top: 1.25rem;
+}
+.onboarding-ready-actions {
+  margin-top: auto;
 }
 .onboarding-quick-footer > div {
   display: flex;

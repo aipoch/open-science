@@ -1464,4 +1464,19 @@ describe('ProviderStep', () => {
     expect(css).not.toContain('.dark .onboarding-provider-card {')
     expect(css).not.toContain('.dark .onboarding-provider-card-actions {')
   })
+
+  it('lets quick feedback and actions flow without reserving an empty spacer', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const footerRule = css.match(
+      /\.onboarding-quick-footer,\n\.onboarding-ready-actions \{[\s\S]*?\n\}/
+    )?.[0]
+    const readyActionsRule = css.match(
+      /\.onboarding-ready-actions \{\n  margin-top: auto;\n\}/
+    )?.[0]
+
+    expect(footerRule).toBeDefined()
+    expect(readyActionsRule).toBeDefined()
+    expect(footerRule).not.toContain('margin-top: auto;')
+    expect(readyActionsRule).toContain('margin-top: auto;')
+  })
 })
