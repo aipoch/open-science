@@ -392,11 +392,6 @@ describe('KernelProcessLifecycleOwner', () => {
       storageRoot: root,
       ownerInstanceId: 'owner-other'
     })
-    const pending = restarted.beginSpawn({
-      laneKey: lane,
-      processKey: 'repl',
-      kernelEpochId: 'epoch-pending'
-    })
     const external = other.beginSpawn({
       laneKey: lane,
       processKey: 'python:default-python',
@@ -406,7 +401,6 @@ describe('KernelProcessLifecycleOwner', () => {
 
     await restarted.ensureReadyForLane(lane)
     expect(probe).toHaveBeenCalledOnce()
-    restarted.abandonSpawn(pending)
   })
 
   it('does not cancel a pending startup while tolerant recovery scans another lane', async () => {

@@ -10,6 +10,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
@@ -86,6 +87,10 @@ type KernelProcessReceipt = Readonly<{
 type KernelProcessProbe = 'dead' | 'owned' | 'reused' | 'unknown'
 
 const SCOPED_RECOVERY_CACHE_MAX = 256
+
+type ScopedRecoveryResult = Readonly<{
+  directoryMtimeMs: number | undefined
+}>
 
 type KernelProcessRecoveryController = Readonly<{
   probe(
@@ -409,7 +414,7 @@ class KernelProcessLifecycleOwner {
   private recovery: Promise<void> | undefined
   private scopedRecoveryTail: Promise<void> = Promise.resolve()
   private readonly scopedRecoveries = new Map<string, Promise<void>>()
-  private readonly scopedRecoveryResults = new Map<string, true>()
+  private readonly scopedRecoveryResults = new Map<string, ScopedRecoveryResult>()
   private readonly invalidatedScopedRecoveries = new Set<string>()
 
   constructor(options: KernelProcessLifecycleOwnerOptions) {
@@ -433,18 +438,27 @@ class KernelProcessLifecycleOwner {
   }
 
   ensureReadyForLane(laneKey: string): Promise<void> {
-    if (this.scopedRecoveryResults.has(laneKey)) {
+    const cached = this.scopedRecoveryResults.get(laneKey)
+    if (cached && cached.directoryMtimeMs === this.receiptDirectoryMtimeMs()) {
       this.scopedRecoveryResults.delete(laneKey)
-      this.scopedRecoveryResults.set(laneKey, true)
+      this.scopedRecoveryResults.set(laneKey, cached)
       return Promise.resolve()
     }
+    this.scopedRecoveryResults.delete(laneKey)
     const existing = this.scopedRecoveries.get(laneKey)
     if (existing) return existing
     // Session admission may happen concurrently for several lanes. Serialize the filesystem scan,
     // while sharing duplicate callers for the same lane.
     const queued = this.scopedRecoveryTail.then(async () => {
+      const directoryMtimeBefore = this.receiptDirectoryMtimeMs()
       await this.recoverRecords({ allowUnverifiedReceipts: true, targetLaneKey: laneKey })
-      if (!this.invalidatedScopedRecoveries.delete(laneKey)) this.rememberScopedRecovery(laneKey)
+      const directoryMtimeAfter = this.receiptDirectoryMtimeMs()
+      if (
+        directoryMtimeBefore === directoryMtimeAfter &&
+        !this.invalidatedScopedRecoveries.delete(laneKey)
+      ) {
+        this.rememberScopedRecovery(laneKey, directoryMtimeAfter)
+      }
     })
     this.scopedRecoveryTail = queued.catch(() => undefined)
     this.scopedRecoveries.set(laneKey, queued)
@@ -591,13 +605,22 @@ class KernelProcessLifecycleOwner {
     if (this.scopedRecoveries.has(laneKey)) this.invalidatedScopedRecoveries.add(laneKey)
   }
 
-  private rememberScopedRecovery(laneKey: string): void {
+  private rememberScopedRecovery(laneKey: string, directoryMtimeMs: number | undefined): void {
     this.scopedRecoveryResults.delete(laneKey)
-    this.scopedRecoveryResults.set(laneKey, true)
+    this.scopedRecoveryResults.set(laneKey, { directoryMtimeMs })
     while (this.scopedRecoveryResults.size > SCOPED_RECOVERY_CACHE_MAX) {
       const oldest = this.scopedRecoveryResults.keys().next().value
       if (oldest === undefined) return
       this.scopedRecoveryResults.delete(oldest)
+    }
+  }
+
+  private receiptDirectoryMtimeMs(): number | undefined {
+    try {
+      return statSync(this.directory).mtimeMs
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
     }
   }
 
