@@ -105,6 +105,7 @@ type NotebookPackageOperationsOptions = {
     resolvedInterpreter: NotebookSessionResolvedInterpreter | undefined,
     runtimeRoot: string
   ) => EnvironmentCaptureTarget
+  invalidateDiscovery?: (language: NotebookLanguage) => void
 }
 
 const defaultEnvironment = (language: NotebookLanguage): string =>
@@ -269,6 +270,7 @@ class NotebookPackageOperations {
         },
         signal
       )
+      this.options.invalidateDiscovery?.(request.language)
       if (result.needsRestart && request.language === 'r') {
         if (admission.target.binding?.source === 'external') {
           const runtimeId = admission.target.binding.runtimeId

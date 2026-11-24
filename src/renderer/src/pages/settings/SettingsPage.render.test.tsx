@@ -597,8 +597,26 @@ describe('SettingsPage layout', () => {
     expect(document.querySelector('[aria-label="Back to model"]')).not.toBeNull()
     expect(document.body.textContent).toContain('No model services added')
     await clickText('Add image service')
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Search image services')
+    const cards = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-slot="provider-picker-card"]')
+    )
+    expect(cards.map((card) => card.dataset.providerKind)).toEqual([
+      'custom',
+      'openai',
+      'minimax',
+      'volcengine',
+      'bailian'
+    ])
+    await act(async () => cards[1].click())
+    expect(document.querySelector('[aria-label="Provider type"]')?.textContent).toContain('OpenAI')
     expect(document.querySelector('#image-service-name')).not.toBeNull()
     expect(document.body.textContent).toContain('Add image service')
+    await clickText('Change')
+    expect(document.querySelector('[aria-label="Search image services"]')).not.toBeNull()
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Forward"]')?.disabled).toBe(
+      false
+    )
     await act(async () =>
       document.querySelector<HTMLButtonElement>('[aria-label="Back to model"]')!.click()
     )

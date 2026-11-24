@@ -18,7 +18,6 @@ import { Trans, useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { FieldHelp } from '@/components/FieldHelp'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
@@ -43,6 +42,7 @@ import {
 import { customProviderRequiresKey } from '../../../../shared/provider-url-policy'
 
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
+import { SelectedProviderCard } from './ProviderKindPicker'
 import { ProviderKindIcon } from './provider-icons'
 import {
   LOCAL_MODEL_KIND_PREFIX,
@@ -485,35 +485,13 @@ const ProviderForm = ({
         </p>
       ) : null}
       {onChangeProviderKind ? (
-        <div
-          role="group"
-          aria-label={t('Provider type')}
-          className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-muted/30 p-3"
-        >
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
-            <ProviderKindIcon kindKey={selectedKindIconKey} />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium text-foreground">
-              {selectedKindLabel}
-            </span>
-            {selectedKind?.descriptionKey ? (
-              <span className="block truncate text-xs text-muted-foreground">
-                {t(selectedKind.descriptionKey)}
-              </span>
-            ) : null}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-label={t('Change provider')}
-            disabled={disabled}
-            onClick={onChangeProviderKind}
-          >
-            {t('Change')}
-          </Button>
-        </div>
+        <SelectedProviderCard
+          iconKey={selectedKindIconKey}
+          label={selectedKindLabel}
+          description={selectedKind?.descriptionKey ? t(selectedKind.descriptionKey) : undefined}
+          disabled={disabled}
+          onChange={onChangeProviderKind}
+        />
       ) : (
         <div className="space-y-1.5">
           <div className="flex items-center gap-1">

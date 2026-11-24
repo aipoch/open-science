@@ -128,7 +128,7 @@ export type SessionMessageGraphActions = {
         >
       | undefined,
     contextReset: boolean,
-    preparationId?: string
+    preparation?: { id: string; authority: PersistedChatSession }
   ) => { runtimeSegmentId?: string } | undefined
   appendUserMessage: (input: AppendUserMessageInput) => AppendMessageResult | undefined
   appendRoutedUserMessage: (input: AppendRoutedUserMessageInput) => AppendMessageResult | undefined

@@ -44,6 +44,19 @@ describe('providerPickerEntries', () => {
     }
   })
 
+  it('lists coding plans in picker order', () => {
+    const plans = providerPickerEntries({}).filter((entry) => entry.category === 'coding-plan')
+    expect(plans.map((entry) => entry.key)).toEqual([
+      'official:opencode-go',
+      'official:glmcodingplan',
+      'official:kimiforcode',
+      'official:bailianplan',
+      'official:stepplan',
+      'official:tencentcodingplan',
+      'official:tencenttokenplan'
+    ])
+  })
+
   it('offers subscriptions only for the frameworks that support them', () => {
     const keys = (availability: Parameters<typeof providerPickerEntries>[0]): string[] =>
       providerPickerEntries(availability)
@@ -51,8 +64,11 @@ describe('providerPickerEntries', () => {
         .map((entry) => entry.key)
 
     expect(keys({})).toEqual(['xai-subscription'])
-    expect(keys({ showCodexSubscriptions: true })).toContain('codex-subscription')
-    expect(keys({ showClaudeIsolated: true })).toContain('claude-subscription')
+    expect(keys({ showCodexSubscriptions: true })).toEqual([
+      'codex-subscription',
+      'xai-subscription'
+    ])
+    expect(keys({ showClaudeIsolated: true })).toEqual(['claude-subscription', 'xai-subscription'])
     const codeBuddy = providerPickerEntries({ codeBuddyProviders: ['builtin-codebuddy-china'] })
     expect(codeBuddy.find((entry) => entry.key === 'builtin-codebuddy-china')?.disabled).toBe(true)
     expect(

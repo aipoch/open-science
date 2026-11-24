@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 
+import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
@@ -58,12 +59,12 @@ const ProviderCard = ({
   entry,
   label,
   recommended,
-  onSelect
+  onClick
 }: {
   entry: ProviderPickerEntry
   label: string
   recommended: boolean
-  onSelect: (key: string) => void
+  onClick: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const description = entryDescription(entry, t)
@@ -74,11 +75,11 @@ const ProviderCard = ({
       data-slot="provider-picker-card"
       data-provider-kind={entry.key}
       disabled={entry.disabled}
-      onClick={() => onSelect(entry.key)}
+      onClick={onClick}
       className="flex min-h-15 w-full min-w-0 items-center gap-3 rounded-xl border border-border bg-card p-3 text-left text-card-foreground outline-none transition-[border-color,box-shadow,transform] duration-150 motion-reduce:transition-none active:translate-y-px focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60 disabled:active:translate-y-0 [@media(hover:hover)]:enabled:hover:border-foreground/20 [@media(hover:hover)]:enabled:hover:shadow-sm"
     >
       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background">
-        <ProviderKindIcon kindKey={entry.key} />
+        <ProviderKindIcon kindKey={entry.iconKey ?? entry.key} />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-foreground">{label}</span>
@@ -97,22 +98,23 @@ const ProviderCard = ({
 
 // First step of Add provider: search and pick a provider kind, then fill in its details. Categories
 // filter in place instead of a second sidebar, which the Settings dialog has no room for.
-const ProviderKindPicker = ({
-  codeBuddyProviders,
-  showCodexSubscriptions,
-  showClaudeIsolated,
+const ProviderPicker = <Key extends string>({
+  entries,
   recommendedKey,
+  searchLabel,
+  searchPlaceholder = searchLabel,
   onSelect
-}: ProviderKindPickerProps): React.JSX.Element => {
+}: {
+  entries: ProviderPickerEntry<Key>[]
+  recommendedKey?: Key
+  searchLabel: string
+  searchPlaceholder?: string
+  onSelect: (key: Key) => void
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<CategoryFilter>('all')
 
-  const entries = providerPickerEntries({
-    codeBuddyProviders,
-    showCodexSubscriptions,
-    showClaudeIsolated
-  })
   const matches = entries
     .map((entry) => ({ entry, label: entryLabel(entry, t) }))
     .filter(({ entry, label }) => matchesProviderPickerQuery(entry, query, label))
@@ -137,7 +139,7 @@ const ProviderKindPicker = ({
     entry,
     label
   }: {
-    entry: ProviderPickerEntry
+    entry: ProviderPickerEntry<Key>
     label: string
   }): React.JSX.Element => (
     <li key={entry.key} className="min-w-0">
@@ -145,7 +147,7 @@ const ProviderKindPicker = ({
         entry={entry}
         label={label}
         recommended={entry.key === recommendedKey}
-        onSelect={onSelect}
+        onClick={() => onSelect(entry.key)}
       />
     </li>
   )
@@ -155,8 +157,8 @@ const ProviderKindPicker = ({
     <div data-slot="provider-picker" className="flex flex-col gap-4">
       <SettingsSearchInput
         autoFocus
-        aria-label={t('Search providers')}
-        placeholder={t('Search by name or website, e.g. kimi, openrouter')}
+        aria-label={searchLabel}
+        placeholder={searchPlaceholder}
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
@@ -221,4 +223,64 @@ const ProviderKindPicker = ({
   )
 }
 
-export { ProviderKindPicker }
+const ProviderKindPicker = ({
+  recommendedKey,
+  onSelect,
+  ...availability
+}: ProviderKindPickerProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <ProviderPicker
+      entries={providerPickerEntries(availability)}
+      recommendedKey={recommendedKey}
+      searchLabel={t('Search providers')}
+      searchPlaceholder={t('Search by name or website, e.g. kimi, openrouter')}
+      onSelect={onSelect}
+    />
+  )
+}
+
+export const SelectedProviderCard = ({
+  iconKey,
+  label,
+  description,
+  disabled,
+  onChange
+}: {
+  iconKey: string
+  label?: string
+  description?: string
+  disabled?: boolean
+  onChange: () => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div
+      role="group"
+      aria-label={t('Provider type')}
+      className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-muted/30 p-3"
+    >
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
+        <ProviderKindIcon kindKey={iconKey} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium text-foreground">{label}</span>
+        {description ? (
+          <span className="block truncate text-xs text-muted-foreground">{description}</span>
+        ) : null}
+      </span>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label={t('Change provider')}
+        disabled={disabled}
+        onClick={onChange}
+      >
+        {t('Change')}
+      </Button>
+    </div>
+  )
+}
+
+export { ProviderKindPicker, ProviderPicker }

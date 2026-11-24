@@ -23,7 +23,7 @@ export const PROVIDER_PICKER_CATEGORIES: readonly ProviderPickerCategory[] = [
   'local'
 ]
 
-// Exhaustive so a new registry vendor is a typecheck failure until it is filed under a section.
+// Vendors in picker display order. A new registry vendor must be filed under a section.
 const VENDOR_CATEGORY: Record<
   OfficialVendorId,
   Exclude<ProviderPickerCategory, 'sign-in' | 'local'>
@@ -39,22 +39,31 @@ const VENDOR_CATEGORY: Record<
   stepfun: 'vendor',
   xiaomimimo: 'vendor',
   sensenova: 'vendor',
-  bailianplan: 'coding-plan',
+  'opencode-go': 'coding-plan',
   glmcodingplan: 'coding-plan',
   kimiforcode: 'coding-plan',
+  bailianplan: 'coding-plan',
   stepplan: 'coding-plan',
   tencentcodingplan: 'coding-plan',
   tencenttokenplan: 'coding-plan',
-  'opencode-go': 'coding-plan',
   bailian: 'cloud',
   volcengine: 'cloud',
   tencent: 'cloud',
   nvidia: 'cloud',
+  opencode: 'gateway',
   openrouter: 'gateway',
   requesty: 'gateway',
-  kilo: 'gateway',
-  opencode: 'gateway'
+  kilo: 'gateway'
 }
+
+// Unlisted sign-ins keep their relative order before xAI. The picker pins Custom separately.
+const pickerOrder = [
+  'xai-subscription',
+  ...Object.keys(VENDOR_CATEGORY).map((id) => `official:${id}`)
+]
+const pickerKinds = [...PROVIDER_KINDS].sort(
+  (left, right) => pickerOrder.indexOf(left.key) - pickerOrder.indexOf(right.key)
+)
 
 // Extra search terms for names users commonly type instead of the registry label: local-language
 // brand names, product names, and model families. Matching only; never displayed.
@@ -80,9 +89,10 @@ const VENDOR_SEARCH_ALIASES: Partial<Record<OfficialVendorId, readonly string[]>
   tencenttokenplan: ['腾讯', '騰訊', '混元', 'hunyuan']
 }
 
-export type ProviderPickerEntry = {
+export type ProviderPickerEntry<Key extends string = string> = {
   // Provider kind key the form is seeded from (see providerKindPatch).
-  key: string
+  key: Key
+  iconKey?: string
   // A custom gateway is pinned above the sections rather than filed under one.
   category: ProviderPickerCategory | 'custom'
   // Proper nouns pass through; kinds with a labelKey are translated by the picker.
@@ -138,7 +148,7 @@ export const providerPickerEntries = (
 ): ProviderPickerEntry[] => {
   const entries: ProviderPickerEntry[] = []
 
-  for (const kind of PROVIDER_KINDS) {
+  for (const kind of pickerKinds) {
     if (!isProviderKindAvailable(kind, availability)) continue
     if (kind.key.startsWith('official:')) {
       entries.push(vendorEntry(kind, kind.key.slice('official:'.length) as OfficialVendorId))
