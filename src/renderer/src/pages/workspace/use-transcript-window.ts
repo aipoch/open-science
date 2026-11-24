@@ -137,28 +137,47 @@ const useTranscriptWindow = (
         : Math.min(start + retainedWindowSize, items.length)
       : items.length
 
-  // Short or collapsed rows may leave the first window too small to scroll into older history.
+  // A short tail must still let the reader scroll up after a resize or row collapse.
   useLayoutEffect(() => {
     const viewport = viewportRef.current
     if (
-      initialWindowSize < TRANSCRIPT_WINDOW_SIZE &&
-      start > 0 &&
-      end === items.length &&
-      presentationBarrierIndex < 0 &&
-      viewport &&
-      viewport.clientHeight > 0 &&
-      viewport.scrollHeight <= viewport.clientHeight
-    ) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setState({
-        scopeId,
-        itemCount: items.length,
-        start: Math.max(0, start - initialWindowSize),
-        end,
-        followEnd: true
-      })
+      !viewport ||
+      initialWindowSize === TRANSCRIPT_WINDOW_SIZE ||
+      start === 0 ||
+      end !== items.length ||
+      presentationBarrierIndex >= 0 ||
+      followingPaused ||
+      state.followEnd === false
+    )
+      return
+    const fillViewport = (): void => {
+      if (viewport.clientHeight > 0 && viewport.scrollHeight <= viewport.clientHeight) {
+        setState({
+          scopeId,
+          itemCount: items.length,
+          start: Math.max(0, start - (end - start)),
+          end,
+          followEnd: true
+        })
+      }
     }
-  }, [end, initialWindowSize, items.length, presentationBarrierIndex, scopeId, start, viewportRef])
+    fillViewport()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(fillViewport)
+    observer.observe(viewport)
+    if (viewport.firstElementChild) observer.observe(viewport.firstElementChild)
+    return () => observer.disconnect()
+  }, [
+    end,
+    followingPaused,
+    initialWindowSize,
+    items.length,
+    presentationBarrierIndex,
+    scopeId,
+    start,
+    state.followEnd,
+    viewportRef
+  ])
 
   // Preserve mounted reading rows as well as scrollTop during an explicit interaction pause.
   // Persist the release so ending the pause alone cannot jump to a newer bounded tail.
