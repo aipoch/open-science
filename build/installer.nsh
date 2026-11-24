@@ -32,6 +32,15 @@
 !include "${BUILD_RESOURCES_DIR}\windows-app-running.nsh"
 
 !macro customUnInstall
+  # Remove the launcher and its PATH entry before deleting the installed executable. Updates keep
+  # the launcher so the replacement install can refresh it in customInstall.
+  ${ifNot} ${isUpdated}
+    ClearErrors
+    ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --uninstall-cli' $R0
+    ${if} $R0 != 0
+      DetailPrint "Open-Science CLI launcher cleanup returned $R0; unmanaged files were preserved."
+    ${endif}
+  ${endif}
   # Cleanup can fail after removing some program files. Keep retry's lifecycle helper in the
   # uninstaller itself, so its availability never depends on a partly removed installation.
   # The native helper replaces one powershell.exe launch (0.6-1.2 s each) per cleanup step.
@@ -522,6 +531,14 @@ FunctionEnd
   ${if} ${Errors}
     DetailPrint "Open-Science protocol registration failed."
     !insertmacro quitFailedUpdate
+  ${endif}
+  # Register the bundled ordinary Node CLI during installation so silent WinGet installs are
+  # immediately usable from a fresh terminal. The launcher owner keeps its PATH journal and
+  # refuses to overwrite an unmanaged command.
+  ClearErrors
+  ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --install-cli' $R0
+  ${if} $R0 != 0
+    DetailPrint "Open-Science CLI launcher installation returned $R0; the desktop app remains installed."
   ${endif}
   Push "installed"
   Call writeUpdateReceipt
