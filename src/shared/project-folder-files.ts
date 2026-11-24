@@ -44,8 +44,16 @@ export const projectFolderListingSchema = z
       .max(200),
     nextCursor: z.string().optional(),
     truncated: z.boolean().optional(),
-    // Matches an exact path-qualified mention to the published Version represented at that path.
-    publishedArtifacts: z.array(publishedArtifactAliasSchema).max(200).optional()
+    // Published Versions represented by paths that matched a folder search.
+    publishedArtifacts: z
+      .array(
+        publishedArtifactAliasSchema.extend({
+          relativePath: z.string(),
+          exactPathMatch: z.boolean()
+        })
+      )
+      .max(200)
+      .optional()
   })
   .strict()
 export const readProjectFolderPreviewRequestSchema = folderFileScopeSchema

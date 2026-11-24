@@ -85,25 +85,23 @@ function scopeCandidate(
   return undefined
 }
 
-async function matchesStableContent(
+async function readStableChecksum(
   { path, info }: Candidate,
-  checksum: string,
   signal: AbortSignal
-): Promise<boolean> {
+): Promise<string | undefined> {
   signal.throwIfAborted()
   const handle = await open(
     path,
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
   )
   try {
-    if (!sameFileStats(info, await handle.stat())) return false
+    if (!sameFileStats(info, await handle.stat())) return undefined
     const digest = await digestOpenFileWithinBudget(handle, info.size, signal)
-    return (
-      digest.sizeBytes === info.size &&
-      digest.checksum === checksum &&
+    return digest.sizeBytes === info.size &&
       sameFileStats(info, await lstat(path)) &&
       sameFileStats(info, await handle.stat())
-    )
+      ? digest.checksum
+      : undefined
   } finally {
     await handle.close()
   }
@@ -189,7 +187,17 @@ export async function findPublishedArtifactCopies(
   const rootIdentity = Array.from(scoped.values()).some(({ lookup }) => lookup.kind === 'delivery')
     ? projectFolderFileIdentity(await stat(root))
     : undefined
-  const deliveryVerificationBudget = AbortSignal.timeout(250)
+  let verificationBudget: AbortSignal | undefined
+  const checksums = new Map<string, Promise<string | undefined>>()
+  const matchesStableContent = async (candidate: Candidate, checksum: string): Promise<boolean> => {
+    let pending = checksums.get(candidate.path)
+    if (!pending) {
+      verificationBudget ??= AbortSignal.timeout(250)
+      pending = readStableChecksum(candidate, verificationBudget).catch(() => undefined)
+      checksums.set(candidate.path, pending)
+    }
+    return (await pending) === checksum
+  }
   const add = (path: string, artifact: PublishedArtifactAlias): void => {
     const aliases = matches.get(path) ?? []
     aliases.push(artifact)
@@ -214,12 +222,19 @@ export async function findPublishedArtifactCopies(
       notebook.lookup.sessionId === record.sessionId &&
       (!notebook.frameId || notebook.frameId === record.agentFrameId) &&
       notebook.info.size === size &&
-      // The version sealed this exact path and generation. A file changed since sealing is live.
-      Math.floor(Math.max(notebook.info.ctimeMs, notebook.info.mtimeMs)) <=
-        Number(record.createdAtMs) &&
-      (await stillCurrent(notebook))
-    )
-      add(notebook.path, artifact)
+      Math.floor(notebook.info.birthtimeMs) <= Number(record.createdAtMs)
+    ) {
+      // The version sealed this exact path and generation. A later metadata change needs byte verification.
+      const unchangedSinceSealing =
+        Math.floor(Math.max(notebook.info.ctimeMs, notebook.info.mtimeMs)) <=
+        Number(record.createdAtMs)
+      if (
+        unchangedSinceSealing
+          ? await stillCurrent(notebook)
+          : await matchesStableContent(notebook, record.checksum)
+      )
+        add(notebook.path, artifact)
+    }
 
     try {
       const delivery = parseArtifactOutputDelivery(record.outputDeliveryJson)
@@ -232,6 +247,8 @@ export async function findPublishedArtifactCopies(
         !baseline ||
         baseline.rootIdentity !== rootIdentity ||
         baseline.identity !== projectFolderFileIdentity(target.info) ||
+        baseline.checksum !== record.checksum ||
+        baseline.size !== size ||
         baseline.size !== target.info.size
       )
         continue
@@ -240,7 +257,7 @@ export async function findPublishedArtifactCopies(
       if (
         baseline.ctimeMs === target.info.ctimeMs
           ? await stillCurrent(target)
-          : await matchesStableContent(target, baseline.checksum, deliveryVerificationBudget)
+          : await matchesStableContent(target, baseline.checksum)
       )
         add(target.path, artifact)
     } catch {

@@ -36,6 +36,7 @@ import {
   type ReadPublishedArtifactFolderRecords
 } from './project-folder-mention-candidates'
 import * as boundedIo from '../bounded-file-io'
+import { sha256 } from './provenance-canonical'
 
 let fixture: Awaited<ReturnType<typeof createProvenanceTestFixture>>
 let folder: string
@@ -265,6 +266,111 @@ it('verifies stable delivery bytes when ctime is absent or metadata has changed'
   expect(changed.ino).toBe(original.ino)
   expect(changed.size).toBe(original.size)
   await expect(aliases()).resolves.toBe(false)
+})
+
+it('keeps an older delivered file live when the current Version fails delivery', async () => {
+  const first = await prepare(1, 'first')
+  await publish(first)
+  delivery.setMutationOwner(async () => {
+    throw new Error('Delivery unavailable')
+  })
+  const current = await prepare(2, 'later')
+  await publish(current)
+  expect((await service.inspect(identity(current))).outputDelivery).toMatchObject({
+    state: 'failed',
+    versionId: current.version.versionId
+  })
+  const path = await realpath(target())
+  expect(await readFile(path, 'utf8')).toBe('first')
+  const matches = await findPublishedArtifactCopies(
+    'project-1',
+    await realpath(folder),
+    fixture.storageRoot,
+    [{ path, info: await stat(path) }],
+    (...scope) => listPublishedArtifactFolderRecords(fixture.client, ...scope)
+  )
+  expect(matches.has(path)).toBe(false)
+})
+
+it('queries all published aliases of a Notebook path without counting dependency-only matches', async () => {
+  const projectId = 'project-1'
+  const sessionId = 'session-1'
+  const relativePath = `notebooks/${projectId}/${sessionId}/data/draft.py`
+  const checksum = 'a'.repeat(64)
+  const size = 10
+  const published = ['published-a', 'published-b', 'published-c']
+  const downstream = ['downstream-a', 'downstream-b', 'downstream-c']
+  await fixture.client.fileOriginSession.create({ data: { projectId, sessionId } })
+  for (const [index, artifactId] of [...published, ...downstream].entries()) {
+    const versionId = `${artifactId}-v1`
+    const filename = `${artifactId}.py`
+    await fixture.client.artifactLineage.create({
+      data: { id: artifactId, projectId, sessionId, filename, normalizedFilename: filename }
+    })
+    const generation = {
+      entityId: 'file-generation:draft',
+      kind: 'file-generation',
+      relativePath: `data/${relativePath}`,
+      pathPortability: 'relative',
+      checksum,
+      sizeBytes: size
+    }
+    const executionSnapshotJson = JSON.stringify({
+      provenanceGraph: {
+        entities: [generation],
+        edges: [
+          {
+            kind: 'used',
+            entityId: generation.entityId,
+            authority: 'authoritative',
+            ...(published.includes(artifactId)
+              ? {
+                  activityId: `artifact-publication:${versionId}`,
+                  evidenceSource: 'artifact-publication'
+                }
+              : { activityId: 'run-1', evidenceSource: 'dependency-analysis' })
+          }
+        ]
+      }
+    })
+    await fixture.client.artifactVersion.create({
+      data: {
+        id: versionId,
+        artifactId,
+        versionNumber: 1,
+        filename,
+        state: 'finalized',
+        managedVisibleAt: new Date(),
+        createdAt: new Date(index + 1),
+        contentStorageKey: `artifacts/${versionId}`,
+        artifactRunId: 'artifact-run-1',
+        rootFrameId: 'frame-1',
+        agentFrameId: 'frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1',
+        promptMessageId: 'prompt-1',
+        producerRunId: 'run-1',
+        checksum,
+        sizeBytes: size,
+        evidenceStorageKey: `artifacts/${versionId}/evidence.json`,
+        evidenceJson: '{}',
+        evidenceChecksum: sha256('{}'),
+        evidenceSchemaVersion: 1,
+        executionSnapshotJson,
+        executionSnapshotChecksum: sha256(executionSnapshotJson),
+        executionSnapshotStorageKey: `artifacts/${versionId}/execution.json`,
+        executionSnapshotSchemaVersion: 2
+      }
+    })
+    await fixture.client.artifactLineage.update({
+      where: { id: artifactId },
+      data: { currentVersionId: versionId }
+    })
+  }
+  const records = await listPublishedArtifactFolderRecords(fixture.client, projectId, [
+    { kind: 'notebook', relativePath, sessionId, size }
+  ])
+  expect(records.map((record) => record.sourceFileId).sort()).toEqual(published)
 })
 
 it('isolates Sessions, retains the first filename spelling, and refuses late old-head retries', async () => {

@@ -251,7 +251,7 @@ export class ProjectFolderFiles {
       const candidates: {
         path: string
         info: Stats
-        entry: ProjectFolderListing['entries'][number]
+        entry: ProjectFolderListing['entries'][number] & { relativePath: string }
       }[] = []
       // Leave room for excluded aliases while keeping Project records reads to one batch.
       const candidateLimit = findPublishedCopies ? request.limit * 2 : request.limit
@@ -325,15 +325,28 @@ export class ProjectFolderFiles {
         }
       }
       const copies =
-        storageRoot &&
-        (await findPublishedCopies?.(request.projectId, root, storageRoot, [
-          ...(exactCandidate?.info.isFile() ? [exactCandidate] : []),
-          ...candidates
-        ]).catch(() => undefined))
-      const publishedArtifacts =
-        exactCandidate && copies
-          ? copies.get(exactCandidate.path)?.slice(0, request.limit)
+        findPublishedCopies && storageRoot
+          ? await findPublishedCopies(request.projectId, root, storageRoot, [
+              ...(exactCandidate?.info.isFile() ? [exactCandidate] : []),
+              ...candidates
+            ]).catch(() => undefined)
           : undefined
+      const aliases = new Map<
+        string,
+        NonNullable<ProjectFolderListing['publishedArtifacts']>[number]
+      >()
+      const addAliases = (path: string, relativePath: string, exactPathMatch: boolean): void => {
+        for (const artifact of copies?.get(path) ?? []) {
+          if (!aliases.has(artifact.sourceFileId))
+            aliases.set(artifact.sourceFileId, { ...artifact, relativePath, exactPathMatch })
+        }
+      }
+      if (copies) {
+        if (exactCandidate?.info.isFile())
+          addAliases(exactCandidate.path, `${request.relativePath}/${request.query}`, true)
+        for (const { path, entry } of candidates) addAliases(path, entry.relativePath, false)
+      }
+      const publishedArtifacts = Array.from(aliases.values()).slice(0, request.limit)
       const live = candidates.filter(({ path }) => !copies || !copies.has(path))
       const entries = live.slice(0, request.limit).map(({ entry }) => entry)
       return {
@@ -341,8 +354,8 @@ export class ProjectFolderFiles {
         relativePath: request.relativePath,
         entries,
         totalCount: entries.length,
-        truncated: truncated || live.length > request.limit,
-        ...(publishedArtifacts?.length ? { publishedArtifacts } : {})
+        truncated: truncated || live.length > request.limit || aliases.size > request.limit,
+        ...(publishedArtifacts.length ? { publishedArtifacts } : {})
       }
     })
   }

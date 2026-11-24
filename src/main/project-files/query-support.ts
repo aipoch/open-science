@@ -567,7 +567,7 @@ export const listPublishedArtifactFolderRecords = async (
   requireIdentifier(projectId, 'projectId')
   await reconcileProjectRecordIndexes(client, [projectId])
   // Scope by the files found in this bounded walk. Project reconciliation runs once and only
-  // current Versions with a matching receipt path or graph entity cross into the host.
+  // current Versions with a matching receipt path or publication source cross into the host.
   return client.$queryRaw<PublishedArtifactFolderRecord[]>(Prisma.sql`
     ${authoritativeCatalogCte([projectId])},
     "FolderCandidate" AS MATERIALIZED (
@@ -606,15 +606,30 @@ export const listPublishedArtifactFolderRecords = async (
           FROM json_each(
             CASE WHEN json_valid(version."executionSnapshotJson")
               THEN version."executionSnapshotJson" ELSE '{}' END,
-            '$.provenanceGraph.entities'
-          ) AS entity
-          JOIN "FolderCandidate" AS candidate
-            ON candidate."kind" = 'notebook' AND candidate."sessionId" = artifact."sessionId"
-            AND candidate."size" = artifact."sizeBytes"
-            AND 'data/' || candidate."relativePath" = CASE WHEN entity.type = 'object'
-              THEN json_extract(entity.value, '$.relativePath') END
-          WHERE CASE WHEN entity.type = 'object'
-            THEN json_extract(entity.value, '$.kind') = 'file-generation' END
+            '$.provenanceGraph.edges'
+          ) AS edge
+          WHERE CASE WHEN edge.type = 'object' THEN
+            json_extract(edge.value, '$.kind') = 'used'
+            AND json_extract(edge.value, '$.activityId') = 'artifact-publication:' || artifact."versionId"
+            AND json_extract(edge.value, '$.authority') = 'authoritative'
+            AND json_extract(edge.value, '$.evidenceSource') = 'artifact-publication'
+            AND EXISTS (
+              SELECT 1
+              FROM json_each(version."executionSnapshotJson", '$.provenanceGraph.entities') AS entity
+              JOIN "FolderCandidate" AS candidate
+                ON candidate."kind" = 'notebook' AND candidate."sessionId" = artifact."sessionId"
+                AND candidate."size" = artifact."sizeBytes"
+                AND 'data/' || candidate."relativePath" = CASE WHEN entity.type = 'object'
+                  THEN json_extract(entity.value, '$.relativePath') END
+              WHERE CASE WHEN entity.type = 'object' THEN
+                json_extract(entity.value, '$.kind') = 'file-generation'
+                AND json_extract(entity.value, '$.entityId') = json_extract(edge.value, '$.entityId')
+                AND json_extract(entity.value, '$.pathPortability') = 'relative'
+                AND json_extract(entity.value, '$.checksum') = artifact."checksum"
+                AND json_extract(entity.value, '$.sizeBytes') = artifact."sizeBytes"
+              END
+            )
+          END
         )
     )
     SELECT artifact.*,
@@ -630,7 +645,6 @@ export const listPublishedArtifactFolderRecords = async (
           THEN json_extract(artifact."outputDeliveryJson", '$.relativePath') END
     )
     ORDER BY artifact."createdAtMs" DESC, artifact."versionId" ASC
-    LIMIT ${lookups.length * 2}
   `)
 }
 

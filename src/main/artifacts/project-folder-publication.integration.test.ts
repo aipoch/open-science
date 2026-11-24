@@ -8,6 +8,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile
 } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -631,6 +632,25 @@ it('offers published Notebook files through their Artifact heads and retains ind
       `${outputRelativePath}/mention_result_unpublished.txt`
     ].sort()
   )
+  const renamed = await search('', 'mention_result.py')
+  expect(renamed.entries.map((entry) => entry.relativePath)).toEqual(['mention_result.py'])
+  expect(renamed.publishedArtifacts).toEqual([
+    expect.objectContaining({
+      name: 'mention_result_code.py',
+      sourceFileId: artifacts[0].artifactId,
+      versionId: artifacts[0].versionId,
+      relativePath: `${outputRelativePath}/mention_result.py`,
+      exactPathMatch: false
+    })
+  ])
+  const prefixed = await search(outputRelativePath, 'mention_res')
+  expect(prefixed.entries.map((entry) => entry.name).sort()).toEqual([
+    'mention_result_same_bytes.py',
+    'mention_result_unpublished.txt'
+  ])
+  expect(prefixed.publishedArtifacts?.map((artifact) => artifact.versionId).sort()).toEqual(
+    proof.artifactVersionIds.toSorted()
+  )
   const browser = await projectFolder.listFolder({
     projectId,
     relativePath: artifactDirectory,
@@ -645,7 +665,8 @@ it('offers published Notebook files through their Artifact heads and retains ind
         expect.objectContaining({
           name: filename,
           sourceFileId: artifacts[index].artifactId,
-          versionId: artifacts[index].versionId
+          versionId: artifacts[index].versionId,
+          exactPathMatch: true
         })
       ]
     })
@@ -659,6 +680,14 @@ it('offers published Notebook files through their Artifact heads and retains ind
     )
     expect((await readFile(artifacts[index].path)).equals(outputs[source])).toBe(true)
   }
+  const pythonSource = join(folder, outputRelativePath, 'mention_result.py')
+  const pythonStat = await stat(pythonSource)
+  await utimes(pythonSource, pythonStat.atime, new Date(pythonStat.mtimeMs + 3000))
+  const touched = await search(outputRelativePath, 'mention_result.py')
+  expect(touched.entries).toEqual([])
+  expect(touched.publishedArtifacts?.map((item) => item.versionId)).toEqual([
+    artifacts[0].versionId
+  ])
   // A rewrite of the large source keeps its size and uses the same path.
   const changed = createPngBytes(Buffer.alloc(12 * 1024 * 1024, 1))
   await writeFile(join(folder, outputRelativePath, 'mention_result.png'), changed)

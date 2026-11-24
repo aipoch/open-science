@@ -5,7 +5,16 @@ import {
   useDesktopRuntimeRecoveryStore
 } from '../../../stores/desktop-runtime-recovery-store'
 import { useLiteratureChanges } from '@/pages/literature/public/events'
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { BookOpenText, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -29,7 +38,7 @@ import {
 
 import { createArtifactThumbnailReader, thumbnailRequestKey } from './artifact-thumbnail-reader'
 import { ArtifactFileIcon } from './artifact-file-icon'
-import { fuzzyScore, type FuzzyMatch } from './fuzzy-match'
+import { fuzzyScore } from './fuzzy-match'
 import { HighlightedText } from './HighlightedText'
 import { loadAllProjectFiles } from './load-project-files'
 
@@ -69,6 +78,7 @@ type ArtifactRow = {
   projectId?: string
   sourceFileId?: string
   fixedVersionId?: string
+  exactPathMatch?: boolean
   picked?: LiteratureReference | LiteratureScopeReference | ProjectFolderFileReference
   mimeType?: string
   size?: number
@@ -168,46 +178,48 @@ export const ArtifactMentionPopup = ({
               query,
               state: 'loaded',
               truncated: page.truncated,
-              rows: page.publishedArtifacts?.length
-                ? page.publishedArtifacts.map((artifact) => ({
-                    id: artifact.sourceFileId,
+              rows: [
+                ...(page.publishedArtifacts ?? []).map((artifact): ArtifactRow => ({
+                  id: artifact.sourceFileId,
+                  projectId: activeProjectId,
+                  source: 'artifact',
+                  sourceFileId: artifact.sourceFileId,
+                  fixedVersionId: artifact.versionId,
+                  exactPathMatch: artifact.exactPathMatch,
+                  name: artifact.name,
+                  path: createArtifactVersionLocator({
                     projectId: activeProjectId,
-                    source: 'artifact',
-                    sourceFileId: artifact.sourceFileId,
-                    fixedVersionId: artifact.versionId,
-                    name: artifact.name,
-                    path: createArtifactVersionLocator({
+                    appSessionId: artifact.sessionId,
+                    artifactId: artifact.sourceFileId,
+                    versionId: artifact.versionId
+                  }),
+                  mimeType: artifact.mimeType,
+                  size: artifact.size,
+                  description: artifact.relativePath,
+                  tag: 'output'
+                })),
+                ...page.entries
+                  .filter((entry) => !entry.isDirectory && entry.relativePath)
+                  .map((entry): ArtifactRow => {
+                    const path = entry.relativePath!
+                    const picked: ProjectFolderFileReference = {
+                      id: `project-folder:${activeProjectId}:${path}`,
+                      name: entry.name,
+                      source: 'project-folder',
                       projectId: activeProjectId,
-                      appSessionId: artifact.sessionId,
-                      artifactId: artifact.sourceFileId,
-                      versionId: artifact.versionId
-                    }),
-                    mimeType: artifact.mimeType,
-                    size: artifact.size,
-                    description: normalized,
-                    tag: 'output'
-                  }))
-                : page.entries
-                    .filter((entry) => !entry.isDirectory && entry.relativePath)
-                    .map((entry) => {
-                      const path = entry.relativePath!
-                      const picked: ProjectFolderFileReference = {
-                        id: `project-folder:${activeProjectId}:${path}`,
-                        name: entry.name,
-                        source: 'project-folder',
-                        projectId: activeProjectId,
-                        path
-                      }
-                      return {
-                        id: picked.id,
-                        projectId: activeProjectId,
-                        name: entry.name,
-                        description: path,
-                        size: entry.size,
-                        tag: 'folder',
-                        picked
-                      }
-                    })
+                      path
+                    }
+                    return {
+                      id: picked.id,
+                      projectId: activeProjectId,
+                      name: entry.name,
+                      description: path,
+                      size: entry.size,
+                      tag: 'folder',
+                      picked
+                    }
+                  })
+              ]
             })
           },
           () => {
@@ -336,19 +348,25 @@ export const ArtifactMentionPopup = ({
 
   // ManagedFile supplies the logical identity. Selection resolves and pins its current Version.
   const rows = useMemo<ArtifactRow[]>(() => {
+    const folderRows = folderState === 'loaded' && projectFolder ? folder.rows : []
+    const aliasedArtifacts = new Set(folderRows.map((row) => row.sourceFileId))
     const projectRows =
       projectFiles.projectId === activeProjectId
-        ? projectFiles.files.map((file): ArtifactRow => ({
-            id: file.id,
-            sourceFileId: file.sourceFileId,
-            projectId: file.projectId,
-            name: file.name,
-            path: file.path,
-            source: file.source,
-            mimeType: file.mimeType,
-            size: file.size,
-            tag: file.source === 'upload' ? ('upload' as const) : ('output' as const)
-          }))
+        ? projectFiles.files
+            .filter(
+              (file) => file.source !== 'artifact' || !aliasedArtifacts.has(file.sourceFileId)
+            )
+            .map((file): ArtifactRow => ({
+              id: file.id,
+              sourceFileId: file.sourceFileId,
+              projectId: file.projectId,
+              name: file.name,
+              path: file.path,
+              source: file.source,
+              mimeType: file.mimeType,
+              size: file.size,
+              tag: file.source === 'upload' ? ('upload' as const) : ('output' as const)
+            }))
         : []
     const libraryScopeRows: ArtifactRow[] = query.trim()
       ? [
@@ -363,7 +381,7 @@ export const ArtifactMentionPopup = ({
         ]
       : []
     return [
-      ...(folderState === 'loaded' && projectFolder ? folder.rows : []),
+      ...folderRows,
       ...projectRows,
       ...libraryScopeRows,
       ...(collectionState === 'loaded' ? collections.rows : []),
@@ -390,25 +408,27 @@ export const ArtifactMentionPopup = ({
   // query preserves the incoming order within each section.
   const matches = useMemo<ArtifactRow[]>(() => {
     const needle = query.trim()
-    const exactOutputs = rows.filter((row) => row.fixedVersionId)
-    if (exactOutputs.length) return exactOutputs
-
     const rankSection = (tag: ArtifactRow['tag']): ArtifactRow[] =>
       needle.length === 0 || tag === 'library' || tag === 'folder'
         ? rows.filter((row) => row.tag === tag)
         : rows
             .filter((row) => row.tag === tag)
             .map((row) => ({ row, match: fuzzyScore(needle, row.name) }))
-            .filter(
-              (entry): entry is { row: ArtifactRow; match: FuzzyMatch } => entry.match !== null
+            .filter(({ row, match }) => match !== null || row.fixedVersionId)
+            .sort(
+              (a, b) =>
+                Number(b.row.exactPathMatch ?? false) - Number(a.row.exactPathMatch ?? false) ||
+                (b.match?.score ?? 0) - (a.match?.score ?? 0)
             )
-            .sort((a, b) => b.match.score - a.match.score)
-            .map(({ row, match }) => ({ ...row, positions: match.positions }))
+            .map(({ row, match }) => ({ ...row, positions: match?.positions }))
 
+    const outputs = rankSection('output')
+    const exactOutput = outputs[0]?.exactPathMatch
     return [
+      ...(exactOutput ? outputs : []),
       ...rankSection('folder'),
       ...rankSection('upload'),
-      ...rankSection('output'),
+      ...(exactOutput ? [] : outputs),
       ...rankSection('library-scope'),
       ...rankSection('collection-scope'),
       ...rankSection('library')
@@ -573,14 +593,21 @@ export const ArtifactMentionPopup = ({
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [matches, safeIndex, selectRow, onClose, composingRef])
 
-  // Split the flat match list back into its sections, preserving the flat highlight index.
-  const folderMatches = matches.filter((row) => row.tag === 'folder')
-  const uploadMatches = matches.filter((row) => row.tag === 'upload')
-  const artifactMatches = matches.filter((row) => row.tag === 'output')
-  const scopeMatches = matches.filter(
-    (row) => row.tag === 'library-scope' || row.tag === 'collection-scope'
-  )
-  const libraryMatches = matches.filter((row) => row.tag === 'library')
+  const sectionLabels = {
+    folder: t('Project folder'),
+    upload: t(SECTION_UPLOADS_KEY),
+    output: t(SECTION_ARTIFACTS_KEY),
+    'library-scope': t(SECTION_LIBRARY_KEY),
+    library: t('References')
+  }
+  const sections: { kind: keyof typeof sectionLabels; startIndex: number; rows: ArtifactRow[] }[] =
+    []
+  for (const [index, row] of matches.entries()) {
+    const kind = row.tag === 'collection-scope' ? 'library-scope' : row.tag
+    const previous = sections.at(-1)
+    if (previous?.kind === kind) previous.rows.push(row)
+    else sections.push({ kind, startIndex: index, rows: [row] })
+  }
 
   const renderRow = (row: ArtifactRow, index: number): React.JSX.Element => {
     const isActive = index === safeIndex
@@ -752,77 +779,17 @@ export const ArtifactMentionPopup = ({
         aria-label={t('Artifact suggestions')}
         className="min-h-0 overflow-y-auto max-h-[min(45vh,18rem)]"
       >
-        {folderMatches.length > 0 ? (
-          <>
+        {sections.map(({ kind, startIndex, rows }) => (
+          <Fragment key={kind}>
             <li
               aria-hidden="true"
               className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
             >
-              {t('Project folder')}
+              {sectionLabels[kind]}
             </li>
-            {folderMatches.map((row, index) => renderRow(row, index))}
-          </>
-        ) : null}
-        {uploadMatches.length > 0 ? (
-          <>
-            <li
-              aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
-            >
-              {t(SECTION_UPLOADS_KEY)}
-            </li>
-            {uploadMatches.map((row, index) => renderRow(row, folderMatches.length + index))}
-          </>
-        ) : null}
-        {artifactMatches.length > 0 ? (
-          <>
-            <li
-              aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
-            >
-              {t(SECTION_ARTIFACTS_KEY)}
-            </li>
-            {artifactMatches.map((row, index) =>
-              renderRow(row, folderMatches.length + uploadMatches.length + index)
-            )}
-          </>
-        ) : null}
-        {scopeMatches.length > 0 ? (
-          <>
-            <li
-              aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
-            >
-              {t(SECTION_LIBRARY_KEY)}
-            </li>
-            {scopeMatches.map((row, index) =>
-              renderRow(
-                row,
-                folderMatches.length + uploadMatches.length + artifactMatches.length + index
-              )
-            )}
-          </>
-        ) : null}
-        {libraryMatches.length > 0 ? (
-          <>
-            <li
-              aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
-            >
-              {t('References')}
-            </li>
-            {libraryMatches.map((row, index) =>
-              renderRow(
-                row,
-                folderMatches.length +
-                  uploadMatches.length +
-                  artifactMatches.length +
-                  scopeMatches.length +
-                  index
-              )
-            )}
-          </>
-        ) : null}
+            {rows.map((row, index) => renderRow(row, startIndex + index))}
+          </Fragment>
+        ))}
       </ul>
       <div className="shrink-0 mt-1 -mx-1.5 -mb-1.5 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
         <span>

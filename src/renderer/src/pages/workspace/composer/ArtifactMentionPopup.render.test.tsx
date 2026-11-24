@@ -1139,6 +1139,8 @@ describe('bound Project folder mentions', () => {
             sessionId: 'session-1',
             versionId: 'published-v3',
             name: 'published.pdf',
+            relativePath: query,
+            exactPathMatch: true,
             mimeType: 'application/pdf',
             size: 4096
           }
@@ -1156,8 +1158,9 @@ describe('bound Project folder mentions', () => {
           query: basename
         })
       )
-      expect(options()).toHaveLength(1)
+      expect(options()).toHaveLength(2)
       expect(options()[0].textContent).toContain('published.pdf')
+      expect(options()[1].textContent).toContain(`another-${basename}`)
       pressKey('Enter')
       expect(onSelect).toHaveBeenCalledWith({
         id: 'art-1',
@@ -1169,6 +1172,87 @@ describe('bound Project folder mentions', () => {
         path: 'artifact-version:default/session-1/art-1/published-v3'
       })
       expect(window.api.managedFileVersions.inspect).not.toHaveBeenCalled()
+      pressKey('ArrowDown')
+      pressKey('Enter')
+      expect(onSelect).toHaveBeenLastCalledWith({
+        id: `project-folder:default:${directory}/another-${basename}`,
+        name: `another-${basename}`,
+        source: 'project-folder',
+        projectId: 'default',
+        path: `${directory}/another-${basename}`
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('merges renamed outputs by Artifact ID and preserves independent prefix matches', async () => {
+    vi.useFakeTimers()
+    try {
+      const directory = 'notebooks/default/session-1/data'
+      const aliases = [
+        {
+          sourceFileId: 'art-1',
+          sessionId: 'session-1',
+          versionId: 'published-v3',
+          name: 'report.py',
+          relativePath: `${directory}/draft.py`,
+          exactPathMatch: false,
+          size: 10
+        },
+        {
+          sourceFileId: 'art-2',
+          sessionId: 'session-1',
+          versionId: 'published-v1',
+          name: 'draft-code.py',
+          relativePath: `${directory}/draft-code.py`,
+          exactPathMatch: false,
+          size: 10
+        }
+      ]
+      window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+        items: aliases.map(({ sourceFileId, versionId, name }) => ({
+          ...defaultProjectFiles[1],
+          id: sourceFileId,
+          sourceFileId,
+          sourceVersionId: versionId,
+          name
+        })),
+        totalCount: aliases.length
+      })
+      window.api.projects = {
+        listFolder: vi.fn().mockResolvedValue({
+          path: '/research',
+          relativePath: '',
+          totalCount: 1,
+          entries: [
+            {
+              name: 'draft-notes.py',
+              relativePath: `${directory}/draft-notes.py`,
+              isDirectory: false,
+              size: 5,
+              mtimeMs: 1
+            }
+          ],
+          publishedArtifacts: aliases
+        })
+      } as unknown as typeof window.api.projects
+      const onSelect = vi.fn()
+      for (const query of ['draft', `${directory}/draft`]) {
+        await renderPopup({ query, onSelect })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(120)
+        })
+        const matched = options()
+        expect(matched).toHaveLength(3)
+        expect(matched[0].textContent).toContain('draft-notes.py')
+        expect(matched.filter((row) => row.textContent?.includes('draft-code.py'))).toHaveLength(1)
+        const renamed = matched.find((row) => row.textContent?.includes('report.py'))!
+        act(() => renamed.click())
+        expect(onSelect).toHaveBeenLastCalledWith(
+          expect.objectContaining({ sourceFileId: 'art-1', versionId: 'published-v3' })
+        )
+      }
     } finally {
       vi.useRealTimers()
     }
