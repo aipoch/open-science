@@ -8,6 +8,8 @@
     "src/main/settings/codebuddy-skill-selector-transport.ts",
     "src/main/settings/codex-transport-fallback-log.test.ts",
     "src/main/settings/codex-transport-fallback-log.ts",
+    "src/main/settings/cloudflare-gateway-transport.ts",
+    "src/main/settings/provider-gateway-fetch.ts",
     "src/main/settings/provider-failure-observation.ts",
     "src/main/settings/provider-loopback-http-host.architecture.test.ts",
     "src/main/settings/provider-loopback-http-host.test.ts",
@@ -21,6 +23,8 @@
     "src/main/settings/codebuddy-chat-request-adapter.ts",
     "src/main/settings/codebuddy-skill-selector-transport.ts",
     "src/main/settings/codex-transport-fallback-log.ts",
+    "src/main/settings/cloudflare-gateway-transport.ts",
+    "src/main/settings/provider-gateway-fetch.ts",
     "src/main/settings/provider-failure-observation.ts",
     "src/main/settings/provider-loopback-http-host.ts",
     "src/main/settings/skill-selection-contract.ts",
@@ -813,5 +817,6 @@
   },
   "consumerModules": ["artifact_provenance", "reviewer_orchestrator", "settings_service_facade"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Cloudflare and Foundry credential forwarding introduces shared gateway transport paths. Run full validation until the expanded transport boundary is reviewed."
 }

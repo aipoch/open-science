@@ -1,5 +1,9 @@
 {
   "ownerPaths": [
+    "src/shared/cloudflare-gateway.ts",
+    "src/shared/configured-provider-model.ts",
+    "src/shared/local-provider-preset.ts",
+    "src/shared/manual-provider.ts",
     "src/shared/provider-model-catalog.ts",
     "src/shared/provider-model-catalog-codec.ts",
     "src/shared/reasoning-effort.ts",
@@ -23,6 +27,10 @@
     "src/shared/image-model-presets/index.test.ts"
   ],
   "interfacePaths": [
+    "src/shared/cloudflare-gateway.ts",
+    "src/shared/configured-provider-model.ts",
+    "src/shared/local-provider-preset.ts",
+    "src/shared/manual-provider.ts",
     "src/shared/provider-model-catalog.ts",
     "src/shared/provider-model-catalog-codec.ts",
     "src/shared/reasoning-effort.ts",
