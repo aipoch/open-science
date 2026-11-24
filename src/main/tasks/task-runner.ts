@@ -107,6 +107,14 @@ type TaskProjectPort = {
 
 type TaskSessionPort = {
   list(): Promise<PersistedChatSession[]>
+  find(sessionId: string): Promise<PersistedChatSession | undefined>
+  findArtifact(artifactId: string): Promise<
+    | {
+        session: PersistedChatSession
+        artifact: PersistedArtifact
+      }
+    | undefined
+  >
   save(session: PersistedChatSession): Promise<PersistedChatSession>
   bindSession(request: BindTaskSessionRequest): Promise<PersistedChatSession>
   admitTurn(request: AdmitTaskSessionTurnRequest): Promise<PersistedChatSession>
@@ -1187,11 +1195,7 @@ class TaskRunner {
   }
 
   async acquireArtifact(artifactId: string): Promise<TaskArtifactLease> {
-    const sessions = await this.dependencies.sessions.list()
-    const candidates = sessions.flatMap((session) =>
-      (session.artifacts ?? []).map((artifact) => ({ session, artifact }))
-    )
-    const owner = candidates.find((candidate) => candidate.artifact.id === artifactId)
+    const owner = await this.dependencies.sessions.findArtifact(artifactId)
     if (!owner?.artifact) {
       throw new TaskRunnerError('artifact_not_found', `Artifact not found: ${artifactId}`)
     }
@@ -2985,9 +2989,7 @@ class TaskRunner {
   }
 
   private async findSession(sessionId: string): Promise<PersistedChatSession> {
-    const session = (await this.dependencies.sessions.list()).find(
-      (candidate) => candidate.id === sessionId
-    )
+    const session = await this.dependencies.sessions.find(sessionId)
     if (!session) throw new TaskRunnerError('session_not_found', `Session not found: ${sessionId}`)
     return session
   }

@@ -20,7 +20,10 @@ import type {
   UpdateSessionConfigurationRequest
 } from '../../shared/session-configuration'
 import type { PersistedArtifact } from '../../shared/session-message-contract'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type {
+  PersistedChatSession,
+  ListSessionSummariesResult
+} from '../../shared/session-persistence'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
 import type {
   AddCustomServerRequest,
@@ -119,6 +122,34 @@ class HeadlessTaskApi {
           ) as Promise<Project>
       },
       sessions: {
+        findArtifact: async (artifactId) => {
+          const candidates = this.ports.controls?.findArtifactSessions
+          if (!candidates) throw new Error('Task artifact lookup is unavailable.')
+          for (const candidate of await candidates(artifactId)) {
+            const session = (await this.invoke('sessions:load-one', candidate)) as
+              PersistedChatSession | undefined
+            const artifact = session?.artifacts?.find((item) => item.id === artifactId)
+            if (session && artifact) return { session, artifact }
+          }
+          return undefined
+        },
+        find: async (sessionId) => {
+          const catalog = (await this.invoke('sessions:list')) as ListSessionSummariesResult
+          let summary: { projectId: string } | undefined = catalog.sessions.find(
+            (session) => session.id === sessionId
+          )
+          if (!summary && catalog.diagnostics?.catalogHydrationPending) {
+            const findAfterHydration = this.ports.controls?.findSessionAfterCatalogHydration
+            if (!findAfterHydration)
+              throw new Error('Task session catalog recovery is unavailable.')
+            summary = await findAfterHydration(sessionId)
+          }
+          if (!summary) return undefined
+          return this.invoke('sessions:load-one', {
+            projectId: summary.projectId,
+            sessionId
+          }) as Promise<PersistedChatSession | undefined>
+        },
         list: async () => {
           const result = (await this.invoke('sessions:load-all')) as {
             sessions: PersistedChatSession[]

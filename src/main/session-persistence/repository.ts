@@ -1037,6 +1037,23 @@ class SessionRepository {
     })
   }
 
+  async findArtifactSessions(
+    artifactId: string,
+    ensureProjection: () => Promise<{ result?: LoadAllSessionsResult }>
+  ): Promise<Array<{ projectId: string; sessionId: string }>> {
+    const { result } = await ensureProjection()
+    if (result) {
+      // Recovery may return readable authority while the index is incomplete. Reuse the
+      // sessions it already loaded, including legacy attachments keyed by Version id.
+      return result.sessions
+        .filter((session) => session.artifacts?.some((artifact) => artifact.id === artifactId))
+        .map(({ id: sessionId, projectId }) => ({ projectId, sessionId }))
+    }
+    return this.operationScheduler.runGlobal(() =>
+      this.projection!.findArtifactSessions(artifactId)
+    )
+  }
+
   async loadSessionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
     if (!this.projection || !(await this.projection.isReady())) {
       throw new Error('Session projection is not ready.')

@@ -30,6 +30,7 @@ import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
 import { createManagedPreviewProtocolHandler } from '../managed-preview-protocol'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
+import { SessionProjectionRepository } from '../session-persistence/projection'
 import { SessionRepository } from '../session-persistence/repository'
 import { startWebHttpServer } from './http-server'
 import { HeadlessTaskApi } from './task-api'
@@ -45,7 +46,9 @@ it.each(['historical', 'native'] as const)(
   async (identity) => {
     const fixture = await createProvenanceTestFixture()
     initDataRoot(fixture.storageRoot)
-    const sessions = new SessionRepository(fixture.storageRoot)
+    const projection = new SessionProjectionRepository(async () => fixture.client)
+    const sessions = new SessionRepository(fixture.storageRoot, {}, projection)
+    const writer = identity === 'historical' ? new SessionRepository(fixture.storageRoot) : sessions
     const messages: PersistedChatSession['messages'] = [
       {
         id: 'prompt-1',
@@ -102,6 +105,7 @@ it.each(['historical', 'native'] as const)(
     })
     const owners = createManagedPreviewOwnerRegistry(resources)
     const acquiredIds: string[] = []
+    const openedSessionIds: string[] = []
     const router = createApplicationCommandRouter()
     const installation = registerDataContentApplicationCommands(router.registrar, {
       managedFileVersions: createManagedFileVersionHandlers(versions, {
@@ -113,7 +117,12 @@ it.each(['historical', 'native'] as const)(
         commandNames: () => [],
         invoke: async (name, invocation) => {
           const { args, callerLease } = invocation
-          if (name === 'sessions:load-all') return sessions.loadAll()
+          if (name === 'sessions:list') return { sessions: await projection.list() }
+          if (name === 'sessions:load-one') {
+            const { projectId, sessionId } = args[0] as { projectId: string; sessionId: string }
+            openedSessionIds.push(sessionId)
+            return sessions.loadSession(projectId, sessionId)
+          }
           if (name === 'artifacts:resolve-version-descriptors') {
             return provenance.resolveVersionDescriptors(
               args[0] as ResolveArtifactVersionDescriptorsRequest
@@ -140,7 +149,14 @@ it.each(['historical', 'native'] as const)(
           throw new Error(`Unexpected download command: ${name}`)
         }
       },
-      agent: {} as never
+      agent: {} as never,
+      controls: {
+        specialists: { resolve: async (id) => ({ id }) },
+        findArtifactSessions: (id) =>
+          sessions.findArtifactSessions(id, () =>
+            sessions.ensureSessionProjection(() => sessions.loadAll())
+          )
+      }
     })
     // Capability resolution, verified file handles,
     // protocol streaming, HTTP and the public client execute their production implementations.
@@ -148,7 +164,7 @@ it.each(['historical', 'native'] as const)(
     let server: Awaited<ReturnType<typeof startWebHttpServer>> | undefined
     try {
       await fixture.client.project.create({ data: { id: 'project-1', name: 'Download fixture' } })
-      await sessions.saveSession(session)
+      await writer.saveSession(session)
       const content = '# Synthetic report\n\nExact immutable bytes.\n'
       const context = {
         rootFrameId: conversationGraph.rootFrameId,
@@ -187,7 +203,7 @@ it.each(['historical', 'native'] as const)(
       await provenance.activateFinalizedRun(finalization)
       // Reproduce the old Task projection: the row id is a Version id, but native identity
       // fields were omitted. Persist and reload it rather than supplying an acquisition stub.
-      session = await sessions.saveSession({
+      session = await writer.saveSession({
         ...session,
         artifacts: [
           {
@@ -233,6 +249,45 @@ it.each(['historical', 'native'] as const)(
       await provenance.activateFinalizedRun(newerFinalization)
       expect(newer.artifactId).toBe(version.artifactId)
       expect(await readFile(version.path, 'utf8')).toBe(content)
+      if (identity === 'native') {
+        // Every distractor has an attachment and sorts ahead of the target.
+        for (let index = 0; index < 231; index++) {
+          await sessions.saveSession({
+            id: `other-${index}`,
+            projectId: session.projectId,
+            title: 'Unrelated session',
+            cwd: session.cwd,
+            status: 'idle',
+            messages: [],
+            artifacts: [{ id: `other-artifact-${index}`, kind: 'managed-file', path: 'other.csv' }],
+            createdAt: 3,
+            updatedAt: session.updatedAt + index + 1
+          })
+        }
+        expect(await projection.list()).toHaveLength(232)
+        expect((await projection.list()).every(({ artifactCount }) => artifactCount === 1)).toBe(
+          true
+        )
+      }
+      if (identity === 'historical') {
+        expect(await projection.findArtifactSessions(version.id)).toEqual([])
+        // An interrupted recovery may expose readable JSON before the complete index can commit.
+        const authority = await writer.loadAll()
+        await expect(
+          sessions.findArtifactSessions(version.id, () =>
+            sessions.ensureSessionProjection(async () => ({
+              ...authority,
+              diagnostics: { isComplete: false, warnings: [] }
+            }))
+          )
+        ).resolves.toEqual([{ projectId: session.projectId, sessionId: session.id }])
+        expect(await projection.isReady()).toBe(false)
+      }
+      await sessions.ensureSessionProjection(() => sessions.loadAll())
+      expect(await projection.findArtifactSessions(version.id)).toEqual([
+        { projectId: session.projectId, sessionId: session.id }
+      ])
+      const loadAll = vi.spyOn(sessions, 'loadAll')
       const emptyCommands = { commandNames: () => [], invoke: async () => undefined }
       let pairedCurrent = true
       let revokeOnOpen = false
@@ -283,6 +338,7 @@ it.each(['historical', 'native'] as const)(
         status: 404,
         code: 'artifact_not_found'
       })
+      expect(openedSessionIds).toEqual([])
       const listed = await client.listArtifacts(session.id)
       expect(listed).toHaveLength(1)
       expect(listed[0].id).toBe(version.versionId)
@@ -294,7 +350,10 @@ it.each(['historical', 'native'] as const)(
         status: 200,
         body: content
       })
+      openedSessionIds.length = 0
       const response = await client.downloadArtifact(listed[0].id)
+      expect(openedSessionIds).toEqual([session.id])
+      expect(loadAll).not.toHaveBeenCalled()
       const bytes = Buffer.from(await response.arrayBuffer())
       expect(bytes.toString()).toBe(content)
       expect(createHash('sha256').update(bytes).digest('hex')).toBe(version.checksum)

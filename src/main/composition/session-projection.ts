@@ -97,6 +97,7 @@ export function composeSessionProjection({
     recoveredSessions?: PersistedChatSession[]
     sessions: SessionSummary[]
   }>
+  findSessionAfterCatalogHydration: (sessionId: string) => Promise<SessionSummary | undefined>
   sessionPersistenceBackend: ReturnType<typeof coordinateSessionPersistenceWithProjectDeletions>
 } {
   const log = createLogger('session-network-approval')
@@ -257,6 +258,16 @@ export function composeSessionProjection({
       }
     )
     return startupProjection
+  }
+  const findSessionAfterCatalogHydration = async (
+    sessionId: string
+  ): Promise<SessionSummary | undefined> => {
+    // Share the initial build if it is still running. If it settled after a partial read,
+    // consult the current authority rather than relying on the retained startup snapshot.
+    const catalog = await (startupProjectionSettled
+      ? ensureSessionProjection()
+      : beginStartupProjection())
+    return catalog.sessions.find((session) => session.id === sessionId)
   }
   const listSessionProjection = async (): Promise<{
     projection: SessionProjectionLoad
@@ -546,6 +557,7 @@ export function composeSessionProjection({
     beginStartupProjection,
     createDeferredRecovery,
     ensureSessionProjection,
+    findSessionAfterCatalogHydration,
     sessionPersistenceBackend
   }
 }
