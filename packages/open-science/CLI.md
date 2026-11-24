@@ -76,6 +76,36 @@ not require a separate Node.js installation.
 If the launcher directory is not yet on PATH, the Settings panel shows the line to add. Open a new
 terminal after updating PATH. Choose **Uninstall command** in the same panel to remove the launcher.
 
+### External-agent terminal flow
+
+An external agent can complete a package hand-off from a terminal after the standalone npm install:
+
+```bash
+npm install --global @aipoch/open-science
+open-science init
+open-science start --no-open
+open-science session import /absolute/path/to/research.science \
+  --new-project "Imported research" --non-interactive --json
+open-science url
+```
+
+Give the user the URL printed by `open-science url`. It contains the local authentication token and
+must be treated as private. The import command validates the `.science` package and creates a
+read-only imported Session before the URL is returned. A writable continuation requires
+`open-science session fork` after import.
+
+WinGet installs the desktop application. It does not install the `open-science` command on PATH by
+default. After the installation completes, run
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+open **Settings > General > Command line tool > Install command**, open a new terminal, and run the
+same `init`, `start`, `session import`, and `url` commands. If the desktop app is already installed,
+the WinGet command reports that no newer version is available and leaves the existing installation
+in place.
+
 ### From a source checkout
 
 Replace `open-science` in the examples below with:
