@@ -207,8 +207,14 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Main-only initial connection preparation changes no tool schemas, handlers or Auto dispositions.
         // Reviewed: default runtime advice and no-retry guidance for declines and stops only change
         // tool text. RPC dispatch, input schemas and Auto authorization remain unchanged.
+        // Reviewed: terminal status and diagnostics are projected after RPC dispatch. Background
+        // query and cancel still require the registered action and its validated Run identity.
+        // The read-only state request limits history to the ten runs its response can display.
+        // Directory discovery publishes its existing result fields using the MCP default dialect.
+        // Output paging reads one persisted Run through the existing session-scoped state route.
+        // Paging and handoff extraction project results only; no Auto operation branch changed.
         'notebook/mcp-server.ts':
-          'b73ee43c7d0915c717590aff6b16d08874208c3128413f59d3bcb3fc42acd465',
+          '246821c41c360ed03b33b39d42dd5600d2339edc245814f1acb4949b052b187e',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
