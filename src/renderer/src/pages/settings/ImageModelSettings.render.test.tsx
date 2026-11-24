@@ -169,6 +169,7 @@ it('announces a committed selection, clears stale success on failure and confirm
   await screen.findByRole('alert')
   expect(screen.queryByRole('status')).toBeNull()
   expect(select.textContent).toContain('Local images')
+  expect(select.querySelector('svg.lucide-circle-plus')).not.toBeNull()
   save.mockResolvedValueOnce(configured)
   fireEvent.pointerDown(select, { button: 0, pointerType: 'mouse', ctrlKey: false })
   fireEvent.click(await screen.findByRole('option', { name: 'Not configured' }))

@@ -74,6 +74,13 @@ const presetLabels: Record<ImageModelPresetId, string> = {
   'seedream/5.5': 'Seedream 5.5'
 }
 
+const imageServiceVendorId = (
+  service: ImageServiceConfiguration | undefined,
+  snapshot: ImageModelSettingsSnapshot
+): ImageVendorId | undefined =>
+  service?.vendorId ??
+  snapshot.availableProviders.find((account) => account.id === service?.providerId)?.vendorId
+
 export const ImageModelSelector = ({
   state,
   onManage
@@ -99,19 +106,24 @@ export const ImageModelSelector = ({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="none">{t('Not configured')}</SelectItem>
-            {snapshot?.services.flatMap((service) =>
-              service.models.map((model) => (
+            {snapshot?.services.flatMap((service) => {
+              const vendorId = imageServiceVendorId(service, snapshot)
+              const iconKey = vendorId ? `official:${vendorId}` : 'custom'
+              return service.models.map((model) => (
                 <SelectItem
                   key={`${service.id}:${model.id}`}
                   disabled={!service.configured}
                   value={JSON.stringify({ serviceId: service.id, modelId: model.id })}
                 >
-                  <span className="truncate">
-                    {service.name} · {model.label ?? model.wireModelId}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <ProviderKindIcon kindKey={iconKey} className="size-4" />
+                    <span className="truncate">
+                      {service.name} · {model.label ?? model.wireModelId}
+                    </span>
                   </span>
                 </SelectItem>
               ))
-            )}
+            })}
           </SelectContent>
         </Select>
         <Button variant="outline" onClick={onManage}>
@@ -297,10 +309,7 @@ export const ImageServicesPanel = ({
           ) : (
             <ul className="space-y-2">
               {snapshot.services.map((service) => {
-                const vendorId =
-                  service.vendorId ??
-                  snapshot.availableProviders.find((account) => account.id === service.providerId)
-                    ?.vendorId
+                const vendorId = imageServiceVendorId(service, snapshot)
                 const models = service.models
                   .map((model) => model.label ?? model.wireModelId)
                   .join(' · ')
@@ -410,10 +419,7 @@ const ImageServiceEditor = ({
   const [id] = useState(() => service?.id ?? crypto.randomUUID())
   const [name, setName] = useState(service?.name ?? '')
   const [vendorId, setVendorId] = useState<ImageVendorId | 'custom'>(
-    service?.vendorId ??
-      snapshot.availableProviders.find((entry) => entry.id === service?.providerId)?.vendorId ??
-      initialVendorId ??
-      'custom'
+    imageServiceVendorId(service, snapshot) ?? initialVendorId ?? 'custom'
   )
   const vendor = IMAGE_VENDOR_CATALOG.find((entry) => entry.id === vendorId)
   const accounts = snapshot.availableProviders.filter((entry) => entry.vendorId === vendorId)
