@@ -2335,13 +2335,15 @@ const CLI_UNINSTALL_MODE = '--uninstall-cli'
 const runCliInstallerMode = async (
   mode: typeof CLI_INSTALL_MODE | typeof CLI_UNINSTALL_MODE
 ): Promise<void> => {
-  await app.whenReady()
   const configRoot = resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
   const profilePath = resolveElectronProfile({
     appData: app.getPath('appData'),
     configRoot,
     packaged: app.isPackaged
   })
+  app.setPath('userData', profilePath)
+  app.setPath('sessionData', profilePath)
+  await app.whenReady()
   const backendPaths = desktopBackendPaths({
     applicationPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,

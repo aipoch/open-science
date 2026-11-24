@@ -38,7 +38,8 @@
     ClearErrors
     ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --uninstall-cli' $R0
     ${if} $R0 != 0
-      DetailPrint "Open-Science CLI launcher cleanup returned $R0; unmanaged files were preserved."
+      DetailPrint "Open-Science CLI launcher cleanup returned $R0; the uninstall will be retried."
+      Abort
     ${endif}
   ${endif}
   # Cleanup can fail after removing some program files. Keep retry's lifecycle helper in the
