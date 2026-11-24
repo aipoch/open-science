@@ -79,7 +79,7 @@ async function fixture(): Promise<{
     >
   }
   service: LiteratureSynthesisService
-  create(): Promise<SynthesisNote>
+  create(title?: string): Promise<SynthesisNote>
   setSource(value: SynthesisCandidate | undefined): void
 }> {
   const root = await mkdtemp(join(tmpdir(), 'literature-synthesis-'))
