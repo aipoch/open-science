@@ -232,7 +232,14 @@ test('reviews a pending MCP export in Desktop and publishes the exact candidate'
   await client.connect(
     new StdioClientTransport({
       command: process.execPath,
-      args: [resolve('packages/open-science/cli.mjs'), 'mcp', '--profile', profile],
+      args: [
+        resolve('packages/open-science/cli.mjs'),
+        'mcp',
+        '--group',
+        'core',
+        '--profile',
+        profile
+      ],
       stderr: 'pipe'
     })
   )
