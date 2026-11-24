@@ -568,9 +568,10 @@ const WorkspacePage = ({
       activeSessionHasSendPreparation ||
       activeSessionSaveAsSkillPending
     : false
+  const importedSession = !!activeSession && isImportedSession(activeSession)
   const canEditDraft =
     isSessionPersistenceReady &&
-    !activeSession?.packageOrigin &&
+    !importedSession &&
     !activeSessionHasSendPreparation &&
     activeSession?.status !== 'waiting-plan-approval'
   const recoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
@@ -582,7 +583,7 @@ const WorkspacePage = ({
     canEditDraft ||
     (hadPersistenceReady &&
       recoveryPhase !== 'connected' &&
-      !activeSession?.packageOrigin &&
+      !importedSession &&
       !activeSessionHasSendPreparation &&
       activeSession?.status !== 'waiting-plan-approval')
   const composerHistoryPolicy = useMemo(

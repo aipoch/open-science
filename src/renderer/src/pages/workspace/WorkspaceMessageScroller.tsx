@@ -961,7 +961,9 @@ const WorkspaceMessageScrollerImpl = ({
     conversationItems,
     presentationBarrierIndex,
     messageScrollerViewportRef,
-    followingPaused
+    followingPaused,
+    // Imported rows can each mount Markdown, review controls and multiple artifact previews.
+    activeSession?.packageOrigin ? 8 : undefined
   )
   // A newly mounted prompt anchor would pull a reader out of history on send.
   const skipScrollAnchorOnMount =
