@@ -213,13 +213,13 @@ describe('session persistence repository (per-session files)', () => {
     expect(scan).toHaveBeenCalledOnce()
   })
 
-  it('defers repeated locator rebuild attempts after an incomplete identity scan', async () => {
+  it('retries locator reconstruction after an incomplete identity scan', async () => {
     const root = await createStorageRoot()
     await new SessionRepository(root).saveSession(createSession())
     await writeFile(join(root, 'sessions', 'session-locator.json'), '{broken', 'utf8')
 
     const reopened = new SessionRepository(root)
-    const scan = vi.spyOn(reopened, 'scanSessionIdentities').mockResolvedValue({
+    const scan = vi.spyOn(reopened, 'scanSessionIdentities').mockResolvedValueOnce({
       sessions: [],
       isComplete: false,
       generation: 0
@@ -228,10 +228,27 @@ describe('session persistence repository (per-session files)', () => {
     await expect(reopened.locateSession('session-1')).rejects.toThrow(
       'complete Session identity scan'
     )
-    await expect(reopened.locateSession('session-1')).rejects.toThrow(
-      'already deferred after an incomplete attempt'
+    await expect(reopened.locateSession('session-1')).resolves.toMatchObject({
+      sessionId: 'session-1'
+    })
+    expect(scan).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains every locator when different projects save concurrently', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    await repository.saveSession(createSession())
+    await repository.locateSession('absent')
+    const ids = ['one', 'two', 'three', 'four']
+    await Promise.all(
+      ids.map((id) => repository.saveSession(createSession({ id, projectId: 'project-' + id })))
     )
-    expect(scan).toHaveBeenCalledOnce()
+    const locator = JSON.parse(
+      await readFile(join(root, 'sessions', 'session-locator.json'), 'utf8')
+    )
+    expect(locator.entries.map((entry: { sessionId: string }) => entry.sessionId)).toEqual(
+      expect.arrayContaining(ids)
+    )
   })
 
   it('updates and removes locator entries as Session ownership changes', async () => {

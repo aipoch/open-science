@@ -134,14 +134,17 @@ accepts only JSON and help options, and `help` accepts only one optional command
 MCP startup diagnostics never use stdout because MCP stdout is reserved for JSON-RPC. If the
 installed package is missing the MCP SDK, `open-science mcp` writes a structured diagnostic to
 stderr and `doctor --json` returns the same `mcp_dependency_missing` code. An external Agent can
-show that action to the user and, after explicit authorization, repair an npm installation:
+show that action to the user and, after explicit authorization, repair a global npm installation:
 
 ```bash
 open-science doctor --profile /absolute/path/to/profile --json
 open-science repair mcp --profile /absolute/path/to/profile --json
 ```
 
-The repair command uses the official complete distribution for the detected installation. npm
+For a project dependency, reinstall the package in the owning project. For an npx entry, recreate
+its cached installation and reconnect the client.
+
+The repair command uses the official complete distribution for the detected installation. Global npm
 installations use the complete npm distribution with optional dependencies; desktop installations
 use the existing official desktop updater; standalone archives download and verify a complete
 compatible Release archive before extracting it beside the old directory. It never adds a package

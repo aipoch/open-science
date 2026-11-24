@@ -152,7 +152,11 @@ export const runResearchMcpServer = async ({ configRoot, version, startService, 
     heartbeat.unref?.()
     await registration.setState('connected')
   }
-  const serviceRoot = () => (startup ??= startService(lifetime.signal))
+  const serviceRoot = () =>
+    (startup ??= startService(lifetime.signal).catch((error) => {
+      startup = undefined
+      throw error
+    }))
   const ensureReady = () => {
     if (!ready) {
       // An explicit profile is enough to register this MCP process. Do not wait for backend
@@ -185,7 +189,6 @@ export const runResearchMcpServer = async ({ configRoot, version, startService, 
       } catch {
         signal.throwIfAborted()
         // A later call may retry startup. No business operation has been submitted yet.
-        if (startup === attempt) startup = undefined
         throw new OpenScienceApiError('Could not confirm startup.', { code: 'startup_unconfirmed' })
       } finally {
         listener[Symbol.dispose]()

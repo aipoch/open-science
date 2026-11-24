@@ -64,6 +64,34 @@ async function connectMcp(
   return client
 }
 
+it('retries a failed background startup on the same profile-less grouped connection', async () => {
+  const profile = await mkdtemp(join(tmpdir(), 'osci-group-retry-'))
+  cleanup.push(() => rm(profile, { recursive: true, force: true }))
+  const client = new Client({ name: 'retry-client', version: '1' })
+  cleanup.push(() => client.close())
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [
+        '--input-type=module',
+        '-e',
+        `
+      import { runResearchMcpServer } from './packages/open-science/mcp.mjs'
+      let starts = 0
+      await runResearchMcpServer({ version: '1', group: 'core', startService: async () => {
+        if (++starts === 1) throw new Error('transient startup failure')
+        return ${JSON.stringify(profile)}
+      } })
+    `
+      ],
+      stderr: 'pipe'
+    })
+  )
+  const result = await client.callTool({ name: 'list_capabilities', arguments: {} })
+  expect(result.isError).not.toBe(true)
+  expect(result.structuredContent).toHaveProperty('result')
+})
+
 it('exposes filtered tools through each real stdio MCP group', async () => {
   const agent = await resourceAgents(() => undefined)
   const clients = await Promise.all(

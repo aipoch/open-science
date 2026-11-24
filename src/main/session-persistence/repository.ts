@@ -392,9 +392,8 @@ class SessionRepository {
   private suspendedProjectionCatalogMutation = false
   private readyIdentityCatalog: SessionIdentityCatalog | undefined
   private sessionLocator: SessionLocatorDocument | undefined
-  private sessionLocatorMissingEntryRebuild: Promise<SessionLocatorDocument> | undefined
+  private sessionLocatorTail: Promise<void> = Promise.resolve()
   private readonly sessionLocatorRemovedSessionIds = new Set<string>()
-  private sessionLocatorRebuildBlocked = false
   private projectionInitialization:
     | Promise<{
         result?: LoadAllSessionsResult
@@ -1378,8 +1377,22 @@ class SessionRepository {
       throw new Error('Cannot save a Session id that is already owned by another Project.')
   }
 
+  // Lookups can rebuild the same file that independent project writers maintain.
+  private withSessionLocator<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.sessionLocatorTail.then(operation)
+    this.sessionLocatorTail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+
   async locateSession(sessionIdValue: string): Promise<SessionLocation | undefined> {
     const sessionId = assertSafeSegment(sessionIdValue)
+    return this.withSessionLocator(() => this.locateSessionLocked(sessionId))
+  }
+
+  private async locateSessionLocked(sessionId: string): Promise<SessionLocation | undefined> {
     let locator = await this.ensureSessionLocator()
     let entry = locator.entries.find((candidate) => candidate.sessionId === sessionId)
     if (!entry && !this.sessionLocatorRemovedSessionIds.has(sessionId)) {
@@ -1390,9 +1403,8 @@ class SessionRepository {
         (await isSessionPackagePending(this.storageDir, ownership.projectIds[0]))
       )
         return undefined
-      const rebuild = (this.sessionLocatorMissingEntryRebuild ??=
-        this.rebuildSessionLocator('missing-entry'))
-      locator = await rebuild
+      if (ownership.isComplete && !ownership.projectIds.length) return undefined
+      locator = await this.rebuildSessionLocator('missing-entry')
       entry = locator.entries.find((candidate) => candidate.sessionId === sessionId)
     }
     if (!entry) return undefined
@@ -1474,10 +1486,6 @@ class SessionRepository {
   private async rebuildSessionLocator(
     reason: 'missing-or-invalid' | 'missing-entry' | 'stale'
   ): Promise<SessionLocatorDocument> {
-    if (this.sessionLocatorRebuildBlocked) {
-      throw new Error('Session locator rebuild is already deferred after an incomplete attempt.')
-    }
-    this.sessionLocatorRebuildBlocked = true
     try {
       const scan = await this.scanSessionIdentities()
       if (!scan.isComplete) {
@@ -1495,7 +1503,6 @@ class SessionRepository {
       }
       await this.atomicWrite(this.sessionLocatorPath, document)
       this.sessionLocator = document
-      this.sessionLocatorRebuildBlocked = false
       try {
         createLogger('session-persistence').info('Session locator rebuilt', {
           operation: 'session-locator-rebuild',
@@ -1524,39 +1531,47 @@ class SessionRepository {
   private async maintainSessionLocator(
     operation: (document: SessionLocatorDocument) => SessionLocatorDocument
   ): Promise<void> {
-    try {
-      const next = operation(await this.ensureSessionLocator())
-      await this.atomicWrite(this.sessionLocatorPath, next)
-      this.sessionLocator = next
-    } catch (error) {
-      this.sessionLocator = undefined
+    await this.withSessionLocator(async () => {
       try {
-        createLogger('session-persistence').warn('Session locator maintenance degraded', {
-          operation: 'session-locator-maintenance',
-          outcome: 'degraded',
-          ...diagnosticErrorFields(error)
-        })
-      } catch {
-        // Diagnostics must not affect Session authority.
+        const current = await this.ensureSessionLocator()
+        const next = operation(current)
+        if (current === next) return
+        await this.atomicWrite(this.sessionLocatorPath, next)
+        this.sessionLocator = next
+      } catch (error) {
+        this.sessionLocator = undefined
+        try {
+          createLogger('session-persistence').warn('Session locator maintenance degraded', {
+            operation: 'session-locator-maintenance',
+            outcome: 'degraded',
+            ...diagnosticErrorFields(error)
+          })
+        } catch {
+          // Diagnostics must not affect Session authority.
+        }
       }
-    }
+    })
   }
 
   private async upsertSessionLocator(
     session: Pick<PersistedChatSession, 'id' | 'projectId'>
   ): Promise<void> {
     this.sessionLocatorRemovedSessionIds.delete(session.id)
-    await this.maintainSessionLocator((document) => ({
-      version: 1,
-      entries: [
-        ...document.entries.filter((entry) => entry.sessionId !== session.id),
-        {
-          sessionId: session.id,
-          projectId: session.projectId,
-          storagePath: this.sessionStoragePath(session.projectId, session.id)
-        }
-      ].sort((left, right) => left.sessionId.localeCompare(right.sessionId))
-    }))
+    await this.maintainSessionLocator((document) => {
+      const existing = document.entries.find((entry) => entry.sessionId === session.id)
+      if (existing?.projectId === session.projectId) return document
+      return {
+        version: 1,
+        entries: [
+          ...document.entries.filter((entry) => entry.sessionId !== session.id),
+          {
+            sessionId: session.id,
+            projectId: session.projectId,
+            storagePath: this.sessionStoragePath(session.projectId, session.id)
+          }
+        ].sort((left, right) => left.sessionId.localeCompare(right.sessionId))
+      }
+    })
   }
 
   private async removeSessionLocator(sessionId: string): Promise<void> {

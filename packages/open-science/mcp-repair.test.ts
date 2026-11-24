@@ -73,6 +73,28 @@ describe('MCP dependency diagnostic', () => {
 })
 
 describe('npm MCP repair', () => {
+  it('keeps the global installation untouched for a local or npx CLI', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'osci-npx-repair-'))
+    roots.push(root)
+    const globalRoot = join(root, 'global', 'node_modules')
+    const local = join(root, 'cache', 'node_modules', '@aipoch', 'open-science')
+    await mkdir(globalRoot, { recursive: true })
+    await mkdir(local, { recursive: true })
+    await writeFile(
+      join(local, 'package.json'),
+      JSON.stringify({ name: '@aipoch/open-science', version: '1.3.2' })
+    )
+    const exec = vi.fn().mockResolvedValue({ stdout: globalRoot })
+    const result = await repairNpmMcp({
+      cliPath: join(local, 'cli.mjs'),
+      profile: root,
+      exec,
+      checkDependency: async () => ({ available: false })
+    })
+    expect(result.error?.code).toBe('mcp_repair_unsupported_installation')
+    expect(exec).toHaveBeenCalledOnce()
+    expect(exec.mock.calls[0][1].slice(-2)).toEqual(['root', '--global'])
+  })
   it('upgrades the complete npm distribution and verifies the dependency afterward', async () => {
     const root = await mkdtemp(join(tmpdir(), 'osci-mcp-repair-'))
     roots.push(root)
@@ -87,7 +109,7 @@ describe('npm MCP repair', () => {
       JSON.stringify({ name: '@aipoch/open-science', version: '1.3.2' })
     )
     const cliPath = join(packageRoot, 'cli.mjs')
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = vi.fn().mockResolvedValue({ stdout: join(root, 'node_modules'), stderr: '' })
     const verifyMcp = vi.fn().mockResolvedValue({ initialize: true, toolsList: true, toolCount: 1 })
     let available = false
     const result = await repairNpmMcp({
@@ -112,8 +134,14 @@ describe('npm MCP repair', () => {
       arch: 'x64'
     })
     expect(exec).toHaveBeenCalledWith(
-      expect.stringMatching(/npm(?:\.cmd)?$/),
-      ['install', '--global', '@aipoch/open-science@latest', '--include=optional'],
+      process.execPath,
+      [
+        join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        'install',
+        '--global',
+        '@aipoch/open-science@latest',
+        '--include=optional'
+      ],
       expect.objectContaining({ cwd: dirname(dirname(dirname(packageRoot))) })
     )
     expect(verifyMcp).toHaveBeenCalledOnce()

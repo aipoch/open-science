@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFile, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { basename, dirname, join, normalize, posix, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -446,10 +446,30 @@ export const repairNpmMcp = async ({
     }
   }
   try {
+    const command = platform === 'win32' ? process.execPath : 'npm'
+    const npmArgs =
+      platform === 'win32'
+        ? [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+        : []
+    const options = { cwd: installation.prefix, windowsHide: true }
+    const { stdout } = await exec(command, [...npmArgs, 'root', '--global'], options)
+    const currentRoot = await realpath(dirname(dirname(installation.packageRoot)))
+    const globalRoot = await realpath(stdout.trim()).catch(() => undefined)
+    if (currentRoot !== globalRoot) {
+      return repairFailure({
+        profile,
+        installation: 'npm',
+        platform,
+        arch,
+        code: 'mcp_repair_unsupported_installation',
+        message:
+          'This CLI belongs to a project or npx cache. Reinstall it in that project or recreate the npx installation, then reconnect the MCP client.'
+      })
+    }
     await exec(
-      platform === 'win32' ? 'npm.cmd' : 'npm',
-      ['install', '--global', '@aipoch/open-science@latest', '--include=optional'],
-      { cwd: installation.prefix, windowsHide: true }
+      command,
+      [...npmArgs, 'install', '--global', '@aipoch/open-science@latest', '--include=optional'],
+      options
     )
   } catch {
     return {
