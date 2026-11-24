@@ -274,6 +274,10 @@ describe('packaged database migration ledger smoke', () => {
       {
         id: '0060_image_models',
         checksum: '549a15be3440345a2278522be0928cf3d0652e1e0eacb5c373ac32b91421a035'
+      },
+      {
+        id: '0061_version_cleanup',
+        checksum: '124273d1af52c4aca3d66f50ec6b353d314337ed46a2ba50f24bb84e92de6752'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
