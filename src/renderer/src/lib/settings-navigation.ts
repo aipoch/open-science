@@ -1,3 +1,4 @@
+import type { ImageVendorId } from '../../../shared/image-model-settings'
 import type { ComputeAccountProvider } from '../../../shared/compute-accounts'
 import type {
   EnvironmentCheckId,
@@ -118,7 +119,7 @@ export type SpecialistMarketplaceView =
 
 export type ImageServicesView =
   | { kind: 'image-services' }
-  | { kind: 'image-service-create' }
+  | { kind: 'image-service-create'; vendorId?: ImageVendorId | 'custom' }
   | { kind: 'image-service-edit'; serviceId: string }
 
 export type ClassificationView =
