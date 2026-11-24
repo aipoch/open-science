@@ -120,7 +120,15 @@ export const resolveNativeMathAccents = (objects) => {
       accentIndex: accent.i,
       baseIndex: base.i,
       label,
-      labels: [label, leading],
+      // A fused equality can put the raised mark after the whole run in reader order.
+      labels:
+        mark === '˜' &&
+        accent.i + 1 === base.i &&
+        accent.fontName === base.fontName &&
+        accent.size === base.size &&
+        /^\p{Script=Greek}\s*=$/u.test(base.text.trim())
+          ? [label, leading, base.text.trim() + mark]
+          : [label, leading],
       bounds: [
         Math.min(left, base.bounds[0]),
         Math.min(bottom, base.bounds[1]),

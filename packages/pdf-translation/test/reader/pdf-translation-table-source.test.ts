@@ -2018,69 +2018,77 @@ describe('cached PDF table source ownership', () => {
     expect(f.extraction.source.units[0].sourceOnly).toBeUndefined()
   })
 
-  it('preserves native plot marks while keeping identical text in ordinary fonts eligible', async () => {
-    const units = (
-      [
-        ['ll', 0.12],
-        ['ll', 0.2],
-        ['Samples', 0.3],
-        ['ll', 0.81]
-      ] as const
-    ).map(([source, x], index) => ({
-      id: `label-${index}`,
-      source,
-      fragments: [
-        {
-          pageNumber: 1,
-          rect: { x, y: 0.15, width: 0.06, height: 0.03 },
-          items: [{ index, text: source }]
-        }
-      ]
-    }))
-    const extraction = {
-      source: createPdfTranslationSource({
-        resourceRequestKey: 'plot',
-        fingerprint: 'plot',
-        pages: [{ width: 100, height: 100 }],
-        units
+  it.each([
+    { marker: 'll', name: 'ZapfDingbats', missingFile: true },
+    { marker: '❤t ①', name: 'ABCDEF+LCIRCLEW10', missingFile: false },
+    { marker: '✒', name: 'ABCDEF+LINEW10', missingFile: false },
+    { marker: '0\u0004', name: 'Type3', missingFile: false }
+  ])(
+    'preserves native plot marks from $name inside their verified figure',
+    async ({ marker, name, missingFile }) => {
+      const units = (
+        [
+          [marker, 0.12],
+          [marker, 0.2],
+          ['Samples', 0.3],
+          [marker, 0.81]
+        ] as const
+      ).map(([source, x], index) => ({
+        id: `label-${index}`,
+        source,
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x, y: 0.15, width: 0.06, height: 0.03 },
+            items: [{ index, text: source }]
+          }
+        ]
+      }))
+      const extraction = {
+        source: createPdfTranslationSource({
+          resourceRequestKey: 'plot',
+          fingerprint: 'plot',
+          pages: [{ width: 100, height: 100 }],
+          units
+        })
+      }
+      const page = {
+        commonObjs: {
+          has: (): boolean => true,
+          get: (fontId: string): { name: string; missingFile: boolean; isType3Font: boolean } =>
+            fontId === 'marker'
+              ? { name, missingFile, isType3Font: name === 'Type3' }
+              : { name: 'Helvetica', missingFile: false, isType3Font: false }
+        },
+        getTextContent: async () => ({
+          items: units.map((unit, index) => ({
+            str: unit.source,
+            fontName: index === 0 || index === 3 ? 'marker' : 'body'
+          })),
+          styles: { marker: {}, body: {} }
+        }),
+        getViewport: () => ({ width: 100, height: 100, transform: [1, 0, 0, 1, 0, 0] }),
+        getOperatorList: async () => ({
+          fnArray: [OPS.transform, OPS.paintImageXObject],
+          argsArray: [[45, 0, 0, 32, 10, 10], ['image']]
+        }),
+        cleanup: () => {}
+      }
+      const prepared = await preservePdfFigureSources({
+        extraction,
+        document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+        operators: OPS,
+        signal: new AbortController().signal,
+        skipTranslation: false
       })
+      expect(prepared.source.units).toEqual([
+        { ...units[0], figure: true, sourceOnly: true, preserve: 'literal' },
+        { ...units[1], figure: true },
+        { ...units[2], figure: true },
+        units[3]
+      ])
     }
-    const page = {
-      commonObjs: {
-        has: (): boolean => true,
-        get: (name: string): { name: string; missingFile: boolean } =>
-          name === 'marker'
-            ? { name: 'ZapfDingbats', missingFile: true }
-            : { name: 'Helvetica', missingFile: false }
-      },
-      getTextContent: async () => ({
-        items: units.map((unit, index) => ({
-          str: unit.source,
-          fontName: index === 0 || index === 3 ? 'marker' : 'body'
-        })),
-        styles: { marker: {}, body: {} }
-      }),
-      getViewport: () => ({ width: 100, height: 100, transform: [1, 0, 0, 1, 0, 0] }),
-      getOperatorList: async () => ({
-        fnArray: [OPS.transform, OPS.paintImageXObject],
-        argsArray: [[45, 0, 0, 32, 10, 10], ['image']]
-      }),
-      cleanup: () => {}
-    }
-    const prepared = await preservePdfFigureSources({
-      extraction,
-      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
-      operators: OPS,
-      signal: new AbortController().signal,
-      skipTranslation: false
-    })
-    expect(prepared.source.units).toEqual([
-      { ...units[0], figure: true, sourceOnly: true, preserve: 'literal' },
-      { ...units[1], figure: true },
-      { ...units[2], figure: true },
-      units[3]
-    ])
-  })
+  )
 
   it.each([false, true])(
     'keeps independent acronym legend rows with their unique swatches (%s)',

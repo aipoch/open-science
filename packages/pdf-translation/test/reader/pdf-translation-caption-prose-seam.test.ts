@@ -60,3 +60,68 @@ it.each([true, false])(
     )
   }
 )
+
+it.each(['matched', 'wrong panel', 'drifting rail', 'different typeface'])(
+  'keeps the proved terminal panel text with its three-line caption (%s)',
+  (variant) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL: boolean,
+      fontName = 'caption',
+      size = 9
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: size,
+      dir: 'ltr',
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      transform: [size, 0, 0, size, x, y],
+      hasEOL
+    })
+    const items = [
+      row(
+        'Figure 1: (A) The top row shows paired model geometries with a shared reference scale; (B)',
+        54,
+        332,
+        417,
+        false
+      ),
+      row('Contours', 474, 332, 63, false, 'caption-emphasis'),
+      row('dis-', 541, 332, 18, true),
+      row(
+        'play the aligned edge colors of the expanded records (C) and the illustration of measured',
+        54,
+        321,
+        504,
+        true
+      ),
+      row(
+        variant === 'wrong panel' ? 'diffusion(E).' : 'diffusion(D).',
+        variant === 'drifting rail' ? 59 : 54,
+        310,
+        64,
+        false,
+        variant === 'different typeface' ? 'body' : 'caption'
+      ),
+      row('Abstract', 54, 291, 42, true, 'caption', 11),
+      row('The measurement uses a stable reference at', 54, 275, 207, true, 'body', 11),
+      row('the origin to limit the change of scale.', 54, 262, 190, true, 'body', 11)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const caption = units.find((unit) => unit.items.includes('1:0'))!
+    expect(caption.items.includes('1:4')).toBe(variant === 'matched')
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(items.map((_, i) => '1:' + i))
+    if (variant === 'matched') {
+      expect(caption.fragments).toHaveLength(1)
+      expect(caption.source.endsWith('measured diffusion(D).')).toBe(true)
+    }
+  }
+)

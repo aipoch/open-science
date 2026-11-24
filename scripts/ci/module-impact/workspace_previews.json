@@ -297,7 +297,11 @@
     "src/renderer/src/pages/workspace/image-edit/ImageEditFloatingTools.tsx",
     "src/renderer/src/pages/workspace/image-edit/ImageEditPending.tsx",
     "src/renderer/src/pages/workspace/image-edit/image-composer-bridge.tsx",
-    "src/renderer/src/pages/workspace/image-edit/image-composer-bridge.test.tsx"
+    "src/renderer/src/pages/workspace/image-edit/image-composer-bridge.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-link-verification.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-page-groups.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-recovery.ts",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-verification.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/previews/PreviewFallback.tsx",

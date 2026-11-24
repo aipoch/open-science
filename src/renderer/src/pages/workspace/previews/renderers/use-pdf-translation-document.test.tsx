@@ -3705,23 +3705,44 @@ it.each([
   await waitFor(() => expect(hook.result.current.state.status).toBe(change ? 'error' : 'ready'))
 })
 
-describe.each(['˜', 'ˆ'])('native leading accent %s', (accent) => {
-  it.each(['leading', 'shifted-mark', 'reversed-native-order', 'duplicate-base'])(
-    'keeps an exact leading spacing accent only for adjacent unchanged owned pairs: %s',
+describe.each([
+  { accent: '˜', base: 'q' },
+  { accent: 'ˆ', base: 'q' },
+  { accent: '˜', base: 'Γ =' }
+])('native $accent accent over $base', ({ accent, base }) => {
+  const fused = base.endsWith('='),
+    label = fused ? base + accent : accent + base
+  it.each([
+    'intact',
+    'shifted-mark',
+    'reversed-native-order',
+    'duplicate-base',
+    ...(fused ? ['changed-font'] : [])
+  ])(
+    'keeps an exact spacing accent only for adjacent unchanged owned pairs: %s',
     async (variant) => {
       const f = fixture(),
-        glyph = (str: string, x: number, y: number, width: number): typeof f.item => ({
+        glyph = (
+          str: string,
+          x: number,
+          y: number,
+          width: number
+        ): typeof f.item & { fontName: string } => ({
           str,
           width,
+          fontName: 'native',
           transform: [10, 0, 0, 10, x, y]
         }),
         original = [
           glyph('Value ', 60, 700, 30),
           glyph(accent, 100, 701.6, 5),
-          glyph('q', 100.2, 700, 4.7)
+          glyph(base, 100.2, 700, fused ? 17 : 4.7)
         ],
         movedMark = glyph(accent, variant === 'shifted-mark' ? 141 : 140, 701.6, 5),
-        movedBase = glyph('q', 140.2, 700, 4.7),
+        movedBase = {
+          ...glyph(base, 140.2, 700, fused ? 17 : 4.7),
+          fontName: variant === 'changed-font' ? 'different' : 'native'
+        },
         target = [
           glyph('数值 ', 60, 700, 25),
           ...(variant === 'reversed-native-order'
@@ -3734,7 +3755,7 @@ describe.each(['˜', 'ˆ'])('native leading accent %s', (accent) => {
           units: [
             {
               ...f.results.source.units[0],
-              source: `Value ${accent}q`,
+              source: `Value ${label}`,
               fragments: [
                 {
                   ...f.results.source.units[0].fragments[0],
@@ -3746,18 +3767,17 @@ describe.each(['˜', 'ˆ'])('native leading accent %s', (accent) => {
         }),
         results = {
           source,
-          units: [
-            { id: 'one', translationSource: `Value ${accent}q`, translation: `数值 ${accent}q` }
-          ]
+          units: [{ id: 'one', translationSource: `Value ${label}`, translation: `数值 ${label}` }]
         },
         artifact = { results, data: new Uint8Array([4, 5]) }
-      f.originalPage.getTextContent.mockResolvedValue({ items: original })
-      f.targetPage.getTextContent.mockResolvedValue({ items: target })
+      const styles = { native: { ascent: 0.85 }, different: { ascent: 0.8 } }
+      f.originalPage.getTextContent.mockImplementation(async () => ({ items: original, styles }))
+      f.targetPage.getTextContent.mockImplementation(async () => ({ items: target, styles }))
       const hook = renderHook(() =>
         usePdfTranslationDocument(f.original, results, artifact, 'reader:0')
       )
       await waitFor(() =>
-        expect(hook.result.current.state.status).toBe(variant === 'leading' ? 'ready' : 'error')
+        expect(hook.result.current.state.status).toBe(variant === 'intact' ? 'ready' : 'error')
       )
     }
   )

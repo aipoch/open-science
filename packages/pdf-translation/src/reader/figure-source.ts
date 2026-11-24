@@ -1,12 +1,21 @@
-import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
+import { readPdfStructureEvidence } from './structure-evidence.js'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
-import type { TextItem } from 'pdfjs-dist/types/src/display/api.js'
+import type {
+  StructTreeContent,
+  StructTreeNode,
+  TextItem
+} from 'pdfjs-dist/types/src/display/api.js'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PdfTranslationExtraction } from './extraction.js'
 import { isPdfTranslationCaption } from './layout.js'
 import { createPdfTranslationSource, type PdfTranslationFragment } from './source.js'
 import type { PdfTranslationSourceIdentity } from './table-source.js'
-import { verifiedPdfStructureRegions } from './structure-regions.js'
+import {
+  structureRegionContains,
+  structureRegionsOverlap,
+  verifiedPdfStructureRegions
+} from './structure-regions.js'
 import { nativeLabelRegion, nativeRectangularPath } from './native-source-geometry.js'
 import {
   retainPdfWholeRegionSources,
@@ -60,6 +69,159 @@ const contains = (outer: Rect, inner: Rect): boolean =>
 
 const isFigureCaption = (text: string): boolean =>
   /^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s*\d/iu.test(text)
+
+// A full-width floating figure can divide a quantified sentence between pages.
+function nativeFigureSentenceContinuation(
+  source: Source,
+  units: Source['units'],
+  regions: readonly Rect[],
+  number: number
+): { head: Source['units'][number]; tail: Source['units'][number] } | undefined {
+  const previousPage = source.pages[number - 2],
+    currentPage = source.pages[number - 1]
+  if (
+    !previousPage ||
+    !currentPage ||
+    previousPage.width !== currentPage.width ||
+    previousPage.height !== currentPage.height ||
+    regions.length !== 1
+  )
+    return
+  const [figure] = regions
+  const captionIndex = units.findIndex((unit) => isPdfTranslationCaption(unit.source))
+  if (captionIndex < 1) return
+  const [caption, tail, following] = units.slice(captionIndex)
+  const label = /^Figure (\d+): /u.exec(caption.source)
+  if (!label || caption.fragments.length !== 1 || tail?.fragments.length !== 1) return
+  const prior = source.units.filter((unit) =>
+    unit.fragments.some((part) => part.pageNumber === number - 1)
+  )
+  const [head, folio] = prior.slice(-2)
+  const headPart = head?.fragments[0],
+    tailPart = tail.fragments[0]
+  if (
+    !headPart ||
+    head.sourceOnly ||
+    tail.sourceOnly ||
+    head.figure ||
+    tail.figure ||
+    head.fragments.length !== 1 ||
+    headPart.pageNumber !== number - 1 ||
+    tailPart.pageNumber !== number ||
+    !/\. Thus, the sum of$/u.test(headPart.items.at(-1)?.text ?? '') ||
+    tailPart.items[0]?.text !== 'this quantity over all' ||
+    !/^this quantity over all \p{Ll} ∈ \{\d+(?:, \d+){1,5}\} is at most \d+\. Since /u.test(
+      tail.source
+    ) ||
+    !folio?.sourceOnly ||
+    folio.preserve !== 'literal' ||
+    folio.source !== String(number - 1) ||
+    folio.fragments.length !== 1 ||
+    folio.fragments[0].rect.y < 0.88 ||
+    !following?.sourceOnly ||
+    following.preserve !== 'formula' ||
+    !/^pair \(/u.test(following.source) ||
+    following.fragments.length !== 1 ||
+    following.fragments[0].pageNumber !== number ||
+    !prior.some((unit) => unit.source.includes(`See Figure ${label[1]} for `))
+  )
+    return
+  const end = (rect: Rect): number => rect.y + rect.height
+  const before = headPart.rect,
+    after = tailPart.rect,
+    cap = caption.fragments[0].rect
+  const aligned = (r: Rect): boolean =>
+    Math.abs(r.x - before.x) < 0.003 && Math.abs(r.width - before.width) < 0.006
+  const labelMargin = after.height * 3
+  const figureBand = {
+    x: figure.x - labelMargin,
+    width: figure.width + labelMargin * 2,
+    y: figure.y - labelMargin / 2,
+    height: figure.height + labelMargin
+  }
+  if (
+    end(before) < 0.85 ||
+    before.width < 0.7 ||
+    end(before) >= folio.fragments[0].rect.y ||
+    figure.y < 0.07 ||
+    figure.y > 0.16 ||
+    figure.width < 0.4 ||
+    figure.height < 0.13 ||
+    cap.y < end(figure) ||
+    cap.y - end(figure) > 0.05 ||
+    !aligned(cap) ||
+    !aligned(after) ||
+    after.y <= end(cap) ||
+    after.y - end(cap) > 0.04 ||
+    units
+      .slice(0, captionIndex)
+      .some(
+        (unit) =>
+          unit.fragments.length !== 1 ||
+          unit.fragments[0].pageNumber !== number ||
+          !contains(figureBand, unit.fragments[0].rect)
+      )
+  )
+    return
+  return { head, tail }
+}
+
+// A numbered figure appendix after the bibliography has its own caption flow.
+async function rasterAppendixCaptions(
+  page: PDFPageProxy,
+  units: Source['units'],
+  images: Rect[],
+  heading: Source['units'][number],
+  signal: AbortSignal
+): Promise<string[]> {
+  const captions = units.filter((unit) => unit !== heading)
+  if (page.rotate !== 0 || !captions.length || captions.length !== images.length) return []
+  const graphics = [...images].sort((a, b) => a.y - b.y)
+  if (
+    !captions.every(({ fragments: [{ rect }] }, index) => {
+      const graphic = graphics[index]
+      const gap = rect.y - graphic.y - graphic.height
+      const previous = captions[index - 1]?.fragments[0].rect
+      return (
+        rect.width >= 0.66 &&
+        graphic.width >= 0.45 &&
+        graphic.height >= 0.2 &&
+        Math.abs(rect.x - graphic.x) < 0.002 &&
+        graphic.x + graphic.width < rect.x + rect.width &&
+        gap > 0.002 &&
+        gap < 0.028 &&
+        (!previous || previous.y + previous.height < graphic.y) &&
+        (!(index === 0 && units[0] === heading) ||
+          heading.fragments[0].rect.y + heading.fragments[0].rect.height < graphic.y)
+      )
+    })
+  )
+    return []
+
+  const content = await page.getTextContent()
+  signal.throwIfAborted()
+  const items = units.flatMap((unit) => unit.fragments[0].items)
+  const visible = content.items.flatMap((item, index) =>
+    'str' in item && item.str.trim() ? [{ item, index }] : []
+  )
+  if (
+    items.length !== visible.length ||
+    !visible.every(
+      ({ item, index }, i) =>
+        items[i].index === index &&
+        items[i].text === item.str &&
+        item.dir === 'ltr' &&
+        item.transform[0] > 0 &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0 &&
+        item.transform[3] > 0 &&
+        item.height > 0 &&
+        item.width > 0
+    )
+  )
+    return []
+  return captions.map((unit) => unit.id)
+}
 
 // A full-width caption may follow the last reference when it belongs to a separate image.
 async function terminalReferenceCaption(
@@ -1134,18 +1296,22 @@ function tableRegions(
   units: Source['units'],
   rules: readonly Rect[],
   number: number,
-  appendix = false
+  mode: 'standard' | 'appendix' | 'roman' | 'roman-below' | 'roman-total' = 'standard'
 ): RuledTable[] {
+  const romanCaption = mode === 'roman' || mode === 'roman-below' || mode === 'roman-total'
+  const appendix = mode === 'appendix'
   const captions = units
     .filter((unit) =>
       appendix
         ? /^(?:Table|Tab\.) [A-Z]\.[1-9]\d*\. \p{Lu}/u.test(unit.source)
-        : /^(?:Table|Tab\.)\s*\d/iu.test(unit.source) && isPdfTranslationCaption(unit.source)
+        : romanCaption
+          ? /^TABLE [IVXLCDM]+\. \p{Lu}/u.test(unit.source)
+          : /^(?:Table|Tab\.)\s*\d/iu.test(unit.source) && isPdfTranslationCaption(unit.source)
     )
     .flatMap((unit) => unit.fragments.filter((f) => f.pageNumber === number))
   const regions: RuledTable[] = []
   for (const caption of captions) {
-    for (const above of [true, false]) {
+    for (const above of mode === 'roman-below' ? [true] : romanCaption ? [false] : [true, false]) {
       const nearby = rules
         .filter(
           (rule) =>
@@ -1172,7 +1338,29 @@ function tableRegions(
       const distinct = aligned.filter(
         (rule, index) => !index || rule.y - aligned[index - 1].y > 0.004
       )
-      if (distinct.length < 3) continue
+      if (distinct.length < 3 || (mode === 'roman' && distinct.length !== 3)) continue
+      if (
+        mode === 'roman-total' &&
+        (distinct.length !== 4 ||
+          aligned.length !== 6 ||
+          aligned[1].y - aligned[0].y <= 0.001 ||
+          aligned[1].y - aligned[0].y > 0.004 ||
+          aligned.at(-1)!.y - aligned.at(-2)!.y <= 0.001 ||
+          aligned.at(-1)!.y - aligned.at(-2)!.y > 0.004)
+      )
+        continue
+      if (
+        mode === 'roman-below' &&
+        (distinct.length < 4 ||
+          aligned.length !== distinct.length + 2 ||
+          caption.rect.y - edge.y > 0.04 ||
+          aligned[1].y - aligned[0].y <= 0.001 ||
+          aligned[1].y - aligned[0].y > 0.004 ||
+          aligned.at(-1)!.y - aligned.at(-2)!.y <= 0.001 ||
+          aligned.at(-1)!.y - aligned.at(-2)!.y > 0.004 ||
+          aligned.some((rule) => rule.x !== edge.x || rule.width !== edge.width))
+      )
+        continue
       // The header separator follows the top rule closely; a distant rule can
       // belong to another table or a footnote and cannot establish the top.
       const tops = distinct
@@ -1181,6 +1369,8 @@ function tableRegions(
       const top = tops[0]
       const bottom = above ? edge : distinct.at(-1)
       if (!top || !bottom || bottom.y - top.y < 0.025) continue
+      if (romanCaption && distinct.some((rule) => rule.x !== top.x || rule.width !== top.width))
+        continue
       const rect = {
         x: Math.max(0, top.x - 0.002),
         y: Math.max(0, top.y - 0.003),
@@ -1213,6 +1403,287 @@ function tableRegions(
     }
   }
   return regions
+}
+
+// A tagged measurement table can split one data row or cell into prose owners.
+async function taggedMeasurementTableOwners(
+  page: PDFPageProxy,
+  number: number,
+  units: Source['units'],
+  signal: AbortSignal
+): Promise<{ owners: string[]; header?: [string, Source['units']] } | undefined> {
+  if (page.rotate !== 0 || !units.some((unit) => /^TABLE [IVXLCDM]+\. /u.test(unit.source))) return
+  const tree = await page.getStructTree()
+  signal.throwIfAborted()
+  if (!tree) return
+  type Node = StructTreeNode | StructTreeContent
+  const tables: StructTreeNode[] = []
+  let nodes = 0
+  const visit = (node: Node, depth: number): void => {
+    if (depth > 32 || ++nodes > 10000) throw new Error('Table structure exceeds its depth limit')
+    if (!('role' in node)) return
+    if (node.role === 'Table') tables.push(node)
+    for (const child of node.children) visit(child, depth + 1)
+  }
+  visit(tree, 0)
+  if (tables.length !== 1) return
+  const [table] = tables
+  const rows = table.children
+  if (
+    rows.length < 5 ||
+    rows.length > 32 ||
+    !rows.every(
+      (row, index): row is StructTreeNode =>
+        'role' in row &&
+        row.role === 'TR' &&
+        row.children.length === 5 &&
+        row.children.every(
+          (cell, column) => 'role' in cell && cell.role === (index && column ? 'TD' : 'TH')
+        )
+    )
+  )
+    return
+  const [plain, marked] = await Promise.all([
+    page.getTextContent(),
+    page.getTextContent({ includeMarkedContent: true })
+  ])
+  signal.throwIfAborted()
+  const stack: (string | undefined)[] = [],
+    carriers = new Map<string, { index: number; item: TextItem }[]>()
+  let index = 0
+  for (const item of marked.items) {
+    if ('str' in item) {
+      const ordinary = plain.items[index]
+      if (
+        !ordinary ||
+        !('str' in ordinary) ||
+        ordinary.str !== item.str ||
+        ordinary.fontName !== item.fontName ||
+        ordinary.width !== item.width ||
+        ordinary.height !== item.height ||
+        ordinary.transform.some((value, i) => value !== item.transform[i])
+      )
+        return
+      const group = stack.at(-1)
+      if (group && item.str.trim()) carriers.get(group)!.push({ index, item })
+      index++
+    } else if (item.type === 'endMarkedContent') {
+      if (!stack.length) return
+      stack.pop()
+    } else {
+      if (item.id) {
+        if (carriers.has(item.id)) return
+        carriers.set(item.id, [])
+      }
+      stack.push(item.id)
+    }
+  }
+  if (stack.length || index !== plain.items.length) return
+  const claimed = new Set<string>()
+  const gather = (node: Node): { index: number; item: TextItem }[] => {
+    if ('role' in node) {
+      if (!['TH', 'TD', 'P', 'Span', 'Link'].includes(node.role))
+        throw new Error('Unexpected tagged table cell role')
+      return node.children.flatMap(gather)
+    }
+    if (node.type === 'object') return []
+    const data = carriers.get(node.id)
+    if (!data || !data.length || claimed.has(node.id))
+      throw new Error('Missing or duplicate marked table content')
+    claimed.add(node.id)
+    return data
+  }
+  const cells = rows.map((row) => row.children.map(gather)),
+    [header, ...body] = cells
+  const text = (cell: (typeof header)[number]): string =>
+    cell
+      .map(({ item }) => item.str)
+      .join('')
+      .replace(/\s+/gu, '')
+  const measurement = '[+−-]?\\d+(?:\\.\\d+)?dB'
+  const values = new RegExp(
+    `^(?:${measurement}|${measurement}\\([A-Z]\\)${measurement}\\([A-Z]\\))$`,
+    'u'
+  )
+  const citation = /^\[\d{1,4}\]$/u
+  if (
+    text(header[4]) !== 'Ref.' ||
+    header.some((cell) => cell.length !== 1 || !/^\p{Lu}\p{Ll}{2,24}\.?$/u.test(text(cell))) ||
+    body.slice(0, -1).some((row) => !citation.test(text(row[4]))) ||
+    body.some(
+      ([key, a, b, value]) =>
+        !/^[A-Za-z0-9]{2,8}(?:[-–][A-Za-z0-9]{2,8}){1,2}$/u.test(text(key)) ||
+        ![a, b].every((cell) => /^[A-Z]{2,5}$/u.test(text(cell))) ||
+        !values.test(text(value))
+    ) ||
+    text(body.at(-1)![4]) !== 'Thiswork'
+  )
+    return
+  const flat = cells.flat(2),
+    selected = new Map(body.flat(2).map(({ index, item }) => [index, item.str]))
+  if (new Set(flat.map(({ index }) => index)).size !== flat.length) return
+  const owners: string[] = []
+  for (const unit of units) {
+    if (
+      !unit.fragments.some(
+        (f) => f.pageNumber === number && f.items.some((i) => selected.has(i.index))
+      )
+    )
+      continue
+    if (
+      unit.fragments.some(
+        (f) =>
+          f.pageNumber !== number ||
+          f.unclippedRect ||
+          f.items.some((i) => selected.get(i.index) !== i.text || !selected.delete(i.index))
+      )
+    )
+      return
+    if (!unit.sourceOnly) owners.push(unit.id)
+  }
+  if (selected.size) return
+  const heads = header.map(([head]) => head)
+  const headOwner = units.find((unit) => {
+    if (unit.sourceOnly || unit.preserve || unit.fragments.length !== 1) return false
+    const [fragment] = unit.fragments
+    return (
+      fragment.pageNumber === number &&
+      !fragment.unclippedRect &&
+      fragment.items.length === heads.length &&
+      fragment.items.every(
+        ({ index, text }, n) => index === heads[n].index && text === heads[n].item.str
+      ) &&
+      unit.source === heads.map(({ item }) => item.str).join(' ')
+    )
+  })
+  if (!headOwner) return { owners }
+  const viewport = page.getViewport({ scale: 1 }),
+    [fragment] = headOwner.fragments,
+    claims = new Set(heads.map(({ index }) => index)),
+    headerBounds = heads.map(({ item }) =>
+      nativeLabelRegion(item, plain.styles[item.fontName], viewport, number)
+    )
+  if (
+    headerBounds.some(
+      (bounds, n) =>
+        !bounds ||
+        !contains(fragment.rect, bounds) ||
+        (n && bounds.x <= headerBounds[n - 1]!.x + headerBounds[n - 1]!.width)
+    ) ||
+    heads.some(({ item }) => item.transform[5] !== heads[0].item.transform[5]) ||
+    units.some(
+      (unit) =>
+        unit !== headOwner &&
+        unit.fragments.some(
+          (f) => f.pageNumber === number && f.items.some((part) => claims.has(part.index))
+        )
+    )
+  )
+    return { owners }
+  const split = heads.map(({ item }, n) => {
+    const { x, width } = headerBounds[n]!
+    return {
+      ...headOwner,
+      id: `${headOwner.id}-cell-${n + 1}`,
+      source: item.str,
+      ...(n === heads.length - 1
+        ? { sourceOnly: true as const, preserve: 'literal' as const }
+        : {}),
+      fragments: [{ ...fragment, rect: { ...fragment.rect, x, width }, items: [fragment.items[n]] }]
+    }
+  })
+  return { owners, header: [headOwner.id, split] }
+}
+
+// A fused native run cannot be translated without moving content between columns.
+async function retainGroupedRomanTable(
+  page: PDFPageProxy,
+  number: number,
+  units: Source['units'],
+  rules: readonly Rect[],
+  signal: AbortSignal
+): Promise<{ rect: Rect; owners: string[] }[]> {
+  if (page.rotate !== 0 || rules.length < 6) return []
+  const tables = tableRegions(units, rules, number, 'roman-below')
+  if (!tables.length) return []
+  const content = await page.getTextContent()
+  signal.throwIfAborted()
+  const viewport = page.getViewport({ scale: 1 })
+  return tables.flatMap(({ rect, header, top }) => {
+    const native = new Map<number, { item: TextItem; header: boolean }>()
+    for (const [index, item] of content.items.entries()) {
+      if (!('str' in item) || !item.str.trim()) continue
+      const bounds = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+      if (!bounds) {
+        const [x, y] = viewport.convertToViewportPoint(item.transform[4], item.transform[5])
+        if (contains(rect, { x: x / viewport.width, y: y / viewport.height, width: 0, height: 0 }))
+          return []
+        continue
+      }
+      if (!overlaps(rect, bounds, 0)) continue
+      if (
+        !contains(rect, bounds) ||
+        item.dir !== 'ltr' ||
+        item.transform[0] <= 0 ||
+        item.transform[1] !== 0 ||
+        item.transform[2] !== 0 ||
+        item.transform[3] <= 0
+      )
+        return []
+      native.set(index, { item, header: contains(header, bounds) })
+    }
+    const entries = [...native.values()]
+    const heads = entries.filter((entry) => entry.header).map(({ item }) => item)
+    if (heads.length !== 3 || native.size < 15) return []
+    const [first, second, last] = heads
+    const em = first.height
+    const left = (item: TextItem): number => item.transform[4]
+    const right = (item: TextItem): number => left(item) + item.width
+    const sameRail = (item: TextItem, head: TextItem): boolean =>
+      Math.abs(left(item) - left(head)) < em * 0.05
+    if (
+      Math.abs(left(first) - top.x * viewport.width) > em * 0.35 ||
+      heads.some(
+        (head, i) =>
+          head.fontName !== first.fontName ||
+          head.height !== em ||
+          head.transform[5] !== first.transform[5] ||
+          !/\p{L}{2}/u.test(head.str) ||
+          (i > 0 && left(head) - right(heads[i - 1]) < em)
+      )
+    )
+      return []
+    const body = entries.filter((entry) => !entry.header).map(({ item }) => item)
+    if (
+      heads.some((head) => body.filter((item) => sameRail(item, head)).length < 3) ||
+      !body.some(
+        (item) =>
+          sameRail(item, second) && right(item) > left(last) + em && /\p{L}{2}/u.test(item.str)
+      )
+    )
+      return []
+    const owners = units.filter((unit) =>
+      unit.fragments.some(
+        (fragment) => fragment.pageNumber === number && overlaps(rect, fragment.rect, 0)
+      )
+    )
+    if (
+      owners.some(({ fragments }) =>
+        fragments.some(
+          ({ pageNumber, rect: bounds, unclippedRect, items }) =>
+            pageNumber !== number ||
+            unclippedRect ||
+            !contains(rect, bounds) ||
+            items.some(
+              ({ index, text }) => native.get(index)?.item.str !== text || !native.delete(index)
+            )
+        )
+      ) ||
+      native.size
+    )
+      return []
+    return [{ rect, owners: owners.map(({ id }) => id) }]
+  })
 }
 
 // A single translation cannot keep native fields on opposite sides of a table rule.
@@ -1429,6 +1900,297 @@ function splitNativeTableHeader(
   }
   if (cursor === runs.length && cells.map(({ source }) => source).join(' ') === unit.source)
     return cells
+}
+
+// A ruled four-column table can have wrapped prose that crosses a physical row boundary.
+function splitCrossRowTableProse(
+  units: Source['units'],
+  table: RuledTable,
+  number: number,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  viewport: ReturnType<PDFPageProxy['getViewport']>
+): Map<string, Source['units']> {
+  const split = new Map<string, Source['units']>()
+  const native = content.items.flatMap((item, index) => {
+    if (!('str' in item) || !item.str.trim()) return []
+    const [scale, skewY, skewX, height, x, y] = item.transform
+    if (scale <= 0 || height <= 0 || skewX !== 0 || skewY !== 0) return []
+    const rect = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+    return rect && contains(table.rect, rect) ? [{ item, index, rect, x, y }] : []
+  })
+  const heads = native.filter(({ rect }) => contains(table.header, rect)).sort((a, b) => a.x - b.x)
+  const first = heads[0]
+  if (heads.length !== 4 || Math.abs(first.rect.x - table.top.x) > 0.001) return split
+  const em = first.item.height
+  const aligned = (a: number, b: number): boolean => Math.abs(a - b) < em * 0.05
+  if (
+    heads.some(({ item, x, y }, i) => {
+      const previous = heads[i - 1]
+      return (
+        item.fontName !== first.item.fontName ||
+        item.height !== em ||
+        !aligned(y, first.y) ||
+        !/\p{L}{2}/u.test(item.str) ||
+        (previous && x - previous.x - previous.item.width <= em)
+      )
+    })
+  )
+    return split
+
+  const body = native.filter(({ rect }) => rect.y >= table.separator.y)
+  const starts = body.filter(
+    ({ item, x }) =>
+      item.fontName === first.item.fontName &&
+      item.height === em &&
+      aligned(x, first.x) &&
+      /^[A-Z]\d{1,2} \p{Lu}/u.test(item.str)
+  )
+  const peers = heads.slice(1)
+  if (
+    starts.length < 3 ||
+    starts.some(
+      ({ item, y }, i) =>
+        !item.str.startsWith(starts[0].item.str[0] + (i + 1) + ' ') ||
+        (i > 0 && starts[i - 1].y - y <= em * 2) ||
+        peers.some(
+          (head) =>
+            body.filter(
+              (run) => run.item.height === em && aligned(run.x, head.x) && aligned(run.y, y)
+            ).length !== 1
+        )
+    )
+  )
+    return split
+  const claims = new Map<number, number>()
+  for (const { fragments } of units)
+    for (const { pageNumber, items } of fragments)
+      if (pageNumber === number)
+        for (const { index } of items) claims.set(index, (claims.get(index) ?? 0) + 1)
+  const byIndex = new Map(body.map((run) => [run.index, run]))
+  const compact = (text: string): string => text.replace(/\s+/gu, '')
+  const matches = (parts: Source['units'][number]['fragments'], text: string): boolean =>
+    compact(parts.flatMap(({ items }) => items.map(({ text }) => text)).join('')) === compact(text)
+  for (const unit of units) {
+    if (
+      unit.sourceOnly ||
+      unit.figure ||
+      unit.preserve ||
+      unit.referenceBoundary ||
+      unit.fragments.length < 2
+    )
+      continue
+    const fragments = unit.fragments
+    const column = heads.findLastIndex(({ rect }) => fragments[0].rect.x >= rect.x - 0.001)
+    if (column < 0) continue
+    const left = heads[column].rect.x - 0.001
+    const right = heads[column + 1]?.rect.x ?? table.top.x + table.top.width
+    if (
+      fragments.some(
+        ({ pageNumber, unclippedRect, rect, items }, i) =>
+          pageNumber !== number ||
+          unclippedRect ||
+          rect.x < left ||
+          rect.x + rect.width > right ||
+          (i > 0 && rect.y <= fragments[i - 1].rect.y) ||
+          !items.length ||
+          items.some(({ index, text }) => {
+            const run = byIndex.get(index)
+            return claims.get(index) !== 1 || run?.item.str !== text || !contains(rect, run.rect)
+          })
+      )
+    )
+      continue
+    const boundaries: number[] = []
+    for (let i = 1; i < fragments.length; i++) {
+      const start = byIndex.get(fragments[i].items[0].index)!
+      const previous = byIndex.get(fragments[i - 1].items[0].index)!
+      if (
+        aligned(start.x, heads[column].x) &&
+        previous.y - start.y > em * 1.5 &&
+        starts.some(({ y }) => aligned(y, start.y))
+      )
+        boundaries.push(i)
+    }
+    if (boundaries.length !== 1) continue
+    const [at] = boundaries
+    const boundary = byIndex.get(fragments[at].items[0].index)!
+    const row = starts.findIndex(({ y }) => aligned(y, boundary.y))
+    const previous = starts[row - 1]
+    if (!previous) continue
+    const inBand = (parts: typeof fragments, top: number, bottom: number): boolean =>
+      parts.every(({ items }) =>
+        items.every(({ index }) => {
+          const { y } = byIndex.get(index)!
+          return y <= top + em * 0.05 && y > bottom + em * 0.05
+        })
+      )
+    const beforeFragments = fragments.slice(0, at)
+    const afterFragments = fragments.slice(at)
+    if (
+      !inBand(beforeFragments, previous.y, starts[row].y) ||
+      !inBand(afterFragments, starts[row].y, starts[row + 1]?.y ?? -Infinity)
+    )
+      continue
+    const lead = fragments[at].items[0].text
+    const seam = unit.source.indexOf(' ' + lead) + 1
+    if (!seam || unit.source.indexOf(' ' + lead, seam) !== -1) continue
+    const before = unit.source.slice(0, seam - 1)
+    const after = unit.source.slice(seam)
+    if (
+      !/[.!?]$/u.test(before) ||
+      !matches(beforeFragments, before) ||
+      !matches(afterFragments, after)
+    )
+      continue
+    split.set(unit.id, [
+      { ...unit, source: before, fragments: beforeFragments },
+      { ...unit, id: unit.id + '-table-row', source: after, fragments: afterFragments }
+    ])
+  }
+  return split
+}
+
+// The final priced item and the separate total can share one prose owner.
+function splitRomanCostTotal(
+  units: Source['units'],
+  table: RuledTable,
+  number: number,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  viewport: ReturnType<PDFPageProxy['getViewport']>
+): Map<string, Source['units']> {
+  const split = new Map<string, Source['units']>()
+  const runs = content.items.flatMap((item, index) => {
+    if (!('str' in item) || !item.str.trim()) return []
+    const rect = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+    if (
+      !rect ||
+      (!contains(table.rect, rect) &&
+        (item.str !== ')' ||
+          !contains(
+            { ...table.header, width: table.header.width + item.height / viewport.width },
+            rect
+          )))
+    )
+      return []
+
+    const [a, b, c, d, x, y] = item.transform
+    return a > 0 && b === 0 && c === 0 && d > 0 && item.dir === 'ltr'
+      ? [{ item, index, rect, x, y }]
+      : []
+  })
+  const heads = runs.filter(({ rect }) => rect.y + rect.height <= table.separator.y + 0.001)
+  const first = heads[0]
+  if (
+    heads.length !== 4 ||
+    first.item.str !== 'Component' ||
+    heads
+      .slice(1)
+      .map(({ item }) => item.str)
+      .join('') !== 'Approx. cost (US$)' ||
+    heads.some(({ y }) => Math.abs(y - first.y) > first.item.height * 0.15)
+  )
+    return split
+  const em = first.item.height
+  const close = (a: number, b: number): boolean => Math.abs(a - b) < em * 0.08
+  const rows: (typeof runs)[] = []
+  for (const run of runs.slice(4)) {
+    const row = rows.at(-1)
+    if (row && close(run.y, row[0].y)) row.push(run)
+    else rows.push([run])
+  }
+  const last = rows.at(-1)
+  const prices = rows.slice(0, -1)
+  if (
+    !last ||
+    last.length !== 3 ||
+    prices.length < 5 ||
+    prices.some(
+      ([label, price], at) =>
+        prices[at].length !== 2 ||
+        !close(label.x, first.x) ||
+        label.item.fontName !== first.item.fontName ||
+        price.item.fontName !== first.item.fontName ||
+        !/^\d+(?:\.\d+)?$/u.test(price.item.str) ||
+        !close(price.x + price.item.width / 2, prices[0][1].x + prices[0][1].item.width / 2) ||
+        (at > 0 && !close(prices[at - 1][0].y - label.y, prices[0][0].y - prices[1][0].y))
+    )
+  )
+    return split
+  const [sum, sign, total] = last
+  const [label, price] = prices.at(-1)!
+  if (
+    !/^Total \(excluding the [a-z ]+\)$/u.test(sum.item.str) ||
+    !close(sum.x, first.x) ||
+    sum.item.fontName !== first.item.fontName ||
+    sign.item.str !== '≈' ||
+    !/^\d{1,5}$/u.test(total.item.str) ||
+    total.item.fontName !== price.item.fontName ||
+    !close((sign.x + total.x + total.item.width) / 2, price.x + price.item.width / 2) ||
+    sum.rect.x + sum.rect.width >= sign.rect.x ||
+    !close(label.y - sum.y, prices[0][0].y - prices[1][0].y)
+  )
+    return split
+  const exactly = (
+    items: Source['units'][number]['fragments'][number]['items'],
+    expected: typeof runs
+  ): boolean =>
+    items.length === expected.length &&
+    items.every(
+      ({ index, text }, at) => index === expected[at].index && text === expected[at].item.str
+    )
+  const owner = units.filter((unit) =>
+    unit.fragments.some(
+      ({ pageNumber, items }) =>
+        pageNumber === number &&
+        items.some(({ index }) => [label, sum, sign, total].some((run) => run.index === index))
+    )
+  )
+  const [unit] = owner
+  if (
+    owner.length !== 1 ||
+    unit.sourceOnly ||
+    unit.figure ||
+    unit.preserve ||
+    unit.referenceBoundary ||
+    unit.fragments.length !== 2 ||
+    unit.fragments.some(
+      (f) => f.pageNumber !== number || f.unclippedRect || !contains(table.rect, f.rect)
+    ) ||
+    !exactly(unit.fragments[0].items, [label]) ||
+    !exactly(unit.fragments[1].items, last) ||
+    unit.source !== [label, ...last].map(({ item }) => item.str).join(' ') ||
+    !units.some(
+      (u) =>
+        u.sourceOnly &&
+        u.preserve === 'literal' &&
+        u.fragments.length === 1 &&
+        u.fragments[0].pageNumber === number &&
+        exactly(u.fragments[0].items, [price])
+    )
+  )
+    return split
+  const fragment = (selected: typeof runs): typeof unit.fragments => [
+    {
+      pageNumber: number,
+      rect: selected
+        .map(({ rect: { x, y, width, height } }) => ({ x, y, width, height }))
+        .reduce(union),
+      items: selected.map(({ index, item }) => ({ index, text: item.str }))
+    }
+  ]
+  split.set(unit.id, [
+    { ...unit, source: label.item.str, fragments: unit.fragments.slice(0, 1) },
+    { ...unit, id: unit.id + '-total-label', source: sum.item.str, fragments: fragment([sum]) },
+    {
+      ...unit,
+      id: unit.id + '-total-value',
+      source: sign.item.str + ' ' + total.item.str,
+      sourceOnly: true,
+      preserve: 'literal',
+      fragments: fragment([sign, total])
+    }
+  ])
+  return split
 }
 
 // One translation cannot keep separately aligned native table labels in their columns.
@@ -1660,16 +2422,227 @@ function coalescedRuledBodyOwners(
   })
 }
 
+// A full rail of original check/dash cells witnesses the baselines of a merged text column.
+function splitMarkedTableTextColumn(
+  units: Source['units'],
+  table: RuledTable,
+  number: number,
+  header: readonly NativeHeaderRun[],
+  body: readonly NativeHeaderRun[]
+): Map<string, Source['units']> {
+  const result = new Map<string, Source['units']>()
+  if (header.length < 6 || header.length > 10) return result
+  const rows = [...Map.groupBy(body, ({ item }) => item.transform[5]).values()]
+    .map((row) => row.sort((a, b) => a.rect.x - b.rect.x))
+    .sort((a, b) => b[0].item.transform[5] - a[0].item.transform[5])
+  if (rows.length < 4 || rows.length > 24 || rows.some((row) => row.length !== 6)) return result
+  const [first, second] = rows
+  const em = first[1].item.height
+  const baseline = ({ item }: NativeHeaderRun): number => item.transform[5]
+  const right = ({ rect }: NativeHeaderRun): number => rect.x + rect.width
+  const center = (run: NativeHeaderRun): number => (run.rect.x + right(run)) / 2
+  const [stub, label] = first
+  const pitch = baseline(stub) - baseline(second[0])
+  const headerBaseline = Math.min(...header.map(baseline))
+  const heads = header
+    .filter((run) => baseline(run) === headerBaseline)
+    .sort((a, b) => a.rect.x - b.rect.x)
+  if (
+    heads.length !== 6 ||
+    Math.abs(stub.rect.x - table.top.x) > 0.001 ||
+    heads.some(
+      (head, i) =>
+        head.item.fontName !== label.item.fontName ||
+        head.item.height !== em ||
+        !/\p{L}{2}/u.test(head.item.str) ||
+        (i > 0 && head.rect.x <= right(heads[i - 1])) ||
+        (i < 2
+          ? Math.abs(head.rect.x - first[i].rect.x) > 0.001
+          : Math.abs(center(head) - center(first[i])) > first[i].rect.width * 0.15)
+    ) ||
+    pitch < em * 1.2 ||
+    pitch > em * 1.4 ||
+    rows.some(
+      (row, i) =>
+        Math.abs(baseline(stub) - baseline(row[0]) - i * pitch) > em * 0.03 ||
+        row.some(
+          (cell, j) =>
+            cell.item.height !== em ||
+            (j > 0 && cell.rect.x <= right(row[j - 1])) ||
+            (j < 2
+              ? Math.abs(cell.rect.x - first[j].rect.x) > 0.001 || !/\p{L}{2}/u.test(cell.item.str)
+              : !/^[✓–]$/u.test(cell.item.str) ||
+                Math.abs(center(cell) - center(first[j])) > first[j].rect.width * 0.15)
+        )
+    )
+  )
+    return result
+
+  const owners = new Map<number, { unit: Source['units'][number]; text: string }>()
+  for (const unit of units)
+    for (const fragment of unit.fragments)
+      if (fragment.pageNumber === number)
+        for (const { index, text } of fragment.items) {
+          if (owners.has(index)) return result
+          owners.set(index, { unit, text })
+        }
+  if (body.some(({ index, item }) => owners.get(index)?.text !== item.str)) return result
+  if (
+    rows.some((row) =>
+      row.slice(2).some(({ index, item }) => {
+        const { unit } = owners.get(index)!
+        return (
+          !unit.sourceOnly ||
+          unit.source !== item.str ||
+          unit.fragments.length !== 1 ||
+          unit.fragments[0].items.length !== 1 ||
+          unit.fragments[0].unclippedRect
+        )
+      })
+    )
+  )
+    return result
+
+  const cells = rows.map((row) => row[1])
+  const { unit } = owners.get(label.index)!
+  const [fragment] = unit.fragments
+  if (
+    unit.sourceOnly ||
+    unit.preserve ||
+    unit.figure ||
+    unit.referenceBoundary ||
+    unit.fragments.length !== 1 ||
+    fragment.unclippedRect ||
+    fragment.pageNumber !== number ||
+    !contains(table.rect, fragment.rect) ||
+    fragment.items.length !== cells.length ||
+    cells.some(
+      (cell, i) =>
+        cell.index !== fragment.items[i].index ||
+        cell.item.fontName !== label.item.fontName ||
+        !contains(fragment.rect, cell.rect)
+    ) ||
+    fragment.items.map(({ text }) => text).join(' ') !== unit.source
+  )
+    return result
+
+  result.set(
+    unit.id,
+    cells.map(({ item, rect: { x, y, width, height } }, i) => ({
+      ...unit,
+      id: `${unit.id}-cell-${i + 1}`,
+      source: item.str,
+      fragments: [{ ...fragment, rect: { x, y, width, height }, items: [fragment.items[i]] }]
+    }))
+  )
+  return result
+}
+
+// A ruled quantity/value table can put an approximate value in its translated label owner.
+function splitApproximateTableValues(
+  units: Source['units'],
+  table: RuledTable,
+  number: number,
+  [quantity, value]: readonly NativeHeaderRun[],
+  body: readonly NativeHeaderRun[]
+): Map<string, Source['units']> {
+  const result = new Map<string, Source['units']>()
+  if (quantity.item.str !== 'Quantity' || value.item.str !== 'Value') return result
+  const em = quantity.rect.height
+  const sameRail = (x: number, y: number): boolean => Math.abs(x - y) < em * 0.045
+  const baseline = (run: NativeHeaderRun): number => run.item.transform[5]
+  if (
+    !em ||
+    quantity.item.fontName !== value.item.fontName ||
+    baseline(quantity) !== baseline(value) ||
+    value.rect.x - quantity.rect.x < em * 7 ||
+    body.filter((run) => sameRail(run.rect.x, value.rect.x) && /^\d+$/u.test(run.item.str)).length <
+      5
+  )
+    return result
+  const native = new Map(body.map((run) => [run.index, run]))
+  const seen = new Set<number>()
+  const overlaps = new Set<number>()
+  for (const unit of units)
+    for (const fragment of unit.fragments)
+      if (fragment.pageNumber === number)
+        for (const { index } of fragment.items) {
+          if (seen.has(index)) overlaps.add(index)
+          seen.add(index)
+        }
+  for (const unit of units) {
+    const [fragment] = unit.fragments
+    if (
+      unit.sourceOnly ||
+      unit.preserve ||
+      unit.referenceBoundary ||
+      unit.fragments.length !== 1 ||
+      fragment.pageNumber !== number ||
+      fragment.unclippedRect ||
+      !contains(table.rect, fragment.rect)
+    )
+      continue
+    const [first, ...parts] = fragment.items
+    const label = native.get(first?.index)
+    const measures = parts.map(({ index }) => native.get(index))
+    const [start] = measures
+    if (
+      !label ||
+      !start ||
+      start.item.str !== '≃' ||
+      label.item.fontName !== quantity.item.fontName ||
+      !sameRail(label.rect.x, quantity.rect.x) ||
+      !sameRail(start.rect.x, value.rect.x) ||
+      label.rect.x + label.rect.width >= start.rect.x - em * 0.4 ||
+      !unit.source.startsWith(label.item.str + ' ') ||
+      !/^≃ \d+(?:[–-]\d+|\.\d+ [a-z]{2,8})$/u.test(unit.source.slice(label.item.str.length + 1)) ||
+      fragment.items.some(({ index, text }) => {
+        const run = native.get(index)
+        return (
+          !run || overlaps.has(index) || run.item.str !== text || baseline(run) !== baseline(label)
+        )
+      }) ||
+      measures.some((run) => run!.rect.x < start.rect.x)
+    )
+      continue
+    const rect = ({ x, y, width, height }: Rect): Rect => ({ x, y, width, height })
+    result.set(unit.id, [
+      {
+        ...unit,
+        id: unit.id + '-cell-1',
+        source: label.item.str,
+        fragments: [{ pageNumber: number, rect: rect(label.rect), items: [first] }]
+      },
+      {
+        ...unit,
+        id: unit.id + '-cell-2',
+        source: unit.source.slice(label.item.str.length + 1),
+        sourceOnly: true,
+        preserve: 'literal',
+        fragments: [
+          {
+            pageNumber: number,
+            rect: measures.map((run) => rect(run!.rect)).reduce(union),
+            items: parts
+          }
+        ]
+      }
+    ])
+  }
+  return result
+}
+
 // Columns in a ruled parameter table can share a prose owner even though their
 // native rows, labels and measurement fields are independently aligned.
 function splitRuledParameterTableOwners(
   units: Source['units'],
-  { rect, top, separator }: RuledTable,
+  table: RuledTable,
   number: number,
   content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
   viewport: ReturnType<PDFPageProxy['getViewport']>
 ): Map<string, Source['units']> {
   const result = new Map<string, Source['units']>()
+  const { rect, top, separator } = table
   const runs: NativeHeaderRun[] = []
   for (const [index, item] of content.items.entries()) {
     if (!('str' in item) || !item.str.trim()) continue
@@ -1698,7 +2671,11 @@ function splitRuledParameterTableOwners(
     viewport.convertToViewportPoint(item.transform[4], item.transform[5])[1]
   const right = ({ rect }: NativeHeaderRun): number => rect.x + rect.width
   const header = runs.filter((r) => baseline(r) < separator.y * viewport.height)
-  if (header.length !== 4) return result
+  if (header.length !== 4) {
+    const body = runs.filter((run) => baseline(run) >= separator.y * viewport.height)
+    if (header.length === 2) return splitApproximateTableValues(units, table, number, header, body)
+    return splitMarkedTableTextColumn(units, table, number, header, body)
+  }
   const [stub, description, value, measure] = header
   const em = stub.item.height,
     emX = em / viewport.width
@@ -2328,6 +3305,156 @@ async function splitNativeOrdinalAxisTitles(
   return splits
 }
 
+// A line shared by three raster labels cannot be translated as one paragraph.
+async function splitThreeRasterPanelLabels(
+  page: PDFPageProxy,
+  number: number,
+  units: Source['units'],
+  images: readonly Rect[],
+  signal: AbortSignal
+): Promise<Map<string, Source['units']>> {
+  const split = new Map<string, Source['units']>()
+  if (page.rotate !== 0 || images.length < 3) return split
+  const right = (rect: Rect): number => rect.x + rect.width
+  const ids = /^\(([a-z])\)$/u
+  const candidates = units.flatMap((unit, i) => {
+    const marker = units[i - 1]
+    const [fragment] = unit.fragments
+    const items = fragment?.items
+    if (
+      unit.sourceOnly ||
+      unit.preserve ||
+      unit.figure ||
+      unit.referenceBoundary ||
+      unit.fragments.length !== 1 ||
+      fragment.pageNumber !== number ||
+      fragment.unclippedRect ||
+      items.length !== 5 ||
+      !marker?.sourceOnly ||
+      marker.preserve !== 'formula' ||
+      marker.fragments.length !== 1 ||
+      marker.fragments[0].pageNumber !== number ||
+      marker.fragments[0].unclippedRect ||
+      marker.fragments[0].items.length !== 1
+    )
+      return []
+    const pieces = [...marker.fragments[0].items, ...items]
+    const letter = ids.exec(marker.source)?.[1]
+    if (
+      !letter ||
+      pieces[0].text !== marker.source ||
+      items.map(({ text }) => text).join(' ') !== unit.source ||
+      [2, 4].some(
+        (n) => pieces[n].text !== '(' + String.fromCharCode(letter.charCodeAt(0) + n / 2) + ')'
+      ) ||
+      [1, 3, 5].some((n) => !/^\p{Lu}[^()]{8,120}$/u.test(pieces[n].text))
+    )
+      return []
+    const emY = fragment.rect.height
+    const lower = fragment.rect.y + emY
+    const captions = units.filter(
+      ({ source, fragments, sourceOnly }) =>
+        !sourceOnly &&
+        isFigureCaption(source) &&
+        isPdfTranslationCaption(source) &&
+        fragments.some(
+          ({ pageNumber, rect }) =>
+            pageNumber === number &&
+            rect.y > lower &&
+            rect.y - lower < emY &&
+            rect.x <= marker.fragments[0].rect.x &&
+            right(rect) >= right(fragment.rect)
+        )
+    )
+    return captions.length === 1 ? [{ unit, fragment, pieces, marker }] : []
+  })
+  if (!candidates.length) return split
+  const content = await page.getTextContent()
+  signal.throwIfAborted()
+  const viewport = page.getViewport({ scale: 1 })
+  const owners = new Map<number, number>()
+  for (const { fragments } of units)
+    for (const fragment of fragments)
+      if (fragment.pageNumber === number)
+        for (const { index } of fragment.items) owners.set(index, (owners.get(index) ?? 0) + 1)
+  for (const { unit, fragment, pieces, marker } of candidates) {
+    const runs = pieces.map(({ index, text }, i) => {
+      const item = content.items[index]
+      if (
+        owners.get(index) !== 1 ||
+        !item ||
+        !('str' in item) ||
+        item.str !== text ||
+        item.transform[0] <= 0 ||
+        item.transform[1] !== 0 ||
+        item.transform[2] !== 0 ||
+        item.transform[3] <= 0 ||
+        (i > 0 &&
+          (pieces[i - 1].index >= index ||
+            content.items
+              .slice(pieces[i - 1].index + 1, index)
+              .some((other) => 'str' in other && other.str.trim())))
+      )
+        return
+      const rect = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+      return rect && { item, rect }
+    })
+    if (!runs.every((run) => run !== undefined)) continue
+    const em = runs[0].item.height
+    if (
+      runs.some(
+        ({ item, rect }, i) =>
+          item.height !== em ||
+          item.transform[5] !== runs[0].item.transform[5] ||
+          item.fontName !== runs[i % 2].item.fontName ||
+          (i > 0 && rect.x <= right(runs[i - 1].rect)) ||
+          !contains(i === 0 ? marker.fragments[0].rect : fragment.rect, rect)
+      )
+    )
+      continue
+    const panels = [0, 2, 4].map((i) => {
+      const a = runs[i].rect,
+        b = runs[i + 1].rect
+      const gap = b.x - right(a)
+      if (gap > (em * 0.55) / viewport.width) return
+      const fits = images.filter(
+        (image) =>
+          a.x >= image.x &&
+          right(b) <= right(image) &&
+          Math.abs(a.x + right(b) - image.x - right(image)) <= em / viewport.width &&
+          a.y > image.y + image.height &&
+          a.y - image.y - image.height < a.height * 1.2
+      )
+      return fits.length === 1 ? fits[0] : undefined
+    })
+    if (
+      !panels.every((panel) => panel !== undefined) ||
+      panels.some(
+        (panel, i) =>
+          i > 0 &&
+          (panel.x <= right(panels[i - 1]!) ||
+            Math.abs(panel.y - panels[0]!.y) > fragment.rect.height * 0.2)
+      )
+    )
+      continue
+    split.set(
+      unit.id,
+      pieces.slice(1).map((part, i) => {
+        const mark = i % 2 !== 0
+        const { x, y, width, height } = runs[i + 1].rect
+        return {
+          ...unit,
+          id: `${unit.id}-panel-${i + 1}`,
+          source: part.text,
+          ...(mark ? { sourceOnly: true as const, preserve: 'formula' as const } : {}),
+          fragments: [{ pageNumber: number, rect: { x, y, width, height }, items: [part] }]
+        }
+      })
+    )
+  }
+  return split
+}
+
 /** Run before admitting a new translation; historical snapshots keep their indices unchanged. */
 export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtraction, 'source'>>({
   document,
@@ -2349,9 +3476,26 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
     retainedTableOwners = new Set<string>(),
     nativeFractionOwners = new Set<string>(),
     splitTableCells = new Map<string, Source['units']>(),
+    splitTableRows = new Map<string, Source['units']>(),
     splitFigureLabels = new Map<string, Source['units']>(),
-    splitFrequencyLabels = new Map<string, Source['units']>()
+    splitFrequencyLabels = new Map<string, Source['units']>(),
+    figureContinuations = new Map<string, Source['units']>()
   const restoredCaptions = new Set<string>()
+  const appendixHeading = source.units.findIndex((unit) => unit.source === 'Figures:')
+  const appendix = appendixHeading > 0 ? source.units.slice(appendixHeading) : []
+  const [heading, ...appendixCaptions] = appendix
+  const anchor = source.units[appendixHeading - 1]
+  const figureAppendix =
+    appendixCaptions.length >= 2 &&
+    appendix.every(
+      (unit) => unit.sourceOnly && unit.preserve === 'reference' && unit.fragments.length === 1
+    ) &&
+    anchor?.sourceOnly &&
+    anchor.preserve === 'reference' &&
+    anchor.fragments.at(-1)?.pageNumber === heading.fragments[0].pageNumber - 1 &&
+    appendixCaptions.every((unit, index) =>
+      new RegExp(`^Figure ${index + 1} - \\p{Lu}.{24,}\\.$`, 'u').test(unit.source)
+    )
   const originalRegions: NonNullable<Source['originalRegions']>[number][] = [
     ...(source.originalRegions ?? [])
   ]
@@ -2372,6 +3516,10 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
         painted = [],
         filledRules = []
       } = await graphicRegions(page, operators, signal)
+      if (figureAppendix && units.every((unit) => appendix.includes(unit))) {
+        for (const id of await rasterAppendixCaptions(page, units, images, heading, signal))
+          restoredCaptions.add(id)
+      }
       if (number === source.pages.length && source.units.at(-1) === units.at(-1)) {
         const restored = await terminalReferenceCaption(
           page,
@@ -2406,6 +3554,19 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
             caption.x + caption.width > rect.x
         )
       )
+      const continued =
+        !page.rotate && nativeFigureSentenceContinuation(source, units, captionedVectors, number)
+      if (continued && !preserved.has(continued.head.id)) {
+        const { head, tail } = continued
+        figureContinuations.set(head.id, [
+          {
+            ...head,
+            source: head.source + ' ' + tail.source,
+            fragments: [...head.fragments, ...tail.fragments]
+          }
+        ])
+        figureContinuations.set(tail.id, [])
+      }
       const vectorTables = tableRegions(units, rules, number)
       for (const id of await nativeMaskFractions(units, page, number, smallMaskRules, signal))
         nativeFractionOwners.add(id)
@@ -2440,10 +3601,40 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
             nativeLiterals.add(unit.id)
         }
       }
+      const taggedTable = await taggedMeasurementTableOwners(page, number, units, signal).catch(
+        () => {
+          signal.throwIfAborted()
+        }
+      )
+      if (taggedTable) {
+        for (const id of taggedTable.owners) {
+          preserved.add(id)
+          retainedTableOwners.add(id)
+        }
+        if (!skipTranslation && taggedTable.header) {
+          const [id, cells] = taggedTable.header
+          preserved.add(id)
+          splitTableCells.set(id, cells)
+        }
+      }
       const filled = await closedFilledTable(page, number, units, filledRules, signal)
       if (filled) for (const id of filled.owners) retainedTableOwners.add(id)
+      const grouped = await retainGroupedRomanTable(
+        page,
+        number,
+        units,
+        painted.filter(({ straight, height }) => straight && height === 0),
+        signal
+      )
+      for (const table of grouped) {
+        for (const id of table.owners) {
+          preserved.add(id)
+          retainedTableOwners.add(id)
+        }
+      }
       const regions = [
         ...images,
+        ...grouped.map(({ rect }) => rect),
         ...tables.map(({ rect }) => rect),
         ...captionedVectors,
         ...(filled ? [filled.rect] : [])
@@ -2506,6 +3697,16 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
         }
       }
       if (!skipTranslation) {
+        for (const [id, labels] of await splitThreeRasterPanelLabels(
+          page,
+          number,
+          units,
+          images,
+          signal
+        )) {
+          preserved.add(id)
+          splitFigureLabels.set(id, labels)
+        }
         const nodes = await diagramNodeLabelOwners(
           page,
           number,
@@ -2528,7 +3729,7 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
           page,
           number,
           units,
-          [...tables, ...tableRegions(units, rules, number, true)],
+          [...tables, ...tableRegions(units, rules, number, 'appendix')],
           painted,
           signal
         )
@@ -2537,10 +3738,43 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
           preserved.add(id)
           splitTableCells.set(id, cells)
         }
-        if (page.rotate === 0 && vectorTables.length) {
+        const romanTables =
+          page.rotate === 0
+            ? tableRegions(
+                units,
+                painted.filter(({ straight, height }) => straight && height === 0),
+                number,
+                'roman'
+              )
+            : []
+        const totalTables =
+          page.rotate === 0
+            ? tableRegions(
+                units,
+                painted.filter(({ straight, height }) => straight && height === 0),
+                number,
+                'roman-total'
+              )
+            : []
+        if (
+          page.rotate === 0 &&
+          (vectorTables.length || romanTables.length || totalTables.length)
+        ) {
           const content = await page.getTextContent()
           signal.throwIfAborted()
           const viewport = page.getViewport({ scale: 1 })
+          for (const table of totalTables)
+            for (const [id, cells] of splitRomanCostTotal(units, table, number, content, viewport))
+              splitTableRows.set(id, cells)
+          for (const table of romanTables)
+            for (const [id, rows] of splitCrossRowTableProse(
+              units,
+              table,
+              number,
+              content,
+              viewport
+            ))
+              splitTableRows.set(id, rows)
           for (const table of vectorTables)
             for (const [id, cells] of splitRuledParameterTableOwners(
               units,
@@ -2598,31 +3832,43 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
           if (left.size >= 3 || right.size >= 3) nativeLiterals.add(key.id)
         }
       }
-      // A legacy plot may draw data points with the built-in Dingbats font.
-      // PDF.js can expose those marks as letter l even though they are not labels.
+      // Native plot fonts can be decoded as ordinary text instead of markers.
+      const dingbatText = /^l+(?:\s+l+)*$/u
+      const texMarkerText = /^[①❤✒✠·qrt\s]+$/u
+      const hasUndecodedPlotGlyph = (text: string): boolean =>
+        [...text].some((char) => char.charCodeAt(0) < 32 && char.trim() !== '')
       const markerUnits = units.filter(
         (unit) =>
           preserved.has(unit.id) &&
           !unit.sourceOnly &&
           unit.fragments.length === 1 &&
           unit.fragments[0].items.length > 0 &&
-          /^l+(?:\s+l+)*$/u.test(unit.source)
+          (dingbatText.test(unit.source) ||
+            texMarkerText.test(unit.source) ||
+            hasUndecodedPlotGlyph(unit.source))
       )
       const fonts = page.commonObjs
       if (markerUnits.length && typeof fonts?.has === 'function') {
         const content = await page.getTextContent()
         signal.throwIfAborted()
-        const dingbats = new Set(
-          Object.keys(content.styles).filter((name) => {
-            const font = fonts.has(name) ? fonts.get(name) : undefined
-            return font?.name === 'ZapfDingbats' && font.missingFile === true
-          })
-        )
         for (const unit of markerUnits) {
+          const dingbat = dingbatText.test(unit.source)
+          const texMarker = texMarkerText.test(unit.source)
           if (
             unit.fragments[0].items.every(({ index, text }) => {
               const item = content.items[index]
-              return item && 'str' in item && item.str === text && dingbats.has(item.fontName)
+              if (!item || !('str' in item) || item.str !== text || !fonts.has(item.fontName))
+                return false
+              const font = fonts.get(item.fontName)
+              return (
+                (font?.name === 'ZapfDingbats' && font.missingFile === true && dingbat) ||
+                (font?.missingFile === false &&
+                  /^(?:[A-Z]{6}\+)?(?:LCIRCLEW10|LINEW10)$/u.test(font.name) &&
+                  texMarker) ||
+                (font?.isType3Font === true &&
+                  font.missingFile === false &&
+                  hasUndecodedPlotGlyph(text))
+              )
             })
           )
             nativeLiterals.add(unit.id)
@@ -2639,8 +3885,10 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
   }
   if (
     !preserved.size &&
+    !splitTableRows.size &&
     !originalRegions.length &&
     !restoredCaptions.size &&
+    !figureContinuations.size &&
     !nativeFractionOwners.size
   )
     return extraction
@@ -2652,6 +3900,8 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
         ...source,
         originalRegions,
         units: source.units.flatMap((unit) => {
+          const continued = figureContinuations.get(unit.id)
+          if (continued) return continued
           if (restoredCaptions.has(unit.id)) {
             const restored = { ...unit }
             delete restored.sourceOnly
@@ -2660,7 +3910,7 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
           }
           if (nativeFractionOwners.has(unit.id))
             return { ...unit, sourceOnly: true as const, preserve: 'formula' as const }
-          if (!preserved.has(unit.id)) return unit
+          if (!preserved.has(unit.id)) return splitTableRows.get(unit.id) ?? [unit]
           const labels = splitFrequencyLabels.get(unit.id) ?? splitFigureLabels.get(unit.id)
           if (labels) return labels
           const cells = splitTableCells.get(unit.id)
@@ -2721,44 +3971,16 @@ export async function applyCachedPdfFigureSources({
     )
       throw new Error('PDF source changed during figure verification')
   }
-  type Region = PdfStructureResult['elements'][number]['regions'][number]
-  const inside = (r: Region, outer: Region): boolean =>
-    r.page === outer.page &&
-    r.x >= outer.x - 1e-6 &&
-    r.y >= outer.y - 1e-6 &&
-    r.x + r.width <= outer.x + outer.width + 1e-6 &&
-    r.y + r.height <= outer.y + outer.height + 1e-6
-  const overlaps = (a: Region, b: Region): boolean =>
-    a.page === b.page &&
-    a.x < b.x + b.width &&
-    b.x < a.x + a.width &&
-    a.y < b.y + b.height &&
-    b.y < a.y + a.height
   try {
-    const results: PdfStructureResult[] = [],
-      batches = new Map<string, string>()
-    let bytes = 0,
-      count = 0
-    for (let page = 1; page <= document.numPages; page++) {
-      current()
-      const cached = await readCached({ sourceId, page })
-      current()
-      if (!cached) continue
-      const result = parsePdfStructureResult(cached, { ...cached, ...identity })
-      if (result.pageCount !== document.numPages || !result.processedPages.includes(page))
-        return extraction
-      const serialized = JSON.stringify(result),
-        previous = batches.get(result.extractionId)
-      if (previous !== undefined) {
-        if (previous !== serialized) return extraction
-        continue
-      }
-      bytes += serialized.length * 2
-      count += result.elements.length
-      if (bytes > 32 * 1024 ** 2 || count > 512) return extraction
-      batches.set(result.extractionId, serialized)
-      results.push(result)
-    }
+    const results = await readPdfStructureEvidence({
+      document,
+      sourceId,
+      identity,
+      readCached,
+      assertCurrent: current
+    })
+    if (!results) return extraction
+    current()
     const figureExtraction = await (async () => {
       const elements = results.flatMap((result) => result.elements)
       const owners = new Map<string, string>()
@@ -2841,11 +4063,12 @@ export async function applyCachedPdfFigureSources({
           )
           if (
             !region ||
-            !figure.regions.some((outer) => inside(region, outer)) ||
+            !figure.regions.some((outer) => structureRegionContains(outer, region)) ||
             elements.some(
               (element) =>
-                (element !== figure && element.regions.some((other) => overlaps(region, other))) ||
-                element.caption?.regions.some((caption) => overlaps(region, caption))
+                (element !== figure &&
+                  element.regions.some((other) => structureRegionsOverlap(region, other))) ||
+                element.caption?.regions.some((caption) => structureRegionsOverlap(region, caption))
             )
           )
             return extraction
@@ -2873,12 +4096,14 @@ export async function applyCachedPdfFigureSources({
           continue
         const region = figure.regions[0]
         if (
-          figure.caption.regions.some((caption) => overlaps(region, caption)) ||
+          figure.caption.regions.some((caption) => structureRegionsOverlap(region, caption)) ||
           elements.some(
             (element) =>
               element !== figure &&
-              (element.regions.some((other) => overlaps(region, other)) ||
-                element.caption?.regions.some((caption) => overlaps(region, caption)))
+              (element.regions.some((other) => structureRegionsOverlap(region, other)) ||
+                element.caption?.regions.some((caption) =>
+                  structureRegionsOverlap(region, caption)
+                ))
           )
         ) {
           continue
@@ -2945,7 +4170,7 @@ export async function applyCachedPdfFigureSources({
             complete = false
             break
           }
-          if (!inside(label, region)) continue
+          if (!structureRegionContains(region, label)) continue
           const key = `${pageNumber}:${index}`
           if (owners.get(key) !== item.str) {
             complete = false
@@ -2958,7 +4183,7 @@ export async function applyCachedPdfFigureSources({
         }
         const units = source.units.filter((unit) =>
           unit.fragments.some((fragment) =>
-            overlaps(region, { page: fragment.pageNumber, ...fragment.rect })
+            structureRegionsOverlap(region, { page: fragment.pageNumber, ...fragment.rect })
           )
         )
         const unitKeys = new Set<string>()
@@ -2970,13 +4195,10 @@ export async function applyCachedPdfFigureSources({
           for (const fragment of unit.fragments) {
             if (
               fragment.pageNumber !== pageNumber ||
-              !inside(
-                {
-                  page: fragment.pageNumber,
-                  ...fragment.rect
-                },
-                region
-              ) ||
+              !structureRegionContains(region, {
+                page: fragment.pageNumber,
+                ...fragment.rect
+              }) ||
               !fragment.items.length
             ) {
               complete = false
@@ -3017,12 +4239,14 @@ export async function applyCachedPdfFigureSources({
         if (
           regions.some(
             (region) =>
-              !figure.regions.some((outer) => inside(region, outer)) ||
+              !figure.regions.some((outer) => structureRegionContains(outer, region)) ||
               elements.some(
                 (element) =>
                   (element !== figure &&
-                    element.regions.some((other) => overlaps(region, other))) ||
-                  element.caption?.regions.some((caption) => overlaps(region, caption))
+                    element.regions.some((other) => structureRegionsOverlap(region, other))) ||
+                  element.caption?.regions.some((caption) =>
+                    structureRegionsOverlap(region, caption)
+                  )
               )
           )
         )
