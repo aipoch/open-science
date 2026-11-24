@@ -52,15 +52,12 @@ describe('ExtensionPreservingFileName', () => {
 
   const mockWidths = (available: () => number): void => {
     const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-      this: HTMLElement
-    ) {
-      const width =
-        this.dataset.testid === 'file-name-root'
-          ? available()
-          : Array.from(segmenter.segment(this.textContent ?? '')).length * 8
-      return { width } as DOMRect
-    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ width: available() }) as DOMRect
+    )
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      measureText: (text: string) => ({ width: Array.from(segmenter.segment(text)).length * 8 })
+    } as CanvasRenderingContext2D)
   }
 
   it('preserves whole filename words instead of cutting into the final word', () => {

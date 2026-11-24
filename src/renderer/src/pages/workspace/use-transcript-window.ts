@@ -60,7 +60,8 @@ const useTranscriptWindow = (
   items: readonly WorkspaceConversationTimelineItem[],
   presentationBarrierIndex: number,
   viewportRef: RefObject<HTMLDivElement | null>,
-  followingPaused = false
+  followingPaused = false,
+  initialWindowSize = TRANSCRIPT_WINDOW_SIZE
 ): {
   entries: Array<{ item: WorkspaceConversationTimelineItem; itemIndex: number }>
   end: number
@@ -90,7 +91,7 @@ const useTranscriptWindow = (
   >(undefined)
   const scrollInputTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const finding = state.scopeId === scopeId && state.finding === true
-  const initialStart = Math.max(0, items.length - TRANSCRIPT_WINDOW_SIZE)
+  const initialStart = Math.max(0, items.length - initialWindowSize)
   if (state.scopeId !== scopeId) {
     setState({
       scopeId,
@@ -116,7 +117,7 @@ const useTranscriptWindow = (
     stateMatchesScope &&
     state.followEnd !== false &&
     state.end === state.itemCount
-  const retainedWindowSize = Math.max(TRANSCRIPT_WINDOW_SIZE, state.end - state.start)
+  const retainedWindowSize = Math.max(initialWindowSize, state.end - state.start)
   const retainedStart =
     stateMatchesScope && state.anchorId ? items.findIndex((item) => item.id === state.anchorId) : -1
   const start = finding
@@ -135,6 +136,29 @@ const useTranscriptWindow = (
         ? items.length
         : Math.min(start + retainedWindowSize, items.length)
       : items.length
+
+  // Short or collapsed rows may leave the first window too small to scroll into older history.
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    if (
+      initialWindowSize < TRANSCRIPT_WINDOW_SIZE &&
+      start > 0 &&
+      end === items.length &&
+      presentationBarrierIndex < 0 &&
+      viewport &&
+      viewport.clientHeight > 0 &&
+      viewport.scrollHeight <= viewport.clientHeight
+    ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState({
+        scopeId,
+        itemCount: items.length,
+        start: Math.max(0, start - initialWindowSize),
+        end,
+        followEnd: true
+      })
+    }
+  }, [end, initialWindowSize, items.length, presentationBarrierIndex, scopeId, start, viewportRef])
 
   // Preserve mounted reading rows as well as scrollTop during an explicit interaction pause.
   // Persist the release so ending the pause alone cannot jump to a newer bounded tail.
@@ -264,7 +288,7 @@ const useTranscriptWindow = (
       setState({
         scopeId,
         itemCount: items.length,
-        start: Math.max(0, items.length - TRANSCRIPT_WINDOW_SIZE),
+        start: initialStart,
         end: items.length,
         followEnd: true
       })
@@ -300,7 +324,7 @@ const useTranscriptWindow = (
       pendingTargetRef.current = anchor
       setState(snapshot.window)
     }
-  }, [items, scopeId, viewportRef])
+  }, [initialStart, items, scopeId, viewportRef])
 
   const finishUserScroll = (): void => {
     clearTimeout(scrollInputTimerRef.current)

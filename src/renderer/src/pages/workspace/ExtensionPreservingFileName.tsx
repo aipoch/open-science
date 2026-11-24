@@ -26,24 +26,27 @@ const ExtensionPreservingFileName = ({
   className
 }: ExtensionPreservingFileNameProps): React.JSX.Element => {
   const rootRef = useRef<HTMLSpanElement>(null)
-  const probeRef = useRef<HTMLSpanElement>(null)
   const [measured, setMeasured] = useState<MeasuredName>()
 
   useLayoutEffect(() => {
     const root = rootRef.current
-    const probe = probeRef.current
-    if (!root || !probe) return
+    if (!root) return
+    let context: CanvasRenderingContext2D | null = null
 
     const update = (): void => {
       const width = root.getBoundingClientRect().width
       if (width <= 0) return
+      context ??= root.ownerDocument.createElement('canvas').getContext('2d')
+      if (!context) return
+      const style = getComputedStyle(root)
+      const metrics = context
+      metrics.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+      metrics.letterSpacing = style.letterSpacing === 'normal' ? '0px' : style.letterSpacing
       const widths = new Map<string, number>([['', 0]])
       const measure = (text: string): number => {
         const cached = widths.get(text)
         if (cached !== undefined) return cached
-        probe.textContent = text
-        const result = probe.getBoundingClientRect().width
-        probe.textContent = ''
+        const result = metrics.measureText(text).width
         widths.set(text, result)
         return result
       }
@@ -89,11 +92,6 @@ const ExtensionPreservingFileName = ({
         className
       )}
     >
-      <span
-        ref={probeRef}
-        aria-hidden="true"
-        className="pointer-events-none invisible absolute w-max whitespace-nowrap"
-      />
       <bdi data-testid="file-name-head" className="min-w-0 shrink truncate">
         {head}
       </bdi>
