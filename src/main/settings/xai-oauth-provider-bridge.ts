@@ -14,6 +14,7 @@ import {
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
   withProviderConnectionMarker,
+  type ProviderLoopbackHostBinding,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 
@@ -31,8 +32,8 @@ export type XaiOAuthBridgeConnection = Readonly<{ baseUrl: string; token: string
 type XaiOAuthProviderBridgeOptions = Readonly<{
   fetchImpl?: typeof fetch
   adaptChatCompletionsRequest?: (request: Record<string, unknown>) => Record<string, unknown>
-  token?: string
-}>
+}> &
+  ProviderLoopbackHostBinding
 
 const log = createLogger('xai-oauth-bridge')
 
@@ -81,7 +82,7 @@ export class XaiOAuthProviderBridge {
     private readonly adaptChatCompletionsRequest?: (
       request: Record<string, unknown>
     ) => Record<string, unknown>,
-    token?: string
+    binding: ProviderLoopbackHostBinding = {}
   ) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
     const initial = this.targets.get(initialTargetId)
@@ -96,7 +97,7 @@ export class XaiOAuthProviderBridge {
     this.host = new ProviderLoopbackHttpHost({
       diagnosticName: `xai-oauth-${this.wire}`,
       credentialMode: 'bearer-or-api-key',
-      ...(token ? { token } : {}),
+      ...binding,
       createConnection: (origin, token) => ({ baseUrl: origin, token }),
       onUnauthorized: (response) => json(response, 401, { error: { message: 'Unauthorized' } }),
       onError: (error, response) =>
@@ -391,6 +392,6 @@ export const createXaiOAuthProviderBridge = (
     getAccessToken,
     options.fetchImpl ?? netFetchStandard,
     options.adaptChatCompletionsRequest,
-    options.token
+    { token: options.token, router: options.router }
   )
 }

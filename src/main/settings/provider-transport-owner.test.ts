@@ -1384,6 +1384,98 @@ describe('ProviderTransportOwner generations', () => {
     expect(bridge.close).toHaveBeenCalledTimes(1)
   })
 
+  it.each(['pi', 'opencode-openai', 'opencode-anthropic'] as const)(
+    'routes 280 %s models concurrently through one listener and releases it',
+    async (kind) => {
+      const upstream = createServer(async (request, response) => {
+        const chunks: Buffer[] = []
+        for await (const chunk of request) chunks.push(Buffer.from(chunk))
+        const body = JSON.parse(Buffer.concat(chunks).toString())
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            model: body.model,
+            path: request.url,
+            key: request.headers.authorization ?? request.headers['x-api-key']
+          })
+        )
+      })
+      await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+      const base = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`
+      const owner = new ProviderTransportOwner({
+        createProtocolForwardingBridge: (targets, id, options) =>
+          new ProtocolForwardingBridge(targets, id, fetch, options),
+        createMessagesBridge: (targets, id, options) =>
+          new MessagesBridge(targets, id, fetch, undefined, options)
+      })
+      const targets = Array.from({ length: 280 }, (_, index) => {
+        const wire =
+          kind === 'opencode-anthropic' || (kind === 'pi' && index % 2 === 1)
+            ? ('messages' as const)
+            : ('chat-completions' as const)
+        const model = `model-${index}`
+        const key = `key-${index}`
+        const target: ProviderRuntimeTarget = {
+          ...makeTarget(),
+          effectiveModel: model,
+          apiEndpoints: [wire],
+          provider: {
+            ...makeTarget().provider,
+            baseUrl: base,
+            chatCompletionsBaseUrl: `${base}/v1`,
+            apiEndpoints: [wire],
+            model,
+            key
+          }
+        }
+        const endpoint = wire === 'messages' ? base : `${base}/v1/chat/completions`
+        return { id: model, target, wire, endpoint }
+      })
+      try {
+        const generation = await owner.acquire({
+          activeTarget: targets[0].target,
+          plan: makePlan(
+            kind === 'pi' ? { kind, targets, initialTargetId: targets[0].id } : { kind, targets }
+          )
+        })
+        const catalog = generation.providerModelCatalog!
+        const send = (index: number, token?: string): Promise<Response> => {
+          const { provider } = catalog[index]
+          const path = targets[index].wire === 'messages' ? 'messages' : 'chat/completions'
+          return fetch(`${provider.baseUrl}/v1/${path}`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${token ?? provider.key}` },
+            body: JSON.stringify({ model: 'ignored', messages: [] })
+          })
+        }
+        try {
+          expect(catalog).toHaveLength(280)
+          expect(
+            new Set(catalog.map(({ provider }) => new URL(provider.baseUrl!).origin)).size
+          ).toBe(1)
+          expect(new Set(catalog.map(({ provider }) => provider.baseUrl)).size).toBe(280)
+          expect((await send(0, 'wrong-token')).status).toBe(401)
+          if (kind !== 'pi') expect((await send(0, catalog[1].provider.key)).status).toBe(401)
+          const selected = [0, 279]
+          const responses = await Promise.all(selected.map((index) => send(index)))
+          expect(await Promise.all(responses.map((response) => response.json()))).toEqual(
+            selected.map((index) => ({
+              model: `model-${index}`,
+              path: targets[index].wire === 'messages' ? '/v1/messages' : '/v1/chat/completions',
+              key: `Bearer key-${index}`
+            }))
+          )
+        } finally {
+          await generation.release()
+        }
+        await expect(send(0)).rejects.toThrow()
+      } finally {
+        upstream.closeAllConnections()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+      }
+    }
+  )
+
   it('closes every OpenCode bridge after a partial multi-provider start failure', async () => {
     const startError = new Error('second OpenCode bridge failed')
     const bridges = [makeOpenAiBridge(0), makeOpenAiBridge(1, startError)]
@@ -1471,11 +1563,11 @@ describe('ProviderTransportOwner generations', () => {
         : Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
     })
     const owner = new ProviderTransportOwner({
-      createProtocolForwardingBridge: (targets, initialTargetId) => {
+      createProtocolForwardingBridge: (targets, initialTargetId, options) => {
         expect(
           targets.every((target) => target.adaptStream === bufferChatCompletionsToolNames)
         ).toBe(true)
-        return new ProtocolForwardingBridge(targets, initialTargetId, upstreamFetch)
+        return new ProtocolForwardingBridge(targets, initialTargetId, upstreamFetch, options)
       }
     })
     const targetA = makeTarget()

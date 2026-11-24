@@ -71,6 +71,10 @@ import type {
   ResponsesConnection,
   ResponsesToChatCompletionsBridgeTarget
 } from './responses-transport-contract'
+import {
+  ProviderLoopbackRouter,
+  type ProviderLoopbackHostBinding
+} from './provider-loopback-http-host'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
 import { sanitizeXaiResponsesRequest } from '@aipoch/providers/protocol'
@@ -84,9 +88,6 @@ type ChatCompletionsCompatibilityBridgePort = Pick<
   'start' | 'close'
 >
 type CreateXaiOAuthProviderBridge = typeof createXaiOAuthProviderBridge
-// Lets one Pi generation serve several protocol bridges under its single ACP API key.
-type LoopbackCredentialOptions = Readonly<{ token?: string }>
-
 const codeBuddyCompatibilityEndpoint = (
   provider: ProviderRuntimeTarget['provider'],
   wire: ChatCompletionsCompatibilityTarget['wire']
@@ -168,12 +169,12 @@ type ProviderTransportOwnerOptions = {
   createMessagesBridge?: (
     targets: readonly MessagesBridgeTarget[],
     initialTargetId: string,
-    options?: LoopbackCredentialOptions
+    options?: ProviderLoopbackHostBinding
   ) => MessagesBridgePort
   createProtocolForwardingBridge?: (
     targets: readonly ProtocolForwardingBridgeTarget[],
     initialTargetId: string,
-    options?: LoopbackCredentialOptions
+    options?: ProviderLoopbackHostBinding
   ) => ProtocolForwardingBridgePort
   createChatCompletionsCompatibilityBridge?: (
     target: ChatCompletionsCompatibilityTarget
@@ -240,12 +241,12 @@ class ProviderTransportOwner {
   private readonly createMessagesBridge: (
     targets: readonly MessagesBridgeTarget[],
     initialTargetId: string,
-    options?: LoopbackCredentialOptions
+    options?: ProviderLoopbackHostBinding
   ) => MessagesBridgePort
   private readonly createProtocolForwardingBridge: (
     targets: readonly ProtocolForwardingBridgeTarget[],
     initialTargetId: string,
-    options?: LoopbackCredentialOptions
+    options?: ProviderLoopbackHostBinding
   ) => ProtocolForwardingBridgePort
   private readonly createChatCompletionsCompatibilityBridge: (
     target: ChatCompletionsCompatibilityTarget
@@ -525,8 +526,10 @@ class ProviderTransportOwner {
   ): Promise<ProviderTransportGeneration> {
     const transport = input.plan.transport
     if (transport.kind !== 'pi') throw new Error('Pi provider transport is unavailable.')
-    // Every bridge accepts the one key Pi receives over ACP authentication.
+    // Pi sends the same ACP credential for every model in this generation.
     const token = randomBytes(24).toString('hex')
+    const router = new ProviderLoopbackRouter()
+    const binding = { token, router }
     const bridges: Array<
       MessagesBridgePort | ProtocolForwardingBridgePort | ReturnType<CreateXaiOAuthProviderBridge>
     > = []
@@ -551,7 +554,7 @@ class ProviderTransportOwner {
                 planned.id,
                 'chat-completions',
                 this.getXaiOAuthAccessToken,
-                { token }
+                binding
               )
             : planned.oauth === 'lab'
               ? this.createProtocolForwardingBridge(
@@ -559,7 +562,7 @@ class ProviderTransportOwner {
                     this.labForwardingTarget(planned.id, planned.wire, planned.endpoint!, candidate)
                   ],
                   planned.id,
-                  { token }
+                  binding
                 )
               : planned.wire === 'messages'
                 ? this.createMessagesBridge(
@@ -577,7 +580,7 @@ class ProviderTransportOwner {
                       }
                     ],
                     planned.id,
-                    { token }
+                    binding
                   )
                 : this.createProtocolForwardingBridge(
                     [
@@ -591,7 +594,7 @@ class ProviderTransportOwner {
                       }
                     ],
                     planned.id,
-                    { token }
+                    binding
                   )
         bridges.push(bridge)
         const connection = await bridge.start()
@@ -621,7 +624,7 @@ class ProviderTransportOwner {
       const release = async (): Promise<void> => {
         if (released) return
         released = true
-        await Promise.all(bridges.map((bridge) => bridge.close()))
+        await Promise.all([router.close(), ...bridges.map((bridge) => bridge.close())])
       }
       return Object.freeze({
         provider: activeProvider,
@@ -629,14 +632,14 @@ class ProviderTransportOwner {
         piModelBridge: Object.freeze({ token }),
         environment: loopbackProxyBypassEnvironment(process.env),
         providerTransportLease: {
-          // Pi selects among catalog models itself; each target keeps its own bridge.
+          // Pi sends each model to its own path on the shared listener.
           setTarget: (targetId: string) => !released && targetIds.has(targetId),
           release
         },
         release
       })
     } catch (error) {
-      await Promise.all(bridges.map((bridge) => bridge.close().catch(() => undefined)))
+      await Promise.allSettled([router.close(), ...bridges.map((bridge) => bridge.close())])
       throw error
     }
   }
@@ -839,6 +842,8 @@ class ProviderTransportOwner {
     if (transport.kind !== 'opencode-openai' && transport.kind !== 'opencode-anthropic') {
       throw new Error('OpenCode provider transport is unavailable.')
     }
+    const router = new ProviderLoopbackRouter()
+    const binding = { router }
     const bridges: Array<MessagesBridgePort | ProtocolForwardingBridgePort> = []
     const targetIds = new Set<string>()
     const catalog: AgentModelCatalogEntry[] = []
@@ -856,7 +861,8 @@ class ProviderTransportOwner {
                 [{ id: targetId, model }],
                 targetId,
                 'chat-completions',
-                this.getXaiOAuthAccessToken
+                this.getXaiOAuthAccessToken,
+                binding
               )
             : isLabProvider(candidate.provider.type)
               ? (() => {
@@ -871,7 +877,8 @@ class ProviderTransportOwner {
                         adaptStream: bufferChatCompletionsToolNames
                       })
                     ],
-                    targetId
+                    targetId,
+                    binding
                   )
                 })()
               : transport.kind === 'opencode-openai'
@@ -890,7 +897,8 @@ class ProviderTransportOwner {
                         model
                       }
                     ],
-                    targetId
+                    targetId,
+                    binding
                   )
                 : this.createMessagesBridge(
                     [
@@ -909,7 +917,8 @@ class ProviderTransportOwner {
                           : {})
                       }
                     ],
-                    targetId
+                    targetId,
+                    binding
                   )
         bridges.push(bridge)
         const connection = await bridge.start()
@@ -952,7 +961,7 @@ class ProviderTransportOwner {
       const release = async (): Promise<void> => {
         if (released) return
         released = true
-        await Promise.all(bridges.map((bridge) => bridge.close()))
+        await Promise.all([router.close(), ...bridges.map((bridge) => bridge.close())])
       }
       return Object.freeze({
         provider: activeProvider,
@@ -960,7 +969,7 @@ class ProviderTransportOwner {
         environment: loopbackProxyBypassEnvironment(process.env),
         providerTransportLease: {
           setTarget: (targetId: string) => {
-            if (!targetIds.has(targetId)) return false
+            if (released || !targetIds.has(targetId)) return false
             if (activeTargetId !== targetId) {
               activeTargetId = targetId
               for (const bridge of bridges) bridge.clearErrorReplay()
@@ -972,7 +981,7 @@ class ProviderTransportOwner {
         release
       })
     } catch (error) {
-      await Promise.all(bridges.map((bridge) => bridge.close().catch(() => undefined)))
+      await Promise.allSettled([router.close(), ...bridges.map((bridge) => bridge.close())])
       throw error
     }
   }

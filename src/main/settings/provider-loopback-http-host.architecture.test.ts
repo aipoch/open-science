@@ -9,6 +9,7 @@ import {
 
 const projectRoot = resolve(__dirname, '../../..')
 const hostPath = resolve(__dirname, 'provider-loopback-http-host.ts')
+const ownerPath = resolve(__dirname, 'provider-transport-owner.ts')
 const adapterPaths = [
   resolve(__dirname, 'messages-bridge.ts'),
   resolve(__dirname, 'chat-completions-compatibility.ts'),
@@ -36,15 +37,19 @@ describe('Provider loopback HTTP ownership', () => {
       expect(adapter).not.toContain("randomBytes(24).toString('hex')")
       expect(adapter).toContain('new ProviderLoopbackHttpHost')
     }
+
+    const owner = readSource(ownerPath)
+    expect(owner).toContain('new ProviderLoopbackRouter()')
+    expect(owner).not.toMatch(/createServer\(|new ProviderLoopbackHttpHost|closeAllConnections\(\)/)
   })
 
-  it('keeps the internal host seam limited to the declared Provider adapters', () => {
+  it('limits loopback host imports to the Provider adapters and router owner', () => {
     expect(
       productionSources()
         .filter((path) => path !== hostPath)
         .filter((path) => readSource(path).includes('provider-loopback-http-host'))
         .map(portablePath)
         .sort()
-    ).toEqual(adapterPaths.map(portablePath).sort())
+    ).toEqual([...adapterPaths, ownerPath].map(portablePath).sort())
   })
 })
