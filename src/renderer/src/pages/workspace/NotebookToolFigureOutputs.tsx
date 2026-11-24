@@ -27,35 +27,64 @@ type NotebookToolFigureOutputContentProps = NotebookToolFigureOutputsProps & {
 }
 
 type NotebookToolFigureCardProps = {
+  reference?: NotebookSessionReference
+  runId: string
   figure: NotebookRunFigure
   filename: string
   onOpen: (figure: NotebookRunFigure, trigger: HTMLButtonElement) => void
 }
 
 const NotebookToolFigureCard = ({
+  reference,
+  runId,
   figure,
   filename,
   onOpen
 }: NotebookToolFigureCardProps): React.JSX.Element => {
   const { t } = useTranslation()
-  // Notebook runs already retain bounded capture payloads. Keep those large base64 strings out of
-  // the DOM and image decoder until the individual card enters the transcript's viewport overscan.
   const [setCardElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
 
-  if (figure.payload === undefined) {
+  const [loaded, setLoaded] = useState<string | null>()
+  const requested = useRef(false)
+  const { outputIndex, mimeType, payload: captured } = figure
+  const sessionId = reference?.sessionId
+  const projectId = reference && resolveProjectId(reference)
+  const workspaceCwd = reference?.workspaceCwd
+  useEffect(() => {
+    if (!isNearViewport || captured !== undefined || loaded !== undefined || requested.current)
+      return
+    if (!sessionId || !projectId || workspaceCwd === undefined) return
+    // A card is keyed to one figure. Let its read finish if it scrolls away and reuse it on return.
+    requested.current = true
+    void window.api.notebook
+      .runFigure({ sessionId, projectId, workspaceCwd, runId, outputIndex, mimeType })
+      .then(setLoaded, () => setLoaded(null))
+  }, [
+    isNearViewport,
+    captured,
+    loaded,
+    sessionId,
+    projectId,
+    workspaceCwd,
+    runId,
+    outputIndex,
+    mimeType
+  ])
+  const payload = captured ?? loaded
+  if (payload === null)
     return (
-      <button
-        type="button"
-        data-testid="notebook-tool-figure-button"
-        aria-label={t('Preview {{name}}', { name: filename })}
-        className="flex items-center gap-2 rounded-lg border border-border-200 px-3 py-2 text-sm hover:bg-bg-100 focus-visible:ring-2"
-        onClick={(event) => onOpen(figure, event.currentTarget)}
-      >
-        <Maximize2 className="size-3.5" aria-hidden="true" />
-        {filename}
-      </button>
+      <ErrorNotice
+        inline
+        description={t('Preview unavailable.')}
+        primaryButton={{
+          label: t('Retry'),
+          onClick: () => {
+            requested.current = false
+            setLoaded(undefined)
+          }
+        }}
+      />
     )
-  }
   return (
     <div className="rounded-2xl bg-bg-000 p-2 shadow-sm">
       <button
@@ -64,20 +93,27 @@ const NotebookToolFigureCard = ({
         data-testid="notebook-tool-figure-button"
         className="group relative block w-fit max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0"
         aria-label={t('Preview {{name}}', { name: filename })}
-        onClick={(event) => onOpen(figure, event.currentTarget)}
+        disabled={payload === undefined}
+        onClick={(event) => onOpen({ ...figure, payload }, event.currentTarget)}
       >
         <span className="flex max-w-full items-center justify-center">
-          {isNearViewport ? (
+          {isNearViewport && payload !== undefined ? (
             <img
               data-testid="notebook-tool-figure-image"
-              src={`data:${figure.mimeType};base64,${figure.payload}`}
+              src={`data:${figure.mimeType};base64,${payload}`}
               alt={filename}
               className="block h-auto max-h-[300px] w-auto max-w-full object-contain"
               decoding="async"
               draggable={false}
             />
           ) : (
-            <span className="h-36 w-60 max-w-full bg-bg-100" aria-hidden="true" />
+            <span className="flex h-36 w-60 max-w-full items-center justify-center bg-bg-100">
+              {isNearViewport && (
+                <span role="status" className="text-sm text-text-200">
+                  {t('Loading image…')}
+                </span>
+              )}
+            </span>
           )}
         </span>
         <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-gradient-to-t from-black/55 to-transparent px-2 pb-1 pt-3.5 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
@@ -98,42 +134,8 @@ const NotebookToolFigureOutputContent = ({
 }: NotebookToolFigureOutputContentProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [selectedFigure, setSelectedFigure] = useState<NotebookRunFigure>()
-  const [loaded, setLoaded] = useState<{ figure: NotebookRunFigure; payload: string | null }>()
-  const [attempt, setAttempt] = useState(0)
-  const sessionId = reference?.sessionId
-  const projectId = reference && resolveProjectId(reference)
-  const workspaceCwd = reference?.workspaceCwd
-  useEffect(() => {
-    if (
-      !selectedFigure ||
-      selectedFigure.payload !== undefined ||
-      !sessionId ||
-      !projectId ||
-      workspaceCwd === undefined
-    )
-      return
-    let current = true
-    const finish = (payload: string | null): void => {
-      if (current) setLoaded({ figure: selectedFigure, payload })
-    }
-    void window.api.notebook
-      .runFigure({
-        sessionId,
-        projectId,
-        workspaceCwd,
-        runId: run.runId,
-        outputIndex: selectedFigure.outputIndex,
-        mimeType: selectedFigure.mimeType
-      })
-      .then(finish, () => finish(null))
-    return () => {
-      current = false
-    }
-  }, [selectedFigure, sessionId, projectId, workspaceCwd, run.runId, attempt])
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null)
   const dialogFigure = useRetainedDialogValue(selectedFigure)
-  const payload =
-    dialogFigure?.payload ?? (loaded && loaded.figure === dialogFigure ? loaded.payload : undefined)
   const selectedFilename = dialogFigure ? formatNotebookFigureFilename(dialogFigure, t) : undefined
 
   return (
@@ -147,7 +149,9 @@ const NotebookToolFigureOutputContent = ({
 
           return (
             <NotebookToolFigureCard
-              key={figure.key}
+              key={JSON.stringify([figure.key, figure.mimeType, reference?.workspaceCwd])}
+              reference={reference}
+              runId={run.runId}
               figure={figure}
               filename={filename}
               onOpen={(nextFigure, trigger) => {
@@ -190,28 +194,13 @@ const NotebookToolFigureOutputContent = ({
             {dialogFigure ? (
               <figure className="min-h-0">
                 <div className="relative flex max-h-[88vh] min-h-40 items-center justify-center overflow-hidden rounded-xl bg-bg-000 text-text-000 shadow-dialog">
-                  {payload === null ? (
-                    <ErrorNotice
-                      description={t('Preview unavailable.')}
-                      primaryButton={{
-                        label: t('Retry'),
-                        onClick: () => {
-                          setLoaded(undefined)
-                          setAttempt((n) => n + 1)
-                        }
-                      }}
-                    />
-                  ) : payload === undefined ? (
-                    <span role="status">{t('Loading image…')}</span>
-                  ) : (
-                    <img
-                      data-testid="notebook-figure-preview-image"
-                      src={`data:${dialogFigure.mimeType};base64,${payload}`}
-                      alt={selectedFilename}
-                      className="block max-h-[88vh] max-w-full object-contain"
-                      draggable={false}
-                    />
-                  )}
+                  <img
+                    data-testid="notebook-figure-preview-image"
+                    src={`data:${dialogFigure.mimeType};base64,${dialogFigure.payload}`}
+                    alt={selectedFilename}
+                    className="block max-h-[88vh] max-w-full object-contain"
+                    draggable={false}
+                  />
                   <Dialog.Close
                     type="button"
                     aria-label={t('Close preview')}

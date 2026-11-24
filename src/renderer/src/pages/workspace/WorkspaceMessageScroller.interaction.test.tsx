@@ -355,7 +355,7 @@ const createDeferred = <Value,>(): {
   return { promise, resolve }
 }
 
-const installIntersectionObserver = (): (() => void) => {
+const installIntersectionObserver = (): ((isIntersecting?: boolean) => void) => {
   const observers = new Set<{
     callback: IntersectionObserverCallback
     elements: Set<Element>
@@ -374,12 +374,10 @@ const installIntersectionObserver = (): (() => void) => {
       }
     }
   )
-  return () => {
+  return (isIntersecting = true) => {
     for (const { callback, elements } of observers) {
       callback(
-        [...elements].map(
-          (target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry
-        ),
+        [...elements].map((target) => ({ target, isIntersecting }) as IntersectionObserverEntry),
         {} as IntersectionObserver
       )
     }
@@ -845,7 +843,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
             historicalRuns.filter((run) => request.runIds?.includes(run.runId) === true)
           )
       )
-      const runFigure = vi.fn().mockResolvedValue('QUJD')
+      const deferredFigure = createDeferred<string>()
+      const runFigure = vi.fn(() => deferredFigure.promise)
       window.api = {
         ...window.api,
         notebook: {
@@ -891,7 +890,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         await act(async () => header.click())
       }
       if (terminalReceipt) {
+        const setNearViewport = installIntersectionObserver()
         expect(loadNotebookState).not.toHaveBeenCalled()
+        expect(runFigure).not.toHaveBeenCalled()
         const chip = container.querySelector<HTMLButtonElement>('[data-testid="tool-chip"]')!
         loadNotebookState.mockRejectedValueOnce(new Error('Temporarily unavailable'))
         await act(async () => chip.click())
@@ -910,6 +911,15 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           [historicalRuns[0].runId]
         ])
         expect(runFigure).not.toHaveBeenCalled()
+        await act(async () => setNearViewport(true))
+        expect(runFigure).toHaveBeenCalledOnce()
+        await act(async () => setNearViewport(false))
+        await act(async () => setNearViewport(true))
+        await act(async () => deferredFigure.resolve('QUJD'))
+        expect(
+          container.querySelector('[data-testid="notebook-tool-figure-image"]')?.getAttribute('src')
+        ).toBe('data:image/png;base64,QUJD')
+        expect(runFigure).toHaveBeenCalledOnce()
         const figure = container.querySelector<HTMLButtonElement>(
           '[data-testid="notebook-tool-figure-button"]'
         )!
