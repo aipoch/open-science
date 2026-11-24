@@ -50,6 +50,24 @@ function fixture(kind = 'script', fault = ''): PDFDocumentProxy {
       true
     )
   ]
+  if (kind === 'parallel-rows') {
+    parts.splice(
+      1,
+      5,
+      item('A', 134, 300, 7, 'Math', 10, true),
+      item('B', 134, 312, 7),
+      item('=', 152, 300, 8, 'Body', 10, true),
+      item('=', fault === 'shifted-relation' ? 154 : 152, 312, 8, 'Body'),
+      ...[300, 312].flatMap((y) => [
+        item('p', 170, y, 5),
+        item('i', 175, y + 1.5, 5, 'Index', 7),
+        item('+', 184, y, 8),
+        item('δ', 194, y, 5),
+        item('i', 199, y + 1.5, 5, 'Index', 7)
+      ]),
+      item('(1)', 284, 306, 15, 'Body', 10, true)
+    )
+  }
   const target = 4,
     anchor = parts.length - 2
   if (fault === 'ordinary-prose')
@@ -570,24 +588,38 @@ function derivativeFixture(fault: string): {
     return parts.length - 1
   }
   add('The preceding prose introduces the two equations.', 60, 700, 240, 'Body', true)
-  add('dψ', 120, 658, 11)
-  add('(', 131, 658, 3, 'Body')
-  add('x', 134, 658, 5)
-  add(')', 139, 658, 3, 'Body', true)
-  const denominator = add('dt', fault === 'off-center' ? 140 : 127, 644, 8)
-  add(fault === 'no-relation' ? '·' : ':=', 146, 651, 9, 'Body')
+  const dotted = fault.startsWith('dotted')
+  const sectionNumerator = dotted ? add('dy', 127, 658, 8, 'Math', true) : -1
+  if (!dotted) {
+    add('dψ', 120, 658, 11)
+    add('(', 131, 658, 3, 'Body')
+    add('x', 134, 658, 5)
+    add(')', 139, 658, 3, 'Body', true)
+  }
+  const denominator = add(dotted ? 'dx' : 'dt', fault === 'off-center' ? 140 : 127, 644, 8)
+  add(fault === 'no-relation' ? '·' : dotted ? '=' : ':=', dotted ? 144 : 146, 651, 9, 'Body')
   add('u', 158, 651, 5)
   add('=', 166, 651, 8, 'Body')
   add('0', 178, 651, 5, 'Body')
-  add(fault === 'no-number' ? 'Independent heading' : '(1)', 455, 651, 14, 'Body', true)
+  add(
+    fault === 'no-number' ? 'Independent heading' : dotted ? '(3.7)' : '(1)',
+    455,
+    651,
+    dotted ? 26 : 14,
+    'Body',
+    true
+  )
   add('The next differential is defined as follows.', 60, 623, 210, 'Body', true)
-  add('x', 118, 577, 6)
-  add('=', 128, 577, 8, 'Body')
-  const differential = add('d', 142, 584, 4, 'Math', true)
-  add('dt', 140, 570, 8)
-  add('μ', 150, 577, 6)
-  add('(2)', 455, 577, 14, 'Body', true)
-  const ordinary = add('dt', 75, 450, 10, 'Body', true)
+  let differential = sectionNumerator
+  if (!dotted) {
+    add('x', 118, 577, 6)
+    add('=', 128, 577, 8, 'Body')
+    differential = add('d', 142, 584, 4, 'Math', true)
+    add('dt', 140, 570, 8)
+    add('μ', 150, 577, 6)
+    add('(2)', 455, 577, 14, 'Body', true)
+  }
+  const ordinary = add(dotted ? 'dx' : 'dt', 75, 450, 10, 'Body', true)
   add('Other prose follows independently.', 75, 419, 220, 'Body', true)
   if (fault === 'ambiguous-fraction') add('overlapping words', 128, 644, 85, 'Body', true)
   const metrics = { ascent: 0.7, descent: -0.2, vertical: false }
@@ -603,12 +635,14 @@ function derivativeFixture(fault: string): {
     ],
     [OPS.setLineWidth, [0.4]],
     ...(
-      (fault === 'no-bar'
+      (fault.endsWith('no-bar')
         ? []
-        : [
-            [120, 142, 654],
-            [140, 148, 580]
-          ]) as number[][]
+        : dotted
+          ? [[127, 135, 654]]
+          : [
+              [120, 142, 654],
+              [140, 148, 580]
+            ]) as number[][]
     ).map(([left, right, y]): [number, unknown[]] => [
       OPS.constructPath,
       [OPS.stroke, [new Float32Array([0, left, y, 1, right, y])], null]
@@ -666,6 +700,8 @@ function derivativeFixture(fault: string): {
 
 it.each([
   'proved',
+  'dotted',
+  'dotted-no-bar',
   'not-opaque',
   'duplicate-key',
   'other-key',
@@ -686,8 +722,10 @@ it.each([
       unit.fragments.some((fragment) => fragment.items.some((item) => item.index === index))
     )
   expect(ownerOf(ordinary)?.sourceOnly).not.toBe(true)
-  expect(ownerOf(denominator)?.sourceOnly).toBe(fault === 'proved' ? true : undefined)
-  if (fault === 'proved') expect(ownerOf(differential)?.sourceOnly).toBe(true)
+  const proved = fault === 'proved' || fault === 'dotted'
+  expect(ownerOf(denominator)?.sourceOnly).toBe(proved ? true : undefined)
+  if (proved || fault.startsWith('dotted'))
+    expect(ownerOf(differential)?.sourceOnly).toBe(proved ? true : undefined)
 })
 
 const braceItem = (
@@ -959,5 +997,776 @@ it.each(['paired aggregates', 'lowered limit', 'different operands'])(
     }
     expect(units.find((unit) => unit.items.includes('1:0'))?.sourceOnly).toBeUndefined()
     expect(units.find((unit) => unit.items.includes('1:21'))?.sourceOnly).toBeUndefined()
+  }
+)
+
+const setBuilderFollowingParagraph = 'We direct readers to the appendix for further guidance.'
+
+function setBuilderDisplay(fault: string): PdfLayoutTextItem[] {
+  const glyph = (
+    str: string,
+    x: number,
+    width: number,
+    fontName = 'Body',
+    y = 190.32,
+    height = 10,
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height,
+    dir: 'ltr',
+    fontName,
+    fontFamily: 'sans-serif',
+    fontAscent: fontName === 'Delimiter' ? 0.04 : fontName === 'Double' ? 0.685 : 0.75,
+    fontDescent:
+      fontName === 'Delimiter'
+        ? -1.759
+        : fontName === 'Double'
+          ? -0.019
+          : fontName === 'Body'
+            ? -0.251
+            : -0.25,
+    fontVertical: false,
+    transform: [height, 0, 0, height, x, y],
+    hasEOL
+  })
+  return [
+    glyph('M', 155.03, 7.84, 'Italic'),
+    glyph('(', 163.87, 3.8),
+    glyph('G, ε', 167.68, 15.37, 'Italic'),
+    glyph(') = min', 183.44, 33.23),
+    glyph('{', 218.47, 5.83, 'Delimiter', 198.35),
+    glyph('M', 224.29, 7.84, 'Italic'),
+    glyph('∈', 235.94, 6.66, 'Math'),
+    glyph('N', 245.37, 7.22, 'Double'),
+    glyph(fault === 'no separator' ? ',' : ':', 255.91, 2.71),
+    glyph('{', 264.24, 5, 'Math'),
+    glyph('V', 269.26, 6.65, 'Italic'),
+    glyph('k', 275.88, 2.86, 'Index', 188.81, 6.67),
+    glyph('}', 279.5, 5, 'Math'),
+    glyph('M', 284.52, 5.62, 'Index', 194.43, 6.67, true),
+    glyph('k', 284.52, 2.86, 'Index', 187.81, 6.67),
+    glyph('=1', 287.83, 9.06, 'Numeral', 187.81, 6.67),
+    glyph('is a', 300.48, 14.73),
+    glyph('ε', 318.54, 4.33, 'Italic'),
+    glyph('-net for', 323.26, 36.41),
+    glyph('G', 362.91, 6.33, 'Italic'),
+    glyph('}', 370.64, 5.83, 'Delimiter', fault === 'shifted delimiter' ? 199.35 : 198.35),
+    glyph('.', 378.17, 2.71, 'Italic'),
+    glyph(setBuilderFollowingParagraph, 83.17, 278.54, 'Body', 173.65)
+  ]
+}
+
+it.each(['closed display', 'shifted delimiter', 'no separator'])(
+  'keeps a split predicate in its native set-builder display (%s)',
+  (fault) => {
+    const items = setBuilderDisplay(fault)
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 536, height: 700, rotation: 0, items }]
+    })
+    const predicate = units.find((unit) => unit.source.includes('-net for'))
+    const sentence = units.find((unit) => unit.source.includes(setBuilderFollowingParagraph))
+
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      items.map((_, index) => `1:${index}`).sort()
+    )
+    if (fault === 'closed display') {
+      expect(predicate).toMatchObject({
+        source: '{ V k } M k =1 is a ε-net for G',
+        preserve: 'formula',
+        sourceOnly: true
+      })
+      expect(units.find((unit) => unit.source === '∈ N :')?.sourceOnly).toBe(true)
+      expect(sentence?.source).toBe(setBuilderFollowingParagraph)
+      expect(sentence?.sourceOnly).toBeUndefined()
+      expect(sentence?.fragments[0].rect.x).toBe(83.17)
+    } else {
+      expect(predicate).toBe(sentence)
+      expect(predicate?.sourceOnly).toBeUndefined()
+    }
+  }
+)
+
+it.each(['aligned', 'shifted-relation'])(
+  'retains both left operands of a numbered display serialized by column: %s',
+  async (shape) => {
+    const { source } = await extractPdfTranslationSource({
+      document: fixture('parallel-rows', shape),
+      resourceRequestKey: 'anonymous',
+      signal: new AbortController().signal
+    })
+    for (const value of ['A', 'B']) {
+      const operand = source.units.find((unit) => unit.source === value)
+      expect(operand).toBeDefined()
+      expect(operand?.preserve).toBe(shape === 'aligned' ? 'formula' : undefined)
+    }
+    expect(
+      source.units.find((unit) => unit.source.startsWith('The following'))?.sourceOnly
+    ).toBeUndefined()
+  }
+)
+
+it.each([0, 11])('retains the complete tail of a centered native extremum: %s', (offset) => {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Formula',
+    height = 10,
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    dir: 'ltr',
+    transform: [height, 0, 0, height, x, y],
+    width,
+    height,
+    fontName,
+    fontVertical: false,
+    fontAscent: 0.75,
+    fontDescent: -0.25,
+    hasEOL
+  })
+  const runs: [string, number, string?][] = [
+    ['max', 18, 'Body'],
+    ['{', 5, 'Symbol'],
+    ['g', 6],
+    ['(', 4],
+    ['uv', 10],
+    ['′', 2.5, 'Prime'],
+    ['w', 5.5],
+    [')', 4],
+    [',', 3],
+    ['5 +', 14],
+    ['g', 6],
+    ['(', 4],
+    ['v', 5],
+    ['′', 2.5, 'Prime'],
+    ['wx', 12.5],
+    [')', 4],
+    [',', 3],
+    ['8 +', 14],
+    ['g', 6],
+    ['(', 4],
+    ['xyz', 15],
+    [')', 4],
+    ['}', 5, 'Symbol'],
+    ['.', 3]
+  ]
+  const gap = (index: number): number => {
+    if ([9, 17].includes(index)) return 4
+    if ([10, 18].includes(index)) return 2
+    return 0
+  }
+  const width = 612
+  const total = runs.reduce((sum, [, advance], index) => sum + advance + gap(index), 0)
+  let x = (width - total) / 2 + offset
+  const formula = runs.map(([str, advance, font], index) => {
+    x += gap(index)
+    const prime = font === 'Prime'
+    const run = item(str, x, prime ? 484 : 480, advance, font, prime ? 7 : 10)
+    x += advance
+    return run
+  })
+  const prose = 'The following explanatory sentence stays available for translation.'
+  const items = [
+    item(
+      'The preceding ordinary prose introduces another complete expression.',
+      92,
+      500,
+      320,
+      'Body',
+      10,
+      true
+    ),
+    ...formula,
+    item(prose, 92, 460, 320, 'Body', 10, true)
+  ]
+  const { units } = groupPdfTranslationPages({
+    pages: [{ page: 1, width, height: 792, rotation: 0, items }]
+  })
+  const tail = units.find((unit) => unit.source === 'xyz)}.')
+  expect(tail?.preserve).toBe(offset === 0 ? 'formula' : undefined)
+  expect(tail?.sourceOnly).toBe(offset === 0 ? true : undefined)
+  expect(units.find((unit) => unit.source === prose)?.sourceOnly).toBeUndefined()
+  expect(units.flatMap((unit) => unit.items).sort()).toEqual(items.map((_, n) => `1:${n}`).sort())
+})
+
+it.each([false, true])(
+  'groups native proof-case prefixes in a consecutive sequence: %s',
+  (fault) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName: string,
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      str,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, y],
+      width,
+      height: 10,
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL
+    })
+    const marks = ['D', 'E', fault ? 'G' : 'F']
+    const items = marks.flatMap((letter, index) => {
+      const y = 600 - index * 61
+      return [
+        item(
+          'The preceding condition establishes the initial estimate.',
+          126,
+          y + 14.4,
+          266,
+          'Body',
+          true
+        ),
+        item('(', 105, y, 3, 'Body'),
+        item(letter, 108, y, 7, 'Variable'),
+        item(') For a type-', 115.5, y, 57, 'Body'),
+        item(letter, 172.5, y, 7, 'Variable'),
+        item(
+          ' group abc, choose a representative with the stated property.',
+          181,
+          y,
+          340,
+          'Body',
+          true
+        ),
+        item(
+          'The relevant inequality follows from this estimate.',
+          126,
+          y - 14.4,
+          245,
+          'Body',
+          true
+        )
+      ]
+    })
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    for (const letter of marks) {
+      expect(units.some((unit) => unit.source.startsWith(`(${letter}) For a type-${letter}`))).toBe(
+        !fault
+      )
+      expect(units.some((unit) => unit.source === `(${letter}`)).toBe(fault)
+    }
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(items.map((_, i) => `1:${i}`).sort())
+  }
+)
+
+it.each(['attached', 'shifted'])(
+  'protects a decimal attached to a native uncertainty stack (%s)',
+  (shape) => {
+    const ink = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      height = 12,
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      fontAscent: 0.82,
+      fontDescent: -0.25,
+      transform: [height, 0, 0, height, x, y],
+      hasEOL
+    })
+    const measurement = (
+      whole: string,
+      fraction: string,
+      x: number,
+      y: number
+    ): PdfLayoutTextItem[] => [
+      ink(whole, x, y, 36),
+      ink('.', x + 36, y, 3, 'Punctuation'),
+      ink(fraction, x + 39, y, 12),
+      ink('+0', x + 51, y + 5, 10, 'Script', 8),
+      ink('.', x + 61, y + 5, 2, 'Script', 8),
+      ink('12', x + 63, y + 5, 8, 'Script', 8),
+      ink('−', x + 51 + (shape === 'shifted' ? 3 : 0), y - 3, 6, 'Sign', 8),
+      ink('0', x + 57, y - 3, 4, 'Script', 8),
+      ink('.', x + 61, y - 3, 2, 'Script', 8),
+      ink('11', x + 63, y - 3, 8, 'Script', 8),
+      ink(',', x + 74, y, 3, 'Body', 12, true)
+    ]
+    const news = ink(
+        'The uncertainty for the response is reported below.',
+        48,
+        557,
+        272,
+        'Body',
+        12,
+        true
+      ),
+      finish = ink(
+        'We compare the independent measurements in the next part.',
+        48,
+        483,
+        320,
+        'Body',
+        12,
+        true
+      )
+    const items = [
+      news,
+      ink('•', 66, 531, 6),
+      ink('P', 76, 531, 7, 'Math'),
+      ...measurement('(days) = 7', '45', 84, 531),
+      finish
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }],
+      pageCount: 1
+    })
+    const owner = units.find((unit) => unit.items.includes('1:3'))
+    expect(owner?.preserve).toBe(shape === 'attached' ? 'formula' : undefined)
+    expect(owner?.sourceOnly).toBe(shape === 'attached' ? true : undefined)
+    expect(owner).toBeDefined()
+  }
+)
+
+it.each([0, 15])('keeps a native differential before an aligned equation number (%s)', (shift) => {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName: string,
+    height = 10,
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height,
+    fontName,
+    hasEOL,
+    dir: 'ltr',
+    fontVertical: false,
+    fontAscent: 0.75,
+    fontDescent: -0.25,
+    transform: [height, 0, 0, height, x, y]
+  })
+  const result = groupPdfTranslationPages({
+    pages: [
+      {
+        page: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        items: [
+          item('We compute the combined rate by integrating.', 36, 300, 198, 'Roman', 10, true),
+          item('J', 36, 242, 6, 'Italic'),
+          item('=', 55, 242, 8, 'Symbol'),
+          item('∫', 66, 255.6, 5.5, 'Large'),
+          item('T', 71.5, 232.9, 4.5, 'Small', 7),
+          item('\u0012', 78, 256.1, 7.3, 'Large'),
+          item('rq', 86, 242, 14, 'Italic'),
+          item('−', 119, 242, 8, 'Symbol'),
+          item('rB', 130, 248.7, 12, 'Italic'),
+          item('4π', 141, 235.2, 11, 'Italic'),
+          item('\u0013', 164, 256.1, 7.3, 'Large'),
+          item('d', 173, 242, 5.2, 'Italic'),
+          item('T', 178.2, 242, 7, 'Bold'),
+          item(',', 185.5, 242, 2.8, 'Italic'),
+          item('(2)', 279, 242 + shift, 13, 'Roman', 10, true),
+          item(
+            'The next paragraph remains available for translation.',
+            36,
+            218,
+            235,
+            'Roman',
+            10,
+            true
+          )
+        ]
+      }
+    ]
+  })
+  const differential = result.units.find((unit) => unit.source === 'dT,')
+  expect(differential).toBeDefined()
+  expect(differential?.sourceOnly).toBe(shift === 0 ? true : undefined)
+  expect(differential?.preserve).toBe(shift === 0 ? 'formula' : undefined)
+})
+
+it.each([0, 15])('retains the native glyphs of a numbered double integral (%s)', (shift) => {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Body',
+    height = 10,
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height,
+    fontName,
+    hasEOL,
+    dir: 'ltr',
+    fontVertical: false,
+    fontAscent: fontName === 'Large' ? 0.04 : 0.75,
+    fontDescent: fontName === 'Large' ? -0.6 : -0.25,
+    transform: [height, 0, 0, height, x, y]
+  })
+  const { units } = groupPdfTranslationPages({
+    pages: [
+      {
+        page: 1,
+        width: 600,
+        height: 800,
+        rotation: 0,
+        items: [
+          item(
+            'Integrating the response gives the following identity.',
+            36,
+            330,
+            273,
+            'Body',
+            10,
+            true
+          ),
+          item('J', 100, 300, 8, 'Italic'),
+          item('T', 108, 298, 4, 'Body', 8),
+          item('=', 115, 300, 8, 'Operator'),
+          item('2', 130, 307, 5, 'Body', 10, true),
+          item('6', 127, 293, 5),
+          item('π', 132, 293, 6, 'Greek'),
+          item('ZZ', 142, 313, 11, 'Large', 9),
+          item('D', 153, 292, 6, 'Limit', 8),
+          item('d', 161, 300, 6),
+          item('u', 167, 300, 5, 'Italic'),
+          item('d', 172, 300, 6),
+          item('v', 178, 300, 5, 'Italic'),
+          item('η', 185, 300, 7, 'Greek'),
+          item('.', 192, 300, 3),
+          item('(3)', 269, 300 + shift, 15, 'Body', 10, true),
+          item(
+            'The next paragraph describes the boundary conditions.',
+            36,
+            273,
+            273,
+            'Body',
+            10,
+            true
+          )
+        ]
+      }
+    ]
+  })
+  for (const source of ['ZZ', 'D', 'dudv η.']) {
+    const owner = units.find((unit) => unit.source === source)
+    expect(owner).toBeDefined()
+    expect(owner?.sourceOnly).toBe(shift === 0 ? true : undefined)
+    expect(owner?.preserve).toBe(shift === 0 ? 'formula' : undefined)
+  }
+  expect(
+    units.filter((unit) => unit.source.includes('paragraph')).map((unit) => unit.sourceOnly)
+  ).toEqual([undefined])
+})
+
+it.each([0, 15])(
+  'preserves a word-bearing statistical expression with a native equation rail (%s)',
+  (shift) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: 10,
+      fontName,
+      hasEOL,
+      dir: 'ltr',
+      fontVertical: false,
+      fontAscent: 0.75,
+      fontDescent: -0.25,
+      transform: [10, 0, 0, 10, x, y]
+    })
+    const formula = 'mean ± T × IQR'
+    const { units } = groupPdfTranslationPages({
+      pages: [
+        {
+          page: 1,
+          width: 600,
+          height: 800,
+          rotation: 0,
+          items: [
+            item(
+              'The observations are sorted into samples of equal size.',
+              300,
+              511,
+              240,
+              'Body',
+              true
+            ),
+            item('Each sample produces the following interval:', 300, 500, 175),
+            item('mean', 300, 467, 24, 'Italic'),
+            item('±', 327, 467, 7, 'Operator'),
+            item('T', 337, 467, 7, 'Italic'),
+            item('×', 347, 467, 7, 'Operator'),
+            item('IQR', 357, 467, 20, 'Italic'),
+            item('(4)', 528 + shift, 467, 12, 'Body', true),
+            item(
+              'Where T controls the response used for every sample.',
+              315,
+              445,
+              225,
+              'Body',
+              true
+            ),
+            item('The response is then read on the same fixed scale.', 300, 434, 240, 'Body', true)
+          ]
+        }
+      ]
+    })
+    const owner = units.find((unit) => unit.source === formula)
+    expect(owner).toBeDefined()
+    expect(owner?.sourceOnly).toBe(shift === 0 ? true : undefined)
+    expect(owner?.preserve).toBe(shift === 0 ? 'formula' : undefined)
+    expect(
+      units.find((unit) => unit.source.includes('controls the response'))?.sourceOnly
+    ).toBeUndefined()
+  }
+)
+
+it.each([0, 14])('retains a numbered tensor-space suffix (tag offset %s)', (tagOffset) => {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Math',
+    h = 10,
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height: str ? h : 0,
+    dir: 'ltr',
+    transform: [h, 0, 0, h, x, y],
+    fontName,
+    fontAscent: fontName === 'Delimiter' ? 0.06 : 0.8,
+    fontDescent: fontName === 'Delimiter' ? -0.86 : -0.2,
+    fontVertical: false,
+    hasEOL
+  })
+  const introduction = 'The features form the following array in the constructed representation'
+  const items = [
+    item(introduction, 48, 151, 245, 'Body'),
+    item('', 111, 140, 0, 'Delimiter', 10, true),
+    item('\u0002', 111, 140, 4, 'Delimiter'),
+    item('A', 115, 132, 7),
+    item('(2)', 123, 136, 10, 'Script', 7),
+    item(',', 134, 132, 3),
+    item('B', 139, 132, 6),
+    item('(', 146, 132, 4, 'Body'),
+    item('u, v', 150, 132, 15),
+    item(')', 165, 132, 4, 'Body'),
+    item('\u0003', 169, 140, 4, 'Delimiter'),
+    item('∈', 176, 132, 7, 'Symbol'),
+    item('R', 186, 132, 7, 'Field'),
+    item('6', 193, 136, 4, 'Script', 7),
+    item('×', 197, 136, 6, 'Script', 7),
+    item('Q', 203, 136, 7, 'Script', 7),
+    item('×', 210, 136, 6, 'Script', 7),
+    item('P', 216, 136, 7, 'Script', 7),
+    item('.', 225, 132, 3),
+    item('(4)', 283, 132 + tagOffset, 12, 'Body')
+  ]
+  const { units } = groupPdfTranslationPages({
+    pages: [{ page: 1, width: 612, height: 790, rotation: 0, items }]
+  })
+  const owner = units.find((unit) => unit.items.includes('1:11'))
+  expect(owner?.items).toEqual(Array.from({ length: 8 }, (_, index) => `1:${index + 11}`))
+  expect(owner?.sourceOnly).toBe(tagOffset ? undefined : true)
+  expect(owner?.preserve).toBe(tagOffset ? undefined : 'formula')
+  expect(units.find((unit) => unit.source === introduction)?.sourceOnly).toBeUndefined()
+})
+
+it.each([0, 12])(
+  'retains the native indexed exponent in a numbered display (tag offset %s)',
+  (offset) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Math',
+      height = 10,
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      transform: [height, 0, 0, height, x, y],
+      fontName,
+      fontAscent: fontName === 'Body' ? 0.678 : 0.694,
+      fontDescent: fontName === 'Body' ? -0.216 : -0.194,
+      fontVertical: false,
+      hasEOL
+    })
+    const intro = 'The value is computed as follows:'
+    const after = 'The next'
+    const items = [
+      item(intro, 163, 352.4, 114.89, 'Body'),
+      item('A', 63.65, 321.32, 8.25),
+      item('= 1', 74.95, 321.32, 15.49, 'Operator'),
+      item('−', 92.66, 321.32, 7.75, 'Symbol'),
+      item('F', 102.62, 321.32, 6.78),
+      item('K', 109.4, 325.43, 5.07, 'Script', 7),
+      item('s', 114.47, 324.38, 3.68, 'SmallScript', 5),
+      item('', 0, 0, 0, '', 0, true),
+      item('base', 109.4, 318.86, 18.03, 'Subscript', 7),
+      item(',', 127.93, 321.32, 2.77),
+      item('T', 152.28, 321.32, 4.38),
+      item('s', 156.66, 319.82, 4.15, 'Script', 7),
+      item('=', 164.07, 321.32, 7.75, 'Operator'),
+      item('T', 174.59, 321.32, 4.38),
+      item('min', 178.97, 319.82, 13.2, 'Subscript', 7),
+      item('+', 194.88, 321.32, 7.75, 'Operator'),
+      item('A', 204.84, 321.32, 8.25),
+      item('(', 213.37, 321.32, 3.87, 'Operator'),
+      item('T', 217.24, 321.32, 4.38),
+      item('max', 221.62, 319.82, 14.7, 'Subscript', 7),
+      item('−', 239.04, 321.32, 7.75, 'Symbol'),
+      item('T', 249, 321.32, 4.38),
+      item('min', 253.38, 319.82, 13.2, 'Subscript', 7),
+      item(')', 267.08, 321.32, 3.87, 'Operator'),
+      item('.', 270.95, 321.32, 2.77),
+      item('(1)', 288.4, 321.32, 11.6, 'Body', 10, true),
+      item(after, 48.96, 302.28, 27.18, 'Body'),
+      item('(2)', 288.4 + offset, 278.01, 11.6, 'Body', 10, true)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const owner = units.find(
+      (unit) => unit.source.startsWith('A = 1') && unit.source.endsWith('(1)')
+    )
+    expect(owner).toBeDefined()
+    expect(owner?.sourceOnly).toBe(offset ? undefined : true)
+    expect(owner?.preserve).toBe(offset ? undefined : 'formula')
+    for (const prose of [intro, after]) {
+      const owner = units.find((unit) => unit.source === prose)
+      expect(owner).toBeDefined()
+      expect(owner?.sourceOnly).toBeUndefined()
+    }
+  }
+)
+
+it.each([
+  ['adjacent', 359, true],
+  ['detached', 367, undefined]
+] as const)(
+  'preserves a stacked fraction differential only when %s',
+  async (_, x, protectedTail) => {
+    type Row = [
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      font?: string,
+      height?: number,
+      eol?: boolean
+    ]
+    const after = 'The next ordinary paragraph describes the result and must remain translatable.'
+    const rows: Row[] = [
+      ['The source establishes the equation for the next model', 134, 372, 344, 'body', 10, true],
+      ['SDE', 134, 360, 20],
+      ['', 240, 348, 0, 'math', 0, true],
+      ['dz', 240, 348, 11, 'math'],
+      ['i', 251, 346.5, 3, 'subscript', 7],
+      ['=', 257, 348, 8],
+      ['dW', 268, 348, 13, 'math'],
+      ['i', 281, 346.5, 3, 'subscript', 7],
+      ['+', 286, 348, 8],
+      ['X', 300, 357.5, 14, 'sum'],
+      ['', 296, 336, 0, 'subscript', 0, true],
+      ['β', 296, 336, 5, 'subscript', 7],
+      ['∈', 301, 336, 5.5, 'symbol', 7],
+      ['A', 307, 336, 6, 'subscript', 7],
+      ['+', 313, 335, 5, 'symbol', 5],
+      ['', 320, 348, 0, 'math', 0, true],
+      ['k', 320, 348, 5, 'math'],
+      ['β', 325, 346.5, 5, 'subscript', 7],
+      ['', 339, 355, 0, 'math', 0, true],
+      ['β', 339, 355, 6, 'math'],
+      ['i', 345, 353.5, 3, 'subscript', 7],
+      ['', 332, 341, 0, 'fence', 0, true],
+      ['⟨', 332, 341, 4, 'fence'],
+      ['z, β', 336, 341, 16.5, 'math'],
+      ['⟩', 352.5, 341, 4, 'fence'],
+      ['ds,', x, 348, 11.5, 'math'],
+      ['', 134, 320, 0, 'body', 0, true],
+      [after, 134, 320, 344, 'body', 10, true]
+    ]
+    const items = rows.map(
+      ([str, x, y, width, fontName = 'body', height = 10, hasEOL = false]) => ({
+        str,
+        width,
+        height,
+        dir: 'ltr',
+        fontName,
+        hasEOL,
+        transform: [height, 0, 0, height, x, y]
+      })
+    )
+    const metrics = { fontFamily: 'serif', ascent: 0.79, descent: -0.21, vertical: false }
+    const font = {
+      ...metrics,
+      missingFile: false,
+      isType3Font: false,
+      isInvalidPDFjsFont: false,
+      systemFontInfo: null
+    }
+    const styles = Object.fromEntries(items.map(({ fontName }) => [fontName, metrics]))
+    const document = {
+      numPages: 1,
+      fingerprints: ['anonymous-fraction-differential'],
+      getPage: async () => ({
+        getViewport: () => ({
+          width: 612,
+          height: 792,
+          rotation: 0,
+          transform: [1, 0, 0, -1, 0, 792]
+        }),
+        getTextContent: async () => ({ items, styles }),
+        getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+        commonObjs: { get: () => font, has: () => true }
+      })
+    } as unknown as PDFDocumentProxy
+
+    const { source, coverage } = await extractPdfTranslationSource({
+      document,
+      resourceRequestKey: 'anonymous',
+      signal: new AbortController().signal
+    })
+    const owner = source.units.find((unit) => unit.source === 'ds,')
+    expect(owner?.fragments[0].items).toEqual([{ index: 25, text: 'ds,' }])
+    expect(owner?.sourceOnly).toBe(protectedTail)
+    expect(owner?.preserve).toBe(protectedTail ? 'formula' : undefined)
+    expect(source.units.find((unit) => unit.source === after)?.sourceOnly).toBeUndefined()
+    expect(coverage.excludedItemCount).toBe(0)
+    expect(coverage.includedItemCount).toBe(coverage.textItemCount)
   }
 )

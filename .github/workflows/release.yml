@@ -263,9 +263,8 @@ jobs:
           node scripts/merge-mac-feed.mjs artifacts
           python3 scripts/ci/verify-mac-zip-blockmaps.py artifacts/*-mac-arm64.zip artifacts/*-mac-x64.zip
 
-      # A capable installed updater uses this optional pair; older clients still read the same feed.
+      # A capable installed updater uses this pair; older clients still read the same feed.
       - name: Generate verified Windows version-pair patch
-        if: vars.WINDOWS_DELTA_ENABLED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash build/windows-delta/release.sh artifacts

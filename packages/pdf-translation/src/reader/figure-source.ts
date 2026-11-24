@@ -1,5 +1,6 @@
 import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
+import type { TextItem } from 'pdfjs-dist/types/src/display/api.js'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PdfTranslationExtraction } from './extraction.js'
 import { isPdfTranslationCaption } from './layout.js'
@@ -21,8 +22,15 @@ import {
 } from './figure-variable-keys.js'
 
 type Rect = PdfTranslationFragment['rect']
+type FilledRule = Rect & { operatorIndex: number }
 type Matrix = readonly number[]
-type PaintedPath = Rect & { frame: boolean; rounded: boolean }
+type PaintedPath = Rect & {
+  frame: boolean
+  rounded: boolean
+  straight?: true
+  diagramStroke?: 'box' | 'horizontal'
+  point?: 'circle' | 'cross'
+}
 type Document = { getPage: (number: number) => Promise<PDFPageProxy> }
 type Source = PdfTranslationExtraction['source']
 const multiply = (a: Matrix, b: Matrix): number[] => [
@@ -212,11 +220,15 @@ async function interleavedRasterCaption(
   const [top, secondImage] = images.toSorted((a, b) => a.y - b.y)
   const bottom = secondImage ?? top
   const stackGap = bottom.y - top.y - top.height
+  const hasRunningTitle = terminal && units[0]?.source !== String(pageNumber)
+  const folioIndex = hasRunningTitle ? 1 : 0
+  const folio = units[folioIndex]
+  const caption = units[folioIndex + 1]
   if (
     top.y > 0.12 ||
     Math.abs(2 * top.x + top.width - 1) > 0.01 ||
     (terminal
-      ? top.width < 0.6 || top.height < 0.25
+      ? top.width < 0.6 || top.height < (hasRunningTitle ? 0.25 : 0.18)
       : top.width < 0.4 ||
         bottom.width < 0.4 ||
         top.height + bottom.height < 0.55 ||
@@ -225,10 +237,8 @@ async function interleavedRasterCaption(
         stackGap > 0.005)
   )
     return
-  const head = terminal ? units[0] : undefined
-  const folio = units[terminal ? 1 : 0]
-  const caption = units[terminal ? 2 : 1]
-  if (terminal) {
+  if (hasRunningTitle) {
+    const head = units[0]
     const headRect = head?.fragments[0]?.rect
     const folioRect = folio?.fragments[0]?.rect
     if (
@@ -260,6 +270,12 @@ async function interleavedRasterCaption(
   const gap = cap.y - bottom.y - bottom.height
   if (
     cap.width < 0.75 ||
+    (terminal &&
+      !hasRunningTitle &&
+      (folio.fragments[0].rect.x < 0.85 ||
+        folio.fragments[0].rect.y + folio.fragments[0].rect.height >= top.y ||
+        Math.abs(cap.x - top.x) > 0.005 ||
+        Math.abs(cap.width - top.width) > 0.01)) ||
     Math.abs(2 * cap.x + cap.width - 1) > 0.02 ||
     gap < 0.004 ||
     gap > 0.025 ||
@@ -282,7 +298,7 @@ async function interleavedRasterCaption(
       ))
   )
     return
-  const lower = units.slice(terminal ? 3 : 2)
+  const lower = units.slice(folioIndex + 2)
   if (
     lower.some(
       (u) =>
@@ -466,6 +482,35 @@ function legendFrame(paths: ArrayLike<number>[] | undefined, bounds: readonly nu
   })
 }
 
+function pointLegendShape(path: ArrayLike<number> | undefined): PaintedPath['point'] {
+  if (!path || path[0] !== 0) return
+  if (
+    path.length === 12 &&
+    path[3] === 1 &&
+    path[6] === 0 &&
+    path[9] === 1 &&
+    path[2] === path[5] &&
+    path[7] === path[10] &&
+    path[1] !== path[4] &&
+    path[8] !== path[11] &&
+    Math.abs(path[1] + path[4] - 2 * path[7]) < 0.001 &&
+    Math.abs(path[8] + path[11] - 2 * path[2]) < 0.001
+  )
+    return 'cross'
+  if (
+    path.length === 60 &&
+    path[59] === 4 &&
+    path[1] === path[57] &&
+    path[2] === path[58] &&
+    path[1] === path[29] &&
+    path[16] === path[44] &&
+    Math.abs(path[15] + path[43] - 2 * path[1]) < 0.001 &&
+    Math.abs(path[2] + path[30] - 2 * path[16]) < 0.001 &&
+    Array.from({ length: 8 }, (_, i) => path[3 + i * 7]).every((op) => op === 2)
+  )
+    return 'circle'
+}
+
 /** Conservative graphic anchors, not regions authorized for PDF text replacement. */
 async function graphicRegions(
   page: PDFPageProxy,
@@ -475,11 +520,17 @@ async function graphicRegions(
   images: Rect[]
   vectors: Rect[]
   rules?: Rect[]
+  maskRules?: Rect[]
+  smallMaskRules?: Rect[]
   painted?: PaintedPath[]
+  filledRules?: FilledRule[]
 }> {
   const images: Rect[] = [],
+    maskRules: Rect[] = [],
+    smallMaskRules: Rect[] = [],
     vectors: Rect[] = [],
-    painted: PaintedPath[] = []
+    painted: PaintedPath[] = [],
+    filledRules: FilledRule[] = []
   // Older embedders may provide only the text extraction subset of PDFPageProxy.
   if (typeof page.getOperatorList !== 'function') return { images, vectors }
   const viewport = page.getViewport({ scale: 1 })
@@ -487,7 +538,19 @@ async function graphicRegions(
   signal.throwIfAborted()
   if (list.fnArray.length > 150000) return { images, vectors }
   let matrix: Matrix = viewport.transform
-  const stack: Matrix[] = []
+  const stack: {
+    matrix: Matrix
+    solid: boolean
+    direct: boolean
+    black: boolean
+    opaque: boolean
+    solidFill: boolean
+  }[] = []
+  let solid = true,
+    direct = true,
+    black = true,
+    opaque = true,
+    solidFill = true
   const add = (bounds: readonly number[], target: Rect[]): void => {
     if (bounds.length !== 4 || !bounds.every(Number.isFinite)) return
     const [left, bottom, right, top] = bounds
@@ -527,18 +590,145 @@ async function graphicRegions(
       args = list.argsArray[index]
     if (op === ops.save || op === ops.paintFormXObjectBegin || op === ops.beginGroup) {
       if (stack.length >= 128) return { images: [], vectors: [] }
-      stack.push(matrix)
+      stack.push({ matrix, solid, direct, black, opaque, solidFill })
+      if (op !== ops.save) opaque = false
+      if (op !== ops.save) direct = false
       if (op === ops.paintFormXObjectBegin && args[0]) matrix = multiply(matrix, args[0])
     } else if (op === ops.restore || op === ops.paintFormXObjectEnd || op === ops.endGroup) {
       if (!stack.length) return { images: [], vectors: [] }
-      matrix = stack.pop()!
+      const state = stack.pop()!
+      matrix = state.matrix
+      solid = state.solid
+      direct = state.direct
+      black = state.black
+      opaque = state.opaque
+      solidFill = state.solidFill
     } else if (op === ops.transform) matrix = multiply(matrix, args)
-    else if (op === ops.constructPath && args[2]) {
+    else if (op === ops.setDash) solid = args[0]?.length === 0
+    else if (op === ops.setFillRGBColor) {
+      black = args?.length === 1 && args[0] === '#000000'
+      solidFill = args?.length === 1 && /^#[0-9a-f]{6}$/iu.test(args[0])
+    } else if (
+      op === ops.setFillColorSpace ||
+      op === ops.setFillColor ||
+      op === ops.setFillColorN ||
+      op === ops.setFillGray ||
+      op === ops.setFillCMYKColor ||
+      op === ops.setFillTransparent
+    ) {
+      black = false
+      solidFill = false
+    } else if (op === ops.clip || op === ops.eoClip) {
+      direct = false
+      const next = list.argsArray[index + 1]
+      const clip = Array.isArray(next?.[1]) ? nativeRectangularPath(next[1]) : undefined
+      opaque &&=
+        list.fnArray[index + 1] === ops.constructPath &&
+        next?.[0] === ops.endPath &&
+        clip !== undefined &&
+        matrix[1] === 0 &&
+        matrix[2] === 0 &&
+        Math.abs(matrix[0] * clip[0] + matrix[4]) < 0.05 &&
+        Math.abs(matrix[0] * clip[2] + matrix[4] - viewport.width) < 0.05 &&
+        Math.abs(Math.min(...[clip[1], clip[3]].map((y) => matrix[3] * y + matrix[5]))) < 0.05 &&
+        Math.abs(
+          Math.max(...[clip[1], clip[3]].map((y) => matrix[3] * y + matrix[5])) - viewport.height
+        ) < 0.05
+    } else if (op === ops.setGState) {
+      direct = false
+      opaque &&=
+        Array.isArray(args?.[0]) &&
+        args[0].every(
+          ([key, value]: [string, unknown]) =>
+            (key === 'BM' && value === 'source-over') ||
+            ((key === 'ca' || key === 'CA') && value === 1)
+        )
+    } else if (
+      op === ops.paintSolidColorImageMask &&
+      direct &&
+      solidFill &&
+      Array.isArray(args) &&
+      args.length === 0
+    ) {
+      const [width, b, c, height, left, top] = matrix
+      if (
+        matrix.every(Number.isFinite) &&
+        b === 0 &&
+        c === 0 &&
+        height > 0.05 &&
+        height <= 1.25 &&
+        left >= 0 &&
+        top >= 0 &&
+        left + width <= viewport.width &&
+        top + height <= viewport.height
+      ) {
+        const mask = {
+          x: left / viewport.width,
+          y: top / viewport.height,
+          width: width / viewport.width,
+          height: height / viewport.height
+        }
+        // TeX can paint a table rule or a fraction bar as a filled single-bit mask.
+        if (black && mask.width >= 0.18 && mask.width <= 0.9) maskRules.push(mask)
+        if (opaque && width >= 2 && width <= 24) smallMaskRules.push(mask)
+      }
+    } else if (op === ops.constructPath && args[2]) {
       const count = vectors.length
       add(args[2], vectors)
+      if (
+        opaque &&
+        solidFill &&
+        vectors.length !== count &&
+        args[0] === ops.fill &&
+        args[1] &&
+        matrix[1] === 0 &&
+        matrix[2] === 0 &&
+        nativeRectangularPath(args[1])?.every((value, i) => value === args[2][i])
+      ) {
+        const rect = vectors.at(-1)!
+        if (
+          (rect.width > 0.02 && rect.height > 0 && rect.height <= 0.003) ||
+          (rect.height > 0.02 && rect.width > 0 && rect.width <= 0.003)
+        )
+          filledRules.push({ ...rect, operatorIndex: index })
+      }
       if (vectors.length !== count && (args[0] === ops.stroke || args[0] === ops.fillStroke)) {
         const frame = args[0] === ops.fillStroke && legendFrame(args[1], args[2])
-        painted.push({ ...vectors.at(-1)!, frame, rounded: frame && args[1]?.[0]?.length === 44 })
+        const path = args[1]?.[0]
+        const axisAlignedStroke =
+          solid &&
+          args[0] === ops.stroke &&
+          args[1]?.length === 1 &&
+          path?.length === 6 &&
+          path[0] === 0 &&
+          path[3] === 1 &&
+          Math.min(path[1], path[4]) === args[2][0] &&
+          Math.min(path[2], path[5]) === args[2][1] &&
+          Math.max(path[1], path[4]) === args[2][2] &&
+          Math.max(path[2], path[5]) === args[2][3] &&
+          matrix[1] === 0 &&
+          matrix[2] === 0 &&
+          (path[1] === path[4]) !== (path[2] === path[5])
+        const point =
+          !frame && args[0] === ops.fillStroke && args[1]?.length === 1 && pointLegendShape(path)
+        const diagramStroke =
+          args[0] === ops.stroke &&
+          matrix[1] === 0 &&
+          matrix[2] === 0 &&
+          args[1] &&
+          nativeRectangularPath(args[1])?.every((value, i) => value === args[2][i])
+            ? 'box'
+            : axisAlignedStroke && path[2] === path[5]
+              ? 'horizontal'
+              : undefined
+        painted.push({
+          ...(diagramStroke ? { diagramStroke } : {}),
+          ...(point ? { point } : {}),
+          ...vectors.at(-1)!,
+          frame,
+          rounded: frame && path?.length === 44,
+          ...(direct && axisAlignedStroke ? { straight: true as const } : {})
+        })
       }
     } else if (op === ops.paintImageXObjectRepeat && args[3]?.length <= 10000) {
       const base = matrix
@@ -572,6 +762,9 @@ async function graphicRegions(
     images,
     vectors: grouped.filter((rect) => rect.width >= 0.006 && rect.height >= 0.006),
     painted,
+    filledRules,
+    maskRules,
+    smallMaskRules,
     rules: vectors.filter((rect) => rect.width >= 0.18 && rect.height < 0.006)
   }
 }
@@ -581,7 +774,8 @@ async function nativeLegendOwners(
   page: PDFPageProxy,
   units: Source['units'],
   paths: readonly PaintedPath[],
-  signal: AbortSignal
+  signal: AbortSignal,
+  splitFrequencyLabels?: Map<string, Source['units']>
 ): Promise<string[]> {
   if (
     page.rotate !== 0 ||
@@ -589,15 +783,66 @@ async function nativeLegendOwners(
     typeof page.getTextContent !== 'function'
   )
     return []
-  const candidates = units.filter(
-    ({ fragments, sourceOnly }) =>
-      !sourceOnly &&
-      fragments.length === 1 &&
-      fragments[0].items.length >= 2 &&
-      fragments[0].items.length <= 8
+  const frequency = '[A-Z][A-Z0-9]{1,10} \\d+(?:\\.\\d+)? (?:kHz|MHz|GHz)'
+  const thisWork = new RegExp('^' + frequency + ' \\(this work\\)$', 'u')
+  const cited = new RegExp(
+    '^' + frequency + ' \\(\\p{Lu}[\\p{L}’.-]+ et al\\., (?:19|20)\\d{2}\\)$',
+    'u'
   )
+  const candidates: {
+    ids: string[]
+    fragment: PdfTranslationFragment
+    frame?: PaintedPath
+    frequencyLegend?: Source['units'][number]
+  }[] = []
+  for (const unit of units) {
+    const { id, source, fragments, sourceOnly } = unit
+    if (sourceOnly || fragments.length !== 1) continue
+    const [fragment] = fragments
+    const { items } = fragment
+    if (
+      splitFrequencyLabels &&
+      items.length >= 6 &&
+      items.length <= 16 &&
+      source === items.map((item) => item.text).join(' ') &&
+      thisWork.test(items[0].text) &&
+      items.slice(1).every((item) => cited.test(item.text)) &&
+      new Set(items.map(({ text }) => text)).size === items.length
+    )
+      candidates.push({ ids: [id], fragment, frequencyLegend: unit })
+    else if (items.length >= 2 && items.length <= 8) candidates.push({ ids: [id], fragment })
+  }
+  for (const frame of paths.filter((path) => path.rounded)) {
+    const members = units.filter(({ fragments }) =>
+      fragments.some(({ rect }) => contains(frame, rect))
+    )
+    if (
+      members.length !== 2 ||
+      members.some(
+        ({ source, sourceOnly, fragments }) =>
+          sourceOnly ||
+          fragments.length !== 1 ||
+          fragments[0].items.length !== 1 ||
+          fragments[0].items[0].text !== source ||
+          !/^[A-Z]{2,4}[a-z]{0,2}$/u.test(source)
+      )
+    )
+      continue
+    const [first, second] = members
+      .map(({ fragments }) => fragments[0])
+      .sort((a, b) => a.rect.y - b.rect.y)
+    candidates.push({
+      ids: members.map(({ id }) => id),
+      fragment: {
+        ...first,
+        rect: union(first.rect, second.rect),
+        items: [...first.items, ...second.items]
+      },
+      frame
+    })
+  }
   if (!candidates.length) return []
-  const { items } = await page.getTextContent()
+  const { items, styles } = await page.getTextContent()
   signal.throwIfAborted()
   const viewport = page.getViewport({ scale: 1 })
   const [sx, skewY, skewX, sy, tx, ty] = viewport.transform
@@ -611,7 +856,7 @@ async function nativeLegendOwners(
     viewport.height <= 0
   )
     return []
-  return candidates.flatMap(({ id, fragments: [fragment] }) => {
+  return candidates.flatMap(({ ids, fragment, frame: standaloneFrame, frequencyLegend }) => {
     const paired = fragment.items.length === 2
     const rows = fragment.items.map(({ index, text }) => {
       const row = items[index]
@@ -626,7 +871,7 @@ async function nativeLegendOwners(
         row.transform[2] === 0 &&
         row.width > 0 &&
         row.height > 0 &&
-        /^[\p{L}][\p{L} ()+-]{2,45}$/u.test(text) &&
+        (frequencyLegend || /^[\p{L}][\p{L} ()+-]{2,45}$/u.test(text)) &&
         (paired || !text.includes('+'))
         ? row
         : undefined
@@ -636,7 +881,7 @@ async function nativeLegendOwners(
     const starts = labels.map(([row]) => row)
     const split = starts.length !== rows.length
     const [first, second] = starts
-    if (!first || !second) return []
+    if (!first || !second || (frequencyLegend && split)) return []
     // With only two labels, also require their shared multiword series name.
     const name = paired && /^([\p{L}]+ [\p{L}]+) /u.exec(first.str)?.[1]
     const pointPair = paired && (!name || !second.str.startsWith(name + ' '))
@@ -671,6 +916,7 @@ async function nativeLegendOwners(
     const isFramedLegend = paths.some((frame) => {
       if (
         !frame.frame ||
+        (standaloneFrame && frame !== standaloneFrame) ||
         (pointPair && (!frame.rounded || first.str === second.str)) ||
         !contains(frame, fragment.rect) ||
         left - frame.x < width * 2 ||
@@ -689,6 +935,16 @@ async function nativeLegendOwners(
           Math.abs(mark.y + mark.height / 2 - center) < height * 0.25
         )
       }
+      if (frequencyLegend && frame.rounded) {
+        const claims = new Set(fragment.items.map(({ index }) => index))
+        // Very small swatches may be absent from the path inventory. An exact
+        // labelled series in a rounded plot key still has independent rows.
+        return items.every((item, index) => {
+          if (!('str' in item) || !item.str.trim() || claims.has(index)) return true
+          const rect = nativeLabelRegion(item, styles[item.fontName], viewport, fragment.pageNumber)
+          return rect !== undefined && !overlaps(frame, rect)
+        })
+      }
       if (!pointPair)
         return starts.every((row) => paths.some((mark) => matches(mark, row.transform[5])))
       const marks = starts.map((row) =>
@@ -697,32 +953,197 @@ async function nativeLegendOwners(
             matches(mark, row.transform[5]) &&
             !mark.frame &&
             mark.width > width * 0.45 &&
-            mark.width < width &&
+            mark.width < width * (standaloneFrame ? 1.1 : 1) &&
             Math.abs(mark.width / width - mark.height / height) < 0.05
         )
       )
       // Two unrelated labels need unique, co-sized point markers in the same column.
       const [[top], [bottom]] = marks
+      if (!marks.every((row) => row.length === 1)) return false
+      // Independent acronyms have distinct swatches with the same marker center.
+      if (standaloneFrame) {
+        return (
+          !!top.point &&
+          !!bottom.point &&
+          top.point !== bottom.point &&
+          Math.abs(top.x + top.width / 2 - bottom.x - bottom.width / 2) < width * 0.05
+        )
+      }
       return (
-        marks.every((row) => row.length === 1) &&
         Math.abs(top.x - bottom.x) < width * 0.05 &&
         Math.abs(top.width - bottom.width) < width * 0.05 &&
         Math.abs(top.height - bottom.height) < height * 0.05
       )
     })
-    return isFramedLegend ? [id] : []
+    if (!isFramedLegend) return []
+    if (!frequencyLegend) return ids
+    const parts = starts.map((row, index) => {
+      const bounds = nativeLabelRegion(row, styles[row.fontName], viewport, fragment.pageNumber)
+      if (!bounds) return
+      const { x, y, width, height } = bounds
+      const id = frequencyLegend.id + '-legend-' + (index + 1)
+      return {
+        ...frequencyLegend,
+        id,
+        source: row.str,
+        ...(index ? { sourceOnly: true as const, preserve: 'literal' as const } : {}),
+        figure: true as const,
+        fragments: [
+          { ...fragment, id, rect: { x, y, width, height }, items: [fragment.items[index]] }
+        ]
+      }
+    })
+    if (parts.every((part) => part !== undefined))
+      splitFrequencyLabels?.set(frequencyLegend.id, parts)
+    return []
   })
+}
+
+// Some PDF producers paint each border as four filled rectangles, duplicating shared edges.
+async function closedFilledTable(
+  page: PDFPageProxy,
+  number: number,
+  units: Source['units'],
+  filledRules: readonly FilledRule[],
+  signal: AbortSignal
+): Promise<{ rect: Rect; owners: string[] } | undefined> {
+  if (page.rotate !== 0 || filledRules.length < 32 || filledRules.length > 500) return
+  const runs: FilledRule[][] = []
+  for (const rule of filledRules) {
+    const run = runs.at(-1)
+    if (run?.at(-1)?.operatorIndex === rule.operatorIndex - 1) run.push(rule)
+    else runs.push([rule])
+  }
+  const lattices = runs.filter(
+    (run) => run.length >= 32 && run.length <= 320 && run.length % 8 === 0
+  )
+  if (lattices.length !== 1) return
+  const [rules] = lattices
+  const near = (a: number, b: number): boolean => Math.abs(a - b) < 0.000001
+  const right = (r: Rect): number => r.x + r.width
+  const bottom = (r: Rect): number => r.y + r.height
+  const cells: Rect[] = []
+  for (let i = 0; i < rules.length; i += 4) {
+    const [top, lower, left, edge] = rules.slice(i, i + 4)
+    if (
+      top.height > 0.003 ||
+      left.width > 0.003 ||
+      top.width < 0.02 ||
+      left.height < 0.02 ||
+      !near(top.x, lower.x) ||
+      !near(top.width, lower.width) ||
+      !near(top.height, lower.height) ||
+      !near(left.y, edge.y) ||
+      !near(left.height, edge.height) ||
+      !near(left.width, edge.width) ||
+      !near(top.x, left.x) ||
+      !near(top.y, left.y) ||
+      !near(right(top), right(edge)) ||
+      !near(bottom(lower), bottom(left))
+    )
+      return
+    cells.push({ x: top.x, y: top.y, width: top.width, height: left.height })
+  }
+  const row = (y: number): Rect[] =>
+    cells.filter((cell) => near(cell.y, y)).sort((a, b) => a.x - b.x)
+  const first = row(Math.min(...cells.map((cell) => cell.y))),
+    second = row(Math.max(...cells.map((cell) => cell.y))),
+    count = first.length,
+    vertical = rules[2].width,
+    horizontal = rules[0].height
+  if (
+    count !== second.length ||
+    count * 2 !== cells.length ||
+    !near(bottom(first[0]) - horizontal, second[0].y) ||
+    first.some(
+      (cell, i) =>
+        !near(cell.height, first[0].height) ||
+        !near(second[i].height, second[0].height) ||
+        !near(cell.x, second[i].x) ||
+        !near(cell.width, second[i].width) ||
+        (i > 0 && !near(right(first[i - 1]) - vertical, cell.x))
+    )
+  )
+    return
+  const rect = union(first[0], second.at(-1)!)
+  if (
+    rect.width < 0.45 ||
+    rect.x <= 0.01 ||
+    rect.y <= 0.01 ||
+    right(rect) >= 0.99 ||
+    bottom(rect) >= 0.99
+  )
+    return
+  const viewport = page.getViewport({ scale: 1 }),
+    content = await page.getTextContent()
+  signal.throwIfAborted()
+  const placed = new Map<number, string>()
+  const texts = cells.map(() => [] as TextItem[])
+  for (const [index, item] of content.items.entries()) {
+    if (!('str' in item) || !item.str.trim()) continue
+    const bounds = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+    if (!bounds) {
+      const [x, y] = viewport.convertToViewportPoint(item.transform[4], item.transform[5])
+      if (overlaps(rect, { x: x / viewport.width, y: y / viewport.height, width: 0, height: 0 }, 0))
+        return
+      continue
+    }
+    if (!overlaps(rect, bounds, 0)) continue
+    const cell = cells.findIndex(
+      (r) =>
+        bounds.x > r.x && bounds.y > r.y && right(bounds) < right(r) && bottom(bounds) < bottom(r)
+    )
+    if (cell < 0 || item.transform[1] !== 0 || item.transform[2] !== 0) return
+    texts[cell].push(item)
+    placed.set(index, item.str)
+  }
+  const data = second.map((cell) => texts[cells.indexOf(cell)])
+  if (
+    texts.some((items) => !items.length) ||
+    data.some((items) => items.some((item) => item.transform[5] !== data[0][0].transform[5])) ||
+    data.filter((items) => /^\d[\d.,]*$/u.test(items.map((item) => item.str).join(''))).length <
+      count / 2
+  )
+    return
+  const owners: string[] = []
+  for (const unit of units) {
+    const all = unit.fragments
+    if (!all.some((fragment) => fragment.pageNumber === number && overlaps(rect, fragment.rect, 0)))
+      continue
+    if (
+      all.some(
+        (fragment) =>
+          fragment.pageNumber !== number ||
+          fragment.unclippedRect ||
+          !contains(rect, fragment.rect) ||
+          fragment.items.some(
+            ({ index, text }) => placed.get(index) !== text || !placed.delete(index)
+          )
+      )
+    )
+      return
+    owners.push(unit.id)
+  }
+  if (!placed.size) return { rect, owners }
 }
 
 // Three-line academic tables often have no vertical rules. A caption plus
 // matching top/header/bottom rules proves an atomic region without guessing cells.
-function tableRegions(units: Source['units'], rules: readonly Rect[], number: number): Rect[] {
+type RuledTable = { rect: Rect; header: Rect; top: Rect; separator: Rect; appendix?: true }
+function tableRegions(
+  units: Source['units'],
+  rules: readonly Rect[],
+  number: number,
+  appendix = false
+): RuledTable[] {
   const captions = units
-    .filter(
-      (unit) => /^(?:Table|Tab\.)\s*\d/iu.test(unit.source) && isPdfTranslationCaption(unit.source)
+    .filter((unit) =>
+      appendix
+        ? /^(?:Table|Tab\.) [A-Z]\.[1-9]\d*\. \p{Lu}/u.test(unit.source)
+        : /^(?:Table|Tab\.)\s*\d/iu.test(unit.source) && isPdfTranslationCaption(unit.source)
     )
     .flatMap((unit) => unit.fragments.filter((f) => f.pageNumber === number))
-  const regions: Rect[] = []
+  const regions: RuledTable[] = []
   for (const caption of captions) {
     for (const above of [true, false]) {
       const nearby = rules
@@ -766,7 +1187,11 @@ function tableRegions(units: Source['units'], rules: readonly Rect[], number: nu
         width: Math.min(1, top.x + top.width + 0.002) - Math.max(0, top.x - 0.002),
         height: Math.min(1, bottom.y + bottom.height + 0.003) - Math.max(0, top.y - 0.003)
       }
-      if (captions.some((other) => overlaps(rect, other.rect, 0))) continue
+      const ruledInterior = { ...rect, y: top.y, height: bottom.y + bottom.height - top.y }
+      if (
+        captions.some((other) => overlaps(other === caption ? ruledInterior : rect, other.rect, 0))
+      )
+        continue
       const inside = units.filter(
         (unit) =>
           !isPdfTranslationCaption(unit.source) &&
@@ -781,10 +1206,1126 @@ function tableRegions(units: Source['units'], rules: readonly Rect[], number: nu
         )
       )
         continue
-      if (!regions.some((region) => overlaps(region, rect, 0))) regions.push(rect)
+      const separator = distinct[distinct.indexOf(top) + 1]
+      const header = { ...rect, height: separator.y - rect.y }
+      if (!regions.some((region) => overlaps(region.rect, rect, 0)))
+        regions.push({ rect, header, top, separator, ...(appendix ? { appendix: true } : {}) })
     }
   }
   return regions
+}
+
+// A single translation cannot keep native fields on opposite sides of a table rule.
+function crossRuleStencilTableOwners(
+  units: Source['units'],
+  tables: readonly RuledTable[],
+  number: number,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  viewport: ReturnType<PDFPageProxy['getViewport']>
+): string[] {
+  return tables.flatMap(({ rect, separator }) => {
+    const selected = units.filter((unit) =>
+      unit.fragments.some((f) => f.pageNumber === number && overlaps(rect, f.rect, 0))
+    )
+    if (
+      selected.length < 4 ||
+      selected.some((unit) =>
+        unit.fragments.some(
+          (f) => f.pageNumber !== number || f.unclippedRect || !contains(rect, f.rect)
+        )
+      )
+    )
+      return []
+    const native = new Map<number, { item: TextItem; baseline: number }>()
+    for (const [index, item] of content.items.entries()) {
+      if (!('str' in item) || !item.str.trim()) continue
+      const [vx, vy] = viewport.convertToViewportPoint(item.transform[4], item.transform[5])
+      const point = { x: vx / viewport.width, y: vy / viewport.height, width: 0, height: 0 }
+      const bounds = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+      if (!overlaps(rect, bounds ?? point, 0)) continue
+      if (
+        !bounds ||
+        !contains(rect, bounds) ||
+        item.transform[0] <= 0 ||
+        item.transform[1] !== 0 ||
+        item.transform[2] !== 0 ||
+        item.transform[3] <= 0 ||
+        item.dir !== 'ltr'
+      )
+        return []
+      native.set(index, { item, baseline: point.y })
+    }
+    const remaining = new Map(native)
+    const ownsAll = selected.every(({ fragments }) =>
+      fragments.every(
+        ({ items }) =>
+          items.length > 0 &&
+          items.every(
+            ({ index, text }) => remaining.get(index)?.item.str === text && remaining.delete(index)
+          )
+      )
+    )
+    if (!ownsAll || remaining.size > 0) return []
+    const crosses = selected.some(({ sourceOnly, preserve, fragments }) => {
+      if (sourceOnly || preserve || fragments.length !== 2) return false
+      const [header, data] = fragments.map(({ items }) =>
+        items.map(({ index }) => native.get(index)!)
+      )
+      if (header.length < 2 || data.length < 3) return false
+      const [left, ...fields] = data
+      const h = left.item.height
+      return (
+        header.every(({ baseline }) => baseline < separator.y) &&
+        data.every(
+          ({ baseline }) => baseline > separator.y + separator.height && baseline === left.baseline
+        ) &&
+        fields.every(({ item }, n) => {
+          const prior = data[n].item
+          return (
+            item.fontName === left.item.fontName &&
+            item.height === h &&
+            item.transform[4] - prior.transform[4] - prior.width > h
+          )
+        }) &&
+        /^\p{L}{2,}$/u.test(left.item.str) &&
+        /^\d+(?:\s*,\s*\d+)*$/u.test(fields.at(-1)!.item.str)
+      )
+    })
+    return crosses ? selected.map(({ id }) => id) : []
+  })
+}
+
+// The same native dividers must bound the type in the header and reappear below its separator.
+function nativeHeaderColumns(
+  { top, separator }: RuledTable,
+  painted: readonly PaintedPath[]
+): Rect[] | undefined {
+  if (
+    ![top, separator].every((rule) =>
+      painted.some(
+        ({ straight, x, y, width, height }) =>
+          straight && height === 0 && x === rule.x && y === rule.y && width === rule.width
+      )
+    )
+  )
+    return
+  const right = top.x + top.width,
+    pitch = separator.y - top.y,
+    tolerance = pitch * 0.02
+  if (
+    Math.abs(separator.x - top.x) > tolerance ||
+    Math.abs(separator.x + separator.width - right) > tolerance
+  )
+    return
+  const verticals = painted.filter(
+    (p) => p.straight && p.width === 0 && p.x >= top.x - tolerance && p.x <= right + tolerance
+  )
+  const header = verticals
+    .filter((p) => p.y > top.y && p.y + p.height < separator.y && p.height > pitch / 2)
+    .sort((a, b) => a.x - b.x)
+  if (
+    header.length < 4 ||
+    Math.abs(header[0].x - top.x) > tolerance ||
+    Math.abs(header.at(-1)!.x - right) > tolerance ||
+    header.some(
+      (p, i) =>
+        (i > 0 && p.x - header[i - 1].x <= tolerance) ||
+        Math.abs(p.y - header[0].y) > tolerance ||
+        Math.abs(p.height - header[0].height) > tolerance
+    )
+  )
+    return
+  const below = verticals.filter((p) => Math.abs(p.y - header[0].y - pitch) <= tolerance)
+  return below.length === header.length &&
+    header.every(
+      (p) =>
+        below.filter(
+          (peer) =>
+            Math.abs(peer.x - p.x) <= tolerance && Math.abs(peer.height - p.height) <= tolerance
+        ).length === 1
+    )
+    ? header
+    : undefined
+}
+
+type NativeHeaderRun = { index: number; item: TextItem; rect: Rect }
+
+function splitNativeTableHeader(
+  unit: Source['units'][number],
+  table: RuledTable,
+  dividers: readonly Rect[],
+  runs: readonly NativeHeaderRun[],
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  ownerCounts: ReadonlyMap<number, number>
+): Source['units'] | undefined {
+  const [fragment] = unit.fragments
+  if (
+    fragment.unclippedRect ||
+    unit.preserve ||
+    fragment.rect.y < table.top.y ||
+    fragment.rect.y + fragment.rect.height > table.separator.y ||
+    runs.some(({ index, item, rect }, i) => {
+      const previous = runs[i - 1]
+      return (
+        ownerCounts.get(index) !== 1 ||
+        item.transform[5] !== runs[0].item.transform[5] ||
+        (previous &&
+          (previous.item.hasEOL ||
+            index <= previous.index ||
+            rect.x <= previous.rect.x ||
+            rect.x + rect.width < previous.rect.x + previous.rect.width))
+      )
+    })
+  )
+    return
+
+  const cells: Source['units'][number][] = []
+  let cursor = 0
+  for (let i = 1; i < dividers.length; i++) {
+    const left = dividers[i - 1],
+      right = dividers[i]
+    const start = cursor
+    while (cursor < runs.length && runs[cursor].rect.x < right.x) cursor++
+    const cell = runs.slice(start, cursor)
+    const first = cell[0],
+      last = cell.at(-1)
+    if (
+      !first ||
+      !last ||
+      first.rect.x <= left.x ||
+      last.rect.x + last.rect.width >= right.x ||
+      cell.some(({ rect }) => rect.y <= right.y || rect.y + rect.height >= right.y + right.height)
+    )
+      return
+
+    const prior = runs[start - 1],
+      gap = content.items[first.index - 1]
+    if (prior && (first.index !== prior.index + 2 || !gap || !('str' in gap) || gap.str !== ' '))
+      return
+    let label = '',
+      next = 0
+    for (let index = first.index; index <= last.index; index++) {
+      const item = content.items[index]
+      if (!item || !('str' in item) || (item.str !== ' ' && cell[next++]?.index !== index)) return
+      label += item.str
+    }
+    if (next !== cell.length || !/\p{L}{2}/u.test(label)) return
+    cells.push({
+      ...unit,
+      id: `${unit.id}-cell-${i}`,
+      source: label,
+      fragments: [
+        {
+          pageNumber: fragment.pageNumber,
+          rect: {
+            ...fragment.rect,
+            x: first.rect.x,
+            width: last.rect.x + last.rect.width - first.rect.x
+          },
+          items: cell.map(({ index, item }) => ({ index, text: item.str }))
+        }
+      ]
+    })
+  }
+  if (cursor === runs.length && cells.map(({ source }) => source).join(' ') === unit.source)
+    return cells
+}
+
+// One translation cannot keep separately aligned native table labels in their columns.
+async function coalescedTableHeaderOwners(
+  page: PDFPageProxy,
+  number: number,
+  units: Source['units'],
+  tables: readonly RuledTable[],
+  painted: readonly PaintedPath[],
+  signal: AbortSignal
+): Promise<{ retained: string[]; split: Map<string, Source['units']> }> {
+  const retained: string[] = [],
+    split = new Map<string, Source['units']>(),
+    result = { retained, split }
+  const candidates = units.filter((unit) => {
+    const [fragment] = unit.fragments
+    return (
+      !unit.sourceOnly &&
+      unit.fragments.length === 1 &&
+      fragment.pageNumber === number &&
+      fragment.items.length >= 3 &&
+      tables.some(
+        ({ header, appendix }) =>
+          contains(header, fragment.rect) && (!appendix || unit.source === 'Parameter Units Prior')
+      )
+    )
+  })
+  if (!candidates.length || page.rotate !== 0) return result
+  const columns = tables.map((table) => ({ table, dividers: nativeHeaderColumns(table, painted) }))
+  const ownerCounts = new Map<number, number>()
+  if (columns.some(({ dividers, table }) => dividers || table.appendix))
+    for (const unit of units)
+      for (const fragment of unit.fragments)
+        if (fragment.pageNumber === number)
+          for (const { index } of fragment.items)
+            ownerCounts.set(index, (ownerCounts.get(index) ?? 0) + 1)
+  const content = await page.getTextContent()
+  signal.throwIfAborted()
+  const viewport = page.getViewport({ scale: 1 })
+  for (const unit of candidates) {
+    const {
+      id,
+      fragments: [fragment]
+    } = unit
+    const runs = fragment.items.map(({ index, text }) => {
+      const item = content.items[index]
+      if (
+        !item ||
+        !('str' in item) ||
+        item.str !== text ||
+        item.transform[0] <= 0 ||
+        item.transform[1] !== 0 ||
+        item.transform[2] !== 0 ||
+        item.transform[3] <= 0
+      )
+        return undefined
+      const rect = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+      return rect && { index, item, rect }
+    })
+    if (!runs.every((run) => run !== undefined)) continue
+    const matching = columns.filter(
+      ({ table }) =>
+        (!table.appendix || unit.source === 'Parameter Units Prior') &&
+        runs.every(({ rect }) => contains(table.header, rect))
+    )
+    if (!matching.length) continue
+    const [{ table, dividers }] = matching
+    if (matching.length === 1 && dividers) {
+      const cells = splitNativeTableHeader(unit, table, dividers, runs, content, ownerCounts)
+      if (cells) {
+        split.set(id, cells)
+        continue
+      }
+    }
+    const separated = runs.slice(1).every(({ index, item }, i) => {
+      const previous = runs[i]
+      const spaces = content.items.slice(previous.index + 1, index)
+      const gap = item.transform[4] - previous.item.transform[4] - previous.item.width
+      return (
+        index === previous.index + 2 &&
+        spaces.length === 1 &&
+        'str' in spaces[0] &&
+        spaces[0].str === ' ' &&
+        !previous.item.hasEOL &&
+        item.fontName === previous.item.fontName &&
+        item.transform[5] === previous.item.transform[5] &&
+        gap > item.height &&
+        gap > previous.item.height
+      )
+    })
+    if (table.appendix) {
+      if (!separated || matching.length !== 1 || runs.length !== 3) continue
+      // For this parameter table the three ruled, widely spaced one-word labels
+      // are independent cells even without painted vertical dividers.
+      const { top, separator } = table
+      const edges = [
+        top.x,
+        ...runs.slice(1).map(({ rect }, i) => (rect.x + runs[i].rect.x + runs[i].rect.width) / 2),
+        top.x + top.width
+      ].map((x) => ({ x, y: top.y, width: 0, height: separator.y - top.y }))
+      const cells = splitNativeTableHeader(unit, table, edges, runs, content, ownerCounts)
+      if (cells) split.set(id, cells)
+      continue
+    }
+    if (separated) {
+      retained.push(id)
+      if (matching.length === 1)
+        retained.push(...coalescedRuledBodyOwners(units, table, number, content, viewport))
+    }
+  }
+  return result
+}
+
+// A translation of several table rows cannot be fitted as a single column of prose.
+function coalescedRuledBodyOwners(
+  units: Source['units'],
+  table: RuledTable,
+  number: number,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  viewport: ReturnType<PDFPageProxy['getViewport']>
+): string[] {
+  const header = content.items
+    .flatMap((item) => {
+      if (!('str' in item) || !item.str.trim()) return []
+      const rect = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+      return rect && contains(table.header, rect) ? [{ item, rect }] : []
+    })
+    .sort((a, b) => a.rect.x - b.rect.x)
+  if (header.length < 4) return []
+  const { item: left, rect: leftRect } = header[0]
+  const em = left.height
+  const ends = (item: TextItem): number => item.transform[4] + item.width
+  if (
+    Math.abs(leftRect.x - table.top.x) > 0.002 ||
+    header.some(
+      ({ item }, i) =>
+        item.fontName !== left.fontName ||
+        item.height !== em ||
+        item.transform[5] !== left.transform[5] ||
+        (i > 0 && item.transform[4] - ends(header[i - 1].item) <= em)
+    )
+  )
+    return []
+  const claimed = new Map<number, number>()
+  for (const { fragments } of units)
+    for (const fragment of fragments)
+      if (fragment.pageNumber === number)
+        for (const { index } of fragment.items) claimed.set(index, (claimed.get(index) ?? 0) + 1)
+  const body = units.flatMap((unit) => {
+    if (
+      !unit.fragments.every(
+        ({ pageNumber, rect, unclippedRect }) =>
+          pageNumber === number &&
+          !unclippedRect &&
+          contains(table.rect, rect) &&
+          rect.y >= table.separator.y
+      )
+    )
+      return []
+    const runs = unit.fragments
+      .flatMap(({ items }) => items)
+      .map(({ index, text }) => {
+        const item = content.items[index]
+        return claimed.get(index) === 1 &&
+          item &&
+          'str' in item &&
+          item.str === text &&
+          item.dir === 'ltr' &&
+          item.transform[0] > 0 &&
+          item.transform[1] === 0 &&
+          item.transform[2] === 0 &&
+          item.transform[3] > 0
+          ? item
+          : undefined
+      })
+    return runs.length && runs.every((item) => item !== undefined) ? [{ unit, runs }] : []
+  })
+  // Existing numeric-only owners in the second column witness each data row.
+  const numericX = header[1].item.transform[4]
+  const rows = [
+    ...new Set(
+      body.flatMap(({ unit, runs }) =>
+        unit.sourceOnly && /^[0-9.,{} +−-]+$/u.test(unit.source)
+          ? runs
+              .filter(
+                (item) =>
+                  Math.abs(item.height - em) < em * 0.01 &&
+                  Math.abs(item.transform[4] - numericX) < em * 0.06
+              )
+              .map((item) => item.transform[5])
+          : []
+      )
+    )
+  ].sort((a, b) => b - a)
+  if (rows.length < 3) return []
+  const pitch = rows[0] - rows[1]
+  if (
+    pitch < em ||
+    pitch >= em * 1.5 ||
+    rows.slice(1).some((row, i) => Math.abs(rows[i] - row - pitch) > em * 0.03)
+  )
+    return []
+  return body.flatMap(({ unit, runs }) => {
+    if (unit.sourceOnly || unit.preserve) return []
+    const column = header.findLastIndex(({ item }) =>
+      runs.every((run) => run.transform[4] >= item.transform[4] - em * 0.06)
+    )
+    if (column < 0) return []
+    const x = header[column].item.transform[4],
+      right =
+        header[column + 1]?.item.transform[4] ?? (table.top.x + table.top.width) * viewport.width
+    if (
+      runs.some(
+        (item) =>
+          ends(item) > right + (column === header.length - 1 ? em * 0.01 : 0) ||
+          !rows.some((row) => Math.abs(item.transform[5] - row) < em * 0.4)
+      )
+    )
+      return []
+    const starts = rows.filter((row) =>
+      runs.some(
+        (item) =>
+          Math.abs(item.height - em) < em * 0.01 &&
+          Math.abs(item.transform[4] - x) < em * 0.06 &&
+          Math.abs(item.transform[5] - row) < em * 0.03
+      )
+    )
+    return starts.length >= 2 ? [unit.id] : []
+  })
+}
+
+// Columns in a ruled parameter table can share a prose owner even though their
+// native rows, labels and measurement fields are independently aligned.
+function splitRuledParameterTableOwners(
+  units: Source['units'],
+  { rect, top, separator }: RuledTable,
+  number: number,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  viewport: ReturnType<PDFPageProxy['getViewport']>
+): Map<string, Source['units']> {
+  const result = new Map<string, Source['units']>()
+  const runs: NativeHeaderRun[] = []
+  for (const [index, item] of content.items.entries()) {
+    if (!('str' in item) || !item.str.trim()) continue
+    const [x, y] = viewport.convertToViewportPoint(item.transform[4], item.transform[5])
+    if (
+      x < top.x * viewport.width ||
+      x > (top.x + top.width) * viewport.width ||
+      y < top.y * viewport.height ||
+      y > (rect.y + rect.height) * viewport.height
+    )
+      continue
+    const runRect = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+    if (
+      !runRect ||
+      !contains(rect, runRect) ||
+      item.dir !== 'ltr' ||
+      item.transform[0] <= 0 ||
+      item.transform[1] !== 0 ||
+      item.transform[2] !== 0 ||
+      item.transform[3] <= 0
+    )
+      return result
+    runs.push({ index, item, rect: runRect })
+  }
+  const baseline = ({ item }: NativeHeaderRun): number =>
+    viewport.convertToViewportPoint(item.transform[4], item.transform[5])[1]
+  const right = ({ rect }: NativeHeaderRun): number => rect.x + rect.width
+  const header = runs.filter((r) => baseline(r) < separator.y * viewport.height)
+  if (header.length !== 4) return result
+  const [stub, description, value, measure] = header
+  const em = stub.item.height,
+    emX = em / viewport.width
+  const label = /^\p{Lu}\p{Ll}+(?: \p{Ll}+){1,5}\.?$/u
+  const word = /^\p{Lu}\p{Ll}{2,20}$/u
+  if (
+    !(em > 0) ||
+    !word.test(stub.item.str) ||
+    !label.test(description.item.str) ||
+    !label.test(value.item.str) ||
+    !word.test(measure.item.str) ||
+    header.some(
+      (r, i) =>
+        r.item.fontName !== stub.item.fontName ||
+        r.item.height !== em ||
+        baseline(r) !== baseline(stub) ||
+        (i > 0 && r.rect.x - right(header[i - 1]) < emX)
+    )
+  )
+    return result
+
+  const body = runs.slice(header.length)
+  const descriptions = body.filter((r) => Math.abs(r.rect.x - description.rect.x) < emX * 0.06)
+  if (
+    descriptions.length < 4 ||
+    descriptions.length > 32 ||
+    descriptions.some(
+      (r) =>
+        r.item.fontName !== stub.item.fontName || r.item.height !== em || !label.test(r.item.str)
+    )
+  )
+    return result
+  const pitch = baseline(descriptions[1]) - baseline(descriptions[0])
+  if (
+    pitch < em * 1.2 ||
+    pitch > em * 1.55 ||
+    baseline(descriptions[0]) - separator.y * viewport.height < em * 0.8 ||
+    baseline(descriptions[0]) - separator.y * viewport.height > em * 1.6 ||
+    (rect.y + rect.height) * viewport.height - baseline(descriptions.at(-1)!) > em * 1.5 ||
+    descriptions
+      .slice(1)
+      .some((r, i) => Math.abs(baseline(r) - baseline(descriptions[i]) - pitch) > em * 0.05)
+  )
+    return result
+
+  const cuts = header.slice(1).map((r) => r.rect.x - emX * 0.7)
+  const cells = new Map(header.map((r) => [r.index, { run: r, preserve: false }]))
+  const data = new Set<number>()
+  for (const name of descriptions) {
+    const row = body.filter((r) => Math.abs(baseline(r) - baseline(name)) < em * 0.48)
+    const columns = [[], [], [], []] as NativeHeaderRun[][]
+    for (const run of row) {
+      if (data.has(run.index) || cuts.some((cut) => run.rect.x < cut && right(run) > cut))
+        return new Map()
+      columns[cuts.filter((cut) => cut <= run.rect.x).length].push(run)
+      data.add(run.index)
+    }
+    const [symbol, prose, values, measures] = columns
+    const text = (column: NativeHeaderRun[]): string => column.map((r) => r.item.str).join('')
+    const centered = (column: NativeHeaderRun[], heading: NativeHeaderRun): boolean => {
+      if (!column.length) return false
+      const midpoint =
+        (Math.min(...column.map((r) => r.rect.x)) + Math.max(...column.map(right))) / 2
+      return Math.abs(midpoint - (heading.rect.x + right(heading)) / 2) < emX * 0.85
+    }
+    if (
+      prose.length !== 1 ||
+      prose[0] !== name ||
+      !/^[\p{Script=Latin}\p{Script=Greek}]{1,4}\d?$/u.test(text(symbol)) ||
+      !symbol.some(({ item }) => item.fontName !== stub.item.fontName) ||
+      !/^(?:\p{Lu}\p{Ll}{2,20}|(?=.*\d)[\p{Script=Greek}0-9()./×+−a-z]+)$/u.test(text(values)) ||
+      !/^(?:[–—-]|[a-z]{1,3}(?:[−-]\d)?)$/u.test(text(measures)) ||
+      !centered(symbol, stub) ||
+      !centered(values, value) ||
+      !centered(measures, measure)
+    )
+      return new Map()
+    for (const run of row) {
+      const plain =
+        run === name || (values.length === 1 && values[0] === run && word.test(run.item.str))
+      cells.set(run.index, { run, preserve: !plain })
+    }
+  }
+  if (data.size !== body.length) return result
+
+  const owners = new Set<number>()
+  const candidates = []
+  for (const unit of units) {
+    const hit = unit.fragments.some(
+      (fragment) =>
+        fragment.pageNumber === number && fragment.items.some(({ index }) => cells.has(index))
+    )
+    if (!hit) continue
+    if (
+      unit.fragments.some(
+        (fragment) =>
+          fragment.pageNumber !== number || fragment.unclippedRect || !contains(rect, fragment.rect)
+      )
+    )
+      return new Map()
+    const parts = unit.fragments.flatMap((fragment) => fragment.items)
+    if (!parts.length) return new Map()
+    for (const { index, text } of parts) {
+      if (cells.get(index)?.run.item.str !== text || owners.has(index)) return new Map()
+      owners.add(index)
+    }
+    candidates.push({ unit, parts })
+  }
+  if (owners.size !== cells.size) return result
+  for (const { unit, parts } of candidates) {
+    if (
+      unit.sourceOnly ||
+      unit.preserve ||
+      parts.length < 2 ||
+      parts.map(({ text }) => text).join(' ') !== unit.source ||
+      parts.every(({ index }) => cells.get(index)!.preserve)
+    )
+      continue
+    result.set(
+      unit.id,
+      parts.map((part, offset) => {
+        const { run, preserve } = cells.get(part.index)!
+        return {
+          ...unit,
+          id: `${unit.id}-cell-${offset + 1}`,
+          source: part.text,
+          ...(preserve ? { sourceOnly: true as const, preserve: 'literal' as const } : {}),
+          fragments: [{ pageNumber: number, rect: run.rect, items: [part] }]
+        }
+      })
+    )
+  }
+  return result
+}
+
+// A connector label and the adjacent node can have almost the same baseline.
+async function diagramNodeLabelOwners(
+  page: PDFPageProxy,
+  number: number,
+  units: Source['units'],
+  regions: readonly Rect[],
+  paths: readonly PaintedPath[],
+  signal: AbortSignal
+): Promise<Map<string, Source['units']>> {
+  const split = new Map<string, Source['units']>()
+  const boxes = paths.filter((path) => path.diagramStroke === 'box')
+  if (page.rotate !== 0 || boxes.length < 2 || !regions.length) return split
+  const candidates = units.flatMap((unit, at) =>
+    !unit.sourceOnly &&
+    unit.fragments.length === 1 &&
+    unit.fragments[0].pageNumber === number &&
+    unit.fragments[0].items.length === 2 &&
+    regions.some((region) => contains(region, unit.fragments[0].rect))
+      ? [{ unit, next: units[at + 1] }]
+      : []
+  )
+  if (!candidates.length) return split
+  const ownerCounts = new Map<number, number>()
+  for (const unit of units)
+    for (const fragment of unit.fragments)
+      if (fragment.pageNumber === number)
+        for (const { index } of fragment.items)
+          ownerCounts.set(index, (ownerCounts.get(index) ?? 0) + 1)
+  const content = await page.getTextContent()
+  signal.throwIfAborted()
+  const viewport = page.getViewport({ scale: 1 })
+  for (const { unit, next } of candidates) {
+    const [part] = unit.fragments,
+      second = next?.fragments[0]
+    if (
+      !next ||
+      next.sourceOnly ||
+      next.fragments.length !== 1 ||
+      !second ||
+      second.pageNumber !== number ||
+      second.items.length < 1 ||
+      second.items.length > 3 ||
+      !regions.some((region) => contains(region, part.rect) && contains(region, second.rect)) ||
+      split.has(unit.id) ||
+      split.has(next.id) ||
+      unit.source !== part.items.map(({ text }) => text).join(' ') ||
+      next.source !== second.items.map(({ text }) => text).join(' ')
+    )
+      continue
+    const claims = [...part.items, ...second.items]
+    if (
+      claims.some(
+        ({ index }, at) => ownerCounts.get(index) !== 1 || (at > 0 && index <= claims[at - 1].index)
+      ) ||
+      content.items
+        .slice(claims[0].index, claims.at(-1)!.index + 1)
+        .filter((item) => 'str' in item && item.str.trim()).length !== claims.length
+    )
+      continue
+    const runs = claims.map(({ index, text }) => {
+      const item = content.items[index]
+      if (
+        !item ||
+        !('str' in item) ||
+        item.str !== text ||
+        item.transform[0] <= 0 ||
+        item.transform[1] !== 0 ||
+        item.transform[2] !== 0 ||
+        item.transform[3] <= 0
+      )
+        return
+      const rect = nativeLabelRegion(item, content.styles[item.fontName], viewport, number)
+      if (rect) return { item, rect }
+    })
+    if (!runs.every((run) => run !== undefined)) continue
+    const [label, top, ...bottom] = runs,
+      h = top.rect.height
+    const owners = boxes.filter(
+      (box) =>
+        runs.slice(1).every(({ rect }) => contains(box, rect)) && !overlaps(label.rect, box, 0)
+    )
+    if (owners.length !== 1) continue
+    const [box] = owners
+    const left = boxes.filter(
+      (peer) =>
+        peer.x + peer.width < label.rect.x &&
+        Math.abs(peer.y - box.y) < h * 0.15 &&
+        Math.abs(peer.height - box.height) < h * 0.15
+    )
+    if (
+      left.length !== 1 ||
+      !/^[a-z]{3,16}$/u.test(label.item.str) ||
+      label.item.fontName === top.item.fontName ||
+      label.rect.height >= h * 0.85 ||
+      Math.abs(label.rect.y - top.rect.y) > h * 0.2 ||
+      bottom.some(
+        ({ item }) =>
+          item.fontName !== top.item.fontName ||
+          item.height !== top.item.height ||
+          item.transform[5] !== bottom[0].item.transform[5]
+      ) ||
+      Math.abs(second.rect.x - top.rect.x) > h * 0.15 ||
+      second.rect.y - top.rect.y < h ||
+      second.rect.y - top.rect.y > h * 1.5
+    )
+      continue
+    const [peer] = left
+    const connections = paths.filter(
+      (path) =>
+        path.diagramStroke === 'horizontal' &&
+        Math.abs(path.x + path.width - box.x) < h * 0.1 &&
+        Math.abs(path.x - peer.x - peer.width) < h * 0.6 &&
+        path.x < label.rect.x + h * 0.1 &&
+        path.y > label.rect.y + label.rect.height &&
+        path.y - label.rect.y - label.rect.height < h * 0.6
+    )
+    if (connections.length !== 1) continue
+    const labelOwner = {
+      ...unit,
+      figure: true as const,
+      source: claims[0].text,
+      fragments: [{ pageNumber: number, rect: label.rect, items: [claims[0]] }]
+    }
+    const nodeOwner = {
+      ...next,
+      figure: true as const,
+      source: claims[1].text + ' ' + next.source,
+      fragments: [{ pageNumber: number, rect: top.rect, items: [claims[1]] }, second]
+    }
+    split.set(unit.id, [labelOwner, nodeOwner])
+    split.set(next.id, [])
+  }
+  return split
+}
+
+// These rows hold dates and instrument settings. Leave their aligned data native,
+// including a filter suffix or a measurement prime painted as a separate glyph.
+function nativeObservationTableRow(
+  fragment: PdfTranslationFragment,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>
+): boolean {
+  const parts = fragment.items.map(({ index }) => content.items[index])
+  if (
+    !parts.every((item, index): item is TextItem =>
+      Boolean(
+        item &&
+        'str' in item &&
+        item.str === fragment.items[index].text &&
+        item.dir === 'ltr' &&
+        item.transform.every(Number.isFinite) &&
+        item.transform[0] > 0 &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0 &&
+        item.transform[3] > 0 &&
+        Number.isFinite(item.width) &&
+        item.width > 0
+      )
+    )
+  )
+    return false
+  if (
+    !parts.every(
+      (item, index) =>
+        Math.abs(item.transform[5] - parts[0].transform[5]) < parts[0].height * 0.45 &&
+        (!index || item.transform[4] > parts[index - 1].transform[4])
+    )
+  )
+    return false
+  const [date, telescope, instrument, ...filterAndValues] = parts.map(({ str }) => str)
+  if (!date || !telescope || !instrument || filterAndValues.length < 1) return false
+  return (
+    /^(?:19|20)[0-9]{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec) [1-9][0-9]?$/u.test(
+      date
+    ) &&
+    /^[A-Z][A-Za-z0-9]+(?: [A-Z])?$/u.test(telescope) &&
+    /^[A-Z][A-Z0-9]{1,8}$/u.test(instrument) &&
+    /^(?:[A-Z][0-9]{2,4}[A-Z]|[a-z] [’′])(?: (?:[0-9]+(?:x[0-9]+)?|[0-9]+[.][0-9]+|′′|[(] *[0-9]+[.][0-9]+[)]))*$/u.test(
+      filterAndValues.join(' ')
+    )
+  )
+}
+
+// A whole, standalone fraction stays native when the two text tiers and its
+// directly painted bar agree. The same compact spelling can also be prose.
+async function nativeMaskFractions(
+  units: Source['units'],
+  page: PDFPageProxy,
+  number: number,
+  masks: readonly Rect[],
+  signal: AbortSignal
+): Promise<string[]> {
+  if (!masks.length || page.rotate !== 0) return []
+  const candidates = units.filter(
+    ({ source, sourceOnly, preserve, fragments }) =>
+      !sourceOnly &&
+      !preserve &&
+      /^(?:\d{2,4}[a-z]|\d{1,2}[a-z]\d{1,2})$/u.test(source) &&
+      fragments.length === 1 &&
+      fragments[0].pageNumber === number &&
+      fragments[0].items.length === 3
+  )
+  if (!candidates.length) return []
+  const { items } = await page.getTextContent()
+  signal.throwIfAborted()
+  const { width, height, transform } = page.getViewport({ scale: 1 })
+  const [sx, b, c, sy, tx, ty] = transform
+  if (sx <= 0 || sy >= 0 || b !== 0 || c !== 0) return []
+  return candidates.flatMap(({ id, source, fragments: [fragment] }) => {
+    const claims = fragment.items.toSorted((a, b) => a.index - b.index)
+    const runs = claims.map(({ index, text }) => {
+      const item = items[index]
+      return item &&
+        'str' in item &&
+        item.str === text &&
+        item.dir === 'ltr' &&
+        item.transform.every(Number.isFinite) &&
+        item.transform[0] > 0 &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0 &&
+        item.transform[3] > 0 &&
+        item.width > 0 &&
+        item.height > 0
+        ? item
+        : undefined
+    })
+    const [digit, variable, denominator] = runs
+    if (
+      !digit ||
+      !variable ||
+      !denominator ||
+      !/^\d{1,2}$/u.test(digit.str) ||
+      !/^[a-z]$/u.test(variable.str) ||
+      !/^\d{1,2}$/u.test(denominator.str) ||
+      digit.fontName !== denominator.fontName ||
+      digit.fontName === variable.fontName ||
+      (source !== digit.str + denominator.str + variable.str &&
+        source !== digit.str + variable.str + denominator.str) ||
+      items
+        .slice(claims[0].index, claims[2].index + 1)
+        .filter((item) => 'str' in item && item.str.trim()).length !== 3
+    )
+      return []
+    const em = digit.height,
+      left = digit.transform[4],
+      right = variable.transform[4] + variable.width
+    const lowerLeft = denominator.transform[4],
+      lowerRight = lowerLeft + denominator.width
+    const rising = digit.transform[5],
+      lower = denominator.transform[5]
+    if (
+      Math.abs(variable.transform[5] - rising) > em * 0.02 ||
+      Math.abs(variable.transform[4] - left - digit.width) > em * 0.12 ||
+      [variable, denominator].some((item) => Math.abs(item.height - em) > em * 0.02) ||
+      rising - lower < em * 0.95 ||
+      rising - lower > em * 1.2 ||
+      Math.abs(left + right - lowerLeft - lowerRight) > em * 0.22
+    )
+      return []
+    const bars = masks.filter((mask) => {
+      const x = (mask.x * width - tx) / sx,
+        end = ((mask.x + mask.width) * width - tx) / sx,
+        top = (mask.y * height - ty) / sy,
+        bottom = ((mask.y + mask.height) * height - ty) / sy
+      return (
+        Math.abs(x - left) <= em * 0.1 &&
+        Math.abs(end - right) <= em * 0.1 &&
+        rising - top >= em * 0.08 &&
+        rising - top <= em * 0.35 &&
+        bottom - lower >= em * 0.65 &&
+        bottom - lower <= em &&
+        top - bottom >= em * 0.025 &&
+        top - bottom <= em * 0.13
+      )
+    })
+    return bars.length === 1 ? [id] : []
+  })
+}
+
+// The raster frame and two equally spaced rows distinguish coordinates from prose.
+function nativeSkyCoordinateTicks(
+  units: Source['units'],
+  images: readonly Rect[],
+  preserved: ReadonlySet<string>
+): string[] {
+  const candidates = units.flatMap((unit) => {
+    const [part] = unit.fragments
+    return preserved.has(unit.id) &&
+      !unit.sourceOnly &&
+      unit.fragments.length === 1 &&
+      /^\d[\d.hms°'"]+$/u.test(unit.source) &&
+      part.items
+        .map(({ text }) => text)
+        .join('')
+        .replace(/\s/gu, '') === unit.source
+      ? [{ id: unit.id, label: unit.source, rect: part.rect }]
+      : []
+  })
+  const row = (values: number[], font: number): boolean => {
+    const gap = values[1] - values[0]
+    return (
+      values.length >= 4 &&
+      gap > font * 2 &&
+      values
+        .slice(2)
+        .every((value, index) => Math.abs(value - values[index + 1] - gap) < font * 0.15)
+    )
+  }
+  return images.flatMap((image) => {
+    const x = candidates
+      .filter(
+        ({ rect, label }) =>
+          /^(?:\d{1,2}h\d{2}m)?\d{2}\.\d{2}s$/u.test(label) &&
+          rect.x + rect.width / 2 >= image.x &&
+          rect.x + rect.width / 2 < image.x + image.width &&
+          rect.y >= image.y + image.height &&
+          rect.y - image.y - image.height < rect.height
+      )
+      .sort((a, b) => a.rect.x + a.rect.width / 2 - b.rect.x - b.rect.width / 2)
+    const y = candidates
+      .filter(
+        ({ rect, label }) =>
+          /^(?:\d{1,2}°)?(?:\d{2}')?\d{2}\.\d{2}"$/u.test(label) &&
+          rect.y > image.y &&
+          rect.y + rect.height <= image.y + image.height &&
+          rect.x + rect.width <= image.x &&
+          image.x - rect.x - rect.width < rect.height * 1.5
+      )
+      .sort((a, b) => a.rect.y - b.rect.y)
+    if (x.length < 4 || y.length < 4) return []
+    const [firstX] = x,
+      [firstY] = y
+    return /^\d{1,2}h\d{2}m/u.test(firstX.label) &&
+      /^\d{1,2}°\d{2}'/u.test(firstY.label) &&
+      x
+        .slice(1)
+        .every(
+          ({ label, rect }) =>
+            !label.includes('h') && Math.abs(rect.y - firstX.rect.y) < firstX.rect.height * 0.05
+        ) &&
+      y
+        .slice(1)
+        .every(
+          ({ label, rect }) =>
+            !label.includes('°') &&
+            Math.abs(rect.x + rect.width - firstY.rect.x - firstY.rect.width) <
+              firstY.rect.height * 0.1
+        ) &&
+      row(
+        x.map(({ rect }) => rect.x + rect.width / 2),
+        firstX.rect.height
+      ) &&
+      row(
+        y.map(({ rect }) => rect.y + rect.height / 2),
+        firstY.rect.height
+      )
+      ? [...x, ...y].map(({ id }) => id)
+      : []
+  })
+}
+
+// An axis title can overlap the middle tick's text metrics even though their
+// native rows are distinct. Split only with a painted axis and a complete tick rail.
+async function splitNativeOrdinalAxisTitles(
+  page: PDFPageProxy,
+  units: Source['units'],
+  regions: Rect[],
+  painted: readonly PaintedPath[],
+  pageNumber: number,
+  signal: AbortSignal
+): Promise<Map<string, Source['units']>> {
+  const splits = new Map<string, Source['units']>()
+  const axes = painted.filter(({ diagramStroke }) => diagramStroke === 'horizontal')
+  if (page.rotate !== 0 || !axes.length || !regions.length || !page.getTextContent) return splits
+
+  const candidates = units.filter(({ source, sourceOnly, preserve, fragments }) => {
+    const [fragment] = fragments
+    const [tick, title] = fragment?.items ?? []
+    return (
+      !sourceOnly &&
+      !preserve &&
+      fragments.length === 1 &&
+      fragment.pageNumber === pageNumber &&
+      fragment.items.length === 2 &&
+      /^\d{1,4}$/u.test(tick.text) &&
+      /^\p{L}{2,}(?: \p{L}{2,}){1,5}$/u.test(title.text) &&
+      source === title.text + tick.text &&
+      regions.some((region) => contains(region, fragment.rect))
+    )
+  })
+  if (!candidates.length) return splits
+
+  const { items, styles } = await page.getTextContent()
+  signal.throwIfAborted()
+  const viewport = page.getViewport({ scale: 1 })
+  const nativeRun = ({
+    index,
+    text
+  }: PdfTranslationFragment['items'][number]): { item: TextItem; rect: Rect } | undefined => {
+    const item = items[index]
+    if (
+      !item ||
+      !('str' in item) ||
+      item.str !== text ||
+      item.transform[0] <= 0 ||
+      item.transform[1] !== 0 ||
+      item.transform[2] !== 0 ||
+      item.transform[3] <= 0 ||
+      styles[item.fontName]?.vertical !== false ||
+      !Number.isFinite(styles[item.fontName].ascent)
+    )
+      return
+    const rect = nativeLabelRegion(item, styles[item.fontName], viewport, pageNumber)
+    return rect && { item, rect }
+  }
+  const literals = units.flatMap(({ source, sourceOnly, preserve, fragments }) => {
+    const [fragment] = fragments
+    if (
+      !sourceOnly ||
+      preserve !== 'literal' ||
+      fragments.length !== 1 ||
+      fragment.pageNumber !== pageNumber ||
+      fragment.items.length !== 1 ||
+      fragment.items[0].text !== source ||
+      !/^\d{1,4}$/u.test(source)
+    )
+      return []
+    const run = nativeRun(fragment.items[0])
+    return run ? [run] : []
+  })
+  const center = (rect: Rect): number => rect.x + rect.width / 2
+  for (const unit of candidates) {
+    const [fragment] = unit.fragments
+    const tick = nativeRun(fragment.items[0])
+    const title = nativeRun(fragment.items[1])
+    if (!tick || !title || tick.item.fontName !== title.item.fontName) continue
+    const em = tick.item.height
+    const rise = title.item.transform[5] - tick.item.transform[5]
+    if (
+      rise < em * 0.65 ||
+      rise > em * 1.5 ||
+      title.item.height < em ||
+      title.item.height > em * 1.5
+    )
+      continue
+    const axis = axes.find(
+      (path) =>
+        path.width >= (em * 16) / viewport.width &&
+        path.y > tick.rect.y + tick.rect.height &&
+        path.y - tick.rect.y - tick.rect.height < tick.rect.height &&
+        Math.abs(center(path) - center(title.rect)) < em / viewport.width &&
+        Math.abs(center(tick.rect) - center(title.rect)) < em / viewport.width &&
+        regions.some((region) => contains(region, path) && contains(region, fragment.rect))
+    )
+    if (!axis) continue
+    const rail = [...literals, tick]
+      .filter(
+        ({ item, rect }) =>
+          item.fontName === tick.item.fontName &&
+          Math.abs(item.height - em) < em * 0.03 &&
+          Math.abs(item.transform[5] - tick.item.transform[5]) < em * 0.04 &&
+          rect.x >= axis.x &&
+          rect.x + rect.width <= axis.x + axis.width
+      )
+      .sort((a, b) => a.rect.x - b.rect.x)
+    if (rail.length < 5) continue
+    const step = Number(rail[1].item.str) - Number(rail[0].item.str)
+    const start = center(rail[0].rect)
+    const pitch = (center(rail.at(-1)!.rect) - start) / (rail.length - 1)
+    if (
+      step <= 0 ||
+      pitch < (em * 2) / viewport.width ||
+      center(rail.at(-1)!.rect) - start < axis.width * 0.65 ||
+      rail.some(
+        ({ item, rect }, index) =>
+          Number(item.str) !== Number(rail[0].item.str) + index * step ||
+          Math.abs(center(rect) - start - index * pitch) > (em * 0.4) / viewport.width
+      )
+    )
+      continue
+    splits.set(
+      unit.id,
+      [tick, title].map(({ item, rect }, index) => ({
+        ...unit,
+        id: index ? unit.id : unit.id + '-axis-tick',
+        source: item.str,
+        figure: true as const,
+        ...(index ? {} : { sourceOnly: true as const, preserve: 'literal' as const }),
+        fragments: [{ ...fragment, rect, items: [fragment.items[index]] }]
+      }))
+    )
+  }
+  return splits
 }
 
 /** Run before admitting a new translation; historical snapshots keep their indices unchanged. */
@@ -804,7 +2345,12 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
 }): Promise<T> {
   const source = extraction.source,
     preserved = new Set<string>(),
-    nativeLiterals = new Set<string>()
+    nativeLiterals = new Set<string>(),
+    retainedTableOwners = new Set<string>(),
+    nativeFractionOwners = new Set<string>(),
+    splitTableCells = new Map<string, Source['units']>(),
+    splitFigureLabels = new Map<string, Source['units']>(),
+    splitFrequencyLabels = new Map<string, Source['units']>()
   const restoredCaptions = new Set<string>()
   const originalRegions: NonNullable<Source['originalRegions']>[number][] = [
     ...(source.originalRegions ?? [])
@@ -821,7 +2367,10 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
         images,
         vectors,
         rules = [],
-        painted = []
+        maskRules = [],
+        smallMaskRules = [],
+        painted = [],
+        filledRules = []
       } = await graphicRegions(page, operators, signal)
       if (number === source.pages.length && source.units.at(-1) === units.at(-1)) {
         const restored = await terminalReferenceCaption(
@@ -857,7 +2406,48 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
             caption.x + caption.width > rect.x
         )
       )
-      const regions = [...images, ...tableRegions(units, rules, number), ...captionedVectors]
+      const vectorTables = tableRegions(units, rules, number)
+      for (const id of await nativeMaskFractions(units, page, number, smallMaskRules, signal))
+        nativeFractionOwners.add(id)
+      const maskTables = tableRegions(units, maskRules, number)
+      const tables = [...vectorTables, ...maskTables]
+
+      if (maskTables.length) {
+        const content = await page.getTextContent()
+        signal.throwIfAborted()
+        if (page.rotate === 0)
+          for (const id of crossRuleStencilTableOwners(
+            units,
+            maskTables,
+            number,
+            content,
+            page.getViewport({ scale: 1 })
+          ))
+            retainedTableOwners.add(id)
+        for (const unit of units) {
+          if (
+            !unit.sourceOnly &&
+            maskTables.some((table) =>
+              unit.fragments.every(
+                (fragment) =>
+                  fragment.pageNumber === number &&
+                  contains(table.rect, fragment.rect) &&
+                  fragment.rect.y > table.separator.y &&
+                  nativeObservationTableRow(fragment, content)
+              )
+            )
+          )
+            nativeLiterals.add(unit.id)
+        }
+      }
+      const filled = await closedFilledTable(page, number, units, filledRules, signal)
+      if (filled) for (const id of filled.owners) retainedTableOwners.add(id)
+      const regions = [
+        ...images,
+        ...tables.map(({ rect }) => rect),
+        ...captionedVectors,
+        ...(filled ? [filled.rect] : [])
+      ]
       for (const rect of regions)
         if (
           !originalRegions.some(
@@ -874,6 +2464,96 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
           unit.fragments.every((fragment) => regions.some((rect) => contains(rect, fragment.rect)))
         )
           preserved.add(unit.id)
+      if (page.rotate === 0 && images.length)
+        for (const id of nativeSkyCoordinateTicks(units, images, preserved)) nativeLiterals.add(id)
+      // Paired detector arms use the same exposure keys on their raw images.
+      if (page.rotate === 0 && !skipTranslation && images.length >= 2) {
+        const detectors = units.flatMap((unit) => {
+          if (
+            !preserved.has(unit.id) ||
+            unit.sourceOnly ||
+            unit.fragments.length !== 1 ||
+            !/^(?:SCIENCE|FLAT|ARC) (?:BLUE|RED)$/u.test(unit.source)
+          )
+            return []
+          const { rect, items } = unit.fragments[0]
+          if (items.length !== 2 || items.map(({ text }) => text).join(' ') !== unit.source)
+            return []
+          const panels = images.filter(
+            (image) =>
+              contains(image, rect) &&
+              Math.abs(rect.x - image.x) < rect.height * 2.5 &&
+              Math.abs(image.y + image.height - rect.y - rect.height) < rect.height * 2
+          )
+          return panels.length === 1 ? [{ unit, rect, panel: panels[0] }] : []
+        })
+        for (const blue of detectors.filter(({ unit }) => unit.source.endsWith(' BLUE'))) {
+          const peers = detectors.filter(
+            ({ unit, rect, panel }) =>
+              unit.source === blue.unit.source.replace(/BLUE$/u, 'RED') &&
+              Math.abs(rect.y - blue.rect.y) < blue.rect.height * 0.1 &&
+              Math.abs(rect.height - blue.rect.height) < blue.rect.height * 0.1 &&
+              Math.abs(panel.y - blue.panel.y) < blue.rect.height * 0.1 &&
+              Math.abs(panel.width - blue.panel.width) < blue.rect.height * 0.1 &&
+              Math.abs(panel.height - blue.panel.height) < blue.rect.height * 0.1 &&
+              panel.x >= blue.panel.x + blue.panel.width &&
+              panel.x - blue.panel.x - blue.panel.width < blue.rect.height
+          )
+          if (peers.length === 1) {
+            nativeLiterals.add(blue.unit.id)
+            nativeLiterals.add(peers[0].unit.id)
+          }
+        }
+      }
+      if (!skipTranslation) {
+        const nodes = await diagramNodeLabelOwners(
+          page,
+          number,
+          units,
+          captionedVectors,
+          painted,
+          signal
+        )
+        for (const [id, labels] of nodes) splitFigureLabels.set(id, labels)
+        for (const [id, labels] of await splitNativeOrdinalAxisTitles(
+          page,
+          units,
+          captionedVectors,
+          painted,
+          number,
+          signal
+        ))
+          splitFigureLabels.set(id, labels)
+        const headers = await coalescedTableHeaderOwners(
+          page,
+          number,
+          units,
+          [...tables, ...tableRegions(units, rules, number, true)],
+          painted,
+          signal
+        )
+        for (const id of headers.retained) retainedTableOwners.add(id)
+        for (const [id, cells] of headers.split) {
+          preserved.add(id)
+          splitTableCells.set(id, cells)
+        }
+        if (page.rotate === 0 && vectorTables.length) {
+          const content = await page.getTextContent()
+          signal.throwIfAborted()
+          const viewport = page.getViewport({ scale: 1 })
+          for (const table of vectorTables)
+            for (const [id, cells] of splitRuledParameterTableOwners(
+              units,
+              table,
+              number,
+              content,
+              viewport
+            )) {
+              preserved.add(id)
+              if (!splitTableCells.has(id)) splitTableCells.set(id, cells)
+            }
+        }
+      }
       // A column of unspaced feature keys keeps the native names used by the data.
       const keys = units.filter((unit) => {
         if (!preserved.has(unit.id) || unit.sourceOnly || unit.fragments.length !== 1) return false
@@ -891,7 +2571,13 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
           unit.fragments.length === 1 &&
           captionedVectors.some((region) => contains(region, unit.fragments[0].rect))
       )
-      for (const id of await nativeLegendOwners(page, legendCandidates, painted, signal))
+      for (const id of await nativeLegendOwners(
+        page,
+        legendCandidates,
+        painted,
+        signal,
+        skipTranslation ? undefined : splitFrequencyLabels
+      ))
         nativeLiterals.add(id)
 
       for (const key of keys) {
@@ -951,7 +2637,13 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
     }
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
   }
-  if (!preserved.size && !originalRegions.length && !restoredCaptions.size) return extraction
+  if (
+    !preserved.size &&
+    !originalRegions.length &&
+    !restoredCaptions.size &&
+    !nativeFractionOwners.size
+  )
+    return extraction
   return Object.freeze({
     ...extraction,
     source: carryNativeCaptionEligibility(
@@ -959,23 +2651,29 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
       createPdfTranslationSource({
         ...source,
         originalRegions,
-        units: source.units.map((unit) => {
+        units: source.units.flatMap((unit) => {
           if (restoredCaptions.has(unit.id)) {
             const restored = { ...unit }
             delete restored.sourceOnly
             delete restored.preserve
             return restored
           }
-          return preserved.has(unit.id)
-            ? {
-                ...unit,
-                ...(skipTranslation || nativeLiterals.has(unit.id)
-                  ? { sourceOnly: true as const }
-                  : {}),
-                ...(nativeLiterals.has(unit.id) ? { preserve: 'literal' as const } : {}),
-                figure: true
-              }
-            : unit
+          if (nativeFractionOwners.has(unit.id))
+            return { ...unit, sourceOnly: true as const, preserve: 'formula' as const }
+          if (!preserved.has(unit.id)) return unit
+          const labels = splitFrequencyLabels.get(unit.id) ?? splitFigureLabels.get(unit.id)
+          if (labels) return labels
+          const cells = splitTableCells.get(unit.id)
+          if (cells && !nativeLiterals.has(unit.id) && !retainedTableOwners.has(unit.id))
+            return cells.map((cell) => ({ ...cell, figure: true as const }))
+          return {
+            ...unit,
+            ...(skipTranslation || nativeLiterals.has(unit.id) || retainedTableOwners.has(unit.id)
+              ? { sourceOnly: true as const }
+              : {}),
+            ...(nativeLiterals.has(unit.id) ? { preserve: 'literal' as const } : {}),
+            figure: true as const
+          }
         })
       })
     )

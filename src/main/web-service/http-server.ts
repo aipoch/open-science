@@ -46,6 +46,7 @@ import { PlanCommandError } from '../../shared/session-plan/contract'
 import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
+  SubmitTaskRunRequest,
   TaskPlanResponseRequest,
   UpdateTaskAgentRoutingRequest,
   UpdateTaskProjectRequest
@@ -1261,8 +1262,9 @@ const handleTaskApiRequest = async (
             requestBodyBudgetRegistry,
             requestBodyClientId
           )
+          assertExternalAuthorizationCurrent(externalAuthorization)
           reply(202, {
-            data: await tasks.submitRun(requestId, body as StartTaskRunRequest)
+            data: await tasks.submitRun(requestId, body as SubmitTaskRunRequest)
           })
         }
         return true
@@ -1627,7 +1629,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             ? [
                 'permission-prompts-none',
                 ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
-                  ? ['durable-submissions']
+                  ? ['durable-submissions', 'run-otel-traces']
                   : [])
               ]
             : [],

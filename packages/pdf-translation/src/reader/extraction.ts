@@ -1,3 +1,4 @@
+import { nativeBundledScientificOwners } from './native-bundled-scientific-table.js'
 import { unreliablyDecodedDisplayOwners } from './native-unreliably-decoded-displays.js'
 import { readNativeFormClippedText } from './native-form-clipped-text.js'
 import { rememberPdfTranslationSourceParser } from './snapshot.js'
@@ -33,13 +34,20 @@ import {
   createAuxiliaryNativeExclusionReader,
   createAuxiliaryNativeDisplayInkReader
 } from './auxiliary-native-ink.js'
-import { hasNativeDisplaySequence, nativeScopedDisplayOwners } from './native-display-packets.js'
+import {
+  hasNativeDisplaySequence,
+  hasNativeNestedIntegralMarker,
+  hasNativeStackedFractionMarker,
+  nativeScopedDisplayOwners,
+  nativeDisplayProductTerms
+} from './native-display-packets.js'
 import {
   hasNativeShortMathContinuation,
   nativeShortMathContinuations
 } from './native-short-math-continuation.js'
 import { hasNativeLiteralMathCandidate, nativeLiteralMathOwners } from './native-literal-math.js'
 import {
+  hasNativeDerivativeMatrixCandidate,
   hasNativeMatrixCandidate,
   createNativeMatrixReader,
   nativeMatrixOwners
@@ -84,6 +92,97 @@ export type PdfTranslationExtraction = Readonly<{
     pageDiagnostics?: readonly Readonly<{ pageNumber: number; reason: 'unreliable-font-unicode' }>[]
   }>
 }>
+
+// The differential immediately after a stacked inner-product fraction is part of the equation.
+function preserveFractionDifferentials(
+  units: PdfTranslationSource['units'],
+  pages: PdfLayoutPage[]
+): PdfTranslationSource['units'] {
+  return units.map((unit, index) => {
+    if (
+      unit.sourceOnly ||
+      unit.preserve ||
+      unit.figure ||
+      unit.referenceBoundary ||
+      !/^d[A-Za-z],$/u.test(unit.source) ||
+      unit.fragments.length !== 1
+    )
+      return unit
+    const [fragment] = unit.fragments
+    const denominator = units[index + 1]
+    const lower = denominator?.fragments[0]
+    if (
+      fragment.unclippedRect ||
+      fragment.items.length !== 1 ||
+      denominator?.preserve !== 'formula' ||
+      !denominator.sourceOnly ||
+      denominator.fragments.length !== 1 ||
+      !lower ||
+      lower.unclippedRect ||
+      lower.pageNumber !== fragment.pageNumber ||
+      lower.items.length !== 3
+    )
+      return unit
+    const page = pages.find((candidate) => candidate.page === fragment.pageNumber)
+    if (!page || page.rotation !== 0) return unit
+    const bracketItems = lower.items.map(({ index }) => page.items[index])
+    const [left, middle, right] = bracketItems
+    const { index: at } = fragment.items[0]
+    const differential = page.items[at]
+    const before = page.items
+      .slice(Math.max(0, lower.items[0].index - 4), lower.items[0].index)
+      .filter((item) => item.str.trim())
+    const last = before.at(-1)
+    const numerator = last?.height === differential?.height ? last : before.at(-2)
+    if (
+      !numerator ||
+      ![left, middle, right, differential, numerator].every(
+        (item) =>
+          item &&
+          item.dir === 'ltr' &&
+          item.fontName &&
+          item.fontVertical === false &&
+          [...item.transform, item.width, item.height].every(Number.isFinite) &&
+          item.width > 0 &&
+          item.height > 0 &&
+          item.transform[0] > 0 &&
+          item.transform[1] === 0 &&
+          item.transform[2] === 0 &&
+          item.transform[3] === item.height
+      )
+    )
+      return unit
+    const x = (item: PdfLayoutTextItem): number => item.transform[4]
+    const y = (item: PdfLayoutTextItem): number => item.transform[5]
+    const em = differential.height
+    const gap = x(differential) - x(right) - right.width
+    if (
+      fragment.items[0].text !== differential.str ||
+      differential.str !== unit.source ||
+      !lower.items.every(({ text }, i) => text === bracketItems[i].str) ||
+      lower.items[2].index >= at ||
+      page.items.slice(lower.items[2].index + 1, at).some((item) => item.str.trim()) ||
+      left.str !== '⟨' ||
+      right.str !== '⟩' ||
+      !/^\p{L},\s\p{L}$/u.test(middle.str) ||
+      !/^\p{Script=Greek}$/u.test(numerator.str) ||
+      ![left, middle, right, numerator].every((item) => item.height === em) ||
+      left.fontName !== right.fontName ||
+      differential.fontName !== middle.fontName ||
+      differential.fontName !== numerator.fontName ||
+      Math.abs(y(left) - y(middle)) > em * 0.02 ||
+      Math.abs(y(left) - y(right)) > em * 0.02 ||
+      Math.abs(y(left) - y(differential) + em * 0.685) > em * 0.1 ||
+      Math.abs(y(numerator) - y(differential) - em * 0.68) > em * 0.1 ||
+      x(numerator) < x(left) ||
+      x(numerator) + numerator.width > x(right) + right.width ||
+      gap < 0 ||
+      gap > em * 0.45
+    )
+      return unit
+    return { ...unit, sourceOnly: true, preserve: 'formula' }
+  })
+}
 
 // The first-page email can otherwise force its linked abstract to stay untranslated.
 function splitCorrespondenceFromAbstract(
@@ -248,6 +347,117 @@ function splitAcrossProtectedRelation(
     prefix,
     { ...unit, id: unit.id + '-relation-tail', source, fragments: [tail] }
   ]
+}
+
+// Repeated address text can bridge two otherwise independent author columns.
+function separateRepeatedAffiliationAddresses(
+  units: readonly PdfTranslationSource['units'][number][],
+  page: PdfLayoutPage
+): readonly PdfTranslationSource['units'][number][] {
+  const [, authors, left, leftAddress, middle, right, date] = units
+  if (!page || page.rotation || !date || !/^[A-Z][a-z]+ [1-9]\d?, \d{4}$/u.test(date.source))
+    return units
+  const [top, bottom] = middle.fragments
+  const [rightTop] = right.fragments
+  const pair = bottom?.items
+  if (
+    middle.fragments.length !== 2 ||
+    right.fragments.length !== 1 ||
+    [left, leftAddress, date].some((unit) => unit.fragments.length !== 1) ||
+    [left, leftAddress, middle, right].some(
+      (unit) => unit.sourceOnly || unit.preserve || unit.figure || unit.referenceBoundary
+    ) ||
+    !top ||
+    !rightTop ||
+    top.items.length !== 1 ||
+    rightTop.items.length !== 1 ||
+    pair?.length !== 2 ||
+    pair[0].text !== pair[1].text ||
+    top.items[0].text !== rightTop.items[0].text ||
+    right.source !== rightTop.items[0].text ||
+    middle.source !== `${right.source} ${pair[0].text} ${pair[1].text}` ||
+    !/\b(?:University|Institute|College)\b/u.test(left.source) ||
+    !/\b(?:University|Institute|College)\b/u.test(right.source) ||
+    ![leftAddress.source, pair[0].text].every((s) =>
+      /^[\p{Lu}][\p{L} .'-]+, [A-Z]{2}, \d{5}$/u.test(s)
+    ) ||
+    !authors ||
+    authors.fragments.length !== 1 ||
+    authors.fragments[0].pageNumber !== 1 ||
+    date.fragments[0].pageNumber !== 1 ||
+    !['∗', '†', '‡'].every((mark) => authors.fragments[0].items.some(({ text }) => text === mark))
+  )
+    return units
+  const rows = [left.fragments[0], top, rightTop, leftAddress.fragments[0], bottom]
+  if (
+    rows.some(({ pageNumber }) => pageNumber !== 1) ||
+    rows.slice(0, -1).some(({ items }) => items.length !== 1)
+  )
+    return units
+  const claims = rows.flatMap((fragment) => fragment.items)
+  const items = claims.map(({ index }) => page.items[index])
+  if (
+    items.some(
+      (item, i) =>
+        !item ||
+        item.str !== claims[i].text ||
+        item.dir !== 'ltr' ||
+        item.transform[0] <= 0 ||
+        item.transform[1] !== 0 ||
+        item.transform[2] !== 0 ||
+        item.transform[3] <= 0 ||
+        !item.transform.every(Number.isFinite) ||
+        item.width <= 0
+    )
+  )
+    return units
+  const [first, , , firstAddress] = items
+  const em = first.height,
+    pitch = first.transform[5] - firstAddress.transform[5]
+  const center = (item: PdfLayoutTextItem): number => item.transform[4] + item.width / 2
+  const beforeDate = page.items[date.fragments[0].items[0].index]
+  if (
+    em <= 0 ||
+    pitch < em * 1.4 ||
+    pitch > em * 2 ||
+    !beforeDate ||
+    beforeDate.transform[5] >= firstAddress.transform[5] - em * 2 ||
+    items.some(
+      (item, i) =>
+        item.fontName !== first.fontName ||
+        item.height !== em ||
+        Math.abs(item.transform[5] - (i < 3 ? first : firstAddress).transform[5]) > em * 0.04 ||
+        (i > 0 &&
+          i !== 3 &&
+          item.transform[4] - items[i - 1].transform[4] - items[i - 1].width < em * 3) ||
+        (i >= 3 && Math.abs(center(item) - center(items[i - 3])) > em * 0.04)
+    ) ||
+    page.items.slice(claims[0].index, claims.at(-1)!.index + 1).filter((item) => item.str.trim())
+      .length !== items.length
+  )
+    return units
+  const separated = units.slice()
+  for (const [column, owner] of [middle, right].entries()) {
+    const item = items[column + 4]
+    const address = pair[column]
+    separated[column + 4] = {
+      ...owner,
+      source: `${rightTop.items[0].text} ${address.text}`,
+      fragments: [
+        owner.fragments[0],
+        {
+          ...bottom,
+          rect: {
+            ...bottom.rect,
+            x: item.transform[4] / page.width,
+            width: item.width / page.width
+          },
+          items: [address]
+        }
+      ]
+    }
+  }
+  return separated
 }
 
 // A split conditional after a protected formula can lose its governing negation.
@@ -617,7 +827,12 @@ async function readPdfTranslationSource({
       content,
       nativeReferenceEvidence
     )
-    if (!nativeDisplayMathEvidence.complete && hasNativeDisplaySequence(content))
+    if (
+      !nativeDisplayMathEvidence.complete &&
+      (hasNativeDisplaySequence(content) ||
+        hasNativeNestedIntegralMarker(content) ||
+        hasNativeStackedFractionMarker(content))
+    )
       scopedDisplays.push({ page, content, viewport, pageNumber })
     if (hasNativeShortMathContinuation(content))
       shortMathPages.push({ page, content, viewport, pageNumber })
@@ -625,7 +840,7 @@ async function readPdfTranslationSource({
       literalMathPages.push({ page, content, viewport, pageNumber })
     if (hasNativeFunctionDisplay(content))
       nativeFunctions.push({ page, content, viewport, pageNumber })
-    if (hasNativeMatrixCandidate(content))
+    if (hasNativeMatrixCandidate(content) || hasNativeDerivativeMatrixCandidate(content))
       nativeMatrices.push({ page, content, viewport, pageNumber })
     for (const [index, rect] of readOutlierFontNavigation(page, content, viewport))
       outlierNavigation.set(`${pageNumber}:${index}`, rect)
@@ -1036,6 +1251,8 @@ async function readPdfTranslationSource({
     terminalContactSources([...units, ...independent], layout, pages, document.numPages),
     pages[0]
   )
+  finalUnits = separateRepeatedAffiliationAddresses(finalUnits, pages[0])
+  finalUnits = preserveFractionDifferentials(finalUnits, pages)
   for (const context of shortMathPages) {
     signal.throwIfAborted()
     finalUnits = [
@@ -1096,6 +1313,13 @@ async function readPdfTranslationSource({
         : unit
     )
   }
+
+  const productTerms = nativeDisplayProductTerms(finalUnits, pages)
+  finalUnits = finalUnits.map((unit) =>
+    productTerms.has(unit.id)
+      ? { ...unit, sourceOnly: true as const, preserve: 'literal' as const }
+      : unit
+  )
   if (nativeMatrices.length) {
     const reader = createNativeMatrixReader({
         document,
@@ -1185,6 +1409,11 @@ async function readPdfTranslationSource({
   if (undecodedDisplays.size)
     finalUnits = finalUnits.map((unit) =>
       undecodedDisplays.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
+    )
+  const nativeNumbers = nativeBundledScientificOwners(pages, finalUnits)
+  if (nativeNumbers.size)
+    finalUnits = finalUnits.map((unit) =>
+      nativeNumbers.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
     )
   const sourceInput = { resourceRequestKey, fingerprint, pages, units: finalUnits }
   const source = terminalSource?.create(sourceInput) ?? createPdfTranslationSource(sourceInput)

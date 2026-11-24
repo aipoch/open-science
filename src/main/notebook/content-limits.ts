@@ -10,6 +10,8 @@ export const NOTEBOOK_FIGURE_LIMIT_BYTES = Math.floor(3.5 * MIB)
 export const NOTEBOOK_FIGURE_COUNT_LIMIT = 12
 export const NOTEBOOK_FIGURE_TOTAL_LIMIT_BYTES = 8 * MIB
 export const NOTEBOOK_RENDERER_RUN_LIMIT = 100
+// Leave room for cells and metadata under the 8 MiB inline response threshold.
+export const NOTEBOOK_PREVIEW_HISTORY_BYTES = 7 * MIB
 export const NOTEBOOK_NAMESPACE_VARIABLE_LIMIT = 500
 export const NOTEBOOK_NAMESPACE_PREVIEW_LIMIT_BYTES = 512
 export const NOTEBOOK_NAMESPACE_RESPONSE_LIMIT_BYTES = 256 * 1024

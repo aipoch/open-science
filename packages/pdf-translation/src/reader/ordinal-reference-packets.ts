@@ -34,7 +34,8 @@ const overlaps = (a: Box, b: Box): boolean =>
  * borrowed to continue a different independently bounded bibliography packet. */
 export function nativeOrdinalReferencePackets(
   units: Unit[],
-  pages: PdfLayoutPage[]
+  pages: PdfLayoutPage[],
+  pageCount?: number
 ): ReadonlySet<string> {
   const accepted = new Set<string>(),
     owners = new Map<string, Unit>(),
@@ -92,12 +93,34 @@ export function nativeOrdinalReferencePackets(
     }
     if (chain.at(-1)!.stop) add(chain)
   }
+  if (pageCount === pages.length && pages.length >= 2 && pages.every((p, n) => p.page === n + 1)) {
+    const first = scan(pages[pages.length - 2], 'heading'),
+      last = scan(pages[pages.length - 1], 'continuation'),
+      opening = first?.records[0],
+      continued = last?.records[0]
+    if (
+      first?.heading &&
+      first.folio &&
+      last?.folio &&
+      !last.stop &&
+      opening?.number === 1 &&
+      first.records.length === 1 &&
+      last.records.length >= 3 &&
+      continued?.number === 2 &&
+      continued.font === opening.font &&
+      continued.entries[0].item.fontName === opening.entries[0].item.fontName &&
+      Math.abs(continued.entries[0].item.transform[4] - opening.entries[0].item.transform[4]) <
+        opening.font * 0.05
+    )
+      add([first, last])
+  }
   return accepted
 
-  function scan(p: PdfLayoutPage): PageProof | undefined {
-    if (cache.has(p)) return cache.get(p)
-    cache.set(p, undefined)
-    const proof = p.nativeSectionFontEvidence
+  function scan(p: PdfLayoutPage, terminal?: 'heading' | 'continuation'): PageProof | undefined {
+    if (!terminal && cache.has(p)) return cache.get(p)
+    if (!terminal) cache.set(p, undefined)
+    const proof =
+      terminal === 'heading' ? pages.at(-1)?.nativeSectionFontEvidence : p.nativeSectionFontEvidence
     if (
       !proof?.complete ||
       p.rotation !== 0 ||
@@ -105,9 +128,12 @@ export function nativeOrdinalReferencePackets(
       p.items.length > 4096
     )
       return
+    const headingIndex =
+      terminal === 'heading' ? p.items.findIndex((i) => i.str === 'REFERENCE') : 0
+    if (headingIndex < 0) return
     const entries: Entry[] = []
     for (const [index, item] of p.items.entries()) {
-      if (!item.str.trim()) continue
+      if (index < headingIndex || !item.str.trim()) continue
       const key = `${p.page}:${index}`,
         owner = owners.get(key),
         font = proof.fonts[item.fontName!]
@@ -115,10 +141,11 @@ export function nativeOrdinalReferencePackets(
         !owner ||
         counts.get(key) !== 1 ||
         owner.originalStrings[owner.items.indexOf(key)] !== item.str ||
-        !font?.nativeMetrics ||
-        font.ascent !== item.fontAscent ||
-        font.descent !== item.fontDescent ||
-        font.vertical !== false ||
+        (!(terminal === 'heading' && index === headingIndex) &&
+          (!font?.nativeMetrics ||
+            font.ascent !== item.fontAscent ||
+            font.descent !== item.fontDescent ||
+            font.vertical !== false)) ||
         item.fontVertical !== false ||
         item.dir !== 'ltr' ||
         item.transform.length !== 6 ||
@@ -152,9 +179,48 @@ export function nativeOrdinalReferencePackets(
           e.owner.items.length === 1
       ),
       body = entries.filter((e) => !folios.includes(e))
-    if (!body.length || folios.length > 1 || box(p, body[0].item).y > p.height * 0.16) return
+    if (
+      !body.length ||
+      folios.length > 1 ||
+      (terminal !== 'heading' && box(p, body[0].item).y > p.height * 0.16)
+    )
+      return
     let heading: Unit | undefined
-    if (/^(?:References|Bibliography) and Notes$/u.test(body[0].item.str)) {
+    if (terminal === 'heading') {
+      const [title, next] = body,
+        folio = folios[0]
+      if (
+        !next ||
+        !folio ||
+        title.owner.items.length !== 1 ||
+        title.owner.source !== title.item.str ||
+        title.owner.risks.length ||
+        title.item.height !== next.item.height ||
+        title.item.fontName === next.item.fontName ||
+        title.item.transform[5] > p.height * 0.17 ||
+        title.item.transform[5] - next.item.transform[5] < next.item.height ||
+        title.item.transform[5] - next.item.transform[5] > next.item.height * 3 ||
+        Math.abs(
+          title.item.transform[4] +
+            title.item.width / 2 -
+            folio.item.transform[4] -
+            folio.item.width / 2
+        ) >
+          next.item.height * 0.15 ||
+        p.items
+          .slice(0, headingIndex)
+          .some(
+            (item) =>
+              item.str.trim() &&
+              item.transform[5] + Math.min(0, item.fontDescent ?? 0) * item.height <=
+                title.item.transform[5] + title.item.fontAscent! * title.item.height
+          ) ||
+        !closed(p, [title])
+      )
+        return
+      body.shift()
+      heading = title.owner
+    } else if (/^(?:References|Bibliography) and Notes$/u.test(body[0].item.str)) {
       const title = body.shift()!
       if (
         title.owner.items.length !== 1 ||
@@ -257,7 +323,11 @@ export function nativeOrdinalReferencePackets(
           text
         ) ||
         !dated ||
-        !publication ||
+        (terminal
+          ? !/^(?:\p{Lu}\. *){1,4}\p{Lu}[\p{L}\p{M}’'-]+/u.test(text) ||
+            !/(?:\(|, )(?:18|19|20)\d{2}\)\.$/u.test(text) ||
+            es.some((e) => e.item.fontName !== es[0].item.fontName)
+          : !publication) ||
         !/\.$/u.test(source) ||
         physical
           .slice(1)
@@ -274,7 +344,7 @@ export function nativeOrdinalReferencePackets(
       records.push({ number, entries: es, wraps: physical.slice(1).map((r) => r.left), font })
     }
     const result = { page: p, records, heading, stop: stopIndex >= 0, folio: folios.length === 1 }
-    cache.set(p, result)
+    if (!terminal) cache.set(p, result)
     return result
   }
 }

@@ -296,6 +296,29 @@ describe('codebuddy framework', () => {
     })
   })
 
+  it('reapplies the selected model after resuming a history-bearing session', async () => {
+    const request = vi.fn(async () => ({}))
+
+    await createCodeBuddyFramework().beforePromptDispatch?.({
+      connection: { agent: { request } } as never,
+      providerSessionId: 'provider-session',
+      cwd: '/workspace',
+      mcpServers: [],
+      sessionModel: 'hy4flash-free'
+    })
+
+    expect(request).toHaveBeenNthCalledWith(1, 'session/resume', {
+      sessionId: 'provider-session',
+      cwd: '/workspace',
+      mcpServers: []
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'session/set_config_option', {
+      sessionId: 'provider-session',
+      configId: 'model',
+      value: 'hy4flash-free'
+    })
+  })
+
   it('removes the Skill loader for a CodeBuddy turn with no routed Skill', async () => {
     const request = vi.fn(async () => ({}))
 

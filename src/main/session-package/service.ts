@@ -1,3 +1,4 @@
+import { pendingDirectoryIdentity } from '../notebook/pending-run-files'
 import { readStoredImageTasks, withImageTaskSnapshot } from '../image-model/stored-tasks'
 import { imageTaskIsActive, type ImageTaskScope, type ImageTask } from '../../shared/image-task'
 import { readResearchFilmCard } from '../research-video/stored-presentation'
@@ -1298,7 +1299,11 @@ export class SessionPackageService {
       if (!notebookDocumentIdentity(key)) continue
       const document = notebooks[notebookIndex++]
       const stored = await readPackageJson(resolveStorageKey(this.options.storageRoot, key))
-      if ((stored as { version?: number }).version === 2) portableNotebooks.set(key, document)
+      if (
+        (stored as { version?: number }).version === 2 ||
+        (await pendingDirectoryIdentity(resolveStorageKey(this.options.storageRoot, key)))
+      )
+        portableNotebooks.set(key, document)
     }
     diagnostic.phase('collect-records')
     const bookmarkTargets = options.consumeSnapshot
@@ -1412,6 +1417,7 @@ export class SessionPackageService {
       string,
       { observation: FileObservation; integrity: { checksum: string; sizeBytes: number } }
     >()
+    const measuredSources = new Map<string, { checksum: string; sizeBytes: number }>()
     diagnostic.phase('measure-content')
     for (const key of new Set([
       ...nativeStorageKeys(records),
@@ -1446,6 +1452,7 @@ export class SessionPackageService {
       if (!sameFileObservation(observation, observeFile(await lstat(original, { bigint: true }))))
         throw new Error('The Session changed during export. Try again.')
       measuredContent.set(identity, integrity)
+      measuredSources.set(key, integrity)
       if (immutableVersions.has(key) && observation.inode !== '0')
         sourceObservations.set(key, { observation, integrity })
       retainedFiles.push({ storageKey: key, filename: key, ...integrity })
@@ -1577,8 +1584,12 @@ export class SessionPackageService {
             }
           }
           sizes.set(key, size)
+          const measured = measuredSources.get(key)
           const integrity =
-            observed?.integrity ?? (await digestFileWithinBudget(original, size, this.signal))
+            observed?.integrity ??
+            (measured?.sizeBytes === size
+              ? measured
+              : await digestFileWithinBudget(original, size, this.signal))
           if (
             integrity.sizeBytes !== size ||
             (!observed &&

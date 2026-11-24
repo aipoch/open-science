@@ -1949,6 +1949,44 @@ describe('ArtifactProvenancePanel', () => {
     )
   })
 
+  it('keeps a local Provenance selection while the owner retains the preview item', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    const onVersionChange = vi.fn(() => true)
+
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-2', versionNumber: 2 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+          onVersionChange={onVersionChange}
+          preserveVersionSelection
+        />
+      )
+    )
+    await flush()
+
+    const previous = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Previous Artifact version"]'
+    )
+    expect(previous?.disabled).toBe(false)
+    await act(async () => previous?.click())
+    await flush()
+
+    expect(onVersionChange).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedVersionId: 'version-1', versionNumber: 1 })
+    )
+    expect(container.querySelector('[data-testid="artifact-provenance"]')?.textContent).toContain(
+      'v1'
+    )
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Next Artifact version"]')
+        ?.disabled
+    ).toBe(false)
+  })
+
   it('renders captured Messages through the normal Session message surface without GENERATED cards', async () => {
     await clickTab('Messages')
 

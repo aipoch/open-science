@@ -296,7 +296,7 @@ const cloneCell = (cell: NotebookCell): NotebookCell => ({ ...cell })
 const cloneBinding = (binding: NotebookSessionRuntimeBinding): NotebookSessionRuntimeBinding => ({
   ...binding,
   resolvedInterpreter: binding.resolvedInterpreter
-    ? { ...binding.resolvedInterpreter, args: binding.resolvedInterpreter.args?.slice() }
+    ? structuredClone(binding.resolvedInterpreter)
     : undefined
 })
 

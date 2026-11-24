@@ -288,6 +288,8 @@ it.each(outcomes)(
       sessionPersistenceCoordinator: { runSessionMutation: vi.fn() },
       sessionPackageService: { readResearchFilm: vi.fn() },
       researchFilmLifecycle: createResearchFilmLifecycle({ dataRoot: () => mocks.root }),
+      applicationEvents: { publish: vi.fn() },
+      taskNotifications: { handleResearchFilmOutcome: vi.fn(async () => undefined) },
       recordAuxiliaryUsage: vi.fn()
     }
     const runtime = await composeApplicationRuntime(async (modules) =>
@@ -662,6 +664,8 @@ it.each([
           providers: [{ id: 'test', model: 'test', contextWindow: 200_000 }]
         })
       },
+      applicationEvents: { publish: vi.fn() },
+      taskNotifications: { handleResearchFilmOutcome: vi.fn(async () => undefined) },
       recordAuxiliaryUsage: recordUsage
     } as unknown as Parameters<typeof composeResearchFilm>[0])
   )
@@ -676,7 +680,7 @@ it.each([
     )
   try {
     expect(mocks.runnerOptions).toHaveBeenLastCalledWith(
-      expect.objectContaining({ requireConfirmedCleanup: true })
+      expect.objectContaining({ requireConfirmedCleanup: true, allowCodeBuddySubscription: true })
     )
     mocks.run.mockResolvedValue(response)
     if (scenario === 'provider-cancelled')

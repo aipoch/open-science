@@ -31,6 +31,9 @@ import {
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
 
+import { taskRunTracing } from './task-run-tracing'
+import { HARNESS_TRACE_READINESS_METHOD } from '../harness-acp/config'
+
 const diagnosticLogs = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
@@ -442,6 +445,24 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it.each([true, false])(
+    'refuses an unconfigured exporter before attaching or refreshing the Session (attached=%s)',
+    async (attached) => {
+      const harness = createHarness({
+        attached,
+        initialBackend: { ...backend, framework: getAgentFramework('open-science-agent') }
+      })
+      harness.request.mockResolvedValueOnce({ ready: false })
+      const traced = { cwd: '/workspace', [taskRunTracing]: true }
+      await expect(harness.resume(traced)).rejects.toThrow('OTLP_TRACES_ENDPOINT')
+      expect(harness.request).toHaveBeenCalledOnce()
+      expect(harness.request.mock.calls[0][0]).toBe(HARNESS_TRACE_READINESS_METHOD)
+      expect(harness.configurePermissionProfile).not.toHaveBeenCalled()
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.adopt).not.toHaveBeenCalled()
+    }
+  )
+
   it('preserves the selected CodeBuddy subscription site when refreshing Notebook credentials', async () => {
     const beforePromptDispatch = vi.fn().mockResolvedValue(undefined)
     const harness = createHarness({

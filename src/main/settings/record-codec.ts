@@ -23,7 +23,11 @@ import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/
 import { createLogger } from '@aipoch/diagnostics/node'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import type { PackageMirror } from '../../shared/mirror'
-import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
+import {
+  type ModelProtocol,
+  type ModelReasoningEffort,
+  isOfficialVendorId
+} from '@aipoch/providers'
 import type { LabModelCapabilities } from '../../shared/lab'
 import {
   isCustomReasoningEffortTransport,
@@ -263,6 +267,40 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     }
   }
 
+  let modelReasoningEfforts: Record<string, ModelReasoningEffort[]> | undefined
+  if (isRecord(value.modelReasoningEfforts)) {
+    const allowed = new Set<ModelReasoningEffort>([
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra'
+    ])
+    const entries: Array<[string, ModelReasoningEffort[]]> = []
+    for (const [modelId, rawEfforts] of Object.entries(value.modelReasoningEfforts)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        !Array.isArray(rawEfforts)
+      )
+        continue
+      const efforts = [
+        ...new Set(
+          rawEfforts.filter(
+            (entry): entry is ModelReasoningEffort =>
+              typeof entry === 'string' && allowed.has(entry as ModelReasoningEffort)
+          )
+        )
+      ]
+      if (efforts.length > 0) entries.push([modelId, efforts])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelReasoningEfforts = Object.fromEntries(entries)
+  }
+
   // Per-model protocol declarations for app-managed heterogeneous catalogs (Lab). Only known
   // protocol ids and bounded keys/values are retained.
   let modelProtocols: Record<string, ModelProtocol[]> | undefined
@@ -364,6 +402,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
   if (modelProtocols) provider.modelProtocols = modelProtocols
   if (modelCapabilities) provider.modelCapabilities = modelCapabilities
+  if (modelReasoningEfforts) provider.modelReasoningEfforts = modelReasoningEfforts
   if (modelStreaming) provider.modelStreaming = modelStreaming
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region

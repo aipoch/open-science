@@ -1882,3 +1882,103 @@ it.each(['display argument', 'displaced closing bracket'] as const)(
     expect(argument.sourceOnly ?? false).toBe(shape === 'display argument')
   }
 )
+
+it.each([0, 12])(
+  'keeps a counted final noun with its equation explanation (offset=%s)',
+  (offset) => {
+    const { units } = groupPdfTranslationPages({
+      pages: [
+        page(1, [
+          item('Substituting the trial parameters into the estimator yields', 316, 486, 244),
+          item('v', 409, 462, 6, false, 10, 'Math'),
+          item('=', 419, 462, 7, false, 10, 'Operator'),
+          item('u', 429, 462, 6, false, 10, 'Math'),
+          item('(8)', 543 - offset, 462, 17),
+          item('where', 316, 438, 23, false),
+          item('U', 344, 438, 7, false, 10, 'Math'),
+          item('⊥', 351, 442, 6, false, 7, 'Script'),
+          item('is formed by removing the first four', 361, 438, 199),
+          item('rows.', 316, 426, 21),
+          item('The retained subspace provides an independent estimate.', 326, 414, 234),
+          item('An alternative trial provides a separate comparison.', 326, 402, 234)
+        ])
+      ]
+    })
+    const head = units.find((unit) => unit.items.includes('1:5'))!
+    const tail = units.find((unit) => unit.items.includes('1:9'))!
+    expect(head === tail).toBe(offset === 0)
+    expect(head.source).toBe(
+      'where U⊥ is formed by removing the first four' + (offset === 0 ? ' rows.' : '')
+    )
+    expect(units.find((unit) => unit.items.includes('1:4'))).toMatchObject({
+      source: '(8)',
+      sourceOnly: true,
+      preserve: 'formula'
+    })
+    expect(units.find((unit) => unit.items.includes('1:10'))).not.toBe(head)
+  }
+)
+
+it.each([0, 4])('joins a short same-column comparison-year tail (offset=%s)', (offset) => {
+  const { units } = groupPdfTranslationPages({
+    pages: [
+      page(1, [
+        item('The field tests use the same sites each year.', 72, 610, 449),
+        item('Surveyors took weekly readings at every site.', 72, 592, 450),
+        item('The average reading was lower in 2018 compared', 72, 574, 451),
+        item('to 2017.', 72 + offset, 556, 36),
+        item('A new field test changed the sensor position.', 72, 532, 451)
+      ])
+    ]
+  })
+  const head = units.find((unit) => unit.items.includes('1:2'))!
+  const tail = units.find((unit) => unit.items.includes('1:3'))!
+  expect(tail).toBeDefined()
+  expect(head === tail).toBe(offset === 0)
+  expect(units.find((unit) => unit.items.includes('1:4'))).not.toBe(head)
+})
+
+it.each([0, 4])('joins a repeated named term before the next section (offset=%s)', (offset) => {
+  const { units } = groupPdfTranslationPages({
+    pages: [
+      page(1, [
+        item(
+          'The preliminary estimates imply an independent result for the',
+          64,
+          631,
+          252,
+          true,
+          9
+        ),
+        item(
+          'filters and show that the Damped Responses describe the output.',
+          64,
+          620,
+          252,
+          true,
+          9
+        ),
+        item('The output is nearly constant.', 64, 609, 111, false, 9),
+        item(' ', 175, 609, 5, false, 0),
+        item('We now give a clear estimate for', 180, 609, 136, true, 9),
+        item('the response of the fixed filter', 64, 598, 160, false, 9),
+        item(' ', 224, 598, 3.5, false, 0),
+        item('ξ', 227.5, 598, 4.3, false, 9, 'Math'),
+        item(' ', 231.8, 598, 3.7, false, 0),
+        item('satisfying the Damped', 235.5, 598, 80.5, true, 9),
+        item('Responses.', 64 + offset, 587, 34, true, 9),
+        item('2.4.', 64, 562, 14, false, 9),
+        item(' ', 78, 562, 4, false, 0),
+        item('Independent validation.', 82, 562, 100, false, 9, 'Title'),
+        item(' ', 182, 562, 4, false, 0),
+        item('The procedure uses a second trial.', 186, 562, 130, true, 9),
+        item('A second trial is used to confirm the measurements.', 64, 551, 252, true, 9)
+      ])
+    ]
+  })
+  const head = units.find((unit) => unit.items.includes('1:9'))!
+  const tail = units.find((unit) => unit.items.includes('1:10'))!
+  expect(tail).toBeDefined()
+  expect(head === tail).toBe(offset === 0)
+  expect(units.find((unit) => unit.items.includes('1:11'))).not.toBe(head)
+})

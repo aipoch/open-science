@@ -309,13 +309,16 @@ describe('release and scheduled workflow topology', () => {
       }
     })
     expect(step(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(step(dependencies, 'Verify generated test dependencies').run).toBe(
+      'node scripts/check-prisma-client.mjs'
+    )
     expect(step(dependencies, 'Pack dependencies').run).toContain('pack-dependencies')
     expect(step(dependencies, 'Pack dependencies').shell).toBe('bash')
     expect(step(job, 'Restore dependencies').shell).toBe('bash')
     expect(step(windows.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
     expect(step(dependencies, 'Upload dependencies').with?.['compression-level']).toBe(0)
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/8')
+    expect(test.run).toContain('npx vitest run --shard=${{ matrix.shard }}/8')
     expect(test.run).toContain('--maxWorkers=1')
     expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')
@@ -1197,7 +1200,7 @@ describe('website mirror publication intent', () => {
     expect(dispatch.inputs.bootstrap_linux_arm64).toMatchObject({ default: false, type: 'boolean' })
     expect(publication.env?.BOOTSTRAP_LINUX_ARM64).toBe('${{ inputs.bootstrap_linux_arm64 }}')
     expect(publication.env?.MODE).toBe('${{ inputs.mode }}')
-    expect(publication.if).toBe('${{ !inputs.dry_run }}')
+    expect(publication.if).toBe('${{ !inputs.dry_run && !inputs.windows_delta_repair }}')
     expect(publication.run).toBe('node scripts/publish-update-channel.mjs')
   })
 })

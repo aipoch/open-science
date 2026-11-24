@@ -5,9 +5,12 @@ import type {
   PromptResponse,
   SessionNotification
 } from '@agentclientprotocol/sdk'
+import { setTimeout as wait } from 'node:timers/promises'
 
 import { toAcpTurnTokenUsage } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
+import { requireTracingFramework } from './task-run-tracing'
+import { HARNESS_TRACE_ENABLED } from '../harness-acp/config'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
 import { createClaudeTranscriptReader } from './claude-transcript-reader'
 import { createClaudeCodeTurnAdapter } from './claude-turn-adapter'
@@ -33,7 +36,11 @@ type ProviderPromptExecutionInput = Readonly<{
   isCurrent: () => boolean
   isUserStopped?: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
+  authorizeHarnessTracing?: true | (() => Promise<boolean>)
+  signal?: AbortSignal
+  cancellationCheckpoint?: () => Promise<'active' | 'cancelled'>
   captureStop: (response: PromptResponse) => boolean
+  onDispatchAttempt?: () => void
   onDispatched?: () => void
   onAccepted: () => void | Promise<void>
   routeNotification: (notification: SessionNotification) => void
@@ -67,10 +74,44 @@ type ActiveObservation = Readonly<{
 }>
 
 const EMPTY_FACTS: AcpProviderTurnResult = Object.freeze({})
+const HARNESS_TRACE_AUTHORIZATION_TIMEOUT_MS = 250
 const NOOP_PROBE: AcpProviderTurnProbe = Object.freeze({
   finalize: () => EMPTY_FACTS,
   cancel: () => undefined
 })
+
+async function authorizeHarnessPrompt(
+  content: ProviderPromptExecutionInput['content'],
+  authorize: ProviderPromptExecutionInput['authorizeHarnessTracing'],
+  signal: AbortSignal | undefined
+): Promise<ProviderPromptExecutionInput['content']> {
+  let enabled = authorize === true
+  if (typeof authorize === 'function' && !signal?.aborted) {
+    const lookupLifetime = new AbortController()
+    const lookupSignal = signal
+      ? AbortSignal.any([signal, lookupLifetime.signal])
+      : lookupLifetime.signal
+    try {
+      enabled =
+        (await Promise.race([
+          authorize(),
+          wait(HARNESS_TRACE_AUTHORIZATION_TIMEOUT_MS, false, { signal: lookupSignal, ref: false })
+        ])) === true && !signal?.aborted
+    } catch {
+      // Project settings are optional diagnostics authority. Continue the turn without exporting.
+    } finally {
+      lookupLifetime.abort()
+    }
+  }
+  const first: ContentBlock | undefined =
+    typeof content === 'string' ? { type: 'text', text: content } : content[0]
+  if (!first || (!enabled && !Object.hasOwn(first._meta ?? {}, HARNESS_TRACE_ENABLED)))
+    return content
+  const meta: Record<string, unknown> = { ...first._meta }
+  delete meta[HARNESS_TRACE_ENABLED]
+  if (enabled) meta[HARNESS_TRACE_ENABLED] = true
+  return [{ ...first, _meta: meta }, ...(typeof content === 'string' ? [] : content.slice(1))]
+}
 
 const reportBestEffort = (
   report: ProviderPromptExecutionInput['reportBestEffortFailure'],
@@ -260,9 +301,23 @@ class AcpProviderPromptExecutor {
         return Object.freeze({ kind: 'not-dispatched' })
       }
 
+      let content = input.content
+      if (input.authorizeHarnessTracing === true) requireTracingFramework(input.frameworkId)
+      if (input.frameworkId === 'open-science-agent') {
+        content = await authorizeHarnessPrompt(content, input.authorizeHarnessTracing, input.signal)
+        // Stop aborts the lookup before ACP confirms whether it cancelled the prompt.
+        const cancelled =
+          input.signal?.aborted && (await input.cancellationCheckpoint?.()) !== 'active'
+        if (cancelled || !input.isCurrent()) {
+          await cancelProbe()
+          return Object.freeze({ kind: 'not-dispatched' })
+        }
+      }
+
       let promptRequest: Promise<unknown>
       try {
-        promptRequest = input.session.prompt(input.content)
+        input.onDispatchAttempt?.()
+        promptRequest = input.session.prompt(content)
         input.onDispatched?.()
       } catch (error) {
         await cancelProbe()

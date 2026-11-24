@@ -36,6 +36,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Verify runtime helper registration
+        if: inputs.platform == 'all' || inputs.platform == matrix.platform
+        run: node scripts/ci/check-installation-helper-registration.mjs
       - name: Install dependencies
         if: inputs.platform == 'all' || inputs.platform == matrix.platform
         run: node scripts/ci/npm-ci.mjs
@@ -43,7 +46,7 @@ jobs:
         if: inputs.platform == 'all' || inputs.platform == matrix.platform
         run: |
           npm test -- src/main/desktop-runtime-launcher.integration.test.ts -t "admits launch-log readers" --reporter=default --reporter=json --outputFile=test-results/update-occupancy.json
-          npx vitest run src/main/update/installation-protection.test.ts -t "admits authenticated current-runtime helpers before the gate"
+          npx vitest run src/main/update/installation-protection.test.ts -t "admits authenticated current-runtime helpers before the gate|coordinates cross-profile registrations and never stops them|keeps the update gate blocked by a live registration with an unreadable record"
       - name: Require executed desktop and CLI evidence
         if: inputs.platform == 'all' || inputs.platform == matrix.platform
         run: node scripts/ci/verify-update-occupancy.mjs source test-results/update-occupancy.json

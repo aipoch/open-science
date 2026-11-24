@@ -116,6 +116,11 @@ generation. A controlled delayed EOF verifies that handoff joins reader exit aft
 backend; the production wait is bounded to five seconds and retains the final occupancy check with
 its independent platform budget. Preparing checks allow up to 60 seconds for transient external holders,
 while pinning the backend and reader birth identities so their exit cannot produce a false pass.
+The same source gate also exercises a live registration from another profile and an unreadable live
+registration, preserving the conservative `other-runtime` and recovery-blocking decisions in PRs.
+Changes to the installation occupancy/protection implementation and its startup helper, or to the
+Update Occupancy workflow, select a dedicated `update_occupancy_source` lane so the source gate cannot
+be silently skipped by change classification. Unrelated updater changes stay on their normal lanes.
 Other Mac validation runs in merge queue.
 The separate Process Lifecycle workflow also covers its declared lifecycle owners and harness paths.
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
@@ -208,8 +213,7 @@ Stable Windows x64 installers include `resources/windows-delta/windows-delta.exe
 builds the helper from pinned HDiffPatch, Zstandard and 7-Zip sources using Python 3, CMake and
 the Visual Studio C++ toolchain. Azure signing covers the helper with the other packaged PE files.
 
-After validating a signed upgrade, release owners can set the repository Actions variable
-`WINDOWS_DELTA_ENABLED=true` to publish an optional patch from the previous stable installer.
+After validating a signed upgrade, Release publishes a patch from the previous stable installer.
 Release generates the patch after signing and verifies that applying it reproduces the exact target
 bytes. The mirror validates the patch before promoting the feed. To replay the release transform
 without publishing, point `node build/windows-delta/publish.mjs OLD NEW WORKER HDIFFZ [7Z]` at
@@ -219,8 +223,7 @@ for `NEW` because the transform writes the verified sidecar and updates the feed
 Clients first acquire the capable updater via the existing blockmap. Subsequent eligible updates
 reuse the cached old installer, reconstruct the new installer in the pending cache and verify its
 SHA-512 and publisher. Cancel stops reconstruction. Missing patches, unsupported pairs or
-insufficient space use the existing download path. Release owners can omit future sidecars by
-clearing the Actions variable.
+insufficient space use the existing download path.
 
 Stable macOS releases always publish the final stapled ZIP and its blockmap for arm64 and x64.
 The mirror reads the current and preceding stable blockmaps from the CDN before promoting the feed.

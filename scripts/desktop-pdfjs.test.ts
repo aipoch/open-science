@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, it } from 'vitest'
 import { createDesktopDependencyFilter } from './backend-dependencies.mjs'
@@ -40,7 +40,8 @@ it('packs only the audited desktop maps and forwards other PDF.js reader options
     await packDesktopPdfJs(source, target)
     const pdf = await import(pathToFileURL(entry).href)
     expect(pdf.version).toBe('fixture')
-    for (const cMapUrl of [maps + '/', pathToFileURL(maps).href + '/']) {
+    const equivalentFileUrl = new URL('./cmaps/./', pathToFileURL(join(maps, '..') + sep)).href
+    for (const cMapUrl of [maps + '/', pathToFileURL(maps).href + '/', equivalentFileUrl]) {
       const options = pdf.getDocument({ cMapUrl })
       const reader = new options.CMapReaderFactory()
       expect(await reader.fetch({ name: 'A' })).toEqual({

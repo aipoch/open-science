@@ -396,6 +396,57 @@ async function unreliableTextItems(
             Array.isArray(font.differences) &&
             Object.hasOwn(font.differences, glyph.originalCharCode) &&
             /^gid\d+$/u.test(font.differences[glyph.originalCharCode])
+          // CMEX10 slot 80 can paint a sum while exposing the fallback letter P.
+          const legacySummation =
+            font?.type === 'Type1' &&
+            /^(?:[A-Z]{6}\+)?CMEX10$/u.test(font.name ?? '') &&
+            font.isInvalidPDFjsFont === false &&
+            font.systemFontInfo === null &&
+            glyph.originalCharCode === 80 &&
+            glyph.width === 1055.6 &&
+            font.widths?.[80] === glyph.width &&
+            font.defaultEncoding?.[80] === 'P' &&
+            !Object.hasOwn(font.differences ?? {}, 80) &&
+            privateRenderSlot
+          // The txex integral paints from its original slot even without a Unicode map.
+          const legacyIntegral =
+            font?.type === 'Type1' &&
+            /^(?:[A-Z]{6}\+)?txex$/u.test(font.name ?? '') &&
+            font.isInvalidPDFjsFont === false &&
+            font.systemFontInfo === null &&
+            glyph.originalCharCode === 90 &&
+            glyph.unicode === 'Z' &&
+            glyph.width === 640 &&
+            font.widths?.[90] === glyph.width &&
+            font.defaultEncoding?.[90] === 'Z' &&
+            !Object.hasOwn(font.differences ?? {}, 90) &&
+            privateRenderSlot
+          // This legacy extension face maps large operators to accented Latin text.
+          // Keep their original ink; the font metrics prove ownership, not a new spelling.
+          if (
+            font?.type === 'Type1' &&
+            /^(?:[A-Z]{6}\+)?TeX-mathx10$/u.test(font.name ?? '') &&
+            font.composite === false &&
+            font.missingFile === false &&
+            font.isInvalidPDFjsFont === false &&
+            font.systemFontInfo === null &&
+            glyph.isInFont === true &&
+            privateRenderSlot &&
+            map?.[glyph.originalCharCode] === glyph.unicode &&
+            font.widths?.[glyph.originalCharCode] === glyph.width &&
+            ((glyph.originalCharCode === 184 &&
+              glyph.unicode === 'ÿ' &&
+              glyph.width === 1110.8 &&
+              font.defaultEncoding?.[184] === 'product') ||
+              (glyph.originalCharCode === 185 &&
+                glyph.unicode === 'ź' &&
+                glyph.width === 1277.5 &&
+                font.defaultEncoding?.[185] === 'pi')) &&
+            !Object.hasOwn(font.differences ?? {}, glyph.originalCharCode)
+          ) {
+            stream.mathFallback += text
+            continue
+          }
           const simpleFallback =
             font?.composite === false &&
             font.missingFile === false &&
@@ -404,7 +455,11 @@ async function unreliableTextItems(
             !glyph.accent &&
             !glyph.isSpace &&
             glyph.unicode.length === 1 &&
-            (glyph.unicode.charCodeAt(0) <= 31 || symbolicRenderSlot || numericType1RenderSlot) &&
+            (glyph.unicode.charCodeAt(0) <= 31 ||
+              symbolicRenderSlot ||
+              numericType1RenderSlot ||
+              legacySummation ||
+              legacyIntegral) &&
             map &&
             !Object.hasOwn(map, glyph.originalCharCode)
           if (
@@ -423,11 +478,13 @@ async function unreliableTextItems(
             continue
           stream.missing.push({ start, end: stream.text.length })
           if (
-            font.composite === true &&
-            font.type === 'CIDFontType2' &&
-            /^(?:[A-Z]{6}\+)?CambriaMath$/u.test(font.name ?? '') &&
-            privateRenderSlot &&
-            glyph.originalCharCode > 0x7f
+            legacySummation ||
+            legacyIntegral ||
+            (font.composite === true &&
+              font.type === 'CIDFontType2' &&
+              /^(?:[A-Z]{6}\+)?CambriaMath$/u.test(font.name ?? '') &&
+              privateRenderSlot &&
+              glyph.originalCharCode > 0x7f)
           )
             stream.mathFallback += text
         }
@@ -496,6 +553,12 @@ async function unreliableTextItems(
 // Resolve only those isolated runs in that named font, never ordinary digits.
 // txsys slot 2 is multiplication. Its named font and 636-unit advance
 // distinguish it from unrelated control-code encodings in other math fonts.
+const legacyCmexOperators = new Map([
+  ['X', { advance: 1.4444, symbol: '∑' }],
+  ['Y', { advance: 1.2778, symbol: '∏' }],
+  ['Z', { advance: 0.5556, symbol: '∫' }]
+])
+
 export async function getPdfTranslationTextContent(
   page: PDFPageProxy,
   onUnreliableItems?: (indexes: readonly number[], mathIndexes: readonly number[]) => void,
@@ -525,10 +588,23 @@ export async function getPdfTranslationTextContent(
   const pairedSlashes = new Map<number, string>()
   for (const [index, mark] of content.items.entries()) {
     if (!('str' in mark) || mark.str !== '6' || mark.width !== 0 || mark.hasEOL) continue
-    const gap = content.items[index + 1]
+    const gap = content.items[index + 1],
+      next = content.items[index + 2]
+    // PDFium can split the overlapping objects into separate text runs. PDF.js
+    // then inserts an empty line marker at the equality's own origin.
     const base =
-      gap && 'str' in gap && gap.str === ' ' && gap.height === 0 && !gap.hasEOL
-        ? content.items[index + 2]
+      gap &&
+      'str' in gap &&
+      gap.height === 0 &&
+      ((gap.str === ' ' && !gap.hasEOL) ||
+        (gap.str === '' &&
+          gap.hasEOL &&
+          gap.width === 0 &&
+          next &&
+          'str' in next &&
+          next.fontName === gap.fontName &&
+          gap.transform.every((value, i) => Math.abs(value - mark.transform[i]) <= 0.001)))
+        ? next
         : gap
     if (
       base &&
@@ -554,7 +630,11 @@ export async function getPdfTranslationTextContent(
     ...pairedSlashes.values(),
     ...content.items.flatMap((item, index) =>
       'str' in item &&
-      (/^[37XZ]$/u.test(item.str) || item.str === '\u0002' || pairedSlashes.has(index))
+      (/^[367>]$/u.test(item.str) ||
+        legacyCmexOperators.has(item.str) ||
+        item.str === 'Õ' ||
+        item.str === '\u0002' ||
+        pairedSlashes.has(index))
         ? [item.fontName]
         : []
     )
@@ -581,22 +661,89 @@ export async function getPdfTranslationTextContent(
         /^(?:[A-Z]{6}\+)?CMR10$/u.test(page.commonObjs.get(base)?.name ?? '')
       )
         return { ...item, str: '\u0338' }
-      // CMEX10 display operators can be exposed as their original slots X and Z.
-      const summation = item.str === 'X'
+      // CMEX10 display operators can be exposed as their original printable slots.
+      const operator = legacyCmexOperators.get(item.str)
       const operatorFont =
-        (summation || item.str === 'Z') && page.commonObjs.has(item.fontName)
+        operator && page.commonObjs.has(item.fontName)
           ? page.commonObjs.get(item.fontName)
           : undefined
       if (
+        operator &&
         operatorFont?.type === 'Type1' &&
         operatorFont.missingFile === false &&
         item.transform[0] > 0 &&
         item.transform[1] === 0 &&
         item.transform[2] === 0 &&
-        Math.abs(item.width / item.transform[0] - (summation ? 1.4444 : 0.5556)) < 0.0001 &&
+        Math.abs(item.width / item.transform[0] - operator.advance) < 0.0001 &&
         /^(?:[A-Z]{6}\+)?CMEX10$/u.test(operatorFont.name ?? '')
       )
-        return { ...item, str: summation ? '∑' : '∫' }
+        return { ...item, str: operator.symbol }
+      // This embedded TeX extension slot paints a sum, though its fallback says Otilde.
+      if (
+        item.str === 'Õ' &&
+        item.dir === 'ltr' &&
+        item.transform[0] > 0 &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0 &&
+        item.transform[3] > 0 &&
+        Math.abs(item.width / item.transform[0] - 0.808) < 0.0001 &&
+        page.commonObjs.has(item.fontName)
+      ) {
+        const font = page.commonObjs.get(item.fontName),
+          slot = 205,
+          renderSlot = font?.toFontChar?.[slot],
+          unicode = font?.toUnicode?._map
+        if (
+          font?.type === 'Type1' &&
+          /^(?:[A-Z]{6}\+)?txexs$/u.test(font.name ?? '') &&
+          font.composite === false &&
+          font.missingFile === false &&
+          font.isInvalidPDFjsFont === false &&
+          font.systemFontInfo === null &&
+          font.defaultEncoding?.[slot] === 'Otilde' &&
+          unicode?.[slot] === 'Õ' &&
+          Object.entries(unicode).every(
+            ([code, value]) => value !== 'Õ' || Number(code) === slot
+          ) &&
+          !Object.hasOwn(font.differences ?? {}, slot) &&
+          font.widths?.[slot] === 808 &&
+          Number.isSafeInteger(renderSlot) &&
+          renderSlot >= 0xe000 &&
+          renderSlot <= 0xf8ff
+        )
+          return { ...item, str: '∑' }
+      }
+      // The explicit MSAM10 encoding names these two slanted relations even
+      // when an absent Unicode entry exposes the original printable slots.
+      if (
+        (item.str === '6' || item.str === '>') &&
+        item.transform[0] > 0 &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0 &&
+        item.transform[3] > 0 &&
+        Math.abs(item.width / item.transform[0] - 0.777) < 0.0001 &&
+        page.commonObjs.has(item.fontName)
+      ) {
+        const font = page.commonObjs.get(item.fontName)
+        const less = item.str === '6'
+        const slot = less ? 54 : 62
+        const renderSlot = font?.toFontChar?.[slot]
+        const unicode = font?.toUnicode?._map
+        if (
+          font?.type === 'Type1' &&
+          font.composite === false &&
+          font.missingFile === false &&
+          /^(?:[A-Z]{6}\+)?MSAM10$/u.test(font.name ?? '') &&
+          font.differences?.[slot] === (less ? 'lessorequalslant' : 'greaterorequalslant') &&
+          font.widths?.[slot] === 777 &&
+          unicode &&
+          !Object.hasOwn(unicode, slot) &&
+          Number.isSafeInteger(renderSlot) &&
+          renderSlot >= 0xe000 &&
+          renderSlot <= 0xf8ff
+        )
+          return { ...item, str: less ? '⩽' : '⩾' }
+      }
       if (dingbats.has(item.fontName) && /^[37]$/u.test(item.str))
         return { ...item, str: item.str === '3' ? '✓' : '✗' }
       if (

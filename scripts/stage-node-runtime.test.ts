@@ -9,6 +9,8 @@ import { zipSync, strToU8 } from 'fflate'
 import { afterEach, expect, it } from 'vitest'
 import {
   extractNodeRuntime,
+  fetchNodeRuntimeArchive,
+  NODE_RUNTIME_DOWNLOAD_BACKOFF_MS,
   nodeRuntime,
   verifyNodeArchive,
   stageNodeRuntime
@@ -157,6 +159,36 @@ it('rejects unsupported targets before downloading', async () => {
   await expect(stageNodeRuntime({ platform: 'freebsd', arch: 'arm64' })).rejects.toThrow(
     'No pinned'
   )
+})
+
+it('retries a transient Node runtime download before succeeding', async () => {
+  const attempts: number[] = []
+  const delays: number[] = []
+  const response = { ok: true, body: [] }
+  const result = await fetchNodeRuntimeArchive('https://nodejs.org/runtime.zip', {
+    fetchImpl: async () => {
+      attempts.push(attempts.length + 1)
+      if (attempts.length < 3) throw new Error('connect timeout')
+      return response
+    },
+    delay: async (milliseconds) => delays.push(milliseconds),
+    log: () => undefined
+  })
+  expect(result).toBe(response)
+  expect(attempts).toEqual([1, 2, 3])
+  expect(delays).toEqual(NODE_RUNTIME_DOWNLOAD_BACKOFF_MS)
+})
+
+it('does not retry a non-transient Node runtime response', async () => {
+  const delays: number[] = []
+  await expect(
+    fetchNodeRuntimeArchive('https://nodejs.org/runtime.zip', {
+      fetchImpl: async () => ({ ok: false, status: 404, body: undefined }),
+      delay: async (milliseconds) => delays.push(milliseconds),
+      log: () => undefined
+    })
+  ).rejects.toThrow('Node runtime download failed (404).')
+  expect(delays).toEqual([])
 })
 
 it.for(['darwin', 'win32'])(

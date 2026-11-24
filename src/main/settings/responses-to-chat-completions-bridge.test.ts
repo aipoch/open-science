@@ -2506,6 +2506,46 @@ describe('Responses bridge Skill selector', () => {
     }
   )
 
+  it('omits reasoning controls for Kilo models without reasoning support', async () => {
+    let upstreamBody: Record<string, unknown> = {}
+    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return Response.json({
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                {
+                  function: {
+                    name: 'select_skills',
+                    arguments: JSON.stringify({ skill_names: ['literature-review'] })
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    })
+    const bridge = new ResponsesToChatCompletionsBridge(
+      {
+        baseUrl: 'https://ai-gateway.kilo.ai/api/v1',
+        model: 'baidu/ernie-5.5-flash-preview:free',
+        vendorId: 'kilo',
+        reasoningSupported: false
+      },
+      upstreamFetch,
+      { skillSelectorFailureMode: 'throw' }
+    )
+
+    await expect(bridge.selectSkills('Prepare a literature review.', catalog)).resolves.toEqual([
+      { name: 'literature-review', path: '/private/review/SKILL.md' }
+    ])
+    expect(upstreamBody).not.toHaveProperty('reasoning_effort')
+    expect(upstreamBody).not.toHaveProperty('reasoning')
+    expect(upstreamBody).not.toHaveProperty('thinking')
+  })
+
   it.each([
     ['Codex', undefined],
     ['CodeBuddy', { skillSelectorFailureMode: 'throw' as const }]

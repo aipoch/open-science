@@ -46,6 +46,8 @@ const VERSION = '1.0.0'
 const WSL_SETUP_DIAGNOSTICS_PROMPT = 'Verify WSL setup diagnostic tools.'
 const WSL_SETUP_UNAVAILABLE_PROMPT = 'Verify WSL setup tools are unavailable.'
 const PERMISSION_PROMPT = 'Request fixture permission.'
+const MEMORY_DENIAL_PROMPT = '请把测试用的周报格式保存到项目记忆里。'
+const PARTIAL_MEMORY_PROMPT = '请先读取记忆分类，再把测试用的周报格式保存到项目记忆里。'
 const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
 const MEMORY_RECALL_PROMPT = 'Verify automatic memory recall.'
 const MEMORY_RECALL_ENTRY = 'Keep every response concise and welcoming.'
@@ -3832,6 +3834,91 @@ if (process.argv.includes('--version')) {
             throw new Error(`Delegated answers did not reach the continuation: ${prompt}`)
           } else {
             reply = 'Delegated answer continuation completed.'
+          }
+        } else if (
+          prompt.includes(MEMORY_DENIAL_PROMPT) &&
+          prompt.includes('Do not retry the denied operations or use another tool or route')
+        ) {
+          reply = '保存记忆的授权被拒绝，这次没有保存。'
+        } else if (
+          prompt.includes(MEMORY_DENIAL_PROMPT) ||
+          prompt.includes(PARTIAL_MEMORY_PROMPT)
+        ) {
+          const partialReply = prompt.includes('测试情形：只回复已读部分。')
+          if (partialReply) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+                content: { type: 'text', text: '我会先读取记忆分类。' }
+              }
+            })
+          }
+          if (prompt.includes(PARTIAL_MEMORY_PROMPT)) {
+            const categories = await withMcpClient(
+              context.params.sessionId,
+              'open-science-notebook',
+              async (client) =>
+                toolResult(
+                  'list_memory_categories',
+                  await client.callTool({ name: 'list_memory_categories', arguments: {} })
+                )
+            )
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'tool_call',
+                toolCallId: makeToolCallId('memory-categories'),
+                title: 'mcp__open_science_notebook__list_memory_categories',
+                kind: 'other',
+                status: 'completed',
+                rawOutput: categories
+              }
+            })
+          }
+          const input = {
+            content: '周报按本周进展、当前阻塞、下周计划三个小节组织。',
+            analysis: {
+              scope: 'project',
+              durability: 'cross-session',
+              evidence: 'user-stated',
+              subject: '周报格式',
+              reason: '用户要求后续会话沿用该格式。'
+            }
+          }
+          const permission = await context.client.request(
+            acp.methods.client.session.requestPermission,
+            {
+              sessionId: context.params.sessionId,
+              toolCall: {
+                toolCallId: makeToolCallId('save-memory'),
+                title: 'mcp__open_science_notebook__remember_memory',
+                kind: 'other',
+                status: 'pending',
+                rawInput: input
+              },
+              options: [
+                { kind: 'allow_once', name: 'Allow once', optionId: 'allow-once' },
+                { kind: 'reject_once', name: 'Deny', optionId: 'deny-once' }
+              ]
+            }
+          )
+          if (
+            permission.outcome.outcome === 'selected' &&
+            permission.outcome.optionId === 'allow-once'
+          ) {
+            await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) =>
+              toolResult(
+                'remember_memory',
+                await client.callTool({ name: 'remember_memory', arguments: input })
+              )
+            )
+            reply = '已保存周报格式。'
+          } else if (partialReply) {
+            reply = '已读取记忆分类。'
+          } else {
+            return { stopReason: 'cancelled' }
           }
         } else if (prompt.includes(PERMISSION_PROMPT)) {
           const permission = await context.client.request(

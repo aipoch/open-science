@@ -9,7 +9,6 @@ import {
   type CatalogStatus
 } from '@aipoch/providers'
 import { modelCatalogErrorMessage } from './model-catalog-feedback'
-import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import type { TFunction } from 'i18next'
@@ -19,6 +18,7 @@ import { Trans, useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { FieldHelp } from '@/components/FieldHelp'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
@@ -45,9 +45,11 @@ import { customProviderRequiresKey } from '../../../../shared/provider-url-polic
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
+  LOCAL_MODEL_KIND_PREFIX,
   LOCAL_MODEL_PRESETS,
   PROVIDER_KIND_GROUPS,
   PROVIDER_KINDS,
+  isProviderKindAvailable,
   localModelPresetPatch,
   providerFormApiEndpoints,
   providerKindPatch,
@@ -99,6 +101,9 @@ type ProviderFormProps = {
   // framework, the custom-gateway form explains the pairing (still savable) instead of staying
   // silent until the post-save validation reports it.
   framework?: AgentFrameworkView
+  // When supplied, the provider kind was chosen before the form opened: the type dropdown becomes a
+  // summary of that choice with a control that returns to the picker.
+  onChangeProviderKind?: () => void
 }
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
@@ -285,7 +290,8 @@ const ProviderForm = ({
   showCodexSubscriptions = false,
   showClaudeIsolated = false,
   defaultCustomApiEndpoint = 'messages',
-  framework
+  framework,
+  onChangeProviderKind
 }: ProviderFormProps): React.JSX.Element => {
   const { t } = useTranslation()
   // Keep catalog feedback copy visible to the locale resource guard even though the helper maps codes.
@@ -359,6 +365,18 @@ const ProviderForm = ({
     Boolean(errors.maxOutputTokens)
 
   const selectedKind = PROVIDER_KINDS.find((kind) => kind.key === selectedKey)
+  // A local preset opens as a custom gateway; the header keeps showing the preset that was picked.
+  const localPreset = isCustom
+    ? LOCAL_MODEL_PRESETS.find((preset) => preset.baseUrl === value.baseUrl.trim())
+    : undefined
+  const selectedKindIconKey = localPreset
+    ? `${LOCAL_MODEL_KIND_PREFIX}${localPreset.id}`
+    : selectedKey
+  const selectedKindLabel = localPreset
+    ? localPreset.label
+    : selectedKind
+      ? kindLabel(selectedKind, t)
+      : undefined
   // Where to get a key for an official vendor (region-specific console); custom providers have none.
   const apiKeyUrl =
     isOfficial && value.vendorId ? resolveVendorApiKeyUrl(value.vendorId, value.region) : undefined
@@ -466,59 +484,89 @@ const ProviderForm = ({
           {fileCredentialNotice}
         </p>
       ) : null}
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-1">
-          <span className={fieldLabelClassName}>{t('Provider type')}</span>
-          {selectedKind?.descriptionKey ? (
-            <FieldHelp label={t('Provider type')} content={t(selectedKind.descriptionKey)} />
-          ) : null}
-        </div>
-        <Select
-          value={selectedKey}
-          disabled={disabled || (isCodeBuddySubscription && !codeBuddyProviders)}
-          onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
+      {onChangeProviderKind ? (
+        <div
+          role="group"
+          aria-label={t('Provider type')}
+          className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-muted/30 p-3"
         >
-          <SelectTrigger aria-label={t('Provider type')}>
-            <span className="flex items-center gap-2">
-              <ProviderKindIcon kindKey={selectedKey} />
-              <span>{selectedKind ? kindLabel(selectedKind, t) : null}</span>
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-card">
+            <ProviderKindIcon kindKey={selectedKindIconKey} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-foreground">
+              {selectedKindLabel}
             </span>
-          </SelectTrigger>
-          <SelectContent scrollToTopOnOpen>
-            {PROVIDER_KIND_GROUPS.map((group) => {
-              const kinds = PROVIDER_KINDS.filter((kind) => {
-                if (kind.group !== group.id) return false
-                if (codeBuddySiteForId(kind.key) && !codeBuddyProviders) return false
-                // Codex and the built-in Agent share the app-owned subscription sign-in.
-                if (group.id === 'codex' && !showCodexSubscriptions) return false
-                // The Claude subscription section mirrors it: gate on Claude Code being active,
-                // the only framework that speaks the app-owned bearer token.
-                if (group.id === 'claude' && !showClaudeIsolated) return false
+            {selectedKind?.descriptionKey ? (
+              <span className="block truncate text-xs text-muted-foreground">
+                {t(selectedKind.descriptionKey)}
+              </span>
+            ) : null}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={t('Change provider')}
+            disabled={disabled}
+            onClick={onChangeProviderKind}
+          >
+            {t('Change')}
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1">
+            <span className={fieldLabelClassName}>{t('Provider type')}</span>
+            {selectedKind?.descriptionKey ? (
+              <FieldHelp label={t('Provider type')} content={t(selectedKind.descriptionKey)} />
+            ) : null}
+          </div>
+          <Select
+            value={selectedKey}
+            disabled={disabled || (isCodeBuddySubscription && !codeBuddyProviders)}
+            onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
+          >
+            <SelectTrigger aria-label={t('Provider type')}>
+              <span className="flex items-center gap-2">
+                <ProviderKindIcon kindKey={selectedKey} />
+                <span>{selectedKind ? kindLabel(selectedKind, t) : null}</span>
+              </span>
+            </SelectTrigger>
+            <SelectContent scrollToTopOnOpen>
+              {PROVIDER_KIND_GROUPS.map((group) => {
+                const kinds = PROVIDER_KINDS.filter(
+                  (kind) =>
+                    kind.group === group.id &&
+                    isProviderKindAvailable(kind, {
+                      codeBuddyProviders,
+                      showCodexSubscriptions,
+                      showClaudeIsolated
+                    })
+                )
 
-                return true
-              })
+                if (kinds.length === 0) return null
 
-              if (kinds.length === 0) return null
-
-              return (
-                <SelectGroup key={group.id}>
-                  <SelectLabel>{t(group.labelKey)}</SelectLabel>
-                  {kinds.map((kind) => (
-                    <SelectItem
-                      key={kind.key}
-                      value={kind.key}
-                      disabled={codeBuddyProviders?.includes(kind.key)}
-                      icon={<ProviderKindIcon kindKey={kind.key} />}
-                    >
-                      {kindLabel(kind, t)}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              )
-            })}
-          </SelectContent>
-        </Select>
-      </div>
+                return (
+                  <SelectGroup key={group.id}>
+                    <SelectLabel>{t(group.labelKey)}</SelectLabel>
+                    {kinds.map((kind) => (
+                      <SelectItem
+                        key={kind.key}
+                        value={kind.key}
+                        disabled={codeBuddyProviders?.includes(kind.key)}
+                        icon={<ProviderKindIcon kindKey={kind.key} />}
+                      >
+                        {kindLabel(kind, t)}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )
+              })}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {!isCodeBuddySubscription &&
       !isCodexSubscription &&

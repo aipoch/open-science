@@ -1,3 +1,5 @@
+import { isNotebookRunReference } from '../notebook/run-record-reference'
+import { mergePendingRuns, pendingDirectoryIdentity } from '../notebook/pending-run-files'
 import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
@@ -29,6 +31,7 @@ const SESSION_JOURNAL_READ_LIMIT = 32 * 1024 * 1024
 const BACKEND_LOG_TAIL_BYTES = 256 * 1024
 const safeSegment = (value: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/.test(value)
 class DiagnosticCollectionError extends Error {}
+class NotebookSnapshotChangedError extends DiagnosticCollectionError {}
 const ownsDiagnosticSession = (
   value: Record<string, unknown>,
   projectId: string,
@@ -509,25 +512,6 @@ const environmentManifestChecksumForRun = (run: Record<string, unknown>): string
 const environmentManifestPath = (dataRoot: string, checksum: string): string =>
   join(dataRoot, ENVIRONMENT_MANIFEST_DIRECTORY, `${checksum}.json`)
 
-const isNotebookRunReference = (
-  value: unknown
-): value is {
-  storage: 'file'
-  runId: string
-  sha256: string
-  bytes: number
-} => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const reference = value as Record<string, unknown>
-  return (
-    reference.storage === 'file' &&
-    typeof reference.runId === 'string' &&
-    digestPattern.test(String(reference.sha256)) &&
-    Number.isSafeInteger(reference.bytes) &&
-    Number(reference.bytes) > 0
-  )
-}
-
 export async function runSessionDiagnosticWorker(
   input: SessionDiagnosticWorkerInput
 ): Promise<SessionDiagnosticWorkerResult> {
@@ -970,6 +954,33 @@ export async function runSessionDiagnosticWorker(
               if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                 if (source.kind === 'notebook') {
                   try {
+                    const rows = (parsed as { runs?: Array<{ runId: string }> }).runs
+                    if (Array.isArray(rows) && input.projectId && input.sessionId) {
+                      await checkPath(source.root, dirname(source.path!))
+                      const pending = await pendingDirectoryIdentity(source.path!)
+                      await mergePendingRuns(
+                        source.path!,
+                        {
+                          projectId: input.projectId,
+                          sessionId: input.sessionId,
+                          frameId: source.frameId ?? null
+                        },
+                        rows,
+                        (run) => typeof run === 'object' && run !== null && 'runId' in run,
+                        sourceReadLimit(source) - stat.size
+                      )
+                      // A checkpoint can replace the manifest and remove the entire hot directory during the read.
+                      const current = await lstat(source.path!)
+                      if (
+                        current.dev !== stat.dev ||
+                        current.ino !== stat.ino ||
+                        current.size !== stat.size ||
+                        current.ctimeMs !== stat.ctimeMs ||
+                        current.mtimeMs !== stat.mtimeMs ||
+                        pending !== (await pendingDirectoryIdentity(source.path!))
+                      )
+                        throw new NotebookSnapshotChangedError()
+                    }
                     const hydratedNotebook = await hydrateNotebookRunReferences(
                       parsed as Record<string, unknown>,
                       source,
@@ -1028,15 +1039,24 @@ export async function runSessionDiagnosticWorker(
                       state.status = 'partial'
                     }
                     await exportEnvironmentManifests(hydratedNotebook, state)
-                  } catch {
+                  } catch (error) {
+                    const changed = error instanceof NotebookSnapshotChangedError
                     await writeBestEffort(
                       `${source.output}.metadata.json`,
-                      () => encode({ ...metadata, omissionReason: 'invalid-scope-or-shape' }),
+                      () =>
+                        encode({
+                          ...metadata,
+                          omissionReason: changed ? 'source-changed' : 'invalid-scope-or-shape'
+                        }),
                       state
                     )
                     partial = true
                     state.status = 'partial'
-                    record('Notebook document scope or shape invalid; content omitted')
+                    record(
+                      changed
+                        ? 'Notebook changed during collection; content omitted'
+                        : 'Notebook document scope or shape invalid; content omitted'
+                    )
                   }
                 } else {
                   if (

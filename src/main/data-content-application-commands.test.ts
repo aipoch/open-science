@@ -427,6 +427,7 @@ const WRAPPED_COMMAND_KEYS = [
   'imageTaskCancel',
   'previewResearchVideoExport',
   'previewResearchVideoCancel',
+  'researchVideoPresentationActive',
   'researchVideoPresentationStart',
   'researchVideoPresentationStatus',
   'researchVideoPresentationRemove',
@@ -721,6 +722,7 @@ describe('Data and content application commands', () => {
         'image-tasks:get',
         'image-tasks:list',
         'image-tasks:cancel',
+        'research-video:active-sessions',
         'research-video:start',
         'research-video:status',
         'research-video:remove',
@@ -2206,6 +2208,28 @@ describe('Data and content application commands', () => {
     expect(deps.projects.update).toHaveBeenCalledOnce()
     expect(deps.projects.update).toHaveBeenCalledWith(request)
   })
+
+  it.each([true, false])(
+    'accepts a project tracing setting of %s from Project Settings',
+    async (enabled) => {
+      const router = createApplicationCommandRouter()
+      const deps = createDependencies()
+      registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+      const request = {
+        id: deps.project.id,
+        expectedUpdatedAt: deps.project.updatedAt,
+        agentTracingEnabled: enabled
+      }
+
+      await expect(
+        router.dispatcher.invoke(
+          dataContentApplicationCommands.projectUpdate,
+          invocation([request])
+        )
+      ).resolves.toBe(deps.project)
+      expect(deps.projects.update).toHaveBeenCalledWith(request)
+    }
+  )
 
   it('preserves configuration revision conflicts across the Task command boundary', async () => {
     const router = createApplicationCommandRouter()

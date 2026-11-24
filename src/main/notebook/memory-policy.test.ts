@@ -199,7 +199,7 @@ describe('MemoryPolicyService', () => {
     expect(service.currentState().status).toBe('healthy')
     expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'healthy' }))
 
-    current = sample({ facts: { availableBytes: 10, totalBytes: 100, overcommitMode: 0 } })
+    current = sample({ facts: { availableBytes: 25, totalBytes: 1000, overcommitMode: 0 } })
     await expect(service.getState({ force: true })).resolves.toMatchObject({
       status: 'pressured',
       reason: { code: 'linux-memory-low' }
@@ -209,7 +209,7 @@ describe('MemoryPolicyService', () => {
   })
 
   it('preserves pressure hysteresis through healthy-looking samples', async () => {
-    let current = sample({ facts: { availableBytes: 10, totalBytes: 100, overcommitMode: 0 } })
+    let current = sample({ facts: { availableBytes: 25, totalBytes: 1000, overcommitMode: 0 } })
     const service = new MemoryPolicyService({
       adapter: adapter(async () => current),
       now: () => 1000,
@@ -221,10 +221,45 @@ describe('MemoryPolicyService', () => {
       status: 'pressured',
       reason: { code: 'linux-memory-low' }
     })
-    current = sample({ facts: { availableBytes: 15, totalBytes: 100, overcommitMode: 0 } })
+    current = sample({ facts: { availableBytes: 35, totalBytes: 1000, overcommitMode: 0 } })
     await expect(service.getState({ force: true })).resolves.toMatchObject({ status: 'pressured' })
-    current = sample({ facts: { availableBytes: 25, totalBytes: 100, overcommitMode: 0 } })
+    current = sample({ facts: { availableBytes: 55, totalBytes: 1000, overcommitMode: 0 } })
     await expect(service.getState({ force: true })).resolves.toMatchObject({ status: 'healthy' })
+  })
+
+  it('caps default Linux physical entry and recovery thresholds on large hosts', async () => {
+    const MiB = 1024 ** 2
+    const total = 64 * 1024 * MiB
+    let current = sample({
+      facts: {
+        totalBytes: total,
+        availableBytes: 400 * MiB + 1,
+        overcommitMode: 0
+      }
+    })
+    const service = new MemoryPolicyService({
+      adapter: adapter(async () => current)
+    })
+    const fresh = { force: true }
+    await expect(service.getState(fresh)).resolves.toMatchObject({ status: 'healthy' })
+    current = sample({
+      facts: { totalBytes: total, availableBytes: 400 * MiB, overcommitMode: 0 }
+    })
+    await expect(service.getState(fresh)).resolves.toMatchObject({
+      status: 'pressured',
+      reason: { code: 'linux-memory-low', remainingThresholdRatio: (400 * MiB) / total }
+    })
+    current = sample({
+      facts: { totalBytes: total, availableBytes: 800 * MiB, overcommitMode: 0 }
+    })
+    await expect(service.getState(fresh)).resolves.toMatchObject({
+      status: 'pressured',
+      reason: { code: 'linux-memory-low', remainingThresholdRatio: (800 * MiB) / total }
+    })
+    current = sample({
+      facts: { totalBytes: total, availableBytes: 800 * MiB + 1, overcommitMode: 0 }
+    })
+    await expect(service.getState(fresh)).resolves.toMatchObject({ status: 'healthy' })
   })
 
   it('expires dispatch authority after two seconds and after suspend or wall-clock rollback', async () => {
@@ -290,7 +325,7 @@ describe('MemoryPolicyService', () => {
   it('starts no periodic sampling without demand and uses pressure cadence after activation', async () => {
     vi.useFakeTimers()
     const observe = vi.fn(async () =>
-      sample({ facts: { availableBytes: 10, totalBytes: 100, overcommitMode: 0 } })
+      sample({ facts: { availableBytes: 25, totalBytes: 1000, overcommitMode: 0 } })
     )
     const service = new MemoryPolicyService({ adapter: adapter(observe), now: Date.now })
     await vi.advanceTimersByTimeAsync(60_000)
@@ -325,7 +360,7 @@ describe('MemoryPolicyService invalidation', () => {
     }
     const service = new MemoryPolicyService({ adapter: adapterWithEvents, now: () => 1000 })
     await service.getState()
-    current = sample({ facts: { availableBytes: 10, totalBytes: 100, overcommitMode: 0 } })
+    current = sample({ facts: { availableBytes: 25, totalBytes: 1000, overcommitMode: 0 } })
     notify?.()
     await expect(service.getState()).resolves.toMatchObject({ status: 'pressured' })
   })

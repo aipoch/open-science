@@ -140,6 +140,8 @@ jobs:
         # The checked-in host can predate current lifecycle and ACL contracts. Both portable
         # process tests and controlled mutations must consume this revision's native source.
         run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+      - name: Verify generated test dependencies
+        run: node scripts/check-prisma-client.mjs
       - name: Download Windows Notebook runtime
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -199,11 +201,14 @@ jobs:
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
-        # tests still fail at that bound. The Windows sequencer keeps modules in eight fixed groups
-        # (see scripts/ci/windows-test-sequencer.ts) sized from measured run durations so each
-        # serial shard finishes inside the 60-minute job timeout after checkout and npm ci.
+        # tests still fail at that bound. The Windows sequencer keeps the complete suite in eight
+        # fixed shards and routes measured file-level outliers across spare shards (see
+        # scripts/ci/windows-test-sequencer.ts), so each serial shard finishes inside the
+        # 60-minute job timeout after checkout and npm ci.
+        # The dependency snapshot already ran the package build and Prisma generation check, so
+        # call Vitest directly instead of repeating npm's pretest hook on every shard.
         # GitHub annotations keep the failing test visible if the job is later cancelled.
-        run: npm test -- --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
+        run: npx vitest run --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions
 
       - name: Test recent Windows regressions
         shell: bash
@@ -213,7 +218,7 @@ jobs:
         # Reuse the full job's runner, install and effective project budgets without running the
         # unrelated shards or native lifecycle smoke. These are suites from recent failed batches.
         run: >-
-          npm test --
+          npx vitest run
           src/main/acp/file-reference-resolver.test.ts
           scripts/ci/pr-gate-workflow.test.ts
           src/main/notebook/shell-cell-session.integration.test.ts
@@ -293,7 +298,7 @@ jobs:
       - name: Test scheduled Windows fixes
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'scheduled-fixes' }}
         run: >-
-          npm test --
+          npx vitest run
           src/main/desktop-runtime-recovery.integration.test.ts
           src/main/desktop-update-integration.test.ts
           src/main/storage/content-repository.test.ts

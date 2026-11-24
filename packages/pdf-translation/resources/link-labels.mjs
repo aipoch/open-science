@@ -352,10 +352,10 @@ function datedClosingReference(source, translation, label, offset) {
         .map((item) => [
           item[1]
             .normalize('NFC')
-            .replace(/\s*(?:et\s*al\.|等人?)$/u, ':et-al')
-            .replace(/\s*(?:&|\band\s+|[和与與])\s*/gu, '&')
-            .trim()
-            .replace(/\s+/gu, ' '),
+            .replace(/\s+/gu, ' ')
+            .replace(/ ?(?:et ?al\.|等人?)$/u, ':et-al')
+            .replace(/ ?(?:&|\band |[和与與]) ?/gu, '&')
+            .trim(),
           item[2]
         ])
         .map((item) => item.join(':'))
@@ -403,7 +403,187 @@ function wholeProseLink(source, translation, label, offset) {
     : null
 }
 
-export function translatedPdfLinkLabel(source, translation, label, offset) {
+const commaDatedAuthors = new RegExp(
+  `(?<![\\p{Script=Latin}\\p{N}\\p{M}_'’−-])(?<![,，、]\\s*)(?<!${author}\\s+)(${author}(?:[,，、]\\s*${author}){2,5})\\s*([（(])\\s*(\\d{4}[a-z]?)\\s*年?([）)])`,
+  'gud'
+)
+const commaDatedName = new RegExp(author, 'gu')
+
+// A line wrap can split names or a year into separate links. A linked
+// piece must cover whole names (and optionally its trailing comma) or the year.
+export function translatedPdfCommaDatedAuthorFragment(source, translation, label, offset) {
+  if (!label || source.slice(offset, offset + label.length) !== label) return undefined
+  const references = (text) =>
+    [...text.matchAll(commaDatedAuthors)].flatMap((match) => {
+      if (match[2] === '(' ? match[4] !== ')' : match[4] !== '）') return []
+      const start = match.indices[1][0],
+        names = [...match[1].matchAll(commaDatedName)]
+      return [
+        {
+          names,
+          start,
+          year: match[3],
+          yearOffset: match.indices[3][0],
+          identity: JSON.stringify([...names.map((name) => name[0]), match[3]])
+        }
+      ]
+    })
+  const origins = references(source),
+    reference = origins.find(
+      (item) => offset >= item.start && offset + label.length <= item.yearOffset + item.year.length
+    )
+  if (!reference) return undefined
+  const same = (item) => item.identity === reference.identity,
+    from = origins.filter(same),
+    to = references(translation).filter(same),
+    occurrence = from.indexOf(reference)
+  if (from.length !== to.length) return null
+  const target = to[occurrence]
+  if (offset === reference.yearOffset && label === reference.year)
+    return { start: target.yearOffset, text: target.year }
+  const nameStart = (item, index) => item.start + item.names[index].index,
+    nameEnd = (item, index) => nameStart(item, index) + item.names[index][0].length,
+    first = reference.names.findIndex((_, i) => nameStart(reference, i) === offset),
+    end = offset + label.length,
+    trailingComma = /[,，、]$/u.test(label),
+    last = reference.names.findIndex(
+      (_, i) => nameEnd(reference, i) + Number(trailingComma) === end
+    )
+  if (first < 0 || last < first || (trailingComma && last === reference.names.length - 1))
+    return null
+  const start = nameStart(target, first)
+  return { start, text: translation.slice(start, nameEnd(target, last) + Number(trailingComma)) }
+}
+
+// A date can lead its report in translation. Match both the date and the
+// acronym before selecting an otherwise ambiguous raised marker.
+export function translatedPdfDatedReportFootnote(source, translation, label, offset) {
+  if (!/^\d{1,3}$/u.test(label) || source.slice(offset, offset + label.length + 1) !== label + '.')
+    return null
+  const report =
+    /\(([A-Z]{2,8})\) (?:[a-z]+ ){0,3}report (?:released|published) on ([A-Z][a-z]+) (\d{1,2}), ((?:19|20)\d{2}) $/u.exec(
+      source.slice(Math.max(0, offset - 96), offset)
+    )
+  if (!report || source.indexOf(report[0]) !== source.lastIndexOf(report[0])) return null
+  const [, acronym, monthName, day, year] = report
+  const month =
+    'January February March April May June July August September October November December'
+      .split(' ')
+      .indexOf(monthName) + 1
+  if (!month || Number(day) < 1 || Number(day) > 31) return null
+  const pattern = new RegExp(
+    String.raw`(?:正如\s*)?(?<!\d)${year}\s*年\s*${month}\s*月\s*${Number(day)}\s*日[\p{Script=Han} ]{1,22}[(（]${acronym}[)）]\s*[\p{Script=Han}]{0,8}(?:报告|報告)\s*(${label})(?=\s*(?:所述|[，。；]))`,
+    'gu'
+  )
+  const matches = [...translation.matchAll(pattern)]
+  if (matches.length !== 1) return null
+  const match = matches[0]
+  return {
+    start: match.index + match[0].length - label.length,
+    text: label,
+    reportStart: match.index
+  }
+}
+
+// A complete keyword label and its original thesaurus action must name the same
+// unique concept before the spelling of a localized label can be trusted.
+function translatedThesaurusKeyword(source, translation, label, offset, uri) {
+  const id = /^https?:\/\/astrothesaurus\.org\/uat\/([1-9]\d{0,4})$/u.exec(uri ?? '')?.[1]
+  if (!id || ![source, translation].some((row) => row.startsWith('Keywords:'))) return null
+  const terms = (row) => {
+    const result = []
+    let offset = 0
+    for (const segment of row.split('—')) {
+      const start = offset
+      offset += segment.length + 1
+      const prefix = start === 0 ? /^[\p{L} ]{1,30}[:：]/u.exec(segment) : null
+      if (start === 0 && !prefix) continue
+      const raw = segment.slice(prefix?.[0].length ?? 0),
+        trimmed = raw.trimStart(),
+        text = trimmed.trimEnd(),
+        number = /(?:\((\d{1,5})\)|（(\d{1,5})）)$/u.exec(text)
+      if (!number || !/^\p{L}[\p{L}\p{M} ’'-]*$/u.test(text.slice(0, number.index).trimEnd()))
+        continue
+      result.push({
+        id: number[1] ?? number[2],
+        start: start + segment.length - trimmed.length,
+        text
+      })
+    }
+    return result
+  }
+  const before = terms(source),
+    after = terms(translation),
+    ids = before.map((term) => term.id),
+    occurrence = ids.indexOf(id)
+  if (
+    ids.length < 2 ||
+    new Set(ids).size !== ids.length ||
+    before.length !== after.length ||
+    !after.every((term, i) => term.id === ids[i]) ||
+    occurrence < 0 ||
+    before[occurrence].text !== label ||
+    before[occurrence].start !== offset
+  )
+    return null
+  const { start, text } = after[occurrence]
+  return { start, text }
+}
+
+// An ACM self-reference can link only the page count beside its unchanged DOI.
+function referenceFormatPageCount(source, translation, label, offset, uri) {
+  if (uri || !/^[1-9]\d{0,2}$/u.test(label)) return null
+  const english =
+    /^ACM Reference Format:[^\r\n]*?\b(\d{1,3}) pages?\.[ \t]+(https:\/\/doi\.org\/10\.\d{4,9}\/[A-Za-z\d.]+)$/du
+  const localized =
+    /^ACM\s*(?:参考|參考)格式[：:][^\r\n]*?共\s*(\d{1,3})\s*[页頁]。\s*(https:\/\/doi\.org\/10\.\d{4,9}\/[A-Za-z\d.]+)$/du
+  const englishSource = english.exec(source),
+    englishTarget = english.exec(translation)
+  if (!englishSource && !englishTarget) return null
+  const from = englishSource ?? localized.exec(source),
+    to = englishTarget ?? localized.exec(translation)
+  if (!from || !to) return null
+  return from[1] === label && to[1] === label && from[2] === to[2] && from.indices[1][0] === offset
+    ? { start: to.indices[1][0], text: label }
+    : null
+}
+
+// Match complete external-link labels in both directions for native verification.
+const resourceWebLinks = [
+  [/\b(?:can|to) (submit)(?= (?:a|their) resources?\b)/dgu, /(提交)/dgu],
+  [/\b(subscription service)\b/dgu, /(订阅服务)/dgu],
+  [/\b(RSS feed)\b/dgu, /(RSS\s*订阅源)/dgu]
+]
+const resourceMailLinks = [[/\b(connect)(?= with (?:our|the) team\b)/dgu, /(联系)/dgu]]
+
+function translatedResourceLinkLabel(source, translation, label, offset, uri) {
+  const destination = uri?.trim() ?? '',
+    patterns = /^https?:\/\//iu.test(destination)
+      ? resourceWebLinks
+      : /^mailto:/iu.test(destination)
+        ? resourceMailLinks
+        : []
+  for (const [english, chinese] of patterns) {
+    const [fromPattern, toPattern] = /\p{Script=Han}/u.test(label)
+      ? [chinese, english]
+      : [english, chinese]
+    const from = [...source.matchAll(fromPattern)]
+    if (from.length !== 1 || from[0][1] !== label || from[0].indices[1][0] !== offset) continue
+    const to = [...translation.matchAll(toPattern)]
+    if (to.length === 1) return { start: to[0].indices[1][0], text: to[0][1] }
+  }
+  return null
+}
+
+export function translatedPdfLinkLabel(source, translation, label, offset, uri) {
+  const pages = referenceFormatPageCount(source, translation, label, offset, uri)
+  if (pages) return pages
+  const keyword = translatedThesaurusKeyword(source, translation, label, offset, uri)
+  if (keyword) return keyword
+  const collectiveDated = translatedCollectiveDatedFragment(source, translation, label, offset)
+  if (collectiveDated !== undefined) return collectiveDated
+  const commaDated = translatedPdfCommaDatedAuthorFragment(source, translation, label, offset)
+  if (commaDated !== undefined) return commaDated
   const closing = datedClosingReference(source, translation, label, offset)
   if (closing) return closing
   const compound = datedCompoundPairFragment(source, translation, label, offset)
@@ -435,7 +615,8 @@ export function translatedPdfLinkLabel(source, translation, label, offset) {
       literalBracketCitation(source, translation, label, offset) ??
       datedLiteralCitation(source, translation, label, offset) ??
       datedCollectiveTail(source, translation, label, offset) ??
-      wholeProseLink(source, translation, label, offset)
+      wholeProseLink(source, translation, label, offset) ??
+      translatedResourceLinkLabel(source, translation, label, offset, uri)
     )
   const authorWords = (text) =>
       text
@@ -519,41 +700,73 @@ export function translatedPdfLinkLabel(source, translation, label, offset) {
 }
 
 // A citation number belongs to its complete closed list, not an unrelated
-// month or measurement. Only bracket/comma presentation can be localized;
-// complete-list occurrences and ordered numeric identities must agree.
+// month or measurement. A corollary number qualifies one citation and is not
+// itself a citation link. Both numbers remain part of the exact identity.
 // Undefined leaves non-citation labels on their existing path; null forbids a
 // bare-number fallback after a complete source citation fails identity proof.
 export function pdfBracketedReferenceBlocks(text) {
   const entry = '\\d{1,4}(?:\\s*[–-]\\s*\\d{1,4})?'
-  const body = `${entry}(?:\\s*[,，]\\s*${entry})*`
+  const commaEntry = `(?:\\s*[,，]\\s*${entry})`
+  const example = '(?:e\\.g\\.|例如)'
+  const locator = '(?:Corollary|推论|推論)\\s*\\d{1,4}'
+  const body = `(?:${example}\\s*${entry}${commaEntry}+|\\d{1,4}\\s*[,，]\\s*${locator}|${entry}${commaEntry}*)`
   const list = new RegExp(`\\[\\s*${body}\\s*\\]|［\\s*${body}\\s*］`, 'gu')
   return [...text.matchAll(list)].map((match) => ({
     start: match.index,
     end: match.index + match[0].length,
     text: match[0],
-    numbers: [...match[0].matchAll(/\d+/gu)],
-    key: match[0].slice(1, -1).replace(/\s/gu, '').replace(/，/gu, ',').replace(/–/gu, '-')
+    numbers: [...match[0].matchAll(/\d+/gu)].slice(
+      0,
+      /(?:Corollary|推论|推論)/u.test(match[0]) ? 1 : undefined
+    ),
+    key: match[0]
+      .slice(1, -1)
+      .replace(/\s/gu, '')
+      .replace(/^例如/u, 'e.g.')
+      .replace(/(?:推论|推論)/u, 'Corollary')
+      .replace(/，/gu, ',')
+      .replace(/–/gu, '-')
   }))
 }
 
 export function translatedPdfBracketedReference(source, translation, label, offset) {
-  if (!/^\d{1,4}$/u.test(label) || source.slice(offset, offset + label.length) !== label)
-    return undefined
+  if (source.slice(offset, offset + label.length) !== label) return undefined
+  const number = /^([［[]\s*)?(\d{1,4})([\]］]?)$/u.exec(label)
+  if (!number) return undefined
+  const [, opening = '', digits, closing] = number
+  if (opening && closing) return undefined
+  const numberOffset = offset + opening.length
   const from = pdfBracketedReferenceBlocks(source),
     to = pdfBracketedReferenceBlocks(translation),
-    block = from.find((b) => b.numbers.some((n) => b.start + n.index === offset && n[0] === label))
-  if (!block) return undefined
+    block = from.find(
+      (b) =>
+        (!opening || offset === b.start) &&
+        (!closing || offset + label.length === b.end) &&
+        b.numbers.some((n) => b.start + n.index === numberOffset && n[0] === digits)
+    )
+  if (!block)
+    // The writer must not fall back to a bare numeral for a corollary locator.
+    return from.some(
+      (candidate) =>
+        candidate.key.includes(',Corollary') &&
+        numberOffset >= candidate.start &&
+        numberOffset < candidate.end
+    )
+      ? null
+      : undefined
   const sourceMatches = from.filter((b) => b.key === block.key),
     targetMatches = to.filter((b) => b.key === block.key)
   if (!sourceMatches.length || sourceMatches.length !== targetMatches.length) return null
   const occurrence = sourceMatches.indexOf(block),
-    ordinal = block.numbers.findIndex((n) => block.start + n.index === offset),
+    ordinal = block.numbers.findIndex((n) => block.start + n.index === numberOffset),
     target = targetMatches[occurrence],
-    start = target.start + target.numbers[ordinal].index
+    targetNumber = target.start + target.numbers[ordinal].index,
+    start = opening ? target.start : targetNumber,
+    end = closing ? target.end : targetNumber + digits.length
   return {
     start,
-    end: start + label.length,
-    text: label,
+    end,
+    text: translation.slice(start, end),
     sourceBlock: { start: block.start, end: block.end, text: block.text },
     targetBlock: { start: target.start, end: target.end, text: target.text }
   }
@@ -590,11 +803,112 @@ function supportingInformationFragment(source, translation, label, offset) {
   return target ? { start: target.start, text: target.text } : null
 }
 
+// Independently linked author or year glyphs still belong to one closed citation.
+// Preserve spelling literally, including a spacing acute before a native vowel.
+function translatedCollectiveDatedFragment(source, translation, label, offset) {
+  if (
+    !/^(?:\d{4}[a-z]?|.+(?:et\s+al\.|等人?)(?:\s+\d{4}[a-z]?|\s*[(（]\d{4}[a-z]?\s*年?[)）])?)$/u.test(
+      label
+    ) ||
+    source.slice(offset, offset + label.length) !== label
+  )
+    return undefined
+  const acuteName = `${author}´[AEIOUaeiou][A-Za-zÀ-ÖØ-öø-ÿ\\p{M}'’-]*`,
+    collective = '(?:\\s+et\\s+al\\.|\\s*等人?)',
+    names = `((${acuteName}|${author})${collective})`,
+    year = '([12]\\d{3}[a-z]?)',
+    parenthetical = new RegExp(`([(（])\\s*${names}\\s+${year}\\s*年?\\s*([)）])`, 'gud'),
+    narrative = new RegExp(
+      `(?<![\\p{Script=Latin}\\p{Script=Greek}\\p{N}\\p{M}_'’´′″‴\\u{1d400}-\\u{1d7ff}-])${names}\\s*([(（])\\s*${year}\\s*年?\\s*([)）])`,
+      'gud'
+    ),
+    matches = (text) =>
+      [parenthetical, narrative].flatMap((pattern) =>
+        [...text.matchAll(pattern)].flatMap((match) => {
+          const [open, authors, surname] = pattern === parenthetical ? [1, 2, 3] : [3, 1, 2]
+          if ((match[open] === '(' ? ')' : '）') !== match[5]) return []
+          const atom = (group) => ({ start: match.indices[group][0], text: match[group] })
+          return [
+            {
+              key: JSON.stringify([pattern === parenthetical, match[surname], match[4]]),
+              parts: [
+                ...(pattern === parenthetical || match[surname].includes('´')
+                  ? [atom(authors), atom(4)]
+                  : []),
+                ...(pattern === narrative ? [atom(0)] : []),
+                ...(pattern === parenthetical
+                  ? [
+                      {
+                        start: match.indices[authors][0],
+                        text: text.slice(match.indices[authors][0], match.indices[4][1])
+                      }
+                    ]
+                  : [])
+              ]
+            }
+          ]
+        })
+      )
+  const origins = matches(source),
+    reference = origins.find(({ parts }) =>
+      parts.some((part) => part.start === offset && part.text === label)
+    )
+  if (!reference) return undefined
+  const same = (part) => part.key === reference.key,
+    from = origins.filter(same),
+    to = matches(translation).filter(same),
+    which = reference.parts.findIndex((part) => part.start === offset && part.text === label)
+  return from.length === to.length ? to[from.indexOf(reference)].parts[which] : null
+}
+
+const spaceDatedCitation = new RegExp(
+  `([（(])\\s*(${authorName})(\\s+et\\s*al\\.|\\s*等人?)?\\s+([12]\\d{3}[a-z])\\s*年?\\s*([）)])`,
+  'gud'
+)
+
+// A linked year can follow a parenthetical author without punctuation.
+// Require the closed citation and exactly as many occurrences of that identity.
+export function translatedPdfSpaceDatedYear(source, translation, label, offset) {
+  if (!/^[12]\d{3}[a-z]$/u.test(label) || source.slice(offset, offset + label.length) !== label)
+    return undefined
+  const references = (text) =>
+    [...text.matchAll(spaceDatedCitation)].flatMap((match) =>
+      (match[1] === '(' ? match[5] !== ')' : match[5] !== '）')
+        ? []
+        : [
+            {
+              year: match[4],
+              offset: match.indices[4][0],
+              identity: JSON.stringify([
+                match[2].normalize('NFC').replace(/\s+/gu, ' '),
+                Boolean(match[3]),
+                match[4]
+              ])
+            }
+          ]
+    )
+  const origins = references(source)
+  const reference = origins.find((item) => item.offset === offset && item.year === label)
+  if (!reference) return undefined
+  const same = (item) => item.identity === reference.identity
+  const from = origins.filter(same)
+  const to = references(translation).filter(same)
+  return from.length === to.length
+    ? { start: to[from.indexOf(reference)].offset, text: label }
+    : null
+}
+
 // A line break can divide one author citation across two link rectangles. Map
 // only a literal slice of its unchanged full author name, optionally followed by
 // the entire localized collective-author marker. Hyphen glyph proof belongs to
 // the native writer: this helper accepts no control characters or invented name.
 export function translatedPdfLinkFragment(source, translation, label, offset) {
+  const collectiveDated = translatedCollectiveDatedFragment(source, translation, label, offset)
+  if (collectiveDated !== undefined) return collectiveDated
+  const spaceDated = translatedPdfSpaceDatedYear(source, translation, label, offset)
+  if (spaceDated !== undefined) return spaceDated
+  const commaDated = translatedPdfCommaDatedAuthorFragment(source, translation, label, offset)
+  if (commaDated !== undefined) return commaDated
   const supporting = supportingInformationFragment(source, translation, label, offset)
   if (supporting !== undefined) return supporting
   const bracketed = translatedPdfBracketedReference(source, translation, label, offset)
@@ -784,6 +1098,27 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
       return year ? { start: target.index + year.index, text: label } : null
     }
     return null
+  }
+  // A link can intersect the numeral and punctuation within a figure reference.
+  const figureTail = /^\.(\d+),$/u.exec(label)
+  if (figureTail) {
+    const reference = [...source.matchAll(labels)].find(
+      (match) =>
+        match[0] === 'Fig.' + figureTail[1] &&
+        match.index + 3 === offset &&
+        source.slice(offset, offset + label.length) === label
+    )
+    if (reference) {
+      const key = pdfLinkLabelKey(reference[0])
+      const unique = (value) =>
+        [...value.matchAll(labels)].filter((match) => pdfLinkLabelKey(match[0]) === key).length ===
+        1
+      if (!unique(source) || !unique(translation)) return null
+      const target = translatedPdfLinkLabel(source, translation, reference[0], reference.index)
+      return target && target.text.endsWith(figureTail[1])
+        ? { start: target.start + target.text.length - figureTail[1].length, text: figureTail[1] }
+        : null
+    }
   }
   // Caption links can include their terminal period. Prove the complete
   // numbered reference identity before moving the fragment; punctuation alone

@@ -53,7 +53,8 @@ import {
   net,
   powerMonitor,
   protocol,
-  session
+  session,
+  shell
 } from 'electron'
 import type { BaseWindow, MenuItem, MenuItemConstructorOptions, WebContents } from 'electron'
 import { dirname, join, resolve } from 'node:path'
@@ -79,6 +80,7 @@ import {
   installationRootForEntry
 } from './update/installation-protection'
 import { applyPreparedWindowsUpdate } from './update/windows-desktop-version'
+import { openSystemProcessManager } from './system-process-manager'
 import {
   discardPreparedMacInstallation,
   prepareSupervisedMacInstallation,
@@ -858,7 +860,8 @@ async function startDesktop(): Promise<void> {
     'update:cancel',
     'update:apply',
     'update:recheck',
-    'update:recover'
+    'update:recover',
+    'update:open-process-manager'
   ])
   const recoveryReadChannels = new Set([
     'sessions:list',
@@ -1961,7 +1964,9 @@ async function startDesktop(): Promise<void> {
         }
       : {})
   })
-  registerUpdateIpcHandlers(update, undefined, requireRecoveryFrame)
+  registerUpdateIpcHandlers(update, undefined, requireRecoveryFrame, () =>
+    openSystemProcessManager(process.platform, (path) => shell.openPath(path))
+  )
   const stopUpdates = startUpdateScheduler(
     update,
     undefined,

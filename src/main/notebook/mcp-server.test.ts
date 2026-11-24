@@ -584,7 +584,7 @@ describe('notebook MCP server config', () => {
     expect(names(true)).not.toEqual(expect.arrayContaining(['wsl_setup_activate']))
   })
 
-  it('publishes remember_memory with a root object output schema', async () => {
+  it('publishes object output schemas compatible with the default MCP dialect', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
@@ -601,9 +601,11 @@ describe('notebook MCP server config', () => {
 
     try {
       const { tools } = await client.listTools()
-      const rememberTool = tools.find(({ name }) => name === 'remember_memory')
-
-      expect(rememberTool?.outputSchema).toEqual(expect.objectContaining({ type: 'object' }))
+      for (const name of ['list_authorized_directories', 'remember_memory']) {
+        const schema = tools.find((tool) => tool.name === name)?.outputSchema
+        expect(schema).toMatchObject({ type: 'object' })
+        expect(schema).not.toHaveProperty('$schema')
+      }
     } finally {
       await client.close()
       await server.close()
@@ -3693,10 +3695,25 @@ describe('compactNotebookStateResult', () => {
     expect(parsed.recentRuns[1].recovery.guidance).toContain('not started')
   })
 
-  it('applies the state projection and smaller global budget to notebook_state', () => {
+  it('requests only the recent runs used by the notebook_state projection', async () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_state')
     expect(tool?.mapResult).toBe(compactNotebookStateResult)
     expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+    await callNotebookRpc(
+      {
+        endpoint: 'http://localhost',
+        token: 'token',
+        sessionId: 'session',
+        workspaceCwd: '/work',
+        projectId: 'project'
+      },
+      tool!.method,
+      {},
+      async (_endpoint, init) => {
+        expect(JSON.parse(String(init.body)).params.historyLimit).toBe(10)
+        return Response.json({ result: {} })
+      }
+    )
   })
 
   it('returns bounded recent metadata without duplicating the complete run history', () => {

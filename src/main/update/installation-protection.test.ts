@@ -36,7 +36,10 @@ import {
   installationStateDirectory,
   registerInstallationRuntime
 } from './installation-protection'
-import { protectInstallationStartup } from '../../../packages/open-science/installation-startup.cjs'
+import {
+  installationHelperFlags,
+  protectInstallationStartup
+} from '../../../packages/open-science/installation-startup.cjs'
 import {
   inspectInstallationProcesses,
   inspectInstallationProcessesAsync
@@ -219,15 +222,7 @@ it.each(['home', 'explicit', 'environment', 'e2e'] as const)(
         }
       )
     try {
-      for (const flag of [
-        '--internal-agent-acp',
-        '--open-science-artifact-mcp',
-        '--open-science-notebook-mcp',
-        '--open-science-reviewer-mcp-proxy',
-        '--open-science-skill-import-mcp',
-        '--open-science-skill-runtime-mcp',
-        '--open-science-plan-mcp'
-      ]) {
+      for (const flag of installationHelperFlags) {
         const result = launch(flag)
         expect(result.status, result.stderr).toBe(0)
         expect(JSON.parse(result.stdout).configRoot).toBe(f.runtime.configRoot)
@@ -330,7 +325,19 @@ describe('installation protection', () => {
       configRoot: 'other',
       generation: 'other'
     })
-    expect(() => beginInstallationUpdate(f.options)).toThrow('Another service')
+    let error: unknown
+    try {
+      beginInstallationUpdate(f.options)
+    } catch (caught) {
+      error = caught
+    }
+    expect(error).toMatchObject({
+      reason: 'installation-busy',
+      recovery: {
+        detail: 'other-runtime',
+        blockingProcesses: [expect.objectContaining({ pid: process.pid })]
+      }
+    })
     other.release()
     const record = beginInstallationUpdate(f.options)
     expect(() => registerInstallationRuntime({ ...f.location, ...f.runtime })).toThrow(
