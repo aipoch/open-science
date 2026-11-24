@@ -22,6 +22,7 @@ import {
 } from '../annotations/annotation-reveal'
 import { HighlightedCodeLines } from '../HighlightedCodeLines'
 import { SourcePreviewContent } from './renderers/SourcePreview'
+import { PdfSelectionTranslation } from './renderers/PdfSelectionTranslation'
 import { PreviewTextAnnotationSurface } from './PreviewTextAnnotationSurface'
 import { PdfAnnotationsProvider } from '../pdf-annotations/PdfAnnotationsProvider'
 import { BookmarksProvider } from '../bookmarks/BookmarksProvider'
@@ -264,6 +265,9 @@ describe('PreviewTextAnnotationSurface', () => {
     const surface = (
       <PreviewTextAnnotationSurface
         item={previewItem}
+        SelectionTranslation={
+          previewItem.source === 'literature' ? PdfSelectionTranslation : undefined
+        }
         annotationVersionId={annotationVersionId}
         annotationVersionPending={annotationVersionPending}
         activeAnnotations={activeAnnotations}
@@ -1072,6 +1076,45 @@ describe('PreviewTextAnnotationSurface', () => {
     expect(create).toHaveBeenCalledTimes(2)
     expect(create.mock.calls[1][0]).toEqual(original)
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('translates just the selected passage with the Main Agent and closes the operation on dismissal', async () => {
+    const begin = vi.fn().mockResolvedValue({ operationId: 'selected', targetKey: 'main' })
+    const close = vi.fn().mockResolvedValue(undefined)
+    let finish!: (value: string) => void
+    const translate = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve
+        })
+    )
+    window.api = {
+      ...window.api,
+      pdfTranslation: { begin, translate, close } as unknown as Window['api']['pdfTranslation']
+    }
+    await renderSurface({
+      previewItem: item({ format: 'pdf', source: 'literature' }),
+      sourcePageNumber: 1
+    })
+    await selectQuote()
+    expect(begin).not.toHaveBeenCalled()
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[data-selection-action="translate"]')!.click()
+    )
+    expect(begin).toHaveBeenCalledWith(
+      expect.objectContaining({ targetId: 'agent', sources: ['confidence intervals overlap'] })
+    )
+    expect(begin.mock.calls[0][0]).not.toHaveProperty('agentModel')
+    expect(begin.mock.calls[0][0]).not.toHaveProperty('documentSource')
+    expect(translate).toHaveBeenCalledWith({
+      operationId: 'selected',
+      sourceIndex: 0,
+      source: 'confidence intervals overlap'
+    })
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close' })))
+    await act(async () => finish('Late result'))
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Late result')).toBeNull()
   })
 
   it('records the owning PDF page with a selected quote', async () => {

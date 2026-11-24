@@ -135,6 +135,7 @@ import { usePdfAnnotations } from '../../pdf-annotations/pdf-annotations-context
 import { subscribePdfReadingReveal } from '../../pdf-reading-reveal'
 import { resolvePdfContextTarget } from '../../use-pdf-context-action'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PdfSelectionTranslation } from './PdfSelectionTranslation'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import {
@@ -2319,6 +2320,9 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       {annotationProps && isNearViewport ? (
         <PreviewTextAnnotationSurface
           {...annotationProps}
+          SelectionTranslation={
+            annotationProps.item.source === 'literature' ? PdfSelectionTranslation : undefined
+          }
           sourcePageNumber={pageNumber}
           pdfEvidenceSource={pdfEvidenceSource}
           pdfBookmarkSource={pdfBookmarkSource}
@@ -2519,7 +2523,11 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
   ])
 
   const currentState = documentState?.requestKey === resourceRequestKey ? documentState : null
-  const singlePage = currentState?.status === 'ready' && currentState.document.numPages === 1
+  const usesLiteratureReader = source === 'literature' && Boolean(props.annotationProps)
+  const singlePage =
+    !usesLiteratureReader &&
+    currentState?.status === 'ready' &&
+    currentState.document.numPages === 1
   const onReadingPositionChange = props.onReadingPositionChange
   useEffect(() => {
     if (singlePage) onReadingPositionChange?.({ pageNumber: 1, pageCount: 1 })
@@ -2528,7 +2536,7 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
   const [multiPageKey, setMultiPageKey] = useState<string>()
   if (
     currentState?.status === 'ready' &&
-    currentState.document.numPages > 1 &&
+    (currentState.document.numPages > 1 || usesLiteratureReader) &&
     multiPageKey !== requestKey
   )
     setMultiPageKey(requestKey)
@@ -2541,7 +2549,7 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
       />
     )
   }
-  if (currentState?.status === 'ready' && currentState.document.numPages === 1) {
+  if (singlePage) {
     return (
       <SinglePagePdfPreview
         key={resourceRequestKey}

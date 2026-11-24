@@ -126,6 +126,8 @@
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslatedPage.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslatedPage.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/PdfSelectionTranslation.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/pdf-translation-model-options.ts",
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationControls.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationGlossaryEditor.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfTranslationPreparation.test.tsx",
