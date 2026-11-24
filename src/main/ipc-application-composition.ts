@@ -109,6 +109,7 @@ import {
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
 import type { TrayNavigationSession } from './tray-navigation'
+import type { TaskResearchFilmPort } from './web-service/research-film-api'
 import { defaultOcrLanguagesForLocale } from '../shared/local-models'
 
 export type IpcRegistrationOptions = {
@@ -183,6 +184,7 @@ export type ApplicationRuntimeInterfaces = {
   ) => Promise<void>
   taskAgent: TaskAgentPort
   taskControls: TaskControlPorts
+  taskResearchFilms: TaskResearchFilmPort
   computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>
   sessionDeletionCapability: Pick<SessionDeletion, 'setSessionDeletionHandlers'>
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
@@ -1066,6 +1068,10 @@ export const createApplicationModules = async (
       )
     },
     taskAgent: agentWorkflows.taskAgent,
+    taskResearchFilms: {
+      ...researchFilm.researchVideoPresentation,
+      renderMp4: researchFilm.headlessFilmExport.render
+    },
     taskControls: {
       findSessionAfterCatalogHydration: (sessionId) =>
         withDataRootWrite(() => sessionProjection.findSessionAfterCatalogHydration(sessionId)),

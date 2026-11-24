@@ -31,8 +31,205 @@ const listProjects = async (): Promise<Array<{ id: string; name: string }>> => [
   { id: 'project-1', name: 'Research' }
 ]
 
+describe('Research Film CLI', () => {
+  const scopeArgs = ['session-1', '--project', 'Research', '--mode', 'research-explanation']
+
+  it.each([
+    ['status', ...scopeArgs, '--install-narration'],
+    ['status', ...scopeArgs, '--advisory-narration-review'],
+    ['start', ...scopeArgs, '--session', 'other-session'],
+    ['start', ...scopeArgs, '--mode', 'mp4'],
+    ['start', ...scopeArgs, '--mode', 'operation-replay', '--advisory-narration-review'],
+    ['revise', ...scopeArgs, '--feedback', 'Change this scene.'],
+    [
+      'revise',
+      ...scopeArgs,
+      '--attempt-id',
+      'attempt',
+      '--feedback',
+      'Change this scene.',
+      '--feedback-file',
+      'feedback.md'
+    ],
+    ['download', ...scopeArgs, '--output', 'film.html'],
+    ['download', ...scopeArgs, '--output', 'film.html', '--resolution', '1080p'],
+    ['export', ...scopeArgs, '--film-id', 'film-1'],
+    ['export', ...scopeArgs, '--film-id', 'film-1', '--output', 'film.mp4', '--resolution', '1440p']
+  ])('rejects incompatible or incomplete options for %s', (...argv) => {
+    expect(() => parseCliArgs(['film', ...argv])).toThrow(CliUsageError)
+  })
+
+  it('accepts the advisory narration compatibility flag for explanation generation and revision', async () => {
+    const client = {
+      listProjects,
+      startResearchFilm: vi.fn().mockResolvedValue({}),
+      reviseResearchFilm: vi.fn().mockResolvedValue({})
+    }
+    const run = (action: string, ...flags: string[]): ReturnType<typeof runTaskCommand> =>
+      runTaskCommand(
+        parseCliArgs(['film', action, ...scopeArgs, '--advisory-narration-review', ...flags]),
+        { connect: async () => client, log: vi.fn() }
+      )
+
+    await run('start')
+    await run('revise', '--attempt-id', 'attempt-1', '--feedback', 'Read the units aloud.')
+    const scope = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      mode: 'research-explanation',
+      narrationReview: 'advisory'
+    }
+    expect(client.startResearchFilm).toHaveBeenCalledWith(scope, undefined)
+    expect(client.reviseResearchFilm).toHaveBeenCalledWith(
+      { ...scope, attemptId: 'attempt-1', feedback: 'Read the units aloud.' },
+      undefined
+    )
+  })
+
+  it('starts a Film, passes user feedback for a specific review failure, and downloads the checked player', async () => {
+    const scope = { projectId: 'project-1', sessionId: 'session-1', mode: 'research-explanation' }
+    const branch = { ...scope, branchId: 'branch-1' }
+    const failed = {
+      branchId: 'branch-1',
+      reviewFailure: { attemptId: 'attempt-1', stage: 'visual', findings: ['Scene 2 overflows.'] }
+    }
+    const player = new Response('<!doctype html><title>Checked player</title>')
+    const client = {
+      listProjects,
+      startResearchFilm: vi.fn().mockResolvedValue({ branchId: branch.branchId }),
+      getResearchFilmStatus: vi.fn().mockResolvedValue(failed),
+      reviseResearchFilm: vi.fn().mockResolvedValue({ branchId: branch.branchId }),
+      cancelResearchFilm: vi.fn().mockResolvedValue({ branchId: branch.branchId }),
+      downloadResearchFilm: vi.fn().mockResolvedValue(player)
+    }
+    const log = vi.fn()
+    const readFile = vi.fn().mockResolvedValue('  Shorten the text in scene 2.\n')
+    const writeDownload = vi.fn().mockResolvedValue(undefined)
+    const deps = { connect: async () => client, log, readFile, writeDownload }
+    const run = (action: string, ...flags: string[]): ReturnType<typeof runTaskCommand> =>
+      runTaskCommand(parseCliArgs(['film', action, ...scopeArgs, '--json', ...flags]), deps)
+
+    await run('start', '--install-narration', '--timeout-ms', '5000')
+    expect(client.startResearchFilm).toHaveBeenCalledWith(
+      { ...scope, installNarration: true },
+      { timeoutMs: 5000 }
+    )
+    await run('status', '--branch', branch.branchId)
+    expect(client.getResearchFilmStatus).toHaveBeenCalledWith(branch, undefined)
+    expect(log).toHaveBeenLastCalledWith(JSON.stringify(failed))
+    await run(
+      'revise',
+      '--branch',
+      branch.branchId,
+      '--attempt-id',
+      'attempt-1',
+      '--feedback-file',
+      'feedback.md'
+    )
+    expect(readFile).toHaveBeenCalledWith('feedback.md')
+    expect(client.reviseResearchFilm).toHaveBeenCalledOnce()
+    expect(client.reviseResearchFilm).toHaveBeenCalledWith(
+      {
+        ...branch,
+        attemptId: 'attempt-1',
+        feedback: 'Shorten the text in scene 2.'
+      },
+      undefined
+    )
+    await run('cancel', '--branch', branch.branchId)
+    expect(client.cancelResearchFilm).toHaveBeenCalledWith(branch, undefined)
+    await run(
+      'download',
+      '--branch',
+      branch.branchId,
+      '--film-id',
+      'film-1',
+      '--output',
+      'film.html'
+    )
+    expect(client.downloadResearchFilm).toHaveBeenCalledWith(
+      { ...branch, filmId: 'film-1' },
+      { timeoutMs: 300_000 }
+    )
+    expect(writeDownload).toHaveBeenCalledWith(player, 'film.html')
+    expect(log).toHaveBeenLastCalledWith(
+      JSON.stringify({ filmId: 'film-1', output: resolve('film.html') })
+    )
+  })
+
+  it('exports a published film with the requested resolution and encoder installation consent', async () => {
+    const video = new Response(new Uint8Array([0, 1, 2, 3]))
+    const exportResearchFilm = vi.fn().mockResolvedValue(video)
+    const writeDownload = vi.fn().mockResolvedValue(undefined)
+    const log = vi.fn()
+    await runTaskCommand(
+      parseCliArgs([
+        'film',
+        'export',
+        ...scopeArgs,
+        '--branch',
+        'branch-1',
+        '--film-id',
+        'film-1',
+        '--output',
+        'film.mp4',
+        '--resolution',
+        '1080p',
+        '--install-export-tools',
+        '--timeout-ms',
+        '80000',
+        '--json'
+      ]),
+      { connect: async () => ({ listProjects, exportResearchFilm }), writeDownload, log }
+    )
+    expect(exportResearchFilm).toHaveBeenCalledExactlyOnceWith(
+      {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        branchId: 'branch-1',
+        mode: 'research-explanation',
+        filmId: 'film-1',
+        resolution: '1080p',
+        installExportTools: true
+      },
+      { timeoutMs: 80_000, signal: expect.any(AbortSignal) }
+    )
+    expect(writeDownload).toHaveBeenCalledExactlyOnceWith(video, 'film.mp4', {
+      signal: exportResearchFilm.mock.calls[0][1].signal
+    })
+    expect(log).toHaveBeenLastCalledWith(
+      JSON.stringify({ filmId: 'film-1', output: resolve('film.mp4') })
+    )
+  })
+
+  it('aborts the export request on Ctrl+C and removes its signal handler', async () => {
+    const started = Promise.withResolvers<void>()
+    const exportResearchFilm = vi.fn(
+      async (_request: unknown, { signal }: { signal: AbortSignal }) => {
+        return new Promise<Response>((_, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+          started.resolve()
+        })
+      }
+    )
+    const listenerCount = process.listenerCount('SIGINT')
+    const writeDownload = vi.fn()
+    const exporting = runTaskCommand(
+      parseCliArgs(['film', 'export', ...scopeArgs, '--film-id', 'film-1', '--output', 'film.mp4']),
+      { connect: async () => ({ listProjects, exportResearchFilm }), writeDownload, log: vi.fn() }
+    )
+    await started.promise
+    const cancelled = expect(exporting).rejects.toMatchObject({ code: 'cancelled', exitCode: 130 })
+    process.emit('SIGINT')
+    await cancelled
+    expect(exportResearchFilm.mock.calls[0][0]).not.toHaveProperty('installExportTools')
+    expect(writeDownload).not.toHaveBeenCalled()
+    expect(process.listenerCount('SIGINT')).toBe(listenerCount)
+  })
+})
+
 describe('CLI help', () => {
-  it.each([undefined, 'run', 'project', 'version', 'paths', 'mcp'])(
+  it.each([undefined, 'run', 'project', 'version', 'paths', 'mcp', 'film'])(
     'makes help %s equivalent to the help flag',
     async (command) => {
       const log = vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -2402,6 +2599,7 @@ describe('task CLI', () => {
       { code: 'session_not_found', exitCode: 4 },
       { code: 'run_not_found', exitCode: 4 },
       { code: 'artifact_not_found', exitCode: 4 },
+      { code: 'film_not_found', exitCode: 4 },
       { code: 'timeout', exitCode: 1 },
       { code: 'session_busy', exitCode: 1 },
       { code: 'command_failed', exitCode: 1 }

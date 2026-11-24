@@ -6,7 +6,11 @@ import { z } from 'zod'
 import type { FilmAuthoringCheckpoint, ResearchVideoSessionSource } from '@aipoch/research-film'
 import {
   researchFilmModeSchema,
-  type ResearchFilmMode
+  researchFilmNarrationReviewSchema,
+  researchFilmReviewFailureSchema,
+  researchFilmRevisionSchema,
+  type ResearchFilmMode,
+  type ResearchFilmNarrationReview
 } from '../../shared/research-video-presentation'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { hasResearchFilmOutputs, researchFilmReceiptSchema } from './stored-presentation'
@@ -22,10 +26,18 @@ const pendingFilmFields = {
   completed: z.number().int().nonnegative().optional(),
   total: z.number().int().positive().optional(),
   built: researchFilmReceiptSchema.optional(),
+  narrationReview: researchFilmNarrationReviewSchema.optional(),
   visualChecked: z.literal(true).optional(),
   outputFingerprint: z
     .string()
     .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+  reviewFailure: researchFilmReviewFailureSchema.optional(),
+  revision: researchFilmRevisionSchema
+    .extend({
+      findings: researchFilmReviewFailureSchema.shape.findings,
+      baseAttemptId: z.uuid().optional()
+    })
     .optional()
 }
 export const pendingFilmSchema = z.discriminatedUnion('version', [
@@ -33,6 +45,7 @@ export const pendingFilmSchema = z.discriminatedUnion('version', [
   z.object({ ...pendingFilmFields, version: z.literal(2), mode: researchFilmModeSchema }).strict()
 ])
 export type PendingFilm = z.infer<typeof pendingFilmSchema>
+export const PENDING_FILM_LIMIT_BYTES = 128 * 1024
 export const PENDING_FILM_OWNER = 'pending-owner.json'
 const identity = z.string().min(1).max(512)
 const ownerFields = {
@@ -43,7 +56,14 @@ const ownerFields = {
 }
 export const pendingFilmOwnerSchema = z.discriminatedUnion('version', [
   z.object({ ...ownerFields, version: z.literal(1), mode: z.undefined().optional() }).strict(),
-  z.object({ ...ownerFields, version: z.literal(2), mode: researchFilmModeSchema }).strict()
+  z
+    .object({
+      ...ownerFields,
+      version: z.literal(2),
+      mode: researchFilmModeSchema,
+      narrationReview: researchFilmNarrationReviewSchema.optional()
+    })
+    .strict()
 ])
 
 export function savePendingFilmOwner(
@@ -54,6 +74,7 @@ export function savePendingFilmOwner(
     sessionId: string
     branchId?: string
     mode?: ResearchFilmMode
+    narrationReview?: ResearchFilmNarrationReview
   }
 ): Promise<void> {
   return writeDurableJsonFile(
@@ -90,10 +111,12 @@ export async function readPendingFilm(base: string): Promise<PendingFilm | undef
   const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error
   })
-  if (!info?.isFile() || info.size > 4096) return undefined
+  if (!info?.isFile() || info.size > PENDING_FILM_LIMIT_BYTES) return undefined
   let parsed
   try {
-    parsed = pendingFilmSchema.safeParse(JSON.parse(await readFileWithinLimit(path, 4096)))
+    parsed = pendingFilmSchema.safeParse(
+      JSON.parse(await readFileWithinLimit(path, PENDING_FILM_LIMIT_BYTES))
+    )
   } catch (error) {
     if (error instanceof SyntaxError) return undefined
     throw error

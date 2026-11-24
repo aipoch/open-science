@@ -11,6 +11,21 @@ export const RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE = `Research film model request 
 
 export const researchFilmModeSchema = z.enum(['research-explanation', 'operation-replay'])
 export type ResearchFilmMode = z.infer<typeof researchFilmModeSchema>
+export const researchFilmNarrationReviewSchema = z.literal('advisory')
+export type ResearchFilmNarrationReview = z.infer<typeof researchFilmNarrationReviewSchema>
+
+export const researchFilmReviewFailureSchema = z.strictObject({
+  attemptId: z.uuid(),
+  stage: z.enum(['script', 'visual', 'replay']),
+  findings: z.array(z.string().min(1).max(500)).min(1).max(12)
+})
+export type ResearchFilmReviewFailure = z.infer<typeof researchFilmReviewFailureSchema>
+
+export const researchFilmRevisionSchema = z.strictObject({
+  attemptId: z.uuid(),
+  feedback: z.string().trim().min(1).max(4000)
+})
+export type ResearchFilmRevision = z.infer<typeof researchFilmRevisionSchema>
 
 export const researchVideoPresentationRequestSchema = z
   .object({
@@ -28,6 +43,13 @@ export const researchVideoStartRequestSchema = researchVideoPresentationRequestS
   installNarration: z.boolean().optional()
 })
 export type ResearchVideoStartRequest = z.infer<typeof researchVideoStartRequestSchema>
+export const researchVideoOwnerStartRequestSchema = researchVideoStartRequestSchema.extend({
+  revision: researchFilmRevisionSchema.optional(),
+  headless: z.boolean().optional(),
+  // Accepted for clients of the earlier opt-in policy. Narration scoring is always advisory.
+  narrationReview: researchFilmNarrationReviewSchema.optional()
+})
+export type ResearchVideoOwnerStartRequest = z.infer<typeof researchVideoOwnerStartRequestSchema>
 export const researchVideoStatusRequestSchema = researchVideoPresentationRequestSchema.extend({
   checkReadiness: z.boolean().optional()
 })
@@ -39,9 +61,13 @@ export type ResearchVideoPresentation = {
   sourcePath: string
   duration: number
   scriptScore?: number
+  narrationReview?: ResearchFilmNarrationReview
   sessionAppMode?: 'live' | 'drawn'
 }
 export type ResearchVideoPresentationStatus = {
+  branchId?: string
+  narrationReview?: ResearchFilmNarrationReview
+  reviewFailure?: ResearchFilmReviewFailure
   canResume?: boolean
   filmStep?: number
   narrationDownload?: LocalModelSnapshot

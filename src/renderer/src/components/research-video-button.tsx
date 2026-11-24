@@ -416,7 +416,9 @@ function ResearchVideoModeButton({
       {label}
     </button>
   )
-  const desktop = isDesktopRenderer()
+  // The film channels are projected into the Web renderer, so the capability decides whether the
+  // film controls can run — not the Electron shell (issue #4666).
+  const filmControls = isDesktopRenderer() || typeof window.api?.researchVideo?.start === 'function'
   const wasInstalling = useEffectEvent((target: ResearchFilmMode) => mode === target && installing)
   const watching = Object.values(statuses).some(filmInProgress)
   const pollingDelay = useEffectEvent((next: ResearchVideoPresentationStatus): number =>
@@ -432,7 +434,7 @@ function ResearchVideoModeButton({
     return true
   })
   useEffect(() => {
-    if (!desktop) return
+    if (!filmControls) return
     live.current = true
     let subscribed = true
     // Each mode can settle independently. A slow read for one film does not block the other.
@@ -480,7 +482,7 @@ function ResearchVideoModeButton({
       subscribed = false
       stopPolling.forEach((stop) => stop())
     }
-  }, [projectId, sessionId, viewedBranchId, desktop, open, watching])
+  }, [projectId, sessionId, viewedBranchId, filmControls, open, watching])
   const checkSelectedReadiness = useEffectEvent(() => {
     let current = true
     const version = ++statusVersion.current[mode]
@@ -503,9 +505,9 @@ function ResearchVideoModeButton({
     }
   })
   useEffect(() => {
-    if (open && desktop) return checkSelectedReadiness()
+    if (open && filmControls) return checkSelectedReadiness()
     return undefined
-  }, [open, desktop, viewedBranchId])
+  }, [open, filmControls, viewedBranchId])
   const selectMode = (next: ResearchFilmMode): void => {
     if (next === mode) return
     wasDeleting.current = false
@@ -632,7 +634,7 @@ function ResearchVideoModeButton({
     setMode(mode)
     setOpen(true)
   }
-  if (!desktop) return renderTrigger ? <>{renderTrigger(undefined, triggerState)}</> : null
+  if (!filmControls) return renderTrigger ? <>{renderTrigger(undefined, triggerState)}</> : null
   return (
     <>
       <span ref={triggerRef} className="contents">

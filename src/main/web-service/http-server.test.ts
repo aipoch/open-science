@@ -8,7 +8,7 @@ import { RemoteSessionPairingManager } from '../remote-access/pairing'
 import { RemoteAccessRepository } from '../remote-access/repository'
 import { requirePairingManager } from '../remote-access/ipc'
 import { remoteAccessApplicationCommandContracts } from '../../shared/remote-access'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { packWebAssets } from '../../../scripts/pack-web-assets.mjs'
 import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
@@ -28,6 +28,7 @@ vi.mock('electron', () => ({
 
 import { WEB_INVOKE_CHANNELS } from '../../shared/web-api-map.generated'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
+import type { ResearchVideoPresentationStatus } from '../../shared/research-video-presentation'
 import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
 import {
   isWebRpcChannel,
@@ -48,6 +49,8 @@ import {
   type RunningWebServer
 } from './http-server'
 import { HeadlessTaskApi, TaskApiError } from './task-api'
+import { createTaskResearchFilmApi, type TaskResearchFilmPort } from './research-film-api'
+import { ResearchFilmMp4Error } from '../research-video/headless-export'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createManagedPreviewOwnerRegistry } from '../managed-preview-ipc'
 import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
@@ -113,6 +116,293 @@ const accessOnlyExternalAccess = (
   kind: 'authorized' as const,
   principalId,
   isCurrent: () => true
+})
+
+it('exposes a local Film review and player workflow without exposing host paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-film-http-'))
+  roots.push(root)
+  const playerPath = join(root, 'player.html')
+  const html = '<!doctype html><title>Research Film</title>'
+  await writeFile(playerPath, html)
+  const mp4Path = join(root, 'fixture.mp4')
+  const mp4 = Buffer.from('verified-mp4-fixture')
+  await writeFile(mp4Path, mp4)
+  const filmId = '2de8caa6-e865-4e34-8a30-9b98ffac6d82'
+  const attemptId = 'bbf1c96c-45a7-47f4-97c7-8854bbe76e91'
+  const scope = {
+    projectId: 'project-1',
+    sessionId: 'session-1',
+    branchId: 'branch-1',
+    mode: 'research-explanation' as const
+  }
+  const reviewFailure = {
+    attemptId,
+    stage: 'visual' as const,
+    findings: ['Scene 2 overlaps its title.']
+  }
+  const result = { id: filmId, title: 'Film title', duration: 10, playerPath, sourcePath: root }
+  const start = vi.fn().mockResolvedValue({ branchId: scope.branchId, reviewFailure })
+  const status = vi.fn(
+    async (request: { branchId?: string }): Promise<ResearchVideoPresentationStatus> =>
+      request.branchId === undefined || request.branchId === scope.branchId
+        ? { branchId: scope.branchId, reviewFailure, result }
+        : { generationBlock: 'unavailable' }
+  )
+  const cancel = vi.fn()
+  const disposeMp4 = vi.fn()
+  const renderMp4 = vi.fn<NonNullable<TaskResearchFilmPort['renderMp4']>>(async (input) => {
+    expect(await input.player.readFile('utf8')).toBe(html)
+    const handle = await open(mp4Path)
+    return {
+      handle,
+      size: mp4.length,
+      async dispose() {
+        await handle.close()
+        disposeMp4()
+      }
+    }
+  })
+  const server = await startTestWebHttpServer({
+    host: '127.0.0.1',
+    port: 0,
+    token: 'test-token',
+    staticRoot: '/unused',
+    rpc: { channels: () => [], invoke: vi.fn() },
+    tasks: {
+      runWithCallerContext,
+      supportsSubmissions: () => true,
+      subscribeProgress: vi.fn(() => vi.fn()),
+      researchFilms: createTaskResearchFilmApi({ start, status, cancel, renderMp4 })
+    } as never,
+    externalAccess: {
+      authorizeHttp: async () => authorizedExternalAccess(),
+      authorizeWebSocket: async () => undefined
+    },
+    bootstrap: {
+      appName: 'Open-Science',
+      appVersion: '1.3.0',
+      configRoot: '/unused',
+      platform: 'test',
+      versions: { node: '24' }
+    }
+  })
+  servers.push(server)
+  const base = `http://127.0.0.1:${server.port}/api/v1/research-films/`
+  const headers = { authorization: 'Bearer test-token', 'content-type': 'application/json' }
+  const post = (action: string, body: unknown, local = true): Promise<Response> =>
+    fetch(base + action, {
+      method: 'POST',
+      headers: local ? headers : { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+
+  const bootstrap = new URL('/api/bootstrap', base)
+  const local = await (await fetch(bootstrap, { headers })).json()
+  expect(local.taskCapabilities).toEqual(
+    expect.arrayContaining([
+      'durable-submissions',
+      'run-otel-traces',
+      'research-film-html',
+      'research-film-mp4'
+    ])
+  )
+  const remote = await (await fetch(bootstrap)).json()
+  expect(remote.webCallerLocation).toBe('remote')
+  expect(remote.taskCapabilities).not.toContain('run-otel-traces')
+  expect(remote.taskCapabilities).not.toContain('research-film-html')
+  expect(remote.taskCapabilities).not.toContain('research-film-mp4')
+
+  expect((await post('start', scope, false)).status).toBe(403)
+  expect((await post('start', { ...scope, headless: false })).status).toBe(400)
+  expect(
+    (
+      await post('start', {
+        ...scope,
+        mode: 'operation-replay',
+        narrationReview: 'advisory'
+      })
+    ).status
+  ).toBe(400)
+  expect(start).not.toHaveBeenCalled()
+  const started = await post('start', scope)
+  expect(started.status).toBe(200)
+  expect(start).toHaveBeenLastCalledWith({ ...scope, headless: true })
+  expect(await started.json()).toEqual({
+    data: { branchId: scope.branchId, canResume: false, reviewFailure }
+  })
+  expect((await post('start', { ...scope, narrationReview: 'advisory' })).status).toBe(200)
+  expect(start).toHaveBeenLastCalledWith({
+    ...scope,
+    headless: true,
+    narrationReview: 'advisory'
+  })
+
+  const observed = await post('status', scope)
+  expect(await observed.json()).toEqual({
+    data: {
+      branchId: scope.branchId,
+      canResume: false,
+      reviewFailure,
+      result: { id: filmId, title: 'Film title', duration: 10 }
+    }
+  })
+  status.mockResolvedValueOnce({
+    preflightError: 'A research film is already generating.',
+    blockingSession: { projectId: 'project-2', sessionId: 'session-2' }
+  })
+  expect(await (await post('status', scope)).json()).toEqual({
+    data: { preflightError: 'A research film is already generating.' }
+  })
+  for (const path of [
+    "/srv/Open Science/Pat's research/missing figure.png",
+    String.raw`C:\Users\O'Connor\Open Science\missing figure.png`
+  ]) {
+    const privateStatus = {
+      error: `ENOENT: no such file or directory, realpath '${path}'`,
+      preflightError: `Could not read '${path}'. Check the source branch.`,
+      reviewFailure: {
+        ...reviewFailure,
+        findings: [
+          `Scene 1: layout clips the caption for '${path}'. Move it below the plot.`,
+          'Scene 2: use the title from images/results.png.'
+        ]
+      }
+    }
+    status.mockResolvedValueOnce(privateStatus)
+    expect(await (await post('status', scope)).json()).toEqual({
+      data: {
+        canResume: false,
+        error: 'ENOENT: no such file or directory, realpath <absolute-path>',
+        preflightError: 'Could not read <absolute-path>',
+        reviewFailure: {
+          ...reviewFailure,
+          findings: [
+            'Scene 1: layout clips the caption for <absolute-path>',
+            'Scene 2: use the title from images/results.png.'
+          ]
+        }
+      }
+    })
+    expect(privateStatus.error).toContain(path)
+    expect(privateStatus.reviewFailure.findings[0]).toContain(path)
+  }
+  status.mockResolvedValueOnce({
+    branchId: scope.branchId,
+    narrationReview: 'advisory',
+    result: { ...result, narrationReview: 'advisory', scriptScore: 0 }
+  })
+  const advisory = await post('status', scope)
+  expect(await advisory.json()).toEqual({
+    data: {
+      branchId: scope.branchId,
+      narrationReview: 'advisory',
+      result: {
+        id: filmId,
+        title: 'Film title',
+        duration: 10,
+        narrationReview: 'advisory',
+        scriptScore: 0
+      }
+    }
+  })
+  const feedback = 'Move the label below the plot.'
+  expect(
+    (await post('revise', { ...scope, attemptId, feedback, narrationReview: 'advisory' })).status
+  ).toBe(200)
+  expect(start).toHaveBeenLastCalledWith({
+    ...scope,
+    headless: true,
+    narrationReview: 'advisory',
+    revision: { attemptId, feedback }
+  })
+  const reviewPath = String.raw`\\service-host\private share\review.json`
+  const privateError = `A newer attempt exists at '${reviewPath}'. Read current status.`
+  const safeError = 'A newer attempt exists at <absolute-path>'
+  start.mockRejectedValueOnce(
+    Object.assign(new Error(privateError), { code: 'film_review_conflict' })
+  )
+  const stale = await post('revise', { ...scope, attemptId, feedback })
+  expect(stale.status).toBe(409)
+  expect(await stale.json()).toEqual({
+    error: { code: 'film_review_conflict', message: safeError }
+  })
+  status.mockRejectedValueOnce(new TaskApiError('invalid_configuration', privateError))
+  const invalid = await post('cancel', { ...scope, branchId: undefined })
+  expect(invalid.status).toBe(400)
+  expect(await invalid.json()).toEqual({
+    error: { code: 'invalid_configuration', message: safeError }
+  })
+  start.mockRejectedValueOnce(new Error(privateError))
+  const unexpected = await post('start', scope)
+  expect(unexpected.status).toBe(500)
+  const unexpectedError = await unexpected.json()
+  expect(unexpectedError).toMatchObject({ error: { code: 'internal_error' } })
+  expect(unexpectedError.error.message).not.toContain(reviewPath)
+  expect(cancel).not.toHaveBeenCalled()
+  expect((await post('cancel', { ...scope, branchId: undefined })).status).toBe(200)
+  expect(cancel).toHaveBeenCalledWith(scope)
+
+  const query = new URLSearchParams({ ...scope, filmId })
+  const player = await fetch(`${base}player?${query}`, { headers })
+  expect(player.status).toBe(200)
+  expect(player.headers.get('content-disposition')).toContain('attachment;')
+  expect(player.headers.get('content-security-policy')).toContain('sandbox')
+  expect(await player.text()).toBe(html)
+  query.set('filmId', attemptId)
+  expect((await fetch(`${base}player?${query}`, { headers })).status).toBe(404)
+  query.set('filmId', filmId)
+  query.set('branchId', 'unknown-branch')
+  expect((await fetch(`${base}player?${query}`, { headers })).status).toBe(404)
+
+  const client = new OpenScienceClient({ baseUrl: new URL(base).origin, token: 'test-token' })
+  expect(await client.getResearchFilmStatus(scope)).toMatchObject({ reviewFailure })
+  expect(await (await client.downloadResearchFilm({ ...scope, filmId })).text()).toBe(html)
+
+  const exportRequest = { ...scope, filmId }
+  expect((await post('export', exportRequest, false)).status).toBe(403)
+  expect((await post('export', { ...exportRequest, filmId: attemptId })).status).toBe(404)
+  expect((await post('export', { ...exportRequest, resolution: '1440p' })).status).toBe(400)
+  expect(renderMp4).not.toHaveBeenCalled()
+  const video = await client.exportResearchFilm(exportRequest)
+  expect(video.headers.get('content-type')).toBe('video/mp4')
+  expect(video.headers.get('content-disposition')).toContain('.mp4')
+  expect(Buffer.from(await video.arrayBuffer())).toEqual(mp4)
+  expect(renderMp4).toHaveBeenLastCalledWith(
+    {
+      player: expect.anything(),
+      size: Buffer.byteLength(html),
+      resolution: '720p',
+      installExportTools: false
+    },
+    expect.any(AbortSignal)
+  )
+  await vi.waitFor(() => expect(disposeMp4).toHaveBeenCalledOnce())
+
+  renderMp4.mockRejectedValueOnce(
+    new ResearchFilmMp4Error('film_export_tools_unavailable', 'FFmpeg is unavailable.')
+  )
+  const unavailable = await post('export', { ...exportRequest, installExportTools: true })
+  expect(unavailable.status).toBe(409)
+  expect(await unavailable.json()).toEqual({
+    error: { code: 'film_export_tools_unavailable', message: 'FFmpeg is unavailable.' }
+  })
+  expect(renderMp4.mock.lastCall?.[0].installExportTools).toBe(true)
+
+  const startedExport = Promise.withResolvers<void>()
+  const disconnected = Promise.withResolvers<void>()
+  renderMp4.mockImplementationOnce(async (_input, signal) => {
+    signal.addEventListener('abort', () => disconnected.resolve(), { once: true })
+    startedExport.resolve()
+    await disconnected.promise
+    throw signal.reason
+  })
+  const controller = new AbortController()
+  const pending = client.exportResearchFilm(exportRequest, { signal: controller.signal })
+  const rejection = expect(pending).rejects.toBeDefined()
+  await startedExport.promise
+  controller.abort()
+  await rejection
+  await disconnected.promise
 })
 const startBudgetTestServer = async (
   requestBodyBudgets: NonNullable<Parameters<typeof startWebHttpServer>[0]['requestBodyBudgets']>,

@@ -78,9 +78,11 @@ import {
 import { authenticateRequest, persistAuthCookie } from './auth'
 import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
+import type { TaskResearchFilmDownload } from './research-film-api'
 import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
+const RESEARCH_FILM_ROUTE = '/api/v1/research-films/'
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
 // for other authenticated clients. Browser uploads use much smaller 8 MiB chunks in normal use.
 const MAX_CLIENT_IN_FLIGHT_RPC_BODY_BYTES = 64 * 1024 * 1024
@@ -200,6 +202,7 @@ type WebServerOptions = {
         | 'bootstrap'
         | 'installCli'
         | 'listRuntimes'
+        | 'researchFilms'
       >
     >
   waitUntilTasksReady?: () => Promise<void>
@@ -616,11 +619,16 @@ const readJsonBody = async (
 
 const taskErrorStatus = (error: TaskApiError): number => {
   if (error.code === 'submission_unavailable') return 503
+  if (error.code === 'unsupported_capability') return 501
+  if (error.code === 'film_export_failed') return 500
   if (error.code === 'submission_conflict' || error.code === 'session_read_only') return 409
   if (error.code === 'invalid_request') return 400
   if (error.code === 'invalid_configuration') return 400
   if (
     error.code === 'session_busy' ||
+    error.code === 'film_busy' ||
+    error.code === 'film_export_tools_unavailable' ||
+    error.code === 'film_review_conflict' ||
     error.code === 'session_revision_conflict' ||
     error.code === 'project_conflict' ||
     error.code === 'session_archived' ||
@@ -1016,6 +1024,28 @@ const artifactContentResponseOverrides = (
   }
 }
 
+const streamFilmDownload = async (
+  response: ServerResponse,
+  film: TaskResearchFilmDownload,
+  contentType: 'text/html; charset=utf-8' | 'video/mp4'
+): Promise<true> => {
+  try {
+    if (response.destroyed) return true
+    response.writeHead(200, {
+      'cache-control': 'no-store',
+      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(film.filename)}`,
+      'content-length': film.size,
+      'content-security-policy': "sandbox; default-src 'none'",
+      'content-type': contentType,
+      'x-content-type-options': 'nosniff'
+    })
+    await pipeline(film.handle.createReadStream(), response)
+    return true
+  } finally {
+    await film.dispose()
+  }
+}
+
 const handleTaskApiRequest = async (
   request: IncomingMessage,
   response: ServerResponse,
@@ -1037,6 +1067,55 @@ const handleTaskApiRequest = async (
     }
     try {
       await waitUntilTasksReady?.()
+      if (url.pathname.startsWith(RESEARCH_FILM_ROUTE)) {
+        const films = tasks.researchFilms
+        if (!films)
+          throw new TaskApiError('unsupported_capability', 'Research Film is unavailable.')
+        const action = url.pathname.slice(RESEARCH_FILM_ROUTE.length)
+        if (action === 'player' && request.method === 'GET') {
+          const player = await films.openPlayer(Object.fromEntries(url.searchParams))
+          return await streamFilmDownload(response, player, 'text/html; charset=utf-8')
+        }
+        if (action === 'export' && request.method === 'POST') {
+          if (!films.openMp4)
+            throw new TaskApiError(
+              'unsupported_capability',
+              'Research Film MP4 export is unavailable.'
+            )
+          const controller = new AbortController()
+          const disconnect = (): void => {
+            if (!response.writableFinished)
+              controller.abort(new Error('Film download disconnected.'))
+          }
+          response.once('close', disconnect)
+          try {
+            if (response.destroyed) return true
+            const body = await readJsonBody(
+              request,
+              response,
+              requestBodyBudgetRegistry,
+              requestBodyClientId
+            )
+            const film = await films.openMp4(body, controller.signal)
+            return await streamFilmDownload(response, film, 'video/mp4')
+          } finally {
+            response.off('close', disconnect)
+          }
+        }
+        if (
+          request.method === 'POST' &&
+          (action === 'start' || action === 'status' || action === 'revise' || action === 'cancel')
+        ) {
+          const body = await readJsonBody(
+            request,
+            response,
+            requestBodyBudgetRegistry,
+            requestBodyClientId
+          )
+          reply(200, { data: await films[action](body) })
+          return true
+        }
+      }
       if (url.pathname === '/api/v1/doctor' && request.method === 'GET' && tasks.doctor) {
         assertExternalAuthorizationCurrent(externalAuthorization)
         const data = await tasks.doctor()
@@ -1630,6 +1709,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                 'permission-prompts-none',
                 ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
                   ? ['durable-submissions', 'run-otel-traces']
+                  : []),
+                ...(auth.localBearer && options.tasks.researchFilms ? ['research-film-html'] : []),
+                ...(auth.localBearer && options.tasks.researchFilms?.openMp4
+                  ? ['research-film-mp4']
                   : [])
               ]
             : [],
@@ -1665,6 +1748,16 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       if (url.pathname.startsWith('/api/v1/')) {
+        if (url.pathname.startsWith(RESEARCH_FILM_ROUTE) && !auth.localBearer) {
+          if (!request.complete) closeRequestAfterResponse(request, response)
+          json(response, 403, {
+            error: {
+              code: 'local_connection_required',
+              message: 'Research Film Task API calls require local bearer authentication.'
+            }
+          })
+          return
+        }
         if (options.tasks) {
           let lease: WebClientLease
           try {

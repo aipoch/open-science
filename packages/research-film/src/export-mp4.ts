@@ -93,6 +93,17 @@ export async function exportResearchVideoMp4(options: {
         '1:a:0',
         '-c:v',
         'libx264',
+        // Explicit high-compression profile (issue #4666). The encoder defaults (CRF 23, preset
+        // medium) oversize flat animation, and the narration is single-channel speech that gains
+        // nothing from 48 kHz stereo. CRF 28 with preset slow and the animation tune keeps the
+        // shared MP4 compact at a size that stays readable for line art and captions; the audio
+        // track is mono 48 kHz at 64 kbit/s instead of the ~128 kbit/s stereo default.
+        '-preset',
+        'slow',
+        '-tune',
+        'animation',
+        '-crf',
+        '28',
         '-pix_fmt',
         'yuv420p',
         '-c:a',
@@ -100,7 +111,9 @@ export async function exportResearchVideoMp4(options: {
         '-ar',
         '48000',
         '-ac',
-        '2',
+        '1',
+        '-b:a',
+        '64k',
         '-t',
         String(frames / 30),
         '-movflags',
@@ -205,7 +218,7 @@ export async function exportResearchVideoMp4(options: {
       video.height !== height ||
       audio?.codec_name !== 'aac' ||
       audio.sample_rate !== '48000' ||
-      audio.channels !== 2 ||
+      audio.channels !== 1 ||
       !Number.isFinite(Number(metadata.format.duration)) ||
       Math.abs(Number(metadata.format.duration) - frames / 30) > 0.1
     )

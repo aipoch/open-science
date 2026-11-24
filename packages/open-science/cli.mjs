@@ -87,6 +87,12 @@ Commands:
   plan revise <session-id> --feedback <text>
   artifacts list <session-id>
   artifacts download <artifact-id> --output <path>
+  film start <session-id> --project <id-or-name> --mode <mode> [--install-narration] [--resume] [--advisory-narration-review]
+  film status <session-id> --project <id-or-name> --mode <mode>
+  film revise <session-id> --project <id-or-name> --mode <mode> --attempt-id <id> (--feedback <text> | --feedback-file <path>) [--advisory-narration-review]
+  film cancel <session-id> --project <id-or-name> --mode <mode>
+  film download <session-id> --project <id-or-name> --mode <mode> --film-id <id> --output <path>
+  film export <session-id> --project <id-or-name> --mode <mode> --film-id <id> --output <path> [--resolution <resolution>] [--install-export-tools]
   literature search [query] [--project <id-or-name>] [--limit <n>] [--offset <n>]
   literature show <item-id>
   literature styles
@@ -139,8 +145,18 @@ Options:
   --request-id <id>      Stable submission identity for lookup and safe retries
   --wait                 Wait for the run to finish
   --return-on-attention  With --wait, return when the Plan needs approval
-  --timeout-ms <ms>      Bound startup, run waiting, or package transfer time
-  --output <path>        Destination path (session export, artifacts download)
+  --timeout-ms <ms>      Bound startup, run waiting, package transfer, or a film request
+  --output <path>        Destination path (session export, artifacts download, film download or export)
+  --mode <mode>          Film mode: research-explanation or operation-replay
+  --branch <id>          Conversation branch (film commands; defaults to the active branch)
+  --install-narration    Explicitly allow installation of the local narration model (film start)
+  --resume               Continue an interrupted Film attempt (film start)
+  --advisory-narration-review  Compatibility flag for default advisory scoring (research explanation only)
+  --attempt-id <id>      Review failure attempt to revise (film revise)
+  --feedback-file <path> Read revision feedback from a UTF-8 file (film revise)
+  --film-id <id>         Published Film ID (film download or export)
+  --resolution <value>  MP4 resolution: 720p (default), 1080p, or 4k (film export)
+  --install-export-tools  Explicitly allow installation of FFmpeg and ffprobe (film export)
   --style <style-id>     Citation style (literature format)
   --locale <locale>      Citation locale: en-US (default) or zh-CN (literature format)
   --limit <n>            Page size, 1-100 (literature search)
@@ -213,6 +229,35 @@ const VALUE_OPTIONS = {
   '--parent': 'parent'
 }
 
+const FILM_VALUE_OPTIONS = {
+  '--mode': 'filmMode',
+  '--branch': 'branchId',
+  '--attempt-id': 'attemptId',
+  '--feedback-file': 'feedbackFile',
+  '--film-id': 'filmId',
+  '--resolution': 'filmResolution'
+}
+
+const FILM_SHARED_OPTIONS = [
+  '--project',
+  '--mode',
+  '--branch',
+  '--timeout-ms',
+  '--json',
+  '--config-root',
+  '--profile',
+  '--help',
+  '-h'
+]
+const FILM_ACTION_OPTIONS = new Map([
+  ['start', ['--install-narration', '--resume', '--advisory-narration-review']],
+  ['status', []],
+  ['revise', ['--attempt-id', '--feedback', '--feedback-file', '--advisory-narration-review']],
+  ['cancel', []],
+  ['download', ['--film-id', '--output']],
+  ['export', ['--film-id', '--output', '--resolution', '--install-export-tools']]
+])
+
 const TASK_COMMANDS = new Set([
   'doctor',
   'runtime',
@@ -222,6 +267,7 @@ const TASK_COMMANDS = new Set([
   'settings',
   'plan',
   'artifacts',
+  'film',
   'literature',
   'connector',
   'credential',
@@ -237,6 +283,7 @@ const GROUP_COMMANDS = new Set([
   'settings',
   'plan',
   'artifacts',
+  'film',
   'literature',
   'connector',
   'credential',
@@ -292,6 +339,12 @@ const POSITIONAL_LIMITS = new Map([
   ['plan revise', 1],
   ['artifacts list', 1],
   ['artifacts download', 1],
+  ['film start', 1],
+  ['film status', 1],
+  ['film revise', 1],
+  ['film cancel', 1],
+  ['film download', 1],
+  ['film export', 1],
   ['literature show', 1],
   ['literature styles', 0],
   ['literature lookup', 1],
@@ -353,13 +406,28 @@ export const parseCliArgs = (argv) => {
     ...(TASK_COMMANDS.has(command) ? { jsonl: false } : {}),
     ...(command === 'run' ? { wait: subcommand === 'wait' } : {})
   }
+  const filmOptions =
+    command === 'film'
+      ? new Set([...FILM_SHARED_OPTIONS, ...(FILM_ACTION_OPTIONS.get(subcommand) ?? [])])
+      : undefined
+  const valueOptions = filmOptions ? { ...VALUE_OPTIONS, ...FILM_VALUE_OPTIONS } : VALUE_OPTIONS
   const positionals = []
   while (args.length > 0) {
     const arg = args.shift()
     if (localOptions && arg.startsWith('-') && !localOptions.includes(arg)) {
       throw new CliUsageError(`Unknown option for ${command}: ${arg}`)
     }
-    if (arg.startsWith('--credential-store=')) {
+    if (filmOptions && arg.startsWith('-') && !filmOptions.has(arg)) {
+      throw new CliUsageError(
+        `Unknown option for film${subcommand ? ` ${subcommand}` : ''}: ${arg}`
+      )
+    }
+    if (filmOptions && arg === '--install-narration') options.installNarration = true
+    else if (filmOptions && arg === '--install-export-tools') options.installExportTools = true
+    else if (filmOptions && arg === '--resume') options.resume = true
+    else if (filmOptions && arg === '--advisory-narration-review')
+      options.narrationReview = 'advisory'
+    else if (arg.startsWith('--credential-store=')) {
       if (options.credentialStore !== undefined)
         throw new CliUsageError('Specify --credential-store only once.')
       options.credentialStore = arg.slice('--credential-store='.length)
@@ -421,12 +489,12 @@ export const parseCliArgs = (argv) => {
       if (!value) throw new CliUsageError('--enable-compute-host requires a value.')
       options.enabledComputeHosts = [...(options.enabledComputeHosts ?? []), value]
     } else if (arg === '-h' || arg === '--help') options.help = true
-    else if (Object.hasOwn(VALUE_OPTIONS, arg)) {
+    else if (Object.hasOwn(valueOptions, arg)) {
       const value = args.shift()
       if (!value) throw new CliUsageError(`${arg} requires a value.`)
       if (arg === '--credential-store' && options.credentialStore !== undefined)
         throw new CliUsageError('Specify --credential-store only once.')
-      options[VALUE_OPTIONS[arg]] = value
+      options[valueOptions[arg]] = value
     } else if (arg.startsWith('-') && arg !== '-') {
       throw new CliUsageError(`Unknown option: ${arg}`)
     } else {
@@ -463,6 +531,39 @@ export const parseCliArgs = (argv) => {
       throw new CliUsageError(`Invalid timeout: ${options.timeoutMs}`)
     }
     options.timeoutMs = timeoutMs
+  }
+  if (filmOptions) {
+    if (!FILM_ACTION_OPTIONS.has(subcommand))
+      throw new CliUsageError('Use film start, status, revise, cancel, download, or export.')
+    assertPositionalLimit(command, subcommand, positionals)
+    if (!positionals[0]?.trim() || !options.project?.trim())
+      throw new CliUsageError('Film commands require a session ID and --project.')
+    if (!['research-explanation', 'operation-replay'].includes(options.filmMode))
+      throw new CliUsageError('--mode must be research-explanation or operation-replay.')
+    if (options.narrationReview && options.filmMode !== 'research-explanation')
+      throw new CliUsageError('--advisory-narration-review requires --mode research-explanation.')
+    if (options.branchId !== undefined && !options.branchId.trim())
+      throw new CliUsageError('--branch requires a non-empty branch ID.')
+    if (
+      subcommand === 'revise' &&
+      (!options.attemptId?.trim() || Boolean(options.feedback) === Boolean(options.feedbackFile))
+    ) {
+      throw new CliUsageError(
+        'Film revision requires --attempt-id and exactly one feedback source.'
+      )
+    }
+    if (
+      (subcommand === 'download' || subcommand === 'export') &&
+      (!options.filmId?.trim() || !options.output?.trim())
+    ) {
+      throw new CliUsageError(`Film ${subcommand} requires --film-id and --output.`)
+    }
+    if (
+      options.filmResolution !== undefined &&
+      !['720p', '1080p', '4k'].includes(options.filmResolution)
+    )
+      throw new CliUsageError('--resolution must be 720p, 1080p, or 4k.')
+    return parsed
   }
   if (options.revision !== undefined) {
     const revision = Number(options.revision)
@@ -1339,7 +1440,7 @@ const resolveDownloadOutput = async (output) => {
   throw new Error(`Too many symbolic links in artifact output: ${output}`)
 }
 
-const writeDownload = async (response, output) => {
+const writeDownload = async (response, output, { signal } = {}) => {
   if (!response.body) throw new Error('Artifact download returned no data.')
   const destination = await resolveDownloadOutput(output)
   const existingMode = await stat(destination).then(
@@ -1356,9 +1457,11 @@ const writeDownload = async (response, output) => {
       createWriteStream(temporaryOutput, {
         flags: 'wx',
         ...(existingMode === undefined ? {} : { mode: existingMode })
-      })
+      }),
+      { signal }
     )
     if (existingMode !== undefined) await chmod(temporaryOutput, existingMode)
+    signal?.throwIfAborted()
     await rename(temporaryOutput, destination)
   } finally {
     await rm(temporaryOutput, { force: true }).catch(() => undefined)
@@ -2019,6 +2122,97 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
     outputValue({ artifactId, output: resolve(options.output) }, options, deps)
     return
   }
+  if (command === 'film') {
+    const project = await resolveCliProject(client, options.project)
+    const scope = {
+      projectId: project.id,
+      sessionId: positionals[0],
+      ...(options.branchId === undefined ? {} : { branchId: options.branchId }),
+      mode: options.filmMode
+    }
+    const requestOptions =
+      options.timeoutMs === undefined ? undefined : { timeoutMs: options.timeoutMs }
+    let result
+    switch (subcommand) {
+      case 'start':
+        result = await client.startResearchFilm(
+          {
+            ...scope,
+            ...(options.installNarration ? { installNarration: true } : {}),
+            ...(options.resume ? { resume: true } : {}),
+            ...(options.narrationReview ? { narrationReview: options.narrationReview } : {})
+          },
+          requestOptions
+        )
+        break
+      case 'status':
+        result = await client.getResearchFilmStatus(scope, requestOptions)
+        break
+      case 'revise': {
+        const feedback = (options.feedback ?? (await deps.readFile(options.feedbackFile))).trim()
+        if (!feedback) throw new CliUsageError('Film revision feedback must not be empty.')
+        result = await client.reviseResearchFilm(
+          {
+            ...scope,
+            attemptId: options.attemptId,
+            feedback,
+            ...(options.narrationReview ? { narrationReview: options.narrationReview } : {})
+          },
+          requestOptions
+        )
+        break
+      }
+      case 'cancel':
+        result = await client.cancelResearchFilm(scope, requestOptions)
+        break
+      case 'download': {
+        const response = await client.downloadResearchFilm(
+          { ...scope, filmId: options.filmId },
+          {
+            timeoutMs: options.timeoutMs ?? ARTIFACT_DOWNLOAD_TIMEOUT_MS
+          }
+        )
+        await deps.writeDownload(response, options.output)
+        result = { filmId: options.filmId, output: resolve(options.output) }
+        break
+      }
+      case 'export': {
+        const controller = new AbortController()
+        const interrupt = () =>
+          controller.abort(
+            Object.assign(new Error('Film export cancelled.'), {
+              code: 'cancelled',
+              exitCode: 130
+            })
+          )
+        process.once('SIGINT', interrupt)
+        try {
+          const response = await client.exportResearchFilm(
+            {
+              ...scope,
+              filmId: options.filmId,
+              ...(options.filmResolution === undefined
+                ? {}
+                : { resolution: options.filmResolution }),
+              ...(options.installExportTools ? { installExportTools: true } : {})
+            },
+            { ...requestOptions, signal: controller.signal }
+          )
+          await deps.writeDownload(response, options.output, { signal: controller.signal })
+          result = { filmId: options.filmId, output: resolve(options.output) }
+        } catch (error) {
+          controller.signal.throwIfAborted()
+          controller.abort()
+          throw error
+        } finally {
+          process.off('SIGINT', interrupt)
+        }
+        break
+      }
+    }
+    deps.log(JSON.stringify(result, null, options.json ? undefined : 2))
+    return
+  }
   if (command === 'literature' && subcommand === 'search') {
     const query = positionals.join(' ').trim()
     const page = await client.searchLiterature({
@@ -2415,6 +2609,7 @@ export const reportCliError = (error, argv = process.argv.slice(2), dependencies
             'session_not_found',
             'run_not_found',
             'artifact_not_found',
+            'film_not_found',
             'literature_item_not_found'
           ].includes(code) || code === 'specialist_not_found'
         ? 4

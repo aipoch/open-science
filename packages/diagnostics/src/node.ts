@@ -34,5 +34,5 @@ export {
   runtimeChildProcessErrorFields
 } from './process-diagnostics'
 export type { BoundedRuntimeDiagnostic, RuntimeDiagnosticLogger } from './process-diagnostics'
-export { buildStartupDiagnostics } from './startup-error'
+export { buildStartupDiagnostics, redactAbsoluteDiagnosticPaths } from './startup-error'
 export type { StartupDiagnosticsOptions } from './startup-error'

@@ -373,12 +373,19 @@ describe('application command composition', () => {
     expect(composition.localWeb.commandNames()).toEqual(expectedLocalWebCommands())
   })
 
-  it('keeps research film generation and export desktop-only without conversation progress', async () => {
+  it('keeps MP4 export desktop-only while the Web surfaces generate films without conversation progress', async () => {
     const composition = createApplicationCommandComposition(dependencies())
     for (const name of [
       'preview-resources:export-research-video',
       'preview-resources:cancel-research-video-export',
-      'preview-resources:research-video-progress',
+      'preview-resources:research-video-progress'
+    ]) {
+      expect(composition.desktop.commandNames()).toContain(name)
+      expect(composition.localWeb.commandNames()).not.toContain(name)
+      expect(composition.remoteWeb.commandNames()).not.toContain(name)
+      expect(composition.task.commandNames()).not.toContain(name)
+    }
+    for (const name of [
       'research-video:active-sessions',
       'research-video:start',
       'research-video:status',
@@ -386,8 +393,8 @@ describe('application command composition', () => {
       'research-video:cancel'
     ]) {
       expect(composition.desktop.commandNames()).toContain(name)
-      expect(composition.localWeb.commandNames()).not.toContain(name)
-      expect(composition.remoteWeb.commandNames()).not.toContain(name)
+      expect(composition.localWeb.commandNames()).toContain(name)
+      expect(composition.remoteWeb.commandNames()).toContain(name)
       expect(composition.task.commandNames()).not.toContain(name)
     }
     for (const surface of [
