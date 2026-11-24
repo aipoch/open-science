@@ -892,6 +892,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       }
       if (terminalReceipt) {
         expect(loadNotebookState).not.toHaveBeenCalled()
+        expect(runFigure).not.toHaveBeenCalled()
         const chip = container.querySelector<HTMLButtonElement>('[data-testid="tool-chip"]')!
         loadNotebookState.mockRejectedValueOnce(new Error('Temporarily unavailable'))
         await act(async () => chip.click())
@@ -909,7 +910,10 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           [historicalRuns[0].runId],
           [historicalRuns[0].runId]
         ])
-        expect(runFigure).not.toHaveBeenCalled()
+        expect(
+          container.querySelector('[data-testid="notebook-tool-figure-image"]')?.getAttribute('src')
+        ).toBe('data:image/png;base64,QUJD')
+        expect(runFigure).toHaveBeenCalledOnce()
         const figure = container.querySelector<HTMLButtonElement>(
           '[data-testid="notebook-tool-figure-button"]'
         )!
