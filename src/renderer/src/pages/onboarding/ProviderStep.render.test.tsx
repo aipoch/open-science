@@ -1479,4 +1479,16 @@ describe('ProviderStep', () => {
     expect(footerRule).not.toContain('margin-top: auto;')
     expect(readyActionsRule).toContain('margin-top: auto;')
   })
+
+  it('sizes the quick-connect popup to content before capping overflow', () => {
+    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
+    const quickConnectRule = css.match(/\.onboarding-quick-connect \{[\s\S]*?\n\}/)?.[0]
+    const quickFeedbackRule = css.match(/\.onboarding-quick-feedback \{[\s\S]*?\n\}/)?.[0]
+
+    expect(quickConnectRule).toBeDefined()
+    expect(quickFeedbackRule).toBeDefined()
+    expect(quickConnectRule).toContain('max-height: inherit;')
+    expect(quickConnectRule).not.toMatch(/^\s*(?:min-)?height:/m)
+    expect(quickFeedbackRule).toContain('overflow-y: auto;')
+  })
 })

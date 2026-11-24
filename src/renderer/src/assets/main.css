@@ -445,17 +445,19 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 .onboarding-quick-connect,
 .onboarding-ready {
   display: flex;
-  min-height: min(760px, calc(100svh - 1.5rem));
   flex-direction: column;
   padding: 2rem 2.5rem 1.5rem;
 }
 
+.onboarding-ready {
+  min-height: min(760px, calc(100svh - 1.5rem));
+}
+
 .onboarding-quick-connect {
-  height: min(840px, calc(100svh - 1.5rem));
+  max-height: inherit;
 }
 .onboarding-quick-feedback {
   display: flex;
-  flex: 1;
   min-height: 0;
   flex-direction: column;
   gap: 0.5rem;
@@ -1096,8 +1098,11 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   .onboarding-welcome,
   .onboarding-quick-connect,
   .onboarding-ready {
-    min-height: calc(100svh - 1rem);
     padding: 1.35rem 1.15rem 1.15rem;
+  }
+  .onboarding-welcome,
+  .onboarding-ready {
+    min-height: calc(100svh - 1rem);
   }
   .onboarding-welcome-art {
     height: 18rem;
