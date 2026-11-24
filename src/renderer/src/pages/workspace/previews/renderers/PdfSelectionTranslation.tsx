@@ -6,6 +6,15 @@ import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { PopoverContent } from '@/components/ui/popover'
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
+import {
   defaultTargetLanguage,
   useAgentModels,
   useAvailableApiModels
@@ -97,6 +106,7 @@ export function PdfSelectionTranslation({
 }): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const catalog = useAgentModels()
+  const agentModels = catalog.models.filter((entry) => entry.selectable)
   const apiModels = useAvailableApiModels()
   const [selected, setSelected] = useState({ key: 'main', model: mainModel })
   const [attempt, setAttempt] = useState(0)
@@ -110,15 +120,10 @@ export function PdfSelectionTranslation({
     >
       <div className="flex items-center gap-2 text-muted-foreground">
         <Languages aria-hidden="true" className="size-4 shrink-0" />
-        <select
-          aria-label={t('Model')}
-          className="min-w-0 flex-1 rounded bg-transparent py-1 text-xs focus-visible:ring-2 focus-visible:ring-ring"
+        <Select
           value={selected.key}
-          onChange={(event) => {
-            const key = event.target.value
-            const agent = catalog.models.find(
-              (entry) => 'agent:' + entry.key === key && entry.selectable
-            )
+          onValueChange={(key) => {
+            const agent = agentModels.find((entry) => 'agent:' + entry.key === key)
             const api = apiModels.find((entry) => 'api:' + entry.key === key)
             setSelected({
               key,
@@ -141,24 +146,33 @@ export function PdfSelectionTranslation({
             })
           }}
         >
-          <option value="main">{t('Main model')}</option>
-          <optgroup label={t('Agent')}>
-            {catalog.models
-              .filter((entry) => entry.selectable)
-              .map((entry) => (
-                <option key={entry.key} value={'agent:' + entry.key}>
-                  {entry.providerName} · {entry.label}
-                </option>
-              ))}
-          </optgroup>
-          <optgroup label={t('Direct API')}>
-            {apiModels.map((entry) => (
-              <option key={entry.key} value={'api:' + entry.key}>
-                {entry.providerName} · {entry.label}
-              </option>
-            ))}
-          </optgroup>
-        </select>
+          <SelectTrigger aria-label={t('Model')} className="h-7 min-w-0 flex-1 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="z-[120]" onEscapeKeyDown={(event) => event.stopPropagation()}>
+            <SelectItem value="main">{t('Main model')}</SelectItem>
+            {agentModels.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>{t('Agent')}</SelectLabel>
+                {agentModels.map((entry) => (
+                  <SelectItem key={entry.key} value={'agent:' + entry.key}>
+                    {entry.providerName} · {entry.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
+            {apiModels.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>{t('Direct API')}</SelectLabel>
+                {apiModels.map((entry) => (
+                  <SelectItem key={entry.key} value={'api:' + entry.key}>
+                    {entry.providerName} · {entry.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
+          </SelectContent>
+        </Select>
         <Button variant="ghost" size="icon-xs" aria-label={t('Close')} onClick={onClose}>
           <X />
         </Button>
