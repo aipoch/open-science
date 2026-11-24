@@ -5948,14 +5948,18 @@ it('recovers a lost submission response through the real SDK and CLI without sta
   try {
     await expect(
       lostResponse.startRun(
-        { project: 'project', prompt: 'Research' },
+        { project: 'project', prompt: 'Research', otelTraces: true },
         { requestId: 'request-receipt' }
       )
     ).rejects.toMatchObject({ code: 'timeout', requestId: 'request-receipt' })
-    const identical = { project: 'project', prompt: 'Research' }
+    const identical = { project: 'project', prompt: 'Research', otelTraces: true }
     const [first, duplicate] = await Promise.all([
       client.submitRun('request-receipt', identical),
-      client.submitRun('request-receipt', { prompt: 'Research', project: 'project' })
+      client.submitRun('request-receipt', {
+        prompt: 'Research',
+        project: 'project',
+        otelTraces: true
+      })
     ])
     expect(first).toMatchObject({ requestId: 'request-receipt', status: 'pending' })
     expect(duplicate).toEqual(first)
@@ -5963,6 +5967,7 @@ it('recovers a lost submission response through the real SDK and CLI without sta
       client.submitRun('request-receipt', { ...identical, prompt: 'Changed study' })
     ).rejects.toMatchObject({ code: 'submission_conflict', requestId: 'request-receipt' })
     expect(startRun).toHaveBeenCalledOnce()
+    expect(startRun).toHaveBeenCalledWith(identical, 'request-receipt')
     expect((await fetch(`${baseUrl}/api/v1/run-submissions/request-receipt`)).status).toBe(403)
     finish()
     const log = vi.fn()
