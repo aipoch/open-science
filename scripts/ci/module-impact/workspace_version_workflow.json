@@ -5,6 +5,8 @@
     "src/renderer/src/pages/workspace/ManagedVersionDiffContent.tsx",
     "src/renderer/src/pages/workspace/ManagedVersionDiffError.test.tsx",
     "src/renderer/src/pages/workspace/ManagedVersionDiffError.tsx",
+    "src/renderer/src/pages/workspace/VersionCleanupDialog.test.tsx",
+    "src/renderer/src/pages/workspace/VersionCleanupDialog.tsx",
     "src/renderer/src/pages/workspace/VersionHistoryLoadButton.tsx",
     "src/renderer/src/pages/workspace/managed-version-diff-presentation.test.ts",
     "src/renderer/src/pages/workspace/managed-version-diff-presentation.ts",
@@ -15,6 +17,7 @@
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ManagedVersionDiffContent.tsx",
     "src/renderer/src/pages/workspace/ManagedVersionDiffError.tsx",
+    "src/renderer/src/pages/workspace/VersionCleanupDialog.tsx",
     "src/renderer/src/pages/workspace/VersionHistoryLoadButton.tsx",
     "src/renderer/src/pages/workspace/managed-version-diff-presentation.ts",
     "src/renderer/src/pages/workspace/use-version-history-pages.ts",
@@ -26,6 +29,7 @@
       "src/renderer/src/pages/workspace/ManagedVersionDiffContent.fallback.test.tsx",
       "src/renderer/src/pages/workspace/ManagedVersionDiffContent.test.tsx",
       "src/renderer/src/pages/workspace/ManagedVersionDiffError.test.tsx",
+      "src/renderer/src/pages/workspace/VersionCleanupDialog.test.tsx",
       "src/renderer/src/pages/workspace/managed-version-diff-presentation.test.ts",
       "src/renderer/src/pages/workspace/useManagedVersionWorkflow.test.tsx"
     ],
