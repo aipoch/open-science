@@ -14,6 +14,7 @@ export const RUNTIME_PAYLOAD_READ_CHANNELS = new Set([
   'sessions:load-one',
   'sessions:load-history-page',
   'notebook:run-evidence',
+  'notebook:run-figure',
   'notebook:state'
 ])
 export const RUNTIME_PAYLOAD_CHANNELS = new Set([

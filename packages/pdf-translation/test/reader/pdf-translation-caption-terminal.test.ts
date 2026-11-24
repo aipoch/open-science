@@ -211,7 +211,7 @@ it('serializes fresh sources without proof and restores historical snapshots unc
   })
   rememberPdfTranslationExtraction(extraction)
   const snapshot = getPdfTranslationLayoutSnapshot(extraction.source)!
-  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-271')
+  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-316')
   const saved = JSON.parse(JSON.stringify(snapshot))
   expect(Object.keys(saved).sort()).toEqual(
     ['version', 'parserVersion', 'fingerprint', 'pages', 'units', 'coverage'].sort()
@@ -731,5 +731,265 @@ it.each(['continuous', 'other rail'] as const)(
       [captionRows.join(' '), ...(shape === 'continuous' ? [locator] : [])].join(' ')
     )
     expect(owner?.items.includes('1:4')).toBe(shape === 'continuous')
+  }
+)
+
+it.each(['continuous', 'indent', 'paragraph gap', 'different sign font', 'complete prose'])(
+  'joins a signed value only on its native caption wrap (%s)',
+  (shape) => {
+    const run = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Caption',
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: str ? 9 : 0,
+      dir: 'ltr',
+      transform: [9, 0, 0, 9, x, y],
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL
+    })
+    const x = shape === 'indent' ? 66 : 54,
+      y = shape === 'paragraph gap' ? 455 : 476
+    const items = [
+      run(
+        'FIG. 7. These images record the different settings of the training instrument.',
+        54,
+        509,
+        502,
+        'Caption',
+        true
+      ),
+      run(
+        'The first two experimental panels compare the simulated responses under steady conditions.',
+        54,
+        498,
+        502,
+        'Caption',
+        true
+      ),
+      run('During the measurement phase the device applies the frequencies of', 54, 487, 450),
+      run('±', 507, 487, 6, 'Symbols'),
+      run('1,', 513, 487, 6),
+      run('±', 522, 487, 6, 'Symbols'),
+      run(shape === 'complete prose' ? '2.' : '2 and', 528, 487, 28),
+      run('', x, y, 0, 'Symbols', true),
+      run('±', x, y, 6, shape === 'different sign font' ? 'Other' : 'Symbols'),
+      run('5.', x + 6, y, 7),
+      run('', 54, 435, 0, 'Caption', true),
+      run(
+        'A separate report describes the operations of the control group.',
+        54,
+        435,
+        246,
+        'Prose',
+        true
+      )
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const caption = units.find((unit) => unit.items.includes('1:0'))
+    const tailOwners = units.filter(
+      (unit) => unit.items.includes('1:8') || unit.items.includes('1:9')
+    )
+    expect(caption?.source.endsWith('±1, ±2 and ±5.')).toBe(shape === 'continuous')
+    expect(tailOwners).toHaveLength(1)
+    expect(tailOwners[0].items.includes('1:0')).toBe(shape === 'continuous')
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      items.flatMap((item, index) => (item.str ? [`1:${index}`] : [])).sort()
+    )
+  }
+)
+
+it.each([0, -4])('merges a caption only around a native subscript (base offset %s)', (offset) => {
+  const rows = [
+    [
+      'Fig. 1. Overview of controlled sensor measurements. (a)',
+      67.15,
+      191.84,
+      240,
+      9,
+      'Body',
+      true
+    ],
+    ['The first measurement uses a fixed-frequency', 67.15, 181.29, 245.55, 9, 'Body', true],
+    ['source (', 67.15, 169.78, 21.91, 9, 'Body', false],
+    ['𝑎', 88.67, 170.73, 4.95, 9, 'Math', false],
+    ['1', 93.62, 169.1, 3.88, 6.5, 'Index', false],
+    [') illuminates the target, and the output signal (', 97.67, 169.78, 182.57, 9, 'Body', false],
+    ['𝑎', 279.85, 170.73, 4.95, 9, 'Math', false],
+    ['+', 290.83, 170.73, 6.72, 9, 'Index', false],
+    ['𝑏)', 299.54, 170.73, 4.95, 9, 'Math', false],
+    [
+      'is divided between two channels. (b) The second trace',
+      67.15,
+      159.23,
+      245.55,
+      9,
+      'Body',
+      true
+    ],
+    ['remains stable through a second run at each sample,', 67.15, 146.45, 245.55, 9, 'Body', true],
+    [
+      'while a second source passes through the same reference',
+      67.15,
+      135.9,
+      245.55,
+      9,
+      'Body',
+      true
+    ],
+    [
+      'filter and is recorded with the detector at each step,',
+      67.15,
+      125.34,
+      245.55,
+      9,
+      'Body',
+      true
+    ],
+    ['producing an averaged measurement.', 67.15, 114.79, 154.4, 9, 'Body', false]
+  ] as const
+  const items: PdfLayoutTextItem[] = rows.map(
+    ([str, x, y, width, height, fontName, hasEOL], i) => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      transform: [height, 0, 0, height, x, y + (i === 3 ? offset : 0)],
+      fontName,
+      fontFamily: fontName === 'Body' ? 'serif' : 'sans-serif',
+      fontAscent: fontName === 'Body' ? 0.95 : 0.78,
+      fontDescent: -0.22,
+      fontVertical: false,
+      hasEOL
+    })
+  )
+  const { units } = groupPdfTranslationPages({
+    pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+  })
+  const caption = units.find((unit) => unit.items.includes('1:0'))
+  const wrapped = ['1:2', '1:3', '1:4', '1:5']
+  expect(caption?.items.filter((item) => wrapped.includes(item))).toEqual(offset ? [] : wrapped)
+})
+
+it.each([0, 12])(
+  'joins a caption with a native parameter row and final measurement (%s)',
+  (shift) => {
+    const rows = [
+      ['Figure 1.', 317.04, 606.12, 34.28, 'body'],
+      ['Measurement of the di', 360.24, 606.12, 32.13, 'body'],
+      ['erence between two reference outputs', 397.8, 606.12, 154.22, 'body'],
+      ['measured with the first channel', 317.04, 595.68, 109.22, 'body'],
+      ['T', 430.2, 595.68, 4.99, 'math'],
+      ['for the second calibration with', 440.04, 595.68, 122.08, 'body'],
+      ['a', 317.04, 585.24, 4.48, 'math'],
+      ['=', 323.76, 585.24, 5.7, 'relation'],
+      ['180 nm,', 331.68, 585.24, 29.72, 'body'],
+      ['r', 364.2, 585.24, 3.49, 'math'],
+      ['=', 370.2, 585.24, 5.7, 'relation'],
+      ['65 nm and', 378.12, 585.24, 43.12, 'body'],
+      ['a', 423.96, 585.24, 4.48, 'math'],
+      ['=', 430.68, 585.24, 5.7, 'relation'],
+      ['220 nm,', 438.6, 585.24, 29.72, 'body'],
+      ['r', 471.24, 585.24, 3.49, 'math'],
+      ['=', 477.12, 585.24, 5.7, 'relation'],
+      ['92 nm,', 485.04, 585.24, 29.72, 'body'],
+      ['h', 517.68, 585.24, 4.48, 'math'],
+      ['=', 524.4, 585.24, 5.7, 'relation'],
+      ['60 nm,', 532.32, 585.24, 29.72, 'body'],
+      ['k', 317.04, 574.8, 3.98, 'math'],
+      ['is dimensionless.', 324.72, 574.8, 57.08, 'body'],
+      ['The estimated di', 388.8, 574.8, 48.45, 'body'],
+      ['erence approaches a fixed value near', 442.68, 574.8, 119.39, 'body'],
+      ['λ', 317.04, 564.36, 4.75, 'symbol'],
+      ['=', 323.76, 564.36, 5.7, 'relation'],
+      ['320 nm, corresponding to a stable reference.', 331.44, 564.36, 131.72, 'body']
+    ] as const
+    const items: PdfLayoutTextItem[] = rows.map(([str, x, y, width, fontName], i) => ({
+      str,
+      dir: 'ltr',
+      width,
+      height: 8.97,
+      transform: [8.97, 0, 0, 8.97, x + (i === rows.length - 1 ? shift : 0), y],
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL: false
+    }))
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const caption = units.find((unit) => unit.source.startsWith('Figure 1.'))
+    expect(caption?.source.includes('λ = 320 nm, corresponding to a stable reference.')).toBe(
+      !shift
+    )
+    if (!shift) expect(caption?.items).toHaveLength(rows.length)
+  }
+)
+
+it.each([0, 4])(
+  'joins an intensity caption across its coefficient and exponent (shift %s)',
+  (shift) => {
+    const rows = [
+      ['Fig. 1.', 47.82, 603.97, 25.06, 8.52, 'label', false],
+      [
+        'Recorded response for the test input with intensity',
+        75.81,
+        603.97,
+        213.27,
+        8.97,
+        'body',
+        false
+      ],
+      ['I', 48.38, 593.06, 2.99, 8.97, 'math', false],
+      ['(', 51.96, 593.06, 3.63, 9.34, 'relation', false],
+      ['t', 55.8, 593.06, 2.99, 8.97, 'math', false],
+      [',', 58.9, 593.06, 2.29, 8.97, 'body', false],
+      ['z', 62.8, 593.06, 3.98, 8.97, 'math', false],
+      ['=', 70.6, 593.06, 7.27, 9.34, 'relation', false],
+      ['0', 81.57, 593.06, 4.57, 8.97, 'body', false],
+      [') =', 86.25, 593.06, 14.71, 9.34, 'relation', false],
+      ['1', 104.67, 593.06, 4.57, 8.97, 'body', false],
+      ['+', 111.32, 593.06, 7.27, 9.34, 'relation', false],
+      ['0.35', 120.66, 593.06, 16.01, 8.97, 'body', false],
+      ['exp', 138.16, 593.06, 14.31, 8.97, 'body', false],
+      ['(', 152.58, 593.06, 3.63, 9.34, 'relation', false],
+      ['−', 156.43, 593.06, 7.27, 9.34, 'minus', false],
+      ['0.002', 163.8, 593.06, 20.58, 8.97, 'body', false],
+      ['t', 184.49, 593.06, 2.99, 8.97, 'math', false],
+      ['2', 187.59, 596.32, 3.49, 6.97, 'body', false],
+      [')', 191.68, 593.06, 3.63, 9.34, 'relation', false],
+      [', and zero initial veloci-', 195.42, 593.06, 95.14, 8.97, 'body', true],
+      ['ty in both calculated cases.', 47.82, 582.15, 235, 8.97, 'body', true],
+      ['(a) Input strength. (b) Calculated response.', 47.82, 571.24, 200, 8.97, 'body', true]
+    ] as const
+    const items: PdfLayoutTextItem[] = rows.map(([str, x, y, width, height, fontName, hasEOL]) => ({
+      str,
+      dir: 'ltr',
+      width,
+      height,
+      transform: [height, 0, 0, height, x + (str === 'exp' ? shift : 0), y],
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL
+    }))
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const caption = units.find((unit) => unit.source.startsWith('Fig. 1.'))
+    expect(caption?.source.includes('0.35 exp(−0.002t2)')).toBe(!shift)
+    if (!shift) expect(caption?.items).toHaveLength(rows.length)
   }
 )

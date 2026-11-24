@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { waitFor } from '@testing-library/react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SessionHistoryLoadButton } from './SessionHistoryLoadButton'
@@ -77,6 +78,51 @@ it('loads earlier records on click and preserves a full-load entry after the las
     })
     expect(container.textContent).toBe('')
     expect(useSessionStore.getState().sessions[0].contentLoaded).toBeUndefined()
+  } finally {
+    act(() => root.unmount())
+  }
+})
+
+it('fills a short viewport in bounded pages without entering manual history navigation', async () => {
+  const session = {
+    id: 'fill',
+    projectId: 'project',
+    title: 'History',
+    cwd: '/workspace',
+    status: 'idle' as const,
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    revision: 1
+  }
+  const historyPage = { revision: 1, totalItems: 200, hasMore: true, beforeCursor: 'start' }
+  useSessionStore.setState({
+    ...createInitialSessionState(),
+    sessions: [{ ...session, contentLoaded: false, historyPage }]
+  })
+  const loadHistoryPage = vi.fn().mockImplementation(async ({ beforeCursor }) => ({
+    projectId: session.projectId,
+    sessionId: session.id,
+    session,
+    ...historyPage,
+    beforeCursor: beforeCursor + '-earlier'
+  }))
+  window.api = { sessions: { loadHistoryPage } } as unknown as Window['api']
+  const viewport = document.createElement('div')
+  Object.defineProperties(viewport, { clientHeight: { value: 800 }, scrollHeight: { value: 800 } })
+  const manual = vi.fn()
+  const Harness = (): React.JSX.Element => {
+    const current = useSessionStore((state) => state.sessions[0])
+    return (
+      <SessionHistoryLoadButton session={current} viewport={viewport} onRequestEarlier={manual} />
+    )
+  }
+  const root = createRoot(document.createElement('div'))
+  try {
+    await act(async () => root.render(<Harness />))
+    await waitFor(() => expect(loadHistoryPage).toHaveBeenCalledTimes(2))
+    expect(loadHistoryPage.mock.calls.map(([request]) => request.limit)).toEqual([8, 8])
+    expect(manual).not.toHaveBeenCalled()
   } finally {
     act(() => root.unmount())
   }

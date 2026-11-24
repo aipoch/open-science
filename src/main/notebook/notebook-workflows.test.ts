@@ -32,6 +32,7 @@ const createRuntime = (
     throw new Error('Unexpected getResourceRelease call')
   }),
   retryResourceRelease: unavailable('retryResourceRelease'),
+  runFigure: unavailable('runFigure'),
   runEvidence: unavailable('runEvidence'),
   runIndex: unavailable('runIndex'),
   state: unavailable('state'),

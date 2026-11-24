@@ -124,8 +124,8 @@ const variants = [
   {
     name: 'without-single-page-reader-admission',
     file: pdf,
-    from: 'currentState.document.numPages === 1 &&\n    !props.pdfBookmarkSource',
-    to: 'currentState.document.numPages === 1',
+    from: 'Boolean(props.pdfBookmarkSource) || ',
+    to: '',
     witness: 'reveals a project annotation from its document provider'
   },
   {

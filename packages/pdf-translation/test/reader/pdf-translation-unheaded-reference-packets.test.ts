@@ -676,7 +676,8 @@ async function generatedOwnedReferenceDocument(
   const regular = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf')),
     bold = await pdf.embedFont(await readFile(assets + 'LiberationSans-Bold.ttf')),
     splitEtAl = fault.endsWith('-et-al'),
-    terminal = splitEtAl && fault !== 'nonterminal-et-al',
+    wrappedWeb = fault.endsWith('-web'),
+    terminal = wrappedWeb || (splitEtAl && fault !== 'nonterminal-et-al'),
     pages = Array.from({ length: terminal ? 2 : 3 }, () => pdf.addPage([600, 800])),
     line = (page: number, text: string, x: number, top: number, heading = false): void => {
       pages[page - 1].drawText(text, {
@@ -716,8 +717,25 @@ async function generatedOwnedReferenceDocument(
   )
   line(2, 'Annual Review of Comprehensive Scientific Measurements', 76, 114)
   pages[1].drawText('12 (2022).', { font: bold, size: 9, x: 315, y: 800 - 114 })
-  start(2, 4, 'D. Author,', 56, 750)
-  line(2, 'A report across columns, Journal 13 (2023).', 356, 60)
+  if (wrappedWeb) {
+    const page = pages[1],
+      lead = '[4] Example Institute Field Guide,',
+      host = 'https://manual.example.',
+      suffix = fault === 'broken-web' ? 'org' : 'org/',
+      urlFont = bold
+    line(2, lead, 56, 750)
+    page.drawText(host, {
+      font: urlFont,
+      size: 9,
+      x: 58 + regular.widthOfTextAtSize(lead, 9),
+      y: 50
+    })
+    page.drawText(suffix, { font: urlFont, size: 9, x: 356, y: 740 })
+    line(2, '(2023).', 358 + urlFont.widthOfTextAtSize(suffix, 9), 60)
+  } else {
+    start(2, 4, 'D. Author,', 56, 750)
+    line(2, 'A report across columns, Journal 13 (2023).', 356, 60)
+  }
   if (embedded) {
     const page = pages[1],
       marker = '[5] ',
@@ -854,6 +872,24 @@ async function generatedOwnedReferenceProof(
   const proof = ownedReferenceApi.nativeOwnedUnheadedReferenceRoles(units, pages)
   return { document, pages, native, contents, units, proof, unreliable }
 }
+
+it.each(['complete-web', 'broken-web'])(
+  'checks completeness of a terminal cross-column bibliography URL (%s)',
+  async (fault) => {
+    const f = await generatedOwnedReferenceProof(fault, true)
+    try {
+      const selected = f.units.filter((unit) =>
+        ownedReferenceApi.hasNativeOwnedReferenceRole(f.proof, unit)
+      )
+      expect(selected.some((unit) => unit.source.includes('Field Guide'))).toBe(
+        fault === 'complete-web'
+      )
+      expect(selected.some((unit) => unit.source.startsWith('This complete ordinary'))).toBe(false)
+    } finally {
+      await f.document.destroy()
+    }
+  }
+)
 
 it('binds complete native crosspage and crosscolumn reference owners without changing their content', async () => {
   const f = await generatedOwnedReferenceProof()
@@ -1302,7 +1338,10 @@ it.each([
   'number-gap',
   'ordinary-tail',
   'embedded-note',
-  'embedded-note-incomplete'
+  'embedded-note-incomplete',
+  'funded',
+  'funded-gap',
+  'funded-embedded-note'
 ] as const)(
   'protects only a complete terminal right-column superscript bibliography: %s',
   async (fault) => {
@@ -1312,8 +1351,12 @@ it.each([
     pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
     const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf')),
       page = pdf.addPage([600, 800]),
-      mixed = fault === 'embedded-note' || fault === 'embedded-note-incomplete'
-    if (!mixed) {
+      mixed =
+        fault === 'embedded-note' ||
+        fault === 'embedded-note-incomplete' ||
+        fault === 'funded-embedded-note',
+      funded = fault === 'funded' || fault === 'funded-gap' || fault === 'funded-embedded-note'
+    if (!mixed && !funded) {
       const graphic = await PDFDocument.create()
       graphic.addPage([90, 70]).drawRectangle({ x: 7, y: 9, width: 39, height: 23 })
       const [embedded] = await pdf.embedPdf(await graphic.save())
@@ -1325,19 +1368,25 @@ it.each([
       x: 54,
       y: 701
     })
-    page.drawText('Independent prose ends before the records.', {
-      font,
-      size: 10,
-      x: 320,
-      y: 701
-    })
+    if (funded) page.drawText('Acknowledgments', { font, size: 9, x: 54, y: 670 })
+    const preceding = funded
+      ? 'This work was supported by field research (Grant No. 29).'
+      : 'Independent prose ends before the records.'
+    page.drawText(preceding, { font, size: 10, x: 320, y: 701 })
     page.pushOperators(beginText())
-    for (let n = 0; n < (mixed ? 8 : 5); n++) {
-      const ordinal = String(n === 2 && fault === 'number-gap' ? 9 : n + 1),
+    for (let n = 0; n < (mixed || funded ? 8 : 5); n++) {
+      const ordinal = String(
+          n === 2 && (fault === 'number-gap' || fault === 'funded-gap') ? 9 : n + 1
+        ),
         y = 678 - n * 11,
         height = 6.75,
         x = 333 - font.widthOfTextAtSize(ordinal, height) - 0.2
-      let record = 'A. Writer, Journal of Examples 12 (2020).'
+      let record =
+        funded && !mixed
+          ? n === 3
+            ? 'Example software (available at: https://example.test/).'
+            : 'Taylor Reader, Journal of Examples 12 (2020).'
+          : 'A. Writer, Journal of Examples 12 (2020).'
       if (fault === 'ordinary-tail' && n === 4) record = 'We now present ordinary observations.'
       if (mixed && n === 3) record = 'These comments explain why the values were adjusted.'
       if (mixed && n === 5) record = 'B. Writer, 2021, unpublished.'
@@ -1374,7 +1423,7 @@ it.each([
         .map((unit) => unit.source)
         .join(' ')
       expect(prose).toContain('Independent prose in the other column remains eligible.')
-      expect(prose).toContain('Independent prose ends before the records.')
+      expect(prose).toContain(preceding)
       const referenceItems = references.flatMap((unit) => unit.fragments.flatMap((f) => f.items))
       if (mixed) {
         const note = result.source.units.find((unit) =>
@@ -1383,11 +1432,17 @@ it.each([
         expect(note?.source).toContain('3A. Writer')
         expect(note?.sourceOnly).toBeUndefined()
         expect(references.some((unit) => unit.source.includes('unpublished'))).toBe(
-          fault === 'embedded-note'
+          fault === 'embedded-note' || fault === 'funded-embedded-note'
         )
       }
       expect(referenceItems).toHaveLength(
-        fault === 'complete' ? 10 : fault === 'embedded-note' ? 6 : 0
+        fault === 'complete'
+          ? 10
+          : fault === 'embedded-note' || fault === 'funded-embedded-note'
+            ? 6
+            : fault === 'funded'
+              ? 16
+              : 0
       )
       expect(references.every((unit) => unit.sourceOnly)).toBe(true)
     } finally {
@@ -1486,61 +1541,79 @@ it.each(['complete', 'tilted divider', 'number gap'])(
   }
 )
 
-it.each(['contact footer', 'unmarked address'])(
-  'recognizes a complete final bibliography after a marked address: %s',
-  async (shape) => {
-    const require = createRequire(import.meta.url)
-    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
-    const pdf = await PDFDocument.create()
-    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
-    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
-    const [first, last] = [pdf.addPage([600, 800]), pdf.addPage([600, 800])]
-    const line = (page: typeof first, text: string, x: number, y: number, size = 9): void =>
-      page.drawText(text, { font, size, x, y })
+it.each([
+  'contact footer',
+  'labelled contact footer',
+  'classified preprint',
+  'mismatched preprint year',
+  'unmarked address'
+])('recognizes a complete final bibliography after a marked address: %s', async (shape) => {
+  const require = createRequire(import.meta.url)
+  const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+  const pdf = await PDFDocument.create()
+  pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+  const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+  const [first, last] = [pdf.addPage([600, 800]), pdf.addPage([600, 800])]
+  const line = (page: typeof first, text: string, x: number, y: number, size = 9): void =>
+    page.drawText(text, { font, size, x, y })
 
-    line(first, 'The final paragraph describes the observations.', 320, 670, 11)
-    line(first, shape === 'contact footer' ? '*' : 'x', 328, 634, 6)
-    line(first, 'author@example.org', 339, 630)
-    line(first, '[1] A. Writer, An independent study,', 320, 619)
-    line(first, 'Journal of Examples 11 (2020).', 339, 608)
-    line(first, '[2] B. Van Dalen, Another independent study,', 320, 597)
-    line(first, 'Journal of Examples 12 (2021).', 339, 586)
-    line(first, '[3] C. Writer, A separate measurement,', 320, 575)
-    line(first, 'Journal of Examples 13 (2022).', 339, 564)
-    line(last, '[4] D. Writer, An independent replication,', 50, 730)
-    line(last, 'Journal of Examples 14 (2023).', 69, 719)
+  line(first, 'The final paragraph describes the observations.', 320, 670, 11)
+  line(first, shape === 'unmarked address' ? 'x' : '*', 328, 634, 6)
+  line(
+    first,
+    shape === 'labelled contact footer'
+      ? 'Contact author: author@example.org'
+      : 'author@example.org',
+    339,
+    630
+  )
+  line(first, '[1] A. Writer, An independent study,', 320, 619)
+  line(first, 'Journal of Examples 11 (2020).', 339, 608)
+  line(first, '[2] B. Van Dalen, Another independent study,', 320, 597)
+  line(first, 'Journal of Examples 12 (2021).', 339, 586)
+  line(first, '[3] C. Writer, A separate measurement,', 320, 575)
+  line(first, 'Journal of Examples 13 (2022).', 339, 564)
+  line(last, '[4] D. Writer, An independent replication,', 50, 730)
+  line(last, 'Journal of Examples 14 (2023).', 69, 719)
+  if (shape === 'classified preprint' || shape === 'mismatched preprint year') {
+    const year = shape === 'classified preprint' ? 2024 : 2025
+    line(last, `[5] E. Writer, A preprint describing the last study (${year}),`, 320, 730)
+    line(last, 'arXiv:2401.00000 [cs.EX].', 339, 719)
+  } else {
     line(last, '[5] E. Writer, The last study,', 320, 730)
     line(last, 'Journal of Examples 15 (2024).', 339, 719)
-    const loading = getDocument({
-      data: await pdf.save(),
-      fontExtraProperties: true,
-      disableFontFace: true,
-      useSystemFonts: false,
-      isEvalSupported: false,
-      standardFontDataUrl: assets
-    })
-    try {
-      const result = await extractPdfTranslationSource({
-        document: await loading.promise,
-        resourceRequestKey: 'anonymous',
-        signal: new AbortController().signal
-      })
-      const units = result.source.units
-      const bibliography = units.filter((unit) => /\[\d\]|Journal of Examples/u.test(unit.source))
-      expect(bibliography).toHaveLength(10)
-      expect(bibliography.filter((unit) => unit.preserve === 'reference')).toHaveLength(
-        shape === 'contact footer' ? 10 : 0
-      )
-      expect(
-        units
-          .filter((unit) => /The final paragraph|author@example.org/u.test(unit.source))
-          .every((unit) => !unit.sourceOnly && !unit.preserve)
-      ).toBe(true)
-    } finally {
-      await loading.destroy()
-    }
   }
-)
+  const loading = getDocument({
+    data: await pdf.save(),
+    fontExtraProperties: true,
+    disableFontFace: true,
+    useSystemFonts: false,
+    isEvalSupported: false,
+    standardFontDataUrl: assets
+  })
+  try {
+    const result = await extractPdfTranslationSource({
+      document: await loading.promise,
+      resourceRequestKey: 'anonymous',
+      signal: new AbortController().signal
+    })
+    const units = result.source.units
+    const bibliography = units.filter((unit) =>
+      /\[\d\]|Journal of Examples|arXiv:/u.test(unit.source)
+    )
+    expect(bibliography).toHaveLength(10)
+    expect(bibliography.filter((unit) => unit.preserve === 'reference')).toHaveLength(
+      shape === 'unmarked address' || shape === 'mismatched preprint year' ? 0 : 10
+    )
+    expect(
+      units
+        .filter((unit) => /The final paragraph|author@example.org/u.test(unit.source))
+        .every((unit) => !unit.sourceOnly && !unit.preserve)
+    ).toBe(true)
+  } finally {
+    await loading.destroy()
+  }
+})
 
 it.each(['continuous', 'number gap'])(
   'recognizes a closed pair of reference columns below prose: %s',
@@ -1654,6 +1727,102 @@ it.each(['column wrap', 'low continuation', 'single right lane', 'unmarked right
       const address = source.units.find((unit) => /author@example.org/u.test(unit.source))
       expect(address).toBeDefined()
       expect(address?.preserve).toBeUndefined()
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each(['closed', 'missing locator'])(
+  'protects a terminal bibliography that turns columns below closed prose (%s)',
+  async (shape) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const regular = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    const italic = await pdf.embedFont(await readFile(assets + 'LiberationSans-Italic.ttf'))
+    pdf
+      .addPage([612, 792])
+      .drawText('An independent earlier page.', { x: 54, y: 680, size: 10, font: regular })
+    const last = pdf.addPage([612, 792])
+    last.drawText('Measured values describe three independent controls.', {
+      x: 54,
+      y: 606,
+      size: 10,
+      font: regular
+    })
+    last.drawText('A review of the same measurements is provided here.', {
+      x: 315,
+      y: 585,
+      size: 10,
+      font: regular
+    })
+    last.drawText('The measurements were repeated.', { x: 315, y: 572, size: 10, font: regular })
+    const normal = last.node.newFontDictionary(regular.name, regular.ref)
+    const slanted = last.node.newFontDictionary(italic.name, italic.ref)
+    const row = (text: string, x: number, y: number, venue = false): void => {
+      last.pushOperators(
+        setTextMatrix(1, 0, 0, 1, x, y),
+        setFontAndSize(venue ? slanted : normal, 9),
+        showText((venue ? italic : regular).encodeText(text))
+      )
+      if (venue)
+        last.pushOperators(
+          setFontAndSize(normal, 9),
+          showText(
+            regular.encodeText(
+              shape === 'missing locator' && y === 434 ? ', 2023.' : ', pages 32–41, 2023.'
+            )
+          )
+        )
+      last.pushOperators(PDFOperator.of(PDFOperatorNames.NextLine))
+    }
+    last.pushOperators(
+      beginText(),
+      setFontAndSize(normal, 9),
+      PDFOperator.of(PDFOperatorNames.SetTextLineHeight, [pdf.context.obj(10.5)])
+    )
+    for (let n = 0; n < 4; n++) {
+      row(`[${n + 1}] A. Writer. The original experiment and its controls.`, 54, 518 - n * 21)
+      if (n < 3) row('Proceedings of the Annual Workshop', 68.5, 507.5 - n * 21, true)
+    }
+    row('Proceedings of the Research Seminar', 329.5, 518, true)
+    for (let n = 0; n < 4; n++) {
+      row(`[${n + 5}] B. Editor. A follow-up study under similar conditions.`, 315, 507.5 - n * 21)
+      row('Proceedings of the Spring Conference', 329.5, 497 - n * 21, true)
+    }
+    last.pushOperators(endText())
+    last.drawText('2', {
+      x: (612 - regular.widthOfTextAtSize('2', 10)) / 2,
+      y: 42,
+      size: 10,
+      font: regular
+    })
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const { source } = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'anonymous',
+        signal: new AbortController().signal
+      })
+      const refs = source.units.filter((u) => /^\[\d+\]|Proceedings of the/u.test(u.source))
+      expect(refs.filter((u) => /^\[\d+\]/u.test(u.source))).toHaveLength(8)
+      expect(
+        refs.find((u) => u.source.startsWith('Proceedings of the Research Seminar'))
+      ).toBeDefined()
+      expect(refs.filter((u) => u.preserve === 'reference')).toHaveLength(
+        shape === 'closed' ? refs.length : 0
+      )
+      expect(
+        source.units.find((u) => u.source.includes('measurements were repeated'))?.sourceOnly
+      ).toBeUndefined()
     } finally {
       await loading.destroy()
     }
@@ -1801,95 +1970,114 @@ it.each(['closed', 'ordinary previous heading', 'incomplete last record'])(
   }
 )
 
-it.each(['closed', 'different heading', 'skipped ordinal'])(
-  'keeps terminal bracketed records after acknowledgments across pages: %s',
-  (shape) => {
-    const line = (
-      str: string,
-      x: number,
-      y: number,
-      width: number,
-      height = 9,
-      fontName = 'reference'
-    ): PdfLayoutTextItem => ({
-      str,
-      width,
-      height,
-      dir: 'ltr',
-      transform: [height, 0, 0, height, x, y],
-      fontName,
-      fontAscent: 0.8,
-      fontDescent: -0.2,
-      fontVertical: false,
-      hasEOL: true
-    })
-    const entries = (numbers: number[], x: number, y: number): PdfLayoutTextItem[] =>
-      numbers.flatMap((number, i) => [
-        line(
-          `[${shape === 'skipped ordinal' && number === 8 ? 80 : number}] A. Reader, A study of alternating test procedures,`,
-          x,
-          y - 22 * i,
-          219
-        ),
-        line(
-          number === 1
-            ? 'Example Journal 12.'
-            : 'Journal of Examples 12, 77 (2025), arXiv:0000.00000.',
-          x + 18,
-          y - 22 * i - 11,
-          199,
-          9,
-          number === 1 ? 'volume' : 'reference'
-        )
-      ])
-    const body = (str: string, x: number, y: number, width: number): PdfLayoutTextItem =>
-      line(str, x, y, width, 10, 'body')
-    const pages = [
-      Array.from({ length: 28 }, (_, index) =>
-        body(
-          'The field report places the measurements in their original context.',
-          index < 14 ? 54 : 317,
-          730 - 12 * (index % 14),
-          220
-        )
+it.each([
+  'closed',
+  'different heading',
+  'skipped ordinal',
+  'unpunctuated locator',
+  'unstyled locator',
+  'locator without page'
+])('keeps terminal bracketed records after acknowledgments across pages: %s', (shape) => {
+  const line = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    height = 9,
+    fontName = 'reference'
+  ): PdfLayoutTextItem => ({
+    str,
+    width,
+    height,
+    dir: 'ltr',
+    transform: [height, 0, 0, height, x, y],
+    fontName,
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    fontVertical: false,
+    hasEOL: true
+  })
+  const entries = (numbers: number[], x: number, y: number): PdfLayoutTextItem[] =>
+    numbers.flatMap((number, i) => [
+      line(
+        `[${shape === 'skipped ordinal' && number === 8 ? 80 : number}] A. Reader, A study of alternating test procedures,`,
+        x,
+        y - 22 * i,
+        219
       ),
-      [
-        body('2', 557, 756, 5),
-        line(
-          shape === 'different heading' ? 'SUPPLEMENTARY NOTES' : 'ACKNOWLEDGMENTS',
-          385,
-          631,
-          106,
-          9,
-          'heading'
-        ),
-        body('We thank the colleagues who supplied measurements and helped plan', 327, 604, 231),
-        body(
-          'the field visits and the subsequent review of the experimental material.',
-          317,
-          592,
-          241
-        ),
-        body(
-          'Their comments and recordings improved the interpretation of the data.',
-          317,
-          580,
-          202
-        ),
-        ...entries([1, 2, 3], 54, 535),
-        ...entries([4, 5, 6], 317, 134)
-      ],
-      [body('3', 557, 756, 5), ...entries([7, 8, 9], 54, 730), ...entries([10, 11, 12], 317, 701)]
-    ].map((items, index) => ({ page: index + 1, width: 612, height: 792, rotation: 0, items }))
-    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
-    const refs = units.filter((unit) =>
-      /^(?:\[\d+\] A\. Reader|(?:Example Journal|Journal of Examples) )/u.test(unit.source)
+      line(
+        number === 1
+          ? 'Example Journal 12.'
+          : 'Journal of Examples 12, 77 (2025), arXiv:0000.00000.',
+        x + 18,
+        y - 22 * i - 11,
+        199,
+        9,
+        number === 1 ? 'volume' : 'reference'
+      )
+    ])
+  const body = (str: string, x: number, y: number, width: number): PdfLayoutTextItem =>
+    line(str, x, y, width, 10, 'body')
+  const right = entries([4, 5, 6], 317, 134)
+  if (shape.endsWith('locator') || shape === 'locator without page') {
+    const tail = right[3]
+    const y = tail.transform[5]
+    right.splice(
+      3,
+      1,
+      { ...tail, str: 'Journal of Examples', width: 119, hasEOL: false },
+      {
+        ...line('12', 458, y, 9, 9, shape === 'unstyled locator' ? 'reference' : 'volume'),
+        hasEOL: false
+      },
+      line(shape === 'locator without page' ? ', (2025)' : ', 77 (2025)', 469, y, 57)
     )
-    expect(refs).toHaveLength(24)
-    expect(refs.filter((unit) => unit.sourceOnly)).toHaveLength(shape === 'closed' ? 24 : 0)
-    expect(units.find((unit) => unit.source.startsWith('We thank'))?.sourceOnly).toBeUndefined()
   }
-)
+  const pages = [
+    Array.from({ length: 28 }, (_, index) =>
+      body(
+        'The field report places the measurements in their original context.',
+        index < 14 ? 54 : 317,
+        730 - 12 * (index % 14),
+        220
+      )
+    ),
+    [
+      body('2', 557, 756, 5),
+      line(
+        shape === 'different heading' ? 'SUPPLEMENTARY NOTES' : 'ACKNOWLEDGMENTS',
+        385,
+        631,
+        106,
+        9,
+        'heading'
+      ),
+      body('We thank the colleagues who supplied measurements and helped plan', 327, 604, 231),
+      body(
+        'the field visits and the subsequent review of the experimental material.',
+        317,
+        592,
+        241
+      ),
+      body('Their comments and recordings improved the interpretation of the data.', 317, 580, 202),
+      ...entries([1, 2, 3], 54, 535),
+      ...right
+    ],
+    [body('3', 557, 756, 5), ...entries([7, 8, 9], 54, 730), ...entries([10, 11, 12], 317, 701)]
+  ].map((items, index) => ({ page: index + 1, width: 612, height: 792, rotation: 0, items }))
+  const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+  const refs = units.filter((unit) =>
+    /^(?:\[\d+\] A\. Reader|(?:Example Journal|Journal of Examples) )/u.test(unit.source)
+  )
+  expect(refs).toHaveLength(24)
+  expect(refs.filter((unit) => unit.sourceOnly)).toHaveLength(
+    shape === 'closed' || shape === 'unpunctuated locator' ? 24 : 0
+  )
+  expect(units.find((unit) => unit.source.startsWith('We thank'))?.sourceOnly).toBeUndefined()
+  const keys = units.flatMap((unit) => unit.items)
+  expect(keys).toHaveLength(new Set(keys).size)
+  expect(keys).toHaveLength(pages.reduce((count, p) => count + p.items.length, 0))
+})
 
 it.each(['closed', 'number gap', 'ordinary note'])(
   'preserves a terminal two-column bibliography after a correspondence block (%s)',
@@ -2329,12 +2517,21 @@ it.each([
   ['availability', false],
   ['availability', true],
   ['two contacts', false],
-  ['two contacts', true]
+  ['two contacts', true],
+  ['wrapped contacts', false],
+  ['wrapped contacts', true],
+  ['separate pages', false],
+  ['separate pages', true],
+  ['centered divider', false],
+  ['centered divider', true]
 ] as const)(
-  'retains a continuous terminal bibliography while keeping its numbered explanatory note (%s, numbering gap=%s)',
+  'retains a continuous terminal bibliography while keeping its numbered explanatory note (%s, invalid evidence=%s)',
   async (boundary, gap) => {
     const availability = boundary === 'availability'
-    const pairedContacts = boundary === 'two contacts'
+    const wrapped = boundary === 'wrapped contacts'
+    const pairedContacts = boundary === 'two contacts' || wrapped
+    const divided = boundary === 'centered divider'
+    const separate = boundary === 'separate pages'
     const require = createRequire(import.meta.url)
     const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
     const pdf = await PDFDocument.create()
@@ -2343,7 +2540,7 @@ it.each([
     const bold = await pdf.embedFont(await readFile(assets + 'LiberationSans-Bold.ttf'))
     const page = (number: number, rows: [string, number, number, number?, boolean?][]): PDFPage => {
       const p = pdf.addPage([600, 800])
-      p.drawText(String(number), { x: 554, y: 755, size: 10, font })
+      if (!separate) p.drawText(String(number), { x: 554, y: 755, size: 10, font })
       p.pushOperators(
         beginText(),
         PDFOperator.of(PDFOperatorNames.SetTextLineHeight, [pdf.context.obj(10.35)])
@@ -2358,6 +2555,15 @@ it.each([
         )
       }
       p.pushOperators(endText())
+      if (separate) {
+        const folio = String(number)
+        p.drawText(folio, {
+          x: (600 - font.widthOfTextAtSize(folio, 10)) / 2,
+          y: 43,
+          size: 10,
+          font
+        })
+      }
       return p
     }
     const record = (n: number, x: number, y: number): [string, number, number] => [
@@ -2365,24 +2571,83 @@ it.each([
       x,
       y
     ]
-    if (pairedContacts) {
-      const markerRight = 339
+    if (separate) {
       page(1, [
-        ['The measurements agree with the earlier estimates.', 322, 205, 10],
-        ['*', markerRight - font.widthOfTextAtSize('*', 6), 154, 6],
-        ['reader@example.test', 343, 150],
-        ['†', markerRight - font.widthOfTextAtSize('†', 6), 143.65, 6],
-        ['writer@example.test', 343, 139.65],
-        record(1, 329, 129.3),
-        record(2, 329, 118.95),
-        record(3, 329, 108.6)
+        ['IV.', 385, 125, 9, true],
+        [gap ? 'OBSERVATIONS' : 'ACKNOWLEDGMENTS', 401, 125, 9, true],
+        ['The authors appreciate the instruments and facilities', 331, 99, 10],
+        ['provided by the measurement team.', 321, 87.5, 10]
       ])
       page(2, [
-        record(4, 54, 730),
-        ['[5] We applied the same calibration to the remaining experiments.', 54, 719.65],
+        record(1, 54, 720),
+        record(2, 54, 709.65),
+        record(3, 329, 720),
+        record(4, 329, 709.65)
+      ])
+      page(3, [
+        record(5, 54, 720),
+        ['[6] We applied the same calibration to the remaining experiments.', 54, 709.65],
+        record(7, 329, 720),
+        record(8, 329, 709.65)
+      ])
+    } else if (divided) {
+      const citation = (n: number, x: number, y: number): [string, number, number] => [
+        `[${n}] Rosa Reader, “Sample Study,” Workshop Papers (2021).`,
+        x,
+        y
+      ]
+      const first = page(1, [
+        ['Unrelated readings appear at the top of this page.', 54, 670, 10],
+        ['They were tested against independent estimates.', 54, 658, 10],
+        ['We appreciate the facilities used for measurement.', 54, 430, 10],
+        ['Support was provided by the analysis team.', 320, 430, 10],
+        citation(1, 58.5, 345),
+        citation(2, 58.5, 334.65),
+        ['[3] Rosa Reader, “Measurements in a', 58.5, 324.3],
+        ['sample chamber,” in the open', 72, 313.95],
+        ['study archive (2021).', 338, 345],
+        citation(4, 324.5, 334.65),
+        citation(5, 324.5, 324.3)
+      ])
+      const rule = (left: number, right: number, y: number): void =>
+        first.pushOperators(setLineWidth(0.4), moveTo(left, y), lineTo(right, y), stroke())
+      rule(54, 550, 680)
+      if (!gap) {
+        rule(185, 300, 375)
+        rule(300, 415, 375)
+      }
+      page(2, [
+        citation(6, 54, 730),
+        ['[7] We repeated the same calibration.', 54, 719.65],
+        citation(8, 320, 730),
+        citation(9, 320, 719.65)
+      ])
+    } else if (pairedContacts) {
+      const markerRight = 339
+      const offset = wrapped ? 432 : 0
+      page(1, [
+        ['The measurements agree with the earlier estimates.', 322, 205 + offset, 10],
+        ['*', markerRight - font.widthOfTextAtSize('*', 6), 154 + offset, 6],
+        ['reader@example.test', 343, 150 + offset],
+        ['†', markerRight - font.widthOfTextAtSize('†', 6), 143.65 + offset, 6],
+        ['writer@example.test', 343, 139.65 + offset],
+        record(1, 329, 129.3 + offset),
+        record(2, 329, 118.95 + offset),
+        wrapped
+          ? [`[3] R. Reader, Signals and ${gap ? 'Methods' : 'Mea-'}`, 329, 78]
+          : record(3, 329, 108.6)
+      ])
+      page(2, [
+        ...(wrapped ? [['surements 11, 24 (2021).', 72, 730] as [string, number, number]] : []),
+        record(4, 54, wrapped ? 719.65 : 730),
+        [
+          '[5] We applied the same calibration to the remaining experiments.',
+          54,
+          wrapped ? 709.3 : 719.65
+        ],
         record(6, 329, 730),
-        record(gap ? 8 : 7, 329, 719.65),
-        record(gap ? 9 : 8, 329, 709.3)
+        record(gap && !wrapped ? 8 : 7, 329, 719.65),
+        record(gap && !wrapped ? 9 : 8, 329, 709.3)
       ])
     } else if (availability) {
       page(1, [
@@ -2439,7 +2704,31 @@ it.each([
         resourceRequestKey: 'anonymous',
         signal: new AbortController().signal
       })
-      const references = source.units.filter((unit) => unit.source.includes('R. Reader'))
+      const references = source.units.filter((unit) =>
+        divided
+          ? /Rosa Reader|sample chamber|study archive/u.test(unit.source)
+          : unit.source.includes('R. Reader')
+      )
+      if (divided) {
+        expect(references.length).toBeGreaterThanOrEqual(8)
+        expect(references.filter((unit) => unit.preserve === 'reference')).toHaveLength(
+          gap ? 0 : references.length
+        )
+        expect(source.units.find((unit) => unit.source.includes('same calibration'))).toMatchObject(
+          {
+            source: expect.stringContaining('repeated the same calibration')
+          }
+        )
+        expect(
+          source.units.find((unit) => unit.source.includes('same calibration'))?.sourceOnly
+        ).toBeUndefined()
+        return
+      }
+      if (wrapped) {
+        expect(source.units.find((unit) => unit.source.includes('surements 11'))?.preserve).toBe(
+          gap ? undefined : 'reference'
+        )
+      }
       expect(references).toHaveLength(availability ? 6 : 7)
       expect(references.filter((unit) => unit.preserve === 'reference')).toHaveLength(
         gap ? 0 : availability ? 6 : 7
@@ -2891,6 +3180,77 @@ it.each([false, true])(
       expect(citations.every((unit) => (unit.preserve === 'reference') === !gap)).toBe(true)
       expect(
         source.units.find((unit) => unit.source.startsWith('The authors'))?.sourceOnly
+      ).toBeUndefined()
+    } finally {
+      await loading.destroy()
+    }
+  }
+)
+
+it.each([false, true])(
+  'preserves an unheaded hanging bibliography (nonreference tail=%s)',
+  async (tail) => {
+    const require = createRequire(import.meta.url)
+    const assets = path.dirname(require.resolve('pdfjs-dist/package.json')) + '/standard_fonts/'
+    const pdf = await PDFDocument.create()
+    pdf.registerFontkit(require('fontkit') as Parameters<PDFDocument['registerFontkit']>[0])
+    const font = await pdf.embedFont(await readFile(assets + 'LiberationSans-Regular.ttf'))
+    pdf
+      .addPage([600, 800])
+      .drawText('This paragraph explains how readers compare sample results.', {
+        font,
+        size: 11,
+        x: 58,
+        y: 710
+      })
+    const page = pdf.addPage([600, 800])
+    for (let i = 0; i < 4; i++) {
+      const y = 730 - i * 23
+      page.drawText(String(i + 1), { font, size: 10, x: 55, y })
+      page.drawText('Allen, Robin. "Notes on sample preparation". Journal of Examples (2020).', {
+        font,
+        size: 10,
+        x: 72,
+        y
+      })
+      page.drawText(`https://doi.org/10.9999/example-${i + 1}.`, {
+        font,
+        size: 10,
+        x: 72,
+        y: y - 11.5
+      })
+    }
+    if (tail)
+      page.drawText('Discuss these measurements with your group.', {
+        font,
+        size: 10,
+        x: 72,
+        y: 638
+      })
+    const loading = getDocument({
+      data: await pdf.save(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      useSystemFonts: false,
+      standardFontDataUrl: assets
+    })
+    try {
+      const { source } = await extractPdfTranslationSource({
+        document: await loading.promise,
+        resourceRequestKey: 'anonymous-bibliography',
+        signal: new AbortController().signal
+      })
+      const citations = source.units.filter((unit) => unit.source.includes('Journal of Examples'))
+      expect(
+        citations.flatMap((unit) => [...unit.source.matchAll(/Journal of Examples/gu)])
+      ).toHaveLength(4)
+      expect(
+        citations.every(
+          (unit) => (unit.sourceOnly === true && unit.preserve === 'reference') === !tail
+        )
+      ).toBe(true)
+      expect(
+        source.units.find((unit) => unit.source.startsWith('This paragraph'))?.sourceOnly
       ).toBeUndefined()
     } finally {
       await loading.destroy()

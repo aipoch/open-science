@@ -883,6 +883,8 @@ const WorkspacePage = ({
     return false
   })
   const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
+  const canMentionArtifact =
+    canEditDraft && docArtifactCount(draftDoc) < MAX_COMPOSER_ARTIFACT_MENTIONS
   // Make the composer-owned mention capability available to Global Search without exposing its draft.
   // The value is transient and Project-scoped; cleanup prevents a stale Project from accepting an
   // Artifact after navigation.
@@ -893,10 +895,10 @@ const WorkspacePage = ({
     }
     setArtifactMentionAvailability({
       projectId: activeProjectId,
-      canMention: canEditDraft && docArtifactCount(draftDoc) < MAX_COMPOSER_ARTIFACT_MENTIONS
+      canMention: canMentionArtifact
     })
     return () => setArtifactMentionAvailability(undefined)
-  }, [activeProjectId, canEditDraft, draftDoc, setArtifactMentionAvailability])
+  }, [activeProjectId, canMentionArtifact, setArtifactMentionAvailability])
 
   // Global Search can only request a same-Project mention. Consume it once in the composer owner so
   // a palette never reaches into this page's local draft state or carries a reference across routing.

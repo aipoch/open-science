@@ -1286,7 +1286,7 @@ it('rejects an import snapshot before reading the archive when temporary space i
   expect(statfs).toHaveBeenCalledTimes(1)
   expect(list).not.toHaveBeenCalled()
   expect(read).not.toHaveBeenCalled()
-  expect(String(capacity.mock.calls[0][0])).toContain('open-science-package-dialog-')
+  expect(String(capacity.mock.calls[0][0])).toContain('session-package-temp')
   expect(desktop.operations.snapshot?.state).toBe('failed')
   expect(vi.mocked(dialog.showMessageBox)).not.toHaveBeenCalled()
   await desktop.close()
