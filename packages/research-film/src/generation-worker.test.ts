@@ -1,16 +1,41 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ on: vi.fn(), post: vi.fn(), narrator: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  on: vi.fn(),
+  post: vi.fn(),
+  narrator: vi.fn(),
+  remote: vi.fn(),
+  remoteIdentity: vi.fn(() => 'remote-http/identity'),
+  workerData: {
+    kind: 'speech',
+    modelDirectory: 'models',
+    runtimeDirectory: 'runtime',
+    threads: 2
+  } as Record<string, unknown>
+}))
 vi.mock('node:worker_threads', () => ({
   parentPort: { on: mocks.on, postMessage: mocks.post },
-  workerData: { kind: 'speech', modelDirectory: 'models', runtimeDirectory: 'runtime', threads: 2 }
+  get workerData() {
+    return mocks.workerData
+  }
 }))
 vi.mock('./kokoro.js', () => ({ createKokoroNarrator: mocks.narrator }))
+vi.mock('./remote-speech.js', () => ({
+  createRemoteSpeechSynthesizer: mocks.remote,
+  remoteSpeechIdentity: mocks.remoteIdentity
+}))
 vi.mock('./generation.js', () => ({ generateResearchVideoInWorker: vi.fn() }))
 
 beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
+  mocks.workerData = {
+    kind: 'speech',
+    modelDirectory: 'models',
+    runtimeDirectory: 'runtime',
+    threads: 2
+  }
+  mocks.remoteIdentity.mockReturnValue('remote-http/identity')
 })
 
 it('uses the duration-only adapter and sends only a scalar for a probe', async () => {
@@ -75,4 +100,59 @@ it('reports predictor failure to the owner instead of hanging the pending probe'
       code: 'ENOMEM'
     })
   )
+})
+
+it('creates the remote synthesizer instead of loading the local model when configured', async () => {
+  const speech = {
+    kind: 'remote-http',
+    style: 'chat-completions',
+    endpoint: 'https://api.example.com/v1/chat/completions',
+    model: 'mimo-v2.5-tts'
+  }
+  mocks.workerData = { ...mocks.workerData, speech }
+  const measureDuration = vi.fn(async () => 0.4),
+    synthesize = vi.fn()
+  mocks.remote.mockReturnValue({ measureDuration, synthesize })
+  await import('./generation-worker.js')
+  mocks.on.mock.calls[0][1]({ kind: 'measure-duration', lane: 0, text: 'Heat' })
+  await vi.waitFor(() =>
+    expect(mocks.post).toHaveBeenCalledExactlyOnceWith({
+      kind: 'speech-duration',
+      lane: 0,
+      duration: 0.4
+    })
+  )
+  expect(mocks.remote).toHaveBeenCalledExactlyOnceWith(speech)
+  expect(mocks.narrator).not.toHaveBeenCalled()
+})
+
+it('stamps the remote identity on generation-side synthesizer proxies', async () => {
+  const speech = {
+    kind: 'remote-http',
+    style: 'audio-speech',
+    endpoint: 'https://api.example.com/v1/audio/speech',
+    model: 'tts-1'
+  }
+  const generation = {
+    specPath: 'video.json',
+    modelDirectory: 'models',
+    engineDirectory: 'engine',
+    outputDirectory: 'output',
+    temporaryDirectory: 'tmp',
+    speechConcurrency: 1,
+    speech
+  }
+  mocks.workerData = generation
+  const { generateResearchVideoInWorker } = await import('./generation.js')
+  vi.mocked(generateResearchVideoInWorker).mockResolvedValue({
+    playerPath: 'player.html',
+    sourcePath: 'sources.zip',
+    duration: 1,
+    preparationMs: 1
+  })
+  await import('./generation-worker.js')
+  expect(mocks.remoteIdentity).toHaveBeenCalledExactlyOnceWith(speech)
+  expect(generateResearchVideoInWorker).toHaveBeenCalledOnce()
+  const synthesizers = vi.mocked(generateResearchVideoInWorker).mock.calls[0][2]
+  expect(synthesizers[0].identity).toBe('remote-http/identity')
 })

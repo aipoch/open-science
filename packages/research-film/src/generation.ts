@@ -8,6 +8,7 @@ import { Worker, type WorkerOptions } from 'node:worker_threads'
 import { availableParallelism, totalmem } from 'node:os'
 import type { VideoSpec } from './timeline.js'
 import type { SpeechSynthesizer } from './narration.js'
+import type { RemoteSpeechConfig } from './remote-speech.js'
 import {
   forkSpeechProcess,
   ownSpeechProcess,
@@ -25,6 +26,8 @@ export type ResearchVideoGenerationInput = {
   modelDirectory: string
   engineDirectory: string
   outputDirectory: string
+  /** Opt-in remote HTTP speech backend; omit to keep the local Kokoro engine. */
+  speech?: RemoteSpeechConfig
 }
 export type ResearchVideoGenerationResult = {
   playerPath: string
@@ -38,6 +41,8 @@ export type ResearchVideoSpeechInput = {
   modelDirectory: string
   runtimeDirectory: string
   threads: number
+  /** When set, the speech worker calls this endpoint instead of loading the local model. */
+  speech?: RemoteSpeechConfig
 }
 export type ResearchVideoSpeechResult = {
   kind: 'speech-result'
@@ -237,7 +242,8 @@ export const createResearchVideoGenerator = (options: {
                   threads: Math.max(
                     1,
                     Math.floor(Math.min(4, availableParallelism()) / speechConcurrency)
-                  )
+                  ),
+                  ...(input.speech ? { speech: input.speech } : {})
                 }
               })
             } catch (error) {

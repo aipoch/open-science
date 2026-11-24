@@ -1,0 +1,284 @@
+import { createServer, type Server } from 'node:http'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  createRemoteSpeechSynthesizer,
+  decodeWav,
+  remoteSpeechIdentity,
+  type RemoteSpeechConfig
+} from './remote-speech.js'
+
+const wav = (samples: number[], sampleRate = 24000, channels = 1, bits = 16): Buffer => {
+  const bytesPerSample = bits / 8
+  const data = Buffer.alloc(samples.length * bytesPerSample)
+  samples.forEach((value, index) => {
+    if (bits === 16) data.writeInt16LE(Math.round(value * 32767), index * 2)
+    else if (bits === 32) data.writeFloatLE(value, index * 4)
+    else data.writeIntLE(Math.round(value * 8388607), index * 3, 3)
+  })
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0)
+  header.writeUInt32LE(36 + data.length, 4)
+  header.write('WAVEfmt ', 8)
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(bits === 32 ? 3 : 1, 20)
+  header.writeUInt16LE(channels, 22)
+  header.writeUInt32LE(sampleRate, 24)
+  header.writeUInt32LE(sampleRate * channels * bytesPerSample, 28)
+  header.writeUInt16LE(channels * bytesPerSample, 32)
+  header.writeUInt16LE(bits, 34)
+  header.write('data', 36)
+  header.writeUInt32LE(data.length, 40)
+  return Buffer.concat([header, data])
+}
+
+describe('decodeWav', () => {
+  it('decodes 16-bit mono PCM', () => {
+    const { samples, sampleRate } = decodeWav(new Uint8Array(wav([0, 0.5, -0.5, 1])))
+    expect(sampleRate).toBe(24000)
+    expect(samples).toHaveLength(4)
+    expect(samples[1]).toBeCloseTo(0.5, 2)
+    expect(samples[2]).toBeCloseTo(-0.5, 2)
+  })
+
+  it('downmixes interleaved stereo to mono', () => {
+    const { samples } = decodeWav(new Uint8Array(wav([1, -1, 0.5, -0.5], 16000, 2)))
+    expect(samples).toHaveLength(2)
+    expect(samples[0]).toBeCloseTo(0, 2)
+    expect(samples[1]).toBeCloseTo(0, 2)
+  })
+
+  it('decodes 32-bit IEEE float PCM', () => {
+    const bytes = wav([0.25, -0.75], 24000, 1, 32)
+    const { samples } = decodeWav(new Uint8Array(bytes))
+    expect(samples[0]).toBeCloseTo(0.25, 6)
+    expect(samples[1]).toBeCloseTo(-0.75, 6)
+  })
+
+  it('decodes 24-bit PCM', () => {
+    const { samples } = decodeWav(new Uint8Array(wav([0.5, -0.25], 24000, 1, 24)))
+    expect(samples[0]).toBeCloseTo(0.5, 5)
+    expect(samples[1]).toBeCloseTo(-0.25, 5)
+  })
+
+  it('rejects payloads that are not RIFF/WAVE', () => {
+    expect(() => decodeWav(new Uint8Array(Buffer.from('<html>error</html>')))).toThrow(
+      /not a WAV file/
+    )
+  })
+
+  it('rejects a WAV without a data chunk', () => {
+    const bytes = wav([1]).subarray(0, 44)
+    bytes.write('junk', 36)
+    bytes.writeUInt32LE(0, 40)
+    expect(() => decodeWav(new Uint8Array(bytes))).toThrow(/missing its data chunk/)
+  })
+
+  it('rejects truncated chunk payloads', () => {
+    const bytes = wav([1, 1, 1, 1])
+    bytes.writeUInt32LE(bytes.length, 40)
+    expect(() => decodeWav(new Uint8Array(bytes))).toThrow(/truncated/)
+  })
+
+  it('rejects unsupported encodings with an actionable message', () => {
+    const bytes = wav([1, 1], 24000, 1, 16)
+    bytes.writeUInt16LE(6, 20) // A-law
+    expect(() => decodeWav(new Uint8Array(bytes))).toThrow(/not supported; request wav output/)
+  })
+})
+
+describe('remoteSpeechIdentity', () => {
+  const base: RemoteSpeechConfig = {
+    kind: 'remote-http',
+    style: 'chat-completions',
+    endpoint: 'https://api.example.com/v1/chat/completions',
+    model: 'tts-1',
+    apiKey: 'secret-key'
+  }
+
+  it('never embeds the API key', () => {
+    expect(remoteSpeechIdentity(base)).not.toContain('secret-key')
+  })
+
+  it('hashes a voice sample instead of embedding it', () => {
+    const withVoice = remoteSpeechIdentity({ ...base, voice: 'data:audio/wav;base64,AAAA' })
+    expect(withVoice).not.toContain('AAAA')
+    expect(withVoice).toContain('chat-completions')
+  })
+
+  it('distinguishes model, endpoint and voice changes', () => {
+    const identity = remoteSpeechIdentity(base)
+    expect(remoteSpeechIdentity({ ...base, model: 'tts-2' })).not.toBe(identity)
+    expect(remoteSpeechIdentity({ ...base, endpoint: 'https://other.example.com/v1' })).not.toBe(
+      identity
+    )
+    expect(remoteSpeechIdentity({ ...base, voice: 'alloy' })).not.toBe(identity)
+    expect(remoteSpeechIdentity({ ...base, apiKey: 'other' })).toBe(identity)
+  })
+})
+
+let server: Server | undefined
+afterEach(async () => {
+  await new Promise((resolve) => (server ? server.close(resolve) : resolve(undefined)))
+  server = undefined
+})
+
+const listen = async (
+  handler: Parameters<typeof createServer>[0]
+): Promise<{
+  url: string
+  requests: { url?: string; body?: string; authorization?: string }[]
+}> => {
+  const requests: { url?: string; body?: string; authorization?: string }[] = []
+  server = createServer((request, response) => {
+    const chunks: Buffer[] = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('end', () => {
+      requests.push({
+        url: request.url,
+        body: Buffer.concat(chunks).toString('utf8'),
+        authorization: request.headers.authorization
+      })
+      handler(request, response)
+    })
+  })
+  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (typeof address === 'string' || !address) throw new Error('Failed to bind mock server')
+  return { url: `http://127.0.0.1:${address.port}/v1/audio/speech`, requests }
+}
+
+describe('createRemoteSpeechSynthesizer', () => {
+  it('posts an audio-speech request and returns decoded WAV audio', async () => {
+    const payload = wav([0, 0.4, -0.4])
+    const { url, requests } = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'audio/wav' })
+      response.end(payload)
+    })
+    const synthesizer = createRemoteSpeechSynthesizer({
+      kind: 'remote-http',
+      style: 'audio-speech',
+      endpoint: url,
+      model: 'tts-1',
+      voice: 'alloy',
+      apiKey: 'test-key'
+    })
+    const audio = await synthesizer.synthesize('Hello world')
+    expect(audio.sampleRate).toBe(24000)
+    expect(audio.samples).toHaveLength(3)
+    expect(requests).toHaveLength(1)
+    expect(requests[0].authorization).toBe('Bearer test-key')
+    const body = JSON.parse(requests[0].body!)
+    expect(body).toMatchObject({ model: 'tts-1', input: 'Hello world', voice: 'alloy' })
+    expect(body.response_format).toBe('wav')
+  })
+
+  it('posts a chat-completions request and decodes base64 audio', async () => {
+    const payload = wav([0.1, -0.1, 0.2])
+    const { url, requests } = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(
+        JSON.stringify({ choices: [{ message: { audio: { data: payload.toString('base64') } } }] })
+      )
+    })
+    const synthesizer = createRemoteSpeechSynthesizer({
+      kind: 'remote-http',
+      style: 'chat-completions',
+      endpoint: url,
+      model: 'mimo-v2.5-tts',
+      voice: '冰糖'
+    })
+    const audio = await synthesizer.synthesize('研究影片旁白')
+    expect(audio.samples).toHaveLength(3)
+    expect(requests[0].authorization).toBeUndefined()
+    const body = JSON.parse(requests[0].body!)
+    expect(body.model).toBe('mimo-v2.5-tts')
+    expect(body.messages).toEqual([{ role: 'assistant', content: '研究影片旁白' }])
+    expect(body.audio).toEqual({ format: 'wav', voice: '冰糖' })
+  })
+
+  it('estimates probe durations proportionally without extra requests', async () => {
+    const payload = wav(new Array(48000).fill(0)) // two seconds at 24 kHz
+    const { url, requests } = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'audio/wav' })
+      response.end(payload)
+    })
+    const synthesizer = createRemoteSpeechSynthesizer({
+      kind: 'remote-http',
+      style: 'audio-speech',
+      endpoint: url,
+      model: 'tts-1'
+    })
+    const audio = await synthesizer.synthesize('abcdefghij')
+    expect(audio.samples).toHaveLength(48000)
+    const measured = await synthesizer.measureDuration?.('abcde')
+    expect(measured).toBeCloseTo(1, 2)
+    expect(requests).toHaveLength(1)
+  })
+
+  it('measures by synthesizing once when no reference exists yet', async () => {
+    const payload = wav(new Array(24000).fill(0))
+    const { url, requests } = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'audio/wav' })
+      response.end(payload)
+    })
+    const synthesizer = createRemoteSpeechSynthesizer({
+      kind: 'remote-http',
+      style: 'audio-speech',
+      endpoint: url,
+      model: 'tts-1'
+    })
+    const measured = await synthesizer.measureDuration?.('cold probe')
+    expect(measured).toBeCloseTo(1, 2)
+    expect(requests).toHaveLength(1)
+  })
+
+  it('reports HTTP failures without echoing credentials', async () => {
+    const { url } = await listen((_request, response) => {
+      response.writeHead(401, { 'content-type': 'text/plain' })
+      response.end('unauthorized')
+    })
+    const synthesizer = createRemoteSpeechSynthesizer({
+      kind: 'remote-http',
+      style: 'audio-speech',
+      endpoint: url,
+      model: 'tts-1',
+      apiKey: 'do-not-leak'
+    })
+    await expect(synthesizer.synthesize('Hello')).rejects.toThrow(/HTTP 401/)
+    await expect(synthesizer.synthesize('Hello')).rejects.not.toThrow(/do-not-leak/)
+  })
+
+  it('reports a chat response that carries no audio', async () => {
+    const { url } = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ choices: [{ message: { content: 'no audio' } }] }))
+    })
+    const synthesizer = createRemoteSpeechSynthesizer({
+      kind: 'remote-http',
+      style: 'chat-completions',
+      endpoint: url,
+      model: 'mimo-v2.5-tts'
+    })
+    await expect(synthesizer.synthesize('Hello')).rejects.toThrow(/missing synthesized audio/)
+  })
+
+  it('rejects malformed configuration eagerly', () => {
+    expect(() =>
+      createRemoteSpeechSynthesizer({
+        kind: 'remote-http',
+        style: 'audio-speech',
+        endpoint: 'not a url',
+        model: 'tts-1'
+      })
+    ).toThrow()
+    expect(() =>
+      createRemoteSpeechSynthesizer({
+        kind: 'remote-http',
+        style: 'audio-speech',
+        endpoint: 'https://example.com/speech',
+        model: 'tts-1',
+        timeoutMs: 0
+      })
+    ).toThrow(/positive number/)
+  })
+})

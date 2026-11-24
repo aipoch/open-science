@@ -443,6 +443,58 @@ it('routes scalar probes without PCM and transfers owned audio buffers to the ge
   }
 })
 
+it('forwards the remote speech configuration with every speech worker request', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-remote-speech-'))
+  const worker = stubWorker()
+  const child = stubChild()
+  child.kill.mockImplementation(() => child.emit('exit', null, 'SIGKILL'))
+  const controller = new AbortController()
+  const speech = {
+    kind: 'remote-http' as const,
+    style: 'audio-speech' as const,
+    endpoint: 'https://api.example.com/v1/audio/speech',
+    model: 'tts-1',
+    apiKey: 'secret'
+  }
+  try {
+    const entered = Promise.withResolvers<void>()
+    child.send.mockImplementation(() => entered.resolve())
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess: () => child as unknown as ChildProcess,
+      createWorker: () => {
+        queueMicrotask(() => worker.emit('message', { kind: 'synthesize', lane: 0, text: 'one' }))
+        return worker as unknown as Worker
+      }
+    })
+    const result = generate(
+      {
+        speechConcurrency: 1,
+        specPath: 'unused',
+        modelDirectory: 'unused',
+        engineDirectory: 'unused',
+        outputDirectory: join(root, 'output'),
+        speech
+      },
+      controller.signal
+    ).catch((error) => error)
+    await entered.promise
+    expect(child.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'synthesize',
+        input: expect.objectContaining({ kind: 'speech', speech })
+      }),
+      expect.any(Function)
+    )
+    controller.abort(new Error('finished forwarding check'))
+    expect(await result).toMatchObject({ message: 'finished forwarding check' })
+    expect(await readdir(root)).toEqual([])
+  } finally {
+    controller.abort()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 it('remixes verified speech after a visual edit and resynthesizes damaged recordings', async () => {
   const root = await mkdtemp(join(tmpdir(), 'film-speech-checkpoint-'))
   try {
