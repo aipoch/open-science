@@ -304,6 +304,10 @@ describe('HeadlessTaskApi adapter', () => {
       createdAt: 1,
       updatedAt: 1
     }
+    let hydrationPending = false
+    const findAfterHydration = vi.fn(async (id: string) =>
+      id === target.id ? { projectId: target.projectId } : undefined
+    )
     const invoke = vi.fn(async (channel, invocation) => {
       if (channel === 'sessions:list')
         return {
@@ -313,8 +317,11 @@ describe('HeadlessTaskApi adapter', () => {
               projectId: project.id,
               artifactCount: 0
             })),
-            { id: target.id, projectId: target.projectId, artifactCount: 1 }
-          ]
+            ...(hydrationPending
+              ? []
+              : [{ id: target.id, projectId: target.projectId, artifactCount: 1 }])
+          ],
+          ...(hydrationPending ? { diagnostics: { catalogHydrationPending: true } } : {})
         }
       if (channel === 'sessions:load-one') {
         expect(invocation.args).toEqual([{ projectId: target.projectId, sessionId: target.id }])
@@ -336,6 +343,7 @@ describe('HeadlessTaskApi adapter', () => {
       agent: createAgent(),
       controls: {
         specialists: { resolve: async (id) => ({ id }) },
+        findSessionAfterCatalogHydration: findAfterHydration,
         findArtifactSessions: async (id) =>
           id === 'download' ? [{ projectId: target.projectId, sessionId: target.id }] : []
       }
@@ -356,6 +364,12 @@ describe('HeadlessTaskApi adapter', () => {
       await expect(api.acquireArtifact('missing')).rejects.toMatchObject({
         code: 'artifact_not_found'
       })
+      expect(findAfterHydration).not.toHaveBeenCalled()
+
+      hydrationPending = true
+      await expect(api.listArtifacts(target.id)).resolves.toEqual(target.artifacts)
+      await expect(api.getSession('missing')).rejects.toMatchObject({ code: 'session_not_found' })
+      expect(findAfterHydration.mock.calls).toEqual([[target.id], ['missing']])
       expect(invoke.mock.calls.some(([channel]) => channel === 'sessions:load-all')).toBe(false)
     } finally {
       await api.dispose()

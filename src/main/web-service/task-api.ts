@@ -135,7 +135,15 @@ class HeadlessTaskApi {
         },
         find: async (sessionId) => {
           const catalog = (await this.invoke('sessions:list')) as ListSessionSummariesResult
-          const summary = catalog.sessions.find((session) => session.id === sessionId)
+          let summary: { projectId: string } | undefined = catalog.sessions.find(
+            (session) => session.id === sessionId
+          )
+          if (!summary && catalog.diagnostics?.catalogHydrationPending) {
+            const findAfterHydration = this.ports.controls?.findSessionAfterCatalogHydration
+            if (!findAfterHydration)
+              throw new Error('Task session catalog recovery is unavailable.')
+            summary = await findAfterHydration(sessionId)
+          }
           if (!summary) return undefined
           return this.invoke('sessions:load-one', {
             projectId: summary.projectId,

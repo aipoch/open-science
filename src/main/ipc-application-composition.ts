@@ -1067,6 +1067,8 @@ export const createApplicationModules = async (
     },
     taskAgent: agentWorkflows.taskAgent,
     taskControls: {
+      findSessionAfterCatalogHydration: (sessionId) =>
+        withDataRootWrite(() => sessionProjection.findSessionAfterCatalogHydration(sessionId)),
       findArtifactSessions: (artifactId) =>
         withDataRootWrite(() =>
           sessionFoundation.sessionRepository.findArtifactSessions(
