@@ -92,6 +92,18 @@ export type PendingElicitationRequest = {
   durable?: ElicitationProjection['durable']
 }
 
+export const matchesElicitationPrompt = (
+  activity: {
+    promptMessageId?: string
+    elicitation?: { durable?: { promptMessageId?: string } }
+  },
+  currentPromptId: string | undefined
+): boolean => {
+  const questionPromptId =
+    activity.promptMessageId ?? activity.elicitation?.durable?.promptMessageId
+  return !currentPromptId || !questionPromptId || questionPromptId === currentPromptId
+}
+
 export const isDurableAgentUserChoiceRequest = (
   request: PendingElicitationRequest
 ): request is PendingElicitationRequest & {

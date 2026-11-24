@@ -2338,6 +2338,11 @@ const ConversationPanel = ({
                           elicitation={pendingElicitation}
                           request={pendingElicitationRequest}
                           onRespond={onRespondToElicitation}
+                          modelSelection={{
+                            configuration: modelConfiguration,
+                            unavailable: modelUnavailable,
+                            onChange: changeModelConfiguration
+                          }}
                         />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer

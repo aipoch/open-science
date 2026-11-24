@@ -2779,6 +2779,7 @@
     "Select all installed skills": "설치된 모든 스킬 선택",
     "Select model": "모델 선택",
     "Session model unavailable": "세션 모델을 사용할 수 없음",
+    "Choose an available model in this conversation's model picker, then try again.": "이 대화의 모델 선택 메뉴에서 사용 가능한 모델을 선택한 후 다시 시도하세요.",
     "Select this computer, then select": "이 컴퓨터를 선택한 다음",
     "Select {{name}}": "{{name}} 선택",
     "Selected area": "선택한 영역",

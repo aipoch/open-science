@@ -2883,6 +2883,7 @@
     "Select all installed skills": "Выбрать все установленные навыки",
     "Select model": "Выбрать модель",
     "Session model unavailable": "Модель сессии недоступна",
+    "Choose an available model in this conversation's model picker, then try again.": "Выберите доступную модель в меню выбора модели этого диалога и повторите попытку.",
     "Select this computer, then select": "Выберите этот компьютер, затем выберите",
     "Select {{name}}": "Выберите {{name}}",
     "Selected": "Выбрано",

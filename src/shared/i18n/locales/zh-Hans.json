@@ -2864,6 +2864,7 @@
     "Select all installed skills": "全选已安装的技能",
     "Select model": "选择模型",
     "Session model unavailable": "会话模型不可用",
+    "Choose an available model in this conversation's model picker, then try again.": "请在当前会话的模型选择器中选择一个可用模型，然后重试。",
     "Select this computer, then select": "选择此电脑，然后选择",
     "Select {{name}}": "选择 {{name}}",
     "Selected area": "已选区域",

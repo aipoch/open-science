@@ -2771,6 +2771,7 @@
     "Select all installed skills": "インストールされているすべてのスキルを選択",
     "Select model": "モデルを選択",
     "Session model unavailable": "セッションモデルは利用できません",
+    "Choose an available model in this conversation's model picker, then try again.": "この会話のモデル選択メニューで利用可能なモデルを選び、もう一度お試しください。",
     "Select this computer, then select": "このコンピューターを選択してから、",
     "Select {{name}}": "{{name}} を選択",
     "Selected area": "選択した範囲",

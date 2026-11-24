@@ -8,7 +8,11 @@ import {
   resolveMessageBranchPath,
   type PersistedConversationGraph
 } from '../../shared/conversation-graph'
-import type { ElicitationAnswer, PendingElicitationRequest } from '../../shared/elicitation'
+import {
+  matchesElicitationPrompt,
+  type ElicitationAnswer,
+  type PendingElicitationRequest
+} from '../../shared/elicitation'
 import type { HistoryReplayDescriptor } from '../../shared/history-replay-contract'
 import {
   buildSessionHistoryReplay,
@@ -340,8 +344,14 @@ class AcpDurableContinuationContextOwner {
         activities: latest.conversationGraph!.activities.map(settle)
       }
       const activities = resolveActiveConversationActivities(graph).activities
+      const currentPromptId = latest.messages.findLast(({ role }) => role === 'user')?.id
       const stillWaiting = activities.some(
-        ({ elicitation }) => elicitation?.state === 'pending' || elicitation?.continuationRecovery
+        (item) =>
+          (item.elicitation?.state === 'pending' || item.elicitation?.continuationRecovery) &&
+          matchesElicitationPrompt(
+            graph.activities.find(({ id }) => id === item.id) ?? item,
+            currentPromptId
+          )
       )
       return {
         ...latest,

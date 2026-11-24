@@ -1,3 +1,4 @@
+import { matchesElicitationPrompt } from '../../../shared/elicitation'
 import { hasPendingSandboxNetworkApproval } from '../../../shared/sandbox-network-approval'
 import {
   deriveSessionAttention,
@@ -63,14 +64,19 @@ type SessionInteractionSource = Readonly<{
   runtimeContext?: ChatSession['runtimeContext']
   activities?: readonly {
     id?: string
+    promptMessageId?: string
     elicitation?: {
       state: string
-      durable?: { kind: string; provenanceContext?: { messageBranchId?: string } }
+      durable?: {
+        kind: string
+        promptMessageId?: string
+        provenanceContext?: { messageBranchId?: string }
+      }
       continuationPending?: boolean
       continuationRecovery?: unknown
     }
   }[]
-  activeRun?: unknown
+  activeRun?: Pick<NonNullable<ChatSession['activeRun']>, 'promptMessageId'>
   agentPromptInFlight?: boolean
   isPending?: boolean
   pendingRetryable?: boolean
@@ -163,15 +169,27 @@ export const isCurrentQuestionBranch = (
   return !activeBranch || !owner || owner === activeBranch
 }
 
-const hasOnlyOtherBranchQuestions = (session: SessionInteractionSource): boolean => {
-  if (!session.conversationGraph) return false
+export const isCurrentSavedQuestion = (
+  session: SessionInteractionSource,
+  activity: NonNullable<SessionInteractionSource['activities']>[number]
+): boolean => {
+  if (!isCurrentQuestionBranch(session, activity.id, activity.elicitation?.durable)) return false
+  // A revision can continue under a routed user reply, which is also a valid prompt here.
+  const currentPromptId =
+    session.activeRun?.promptMessageId ??
+    session.messages?.findLast(({ role }) => role === 'user')?.id
+  const authority = session.conversationGraph?.activities.find(({ id }) => id === activity.id)
+  return matchesElicitationPrompt(authority ?? activity, currentPromptId)
+}
+
+const hasOnlyHistoricalQuestions = (session: SessionInteractionSource): boolean => {
   // Hydration projects only activities on this branch into the flat list. Read the
   // graph as well, preferring newer flat activity state for the same tool call.
   const flat = session.activities ?? []
   const projectedIds = new Set(flat.map(({ id }) => id))
   const questions = [
     ...flat,
-    ...session.conversationGraph.activities.filter(({ id }) => !projectedIds.has(id))
+    ...(session.conversationGraph?.activities.filter(({ id }) => !projectedIds.has(id)) ?? [])
   ].filter(
     ({ elicitation }) =>
       elicitation?.state === 'pending' ||
@@ -180,9 +198,7 @@ const hasOnlyOtherBranchQuestions = (session: SessionInteractionSource): boolean
   )
   return (
     questions.length > 0 &&
-    questions.every(
-      ({ id, elicitation }) => !isCurrentQuestionBranch(session, id, elicitation?.durable)
-    )
+    questions.every((activity) => !isCurrentSavedQuestion(session, activity))
   )
 }
 
@@ -212,7 +228,7 @@ export const projectSessionActionability = (
   const elicitationPending =
     facts.elicitationPending ??
     (session.liveInteractionState?.elicitation === true ||
-      (interactionState.elicitation && !hasOnlyOtherBranchQuestions(session)))
+      (interactionState.elicitation && !hasOnlyHistoricalQuestions(session)))
   const status =
     sessionAwaitsAnswer && !elicitationPending
       ? resolveSessionInteractionStatus(

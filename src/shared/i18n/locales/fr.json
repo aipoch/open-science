@@ -2865,6 +2865,7 @@
     "Select all installed skills": "Sélectionnez toutes les compétences installées",
     "Select model": "Sélectionnez le modèle",
     "Session model unavailable": "Modèle de session indisponible",
+    "Choose an available model in this conversation's model picker, then try again.": "Choisissez un modèle disponible dans le sélecteur de modèles de cette conversation, puis réessayez.",
     "Select this computer, then select": "Sélectionnez cet ordinateur, puis sélectionnez",
     "Select {{name}}": "Sélectionnez {{name}}",
     "Selected": "Sélectionné",

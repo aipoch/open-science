@@ -1,5 +1,14 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import { useId, useEffectEvent, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import {
+  useId,
+  useEffectEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type FormEvent
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowDownRight,
@@ -35,11 +44,17 @@ import {
   type ElicitationValue,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
+import { classifyFailure } from '../../../../shared/failure/classify'
+import {
+  NO_ACTIVE_PROVIDER_MESSAGE,
+  unwrapIpcErrorDetail
+} from '../../../../shared/failure/messages'
 import type { ElicitationEditDraft } from '@/stores/session-store-contract'
 import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
 import { ElicitationOptionDetails } from './ElicitationOptionDetails'
 import { ChoiceKindChip } from './ChoiceKindChip'
+import { ComposerModelPicker } from './ComposerModelPicker'
 import { QuestionSkipButton } from './QuestionSkipButton'
 
 type FormValues = ElicitationEditDraft['values']
@@ -1450,11 +1465,14 @@ const WorkspaceElicitationCard = ({
 const WorkspaceElicitationRecovery = ({
   elicitation,
   request,
-  onRespond
-}: Pick<
-  WorkspaceElicitationCardProps,
-  'elicitation' | 'request' | 'onRespond'
->): React.JSX.Element => {
+  onRespond,
+  modelSelection
+}: Pick<WorkspaceElicitationCardProps, 'elicitation' | 'request' | 'onRespond'> & {
+  modelSelection?: Pick<
+    ComponentProps<typeof ComposerModelPicker>,
+    'configuration' | 'unavailable' | 'onChange'
+  >
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<{ ending: boolean; detail: string }>()
@@ -1483,10 +1501,24 @@ const WorkspaceElicitationRecovery = ({
       setBusy(false)
     }
   }
+  const detail = error?.detail ?? elicitation.continuationRecovery?.error
+  const providerUnavailable =
+    !error?.ending &&
+    detail !== undefined &&
+    (classifyFailure({ origin: 'operation', text: detail }).reason ===
+      'configuration/selected-provider-unavailable' ||
+      (modelSelection?.configuration !== undefined &&
+        unwrapIpcErrorDetail(detail) === NO_ACTIVE_PROVIDER_MESSAGE))
   return (
     <div data-testid="elicitation-recovery" className="rounded-2xl bg-bg-000 p-4 shadow-sm">
       <ErrorNotice
-        title={error?.ending ? t('Could not end this wait.') : t('Could not continue the task')}
+        title={
+          error?.ending
+            ? t('Could not end this wait.')
+            : providerUnavailable
+              ? t('Session model unavailable')
+              : t('Could not continue the task')
+        }
         description={
           elicitation.state === 'answered' || elicitation.state === 'declined'
             ? t('Your response was saved.')
@@ -1507,9 +1539,17 @@ const WorkspaceElicitationRecovery = ({
             : undefined
         }
       >
+        {providerUnavailable && modelSelection ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span>
+              {t("Choose an available model in this conversation's model picker, then try again.")}
+            </span>
+            <ComposerModelPicker {...modelSelection} alwaysShow includeAllClaudeSubscriptions />
+          </div>
+        ) : null}
         <details className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs">
           <summary>{t('Error details')}</summary>
-          {error?.detail ?? elicitation.continuationRecovery?.error}
+          {detail}
         </details>
       </ErrorNotice>
     </div>
