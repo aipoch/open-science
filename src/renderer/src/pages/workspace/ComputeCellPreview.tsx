@@ -63,7 +63,7 @@ export const ComputeCellPreview = memo(function ComputeCellPreview({
         <div className="flex min-w-full w-max py-3 font-mono text-xs leading-5">
           <pre
             aria-hidden="true"
-            className="sticky left-0 shrink-0 select-none border-r border-border bg-card px-3 text-right text-muted-foreground/50"
+            className="sticky left-0 shrink-0 select-none border-r border-border bg-card px-3 text-right text-muted-foreground"
           >
             {lines.map((_, index) => index + 1).join('\n')}
           </pre>

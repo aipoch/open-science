@@ -795,6 +795,7 @@
        Line spans carry the counter via Streamdown's generated before: classes — there is no
        `.line` class, so match the generated class attribute instead. */
     & code > span[class*='counter(line)']::before {
+      color: var(--muted-foreground);
       width: 2ch !important;
       margin-right: 0.5ch !important;
       text-align: left !important;
