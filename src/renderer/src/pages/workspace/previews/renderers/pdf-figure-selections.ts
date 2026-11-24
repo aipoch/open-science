@@ -1,7 +1,7 @@
 import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { PdfStructureSource } from '../../../../../../shared/pdf-structure'
-import { figureCaptionKey, figureReferenceKey } from './pdf-figure-index'
+import { pdfCaptionKey, pdfReferenceKey } from './pdf-figure-index'
 import type { PdfLinkDestination } from './pdf-native-links'
 
 export type Selection = {
@@ -353,7 +353,7 @@ export async function loadPdfFigurePreview(
   signal?: AbortSignal,
   onCacheMiss?: () => void
 ): Promise<{ image: string; caption: string; destination: PdfLinkDestination } | undefined> {
-  const key = figureReferenceKey(reference)
+  const key = pdfReferenceKey(reference)
   if (!key || signal?.aborted) return undefined
   const page = destination.pageNumber
   let result = await window.api.pdfStructure.readCached({ ...source, page })
@@ -377,10 +377,10 @@ export async function loadPdfFigurePreview(
   if (!result || signal?.aborted) return undefined
   const candidates = result.elements.filter(
     (element) =>
-      element.kind === 'figure' &&
+      key.startsWith(element.kind + ':') &&
       element.regions[0]?.page === page &&
       element.caption &&
-      figureCaptionKey(element.caption.text, 'extracted') === key
+      pdfCaptionKey(element.caption.text, 'extracted') === key
   )
   if (candidates.length !== 1) return undefined
   const { caption, thumbnailId, regions } = candidates[0]

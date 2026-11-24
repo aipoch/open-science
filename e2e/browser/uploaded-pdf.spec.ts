@@ -276,3 +276,42 @@ test('opens at the figure reference and lets the reader move and magnify the pre
   await close.click()
   await expect(card).toBeHidden()
 })
+
+test('opens the matching table crop from plain text and pinches only the preview', async ({
+  page,
+  context
+}) => {
+  await page.goto('/uploaded-pdf.html?figure')
+  const link = page.getByRole('link', { name: 'Tab. III', exact: true })
+  await link.focus()
+  await page.keyboard.press('Enter')
+  const card = page.getByRole('region', { name: 'Tab. III', exact: true })
+  await expect(card.getByText('Table 3. Trial outcomes.')).toBeVisible()
+  const img = card.getByRole('img')
+  const box = (await img.boundingBox())!
+  const x = box.x + box.width / 2,
+    y = box.y + box.height / 2
+  const session = await context.newCDPSession(page)
+  await session.send('Input.dispatchMouseEvent', {
+    type: 'mouseWheel',
+    x,
+    y,
+    deltaX: 0,
+    deltaY: -70,
+    modifiers: 2
+  })
+  await expect
+    .poll(() => card.locator('footer span').first().innerText().then(parseFloat))
+    .toBeGreaterThan(150)
+  await card.getByRole('button', { name: 'Reset zoom' }).click()
+  await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 })
+  const points = (spread: number): { x: number; y: number; id: number }[] => [
+    { x: x - spread, y, id: 1 },
+    { x: x + spread, y, id: 2 }
+  ]
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(25) })
+  await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(50) })
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await expect(card.getByText('200%')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.visualViewport?.scale)).toBe(1)
+})

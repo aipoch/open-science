@@ -255,7 +255,6 @@
   },
   "renderer": {
     "Move preview": "移动预览",
-    "View cropped figure": "查看图像裁剪",
     "The update did not finish. Reopen your file or link after updating.": "更新未完成。请在更新后重新打开文件或链接。",
     "View updates": "查看更新",
     "Could not confirm that all subagents stopped.": "未能确认所有子智能体都已停止。",

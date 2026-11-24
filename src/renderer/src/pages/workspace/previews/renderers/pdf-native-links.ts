@@ -2,7 +2,8 @@ import type { PDFDocumentProxy, PDFPageProxy, PageViewport } from 'pdfjs-dist'
 import { pdfjsLib } from '../pdfjs'
 import {
   endsWithFigureSeriesQualifier,
-  figureReferenceKey,
+  pdfReferenceKey,
+  tableReferences,
   type PdfLinkDestination
 } from './pdf-figure-index'
 
@@ -38,20 +39,31 @@ function figureReferences(text: string, precedingLine = ''): RegExpExecArray[] {
   return [
     ...text.matchAll(
       /(?:\b(?:Fig(?:ure)?\.?)|[图圖])[ \t]*(?:S[ \t]*)?\d+(?:[ \t]*\([ \t]*[a-z][ \t]*\)|[a-z])?/giu
-    )
-  ].filter((match) => {
-    const before = text.slice(0, match.index).split('\n').at(-1)!
-    const after = text.slice(match.index + match[0].length)
-    // A wrapped series qualifier still belongs to a label starting the next line.
-    return (
-      !endsWithFigureSeriesQualifier(before.trim() ? before : precedingLine) &&
-      !/^[\p{L}\d]/u.test(after) &&
-      !/^[ \t]+[a-z](?:\b|$)/iu.test(after) &&
-      !/^[ \t]*(?:[.．]\d|[（(]|[-–—/]|(?:[,，&]|and\b|or\b|和|与|與|及)[ \t]*(?:S?\d|[a-z]\b))/iu.test(
-        after
+    ),
+    ...text.matchAll(tableReferences)
+  ]
+    .sort((a, b) => a.index - b.index)
+    .filter((match) => {
+      const before = text.slice(0, match.index).split('\n').at(-1)!
+      const after = text.slice(match.index + match[0].length)
+      const chinese = /[图圖表]/u.test(match[0])
+      if (!pdfReferenceKey(match[0])) return false
+      if (
+        chinese &&
+        /\p{Script=Han}$/u.test(before) &&
+        !/(?:见|見|如|参照|參照|参考|參考|于|於|在|从|從|据|據)$/u.test(before)
       )
-    )
-  })
+        return false
+      // A wrapped series qualifier still belongs to a label starting the next line.
+      return (
+        !endsWithFigureSeriesQualifier(before.trim() ? before : precedingLine) &&
+        !(chinese ? /^[a-z\d一二三四五六七八九十]/iu : /^[\p{L}\d]/u).test(after) &&
+        !/^[ \t]+[a-z](?:\b|$)/iu.test(after) &&
+        !/^[ \t]*(?:[.．]\d|[（(]|[-–—/]|(?:[,，&]|and\b|or\b|和|与|與|及|至|到|、)[ \t]*(?:S?\d|[a-z]\b|[IVXLCDM]+\b|[一二三四五六七八九十]))/iu.test(
+          after
+        )
+      )
+    })
 }
 
 /** Add keyboard links while leaving pointer selection on the original PDF.js text. */
@@ -126,7 +138,7 @@ export function renderIndexedFigureLinks({
       const reference = match[0]
       const end = match.index + reference.length
       const before = line.text.slice(0, match.index)
-      const key = figureReferenceKey(reference)
+      const key = pdfReferenceKey(reference)
       const destination = key ? index.get(key) : undefined
       // A same-page label starting a line may be the figure's own caption.
       if (!destination || (destination.pageNumber === pageNumber && !before.trim())) continue
@@ -287,7 +299,8 @@ function sourceFigureReference(
   }
   const matches = figureReferences(text, precedingLine).filter((match) => {
     const end = match.index + match[0].length
-    const digit = match.index + match[0].search(/\d/u)
+    const digit =
+      match.index + (match[1] ? match[0].length - match[1].length : match[0].search(/\d/u))
     const covered = runs.filter((run) => run.start < end && run.end > digit)
     // Dedicated label/number runs establish ownership without guessing glyph widths.
     if (
@@ -390,9 +403,10 @@ export async function resolvePdfLinkDestination(
     if (
       coordinates.some((value) => value === null) ||
       !(coordinates[2] > coordinates[0]) ||
-      !(coordinates[3] > coordinates[1])
+      coordinates[3] === coordinates[1]
     )
       return undefined
+    // Some publishers store FitR in top-down order. The viewport bounds below normalize y.
     rect = coordinates as number[]
   } else if (mode === 'XYZ') {
     const x = coordinates[0] ?? left,

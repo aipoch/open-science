@@ -9,8 +9,9 @@ import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 // Two pages retain the full reader; single-page PDFs intentionally use image-style previews.
 // Real PDF.js preview and production reader UI; extraction/IPC are controlled fixtures.
 const content =
-  'BT /F1 22 Tf 50 740 Td (Uploaded PDF) Tj /F1 12 Tf 0 -40 Td (Sample    Value) Tj 0 -20 Td (A             42) Tj 0 -30 Td (Fig. 3) Tj 0 -30 Td (See Figure 9 for the trend.) Tj ET'
-const secondPage = 'BT /F1 14 Tf 50 540 Td (Figure 9. The trend over time.) Tj ET'
+  'BT /F1 22 Tf 50 740 Td (Uploaded PDF) Tj /F1 12 Tf 0 -40 Td (Sample    Value) Tj 0 -20 Td (A             42) Tj 0 -30 Td (Fig. 3) Tj 0 -30 Td (See Figure 9 for the trend.) Tj 0 -30 Td (See Tab. III for comparison.) Tj ET'
+const secondPage =
+  'BT /F1 14 Tf 50 540 Td (Figure 9. The trend over time.) Tj 0 -40 Td (Table 3. Trial outcomes.) Tj ET'
 const objects = [
   '<< /Type /Catalog /Pages 2 0 R >>',
   '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
@@ -88,6 +89,14 @@ if (new URLSearchParams(location.search).has('figure')) {
         regions: [region],
         caption: { text: 'Figure 3. Observed results.', regions: [region] },
         issues: []
+      },
+      {
+        ...result.elements[0],
+        kind: 'table',
+        id: 'table-3',
+        regions: [region],
+        thumbnailId: 'crop-table-3',
+        caption: { text: 'Table 3. Trial outcomes.', regions: [region] }
       }
     ]
   })

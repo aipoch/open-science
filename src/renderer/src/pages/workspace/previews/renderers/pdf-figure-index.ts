@@ -3,10 +3,49 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 export type PdfLinkDestination = Readonly<{ pageNumber: number; x: number; y: number }>
 
 type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
-type TextRun = { text: string; x: number; y: number; width: number; height: number }
+type TextRun = { text: string; font: string; x: number; y: number; width: number; height: number }
+
+// Use the same label grammar in text links, native annotations, and candidate captions.
+const chineseDigits = '一二三四五六七八九'
+const tableNumber = /(?:S?\d+(?:[-‐]\d+)?|[IVXLCDM]+|[一二三四五六七八九十]+)/iu
+const tablePrefix =
+  /(?:(?:Supplementary|Supplemental)[ \t]+)?(?:Table|Tab\.)[ \t]+|(?:补充|補充)?表[ \t]*/iu
+const tableLabel = new RegExp(`(?:${tablePrefix.source})(${tableNumber.source})`, 'iu')
+export const tableReferences = new RegExp(
+  `(?:\\b(?=[a-z])|(?=[补補表]))${tableLabel.source}`,
+  'giu'
+)
+const leadingTable = new RegExp(`^${tableLabel.source}`, 'iu')
+
+function tableKey(label: string, number: string): string | undefined {
+  let id = number.toLowerCase().replace('‐', '-')
+  if (/^[ivxlcdm]+$/i.test(number)) {
+    if (!/^M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/i.test(number)) return
+    const values: Record<string, number> = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000 }
+    id = String(
+      [...id].reduce(
+        (sum, c, i) => sum + (values[c] < (values[id[i + 1]] ?? 0) ? -values[c] : values[c]),
+        0
+      )
+    )
+  } else if (/^[一二三四五六七八九十]+$/u.test(number)) {
+    if (!/^(?:[一二三四五六七八九]?十[一二三四五六七八九]?|[一二三四五六七八九])$/u.test(number))
+      return
+    const [tens, units] = number.split('十')
+    id = String(
+      units === undefined
+        ? chineseDigits.indexOf(tens) + 1
+        : 10 * (tens ? chineseDigits.indexOf(tens) + 1 : 1) +
+            (units ? chineseDigits.indexOf(units) + 1 : 0)
+    )
+  }
+  return `table:${/^(?:supplement|补充|補充)/iu.test(label) ? 'supplement:' : ''}${id}`
+}
 
 /** Panels refer to their parent figure. Compound and separately named series stay unresolved. */
-export function figureReferenceKey(reference: string): string | undefined {
+export function pdfReferenceKey(reference: string): string | undefined {
+  const table = leadingTable.exec(reference.trim())
+  if (table && table[0] === reference.trim()) return tableKey(table[0], table[1])
   const match = /^(?:Fig(?:ure)?\.?|图|圖)\s*(S?\d+)(?:[a-z]|\s*\([a-z]\))?$/iu.exec(
     reference.trim()
   )
@@ -14,7 +53,7 @@ export function figureReferenceKey(reference: string): string | undefined {
 }
 
 export function endsWithFigureSeriesQualifier(text: string): boolean {
-  return /(?:\bSupplementary|\bSupplemental|\bExtended[ \t]+Data|\bSupporting(?:[ \t]+Information)?|补充|補充|扩展数据|擴展資料)[ \t]*$/iu.test(
+  return /(?:\bSupplementary|\bSupplemental|\bExtended[ \t]+Data|\bSupporting(?:[ \t]+Information)?|\bAppendix|\bAnnex|附录|附錄|补充|補充|扩展数据|擴展資料)[ \t]*$/iu.test(
     text
   )
 }
@@ -34,7 +73,7 @@ function captionRows(content: TextContent): TextRun[][] {
       height <= 0
     )
       return []
-    return [{ text: item.str, x, y, width: item.width, height }]
+    return [{ text: item.str, font: item.fontName, x, y, width: item.width, height }]
   })
   runs.sort((a, b) => b.y - a.y || a.x - b.x)
   const rows: TextRun[][] = []
@@ -73,10 +112,33 @@ function rowText(row: TextRun[]): string {
 
 // Extracted figures already have a caption role. Raw page text needs an explicit
 // delimiter and description to distinguish a caption from a sentence starting "Figure 3".
-export function figureCaptionKey(
+export function pdfCaptionKey(
   text: string,
-  source: 'page-text' | 'extracted'
+  source: 'page-text' | 'extracted',
+  styledLabel?: string
 ): string | undefined {
+  const table = leadingTable.exec(text.trim())
+  if (table) {
+    const rest = text.trim().slice(table[0].length)
+    if (rest && !/^[\s:：.．。|]/u.test(rest)) return
+    if (/^\s*(?:[.．]\d|[-–—,，/&（(]|and\b|or\b|至|到)/iu.test(rest)) return
+    const description = rest.replace(/^\s*[:：.．。|]?\s*/u, '')
+    if (/^(?:continued\b|cont\.|续表|續表|\(?续\)?|\(?續\)?)/iu.test(description)) return
+    // Page text has no semantic role. Require a delimiter or a separately styled label.
+    if (
+      source === 'page-text' &&
+      /^(?:shows?|lists?|summari[sz]es?|presents?|describes?|compares?|depicts?|illustrates?|contains?|reports?|is|was|provides?)\b/iu.test(
+        description
+      )
+    )
+      return
+    if (
+      source === 'page-text' &&
+      (!description || (!/^\s*[:：.．。|]/u.test(rest) && table[0].trim() !== styledLabel))
+    )
+      return
+    return tableKey(table[0], table[1])
+  }
   const match = /^(?:Fig(?:ure)?\.?|图|圖)\s*(S?\d+)([\s\S]*)$/iu.exec(text.trim())
   if (!match) return undefined
   const tail = match[2]
@@ -110,7 +172,9 @@ export async function buildPdfFigureIndex(
     const viewport = page.getViewport({ scale: 1 })
     const rows = captionRows(content)
     for (const [i, row] of rows.entries()) {
-      const key = figureCaptionKey(rowText(row), 'page-text')
+      const styleBreak = row.findIndex((run) => run.font !== row[0].font)
+      const styledLabel = styleBreak > 0 ? rowText(row.slice(0, styleBreak)) : undefined
+      const key = pdfCaptionKey(rowText(row), 'page-text', styledLabel)
       if (!key || ambiguous.has(key)) continue
       const first = row[0]
       // A wrapped series name belongs to the next line only within the same column.

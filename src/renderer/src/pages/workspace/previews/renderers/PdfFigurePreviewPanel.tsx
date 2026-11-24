@@ -1,5 +1,12 @@
 import { ExternalLink, GripVertical, Maximize, Minus, Plus, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import type { FigureLinkAnchor } from './pdf-native-links'
@@ -128,29 +135,35 @@ export function PdfFigurePreviewPanel({
     return () => controller.abort()
   }, [heldPage, page, pageCache])
 
+  function imagePoint(client: Point): Point {
+    const box = picture.current!.getBoundingClientRect()
+    return {
+      x: clamp((client.x - box.left) / Math.max(1, box.width), 1),
+      y: clamp((client.y - box.top) / Math.max(1, box.height), 1)
+    }
+  }
   // The scrollable plane grows about its center. Keep the selected pixel under the pointer.
-  function zoom(next: number, client?: Point): void {
+  function zoom(next: number, client?: Point, fixedPoint?: Point): void {
     const view = viewport.current,
       img = picture.current
-    if (!view || !img || scale === next) return
+    if (!view || !img || (scale === next && !fixedPoint)) return
     const rect = view.getBoundingClientRect()
     const focus = client
       ? { x: client.x - rect.left, y: client.y - rect.top }
       : { x: view.clientWidth / 2, y: view.clientHeight / 2 }
     const imageRect = img.getBoundingClientRect()
-    const fraction = (coordinate: number, start: number, length: number): number =>
-      clamp((coordinate - start) / Math.max(1, length), 1)
+    const pixel = fixedPoint ?? imagePoint({ x: rect.left + focus.x, y: rect.top + focus.y })
     const width = (imageRect.width * next) / scale,
       height = (imageRect.height * next) / scale
     zoomScroll.current = {
-      x:
-        Math.max(0, (view.clientWidth - width) / 2) +
-        fraction(rect.left + focus.x, imageRect.left, imageRect.width) * width -
-        focus.x,
-      y:
-        Math.max(0, (view.clientHeight - height) / 2) +
-        fraction(rect.top + focus.y, imageRect.top, imageRect.height) * height -
-        focus.y
+      x: Math.max(0, (view.clientWidth - width) / 2) + pixel.x * width - focus.x,
+      y: Math.max(0, (view.clientHeight - height) / 2) + pixel.y * height - focus.y
+    }
+    if (next === scale) {
+      view.scrollLeft = zoomScroll.current.x
+      view.scrollTop = zoomScroll.current.y
+      zoomScroll.current = null
+      return
     }
     if (!caption && next > 1) setHeldPage(image)
     setScale(next)
@@ -164,6 +177,54 @@ export function PdfFigurePreviewPanel({
       zoomScroll.current = null
     }
   }, [scale])
+
+  const pinchZoom = useEffectEvent((factor: number, focus: Point) => {
+    zoom(Math.max(1, Math.min(8, scale * factor)), focus)
+  })
+  useEffect(() => {
+    const view = viewport.current!
+    let delta = 0,
+      frame = 0
+    let focus: Point
+    const wheel = (event: WheelEvent): void => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      event.stopPropagation()
+      focus = { x: event.clientX, y: event.clientY }
+      delta +=
+        event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? view.clientHeight : 1)
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          pinchZoom(Math.exp(-delta / 100), focus)
+          frame = 0
+          delta = 0
+        })
+    }
+    view.addEventListener('wheel', wheel, { passive: false })
+    return () => {
+      view.removeEventListener('wheel', wheel)
+      cancelAnimationFrame(frame)
+    }
+  }, [])
+
+  const pinch = useRef<{ distance: number; scale: number; pixel: Point } | null>(null)
+  function touchGesture(touches: React.TouchList, begin: boolean): void {
+    if (touches.length !== 2) {
+      pinch.current = null
+      return
+    }
+    const [a, b] = [touches[0], touches[1]]
+    const focus = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
+    const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+    if (!distance) return
+    if (begin || !pinch.current) {
+      gesture.current = null
+      pinch.current = { distance, scale, pixel: imagePoint(focus) }
+    } else {
+      const start = pinch.current
+      zoom(Math.max(1, Math.min(8, (start.scale * distance) / start.distance)), focus, start.pixel)
+    }
+  }
 
   function start(event: PointerEvent<HTMLElement>, kind: 'move' | 'pan'): void {
     if (!event.isPrimary || event.button !== 0 || (kind === 'pan' && scale === 1)) return
@@ -250,8 +311,14 @@ export function PdfFigurePreviewPanel({
           className="absolute inset-0 overflow-auto overscroll-contain outline-none focus-visible:keyboard-focus"
           style={{
             containerType: 'size',
-            touchAction: scale > 1 ? 'none' : undefined,
+            touchAction: 'none',
             cursor: scale > 1 ? 'grab' : 'zoom-in'
+          }}
+          onTouchStart={(e) => touchGesture(e.touches, true)}
+          onTouchMove={(e) => touchGesture(e.touches, false)}
+          onTouchEnd={(e) => touchGesture(e.touches, true)}
+          onTouchCancel={() => {
+            pinch.current = null
           }}
           onPointerDown={(e) => start(e, 'pan')}
           {...dragEvents}
@@ -323,7 +390,7 @@ export function PdfFigurePreviewPanel({
               zoom(1)
             }}
           >
-            {t('View cropped figure')}
+            {t('View image')}
           </Button>
         )}
       </footer>

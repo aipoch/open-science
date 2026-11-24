@@ -554,7 +554,7 @@ describe('PdfPreviewContent', () => {
         await act(async () => finish(figureResult))
         if (zoomed) {
           expect(within(preview).getByRole('img', { name: 'Page 2' })).toBeTruthy()
-          fireEvent.click(within(preview).getByRole('button', { name: 'View cropped figure' }))
+          fireEvent.click(within(preview).getByRole('button', { name: 'View image' }))
         }
         expect(
           within(preview).getByText('Figure 2. Measured response across conditions.')

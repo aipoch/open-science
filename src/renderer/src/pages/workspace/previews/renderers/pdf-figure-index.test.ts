@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PDFDocument, StandardFonts, degrees } from 'pdf-lib'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
-import { buildPdfFigureIndex, figureReferenceKey } from './pdf-figure-index'
+import { buildPdfFigureIndex, pdfReferenceKey } from './pdf-figure-index'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -36,12 +36,41 @@ function documentWithPages(pages: object[][]): PDFDocumentProxy {
 
 describe('figure reference identity', () => {
   it.each(['Figure 3', 'Fig. 3b', 'Figure 3(b)', '图 3', '圖3'])('%s names figure 3', (label) => {
-    expect(figureReferenceKey(label)).toBe('figure:3')
+    expect(pdfReferenceKey(label)).toBe('figure:3')
   })
 
+  it.each([
+    ['Table 5', 'table:5'],
+    ['Tab. V', 'table:5'],
+    ['表五', 'table:5'],
+    ['表二十一', 'table:21'],
+    ['Table IV', 'table:4'],
+    ['表 2-1', 'table:2-1'],
+    ['Supplementary Table 5', 'table:supplement:5'],
+    ['Table S5', 'table:s5'],
+    ['Table IIII', undefined],
+    ['Tables 2–4', undefined]
+  ])('normalizes the table identifier %s', (label, expected) =>
+    expect(pdfReferenceKey(label!)).toBe(expected)
+  )
+
+  it('requires caption evidence and keeps duplicates, continuations and prose out of the index', async () => {
+    const doc = documentWithPages([
+      [
+        run('Table 2', 40, 710, 35),
+        { ...run(' Baseline characteristics', 75, 710), fontName: 'body' },
+        run('Table V. Outcomes', 40, 550),
+        run('Table 3 shows the changes', 40, 450)
+      ],
+      [run('Tab. 5: Other outcomes', 40, 600), run('Table 6. Continued', 40, 500)]
+    ])
+    expect([...(await buildPdfFigureIndex(doc, new AbortController().signal)).keys()]).toEqual([
+      'table:2'
+    ])
+  })
   it('keeps numbered supplementary figures separate', () => {
-    expect(figureReferenceKey('Fig. S3b')).toBe('figure:s3')
-    expect(figureReferenceKey('Figure s3 (b)')).toBe('figure:s3')
+    expect(pdfReferenceKey('Fig. S3b')).toBe('figure:s3')
+    expect(pdfReferenceKey('Figure s3 (b)')).toBe('figure:s3')
   })
 
   it.each([
@@ -54,7 +83,7 @@ describe('figure reference identity', () => {
     'Extended Data Figure 1',
     'Figure 3 shows the results'
   ])('rejects ambiguous or separately named reference %s', (label) => {
-    expect(figureReferenceKey(label)).toBeUndefined()
+    expect(pdfReferenceKey(label)).toBeUndefined()
   })
 })
 
@@ -117,7 +146,7 @@ describe('PDF figure text index', () => {
         run('1. Other column text', 300, 700),
         { ...run('Figure 2. Rotated'), transform: [0, 10, -10, 0, 40, 600] },
         { ...run('Figure 3. Invalid'), width: Number.NaN },
-        run('Table 4. Results', 40, 500)
+        run('Section 4. Results', 40, 500)
       ]
     ])
     expect((await buildPdfFigureIndex(document, new AbortController().signal)).size).toBe(0)

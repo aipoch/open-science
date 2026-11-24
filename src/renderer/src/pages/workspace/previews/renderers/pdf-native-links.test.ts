@@ -110,6 +110,21 @@ describe('indexed PDF figure links', () => {
     expect(onNavigate).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    ['如表五所示', true],
+    ['代表五个样本', false],
+    ['见表5至8', false],
+    ['See Table V and VI.', false],
+    ['Tab. V lists results.', true],
+    ['Appendix Table 5 reports data.', false]
+  ])('keeps a table link only for an unambiguous reference in %s', (text, active) => {
+    const { options, host } = indexedFixture([text])
+    renderIndexedFigureLinks({
+      ...options,
+      index: new Map([['table:5', { pageNumber: 2, x: 0, y: 0 }]])
+    })
+    expect(host.children.length).toBe(active ? 1 : 0)
+  })
   it('joins adjacent PDF.js spans without rewriting selectable text', () => {
     const { options, host, textLayer, nodes, onNavigate } = indexedFixture([
       'See Fig.',
@@ -313,7 +328,9 @@ describe('native PDF links', () => {
     ['Fig. 3b', 'Fig. 3b', 'Fig. 3b'],
     ['Fig. 3b', '3', 'Fig. 3b'],
     ['Figure 3(b)', '3', 'Figure 3(b)'],
-    ['Fig. S3b', 'S3b', 'Fig. S3b']
+    ['Fig. S3b', 'S3b', 'Fig. S3b'],
+    ['Table 5', '5', 'Table 5'],
+    ['Tab. IV', 'IV', 'Tab. IV']
   ])('reads the clicked source figure only on demand for %s', async (text, linked, expected) => {
     const { options, page, host, onNavigate } = await fixture(90, text, linked)
     const read = vi.spyOn(page, 'getTextContent')
@@ -333,7 +350,7 @@ describe('native PDF links', () => {
   })
 
   it.each([
-    ['See Table 3.', '3'],
+    ['See Tables 3–5.', '3'],
     ['See section 3.', '3'],
     ['See Fig. 3b and 4c.', '3b'],
     ['See Fig. 3b, c.', '3b'],
@@ -656,6 +673,9 @@ describe('native PDF links', () => {
     expect(
       await resolvePdfLinkDestination(document, [0, { name: 'FitR' }, 160, 400, 300, 585])
     ).toEqual({ pageNumber: 1, x: 0.25, y: 0.25 })
+    expect(
+      await resolvePdfLinkDestination(document, [0, { name: 'FitR' }, 160, 585, 300, 400])
+    ).toEqual({ pageNumber: 1, x: 0.25, y: 0.25 })
     expect(await resolvePdfLinkDestination(document, [0, { name: 'XYZ' }, -10, 900, null])).toEqual(
       { pageNumber: 1, x: 0, y: 0 }
     )
@@ -667,6 +687,7 @@ describe('native PDF links', () => {
       [0, { name: 'XYZ' }, NaN, 3, null],
       [0, { name: 'XYZ' }, 3, 4],
       [0, { name: 'FitR' }, 2, 3, 1, 4],
+      [0, { name: 'FitR' }, 2, 3, 4, 3],
       [0, { name: 'FitR' }, null, 3, 4, 5]
     ])
       expect(await resolvePdfLinkDestination(document, destination)).toBeUndefined()
