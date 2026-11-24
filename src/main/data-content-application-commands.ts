@@ -1006,6 +1006,19 @@ const assertElectronCaller = (
   }
 }
 
+// Research Film generation needs no Electron surface: the shared Node backend owns authoring,
+// narration and publication. Web callers (local and paired remote browsers) may drive it while the
+// Task surface stays excluded, because the channel inventory never installs it there.
+const assertElectronOrWebFilmCaller = (
+  invocation: ApplicationInvocation<readonly unknown[]>,
+  name: string
+): void => {
+  const { surface } = invocation.callerContext
+  if (surface !== 'electron' && surface !== 'web') {
+    throw new Error(`Channel only available from the app or a Web session: ${name}`)
+  }
+}
+
 // Package export/import/operation are exposed to local Web callers (CLI over loopback Web RPC).
 // Remote browsers are stopped by the rejecting-stub surface and the local-only RPC gate; this
 // repeats that boundary at the handler so a dispatcher regression cannot widen it.
@@ -1173,13 +1186,13 @@ const registerDataContentApplicationCommands = (
         return dependencies.imageTasks.cancel(invocation.args[0])
       },
       'research-video:active-sessions': (invocation) => {
-        assertElectronCaller(invocation, 'research-video:active-sessions')
+        assertElectronOrWebFilmCaller(invocation, 'research-video:active-sessions')
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
         return dependencies.researchVideoPresentation.activeSessions()
       },
       'research-video:start': (invocation) => {
-        assertElectronCaller(invocation, 'research-video:start')
+        assertElectronOrWebFilmCaller(invocation, 'research-video:start')
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
         return dependencies.researchVideoPresentation.start(
@@ -1187,19 +1200,19 @@ const registerDataContentApplicationCommands = (
         )
       },
       'research-video:status': (invocation) => {
-        assertElectronCaller(invocation, 'research-video:status')
+        assertElectronOrWebFilmCaller(invocation, 'research-video:status')
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
         return dependencies.researchVideoPresentation.status(invocation.args[0])
       },
       'research-video:remove': (invocation) => {
-        assertElectronCaller(invocation, 'research-video:remove')
+        assertElectronOrWebFilmCaller(invocation, 'research-video:remove')
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
         return dependencies.researchVideoPresentation.remove(invocation.args[0])
       },
       'research-video:cancel': (invocation) => {
-        assertElectronCaller(invocation, 'research-video:cancel')
+        assertElectronOrWebFilmCaller(invocation, 'research-video:cancel')
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
         return dependencies.researchVideoPresentation.cancel(invocation.args[0])
