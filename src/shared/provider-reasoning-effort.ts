@@ -16,6 +16,7 @@ import {
 } from './settings'
 import { readLabModelCapabilities, type LabModelCapabilities } from './lab'
 import type { LocalProviderModel } from './local-provider-preset'
+import type { ProviderModel } from './configured-provider-model'
 
 export type ProviderReasoningEffortSource = {
   type: ProviderType
@@ -26,6 +27,7 @@ export type ProviderReasoningEffortSource = {
   modelCatalog?: CatalogSnapshot
   reasoningEffortPreset?: ReasoningEffortPresetSetting
   localModels?: readonly LocalProviderModel[]
+  manualModels?: readonly ProviderModel[]
   modelCapabilities?: Readonly<Record<string, LabModelCapabilities>>
   modelReasoningEfforts?: Readonly<Record<string, readonly ModelReasoningEffort[]>>
 }
@@ -87,6 +89,11 @@ export const resolveProviderReasoningEffortProfile = (
 
   switch (providerType) {
     case 'official': {
+      if (provider.manualModels)
+        return resolveReasoningEffortProfile(
+          provider.manualModels.find(({ id }) => id === model)?.reasoningEffortPreset ??
+            'unsupported'
+        )
       const capability = resolveOfficialModelCatalog(provider).find(
         (entry) => entry.id === model
       )?.reasoningEffort

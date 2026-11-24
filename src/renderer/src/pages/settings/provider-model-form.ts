@@ -1,10 +1,10 @@
 import {
-  LOCAL_PROVIDER_MODEL_LIMIT,
-  type LocalProviderModel
-} from '../../../../shared/local-provider-preset'
+  PROVIDER_MODEL_LIMIT,
+  type ProviderModel
+} from '../../../../shared/configured-provider-model'
 import type { ReasoningEffortPresetSetting } from '../../../../shared/reasoning-effort'
 
-export type LocalModelFormRow = {
+export type ProviderModelFormRow = {
   rowId: string
   id: string
   displayName?: string
@@ -12,7 +12,7 @@ export type LocalModelFormRow = {
   reasoningEffortPreset: ReasoningEffortPresetSetting
 }
 
-export const localModelFormRow = (model?: LocalProviderModel): LocalModelFormRow => ({
+export const providerModelFormRow = (model?: ProviderModel): ProviderModelFormRow => ({
   rowId: model?.id || crypto.randomUUID(),
   id: model?.id ?? '',
   displayName: model?.displayName,
@@ -20,7 +20,7 @@ export const localModelFormRow = (model?: LocalProviderModel): LocalModelFormRow
   reasoningEffortPreset: model?.reasoningEffortPreset ?? 'unsupported'
 })
 
-export const localModelsFromForm = (rows: readonly LocalModelFormRow[]): LocalProviderModel[] =>
+export const providerModelsFromForm = (rows: readonly ProviderModelFormRow[]): ProviderModel[] =>
   rows.map(({ id, displayName, contextWindow, reasoningEffortPreset }) => ({
     id: id.trim(),
     ...(displayName?.trim() && { displayName: displayName.trim() }),
@@ -29,16 +29,16 @@ export const localModelsFromForm = (rows: readonly LocalModelFormRow[]): LocalPr
   }))
 
 export function mergeLocalModels(
-  rows: LocalModelFormRow[],
+  rows: ProviderModelFormRow[],
   modelIds: readonly string[]
-): LocalModelFormRow[] {
+): ProviderModelFormRow[] {
   const known = new Set(rows.map(({ id }) => id.trim()).filter(Boolean))
-  const additions: LocalModelFormRow[] = []
+  const additions: ProviderModelFormRow[] = []
   for (const rawId of modelIds) {
     const id = rawId.trim()
     if (!id || known.has(id)) continue
     known.add(id)
-    additions.push({ ...localModelFormRow(), id })
+    additions.push({ ...providerModelFormRow(), id })
   }
   if (!additions.length) return rows
   // Replace untouched blanks and keep each previously configured row.
@@ -49,5 +49,5 @@ export function mergeLocalModels(
       contextWindow.trim() ||
       reasoningEffortPreset !== 'unsupported'
   )
-  return [...existing, ...additions].slice(0, LOCAL_PROVIDER_MODEL_LIMIT)
+  return [...existing, ...additions].slice(0, PROVIDER_MODEL_LIMIT)
 }

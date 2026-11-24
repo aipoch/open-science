@@ -2,13 +2,18 @@ import {
   isLocalProviderPresetId,
   type LocalProviderPresetId
 } from '../../../../shared/local-provider-preset'
-import { localModelsFromForm, type LocalModelFormRow } from './local-provider-model-form'
+import {
+  providerModelFormRow,
+  providerModelsFromForm,
+  type ProviderModelFormRow
+} from './provider-model-form'
 import {
   manualProviderDefinition,
   manualProviderPresetModels,
   publishedManualProviderContextWindow,
   resolveManualProviderConnection,
   supportsManualProviderContextWindow,
+  usesCloudProviderModels,
   type ManualProviderConnection
 } from '../../../../shared/manual-provider'
 import {
@@ -91,7 +96,8 @@ export type ProviderFormValue = {
   cloudflare?: CloudflareGateway
   manualConnection?: ManualProviderConnection
   localPresetId?: LocalProviderPresetId
-  localModels?: LocalModelFormRow[]
+  localModels?: ProviderModelFormRow[]
+  manualModels?: ProviderModelFormRow[]
   // Plaintext only while the user is typing a new key; empty means "keep the stored key".
   key: string
 }
@@ -180,6 +186,7 @@ export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormT
       maxOutputTokens: value.maxOutputTokens.trim() ? Number(value.maxOutputTokens) : null
     }
   }
+  if (value.manualModels) return {}
   return value.type === 'official' && supportsManualProviderContextWindow(value.vendorId)
     ? {
         contextWindow:
@@ -190,13 +197,57 @@ export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormT
 
 export const providerFormLocalModels = (value: ProviderFormValue): ProviderDraft['localModels'] =>
   value.type === 'custom' && value.localPresetId
-    ? localModelsFromForm(value.localModels ?? [])
+    ? providerModelsFromForm(value.localModels ?? [])
     : undefined
 
+export const providerFormManualModels = (value: ProviderFormValue): ProviderDraft['manualModels'] =>
+  value.manualModels && providerModelsFromForm(value.manualModels)
+
 export const providerFormModel = (value: ProviderFormValue): string => {
-  if (!value.localPresetId) return value.model
-  const ids = value.localModels?.map(({ id }) => id.trim()) ?? []
+  const rows = value.manualModels ?? (value.localPresetId ? (value.localModels ?? []) : undefined)
+  if (!rows) return value.model
+  const ids = rows.map(({ id }) => id.trim())
   return ids.includes(value.model) ? value.model : (ids[0] ?? '')
+}
+
+const cloudPresetIds = (
+  value: Pick<ProviderFormValue, 'vendorId' | 'cloudflare' | 'manualConnection'>
+): readonly string[] =>
+  value.cloudflare
+    ? CLOUDFLARE_GATEWAY_MODELS[value.cloudflare.mode]
+    : value.manualConnection
+      ? manualProviderPresetModels(value.vendorId, value.manualConnection)
+      : []
+
+export const cloudModelFormRows = (
+  value: Pick<ProviderFormValue, 'vendorId' | 'cloudflare' | 'manualConnection'>
+): ProviderModelFormRow[] => {
+  const ids = cloudPresetIds(value)
+  return ids.length ? ids.map((id) => providerModelFormRow({ id })) : [providerModelFormRow()]
+}
+
+export function cloudModelRoutePatch(
+  value: ProviderFormValue,
+  next: Partial<Pick<ProviderFormValue, 'cloudflare' | 'manualConnection'>>
+): Partial<ProviderFormValue> {
+  const defaults = cloudPresetIds(value)
+  const ids = defaults.length ? defaults : ['']
+  // 只替换未编辑的默认行，避免切换区域或协议时丢掉手填模型。
+  if (
+    value.manualModels &&
+    (value.manualModels.length !== ids.length ||
+      value.manualModels.some(
+        (row, index) =>
+          row.id !== ids[index] ||
+          row.displayName ||
+          row.contextWindow ||
+          row.reasoningEffortPreset !== 'unsupported'
+      ))
+  )
+    return {}
+
+  const manualModels = cloudModelFormRows({ ...value, ...next })
+  return { model: manualModels[0].id, manualModels }
 }
 
 // Chooses the framework's preferred wire protocol for a new custom gateway. This mirrors runtime
@@ -332,19 +383,20 @@ export const getProviderFormErrors = (
   options: { hasStoredKey?: boolean; modelCatalog?: CatalogSnapshot } = {}
 ): ProviderFormErrors => {
   const errors: ProviderFormErrors = {}
+  const rows = value.manualModels ?? (value.localPresetId ? (value.localModels ?? []) : undefined)
   if (value.type === 'official' && value.vendorId === 'cloudflare-ai-gateway') {
     const cloudflare = value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY
     if (!validCloudflareAccountId(cloudflare.accountId))
       errors.accountId = 'Enter a valid Cloudflare Account ID.'
     if (!validCloudflareGatewayId(cloudflare.gatewayId))
       errors.gatewayId = 'Enter a valid Gateway ID.'
-    if (!value.model.trim()) errors.model = 'Model is required.'
+    if (!rows && !value.model.trim()) errors.model = 'Model is required.'
   }
 
   if (value.type === 'official' && value.vendorId && manualProviderDefinition(value.vendorId)) {
     if (!resolveManualProviderConnection(value.vendorId, value.manualConnection))
       errors.location = 'Enter a valid provider endpoint.'
-    if (!value.model.trim()) errors.model = 'Model is required.'
+    if (!rows && !value.model.trim()) errors.model = 'Model is required.'
   }
 
   if (value.type === 'custom') {
@@ -353,13 +405,7 @@ export const getProviderFormErrors = (
       const baseUrlError = getCustomProviderBaseUrlError(value.baseUrl.trim())
       if (baseUrlError) errors.baseUrl = baseUrlError
     }
-    if (value.localPresetId) {
-      const ids = value.localModels?.map(({ id }) => id.trim()) ?? []
-      if (!ids.length || ids.some((id) => !id)) errors.model = 'Model is required.'
-      else if (new Set(ids).size !== ids.length) errors.model = 'Model IDs must be unique.'
-      if (value.localModels?.some(({ contextWindow }) => positiveWholeNumberError(contextWindow)))
-        errors.contextWindow = 'Context window must be a positive whole number of tokens.'
-    } else if (!value.model.trim()) errors.model = 'Model is required.'
+    if (!rows && !value.model.trim()) errors.model = 'Model is required.'
     if (positiveWholeNumberError(value.maxInputTokens)) {
       errors.maxInputTokens = 'Maximum input tokens must be a positive whole number of tokens.'
     }
@@ -367,7 +413,15 @@ export const getProviderFormErrors = (
       errors.maxOutputTokens = 'Maximum output tokens must be a positive whole number of tokens.'
     }
   }
+  if (rows) {
+    const ids = rows.map(({ id }) => id.trim())
+    if (!ids.length || ids.some((id) => !id)) errors.model = 'Model is required.'
+    else if (new Set(ids).size !== ids.length) errors.model = 'Model IDs must be unique.'
+    if (rows.some(({ contextWindow }) => positiveWholeNumberError(contextWindow)))
+      errors.contextWindow = 'Context window must be a positive whole number of tokens.'
+  }
   if (
+    !rows &&
     ((value.type === 'custom' && !value.localPresetId) ||
       (value.type === 'official' &&
         supportsManualProviderContextWindow(value.vendorId) &&
@@ -547,6 +601,7 @@ export const providerKindPatch = (
     manualConnection: undefined,
     localPresetId: undefined,
     localModels: undefined,
+    manualModels: undefined,
     vendorId: undefined,
     region: undefined,
     model: '',
@@ -635,18 +690,21 @@ export const providerKindPatch = (
               manualProvider.defaultConnection.protocol)
         }
       : undefined
-
+    const manualModels = usesCloudProviderModels(vendorId)
+      ? cloudModelFormRows({ vendorId, cloudflare, manualConnection })
+      : undefined
     return {
       ...reset,
       type: 'official',
       name: vendor?.label,
       vendorId,
       region: vendor?.regions?.[0]?.id,
-      ...(cloudflare && { cloudflare, model: CLOUDFLARE_GATEWAY_MODELS[cloudflare.mode][0] }),
+      ...(cloudflare && { cloudflare }),
       ...(manualConnection && {
         manualConnection,
         model: manualProviderPresetModels(vendorId, manualConnection)[0] ?? ''
-      })
+      }),
+      ...(manualModels && { manualModels, model: manualModels[0].id })
     }
   }
 

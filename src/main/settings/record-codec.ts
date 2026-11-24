@@ -1,6 +1,8 @@
+import { decodeProviderModels } from '../../shared/configured-provider-model'
 import {
   manualProviderDefinition,
-  resolveManualProviderConnection
+  resolveManualProviderConnection,
+  usesCloudProviderModels
 } from '../../shared/manual-provider'
 import {
   decodeLocalProviderModels,
@@ -416,6 +418,13 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     provider.labCatalogToken = labCatalogToken
   if (model && characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
     provider.model = model
+  if (type === 'official' && usesCloudProviderModels(vendorId)) {
+    const models = decodeProviderModels(value.manualModels)
+    if (models) {
+      provider.manualModels = models
+      provider.model = models.find(({ id }) => id === provider.model)?.id ?? models[0].id
+    }
+  }
   if (type === 'custom') {
     if (isLocalProviderPresetId(value.localPresetId)) {
       provider.localPresetId = value.localPresetId
@@ -430,6 +439,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   }
   if (
     contextWindow !== undefined &&
+    !provider.manualModels &&
     (type === 'custom' || provider.cloudflare || provider.manualConnection)
   )
     provider.contextWindow = contextWindow

@@ -18,7 +18,7 @@ export const CLOUDFLARE_GATEWAY_MODELS: Readonly<
     '@cf/openai/gpt-oss-20b',
     '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
   ],
-  anthropic: ['claude-sonnet-4-5']
+  anthropic: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5']
 }
 
 export const validCloudflareAccountId = (id: string): boolean => /^[a-f0-9]{32}$/i.test(id.trim())

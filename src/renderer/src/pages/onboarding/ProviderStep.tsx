@@ -26,6 +26,7 @@ import {
   hasProviderFormErrors,
   providerFormApiEndpoints,
   providerFormLocalModels,
+  providerFormManualModels,
   providerFormModel,
   providerFormModelForFramework,
   providerFormTokenLimits,
@@ -33,7 +34,7 @@ import {
   type ProviderFormValue
 } from '../settings/provider-form-value'
 import { describeValidation, localizeProviderResourceMessage } from '../settings/validation-message'
-import { mergeLocalModels } from '../settings/local-provider-model-form'
+import { mergeLocalModels } from '../settings/provider-model-form'
 import { modelCatalogErrorMessage } from '../settings/model-catalog-feedback'
 import type { ProviderStepOperation } from './use-provider-step-operation'
 
@@ -52,6 +53,7 @@ const toUpsertRequest = (value: ProviderFormValue, id?: string): UpsertProviderR
   baseUrl: value.baseUrl,
   model: providerFormModel(value),
   localModels: providerFormLocalModels(value),
+  manualModels: providerFormManualModels(value),
   ...providerFormTokenLimits(value),
   vendorId: value.vendorId,
   region: value.region,

@@ -339,39 +339,24 @@ describe('ProviderForm field switching', () => {
   })
 
   it.each([
-    ['cloudflare-ai-gateway', '@cf/openai/gpt-oss-120b'],
-    ['aws-bedrock', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0']
-  ])('shows credentials followed by the bundled catalog for %s', (vendorId, modelId) => {
-    render(createEmptyProviderFormValue(providerKindPatch(`official:${vendorId}`)))
-    const key = container.querySelector('#provider-key')!
-    const heading = [...container.querySelectorAll('span')].find(
-      (span) => span.textContent === 'Supported models'
-    )!
-    const disclosures = container.querySelectorAll<HTMLButtonElement>(
-      'button[aria-controls="provider-advanced-settings"]'
-    )
+    ['cloudflare-ai-gateway', '#provider-cloudflare-mode', '@cf/openai/gpt-oss-120b'],
+    ['aws-bedrock', '#provider-manual-format', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0']
+  ])(
+    'shows editable default model rows without a refresh control for %s',
+    (vendorId, formatSelector, modelId) => {
+      render(createEmptyProviderFormValue(providerKindPatch(`official:${vendorId}`)))
+      const format = container.querySelector(formatSelector)!
+      const key = container.querySelector('#provider-key')!
+      const model = container.querySelector<HTMLInputElement>('[aria-label="Model ID"]')!
 
-    expect(disclosures).toHaveLength(1)
-    const [disclosure] = disclosures
-    expect(key.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(
-      heading.compareDocumentPosition(disclosure) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    expect(container.textContent).toContain(modelId)
-    expect(container.textContent).not.toContain('Refresh model list')
-    expect(disclosure.getAttribute('aria-expanded')).toBe('false')
-    expect(container.querySelector('#provider-model')).toBeNull()
-    expect(container.querySelector('#provider-manual-location')).toBeNull()
-    expect(container.querySelector('#provider-manual-format')).toBeNull()
-    expect(container.querySelector('#provider-cloudflare-mode')).toBeNull()
-    expect(container.querySelector('#provider-manual-context-window')).toBeNull()
-
-    act(() => disclosure.click())
-    expect(container.querySelector('#provider-advanced-settings #provider-model')).not.toBeNull()
-    expect(
-      container.querySelector('#provider-advanced-settings #provider-manual-context-window')
-    ).not.toBeNull()
-  })
+      expect(format.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(key.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(model.value).toBe(modelId)
+      expect(container.textContent).toContain('Add model')
+      expect(container.textContent).not.toContain('Refresh model list')
+      expect(container.textContent).not.toContain('Advanced settings')
+    }
+  )
 
   it('shows the Vectrust API format up front and selects models directly from the shortlist', () => {
     const onChange = vi.fn()
@@ -402,8 +387,13 @@ describe('ProviderForm field switching', () => {
     const deployment = container.querySelector('[aria-label="Deployment name"]')!
     expect(location.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(key.compareDocumentPosition(deployment) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(container.querySelector('#provider-manual-format')).toBeNull()
-    expect(container.querySelector('#provider-manual-context-window')).toBeNull()
+    expect(container.querySelector('#provider-manual-format')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Context window"]')).not.toBeNull()
+    expect((deployment as HTMLInputElement).value).toBe('')
+    expect(deployment.getAttribute('placeholder')).toBe('claude-sonnet-5-5')
+    expect(container.textContent).not.toContain('Advanced settings')
+    expect(container.textContent).toContain('Add model')
+    expect(container.textContent).not.toContain('Refresh model list')
   })
 
   it('opens Advanced settings when saved model limits would otherwise be hidden', () => {

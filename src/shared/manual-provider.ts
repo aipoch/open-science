@@ -152,7 +152,11 @@ const definitions: Partial<Record<OfficialVendorId, ManualProviderDefinition>> =
     defaultConnection: { location: 'us-east-1', protocol: 'messages' },
     protocols: ['messages', 'chat-completions'],
     models: {
-      messages: ['us.anthropic.claude-sonnet-4-5-20250929-v1:0'],
+      messages: [
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+        'us.anthropic.claude-sonnet-4-6',
+        'us.anthropic.claude-haiku-4-5-20251001-v1:0'
+      ],
       'chat-completions': ['openai.gpt-oss-120b-1:0', 'openai.gpt-oss-20b-1:0']
     },
     // A commercial AWS region must fit in one label of the Bedrock hostname.
@@ -194,6 +198,11 @@ export const supportsManualProviderContextWindow = (
   vendorId: OfficialVendorId | undefined
 ): boolean => vendorId === 'cloudflare-ai-gateway' || Boolean(manualProviderDefinition(vendorId))
 
+export const usesCloudProviderModels = (vendorId: OfficialVendorId | undefined): boolean =>
+  vendorId === 'cloudflare-ai-gateway' ||
+  vendorId === 'aws-bedrock' ||
+  vendorId === 'microsoft-foundry'
+
 /** Use published limits only for the exact model IDs exposed by the selected route. */
 export function publishedManualProviderContextWindow(
   vendorId: OfficialVendorId | undefined,
@@ -206,7 +215,16 @@ export function publishedManualProviderContextWindow(
       if (model === '@cf/meta/llama-3.3-70b-instruct-fp8-fast') return 24_000
       if (model === '@cf/openai/gpt-oss-120b' || model === '@cf/openai/gpt-oss-20b') return 128_000
     }
-    if (protocol === 'messages' && model === 'claude-sonnet-4-5') return 200_000
+    if (protocol === 'messages') {
+      if (model === 'claude-sonnet-4-5' || model === 'claude-haiku-4-5') return 200_000
+      if (
+        model === 'claude-opus-4-8' ||
+        model === 'claude-opus-5-5' ||
+        model === 'claude-sonnet-5-5' ||
+        model === 'claude-haiku-5-5'
+      )
+        return 1_000_000
+    }
   }
   if (vendorId === 'aws-bedrock') {
     if (
@@ -218,6 +236,9 @@ export function publishedManualProviderContextWindow(
       protocol === 'messages' &&
       /^(?:(?:us|eu|au|jp|global)\.)?anthropic\.claude-sonnet-4-5-20250929-v1:0$/.test(model ?? '')
     )
+      return 200_000
+    if (protocol === 'messages' && model === 'us.anthropic.claude-sonnet-4-6') return 1_000_000
+    if (protocol === 'messages' && model === 'us.anthropic.claude-haiku-4-5-20251001-v1:0')
       return 200_000
   }
   return undefined

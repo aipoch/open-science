@@ -4,6 +4,7 @@ import {
   sameManualProviderCredentialScope
 } from '../../../../shared/manual-provider'
 import { sameCloudflareGateway } from '../../../../shared/cloudflare-gateway'
+import { usesCloudProviderModels } from '../../../../shared/manual-provider'
 import { modelCatalogErrorMessage } from './model-catalog-feedback'
 import type { RefreshProviderModelsResult } from '../../../../shared/settings'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
@@ -119,12 +120,14 @@ import {
   hasProviderFormErrors,
   providerFormApiEndpoints,
   providerFormLocalModels,
+  providerFormManualModels,
   providerFormModel,
+  cloudModelFormRows,
   providerFormTokenLimits,
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
-import { localModelFormRow, mergeLocalModels } from './local-provider-model-form'
+import { providerModelFormRow, mergeLocalModels } from './provider-model-form'
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
 import { localizeProviderResourceMessage } from './validation-message'
 import { ProviderTestResultCard } from './ProviderTestResultCard'
@@ -267,11 +270,15 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     cloudflare: provider.cloudflare,
     manualConnection: provider.manualConnection,
     localPresetId: provider.localPresetId,
+    manualModels:
+      provider.type === 'official' && usesCloudProviderModels(provider.vendorId)
+        ? (provider.manualModels?.map(providerModelFormRow) ?? cloudModelFormRows(provider))
+        : undefined,
     localModels: provider.localPresetId
-      ? (provider.localModels?.map(localModelFormRow) ??
+      ? (provider.localModels?.map(providerModelFormRow) ??
         (provider.model
           ? [
-              localModelFormRow({
+              providerModelFormRow({
                 id: provider.model,
                 contextWindow: provider.contextWindow,
                 reasoningEffortPreset: provider.reasoningEffortPreset
@@ -293,6 +300,7 @@ const toUpsertRequest = (
   baseUrl: value.baseUrl,
   model: providerFormModel(value),
   localModels: providerFormLocalModels(value),
+  manualModels: providerFormManualModels(value),
   ...providerFormTokenLimits(value),
   apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,

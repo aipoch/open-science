@@ -28,6 +28,8 @@ import {
 } from '@aipoch/providers'
 import { getOfficialVendorModelIds } from './provider-model-policy'
 import { kiloModelSupportsAnonymousAccess } from './provider-url-policy'
+import type { ProviderModel } from './configured-provider-model'
+import { resolveReasoningEffortProfile } from './reasoning-effort'
 
 export const KILO_FREE_MODEL_ID = 'kilo-auto/free'
 
@@ -45,6 +47,7 @@ export type OfficialCatalogSource = {
   // ProviderView already contains the region and legacy discovery policy applied by main.
   models?: readonly string[]
   modelCatalog?: CatalogSnapshot
+  manualModels?: readonly ProviderModel[]
 }
 
 export const usesBundledModelCatalog = (vendorId: OfficialVendorId | undefined): boolean =>
@@ -80,7 +83,28 @@ function resolveSnapshotRoutes(
   return routes
 }
 
-/** Membership comes from the latest complete snapshot; bundled values only fill missing metadata. */
+function configuredCloudModels(
+  models: readonly ProviderModel[],
+  vendorId: OfficialVendorId,
+  protocol: ModelProtocol,
+  baseUrl: string
+): CatalogModel[] {
+  return models.map((model) => {
+    const effort = resolveReasoningEffortProfile(model.reasoningEffortPreset ?? 'unsupported')
+    return {
+      id: model.id,
+      name: model.displayName,
+      contextWindow:
+        model.contextWindow ?? publishedManualProviderContextWindow(vendorId, protocol, model.id),
+      reasoningEffort: effort.supported
+        ? { supported: true, values: [...new Set(effort.slots)] }
+        : { supported: false },
+      routes: { [protocol]: baseUrl }
+    }
+  })
+}
+
+/** Membership comes from the configured list or latest complete snapshot. */
 export function resolveOfficialModelCatalog(source: OfficialCatalogSource): CatalogModel[] {
   const { vendorId, region, modelCatalog } = source
   if (!vendorId) return []
@@ -88,6 +112,13 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
     const { cloudflare, model } = source
     if (!cloudflare || !model) return []
     const protocol = cloudflareGatewayProtocol(cloudflare.mode)
+    if (source.manualModels)
+      return configuredCloudModels(
+        source.manualModels,
+        vendorId,
+        protocol,
+        cloudflareGatewayBase(cloudflare)
+      )
     const ids = new Set([model, ...CLOUDFLARE_GATEWAY_MODELS[cloudflare.mode]])
     return Array.from(ids, (id) => ({
       id,
@@ -103,6 +134,8 @@ export function resolveOfficialModelCatalog(source: OfficialCatalogSource): Cata
     if (!resolved || !source.model) return []
 
     const { protocol } = resolved.connection
+    if (source.manualModels)
+      return configuredCloudModels(source.manualModels, vendorId, protocol, resolved.baseUrl)
     const presetModels = manualProviderPresetModels(vendorId, resolved.connection)
     // Keep saved model IDs available for existing configurations and pinned sessions.
     const ids = new Set([source.model, ...presetModels])

@@ -151,6 +151,7 @@ class ProviderRuntimeProjectionOwner {
       ...(provider.manualConnection && { manualConnection: provider.manualConnection }),
       ...(provider.localPresetId && { localPresetId: provider.localPresetId }),
       ...(provider.localModels && { localModels: provider.localModels }),
+      ...(provider.manualModels && { manualModels: provider.manualModels }),
       models: this.availableModels(
         needsKey && provider.vendorId === 'kilo' ? { ...provider, keyRef: undefined } : provider
       ),
@@ -335,9 +336,11 @@ class ProviderRuntimeProjectionOwner {
             descriptor,
             key
           )
-          const effort = descriptor.reasoningEffort
-            ? reasoningProfileFromCapability(descriptor.reasoningEffort)
-            : ({ supported: false } as const)
+          const effort = storedProvider.manualModels
+            ? resolveProviderReasoningEffortProfile(storedProvider, descriptor.id)
+            : descriptor.reasoningEffort
+              ? reasoningProfileFromCapability(descriptor.reasoningEffort)
+              : ({ supported: false } as const)
           return this.withFramework(
             this.providerTarget(storedProvider, descriptor.id, provider, effort),
             framework

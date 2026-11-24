@@ -10,19 +10,21 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { fieldErrorClassName } from '@/components/ui/notice-chrome'
-import { LOCAL_PROVIDER_MODEL_LIMIT } from '../../../../shared/local-provider-preset'
+import { PROVIDER_MODEL_LIMIT } from '../../../../shared/configured-provider-model'
 import { DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW } from '../../../../shared/provider-model-policy'
 import {
   CUSTOM_REASONING_EFFORT_PRESETS,
   isReasoningEffortPresetSetting
 } from '../../../../shared/reasoning-effort'
-import { localModelFormRow, type LocalModelFormRow } from './local-provider-model-form'
+import { providerModelFormRow, type ProviderModelFormRow } from './provider-model-form'
 
-type LocalProviderModelsEditorProps = {
-  providerName: string
-  rows: readonly LocalModelFormRow[]
-  onChange: (rows: LocalModelFormRow[]) => void
-  refreshButton: React.ReactNode
+type ProviderModelsEditorProps = {
+  rows: readonly ProviderModelFormRow[]
+  onChange: (rows: ProviderModelFormRow[]) => void
+  refreshButton?: React.ReactNode
+  modelIdLabel?: string
+  modelIdPlaceholder?: string
+  contextPlaceholder?: (modelId: string) => string | undefined
   disabled?: boolean
   modelError?: string
   contextError?: string
@@ -31,28 +33,30 @@ type LocalProviderModelsEditorProps = {
 const rowGrid =
   'items-start gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(6rem,.65fr)_minmax(0,1fr)_auto]'
 
-export function LocalProviderModelsEditor({
-  providerName,
+export function ProviderModelsEditor({
   rows,
   onChange,
   refreshButton,
+  modelIdLabel,
+  modelIdPlaceholder,
+  contextPlaceholder,
   disabled,
   modelError,
   contextError
-}: LocalProviderModelsEditorProps): React.JSX.Element {
+}: ProviderModelsEditorProps): React.JSX.Element {
   const { t } = useTranslation()
   const displayName = t('Display name')
-  const modelId = t('Model ID')
+  const modelId = modelIdLabel ?? t('Model ID')
   const contextWindow = t('Context window')
   const reasoningLevels = t('Reasoning effort levels')
-  const update = (rowId: string, patch: Partial<LocalModelFormRow>): void => {
+  const update = (rowId: string, patch: Partial<ProviderModelFormRow>): void => {
     onChange(rows.map((row) => (row.rowId === rowId ? { ...row, ...patch } : row)))
   }
 
   return (
-    <section className="space-y-2" aria-labelledby="provider-local-models-label">
+    <section className="space-y-2" aria-labelledby="provider-models-label">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="provider-local-models-label" className="text-xs font-medium text-muted-foreground">
+        <h3 id="provider-models-label" className="text-xs font-medium text-muted-foreground">
           {t('Models')}
         </h3>
         <div className="flex flex-wrap items-center gap-2">
@@ -61,8 +65,8 @@ export function LocalProviderModelsEditor({
             type="button"
             variant="outline"
             size="sm"
-            disabled={disabled || rows.length >= LOCAL_PROVIDER_MODEL_LIMIT}
-            onClick={() => onChange([...rows, localModelFormRow()])}
+            disabled={disabled || rows.length >= PROVIDER_MODEL_LIMIT}
+            onClick={() => onChange([...rows, providerModelFormRow()])}
           >
             <Plus aria-hidden="true" />
             {t('Add model')}
@@ -88,8 +92,8 @@ export function LocalProviderModelsEditor({
         >
           <Input
             aria-label={displayName}
-            placeholder={providerName || displayName}
-            value={row.displayName ?? providerName}
+            placeholder={displayName}
+            value={row.displayName ?? row.id}
             maxLength={128}
             disabled={disabled}
             onChange={(event) => update(row.rowId, { displayName: event.target.value })}
@@ -101,7 +105,7 @@ export function LocalProviderModelsEditor({
           <Input
             aria-label={modelId}
             aria-required="true"
-            placeholder={modelId}
+            placeholder={modelIdPlaceholder ?? modelId}
             value={row.id}
             maxLength={512}
             disabled={disabled}
@@ -109,7 +113,11 @@ export function LocalProviderModelsEditor({
           />
           <Input
             aria-label={contextWindow}
-            placeholder={String(DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW)}
+            placeholder={
+              contextPlaceholder
+                ? (contextPlaceholder(row.id) ?? t('Use provider default'))
+                : String(DEFAULT_CUSTOM_MODEL_CONTEXT_WINDOW)
+            }
             inputMode="numeric"
             value={row.contextWindow}
             disabled={disabled}

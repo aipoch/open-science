@@ -1,4 +1,5 @@
 import { supportsManualProviderContextWindow } from '../../shared/manual-provider'
+import { decodeProviderModels } from '../../shared/configured-provider-model'
 import {
   decodeLocalProviderModels,
   isLocalProviderPresetId
@@ -37,7 +38,12 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
         type: draft.type,
         contextWindow: draft.contextWindow
       })
-      const [model] = resolveOfficialModelCatalog({ ...draft, model: target.model, contextWindow })
+      const model = resolveOfficialModelCatalog({
+        ...draft,
+        model: target.model,
+        contextWindow,
+        manualModels: decodeProviderModels(draft.manualModels)
+      }).find(({ id }) => id === target.model)
       return { ...target, contextWindow: model?.contextWindow }
     }
     const draftModel = draft.model ?? defaultVendorModel(draft.vendorId, draft.region)

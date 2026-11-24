@@ -134,7 +134,8 @@ export const buildConfiguredModelInventory = (
           label:
             provider.type === 'lab'
               ? labModelLabel(model)
-              : (provider.localModels?.find(({ id }) => id === model)?.displayName ??
+              : (provider.manualModels?.find(({ id }) => id === model)?.displayName ??
+                provider.localModels?.find(({ id }) => id === model)?.displayName ??
                 (provider.localPresetId && model
                   ? `${provider.name} · ${model}`
                   : model || provider.name)),

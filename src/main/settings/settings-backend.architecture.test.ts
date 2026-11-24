@@ -750,6 +750,7 @@ describe('Settings backend ownership architecture', () => {
       'localModels',
       'localPresetId',
       'manualConnection',
+      'manualModels',
       'maxInputTokens',
       'maxOutputTokens',
       'model',

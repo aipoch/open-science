@@ -7,8 +7,10 @@ import {
   manualProviderDefinition,
   resolveManualProviderConnection,
   sameManualProviderConnection,
-  sameManualProviderCredentialScope
+  sameManualProviderCredentialScope,
+  usesCloudProviderModels
 } from '../../shared/manual-provider'
+import { decodeProviderModels } from '../../shared/configured-provider-model'
 import { parseCloudflareGateway, sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
   decodeCatalogParameters,
@@ -474,15 +476,30 @@ class ProviderAccountsModule {
         request.region ?? (vendorId === existing?.vendorId ? existing.region : undefined)
       provider.vendorId = vendorId
       if (region) provider.region = region
+      if (usesCloudProviderModels(vendorId)) {
+        const models =
+          request.manualModels === undefined
+            ? existing?.vendorId === vendorId
+              ? existing.manualModels
+              : undefined
+            : decodeProviderModels(request.manualModels)
+        if (request.manualModels !== undefined && !models)
+          throw new Error('Enter a valid model list.')
+        if (models) {
+          const selected = (request.model ?? existing?.model)?.trim()
+          provider.manualModels = models
+          provider.model = models.find(({ id }) => id === selected)?.id ?? models[0].id
+        }
+      }
+      const configuredModel = provider.model ?? (request.model ?? existing?.model)?.trim()
       if (vendorId === 'cloudflare-ai-gateway') {
         const cloudflare = parseCloudflareGateway(
           request.cloudflare === undefined ? existing?.cloudflare : request.cloudflare
         )
         if (!cloudflare) throw new Error('Cloudflare Account ID and Gateway ID are required.')
-        const model = (request.model ?? existing?.model)?.trim()
-        if (!model) throw new Error('Model is required.')
+        if (!configuredModel) throw new Error('Model is required.')
         provider.cloudflare = cloudflare
-        provider.model = model
+        provider.model = configuredModel
       } else if (manualProviderDefinition(vendorId)) {
         const resolved = resolveManualProviderConnection(
           vendorId,
@@ -491,12 +508,11 @@ class ProviderAccountsModule {
             : request.manualConnection
         )
         if (!resolved) throw new Error('Enter a valid provider endpoint.')
-        const model = (request.model ?? existing?.model)?.trim()
-        if (!model) throw new Error('Model is required.')
+        if (!configuredModel) throw new Error('Model is required.')
         provider.manualConnection = resolved.connection
-        provider.model = model
+        provider.model = configuredModel
       }
-      if (provider.cloudflare || provider.manualConnection) {
+      if ((provider.cloudflare || provider.manualConnection) && !provider.manualModels) {
         // The override belongs to the selected model and deployment, even when a key is reusable.
         const priorContextWindow =
           vendorId === existing?.vendorId &&

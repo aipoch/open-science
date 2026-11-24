@@ -1,4 +1,5 @@
 import type { LocalProviderModel, LocalProviderPresetId } from '../../shared/local-provider-preset'
+import type { ProviderModel } from '../../shared/configured-provider-model'
 import type { ManualProviderConnection } from '../../shared/manual-provider'
 import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
 import type { CatalogSnapshot, CatalogStatus } from '@aipoch/providers'
@@ -116,6 +117,7 @@ export type StoredProvider = {
   manualConnection?: ManualProviderConnection
   localPresetId?: LocalProviderPresetId
   localModels?: readonly LocalProviderModel[]
+  manualModels?: readonly ProviderModel[]
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]

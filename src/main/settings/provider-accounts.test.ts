@@ -55,6 +55,47 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it('reopens cloud model rows and uses the selected model’s own limits and reasoning', async () => {
+    const request = {
+      id: 'foundry',
+      type: 'official',
+      vendorId: 'microsoft-foundry',
+      manualConnection: { location: 'research', protocol: 'chat-completions' },
+      key: 'fixture',
+      manualModels: [
+        { id: 'research-fast', displayName: 'Fast', contextWindow: 96_000 },
+        {
+          id: 'research-deep',
+          displayName: 'Deep',
+          contextWindow: 128_000,
+          reasoningEffortPreset: 'low-high'
+        }
+      ]
+    } as const
+    await module.upsertProvider(request)
+    const reopened = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(reopened.model).toBe('research-fast')
+    expect(module.toProviderView(reopened).manualModels).toEqual(request.manualModels)
+    expect(module.toProviderView(reopened).models).toEqual(['research-fast', 'research-deep'])
+    expect(
+      module.resolveRuntimeModelCatalog(reopened, {
+        id: 'open-science-agent',
+        supportedApiTypes: ['chat-completions']
+      })
+    ).toEqual([
+      expect.objectContaining({
+        effectiveModel: 'research-fast',
+        provider: expect.objectContaining({ contextWindow: 96_000 }),
+        reasoningEffortProfile: { supported: false }
+      }),
+      expect.objectContaining({
+        effectiveModel: 'research-deep',
+        provider: expect.objectContaining({ contextWindow: 128_000 }),
+        reasoningEffortProfile: { supported: true, slots: ['low', 'high', 'high', 'high', 'high'] }
+      })
+    ])
+  })
+
   it('uses published and deployment context windows after reopening saved providers', async () => {
     const cloudflare = {
       id: 'workers-ai',
