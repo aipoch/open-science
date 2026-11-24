@@ -76,6 +76,51 @@ not require a separate Node.js installation.
 If the launcher directory is not yet on PATH, the Settings panel shows the line to add. Open a new
 terminal after updating PATH. Choose **Uninstall command** in the same panel to remove the launcher.
 
+### External-agent terminal flow
+
+An external agent can complete a package hand-off from a terminal after the standalone npm install:
+
+```bash
+npm install --global @aipoch/open-science
+open-science init
+open-science start --no-open
+open-science session import /absolute/path/to/research.science \
+  --new-project "Imported research" --non-interactive --json
+open-science url
+```
+
+Give the user the URL printed by `open-science url`. It contains the local authentication token and
+must be treated as private. The import command validates the `.science` package and creates a
+read-only imported Session before the URL is returned. A writable continuation requires
+`open-science session fork` after import.
+
+WinGet installs the desktop application and registers the bundled `open-science` command for the
+current Windows user. The installer keeps the command available across upgrades and removes it on
+uninstall. Run the complete hand-off from PowerShell with
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget `
+  --accept-source-agreements --accept-package-agreements --silent --disable-interactivity
+
+# Refresh this shell because the installer updates the user PATH after winget exits.
+$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+  [Environment]::GetEnvironmentVariable('Path', 'User')
+
+open-science init
+open-science start --no-open
+open-science session import C:\path\to\research.science `
+  --new-project 'Imported research' --non-interactive --json
+$url = open-science url
+Start-Process $url
+$url
+```
+
+The final command prints the authenticated URL after opening it in the default browser so an agent
+can return the same URL to the user. The URL contains a local authentication token and must be
+treated as private. The import command validates the `.science` package and creates a read-only
+imported Session before the URL is returned. A writable continuation requires
+`open-science session fork` after import.
+
 ### From a source checkout
 
 Replace `open-science` in the examples below with:
