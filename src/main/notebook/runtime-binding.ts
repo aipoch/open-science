@@ -76,7 +76,10 @@ type DiscoveryOptions = Readonly<{
 type DiscoveryCacheEntry = Readonly<{
   key: string
   promise: Promise<DiscoveredInterpreter[]>
+  expiresAt: number
 }>
+
+const DISCOVERY_CACHE_TTL_MS = 5_000
 
 const sortedRecordEntries = (record: Record<string, boolean>): [string, boolean][] =>
   Object.entries(record).sort(([left], [right]) => left.localeCompare(right))
@@ -718,14 +721,18 @@ export class NotebookRuntimeBindingOwner {
     const cacheGroup = `${language}:${enablement === undefined ? 'all' : 'enabled'}`
     if (!options.fresh) {
       const cached = this.discoveryCache.get(cacheGroup)
-      if (cached?.key === key) return cached.promise
+      if (cached?.key === key && cached.expiresAt > Date.now()) return cached.promise
     }
     const pending = this.discoverUncached(language, manualInterpreters, enablement).catch(() => {
       if (this.discoveryCache.get(cacheGroup)?.promise === pending)
         this.discoveryCache.delete(cacheGroup)
       return []
     })
-    this.discoveryCache.set(cacheGroup, { key, promise: pending })
+    this.discoveryCache.set(cacheGroup, {
+      key,
+      promise: pending,
+      expiresAt: Date.now() + DISCOVERY_CACHE_TTL_MS
+    })
     return pending
   }
 

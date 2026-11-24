@@ -3445,8 +3445,10 @@ class NotebookRuntimeService {
   // This is deliberately separate from managePackages(): an ordinary install may clear an
   // interrupted-install marker, but it must never release a protected-identity quarantine.
   async completeRuntimeRepair(language: NotebookLanguage): Promise<void> {
+    this.runtimeBindingOwner.invalidateDiscovery(language)
     const replacement = await this.runtimeBindingOwner.requireManagedDefault(language)
     await this.runtimeRepair.completeExplicitRepair(language, replacement)
+    this.runtimeBindingOwner.invalidateDiscovery(language)
   }
 
   // Releases ONE prefix from the global corrupt-journal write barrier. Called by a force Reset (via the

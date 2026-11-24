@@ -224,6 +224,19 @@ describe.each(['python', 'r'] as const)('%s binding decision target validation',
     expect(h.discover).toHaveBeenCalledTimes(2)
   })
 
+  it('refreshes external discovery after the bounded cache lifetime', async () => {
+    vi.useFakeTimers()
+    try {
+      const h = fixture()
+      await h.owner.list(h.session, language)
+      vi.advanceTimersByTime(5_000)
+      await h.owner.list(h.session, language)
+      expect(h.discover).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('checks cancellation after final discovery and before durable commit', async () => {
     const h = fixture()
     const controller = new AbortController()
