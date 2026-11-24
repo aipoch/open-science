@@ -22,6 +22,10 @@ public static class OpenScienceBootIdentity {
 }
 '@
 [OpenScienceBootIdentity]::Read()`
+
+// 冷启动时 PowerShell 还要通过 Add-Type 编译查询代码，给繁忙机器留出时间。
+const WINDOWS_BOOT_QUERY_TIMEOUT_MS = 15_000
+
 const WINDOWS_POWERSHELL_ARGS = [
   '-NoProfile',
   '-NonInteractive',
@@ -58,7 +62,7 @@ export function prefetchSystemBootIdentity(): Promise<string> {
     execFile(
       resolveWindowsPowerShellExecutable(),
       WINDOWS_POWERSHELL_ARGS,
-      { encoding: 'utf8', timeout: 5000, windowsHide: true },
+      { encoding: 'utf8', timeout: WINDOWS_BOOT_QUERY_TIMEOUT_MS, windowsHide: true },
       (error, stdout) => {
         if (error) return reject(bootIdentityUnavailable('PowerShell query failed', error))
         try {
