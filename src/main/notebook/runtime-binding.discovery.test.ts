@@ -213,6 +213,17 @@ describe.each(['python', 'r'] as const)('%s binding decision target validation',
     expect(h.discover).toHaveBeenCalledTimes(2)
   })
 
+  it('separates discovery before and after default runtime provisioning', async () => {
+    const h = fixture()
+    const ready = vi
+      .spyOn(discovery, language === 'r' ? 'rReady' : 'pythonReady')
+      .mockReturnValue(false)
+    await h.owner.list(h.session, language)
+    ready.mockReturnValue(true)
+    await h.owner.list(h.session, language)
+    expect(h.discover).toHaveBeenCalledTimes(2)
+  })
+
   it('checks cancellation after final discovery and before durable commit', async () => {
     const h = fixture()
     const controller = new AbortController()

@@ -3,9 +3,12 @@ import type { EnvironmentLease, NotebookRuntimeRepairPolicy } from '@aipoch/envi
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
+  DEFAULT_ENV_VERSION,
   defaultDiscoveryDeps,
   discoverInterpreters,
+  pythonReady,
   rscriptFor,
+  rReady,
   windowsCondaPrefixForR
 } from '@aipoch/environment'
 import { type DiscoveredInterpreter } from '@aipoch/environment/contracts'
@@ -83,13 +86,15 @@ const discoveryCacheKey = (
   platform: NodeJS.Platform | undefined,
   language: NotebookLanguage,
   manualInterpreters: string[],
-  enablement: RuntimeEnablement | undefined
+  enablement: RuntimeEnablement | undefined,
+  defaultRuntimeReady: boolean
 ): string =>
   JSON.stringify({
     dataRoot,
     platform: platform ?? process.platform,
     language,
     manualInterpreters,
+    defaultRuntimeReady,
     enablement: enablement
       ? {
           enabled: sortedRecordEntries(enablement.enabled),
@@ -701,7 +706,14 @@ export class NotebookRuntimeBindingOwner {
       this.options.platform,
       language,
       manualInterpreters,
-      enablement
+      enablement,
+      language === 'r'
+        ? rReady(getRuntimeRoot(this.options.dataRoot), DEFAULT_ENV_VERSION, this.options.platform)
+        : pythonReady(
+            getRuntimeRoot(this.options.dataRoot),
+            DEFAULT_ENV_VERSION,
+            this.options.platform
+          )
     )
     const cacheGroup = `${language}:${enablement === undefined ? 'all' : 'enabled'}`
     if (!options.fresh) {
