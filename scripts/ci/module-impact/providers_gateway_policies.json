@@ -1,0 +1,27 @@
+{
+  "ownerPaths": [
+    "packages/providers/src/protocols/gateway-endpoints.ts",
+    "packages/providers/src/providers/manual-connections.ts",
+    "packages/providers/src/providers/probe-policy.ts",
+    "packages/providers/src/transport/gateway-policies.ts"
+  ],
+  "interfacePaths": [
+    "packages/providers/src/protocols/gateway-endpoints.ts",
+    "packages/providers/src/providers/manual-connections.ts",
+    "packages/providers/src/providers/probe-policy.ts",
+    "packages/providers/src/transport/gateway-policies.ts"
+  ],
+  "testFiles": {
+    "owner": [],
+    "contract": [
+      "src/main/settings/provider-accounts.test.ts",
+      "src/main/settings/validate.test.ts",
+      "src/main/settings/chat-completions-compatibility.test.ts",
+      "src/renderer/src/pages/settings/provider-form-value.test.ts"
+    ],
+    "consumer": []
+  },
+  "consumerModules": ["providers_package", "settings_provider_gateways"],
+  "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
+  "fallbackCapability": "main_runtime"
+}
