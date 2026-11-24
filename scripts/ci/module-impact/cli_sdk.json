@@ -8,6 +8,9 @@
     "packages/open-science/agent-artifacts.mjs",
     "packages/open-science/agent-capabilities.mjs",
     "packages/open-science/agent-delivery-directory.mjs",
+    "packages/open-science/agent-mcp-groups.mjs",
+    "packages/open-science/agent-mcp-readiness.mjs",
+    "packages/open-science/agent-mcp-readiness.test.ts",
     "packages/open-science/agent-notebook-readiness.mjs",
     "packages/open-science/agent-package-capabilities.mjs",
     "packages/open-science/agent-setup-action.mjs",
@@ -41,9 +44,13 @@
     "packages/open-science/browser-import.d.ts",
     "packages/open-science/browser-import.test.ts",
     "packages/open-science/BROWSER_IMPORT.md",
+    "packages/open-science/mcp-archive-repair.mjs",
+    "packages/open-science/mcp-archive-repair.test.ts",
     "packages/open-science/mcp.mjs",
     "packages/open-science/mcp.test.ts",
     "packages/open-science/mcp.integration.test.ts",
+    "packages/open-science/mcp-repair.mjs",
+    "packages/open-science/mcp-repair.test.ts",
     "packages/open-science/runtime-control.test.ts"
   ],
   "interfacePaths": [
@@ -82,6 +89,9 @@
       "packages/open-science/appimage-launcher.test.ts",
       "packages/open-science/locate-backend.test.ts",
       "packages/open-science/browser-import.test.ts",
+      "packages/open-science/agent-mcp-readiness.test.ts",
+      "packages/open-science/mcp-archive-repair.test.ts",
+      "packages/open-science/mcp-repair.test.ts",
       "packages/open-science/runtime-control.test.ts"
     ],
     "contract": [
