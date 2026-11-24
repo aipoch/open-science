@@ -390,6 +390,7 @@ export const createManagedFileReferenceResolver = (dependencies: {
       | undefined
     >
   }>
+  projectFolders?: { resolveFile: (projectId: string, relativePath: string) => Promise<string> }
   readOnlyProjectionMaxSessionBytes?: number
   // Resolves a granted local root id and current access level (settings-backed). Absent ⇒
   // linked-folder references stay unavailable, matching the pre-grant behavior.
@@ -498,6 +499,22 @@ export const createManagedFileReferenceResolver = (dependencies: {
           absolutePath: version.path,
           name: version.filename,
           mimeType: version.contentType,
+          allowSkillImportReference: false
+        }
+      }
+    })
+  }
+
+  if (dependencies.projectFolders) {
+    adapters.push({
+      source: 'project-folder',
+      resolve: async ({ projectId }, reference) => {
+        if (reference.source !== 'project-folder' || reference.projectId !== projectId)
+          throw new Error('Project folder reference belongs to another Project.')
+        return {
+          absolutePath: await dependencies.projectFolders!.resolveFile(projectId, reference.path),
+          name: reference.name,
+          mimeType: reference.mimeType,
           allowSkillImportReference: false
         }
       }

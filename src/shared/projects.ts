@@ -27,6 +27,7 @@ export const projectSchema = z
     // into every agent session's system prompt.
     agentContext: z.string().max(16000).optional(),
     optimizationPrompt: z.string().max(16000).optional(),
+    rootPath: z.string().nullable().optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),
     isExample: z.boolean(),
     // Optional on the wire for compatibility with older persisted payloads; absence means unpinned.
@@ -43,12 +44,41 @@ export const projectSchema = z
 
 export const createProjectRequestSchema = z
   .object({
+    rootPath: z.string().min(1).optional(),
     name: z.string().max(PROJECT_NAME_MAX_LENGTH),
     description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
     agentContext: z.string().max(16000).optional(),
     optimizationPrompt: z.string().max(16000).optional()
   })
   .strict()
+
+export const validateProjectFolderRequestSchema = z.object({ path: z.string() }).strict()
+export const projectFolderValidationResultSchema = z.discriminatedUnion('ok', [
+  z
+    .object({
+      ok: z.literal(true),
+      path: z.string(),
+      warnings: z.array(z.enum(['cloud-synced', 'removable', 'network'])).optional()
+    })
+    .strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      kind: z.enum(['not-found', 'unavailable', 'conflict', 'records-unavailable']),
+      path: z.string().optional(),
+      diagnostics: z.string()
+    })
+    .strict()
+])
+export type ProjectFolderValidationResult = z.infer<typeof projectFolderValidationResultSchema>
+export const locateProjectFolderRequestSchema = z
+  .object({
+    projectId: z.string(),
+    path: z.string(),
+    expectedRootPath: z.string()
+  })
+  .strict()
+export type LocateProjectFolderRequest = z.infer<typeof locateProjectFolderRequestSchema>
 
 export const updateProjectRequestSchema = z
   .object({
@@ -100,6 +130,18 @@ export type ProjectDeletionCleanup = z.infer<typeof projectDeletionCleanupSchema
 export type UpdateProjectArchiveRequest = z.infer<typeof updateProjectArchiveRequestSchema>
 
 export const projectApplicationCommandContracts = Object.freeze({
+  checkFolder: defineApplicationCommandContract(
+    validationCodec(z.tuple([z.object({ projectId: z.string() }).strict()])),
+    validationCodec(projectFolderValidationResultSchema.nullable())
+  ),
+  locateFolder: defineApplicationCommandContract(
+    validationCodec(z.tuple([locateProjectFolderRequestSchema])),
+    validationCodec(projectSchema)
+  ),
+  validateFolder: defineApplicationCommandContract(
+    validationCodec(z.tuple([validateProjectFolderRequestSchema])),
+    validationCodec(projectFolderValidationResultSchema)
+  ),
   optimizePrompt: defineApplicationCommandContract(
     validationCodec(z.tuple([optimizePromptRequestSchema])),
     validationCodec(optimizePromptResultSchema)

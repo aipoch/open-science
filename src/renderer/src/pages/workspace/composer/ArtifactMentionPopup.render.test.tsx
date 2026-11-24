@@ -5,6 +5,7 @@ import { act } from 'react'
 import { type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
+import { useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type {
   LiteratureCollectionView,
@@ -157,6 +158,7 @@ beforeEach(() => {
       search: vi.fn().mockResolvedValue({ entries: [] })
     }
   }
+  useProjectStore.setState({ projects: [] })
   useNavigationStore.setState({ activeProjectId: 'default' })
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -806,7 +808,7 @@ describe('ArtifactMentionPopup', () => {
     })
   })
 
-  it('uses the Project Files artifact projection instead of Session metadata', async () => {
+  it('offers one published output in the default project and pins the head on selection', async () => {
     const onSelect = vi.fn()
     window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
       items: [
@@ -829,6 +831,7 @@ describe('ArtifactMentionPopup', () => {
 
     await renderPopup({ onSelect })
 
+    expect(options()).toHaveLength(1)
     expect(document.body.textContent).toContain('other-session-result.pdf')
     pressKey('Enter')
     await flushSelection()
@@ -1013,5 +1016,245 @@ describe('ArtifactMentionPopup', () => {
     // "report.pdf" (prefix) ranks ahead of "final-report.pdf" (match after the dash).
     expect(rendered[0].textContent).not.toContain('final')
     expect(rendered[1].textContent).toContain('final-report.pdf')
+  })
+})
+
+describe('bound Project folder mentions', () => {
+  beforeEach(() => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'default',
+          name: 'Research',
+          description: '',
+          isExample: false,
+          rootPath: '/research',
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ]
+    })
+  })
+
+  it('queries nested live files on demand and selects the relative identity without a Version lookup', async () => {
+    vi.useFakeTimers()
+    try {
+      const listFolder = vi.fn().mockResolvedValue({
+        path: '/research',
+        relativePath: '',
+        totalCount: 1,
+        truncated: false,
+        entries: [
+          {
+            name: 'sample.csv',
+            relativePath: 'nested/sample.csv',
+            isDirectory: false,
+            size: 12,
+            mtimeMs: 1
+          }
+        ]
+      })
+      window.api.projects = { listFolder } as unknown as typeof window.api.projects
+      const onSelect = vi.fn()
+      await renderPopup({ query: 'sample', onSelect })
+      expect(listFolder).not.toHaveBeenCalled()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120)
+      })
+      const option = options().find((row) => row.textContent?.includes('nested/sample.csv'))!
+      expect(option).toBeDefined()
+      act(() => option.click())
+      expect(onSelect).toHaveBeenCalledWith({
+        id: 'project-folder:default:nested/sample.csv',
+        name: 'sample.csv',
+        source: 'project-folder',
+        projectId: 'default',
+        path: 'nested/sample.csv'
+      })
+      expect(window.api.managedFileVersions.inspect).not.toHaveBeenCalled()
+      expect(listFolder).toHaveBeenCalledWith({
+        projectId: 'default',
+        relativePath: '',
+        query: 'sample',
+        limit: 50,
+        searchDescendants: true,
+        excludePublishedArtifactCopies: true
+      })
+      await renderPopup({ query: 'nested/sample', onSelect })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120)
+      })
+      expect(listFolder).toHaveBeenLastCalledWith({
+        projectId: 'default',
+        relativePath: 'nested',
+        query: 'sample',
+        limit: 50,
+        searchDescendants: true,
+        excludePublishedArtifactCopies: true
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    ['artifacts/default/session-1/published.pdf', 'artifacts/default/session-1', 'published.pdf'],
+    [
+      'notebooks/default/session-1/data/working.pdf',
+      'notebooks/default/session-1/data',
+      'working.pdf'
+    ]
+  ])('pins the exact published output for %s', async (query, directory, basename) => {
+    vi.useFakeTimers()
+    try {
+      window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+        items: [
+          { ...defaultProjectFiles[1], name: 'published.pdf' },
+          {
+            ...defaultProjectFiles[1],
+            name: basename,
+            id: 'other-artifact',
+            sourceFileId: 'other-artifact',
+            sessionId: 'other-session'
+          }
+        ],
+        totalCount: 2
+      })
+      const listFolder = vi.fn().mockResolvedValue({
+        path: `/research/${directory}`,
+        relativePath: directory,
+        totalCount: 1,
+        entries: [
+          {
+            name: `another-${basename}`,
+            relativePath: `${directory}/another-${basename}`,
+            isDirectory: false,
+            size: 5,
+            mtimeMs: 1
+          }
+        ],
+        publishedArtifacts: [
+          {
+            sourceFileId: 'art-1',
+            sessionId: 'session-1',
+            versionId: 'published-v3',
+            name: 'published.pdf',
+            relativePath: query,
+            exactPathMatch: true,
+            mimeType: 'application/pdf',
+            size: 4096
+          }
+        ]
+      })
+      window.api.projects = { listFolder } as unknown as typeof window.api.projects
+      const onSelect = vi.fn()
+      await renderPopup({ query, onSelect })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120)
+      })
+      expect(listFolder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          relativePath: directory,
+          query: basename
+        })
+      )
+      expect(options()).toHaveLength(2)
+      expect(options()[0].textContent).toContain('published.pdf')
+      expect(options()[1].textContent).toContain(`another-${basename}`)
+      pressKey('Enter')
+      expect(onSelect).toHaveBeenCalledWith({
+        id: 'art-1',
+        sourceFileId: 'art-1',
+        name: 'published.pdf',
+        source: 'artifact',
+        mimeType: 'application/pdf',
+        versionId: 'published-v3',
+        path: 'artifact-version:default/session-1/art-1/published-v3'
+      })
+      expect(window.api.managedFileVersions.inspect).not.toHaveBeenCalled()
+      pressKey('ArrowDown')
+      pressKey('Enter')
+      expect(onSelect).toHaveBeenLastCalledWith({
+        id: `project-folder:default:${directory}/another-${basename}`,
+        name: `another-${basename}`,
+        source: 'project-folder',
+        projectId: 'default',
+        path: `${directory}/another-${basename}`
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('merges renamed outputs by Artifact ID and preserves independent prefix matches', async () => {
+    vi.useFakeTimers()
+    try {
+      const directory = 'notebooks/default/session-1/data'
+      const aliases = [
+        {
+          sourceFileId: 'art-1',
+          sessionId: 'session-1',
+          versionId: 'published-v3',
+          name: 'report.py',
+          relativePath: `${directory}/draft.py`,
+          exactPathMatch: false,
+          size: 10
+        },
+        {
+          sourceFileId: 'art-2',
+          sessionId: 'session-1',
+          versionId: 'published-v1',
+          name: 'draft-code.py',
+          relativePath: `${directory}/draft-code.py`,
+          exactPathMatch: false,
+          size: 10
+        }
+      ]
+      window.api.projectFiles.listFiles = vi.fn().mockResolvedValue({
+        items: aliases.map(({ sourceFileId, versionId, name }) => ({
+          ...defaultProjectFiles[1],
+          id: sourceFileId,
+          sourceFileId,
+          sourceVersionId: versionId,
+          name
+        })),
+        totalCount: aliases.length
+      })
+      window.api.projects = {
+        listFolder: vi.fn().mockResolvedValue({
+          path: '/research',
+          relativePath: '',
+          totalCount: 1,
+          entries: [
+            {
+              name: 'draft-notes.py',
+              relativePath: `${directory}/draft-notes.py`,
+              isDirectory: false,
+              size: 5,
+              mtimeMs: 1
+            }
+          ],
+          publishedArtifacts: aliases
+        })
+      } as unknown as typeof window.api.projects
+      const onSelect = vi.fn()
+      for (const query of ['draft', `${directory}/draft`]) {
+        await renderPopup({ query, onSelect })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(120)
+        })
+        const matched = options()
+        expect(matched).toHaveLength(3)
+        expect(matched[0].textContent).toContain('draft-notes.py')
+        expect(matched.filter((row) => row.textContent?.includes('draft-code.py'))).toHaveLength(1)
+        const renamed = matched.find((row) => row.textContent?.includes('report.py'))!
+        act(() => renamed.click())
+        expect(onSelect).toHaveBeenLastCalledWith(
+          expect.objectContaining({ sourceFileId: 'art-1', versionId: 'published-v3' })
+        )
+      }
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

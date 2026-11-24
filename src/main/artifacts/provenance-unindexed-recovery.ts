@@ -1,3 +1,4 @@
+import { reconcileProjectRecordIndexes } from '../projects/record-indexes'
 import { bindManagedPdfVersion } from '../pdf-annotations/source-bindings'
 import type { Dirent } from 'node:fs'
 import { mkdir, readFile, readdir, rename } from 'node:fs/promises'
@@ -109,6 +110,7 @@ class ArtifactProvenanceUnindexedRecovery {
       quarantinedVersionIds: []
     }
     const client = await this.options.getClient()
+    if (state.lineageEntries.length) await reconcileProjectRecordIndexes(client, [state.projectId])
     for (const lineageEntry of state.lineageEntries) {
       if (
         !lineageEntry.isDirectory() ||

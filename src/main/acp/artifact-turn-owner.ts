@@ -13,6 +13,8 @@ import type {
 import type { ArtifactRunContext } from '../artifacts/mcp-server'
 import { ArtifactRepository, getArtifactCurrentRunFilePath } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
+import type { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { ProjectArtifactIndexUnavailableError } from '../projects/record-indexes'
 
 const artifactTurnHandleKey = Symbol('artifact-turn-handle')
 
@@ -89,6 +91,7 @@ type NotebookArtifactSourceScopeProvider = (
 ) => NotebookArtifactSourceScope
 
 type ArtifactTurnProvenance = {
+  recoverLiveRunPublication?: ArtifactProvenanceRepository['recoverLiveRunPublication']
   withSessionMutation?<Result>(
     scope: { projectId: string; appSessionId: string },
     operation: () => Promise<Result>
@@ -571,14 +574,51 @@ class ArtifactTurnOwner {
   private async prepareFinalization(
     turn: ArtifactTurn
   ): Promise<ArtifactTurnPublication | undefined> {
+    const provenanceContext = {
+      rootFrameId: turn.rootFrameId,
+      agentFrameId: turn.agentFrameId,
+      messageBranchId: turn.messageBranchId,
+      runtimeSegmentId: turn.runtimeSegmentId,
+      promptMessageId: turn.promptMessageId
+    }
     let artifacts: ArtifactFile[]
     let artifactVersionIds: string[] | undefined
     if (this.options.provenance) {
-      artifacts = await this.options.provenance.listRunVersions({
-        projectId: turn.projectId,
-        appSessionId: turn.appSessionId,
-        artifactRunId: turn.runId
-      })
+      try {
+        artifacts = await this.options.provenance.listRunVersions({
+          projectId: turn.projectId,
+          appSessionId: turn.appSessionId,
+          artifactRunId: turn.runId
+        })
+      } catch (error) {
+        if (
+          !(error instanceof ProjectArtifactIndexUnavailableError) ||
+          error.projectId !== turn.projectId
+        )
+          throw error
+        // A new execution's Artifact writes stage files before committing a Version. With writes
+        // drained and no pending files, unavailable history cannot prevent the text turn settling.
+        // Verified live writes can stage the normal publication claim from the committed local
+        // projection. Version finalization still requires the portable checkpoint to be readable.
+        const pending = await this.options.repository.listPendingRunFiles({
+          projectId: turn.projectId,
+          sessionId: turn.artifactStorageSessionId,
+          runId: turn.runId
+        })
+        const recovered = await this.options.provenance.recoverLiveRunPublication?.(
+          {
+            projectId: turn.projectId,
+            appSessionId: turn.appSessionId,
+            artifactStorageSessionId: turn.artifactStorageSessionId,
+            artifactRunId: turn.runId,
+            ...provenanceContext
+          },
+          pending
+        )
+        if (!recovered && (pending.length || this.options.provenance.recoverLiveRunPublication))
+          throw error
+        artifacts = recovered ?? []
+      }
       artifactVersionIds = artifacts
         .map((artifact) => artifact.versionId)
         .filter(Boolean) as string[]
@@ -602,13 +642,7 @@ class ArtifactTurnOwner {
       sessionId: turn.appSessionId,
       runId: turn.runId,
       ...(artifactVersionIds ? { artifactVersionIds } : {}),
-      provenanceContext: {
-        rootFrameId: turn.rootFrameId,
-        agentFrameId: turn.agentFrameId,
-        messageBranchId: turn.messageBranchId,
-        runtimeSegmentId: turn.runtimeSegmentId,
-        promptMessageId: turn.promptMessageId
-      }
+      provenanceContext
     })
 
     const artifactClaimId = this.options.runRegistry.register({

@@ -2,13 +2,11 @@ import type { TFunction } from 'i18next'
 import {
   ArrowUpRight,
   AtSign,
-  Boxes,
   Check,
   ChevronDown,
   Folder,
   Loader2,
   Monitor,
-  Paperclip,
   Plus,
   Server
 } from 'lucide-react'
@@ -44,6 +42,7 @@ import { useProjectFileMentionAction } from './use-project-file-mention-action'
 import { useProjectFileMentionAvailability } from './use-project-file-mention-availability'
 import { useProjectFileMentionDrag } from './use-project-file-mention-drag'
 import type { MessageArtifact } from './preview-file-item'
+import { ProjectFilesFilterIcon, ProjectFolderSourceOption } from './project-files-navigation'
 import { GrantedRootMenuRow } from './project-files-granted-root-menu-row'
 import { createProjectFilePreviewArtifact } from './project-files-preview-owner'
 import type { ProjectFilesFilterOption } from './project-files-query-model'
@@ -52,22 +51,6 @@ import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
 
 type ProjectFilesViewMode = 'grid' | 'list'
-// Keeps collection semantics visible in both the menu rows and the currently selected trigger.
-const ProjectFilesFilterIcon = ({
-  kind,
-  className
-}: {
-  kind: ProjectFilesFilterOption['kind']
-  className: string
-}): React.JSX.Element => {
-  if (kind === 'uploads') {
-    return <Paperclip className={className} strokeWidth={1.8} aria-hidden="true" />
-  }
-  if (kind === 'session') {
-    return <Folder className={className} strokeWidth={1.8} aria-hidden="true" />
-  }
-  return <Boxes className={className} strokeWidth={1.8} aria-hidden="true" />
-}
 const COLLAPSED_SESSION_OPTION_COUNT = 5
 // Caps the collapsed menu at five sessions while reserving the final slot for an active session
 // that lies later in the independently paginated option catalog.
@@ -520,7 +503,10 @@ const ProjectFilesFilterMenu = ({
   onGrantedRootMutation,
   localMachineName,
   isLocalSelected,
-  selectedLocalRootId
+  selectedLocalRootId,
+  projectFolderName,
+  isProjectFolderSelected = false,
+  onSelectProjectFolder
 }: {
   label: string
   options: ProjectFilesFilterOption[]
@@ -543,6 +529,9 @@ const ProjectFilesFilterMenu = ({
   localMachineName: string | undefined
   isLocalSelected: boolean
   selectedLocalRootId: string | undefined
+  projectFolderName?: string
+  isProjectFolderSelected?: boolean
+  onSelectProjectFolder?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const hosts = useComputeStore((state) => state.hosts)
@@ -595,8 +584,8 @@ const ProjectFilesFilterMenu = ({
           className="max-w-[220px] gap-1.5"
           aria-label={t('Filter project files')}
         >
-          {isLocalSelected ? (
-            selectedLocalRoot ? (
+          {isLocalSelected || isProjectFolderSelected ? (
+            selectedLocalRoot || isProjectFolderSelected ? (
               <Folder
                 className="size-3.5 shrink-0 text-text-300"
                 strokeWidth={1.8}
@@ -678,6 +667,11 @@ const ProjectFilesFilterMenu = ({
         </DropdownMenuGroup>
 
         {/* "This computer" section: browse files on the machine Kiro runs on */}
+        <ProjectFolderSourceOption
+          name={projectFolderName}
+          selected={isProjectFolderSelected}
+          onSelect={onSelectProjectFolder}
+        />
         <DropdownMenuSeparator />
         <DropdownMenuLabel>{t('This computer')}</DropdownMenuLabel>
         <DropdownMenuGroup>

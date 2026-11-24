@@ -54,6 +54,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 import type { MigrationProgress } from '../../shared/storage'
 import { copyAndVerify, deleteSources, validateMigrationSourceLinks } from './data-migration'
 import { MIGRATABLE_DATA_DIRS } from './data-directories'
+import {
+  getProjectRecordRoot,
+  getProjectRecordRoute,
+  initializeProjectRecordStorage,
+  markProjectRecordDetached
+} from '../projects/record-storage'
 
 let from: string
 let to: string
@@ -89,6 +95,35 @@ const exists = async (path: string): Promise<boolean> => {
 }
 
 describe('validateMigrationSourceLinks', () => {
+  it('moves live and detached research location indexes without moving the user folders', async () => {
+    const folders = await mkdtemp(join(tmpdir(), 'research-record-migration-'))
+    try {
+      for (const id of ['live', 'detached']) {
+        const folder = join(folders, id)
+        await mkdir(folder)
+        await initializeProjectRecordStorage(from, folder, {
+          format: 'open-science-project',
+          version: 1,
+          projectId: id,
+          name: id,
+          createdAt: 1
+        })
+      }
+      await markProjectRecordDetached(from, 'detached')
+      await copyAndVerify({
+        from,
+        to,
+        dirs: [...MIGRATABLE_DATA_DIRS],
+        signal: new AbortController().signal,
+        onProgress: () => {}
+      })
+      expect(getProjectRecordRoot(to, 'live')).toContain('research-record-migration-')
+      expect(getProjectRecordRoot(to, 'detached')).toContain('research-record-migration-')
+      expect(getProjectRecordRoute(to, 'detached')?.detached).toBe(true)
+    } finally {
+      await rm(folders, { recursive: true, force: true })
+    }
+  })
   it('moves models and research presentation sources with the data root', async () => {
     const files = [
       'models/pdf-tables/active.json',

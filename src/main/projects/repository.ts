@@ -1,9 +1,14 @@
 import type { Prisma, PrismaClient, Project as PrismaProject } from '@prisma/client'
+import { randomUUID } from 'node:crypto'
+import { lstat, stat } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 
 import type {
   CreateProjectRequest,
+  LocateProjectFolderRequest,
   Project,
   ProjectDeletionCleanup,
+  ProjectFolderValidationResult,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../../shared/projects'
@@ -12,7 +17,32 @@ import { projectSessionDefaultsSchema } from '../../shared/session-configuration
 import { MEMORY_SETTINGS_ID } from '../../shared/memory'
 import { deletePdfAnnotations } from '../pdf-annotations/repository'
 import { migrationSqlExecutor } from '../database/migration-sql-executor'
+import { sameProjectFolderSpelling } from '../storage/data-location-identity'
 import { isSessionPackagePending } from '../storage/session-package-state'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  validateProjectFolder,
+  type ProjectFolderValidationOptions
+} from './project-folder-validation'
+import type { ProjectFolderPath } from '../storage/workspace-location'
+import { detectProjectFolderWarnings } from './project-folder-location'
+import { assertProjectRecordLocation } from './project-record-location'
+import { ProjectArtifactIndexUnavailableError } from './record-indexes'
+import { revalidateProjectNotebookOutputDirectories } from './session-output-layout'
+import {
+  completeProjectRecordReopen,
+  getProjectRecordRoute,
+  getProjectRecordRoot,
+  initializeProjectRecordStorage,
+  markProjectRecordDetached,
+  readProjectRecordManifest,
+  registerProjectRecordStorage
+} from './record-storage'
+import {
+  assertProjectFolderAvailable,
+  projectFolderFailure,
+  projectFolderWarnings
+} from './project-folder-binding'
 
 // Only the project delegate is needed; typing to this subset keeps the repository unit-testable with a
 // lightweight mock instead of a real (engine-backed) PrismaClient.
@@ -78,6 +108,7 @@ const toProject = (row: PrismaProject): Project => ({
   ...(row.agentContext ? { agentContext: row.agentContext } : {}),
   ...(row.optimizationPrompt ? { optimizationPrompt: row.optimizationPrompt } : {}),
   sessionDefaults: decodeProjectSessionDefaults(row.sessionDefaults),
+  ...(row.rootPath ? { rootPath: row.rootPath } : {}),
   isExample: row.isExample,
   ...(row.pinned ? { pinned: true } : {}),
   ...(row.archivedAt ? { archivedAt: row.archivedAt.getTime() } : {}),
@@ -91,11 +122,253 @@ const toProject = (row: PrismaProject): Project => ({
 type ProjectClientProvider = () => Promise<ProjectClient>
 
 // Owns Project reads/writes. The client is resolved lazily per call so schema-ensure failures can recover.
+export type ProjectRecordOptions = {
+  storageRoot: () => string
+  assertLocation?: (path: string) => Promise<void>
+  restoreIndexes?: (
+    client: Prisma.TransactionClient,
+    projectId: string,
+    locatedFolder?: string
+  ) => Promise<void>
+  reconcileIndexes?: (client: ProjectClient, projectId: string) => Promise<void>
+}
+
 class ProjectRepository {
   constructor(
     private readonly getClient: ProjectClientProvider,
-    private readonly configRoot?: string
+    private readonly configRoot?: string,
+    private readonly folderOptions?: ProjectFolderValidationOptions,
+    private readonly recordOptions?: ProjectRecordOptions
   ) {}
+
+  projectRecordStorageRoot(): string | undefined {
+    return this.recordOptions?.storageRoot()
+  }
+
+  recordRecoveryPending(projectId: string): boolean {
+    return Boolean(
+      this.recordOptions &&
+      getProjectRecordRoute(this.recordOptions.storageRoot(), projectId)?.reopening
+    )
+  }
+
+  async completeRecordRecovery(projectId: string): Promise<void> {
+    if (this.recordOptions)
+      await completeProjectRecordReopen(this.recordOptions.storageRoot(), projectId)
+  }
+
+  private async prepareFolder(
+    path: string,
+    scope: 'tree' | 'target' = 'tree'
+  ): Promise<ProjectFolderPath> {
+    if (!this.folderOptions) {
+      throw new ApplicationCommandError(
+        'project-folder-unavailable',
+        'Project folder access is unavailable.'
+      )
+    }
+    try {
+      return await validateProjectFolder(path, this.folderOptions, scope)
+    } catch (error) {
+      const failure = projectFolderFailure(error)
+      const missing =
+        isAbsolute(path) &&
+        (await stat(path).then(
+          () => false,
+          (failure: NodeJS.ErrnoException) => failure.code === 'ENOENT'
+        ))
+      throw new ApplicationCommandError(
+        missing ? 'project-folder-not-found' : 'project-folder-unavailable',
+        failure.diagnostics,
+        undefined,
+        { cause: error }
+      )
+    }
+  }
+
+  async validateFolder(request: { path: string }): Promise<ProjectFolderValidationResult> {
+    try {
+      const path = await this.prepareFolder(request.path)
+      if (this.recordOptions) {
+        await (this.recordOptions.assertLocation ?? assertProjectRecordLocation)(path)
+        readProjectRecordManifest(path)
+      }
+      await assertProjectFolderAvailable(await this.getClient(), path)
+      return { ok: true, path, warnings: await detectProjectFolderWarnings(path) }
+    } catch (error) {
+      return { ...projectFolderFailure(error), path: request.path }
+    }
+  }
+
+  async assertProjectFolderHealthy(projectId: string): Promise<string | undefined> {
+    const project = await this.get(projectId)
+    if (!project?.rootPath) return undefined
+    try {
+      const info = await lstat(project.rootPath)
+      if (info.isSymbolicLink())
+        throw new ApplicationCommandError(
+          'project-folder-unavailable',
+          `The saved project folder was replaced by a symbolic link: ${project.rootPath}`
+        )
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        if (error instanceof ApplicationCommandError) throw error
+        throw new ApplicationCommandError(
+          'project-folder-unavailable',
+          error instanceof Error ? error.message : String(error)
+        )
+      }
+    }
+    const path = await this.prepareFolder(project.rootPath, 'target')
+    // A saved canonical directory must not silently follow a replacement symlink/ancestor.
+    if (!sameProjectFolderSpelling(project.rootPath, path))
+      throw new ApplicationCommandError(
+        'project-folder-unavailable',
+        `Project folder binding changed on disk.\nSaved folder: ${project.rootPath}\nResolved folder: ${path}`
+      )
+    await assertProjectFolderAvailable(await this.getClient(), path, projectId)
+    if (this.recordOptions) {
+      const storageRoot = this.recordOptions.storageRoot()
+      const route = getProjectRecordRoute(storageRoot, projectId)
+      const manifest = readProjectRecordManifest(path)
+      await (this.recordOptions.assertLocation ?? assertProjectRecordLocation)(path)
+      if (manifest?.projectId !== projectId)
+        throw new ApplicationCommandError(
+          'project-folder-unavailable',
+          'Project research records are missing or belong to another Project.'
+        )
+      if (!route || route.folder !== path)
+        await registerProjectRecordStorage(storageRoot, path, projectId, {
+          reopening: route?.reopening
+        })
+      getProjectRecordRoot(storageRoot, projectId)
+    }
+    return path
+  }
+
+  async checkFolder(request: { projectId: string }): Promise<ProjectFolderValidationResult | null> {
+    const project = await this.get(request.projectId)
+    if (!project?.rootPath) return null
+    try {
+      const path = await this.assertProjectFolderHealthy(request.projectId)
+      if (path)
+        await this.recordOptions?.reconcileIndexes?.(await this.getClient(), request.projectId)
+      return path ? { ok: true, path, warnings: projectFolderWarnings(path) } : null
+    } catch (error) {
+      const failure = projectFolderFailure(error)
+      if (failure.kind === 'unavailable') {
+        const missing = await lstat(project.rootPath).then(
+          () => false,
+          (cause: NodeJS.ErrnoException) => cause.code === 'ENOENT'
+        )
+        if (missing) return { ...failure, kind: 'not-found', path: project.rootPath }
+        if (error instanceof ProjectArtifactIndexUnavailableError)
+          return { ...failure, kind: 'records-unavailable', path: project.rootPath }
+      }
+      return { ...failure, path: project.rootPath }
+    }
+  }
+
+  private async missingFolderForLocation(
+    request: LocateProjectFolderRequest,
+    client: ProjectClient
+  ): Promise<PrismaProject> {
+    const row = await client.project.findUnique({ where: { id: request.projectId } })
+    if (!row || row.deletedAt !== null) throw new Error('Project not found.')
+    if (!row.rootPath || row.rootPath !== request.expectedRootPath)
+      throw new ApplicationCommandError(
+        'project-folder-unavailable',
+        'The project folder binding changed. Refresh it and retry.'
+      )
+    let missing: boolean
+    try {
+      missing = await lstat(row.rootPath).then(
+        () => false,
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return true
+          throw error
+        }
+      )
+    } catch (error) {
+      throw new ApplicationCommandError(
+        'project-folder-unavailable',
+        error instanceof Error ? error.message : String(error)
+      )
+    }
+    if (!missing)
+      throw new ApplicationCommandError(
+        'project-folder-unavailable',
+        'The existing project folder is present. Restore access and retry; it cannot be replaced.'
+      )
+    return row
+  }
+
+  async locateFolder(
+    request: LocateProjectFolderRequest,
+    withRelocation: (commit: () => Promise<Project>) => Promise<Project>
+  ): Promise<Project> {
+    // Quiescing can perform Session/database I/O, so never hold SQLite's writer lock across it.
+    await this.missingFolderForLocation(request, await this.getClient())
+    const path = await this.prepareFolder(request.path)
+    const recordOptions = this.recordOptions
+    if (recordOptions) {
+      await (recordOptions.assertLocation ?? assertProjectRecordLocation)(path)
+      if (readProjectRecordManifest(path)?.projectId !== request.projectId)
+        throw new ApplicationCommandError(
+          'project-folder-unavailable',
+          'Select the folder containing this Project’s research records.'
+        )
+    }
+    await assertProjectFolderAvailable(await this.getClient(), path, request.projectId)
+    return withRelocation(() =>
+      this.admitFolder(path, request.projectId, async (client) => {
+        const current = await this.missingFolderForLocation(request, client)
+        const changed = await client.project.updateMany({
+          where: { id: request.projectId, deletedAt: null, rootPath: request.expectedRootPath },
+          data: {
+            rootPath: path,
+            updatedAt: new Date(Math.max(Date.now(), current.updatedAt.getTime() + 1))
+          }
+        })
+        if (changed.count !== 1)
+          throw new ApplicationCommandError(
+            'project-folder-unavailable',
+            'The project folder binding changed. Refresh it and retry.'
+          )
+        const row = await client.project.findUnique({ where: { id: request.projectId } })
+        if (!row || row.deletedAt !== null) throw new Error('Project not found.')
+        if (recordOptions) {
+          const storageRoot = recordOptions.storageRoot()
+          const recordRoute = getProjectRecordRoute(storageRoot, request.projectId)
+          await revalidateProjectNotebookOutputDirectories(storageRoot, request.projectId, path)
+          await recordOptions.restoreIndexes?.(
+            client as unknown as Prisma.TransactionClient,
+            request.projectId,
+            path
+          )
+          await registerProjectRecordStorage(storageRoot, path, request.projectId, {
+            reopening: recordRoute?.reopening
+          })
+        }
+        return toProject(row)
+      })
+    )
+  }
+
+  private async admitFolder<Result>(
+    path: string,
+    projectId: string | undefined,
+    operation: (client: ProjectClient) => Promise<Result>
+  ): Promise<Result> {
+    const client = await this.getClient()
+    return client.$transaction(async (transaction) => {
+      // Acquire SQLite's writer lock before reading reservations. It serializes admission across
+      // repository instances and host processes, not merely two UI requests in this instance.
+      await transaction.$executeRaw`UPDATE "Project" SET "id" = "id" WHERE 0`
+      await assertProjectFolderAvailable(transaction, path, projectId)
+      return operation(transaction as unknown as ProjectClient)
+    })
+  }
 
   private pending(id: string): Promise<boolean> {
     return this.configRoot ? isSessionPackagePending(this.configRoot, id) : Promise.resolve(false)
@@ -146,17 +419,74 @@ class ProjectRepository {
       throw new Error('Project name is required.')
     }
 
-    const client = await this.getClient()
-    const row = await client.project.create({
-      data: {
+    const rootPath =
+      request.rootPath === undefined ? undefined : await this.prepareFolder(request.rootPath)
+    if (rootPath && this.recordOptions)
+      await (this.recordOptions.assertLocation ?? assertProjectRecordLocation)(rootPath)
+    const stored = rootPath && this.recordOptions ? readProjectRecordManifest(rootPath) : undefined
+    const create = async (client: ProjectClient): Promise<Project> => {
+      const data = {
         name,
         description: request.description?.trim() ?? '',
         agentContext: request.agentContext?.trim() ?? '',
-        optimizationPrompt: request.optimizationPrompt?.trim() ?? ''
+        optimizationPrompt: request.optimizationPrompt?.trim() ?? '',
+        ...(rootPath ? { rootPath } : {})
       }
-    })
-
-    return toProject(row)
+      let row: PrismaProject
+      if (rootPath && this.recordOptions) {
+        const projectId = stored?.projectId ?? randomUUID()
+        const previous = stored
+          ? await client.project.findUnique({ where: { id: projectId } })
+          : null
+        if (previous && previous.deletedAt === null)
+          throw new ApplicationCommandError(
+            'project-folder-conflict',
+            'This Project is already registered. Open or restore its existing entry.'
+          )
+        if (await client.projectDeletionIntent.findUnique({ where: { projectId } }))
+          throw new ApplicationCommandError(
+            'project-folder-unavailable',
+            'Project removal is still finishing. Retry after cleanup completes.'
+          )
+        await initializeProjectRecordStorage(
+          this.recordOptions.storageRoot(),
+          rootPath,
+          stored ?? {
+            format: 'open-science-project',
+            version: 1,
+            projectId,
+            name,
+            createdAt: Date.now()
+          },
+          { reopening: Boolean(stored) }
+        )
+        if (stored)
+          await revalidateProjectNotebookOutputDirectories(
+            this.recordOptions.storageRoot(),
+            projectId,
+            rootPath
+          )
+        row = previous
+          ? await client.project.update({
+              where: { id: projectId },
+              data: { ...data, deletedAt: null, archivedAt: null }
+            })
+          : await client.project.create({
+              data: {
+                ...data,
+                id: projectId,
+                ...(stored ? { createdAt: new Date(stored.createdAt) } : {})
+              }
+            })
+        if (stored)
+          await this.recordOptions.restoreIndexes?.(
+            client as unknown as Prisma.TransactionClient,
+            projectId
+          )
+      } else row = await client.project.create({ data })
+      return toProject(row)
+    }
+    return rootPath ? this.admitFolder(rootPath, undefined, create) : create(await this.getClient())
   }
 
   // Updates editable fields, ignoring undefined values so callers can patch only what changed.
@@ -199,7 +529,6 @@ class ProjectRepository {
     }
 
     const client = await this.getClient()
-
     if (request.sessionDefaults !== undefined || request.agentTracingEnabled !== undefined) {
       const defaults =
         request.sessionDefaults ??
@@ -280,6 +609,45 @@ class ProjectRepository {
     }
 
     const client = await this.getClient()
+    if (!request.archived) {
+      const current = await client.project.findUnique({ where: { id: request.id } })
+      if (!current || current.deletedAt !== null) throw new Error('Project not found.')
+      if (current.rootPath) {
+        let path: string
+        try {
+          path = await this.prepareFolder(current.rootPath)
+        } catch (error) {
+          if (
+            !(error instanceof ApplicationCommandError) ||
+            error.code !== 'project-folder-not-found'
+          )
+            throw error
+          // Restore visibility of genuinely missing bindings so Workspace can offer Locate. This
+          // reserves the saved location; it neither grants access nor converts the Project to managed.
+          const missing = {
+            projectId: request.id,
+            expectedRootPath: current.rootPath,
+            path: current.rootPath
+          }
+          await this.missingFolderForLocation(missing, client)
+          return this.admitFolder(current.rootPath, request.id, async (transaction) => {
+            await this.missingFolderForLocation(missing, transaction)
+            return this.updateArchiveNow(request, archivedAt, transaction)
+          })
+        }
+        return this.admitFolder(path, request.id, (transaction) =>
+          this.updateArchiveNow(request, archivedAt, transaction)
+        )
+      }
+    }
+    return this.updateArchiveNow(request, archivedAt, client)
+  }
+
+  private async updateArchiveNow(
+    request: UpdateProjectArchiveRequest,
+    archivedAt: number,
+    client: ProjectClient
+  ): Promise<Project> {
     // Prisma's @updatedAt automation also runs for administrative changes. Updating only the archive
     // columns in SQL preserves the activity timestamp without reading and later restoring a stale value.
     const updated = await client.$executeRaw`
@@ -347,6 +715,8 @@ class ProjectRepository {
       create: { projectId },
       update: {}
     })
+    if (this.recordOptions)
+      await markProjectRecordDetached(this.recordOptions.storageRoot(), projectId)
   }
 
   // deleteMany treats an already-finished or rolled-back intent as successful cleanup.

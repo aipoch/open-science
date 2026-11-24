@@ -1,5 +1,6 @@
 import { isNotebookRunReference } from '../notebook/run-record-reference'
 import { mergePendingRuns, pendingDirectoryIdentity } from '../notebook/pending-run-files'
+import { NotebookRunRepository } from '../notebook/repository'
 import { constants } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
@@ -122,7 +123,16 @@ async function discoverSessionSources(
   input: SessionDiagnosticWorkerInput & SessionDiagnosticIdentity
 ): Promise<Source[]> {
   const project = join(input.configRoot, 'sessions', input.projectId)
-  const notebookRoot = join(input.dataRoot, 'notebooks', input.projectId, input.sessionId)
+  const notebooks = new NotebookRunRepository(input.dataRoot)
+  let notebookStorageRoot = input.dataRoot
+  let notebookPath: string | undefined
+  try {
+    notebookStorageRoot = notebooks.projectStorageRoot(input.projectId)
+    notebookPath = notebooks.runJsonPath(input.projectId, input.sessionId)
+  } catch {
+    /* Disconnected records must not fall back to stale managed history. */
+  }
+  const notebookRoot = notebookPath ? dirname(notebookPath) : undefined
   const legacySessionPath = join(project, `${input.sessionId}.json`)
   const journalPath = sessionJournalPath(legacySessionPath)
   const sessionPath = await lstat(journalPath)
@@ -146,8 +156,10 @@ async function discoverSessionSources(
       name: 'notebook/run.json',
       kind: 'notebook',
       available: false,
-      root: input.dataRoot,
-      path: join(notebookRoot, 'run.json'),
+      root: notebookStorageRoot,
+      ...(notebookPath
+        ? { path: notebookPath }
+        : { reason: 'Notebook project records are unavailable' }),
       output: 'notebook/run.json'
     }
   ]
@@ -178,8 +190,10 @@ async function discoverSessionSources(
     /* Missing project still leaves the primary missing item visible. */
   }
   try {
+    if (!notebookRoot)
+      throw new DiagnosticCollectionError('Notebook project records are unavailable')
     const framesRoot = join(notebookRoot, 'frames')
-    await checkPath(input.dataRoot, framesRoot)
+    await checkPath(notebookStorageRoot, framesRoot)
     const frames = await opendir(framesRoot)
     let visited = 0
     let found = 0
@@ -191,7 +205,7 @@ async function discoverSessionSources(
           kind: 'notebook',
           available: false,
           reason: 'Notebook frame discovery limit reached',
-          root: input.dataRoot,
+          root: notebookStorageRoot,
           output: 'notebook/frames'
         })
         break
@@ -203,7 +217,7 @@ async function discoverSessionSources(
         name: `notebook/frames/${entry.name}/run.json`,
         kind: 'notebook',
         available: false,
-        root: input.dataRoot,
+        root: notebookStorageRoot,
         frameId: entry.name,
         path: join(framesRoot, entry.name, 'run.json'),
         output: `notebook/frames/${entry.name}/run.json`

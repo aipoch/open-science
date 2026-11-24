@@ -112,6 +112,17 @@ export type NotebookSessionExecutionRequest = {
   notebookSessionRoot: string
   inputRoot?: string
   dataRoot: string
+  outputRoot?: string
+  outputRelativePath?: string
+  isOutputDirectoryCurrent?: () => boolean
+  projectFolderRoot?: string
+  projectFolderStageRoot?: string
+  projectFolderReturnCwd?: string
+  // Host-only cleanup capability, invoked after this exact kernel tree is confirmed reaped.
+  onProjectFolderStageReaped?: () => Promise<void>
+  projectFolderPermissionPrompts?: 'none'
+  observationMode?: 'declared-paths'
+  unfrozenInputPaths?: readonly string[]
   fileEvidenceStorageRoot?: string
   fileEvidenceRoot?: string
   fileEvidenceStoragePrefix?: string
@@ -153,6 +164,9 @@ export type NotebookSessionExecutionResult = {
   truncated?: boolean
   workingFiles?: NotebookWorkingFile[]
   fileEvidence?: ExecutionFileEvidenceSummary
+  projectFolderStageReleased?: boolean
+  projectFolderChanges?: import('../../shared/project-folder-changes').ProjectFolderChange[]
+  projectFolderInputs?: import('../../shared/project-folder-changes').ProjectFolderRunInput[]
   // Exact session-relative reads from complete source/file-evidence analysis. This is internal
   // execution metadata used to distinguish an available turn attachment from an input the run used.
   confirmedReadPaths?: string[]
@@ -256,6 +270,8 @@ export type NotebookSessionAggregateInit<
   cwd: string
   notebookSessionRoot: string
   dataRoot: string
+  outputRoot?: string
+  outputRelativePath?: string
   runtimeRoot: string
   runJsonPath: string
   executionCount: number
@@ -274,6 +290,8 @@ export type NotebookSessionSnapshot = Readonly<{
   cwd: string
   notebookSessionRoot: string
   dataRoot: string
+  outputRoot?: string
+  outputRelativePath?: string
   runtimeRoot: string
   runJsonPath: string
   cells: ReadonlyArray<Readonly<NotebookCell>>
@@ -309,6 +327,8 @@ export class NotebookSessionAggregate<
   readonly projectId: string
   readonly notebookSessionRoot: string
   readonly dataRoot: string
+  readonly outputRoot?: string
+  readonly outputRelativePath?: string
   readonly runtimeRoot: string
   readonly runJsonPath: string
   readonly lane: NotebookLaneIdentity
@@ -361,6 +381,8 @@ export class NotebookSessionAggregate<
     this.projectId = resolveProjectId(init)
     this.cwdValue = init.cwd
     this.notebookSessionRoot = init.notebookSessionRoot
+    this.outputRelativePath = init.outputRelativePath
+    this.outputRoot = init.outputRoot
     this.dataRoot = init.dataRoot
     this.runtimeRoot = init.runtimeRoot
     this.runJsonPath = init.runJsonPath
@@ -393,6 +415,7 @@ export class NotebookSessionAggregate<
       cwd: this.cwdValue,
       notebookSessionRoot: this.notebookSessionRoot,
       dataRoot: this.dataRoot,
+      ...(this.outputRoot ? { outputRoot: this.outputRoot } : {}),
       runtimeRoot: this.runtimeRoot,
       runJsonPath: this.runJsonPath,
       cells: Array.from(this.cells.values(), cloneCell),

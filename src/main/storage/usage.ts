@@ -212,7 +212,10 @@ export const computeStorageUsage = async (
     } else if (key === 'execution-file-evidence') {
       const seen = new Set<string>()
       const bytes =
-        (await dirSize(dir, seen)) + (await dirSize(join(dataRoot, 'notebook-file-evidence'), seen))
+        (await dirSize(dir, seen)) +
+        (await dirSize(join(dataRoot, 'notebook-file-evidence'), seen)) +
+        (await dirSize(join(dataRoot, 'project-folder-history'), seen)) +
+        (await dirSize(join(dataRoot, 'project-record-routes'), seen))
       categories.push({ key, bytes })
     } else {
       // Independent bucket: its own dedup set (no hard links cross data-category boundaries).

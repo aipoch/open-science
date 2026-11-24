@@ -1,4 +1,4 @@
-import type { PreviewFileFormat } from '@/stores/preview-workbench-contract'
+import type { PreviewFileFormat, PreviewFileSource } from '@/stores/preview-workbench-contract'
 
 // Single source of truth for which managed-file extensions the preview panel can render inline.
 // Add an entry here and a matching file renderer to light up a new previewable format.
@@ -156,14 +156,60 @@ export const getFileExtension = (name: string): string => {
   return extension ? extension.toLowerCase() : ''
 }
 
-// Resolves preview capability from file metadata without considering where the file came from.
+// Keep the working folder's existing format scope. HTML and SVG remain inert source text.
+const PROJECT_FOLDER_PREVIEW_EXTENSIONS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'avif',
+  'bmp',
+  'txt',
+  'csv',
+  'tsv',
+  'md',
+  'json',
+  'yaml',
+  'yml',
+  'xml',
+  'svg',
+  'html',
+  'css',
+  'js',
+  'ts',
+  'py',
+  'r',
+  'sh',
+  'log',
+  'sql',
+  'toml',
+  'ini',
+  'fasta',
+  'fa',
+  'fastq',
+  'bed',
+  'vcf'
+])
+
+// Resolves preview capability from file metadata and the source's supported formats.
 export const getPreviewFormatForFile = ({
   name,
-  mimeType
+  mimeType,
+  source
 }: {
   name: string
   mimeType?: string
-}): PreviewFileFormat => getPreviewFormat(getFileExtension(name), mimeType)
+  source?: PreviewFileSource
+}): PreviewFileFormat => {
+  const extension = getFileExtension(name)
+  if (source !== 'project-folder') return getPreviewFormat(extension, mimeType)
+  if (!PROJECT_FOLDER_PREVIEW_EXTENSIONS.has(extension)) return 'unknown'
+  if (extension === 'bmp') return 'image'
+  if (extension === 'html' || extension === 'svg') return 'text'
+  const format = getPreviewFormat(extension)
+  return format === 'unknown' ? 'text' : format
+}
 
 // Selects the reader encoding used for lightweight thumbnails in file lists.
 export const getPreviewThumbnailReadEncoding = (format: PreviewFileFormat): 'utf8' | undefined => {

@@ -73,10 +73,12 @@ describe('Notebook application composition', () => {
 
     callbacks?.onNotebookAvailable?.(available)
     callbacks?.onNotebookChanged?.(changed)
+    callbacks?.onProjectFolderChangesChanged?.({ projectId: 'project', sessionId: 'session-1' })
 
     expect(publish.mock.calls).toEqual([
       ['notebook:available', available],
-      ['notebook:changed', changed]
+      ['notebook:changed', changed],
+      ['notebook:project-folder-changes-changed', { projectId: 'project', sessionId: 'session-1' }]
     ])
   })
 

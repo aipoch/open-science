@@ -80,10 +80,12 @@ describe('review store', () => {
       useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]
         .verificationUnavailable
     ).toBe(true)
-    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
-    expect(
-      useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]
-    ).toMatchObject({ verificationUnavailable: false, stale: false, updatedAt: 2000 })
+    useReviewStore.getState().retryReviewsAfterFolderRecovery('session-1', 'project-1')
+    await vi.waitFor(() => {
+      expect(
+        useReviewStore.getState().getReviewsForSession('session-1', 'project-1')[0]
+      ).toMatchObject({ verificationUnavailable: false, stale: false, updatedAt: 2000 })
+    })
   })
 
   it('keeps a pushed reviewer log when a newer list summary omits it', async () => {
@@ -526,5 +528,47 @@ describe('review store', () => {
     // The in-flight guard drops the overlapping second call.
     expect(getForSession).toHaveBeenCalledTimes(1)
     vi.unstubAllGlobals()
+  })
+  it('retries once after a pre-recovery request fails, preserving cached reviews and typed folder failures', async () => {
+    const cached = makeReview({ id: 'cached' })
+    useReviewStore.getState().handleReviewUpdate({ review: cached })
+    let rejectLoad!: (error: unknown) => void
+    const getForSession = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectLoad = reject
+          })
+      )
+      .mockResolvedValueOnce([cached])
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const prior = useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
+      useReviewStore.getState().retryReviewsAfterFolderRecovery('session-1', 'project-1')
+      useReviewStore.getState().retryReviewsAfterFolderRecovery('session-1', 'project-1')
+      expect(getForSession).toHaveBeenCalledTimes(1)
+      expect(useReviewStore.getState().getReviewsForSession('session-1')).toEqual([cached])
+      rejectLoad(
+        Object.assign(new Error('Folder unavailable'), { code: 'project-folder-not-found' })
+      )
+      await prior
+      await vi.waitFor(() => expect(getForSession).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() =>
+        expect(
+          selectProjectSessionReviewLoadError(
+            useReviewStore.getState().loadErrorsBySession,
+            'project-1',
+            'session-1'
+          )
+        ).toBeUndefined()
+      )
+      expect(useReviewStore.getState().getReviewsForSession('session-1')).toEqual([cached])
+      expect(consoleError).not.toHaveBeenCalled()
+    } finally {
+      consoleError.mockRestore()
+      vi.unstubAllGlobals()
+    }
   })
 })

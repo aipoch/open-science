@@ -13,6 +13,7 @@ type Props = ComponentPropsWithRef<'section'> & {
   canImport: boolean
   canAttach?: boolean
   onFiles?: (files: File[]) => void
+  onFolder?: (folder: File) => void
 }
 
 // One surface-scoped owner routes native file drops before nested editors see them.
@@ -22,6 +23,7 @@ export const ProjectPackageDropZone = ({
   canImport,
   canAttach = false,
   onFiles,
+  onFolder,
   children,
   ...props
 }: Props): React.JSX.Element => {
@@ -66,7 +68,7 @@ export const ProjectPackageDropZone = ({
       onDragOverCapture={(event) => {
         if (!isLocalFileDrag(event)) return
         dropZoneProps.onDragOver(event)
-        if (!canAttach && !importEnabled) event.dataTransfer.dropEffect = 'none'
+        if (!canAttach && !importEnabled && !onFolder) event.dataTransfer.dropEffect = 'none'
       }}
       onDragLeaveCapture={(event) => {
         if (isLocalFileDrag(event)) dropZoneProps.onDragLeave(event)
@@ -82,6 +84,15 @@ export const ProjectPackageDropZone = ({
           )
         ) {
           event.preventDefault()
+          const files = Array.from(event.dataTransfer.files)
+          const fileItems = Array.from(event.dataTransfer.items).filter(
+            (item) => item.kind === 'file'
+          )
+          if (onFolder && files.length === 1 && fileItems.length === 1) {
+            setNotice(undefined)
+            onFolder(files[0])
+            return
+          }
           setNotice(
             t(
               'Folders cannot be attached. Select files inside the folder instead. No files were added.'
@@ -93,18 +104,20 @@ export const ProjectPackageDropZone = ({
       }}
     >
       {children}
-      {isDragging && (canAttach || importEnabled) && (
+      {isDragging && (canAttach || importEnabled || onFolder) && (
         <FileDropOverlay
           label={
-            canAttach
-              ? importEnabled
-                ? t('Drop files to attach or import a .science package')
-                : t('Drop files to attach')
-              : projectId
-                ? t('Drop a .science file to import into “{{project}}”', { project: projectName })
-                : t('Drop a .science file to import')
+            onFolder
+              ? t('Drop a folder to create a project, or a .science file to import')
+              : canAttach
+                ? importEnabled
+                  ? t('Drop files to attach or import a .science package')
+                  : t('Drop files to attach')
+                : projectId
+                  ? t('Drop a .science file to import into “{{project}}”', { project: projectName })
+                  : t('Drop a .science file to import')
           }
-          className="rounded-lg px-6 text-center"
+          className={`rounded-lg px-6 text-center ${onFolder ? 'border-dashed' : ''}`}
         />
       )}
       {notice && (

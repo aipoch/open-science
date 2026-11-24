@@ -1,3 +1,4 @@
+import { createElectronRendererContractAdapter } from '../preload/electron-renderer-contract-adapter'
 import { ipcMain } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -37,6 +38,7 @@ function setup(
       'projects:list',
       'sessions:inspect-diagnostics',
       'sessions:save-session',
+      'reviewer:get-for-session',
       'notebook-env:cancel',
       'office-preview:report-state',
       'internal:never-renderer'
@@ -188,4 +190,55 @@ it('forwards unbound native send events only for an already active document and 
   expect(value.client.invoke).toHaveBeenCalledTimes(2)
   value.installed.uninstall()
   expect(ipcMain.listenerCount('office-preview:report-state')).toBe(0)
+})
+
+it('carries reviewer success and folder recovery codes through the production Node-runtime Electron relay and preload', async () => {
+  const value = setup()
+  value.client.invoke
+    .mockResolvedValueOnce([])
+    .mockRejectedValueOnce(
+      new ApplicationCommandError('project-folder-not-found', 'Project folder is missing')
+    )
+    .mockRejectedValueOnce(new Error('Corrupt record checksum'))
+    .mockRejectedValueOnce(
+      new ApplicationCommandError('command-failed', 'Reconstructed corrupt record failure')
+    )
+  const port = createElectronRendererContractAdapter({
+    invoke: async (channel, ...args) => {
+      const handler = handlers.get(channel)
+      if (!handler) throw new Error('Production relay handler is missing')
+      try {
+        return JSON.parse(JSON.stringify(await handler(value.event, ...args)))
+      } catch (error) {
+        throw new Error(error instanceof Error ? error.message : String(error))
+      }
+    },
+    send: vi.fn(),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+    getPathForFile: () => ''
+  })
+  const request = { projectId: 'project-1', appSessionId: 'session-1' }
+  try {
+    await expect(port.invoke('reviewer.getForSession', request)).resolves.toEqual([])
+    await expect(port.invoke('reviewer.getForSession', request)).rejects.toEqual({
+      code: 'project-folder-not-found',
+      message: 'Project folder is missing'
+    })
+    await expect(port.invoke('reviewer.getForSession', request)).rejects.toThrow(
+      'Corrupt record checksum'
+    )
+    await expect(port.invoke('reviewer.getForSession', request)).rejects.toEqual({
+      code: 'command-failed',
+      message: 'Reconstructed corrupt record failure'
+    })
+    expect(value.client.invoke).toHaveBeenCalledTimes(4)
+    expect(
+      value.client.invoke.mock.calls.every(
+        ([, channel, args]) => channel === 'reviewer:get-for-session' && args[0] === request
+      )
+    ).toBe(true)
+  } finally {
+    value.installed.uninstall()
+  }
 })

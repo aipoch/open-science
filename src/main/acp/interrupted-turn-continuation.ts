@@ -134,6 +134,17 @@ const buildContinuationRequest = (
     NonNullable<AcpPromptRequest['referencedArtifacts']>
   >((references, part) => {
     if (part.type !== 'artifact') return references
+    if (part.source === 'project-folder') {
+      references.push({
+        id: part.id,
+        name: part.name,
+        source: part.source,
+        projectId: part.projectId,
+        path: part.path,
+        mimeType: part.mimeType
+      })
+      return references
+    }
     references.push(
       part.source === 'linked-folder'
         ? {

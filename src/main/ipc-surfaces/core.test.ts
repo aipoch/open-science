@@ -40,6 +40,7 @@ const fixture = (): {
     permissions: vi.fn(async () => ({ grants: [] })),
     projectFiles: vi.fn(async () => ({ entries: [] })),
     versions: vi.fn(async () => ({ ok: true, value: {} })),
+    retryOutputDelivery: vi.fn(async () => ({ ok: true })),
     localFs: vi.fn(() => ({ roots: [] })),
     preview: vi.fn(async () => null)
   }
@@ -47,7 +48,10 @@ const fixture = (): {
   const dependencies = {
     permissionGrantProjection: { list: owners.permissions },
     projectFiles: [{}, {}, {}, { listFiles: owners.projectFiles }],
-    managedFileVersionHandlers: { inspect: owners.versions },
+    managedFileVersionHandlers: {
+      inspect: owners.versions,
+      retryOutputDelivery: owners.retryOutputDelivery
+    },
     localFsService: { getRoots: owners.localFs },
     previewStateRepository: { get: owners.preview }
   } as unknown as CoreElectronSurfaceDependencies
@@ -112,13 +116,14 @@ describe('core Electron production composition', () => {
     ).install()
     const disposed: string[] = []
     const runtime = await compose(dependencies, disposed)
-    expect(native.handlers.size).toBe(33) // 32 production channels plus the independently owned one.
+    expect(native.handlers.size).toBe(34) // 33 production channels plus the independently owned one.
     const event = { sender: { id: 42 } } as Parameters<Parameters<IpcMain['handle']>[1]>[0]
     const request = { projectId: 'project', fileId: 'file' }
     for (const channel of [
       'permissions:list',
       'project-files:list-files',
       'managed-file-versions:inspect',
+      'managed-file-versions:retry-output-delivery',
       'local-fs:get-roots'
     ]) {
       await native.handlers.get(channel)!(event, request)
@@ -128,6 +133,7 @@ describe('core Electron production composition', () => {
     expect(owners.permissions).toHaveBeenCalledOnce()
     expect(owners.projectFiles).toHaveBeenCalledWith(request)
     expect(owners.versions).toHaveBeenCalledWith(request)
+    expect(owners.retryOutputDelivery).toHaveBeenCalledWith(request)
     expect(owners.localFs).toHaveBeenCalledOnce()
     expect(owners.preview).toHaveBeenCalledWith('project')
 

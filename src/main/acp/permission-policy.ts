@@ -1,5 +1,6 @@
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { lstatSync, realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, resolve, sep } from 'node:path'
 
 import type {
   PermissionAutoReviewStrategy,
@@ -147,13 +148,50 @@ const isMcpToolName = (
       )
     }))
 
-// Tests whether a tool-reported path stays within the workspace after resolving relative paths.
-const isWithinWorkspace = (path: string, cwd: string): boolean => {
-  const workspace = resolve(cwd)
-  const target = isAbsolute(path) ? resolve(path) : resolve(workspace, path)
-  const relation = relative(workspace, target)
+// Resolve new files through their nearest existing ancestor. Missing targets are permitted, but
+// dangling links and inaccessible paths cannot establish authority for automatic approval.
+const resolveApprovalPath = (path: string): string => {
+  try {
+    return realpathSync.native(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    try {
+      if (lstatSync(path).isSymbolicLink()) throw new Error('Unresolved symbolic link')
+    } catch (statError) {
+      if ((statError as NodeJS.ErrnoException).code !== 'ENOENT') throw statError
+    }
+    const parent = dirname(path)
+    if (parent === path) throw error
+    return resolve(resolveApprovalPath(parent), basename(path))
+  }
+}
 
-  return relation === '' || (!relation.startsWith('..') && !isAbsolute(relation))
+// Provider tools differ in whether they normalize '..' before or after creating missing parents.
+// No automatic approval can establish one unambiguous physical target for those requests. Names
+// such as '..data' are ordinary components and remain eligible for automatic approval.
+const hasParentTraversal = (path: string): boolean =>
+  path.split(process.platform === 'win32' ? /[\\/]/ : /\//).includes('..')
+
+// Both inputs have physical canonical names. Walk ancestors using exact names: win32.relative
+// folds case even when the actual volume has distinct case-sensitive sibling directories.
+const isPhysicalDescendant = (workspace: string, target: string): boolean => {
+  for (let current = target; ; current = dirname(current)) {
+    if (current === workspace) return true
+    if (dirname(current) === current) return false
+  }
+}
+
+// Resolve existing targets and the existing parents of new targets. An unavailable workspace or
+// any target whose interpretation is uncertain always requires review.
+const isWithinWorkspace = (path: string, cwd: string): boolean => {
+  if (hasParentTraversal(path) || hasParentTraversal(cwd)) return false
+  try {
+    const workspace = realpathSync.native(cwd)
+    const target = resolveApprovalPath(isAbsolute(path) ? path : `${workspace}${sep}${path}`)
+    return isPhysicalDescendant(workspace, target)
+  } catch {
+    return false
+  }
 }
 
 // MCP tools can report a benign kind (read/edit) while performing arbitrary side effects, so the

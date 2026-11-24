@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { requestInputUpload, type InputUploadScope } from './composer-focus-events'
 import { useTranslation } from 'react-i18next'
 import type { NotebookRunRecord, NotebookRunEvidenceSnapshot } from '../../../../shared/notebook'
 
@@ -6,11 +7,13 @@ import type { NotebookRunRecord, NotebookRunEvidenceSnapshot } from '../../../..
 export const NotebookRunEvidence = ({
   run,
   showEnvironmentCaptureWarning = true,
-  loadRun
+  loadRun,
+  uploadScope
 }: {
   run: NotebookRunRecord
   showEnvironmentCaptureWarning?: boolean
   loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
+  uploadScope?: InputUploadScope
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(false)
@@ -63,6 +66,29 @@ export const NotebookRunEvidence = ({
           'These are saved execution facts. Executing code again uses the currently selected environment; exact reproduction is not guaranteed.'
         )}
       </p>
+      {run.projectFolderInputs?.length ? (
+        <div className="mt-2 space-y-1" data-testid="project-folder-input-evidence">
+          <p>
+            {t(
+              'Inputs from the project folder are not frozen, so this run has partial provenance.'
+            )}
+          </p>
+          {run.projectFolderInputs.map((input) => (
+            <code key={input.relativePath} className="block break-all">
+              {input.relativePath}
+            </code>
+          ))}
+          {uploadScope ? (
+            <button
+              type="button"
+              className="text-text-100 underline underline-offset-2 hover:text-text-000"
+              onClick={() => requestInputUpload(uploadScope)}
+            >
+              {t('Add key inputs as uploads')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <code className="block break-all">{displayedRun.runId}</code>
       {target ? (
         <code className="block break-all">

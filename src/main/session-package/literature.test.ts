@@ -20,6 +20,7 @@ import { LiteratureAttachmentAuthority } from '../literature/attachment-authorit
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedPreviewResources } from '../managed-preview-resources'
+import { initializeProjectRecordStorage } from '../projects/record-storage'
 import { SessionProjectionRepository } from '../session-persistence/projection'
 import { SessionRepository } from '../session-persistence/repository'
 import * as storageRoots from '../storage-root'
@@ -293,6 +294,59 @@ it.each([false, true])(
   // exceeded 30 seconds. Match the bounded budgets of the adjacent package round-trip suites.
   process.platform === 'win32' ? 120_000 : 60_000
 )
+
+it('opens an included Literature PDF after importing into a custom folder and forking', async () => {
+  const source = await setup()
+  const target = await setup()
+  await seed(source)
+  const archive = join(source.storageRoot, 'paper.science')
+  await source.service.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+
+  const folder = join(target.storageRoot, 'custom-project')
+  await mkdir(folder)
+  const projectId = 'target'
+  const name = 'Target'
+  await target.client.project.create({ data: { id: projectId, name, rootPath: folder } })
+  await initializeProjectRecordStorage(target.storageRoot, folder, {
+    format: 'open-science-project',
+    version: 1,
+    projectId,
+    name,
+    createdAt: 1
+  })
+  const service = new SessionPackageService({
+    ...target.service.options,
+    assertProjectFolderHealthy: async () => folder
+  })
+  services.push(service)
+  const imported = await service.importFrom(archive, undefined, undefined, undefined, {
+    projectId
+  })
+  const forked = await service.fork(imported)
+  const repository = new SessionRepository(target.storageRoot)
+  const reader = new PackageLiteratureReader({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client,
+    files: new ManagedFileVersionService({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client
+    })
+  })
+  for (const request of [imported, forked]) {
+    const saved = (await repository.loadSession(request.projectId, request.sessionId))!
+    const versionId = saved.runtimeContext!.pdfContext!.bindings[0].sourceVersionId
+    expect(await reader.resolveVersion(versionId)).toMatchObject({
+      versionId,
+      checksum: sha256(createTestPdf())
+    })
+    const lease = await reader.openContent(versionId)
+    try {
+      expect(await readFile(lease.path)).toEqual(createTestPdf())
+    } finally {
+      await lease.close()
+    }
+  }
+}, 60_000)
 
 it('keeps metadata-only Literature references', () => {
   const item = literatureItemInputSchema.parse({

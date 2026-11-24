@@ -1,3 +1,4 @@
+import { reconcileProjectRecordIndexes } from '../projects/record-indexes'
 import { randomUUID } from 'node:crypto'
 
 import type { PrismaClient } from '@prisma/client'
@@ -75,6 +76,7 @@ class ArtifactWriteBudgetOwner {
       }
 
       const client = await this.options.getClient()
+      await reconcileProjectRecordIndexes(client, [request.projectId])
       const existing = await client.artifactVersion.findUnique({
         where: { writeOperationId: request.writeOperationId }
       })

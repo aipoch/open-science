@@ -43,6 +43,16 @@ type ManagedFileIdentity = {
   fileId: string
 }
 
+type ArtifactOutputDeliveryStatus = {
+  state: 'pending' | 'delivered' | 'conflict' | 'failed' | 'cancelled'
+  versionId: string
+  relativePath: string
+  canRetry: boolean
+  errorCode?: string
+}
+
+type ManagedFileRetryOutputDeliveryRequest = ManagedFileIdentity & { versionId: string }
+
 type ManagedFileVersionOriginKind = 'agent_generated' | 'user_upload' | 'user_edit' | 'legacy'
 
 type ManagedFileVersionDescriptor = {
@@ -64,6 +74,7 @@ type ManagedFileVersionDescriptor = {
 }
 
 type ManagedFileVersionInspectResult = {
+  outputDelivery?: ArtifactOutputDeliveryStatus
   source: ManagedFileSource
   projectId: string
   fileId: string
@@ -182,8 +193,14 @@ type SaveTextEditResult =
       version: ManagedFileVersionDescriptor
       headVersionId: string
       replayed: boolean
+      outputDelivery?: ArtifactOutputDeliveryStatus
     }
-  | { kind: 'noop'; version: ManagedFileVersionDescriptor; headVersionId: string }
+  | {
+      kind: 'noop'
+      version: ManagedFileVersionDescriptor
+      headVersionId: string
+      outputDelivery?: ArtifactOutputDeliveryStatus
+    }
   | {
       kind: 'conflict'
       expectedHeadVersionId: string
@@ -294,6 +311,8 @@ export {
   inspectManagedTextEditEligibility,
   isSafeManagedFileBasename,
   type ManagedFileIdentity,
+  type ArtifactOutputDeliveryStatus,
+  type ManagedFileRetryOutputDeliveryRequest,
   type ManagedFileSource,
   type ManagedFileVersionDescriptor,
   type ManagedFileVersionErrorCode,

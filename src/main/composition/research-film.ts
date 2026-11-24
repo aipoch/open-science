@@ -47,6 +47,8 @@ import type { SessionPersistenceCommands } from '../session-persistence/coordina
 import type { createDefaultSessionRepository } from '../session-persistence/ipc'
 import type { SettingsService } from '../settings/service'
 import { resolveDataRoot } from '../storage-root'
+import type { ManagedFileVersionService } from '../managed-file-versions/service'
+import { getProjectRecordRoute } from '../storage/data-location-identity'
 import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
 import {
@@ -91,6 +93,7 @@ export async function composeResearchFilm({
   sessionPackageService,
   researchFilmLifecycle,
   previewResources,
+  managedFileVersionService,
   recordAuxiliaryUsage,
   translate = englishNativeTranslator,
   applicationEvents,
@@ -108,6 +111,7 @@ export async function composeResearchFilm({
   >
   researchFilmLifecycle: ResearchFilmLifecycle
   previewResources: Pick<ManagedPreviewResources, 'withUnusedFiles'>
+  managedFileVersionService?: Pick<ManagedFileVersionService, 'openVersion'>
   recordAuxiliaryUsage(record: SessionAuxiliaryTurnUsageRecord): Promise<void>
   applicationEvents: Pick<ApplicationEvents, 'publish'>
   taskNotifications: Pick<TaskNotificationService, 'handleResearchFilmOutcome'>
@@ -492,6 +496,24 @@ export async function composeResearchFilm({
         mode: 'read-only'
       })
       return result.status === 'found' ? result.session : undefined
+    },
+    resolveArtifactPath: async (projectId, artifact) => {
+      if (
+        !managedFileVersionService ||
+        !artifact.artifactId ||
+        !artifact.versionId ||
+        !getProjectRecordRoute(resolveDataRoot(), projectId)
+      )
+        return artifact.path
+      const lease = await managedFileVersionService.openVersion(
+        { source: 'artifact', projectId, fileId: artifact.artifactId },
+        artifact.versionId
+      )
+      try {
+        return lease.path
+      } finally {
+        await lease.close()
+      }
     },
     generate: researchVideoGenerate,
     confirmSessionApp: async (app, signal) => {

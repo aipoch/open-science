@@ -1,4 +1,3 @@
-import { InlineNotice } from '@/components/ui/inline-notice'
 // Local ("This computer") file browser. Rendered as one of the two containers the Files tab can show:
 // the source dropdown swaps between the artifacts list and this browser, so it owns no tab or modal
 // chrome of its own. Forked from the remote FileBrowserModal chrome (editable address bar, Go-to
@@ -12,8 +11,8 @@ import { ErrorNotice } from '@/components/error-notice'
 import {
   ArrowLeft,
   ChevronDown,
-  Folder,
   File,
+  Folder,
   HardDrive,
   Home,
   Pin,
@@ -43,6 +42,7 @@ import {
   validateLocalPath
 } from '../../../../shared/local-fs'
 import { Button } from '@/components/ui/button'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,25 +66,6 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 import { createPreviewFileItemFromLocal, LOCAL_PREVIEW_SESSION_ID } from './preview-file-item'
-
-// Formats a byte count as a short human-readable string.
-const formatSize = (bytes: number): string => {
-  if (bytes < 1024) return `${bytes} B`
-  const kb = bytes / 1024
-  if (kb < 1024) return `${kb.toFixed(1)} KB`
-  const mb = kb / 1024
-  return mb < 1024 ? `${mb.toFixed(1)} MB` : `${(mb / 1024).toFixed(1)} GB`
-}
-
-// Human-readable relative time from a mtime; empty when unknown (mtimeMs 0).
-const relativeTime = (mtimeMs: number): string => {
-  if (!mtimeMs) return ''
-  const sec = Math.round((Date.now() - mtimeMs) / 1000)
-  if (sec < 60) return `${sec}s`
-  if (sec < 3600) return `${Math.round(sec / 60)}m`
-  if (sec < 86400) return `${Math.round(sec / 3600)}h`
-  return `${Math.round(sec / 86400)}d`
-}
 
 // Shared look for the three icon-only toolbar buttons. They sit above a dense listing, so they read
 // as secondary chrome: text-300 rather than the body color, darkening only on hover, and a hairline
@@ -287,6 +268,124 @@ const GoToMenu = ({
   )
 }
 
+// Formats a byte count as a short human-readable string.
+const formatSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`
+  const kb = bytes / 1024
+  if (kb < 1024) return `${kb.toFixed(1)} KB`
+  const mb = kb / 1024
+  return mb < 1024 ? `${mb.toFixed(1)} MB` : `${(mb / 1024).toFixed(1)} GB`
+}
+
+// Human-readable relative time from a mtime; empty when unknown (mtimeMs 0).
+const relativeTime = (mtimeMs: number): string => {
+  if (!mtimeMs) return ''
+  const sec = Math.round((Date.now() - mtimeMs) / 1000)
+  if (sec < 60) return `${sec}s`
+  if (sec < 3600) return `${Math.round(sec / 60)}m`
+  if (sec < 86400) return `${Math.round(sec / 3600)}h`
+  return `${Math.round(sec / 86400)}d`
+}
+
+export const DirectoryBrowser = ({
+  label,
+  busy,
+  testId,
+  toolbar,
+  children
+}: {
+  label?: string
+  busy?: boolean
+  testId?: string
+  toolbar: React.ReactNode
+  children: React.ReactNode
+}): React.JSX.Element => (
+  <div
+    className="mx-4 mb-1.5 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border-300/50 bg-bg-000"
+    aria-label={label}
+    aria-busy={busy}
+    data-testid={testId}
+  >
+    <div className="flex shrink-0 items-center gap-1.5 border-b border-border-300/40 px-3 py-1.5">
+      {toolbar}
+    </div>
+    {children}
+  </div>
+)
+
+export const DirectoryLoading = (): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div
+      role="status"
+      className="flex flex-1 items-center justify-center text-xs text-muted-foreground"
+    >
+      {t('Loading…')}
+    </div>
+  )
+}
+
+export const DirectoryListing = ({
+  entries,
+  onOpenEntry,
+  truncated,
+  footer
+}: {
+  entries: LocalDirEntry[]
+  onOpenEntry: (entry: LocalDirEntry) => void
+  truncated?: boolean
+  footer?: React.ReactNode
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+      {truncated ? (
+        <InlineNotice className="m-2">
+          {t('Showing the first entries only — this directory is very large.')}
+        </InlineNotice>
+      ) : null}
+      {entries.length === 0 ? (
+        <div className="flex min-h-16 flex-1 items-center justify-center text-xs text-muted-foreground">
+          {t('Empty folder')}
+        </div>
+      ) : (
+        <ul className="shrink-0" aria-label={t('Directory contents')}>
+          {entries.map((entry) => (
+            <li key={entry.name} className="border-b border-border-300/40 last:border-b-0">
+              <button
+                type="button"
+                aria-label={entry.name}
+                onClick={() => onOpenEntry(entry)}
+                className="grid w-full grid-cols-[minmax(0,1fr)_min(80px,20%)_min(64px,16%)] items-center gap-2 px-4 py-2 text-left text-[13px] hover:bg-bg-200 focus-visible:keyboard-focus focus-visible:outline-offset-[-2px]"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  {/* One neutral color for both: the glyph already says folder vs file, so tinting
+                      the folder only added noise to a long list. */}
+                  {entry.isDirectory ? (
+                    <Folder className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
+                  ) : (
+                    <File className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
+                  )}
+                  <span className="truncate" title={entry.name}>
+                    {entry.name}
+                  </span>
+                </span>
+                <span className="text-right text-xs tabular-nums text-muted-foreground">
+                  {entry.isDirectory ? '—' : formatSize(entry.size)}
+                </span>
+                <span className="text-right text-xs tabular-nums text-muted-foreground">
+                  {relativeTime(entry.mtimeMs)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {footer}
+    </div>
+  )
+}
+
 // Directory listing table: dirs first, single-click opens (navigate for dirs, preview tab for files).
 const LocalListing = ({
   state,
@@ -298,11 +397,7 @@ const LocalListing = ({
   const { t } = useTranslation()
 
   if (state.kind === 'loading') {
-    return (
-      <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-        {t('Loading…')}
-      </div>
-    )
+    return <DirectoryLoading />
   }
   if (state.kind === 'error') {
     // A missing or unreadable path is an ordinary typo, not a fault: state it quietly in the body
@@ -319,47 +414,11 @@ const LocalListing = ({
     )
   }
   return (
-    <div className="min-h-0 flex-1 overflow-auto">
-      {state.truncated ? (
-        <InlineNotice className="m-2">
-          {t('Showing the first entries only — this directory is very large.')}
-        </InlineNotice>
-      ) : null}
-      {state.entries.length === 0 ? (
-        <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
-          {t('Empty folder')}
-        </div>
-      ) : (
-        <ul aria-label={t('Directory contents')}>
-          {state.entries.map((entry) => (
-            <li key={entry.name} className="border-b border-border-300/40 last:border-b-0">
-              <button
-                type="button"
-                onClick={() => onOpenEntry(entry)}
-                className="grid w-full grid-cols-[1fr_80px_64px] items-center gap-2 px-4 py-2 text-left text-[13px] hover:bg-bg-200"
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  {/* One neutral color for both: the glyph already says folder vs file, so tinting
-                      the folder only added noise to a long list. */}
-                  {entry.isDirectory ? (
-                    <Folder className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
-                  ) : (
-                    <File className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />
-                  )}
-                  <span className="truncate">{entry.name}</span>
-                </span>
-                <span className="text-right text-xs tabular-nums text-muted-foreground">
-                  {entry.isDirectory ? '—' : formatSize(entry.size)}
-                </span>
-                <span className="text-right text-xs tabular-nums text-muted-foreground">
-                  {relativeTime(entry.mtimeMs)}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <DirectoryListing
+      entries={state.entries}
+      truncated={state.truncated}
+      onOpenEntry={onOpenEntry}
+    />
   )
 }
 
@@ -695,13 +754,10 @@ export const LocalFileBrowser = ({
   }
 
   return (
-    <div
-      className="mx-4 mb-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border-300/50 bg-bg-000"
-      aria-label={t('Local file browser')}
-    >
-      {/* Toolbar */}
-      <TooltipProvider delayDuration={200}>
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-border-300/40 px-3 py-1.5">
+    <DirectoryBrowser
+      label={t('Local file browser')}
+      toolbar={
+        <TooltipProvider delayDuration={200}>
           {/* One arrow only: it goes to the parent directory. A separate up-arrow beside it read as a
               duplicate of the same action, so this is the single way to move a level out. */}
           <Hint label={t('Go to the parent folder')}>
@@ -783,9 +839,9 @@ export const LocalFileBrowser = ({
               )}
             </Button>
           </Hint>
-        </div>
-      </TooltipProvider>
-
+        </TooltipProvider>
+      }
+    >
       {bookmarkError ? (
         <ErrorNotice
           description={bookmarkError}
@@ -827,6 +883,6 @@ export const LocalFileBrowser = ({
           openEntry(pending)
         }}
       />
-    </div>
+    </DirectoryBrowser>
   )
 }

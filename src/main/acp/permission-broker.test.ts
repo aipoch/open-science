@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -700,14 +700,14 @@ describe('ACP permission broker', () => {
     const request = createToolPermissionRequest({
       providerToolName: 'Read',
       kind: 'read',
-      rawInput: { file_path: '/workspace/file.txt' },
-      locations: [{ path: '/workspace/file.txt' }]
+      rawInput: { file_path: join(process.cwd(), 'file.txt') },
+      locations: [{ path: join(process.cwd(), 'file.txt') }]
     })
     for (const profile of ['full', 'auto'] as const) {
       await expect(
         broker.requestPermission(request, {
           profile,
-          cwd: '/workspace',
+          cwd: process.cwd(),
           autoReviewStrategy: 'conservative',
           permissionPrompts: 'none'
         })
@@ -1476,7 +1476,7 @@ describe('ACP permission broker', () => {
   it('re-evaluates pending tool requests after a live profile change without approving app actions', async () => {
     const emitted: EmittedPermissionRequest[] = []
     const broker = new AcpPermissionBroker((request) => emitted.push(request))
-    const policy = { profile: 'ask' as const, cwd: '/workspace' }
+    const policy = { profile: 'ask' as const, cwd: process.cwd() }
 
     const read = broker.requestPermission(
       createToolPermissionRequest({
@@ -1858,10 +1858,46 @@ describe('ACP permission broker', () => {
       broker.requestPermission(request, {
         profile: 'auto',
         autoReviewStrategy: 'conservative',
-        cwd: '/workspace'
+        cwd: process.cwd()
       })
     ).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
     expect(emittedRequests).toEqual([])
+  })
+
+  it('prompts under Auto when an edit escapes through a symlink or junction', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'permission-link-'))
+    try {
+      const workspace = join(root, 'workspace')
+      const outside = join(root, 'outside')
+      await mkdir(workspace)
+      await mkdir(outside)
+      await writeFile(join(outside, 'secret.txt'), 'SECRET')
+      await symlink(
+        outside,
+        join(workspace, 'linked-data'),
+        process.platform === 'win32' ? 'junction' : 'dir'
+      )
+      const emitted: EmittedPermissionRequest[] = []
+      const broker = new AcpPermissionBroker((request) => emitted.push(request))
+      for (const path of ['linked-data/secret.txt', 'linked-data/new.txt']) {
+        const response = broker.requestPermission(
+          createToolPermissionRequest({
+            title: 'Edit file',
+            kind: 'edit',
+            locations: [{ path }]
+          }),
+          { profile: 'auto', autoReviewStrategy: 'conservative', cwd: workspace }
+        )
+        expect(broker.getPendingRequests()).toHaveLength(1)
+        await broker.respond({ requestId: emitted.at(-1)!.requestId, optionId: 'reject-once' })
+        await expect(response).resolves.toEqual({
+          outcome: { outcome: 'selected', optionId: 'reject-once' }
+        })
+      }
+      expect(await readFile(join(outside, 'secret.txt'), 'utf8')).toBe('SECRET')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('does not auto-approve a stale CodeBuddy Skill loader request', async () => {

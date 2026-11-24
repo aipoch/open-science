@@ -1,4 +1,8 @@
 import { Prisma, type FileOriginSession, type ManagedFile } from '@prisma/client'
+import type {
+  PublishedArtifactFolderLookup,
+  PublishedArtifactFolderRecord
+} from '../artifacts/project-folder-mention-candidates'
 
 import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import type {
@@ -10,6 +14,7 @@ import type {
 } from '../../shared/project-files'
 import { createUploadVersionReference } from '../../shared/uploads'
 import type { ProjectFilesClient } from './mutation-projection'
+import { reconcileProjectRecordIndexes } from '../projects/record-indexes'
 import {
   SEARCH_FILE_EXTENSIONS,
   type SearchFileFormat,
@@ -412,6 +417,14 @@ const queryAuthoritativeFiles = async (
   query: AuthoritativeCatalogQuery
 ): Promise<ManagedFile[]> => {
   if (query.projectIds.length === 0) return []
+  await reconcileProjectRecordIndexes(client, query.projectIds)
+  return readAuthoritativeFiles(client, query)
+}
+
+const readAuthoritativeFiles = async (
+  client: ProjectFilesClient,
+  query: AuthoritativeCatalogQuery
+): Promise<ManagedFile[]> => {
   const predicates = authoritativeCatalogPredicates(query)
   const limit = query.limit === undefined ? Prisma.empty : Prisma.sql`LIMIT ${query.limit}`
   const rows = await client.$queryRaw<Array<ManagedFile & { seq: number | bigint }>>(Prisma.sql`
@@ -447,6 +460,7 @@ const getAuthoritativeOverviewCounts = async (
   projectId: string,
   search: NormalizedSearch | undefined
 ): Promise<[number, number, number, number]> => {
+  await reconcileProjectRecordIndexes(client, [projectId])
   const predicates = authoritativeCatalogPredicates({ search })
   const rows = await client.$queryRaw<AuthoritativeOverviewCounts[]>(Prisma.sql`
     ${authoritativeCatalogCte([projectId])}
@@ -472,9 +486,11 @@ const getAuthoritativeOverviewCounts = async (
 const listAuthoritativeFiles = async (
   client: ProjectFilesClient,
   query: AuthoritativeCatalogQuery & { limit: number }
-): Promise<[ManagedFile[], number]> =>
-  Promise.all([
-    queryAuthoritativeFiles(client, query),
+): Promise<[ManagedFile[], number]> => {
+  if (query.projectIds.length === 0) return [[], 0]
+  await reconcileProjectRecordIndexes(client, query.projectIds)
+  return Promise.all([
+    readAuthoritativeFiles(client, query),
     countAuthoritativeFiles(client, {
       projectIds: query.projectIds,
       source: query.source,
@@ -482,6 +498,7 @@ const listAuthoritativeFiles = async (
       search: query.search
     })
   ])
+}
 
 const listAuthoritativeArtifactGroups = async (
   client: ProjectFilesClient,
@@ -492,6 +509,7 @@ const listAuthoritativeArtifactGroups = async (
     limit: number
   }
 ): Promise<[AuthoritativeArtifactGroupRow[], number]> => {
+  await reconcileProjectRecordIndexes(client, [input.projectId])
   const predicates = authoritativeCatalogPredicates({ source: 'artifact', search: input.search })
   const cursorPredicate = input.cursor
     ? Prisma.sql`WHERE (
@@ -539,6 +557,96 @@ const listAuthoritativeManagedFiles = async (
   client: ProjectFilesClient,
   projectIds: string[]
 ): Promise<ManagedFile[]> => queryAuthoritativeFiles(client, { projectIds })
+
+export const listPublishedArtifactFolderRecords = async (
+  client: ProjectFilesClient,
+  projectId: string,
+  lookups: PublishedArtifactFolderLookup[]
+): Promise<PublishedArtifactFolderRecord[]> => {
+  if (lookups.length === 0) return []
+  requireIdentifier(projectId, 'projectId')
+  await reconcileProjectRecordIndexes(client, [projectId])
+  // Scope by the files found in this bounded walk. Project reconciliation runs once and only
+  // current Versions with a matching receipt path or publication source cross into the host.
+  return client.$queryRaw<PublishedArtifactFolderRecord[]>(Prisma.sql`
+    ${authoritativeCatalogCte([projectId])},
+    "FolderCandidate" AS MATERIALIZED (
+      SELECT json_extract(value, '$.sessionId') AS "sessionId",
+        json_extract(value, '$.relativePath') AS "relativePath",
+        json_extract(value, '$.kind') AS "kind",
+        json_extract(value, '$.size') AS "size"
+      FROM json_each(${JSON.stringify(lookups)})
+    ),
+    "ScopedArtifact" AS MATERIALIZED (
+      SELECT file."sourceFileId", lineage."sessionId", version."id" AS "versionId",
+        version."filename", file."displayName", file."mimeType",
+        version."checksum", version."sizeBytes", file."sortAtMs" AS "createdAtMs",
+        version."agentFrameId", version."producerRunId", version."executionSnapshotChecksum",
+        lineage."outputDeliveryJson"
+      FROM "AuthoritativeFile" AS file
+      INNER JOIN "ArtifactLineage" AS lineage ON lineage."id" = file."sourceFileId"
+        AND lineage."projectId" = file."projectId"
+      INNER JOIN "ArtifactVersion" AS version ON version."id" = lineage."currentVersionId"
+        AND version."id" = file."sourceVersionId"
+      WHERE file."source" = 'artifact' AND version."state" = 'finalized'
+        AND lineage."sessionId" IN (SELECT "sessionId" FROM "FolderCandidate")
+    ),
+    "NotebookMatch" AS MATERIALIZED (
+      SELECT artifact."versionId"
+      FROM "ScopedArtifact" AS artifact
+      JOIN "ArtifactVersion" AS version ON version."id" = artifact."versionId"
+      WHERE artifact."producerRunId" IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM "FolderCandidate" AS candidate
+          WHERE candidate."kind" = 'notebook' AND candidate."sessionId" = artifact."sessionId"
+            AND candidate."size" = artifact."sizeBytes"
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE WHEN json_valid(version."executionSnapshotJson")
+              THEN version."executionSnapshotJson" ELSE '{}' END,
+            '$.provenanceGraph.edges'
+          ) AS edge
+          WHERE CASE WHEN edge.type = 'object' THEN
+            json_extract(edge.value, '$.kind') = 'used'
+            AND json_extract(edge.value, '$.activityId') = 'artifact-publication:' || artifact."versionId"
+            AND json_extract(edge.value, '$.authority') = 'authoritative'
+            AND json_extract(edge.value, '$.evidenceSource') = 'artifact-publication'
+            AND EXISTS (
+              SELECT 1
+              FROM json_each(version."executionSnapshotJson", '$.provenanceGraph.entities') AS entity
+              JOIN "FolderCandidate" AS candidate
+                ON candidate."kind" = 'notebook' AND candidate."sessionId" = artifact."sessionId"
+                AND candidate."size" = artifact."sizeBytes"
+                AND 'data/' || candidate."relativePath" = CASE WHEN entity.type = 'object'
+                  THEN json_extract(entity.value, '$.relativePath') END
+              WHERE CASE WHEN entity.type = 'object' THEN
+                json_extract(entity.value, '$.kind') = 'file-generation'
+                AND json_extract(entity.value, '$.entityId') = json_extract(edge.value, '$.entityId')
+                AND json_extract(entity.value, '$.pathPortability') = 'relative'
+                AND json_extract(entity.value, '$.checksum') = artifact."checksum"
+                AND json_extract(entity.value, '$.sizeBytes') = artifact."sizeBytes"
+              END
+            )
+          END
+        )
+    )
+    SELECT artifact.*,
+      CASE WHEN notebook."versionId" IS NOT NULL THEN version."executionSnapshotJson" END
+        AS "executionSnapshotJson"
+    FROM "ScopedArtifact" AS artifact
+    JOIN "ArtifactVersion" AS version ON version."id" = artifact."versionId"
+    LEFT JOIN "NotebookMatch" AS notebook ON notebook."versionId" = artifact."versionId"
+    WHERE notebook."versionId" IS NOT NULL OR EXISTS (
+      SELECT 1 FROM "FolderCandidate" AS candidate
+      WHERE candidate."kind" = 'delivery' AND candidate."sessionId" = artifact."sessionId"
+        AND candidate."relativePath" = CASE WHEN json_valid(artifact."outputDeliveryJson")
+          THEN json_extract(artifact."outputDeliveryJson", '$.relativePath') END
+    )
+    ORDER BY artifact."createdAtMs" DESC, artifact."versionId" ASC
+  `)
+}
 
 const encodeCursor = (cursor: FileCursor | GroupCursor | SearchArtifactCursor): string =>
   Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')

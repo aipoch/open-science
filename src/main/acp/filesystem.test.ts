@@ -308,3 +308,80 @@ describe('ACP workspace filesystem adapter', () => {
     ).rejects.toThrow(/outside the active ACP workspace/)
   })
 })
+
+it('resolves ordinary filenames against the authorized file root and intercepts before I/O', async () => {
+  workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-acp-staged-')))
+  const target = join(workspaceRoot, 'raw.csv')
+  await writeFile(target, 'ORIGINAL')
+  const intercept = vi.fn(async (path: string, content: string) => {
+    expect(path).toBe(target)
+    expect(content).toBe('PREPARED')
+    expect(await readFile(target, 'utf8')).toBe('ORIGINAL')
+    return true
+  })
+  expect(
+    await readWorkspaceTextFile(workspaceRoot, { sessionId: 'session', path: 'raw.csv' })
+  ).toEqual({ content: 'ORIGINAL' })
+  await writeWorkspaceTextFile(
+    workspaceRoot,
+    { sessionId: 'session', path: 'raw.csv', content: 'PREPARED' },
+    [],
+    intercept
+  )
+  expect(intercept).toHaveBeenCalledOnce()
+  expect(await readFile(target, 'utf8')).toBe('ORIGINAL')
+})
+
+it('never invokes the mutation interceptor for unauthorized paths or symlink escapes', async () => {
+  workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-acp-staged-')))
+  const outside = await realpath(await mkdtemp(join(tmpdir(), 'open-science-acp-outside-')))
+  try {
+    await writeFile(join(outside, 'raw.csv'), 'ORIGINAL')
+    await symlink(
+      outside,
+      join(workspaceRoot, 'alias'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+    const intercept = vi.fn(async () => true)
+    await expect(
+      writeWorkspaceTextFile(
+        workspaceRoot,
+        { sessionId: 'session', path: join(workspaceRoot, 'alias/raw.csv'), content: 'PREPARED' },
+        [],
+        intercept
+      )
+    ).rejects.toThrow()
+    expect(intercept).not.toHaveBeenCalled()
+    expect(await readFile(join(outside, 'raw.csv'), 'utf8')).toBe('ORIGINAL')
+  } finally {
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+it('keeps the original and missing parents unchanged when staged preparation rejects', async () => {
+  workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-acp-staged-')))
+  await writeFile(join(workspaceRoot, 'raw.csv'), 'ORIGINAL')
+  const intercept = vi.fn(async () => {
+    throw new Error('Backup unavailable')
+  })
+  await expect(
+    writeWorkspaceTextFile(
+      workspaceRoot,
+      { sessionId: 'session', path: 'raw.csv', content: 'PREPARED' },
+      [],
+      intercept
+    )
+  ).rejects.toThrow('Backup unavailable')
+  expect(await readFile(join(workspaceRoot, 'raw.csv'), 'utf8')).toBe('ORIGINAL')
+  await expect(
+    writeWorkspaceTextFile(
+      workspaceRoot,
+      { sessionId: 'session', path: 'new/result.csv', content: 'PREPARED' },
+      [],
+      intercept
+    )
+  ).rejects.toThrow('Backup unavailable')
+  await expect(readFile(join(workspaceRoot, 'new/result.csv'))).rejects.toMatchObject({
+    code: 'ENOENT'
+  })
+})

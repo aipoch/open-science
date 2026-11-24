@@ -312,7 +312,7 @@ export const PreviewUnsupportedContent = ({
           </p>
           {source === 'local' ? (
             <LocalFileFallbackAction path={path} className="mt-3" />
-          ) : (
+          ) : source !== 'project-folder' ? (
             <ManagedFileDownloadButton
               source={source}
               path={path}
@@ -326,7 +326,7 @@ export const PreviewUnsupportedContent = ({
               appearance="primary"
               wrapperClassName="mt-3"
             />
-          )}
+          ) : null}
           <span className="sr-only">{name}</span>
         </div>
       </div>

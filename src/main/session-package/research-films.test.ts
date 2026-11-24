@@ -16,6 +16,7 @@ import {
   forkEditedConversationMessage
 } from '../../shared/conversation-graph'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { initializeProjectRecordStorage } from '../projects/record-storage'
 import { SessionRepository } from '../session-persistence/repository'
 import { initDataRoot } from '../storage-root'
 import {
@@ -262,6 +263,76 @@ it('round-trips all branches, plays without generation, forwards opt-in films an
 }, 60_000)
 
 await configureTestElectronHost(await import('electron'))
+
+it('plays and removes a Film imported into a custom folder without affecting other files', async () => {
+  const f = await setup()
+  const session = (await f.repository.loadSession('project', 'session'))!
+  const graph = session.conversationGraph!
+  const branchId = graph.frames.find((frame) => frame.id === graph.rootFrameId)!.activeBranchId
+  const originalFilm = await saveFilm(f.root, session, branchId, 'Packaged Film')
+  const archive = join(f.root, 'portable-film.science')
+  await f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive, {
+    selectFiles: include
+  })
+
+  const folder = join(f.root, 'custom-project')
+  await mkdir(folder)
+  const inputPath = join(folder, 'raw.csv')
+  await writeFile(inputPath, 'measurement\n7\n')
+  const client = await f.service.options.getClient()
+  const projectId = 'target'
+  const name = 'Target'
+  await client.project.create({ data: { id: projectId, name, rootPath: folder } })
+  await initializeProjectRecordStorage(f.root, folder, {
+    format: 'open-science-project',
+    version: 1,
+    projectId,
+    name,
+    createdAt: 1
+  })
+  const service = new SessionPackageService({
+    ...f.service.options,
+    assertProjectFolderHealthy: async () => folder
+  })
+  services.push(service)
+  const imported = await service.importFrom(archive, undefined, undefined, undefined, {
+    projectId
+  })
+  const origin = await service.readOrigin(imported)
+  const request = { ...imported, branchId: origin.identities[branchId] }
+  const owner = createResearchVideoPresentationOwner({
+    dataRoot: () => f.root,
+    loadSession: (project, sessionId) => f.repository.loadSession(project, sessionId),
+    loadImportedFilm: (request, options) => service.readResearchFilm(request, options),
+    models: {} as never,
+    generate: vi.fn(),
+    writeScreenplay: vi.fn(),
+    engineDirectory: ''
+  })
+  try {
+    const { result } = await owner.status(request)
+    expect(result?.title).toBe('Packaged Film')
+    expect(await readFile(result!.playerPath, 'utf8')).toContain('Packaged Film')
+    const forwarded = join(f.root, 'forwarded-film.science')
+    await service.exportTo(imported, forwarded, { selectFiles: include })
+    expect(
+      (await unpack(forwarded, join(f.root, 'forwarded-film'))).records.researchFilms
+    ).toMatchObject([{ id: result!.id, title: 'Packaged Film' }])
+    const fork = await service.fork(imported)
+    const forkOrigin = await service.readOrigin(fork)
+    expect(
+      await service.readResearchFilm({ ...fork, branchId: forkOrigin.identities[request.branchId] })
+    ).toMatchObject({ title: 'Packaged Film' })
+    expect((await owner.remove(request)).result).toBeUndefined()
+    await expect(lstat(result!.playerPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(inputPath, 'utf8')).toBe('measurement\n7\n')
+    expect(await readFile(join(originalFilm, 'output/player.html'), 'utf8')).toContain(
+      'Packaged Film'
+    )
+  } finally {
+    await owner.close()
+  }
+})
 
 it('chooses the newest local completion per branch, including legacy unscoped receipts', async () => {
   const f = await setup(),

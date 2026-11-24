@@ -99,6 +99,7 @@ import { requestPdfReadingReveal } from './pdf-reading-reveal'
 import {
   FILE_MISSING_TAG_KEY,
   isManagedFilePublicationPendingError,
+  isProjectArtifactIndexUnavailableError,
   isUnavailableFileError
 } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
@@ -622,7 +623,7 @@ const MessagePartsMeasurement = ({
               key={index}
               data-slot="user-message-measurement-part"
               data-part-type="artifact"
-              data-content={`@${isLinkedFolder ? part.relativePath : part.name}`}
+              data-content={`@${isLinkedFolder ? part.relativePath : !isStatic && 'source' in part && part.source === 'project-folder' ? part.path : part.name}`}
               className={cn(
                 isStatic ? mentionPillClassName : artifactMentionPillClassName,
                 measurementContentClassName
@@ -879,7 +880,11 @@ const VisibleArtifactPreview = ({
             String(error).endsWith('ApplicationCommandError: The local service is stopping.'))
         )
           return
-        if (!isUnavailableFileError(error) && !isManagedFilePublicationPendingError(error)) {
+        if (
+          !isUnavailableFileError(error) &&
+          !isManagedFilePublicationPendingError(error) &&
+          !isProjectArtifactIndexUnavailableError(error)
+        ) {
           console.error('Failed to read artifact preview', error)
         }
         setPreviewState({ requestKey, preview: undefined })
@@ -1219,8 +1224,12 @@ const MessagePartsContent = ({
               )}
               onClick={() => onPreviewMentionArtifact(part)}
               aria-label={t('Preview {{name}}', { name: part.name })}
+              title={part.source === 'project-folder' ? `@${part.path}` : undefined}
             >
-              @<ExtensionPreservingFileName name={part.name} />
+              @
+              <ExtensionPreservingFileName
+                name={part.source === 'project-folder' ? part.path : part.name}
+              />
             </button>
           )
         }

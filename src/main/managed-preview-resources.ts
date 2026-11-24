@@ -113,6 +113,9 @@ type ManagedPreviewResourcesOptions = {
   openNotebookInput?: (
     request: Extract<AcquireManagedPreviewRequest, { source: 'notebook-input' }>
   ) => Promise<ManagedPreviewTrustedLease>
+  openProjectFolderFile?: (
+    request: Extract<AcquireManagedPreviewRequest, { source: 'project-folder' }>
+  ) => Promise<ManagedPreviewTrustedLease>
   openLiterature?: (reference: string) => Promise<ManagedPreviewTrustedLease>
   openStagedEdit?: (key: string) => Promise<ManagedPreviewTrustedLease>
   createId?: () => string
@@ -145,6 +148,7 @@ type ResourceEntry = ManagedPreviewResource & {
   filePath: string
   trustedLease?: ManagedPreviewTrustedLease
   imagePreview?: ResizedImagePreview
+  checkLeaseOnOpen?: boolean
   activeReaders?: number
   releasePath?: () => void
   strictSnapshot?: {
@@ -336,6 +340,9 @@ class ManagedPreviewResources {
           : inferMimeType(filePath, request.mimeType, {
               preferTrustedHtmlMime: request.source === 'artifact' || request.source === 'upload'
             })
+      if (request.source === 'project-folder' && !isPixelLimitedRasterMimeType(mimeType)) {
+        mimeType = 'application/octet-stream'
+      }
       // Reused below as the resource's width/height, so consumers learn the exact geometry from
       // the same header read that enforces the decoded-pixel limit.
       let imageDimensions: RasterImageDimensions | undefined
@@ -446,6 +453,7 @@ class ManagedPreviewResources {
         filePath,
         releasePath,
         ...(trustedLease ? { trustedLease } : {}),
+        ...(request.source === 'project-folder' ? { checkLeaseOnOpen: true } : {}),
         ...(imagePreview ? { imagePreview } : {}),
         // Capability identity is independent of an optional whole-file admission limit.
         ...(!trustedLease
@@ -596,6 +604,13 @@ class ManagedPreviewResources {
 
     if (!resource) {
       throw new Error('Managed preview resource is not available.')
+    }
+
+    if (resource.checkLeaseOnOpen) {
+      await resource.trustedLease?.verifyUnchanged()
+      // A renderer may have closed the tab while its filesystem verification was running.
+      if (this.resources.get(resourceId) !== resource)
+        throw new Error('Managed preview resource is not available.')
     }
 
     if (resource.imagePreview) {
@@ -803,6 +818,11 @@ class ManagedPreviewResources {
         return Promise.reject(new Error('Notebook input preview lease is not configured.'))
       }
       return this.options.openNotebookInput(request)
+    }
+    if (request.source === 'project-folder') {
+      if (!this.options.openProjectFolderFile || !request.projectId?.trim())
+        return Promise.reject(new Error('Project folder preview is unavailable.'))
+      return this.options.openProjectFolderFile(request)
     }
     if (request.source !== 'artifact' && request.source !== 'upload') {
       return Promise.resolve(undefined)

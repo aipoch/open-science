@@ -1,3 +1,4 @@
+import { reconcileProjectRecordIndexes } from '../projects/record-indexes'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { bindManagedPdfVersion } from '../pdf-annotations/source-bindings'
 import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -106,6 +107,7 @@ export class ArtifactProvenanceStagingRecovery {
       throw error
     })
     const client = await this.options.getClient()
+    if (candidates.length) await reconcileProjectRecordIndexes(client, [projectId])
     const retiredRoot = join(dirname(root), '.retired-orphans')
     const retiredRootInfo = await lstat(retiredRoot).catch((error: unknown) => {
       if (errorCode(error) === 'ENOENT') return undefined
@@ -152,6 +154,7 @@ export class ArtifactProvenanceStagingRecovery {
       actions.push(async () => {
         // A Version may have acquired authority or replaced/touched its directory after planning.
         // Neither case authorizes deleting the originally observed rowless staging candidate.
+        await reconcileProjectRecordIndexes(client, [projectId])
         if (
           await client.artifactVersion.findUnique({
             where: { id: candidate.name },

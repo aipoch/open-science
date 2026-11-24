@@ -1729,6 +1729,21 @@ describe('TaskRunner', () => {
     })
   })
 
+  it('omits project folder paths from Task views and rejects injected bindings', async () => {
+    const create = vi.fn(async () => project)
+    const runner = createRunner({
+      projects: { list: async () => [{ ...project, rootPath: '/private/research' }], create }
+    })
+    expect((await runner.listProjects())[0]).not.toHaveProperty('rootPath')
+    await expect(
+      runner.createProject({ name: 'Injected', rootPath: '/private/research' } as never)
+    ).rejects.toMatchObject({ code: 'invalid_request' })
+    expect(create).not.toHaveBeenCalled()
+    await expect(runner.createProject({ name: 'Managed' })).resolves.toMatchObject({
+      id: project.id
+    })
+  })
+
   it('rejects an empty project name before creating a project', async () => {
     let created = false
     const projects: TaskProjectPort = {

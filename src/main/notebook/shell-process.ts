@@ -425,6 +425,8 @@ const prepareShellLaunchOptions = async (
           ? windowsNotebookRuntimeEnvironment(shellEnv, resolveWindowsNotebookRuntime())
           : windowsNotebookNodeEnvironment(shellEnv, resolveWindowsNotebookNodeRuntime())
     }
+    if (options.outputRoot) shellEnv.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR = options.outputRoot
+    else delete shellEnv.OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR
     if (options.inputRoot) shellEnv.OPEN_SCIENCE_INPUT_DIR = options.inputRoot
     else delete shellEnv.OPEN_SCIENCE_INPUT_DIR
   } catch (error) {
@@ -480,6 +482,7 @@ const prepareShellLaunchOptions = async (
           env: baseEnv,
           pathEnvironment: {
             OPEN_SCIENCE_HANDOFF_DIR: options.handoffDir,
+            ...(options.outputRoot ? { OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR: options.outputRoot } : {}),
             ...workloadCacheEnv,
             NPM_CONFIG_PREFIX: shellEnv.NPM_CONFIG_PREFIX,
             NPM_CONFIG_CACHE: shellEnv.NPM_CONFIG_CACHE,
@@ -517,6 +520,8 @@ const prepareShellLaunchOptions = async (
               ? { optionalReadOnlyRoots: environmentPathRoots(baseEnv, runtimePlatform) }
               : {}),
             readWriteRoots: [
+              ...(options.projectFolderRoot ? [options.projectFolderRoot] : []),
+              ...(options.outputRoot ? [options.outputRoot] : []),
               // A retained Shell cwd must not promote a read-only or ungranted directory.
               ...(options.notebookSessionRoot ? [options.notebookSessionRoot] : []),
               options.handoffDir,

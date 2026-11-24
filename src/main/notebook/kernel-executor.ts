@@ -59,6 +59,7 @@ import {
   assertProcessTreeSupport,
   createPosixProcessTreeOwnership,
   registerProcessTreeOwnership,
+  snapshotOwnedPosixProcessIdentities,
   terminateProcessTree,
   trackOwnedPosixProcessTree,
   capturePosixProcessTreeIdentity,
@@ -348,6 +349,9 @@ type ProcState = {
   // Canonical host descriptors already installed into the Python loop's immutable audit hooks.
   // New roots cross the protocol once; Python never exposes a mutable policy collection or updater.
   protectedDirs: Set<string>
+  preparationBaseline?: readonly string[] | null
+  preparationReleases?: Set<() => Promise<void>>
+  treeReaped?: boolean
 }
 
 type KernelStartOperation = {
@@ -683,6 +687,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
   private readonly procs = new Map<ProcessKey, ProcState>()
   private readonly starting = new Set<KernelStartOperation>()
+  private readonly preparationOwners = new WeakMap<NotebookExecutionRequest, ProcState>()
+
   // In-flight process-tree teardowns, keyed by the process key of the proc being reaped. A dropped
   // proc's tree is killed asynchronously; ensureProc awaits any pending teardown for a key before
   // spawning its replacement, so two live process trees for the SAME (kind, env) never briefly coexist.
@@ -743,8 +749,91 @@ class NotebookKernelExecutor implements NotebookExecutor {
     this.terminateTree = options.terminateTree ?? terminateProcessTree
   }
 
-  // Sends one cell to the kind's loop and resolves with the mapped execution result.
+  // Preparation copies are released only after this exact process has left the directory, or its
+  // owned tree is confirmed reaped. Failure to establish that proof retains the managed bytes.
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
+    const directory = request.projectFolderReturnCwd ?? request.projectFolderRoot
+    try {
+      const result = await this.executeRequest(request)
+      if (!request.projectFolderStageRoot) return result
+      const released = await this.leaveProjectPreparation(request, directory)
+      // The kernel can be back in its Project even when another owned process still needs the copy.
+      const restored = released || this.preparationOwners.get(request)?.cwd === directory
+      return {
+        ...result,
+        ...(restored && directory ? { cwdAfter: directory } : {}),
+        projectFolderStageReleased: released
+      }
+    } catch (error) {
+      if (
+        request.projectFolderStageRoot &&
+        typeof error === 'object' &&
+        error !== null &&
+        Object.isExtensible(error)
+      )
+        Object.assign(error, {
+          projectFolderStageReleased: await this.leaveProjectPreparation(request, directory)
+        })
+      throw error
+    }
+  }
+
+  private async leaveProjectPreparation(
+    request: NotebookExecutionRequest,
+    directory: string | undefined
+  ): Promise<boolean> {
+    const proc = this.preparationOwners.get(request)
+    if (!proc) return false
+    try {
+      if (proc.treeReaped) return true
+      if (this.procs.get(proc.key) === proc && proc.alive && !proc.pending && directory) {
+        const position = await this.sendRequest(
+          proc,
+          randomUUID(),
+          {
+            ...request,
+            signal: undefined,
+            timeoutMs: 5000,
+            code:
+              proc.kind === 'r'
+                ? `setwd(${JSON.stringify(directory)})`
+                : proc.kind === 'python'
+                  ? `__import__("os").chdir(${JSON.stringify(directory)})`
+                  : `process.chdir(${JSON.stringify(directory)})`,
+            helperModules: undefined,
+            pythonRandomState: undefined
+          },
+          () => undefined
+        )
+        if (
+          !position.timedOut &&
+          !position.cancelled &&
+          position.response.error === null &&
+          position.response.cwd === directory
+        ) {
+          const live = await snapshotOwnedPosixProcessIdentities(proc.child)
+          if (
+            live &&
+            proc.preparationBaseline &&
+            live.every((id) => proc.preparationBaseline!.includes(id))
+          ) {
+            if (request.onProjectFolderStageReaped)
+              proc.preparationReleases?.delete(request.onProjectFolderStageReaped)
+            return true
+          }
+        }
+      }
+      // Never terminate by a re-resolved kind/env: it may now designate a replacement process.
+      // Live descendants and incomplete snapshots retain this stage until the exact owner reaps.
+      return Boolean(proc.treeReaped)
+    } catch {
+      return Boolean(proc.treeReaped)
+    }
+  }
+
+  private async executeRequest(
+    request: NotebookExecutionRequest
+  ): Promise<NotebookExecutionResult> {
     const endObservation = resourceActivity.begin()
     let workingFileObservation: WorkingFileObservation | undefined
     let kernelDispatched = false
@@ -760,6 +849,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       const proc = await this.ensureProc(key, kind, env, request)
       if (proc.pending) throw new Error('Notebook execution is already running.')
+      if (request.projectFolderStageRoot) {
+        if (proc.preparationBaseline === undefined)
+          proc.preparationBaseline =
+            (await snapshotOwnedPosixProcessIdentities(proc.child).catch(() => undefined)) ?? null
+        this.preparationOwners.set(request, proc)
+        if (request.onProjectFolderStageReaped)
+          (proc.preparationReleases ??= new Set()).add(request.onProjectFolderStageReaped)
+      }
       endSandboxExecution = proc.beginSandboxExecution({
         commandText: request.code,
         executionReference: request.runId ?? randomUUID(),
@@ -771,6 +868,28 @@ class NotebookKernelExecutor implements NotebookExecutor {
           if (!waiting && pending.timeoutMs !== undefined) pending.timeout.arm(pending.timeoutMs)
         }
       })
+      if (request.projectFolderRoot && request.cwd !== proc.cwd) {
+        const position = await this.sendRequest(
+          proc,
+          randomUUID(),
+          {
+            ...request,
+            code:
+              kind === 'r'
+                ? `setwd(${JSON.stringify(request.cwd)})`
+                : kind === 'python'
+                  ? `__import__("os").chdir(${JSON.stringify(request.cwd)})`
+                  : `process.chdir(${JSON.stringify(request.cwd)})`,
+            helperModules: undefined,
+            pythonRandomState: undefined
+          },
+          () => undefined
+        )
+        if (position.cancelled) throw new NotebookExecutionCancelledError()
+        if (position.timedOut)
+          throw new NotebookExecutionTimeoutError('Project folder directory selection timed out.')
+        if (position.response.error !== null) throw new Error(position.response.error)
+      }
       if (kind !== 'repl') {
         cwdBefore = proc.cwd
         request = { ...request, cwd: cwdBefore }
@@ -1459,6 +1578,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
             readWriteRoots: presentPaths([
               // cwd is interpreter-controlled state, never a source of filesystem authority.
               request.notebookSessionRoot,
+              ...(request.outputRoot ? [request.outputRoot] : []),
+              ...(request.projectFolderRoot ? [request.projectFolderRoot] : []),
               figuresDir,
               ...(kind === 'repl' && this.platform === 'win32' && spawnEnv.NPM_CONFIG_PREFIX
                 ? [spawnEnv.NPM_CONFIG_PREFIX]
@@ -1905,6 +2026,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       MPLBACKEND: 'Agg',
       OPEN_SCIENCE_NOTEBOOK_DIR: request.notebookSessionRoot,
       OPEN_SCIENCE_NOTEBOOK_DATA_DIR: request.dataRoot,
+      ...(request.outputRoot ? { OPEN_SCIENCE_NOTEBOOK_OUTPUT_DIR: request.outputRoot } : {}),
       OPEN_SCIENCE_RUNTIME_DIR: request.runtimeRoot,
       // Cross-kernel workspace channel (see repository.ts): same path every kernel kind sees.
       OPEN_SCIENCE_HANDOFF_DIR: join(request.notebookSessionRoot, 'handoff'),
@@ -2413,7 +2535,21 @@ class NotebookKernelExecutor implements NotebookExecutor {
         })
         // A rejected cleanup is still an unconfirmed teardown, not a permanently rejected barrier.
         .catch((error: unknown) => ({ reaped: false, error }))
-        .then((result) => {
+        .then(async (result) => {
+          if (result.reaped) {
+            proc.treeReaped = true
+            for (const release of proc.preparationReleases ?? []) {
+              try {
+                await release()
+                proc.preparationReleases?.delete(release)
+              } catch (error) {
+                createLogger('notebook:preparation-cleanup').warn(
+                  'Could not release a reaped kernel preparation',
+                  { error }
+                )
+              }
+            }
+          }
           // Keep an unsuccessful teardown as a barrier: neither a replacement kernel nor shutdown
           // may claim that the old process tree is gone merely because the kill attempt settled.
           if (result.reaped) {

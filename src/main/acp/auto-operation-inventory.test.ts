@@ -176,8 +176,9 @@ describe('Auto operation completeness against real tool registrations', () => {
       definitions: {
         // Reviewed: errors name a code and next step, and legacy top-level content/encoding is
         // rejected in favor of source. Allow-once disposition and owner-checked source access are unchanged.
+        // Project output-root guidance describes the existing source path field.
         'artifacts/mcp-server.ts':
-          '9e0e7684e9ce91f56ba4e6bfc49bcd2a1bb97bf6dd2a22bd686307c9d634dde2',
+          'c0328b3dbc1f61728c3f77c74183e8f0ff096f2eb6bfa239065652fb2c287ddc',
         // Image tools use the current turn capability and the configured model's operation schema.
         'image-model/mcp-server.ts':
           'a83381424a1c34c05d37c2a3fe9efc71ef47c08dfd561861170d4f165fae893c',
@@ -208,9 +209,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: terminal status and diagnostics are projected after RPC dispatch. Background
         // query and cancel still require the registered action and its validated Run identity.
         // The read-only state request limits history to the ten runs its response can display.
+        // Compact replies include the current Session's output root with the existing path fields.
         // Directory discovery publishes its existing result fields using the MCP default dialect.
         'notebook/mcp-server.ts':
-          'e52fcccfae2e622414ce9a2d7124df62cabd62eb3cb54a038c71c49c480e5832',
+          '6a392ac07333147335999c17e52ca72803f03b5b110b2c2345596a4b7b8fda74',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.

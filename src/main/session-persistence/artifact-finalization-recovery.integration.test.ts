@@ -27,6 +27,7 @@ import {
   type PersistedChatMessage,
   type PersistedChatSession
 } from '../../shared/session-persistence'
+import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
 import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import {
   FinalizedArtifactBindingConflictError,
@@ -42,8 +43,14 @@ import { ArtifactRunRegistry } from '../artifacts/run-registry'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { ManagedFileIndexRepository } from '../project-files/repository'
+import { initializeProjectRecordStorage } from '../projects/record-storage'
+import {
+  ProjectArtifactIndexUnavailableError,
+  withProjectRecordIndexes
+} from '../projects/record-indexes'
 import { SessionPersistenceCoordinator } from './coordinator'
-import { SessionRepository } from './repository'
+import { RuntimeSessionOwner } from './runtime-session-owner'
+import { loadSessionMutationAuthority, SessionRepository } from './repository'
 import { SessionJournalStore, sessionJournalPath } from './journal'
 import { UploadRepository } from '../uploads/repository'
 
@@ -149,6 +156,216 @@ describe('artifact finalization startup recovery', () => {
     expect(saved.messages[0].turnOutcome?.kind).toBe('completed')
     expect(saved.messages[1].artifactIds).not.toContain(pending.id)
     expect(saved.artifacts?.some(({ id }) => id === pending.id)).toBe(true)
+  })
+
+  it('retries an exact live Artifact run when its checkpoint becomes unavailable before publication', async () => {
+    sessions = new SessionRepository(storageRoot, {
+      hasLiveRuntimeSession: () => true,
+      hasActiveRuntimePrompt: () => true
+    })
+    const folder = join(storageRoot, 'research')
+    await mkdir(folder)
+    await initializeProjectRecordStorage(storageRoot, folder, {
+      format: 'open-science-project',
+      version: 1,
+      projectId: PROJECT_ID,
+      name: 'Research',
+      createdAt: 1
+    })
+    const wrapped = withProjectRecordIndexes(client, storageRoot)
+    const compatibility = new ArtifactRepository(storageRoot)
+    const registry = new ArtifactRunRegistry()
+    const load = async (): Promise<PersistedChatSession> => {
+      const result = await loadSessionMutationAuthority(sessions, PROJECT_ID, SESSION_ID)
+      if (result.status !== 'found') throw new Error('Missing durable fixture')
+      return result.session
+    }
+    const provenance = new ArtifactProvenanceRepository({
+      storageRoot,
+      getClient: async () => wrapped,
+      compatibilityRepository: compatibility,
+      loadSession: load
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+    const handlers = createArtifactHandlers(compatibility, registry, {
+      provenance,
+      withSessionMutation: (projectId, sessionId, mutation) =>
+        coordinator.runSessionMutation(projectId, sessionId, mutation),
+      recoverPendingArtifacts: (request) => coordinator.retryArtifactFinalization(request)
+    })
+    const prompt: PersistedChatMessage = {
+      id: 'prompt-exact-run',
+      role: 'user',
+      content: 'Make a report',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const graph = createLinearConversationGraph({
+      sessionId: SESSION_ID,
+      messages: [prompt],
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 1
+    })
+    await sessions.saveSession({
+      id: SESSION_ID,
+      projectId: PROJECT_ID,
+      title: 'Research',
+      cwd: '/workspace',
+      status: 'running',
+      activeRun: { promptMessageId: prompt.id, startedAt: 1 },
+      messages: [prompt],
+      conversationGraph: graph,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const scope = {
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      executionId: 'execution-exact-run',
+      promptMessageId: prompt.id,
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: graph.branches[0].id,
+      runtimeSegmentId: graph.runtimeSegments[0].id
+    }
+    const runtime = new RuntimeSessionOwner({
+      loadSession: (scope) =>
+        coordinator.loadSessionForContinuation(scope.projectId, scope.sessionId),
+      mutateSession: (scope, mutate, options) =>
+        coordinator.mutateRuntimeSession(scope, mutate, options),
+      scheduleFlush: () => () => undefined,
+      now: () => 20,
+      finalizeArtifacts: handlers.finalizeRunArtifacts
+    })
+    await runtime.begin(scope)
+    runtime.accept({
+      kind: 'message',
+      id: 'report-answer',
+      timestamp: 2,
+      level: 'info',
+      sessionId: SESSION_ID,
+      promptMessageId: prompt.id,
+      messageId: 'report-stream',
+      role: 'assistant',
+      text: 'Research report completed.'
+    })
+    const turns = new ArtifactTurnOwner({
+      dataRoot: storageRoot,
+      repository: compatibility,
+      runRegistry: registry,
+      provenance
+    })
+    const turn = await turns.openRootExecution({
+      ...scope,
+      appSessionId: SESSION_ID,
+      artifactStorageSessionId: STORAGE_SESSION_ID,
+      agentName: 'Codex',
+      provenanceContext: { ...scope, rootFrameId: graph.rootFrameId }
+    })
+    const runId = turns.snapshot(turn).runId
+    const first = await turns.write(turn, { filename: 'report.txt', content: 'first draft' })
+    const second = await turns.write(turn, { filename: 'report.txt', content: 'final draft' })
+    const versionIds = [first.versionId!, second.versionId!]
+    const [pending] = await compatibility.listPendingRunFiles({
+      projectId: PROJECT_ID,
+      sessionId: STORAGE_SESSION_ID,
+      runId
+    })
+    expect(pending.versionId).toBe(second.versionId)
+    const checkpoint = join(folder, '.open-science', 'artifact-index.json')
+    const validCheckpoint = await readFile(checkpoint)
+    await writeFile(checkpoint, 'corrupt checkpoint')
+    const displaced = join(storageRoot, 'displaced-report.txt')
+    await rename(pending.path, displaced)
+    await expect(turns.finalize(turn)).rejects.toBeInstanceOf(ProjectArtifactIndexUnavailableError)
+    await rename(displaced, pending.path)
+    await writeFile(pending.path, 'wrong bytes')
+    await expect(turns.finalize(turn)).rejects.toBeInstanceOf(ProjectArtifactIndexUnavailableError)
+    await expect(
+      compatibility.findRunFinalizationMarker(PROJECT_ID, runId)
+    ).resolves.toBeUndefined()
+
+    await writeFile(pending.path, 'final draft')
+    const publication = (await turns.finalize(turn))!
+    expect(publication.artifacts.map(({ versionId }) => versionId)).toEqual(versionIds)
+    expect(await compatibility.findRunFinalizationMarker(PROJECT_ID, runId)).toMatchObject({
+      artifactVersionIds: [...versionIds].sort((left, right) => left.localeCompare(right))
+    })
+    await expect(
+      runtime.publish({ ...publication, executionId: scope.executionId })
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('durable-finalization'),
+      cause: expect.any(ProjectArtifactIndexUnavailableError)
+    })
+    await runtime.commitTerminal(
+      {
+        kind: 'error',
+        id: 'publication-error',
+        timestamp: 24,
+        level: 'error',
+        sessionId: SESSION_ID,
+        promptMessageId: prompt.id,
+        promptExecutionId: scope.executionId,
+        artifactFailure: true,
+        text: 'Project Artifact records are unavailable'
+      },
+      () => undefined
+    )
+    await turns.dispose(turn)
+    const failed = await load()
+    const response = failed.messages.find(({ role }) => role === 'agent')!
+    expect(response).toMatchObject({
+      content: 'Research report completed.',
+      artifactIds: versionIds
+    })
+    expect(failed.messages[0].turnOutcome).toMatchObject({
+      kind: 'failed',
+      recovery: 'retry-artifact-publication'
+    })
+    expect(await client.artifactVersion.findMany({ where: { artifactRunId: runId } })).toEqual(
+      expect.arrayContaining(
+        versionIds.map((id) => expect.objectContaining({ id, state: 'pending', messageId: null }))
+      )
+    )
+
+    await writeFile(checkpoint, validCheckpoint)
+    const recovered = await handlers.reconcilePendingArtifacts({
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      messageId: response.id,
+      pendingPaths: [],
+      artifactVersionIds: versionIds
+    })
+    expect(recovered).toEqual(
+      versionIds.map((versionId) => expect.objectContaining({ versionId, isPublished: true }))
+    )
+    const settled = await load()
+    expect(settled).toMatchObject({ id: SESSION_ID, status: 'idle' })
+    expect(settled.messages[0].turnOutcome?.kind).toBe('completed')
+    expect(settled.messages[1]).toMatchObject({ id: response.id, content: response.content })
+    await expect(
+      readFile(
+        join(
+          folder,
+          '.open-science',
+          'artifacts',
+          PROJECT_ID,
+          SESSION_ID,
+          response.id,
+          'report.txt'
+        ),
+        'utf8'
+      )
+    ).resolves.toBe('final draft')
   })
 
   it('retries durable finalization in the current Session and remains idempotent', async () => {

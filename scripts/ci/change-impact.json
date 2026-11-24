@@ -421,7 +421,14 @@
         "src/main/agent-framework/harness.ts",
         "src/main/harness-acp/tool-receipts.ts",
         "src/main/harness-acp/storage-cleanup.ts",
-        "src/main/web/invocation-store.ts"
+        "src/main/web/invocation-store.ts",
+        "src/main/acp/permission-policy.ts",
+        "src/main/project-folders/staged-files.ts",
+        "src/main/projects/project-folder-binding.ts",
+        "src/main/projects/project-folder-files.ts",
+        "src/main/projects/project-folder-location.ts",
+        "src/main/projects/project-folder-validation.ts",
+        "src/main/projects/project-record-location.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -518,7 +525,8 @@
         "e2e/markdown-publication-policy.spec.ts",
         "e2e/session-data-file-links.spec.ts",
         "e2e/office-spreadsheet-search.spec.ts",
-        "e2e/fixtures/pptx.ts"
+        "e2e/fixtures/pptx.ts",
+        "e2e/project-folder.spec.ts"
       ],
       "capabilities": ["desktop_e2e_source", "e2e_workspace"]
     },

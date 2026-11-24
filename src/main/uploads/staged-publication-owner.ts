@@ -1,3 +1,4 @@
+import { reconcileProjectRecordIndexes } from '../projects/record-indexes'
 import { resolve } from 'node:path'
 import { createReadStream } from 'node:fs'
 import { mkdir, realpath, stat } from 'node:fs/promises'
@@ -219,6 +220,7 @@ class StagedPublicationOwner {
   ): Promise<UploadedAttachment | undefined> {
     const uploadFileId = assertSafePathSegment(attachment.id)
     const client = await this.options.getClient!()
+    await reconcileProjectRecordIndexes(client, [projectId])
     const existingFile = await client.uploadFile.findUnique({
       where: { id: uploadFileId },
       include: { versions: { where: { versionNumber: 1 }, take: 1 } }

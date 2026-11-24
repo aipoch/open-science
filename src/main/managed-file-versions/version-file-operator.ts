@@ -1,3 +1,4 @@
+import { getProjectRecordRoot } from '../storage/data-location-identity'
 import { createHash } from 'node:crypto'
 import { constants, type BigIntStats, type Dirent } from 'node:fs'
 import {
@@ -371,6 +372,13 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     }
   }
 
+  private projectOperator(storageRef: string): NodeVersionFileOperator | undefined {
+    const [kind, projectId] = storageRef.split('/')
+    if (kind !== 'artifacts' || !projectId) return undefined
+    const root = getProjectRecordRoot(this.options.storageRoot, projectId)
+    return root ? new NodeVersionFileOperator({ ...this.options, storageRoot: root }) : undefined
+  }
+
   planImmutable(input: PlanImmutableInput): PlannedFile {
     if (!isSafeManagedFileBasename(input.logicalFilename)) {
       throw new Error('Version file logical filename must be a safe basename.')
@@ -393,6 +401,8 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   }
 
   async publishImmutable(input: PublishImmutableInput): Promise<StoredFile> {
+    const project = this.projectOperator(input.plannedFile.storageRef)
+    if (project) return project.publishImmutable(input)
     this.assertPlannedFile(input)
     const finalPath = this.resolveStorageRef(input.plannedFile.storageRef)
     return serializeImmutableOperation(finalPath, () =>
@@ -508,6 +518,8 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     expectedIntegrity: Integrity,
     options?: OpenImmutableOptions
   ): Promise<ReadLease & { fileIdentity: { dev: number; ino: number } }> {
+    const project = this.projectOperator(storageRef)
+    if (project) return project.openImmutable(storageRef, expectedIntegrity, options)
     const localPath = this.resolveStorageRef(storageRef)
     if (
       !Number.isSafeInteger(expectedIntegrity.sizeBytes) ||
@@ -790,6 +802,8 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   }
 
   async removeImmutable(storageRef: string, expectedIntegrity: Integrity): Promise<void> {
+    const project = this.projectOperator(storageRef)
+    if (project) return project.removeImmutable(storageRef, expectedIntegrity)
     const localPath = this.resolveStorageRef(storageRef)
     await serializeImmutableOperation(localPath, () =>
       this.removeImmutableUnlocked(storageRef, expectedIntegrity, localPath)
@@ -871,6 +885,8 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   }
 
   async inspectRecovery(input: InspectRecoveryInput): Promise<VersionFileRecoveryInspection> {
+    const project = this.projectOperator(input.plannedFile.storageRef)
+    if (project) return project.inspectRecovery(input)
     this.assertPlannedFile(input)
     const localPath = this.resolveStorageRef(input.plannedFile.storageRef)
     return serializeImmutableOperation(localPath, () => this.inspectRecoveryUnlocked(input))
@@ -938,6 +954,8 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
   }
 
   async removeIncomplete(input: RemoveIncompleteInput): Promise<void> {
+    const project = this.projectOperator(input.plannedFile.storageRef)
+    if (project) return project.removeIncomplete(input)
     this.assertPlannedFile(input)
     const localPath = this.resolveStorageRef(input.plannedFile.storageRef)
     await serializeImmutableOperation(localPath, async () => {
@@ -1605,6 +1623,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
 }
 
 export {
+  errorChainHasCode,
   NodeVersionFileOperator,
   VersionFileOperatorError,
   type NodeVersionFileOperatorOptions,

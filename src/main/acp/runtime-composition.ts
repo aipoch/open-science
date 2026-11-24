@@ -13,6 +13,7 @@ import { WebService } from '../web/service'
 import { getWebSnapshotStore } from '../web/snapshot-store'
 import { WebEvidenceLifecycle } from '../web/evidence-lifecycle'
 import { WebRuntimeEvidence } from '../web/runtime-evidence'
+import { ProjectFolderFiles } from '../projects/project-folder-files'
 import type { PdfAnnotationAgentTools } from '../pdf-annotations/agent-tools'
 import type { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
@@ -115,8 +116,11 @@ const MAX_LITERATURE_CITATION_DOCUMENT_BYTES = 64 * 1024 * 1024
 // silently start without a configured policy boundary.
 const createProjectAgentContextResolver = (repository: {
   get: (id: string) => Promise<{ agentContext?: string } | null>
+  assertProjectFolderHealthy?: (projectId: string) => Promise<string | undefined>
 }): ((projectId: string) => Promise<string | undefined>) => {
   return async (projectId) => {
+    // Folder errors preserve their stable recovery type; context lookup errors retain their own facade.
+    await repository.assertProjectFolderHealthy?.(projectId)
     try {
       const project = await repository.get(projectId)
       const context = project?.agentContext?.trim()
@@ -151,10 +155,12 @@ type AcpRuntimeArtifacts = {
   provenanceRepository?: Pick<
     ArtifactProvenanceRepository,
     'listRunVersions' | 'writeAppGeneratedVersion'
-  >
+  > &
+    Partial<Pick<ArtifactProvenanceRepository, 'recoverLiveRunPublication' | 'withSessionMutation'>>
 }
 
 type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
+  assertProjectFolderHealthy?: (projectId: string) => Promise<string | undefined>
   schedules?: import('../schedules/mcp').ScheduleMcp
   appVersion: string
   mcpEntryPath: string
@@ -285,6 +291,7 @@ const isPdfAttachmentVersion = (version: { filename: string; contentType: string
 
 // Composes the compatibility façade while the coordinator remains the cross-generation Session owner.
 const createAcpRuntime = ({
+  assertProjectFolderHealthy,
   schedules,
   appVersion,
   mcpEntryPath,
@@ -998,6 +1005,7 @@ const createAcpRuntime = ({
         authorizedDirectories: grantedRootsRepository?.authorizedSnapshot
           ? new AuthorizedDirectoryNotices(() => grantedRootsRepository.authorizedSnapshot!())
           : undefined,
+        projectFolders: new ProjectFolderFiles((id) => projectRepository.get(id), resolveDataRoot),
         grantedRoots: grantedRootsRepository
           ? {
               list: () => grantedRootsRepository.list(),
@@ -1329,7 +1337,25 @@ const createAcpRuntime = ({
               }
             }
           : undefined,
-        resolveProjectAgentContext: createProjectAgentContextResolver(projectRepository),
+        resolveProjectAgentContext: createProjectAgentContextResolver({
+          get: (id) => projectRepository.get(id),
+          ...(!delegatedNotebookConnection
+            ? {
+                assertProjectFolderHealthy:
+                  assertProjectFolderHealthy ??
+                  ((id) => projectRepository.assertProjectFolderHealthy(id))
+              }
+            : {})
+        }),
+        ...(!delegatedNotebookConnection
+          ? {
+              projectFolderFiles: {
+                resolveRoot: (projectId: string) =>
+                  notebookRpcServer.resolveProjectFolderRoot(projectId),
+                write: (input, signal) => notebookRpcServer.writeAcpProjectFolderFile(input, signal)
+              } satisfies NonNullable<AcpRuntimeOptions['projectFolderFiles']>
+            }
+          : {}),
         resolveProjectTracing: async (projectId) =>
           (await projectRepository.get(projectId))?.sessionDefaults?.agentTracingEnabled === true,
         ...(resolveComputeExecutionTargetIds ? { resolveComputeExecutionTargetIds } : {})

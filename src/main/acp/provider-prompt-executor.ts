@@ -195,6 +195,16 @@ const withPreDispatchModelCalls = (
 
 class AcpProviderPromptExecutor {
   private readonly observations = new Map<string, ActiveObservation>()
+  private readonly pendingAcceptances = new Map<
+    string,
+    { token: symbol; accept: () => Promise<void> }
+  >()
+
+  // A provider can request client-owned file I/O before emitting its first Session update. This is
+  // also acceptance evidence; waiting for output can deadlock a file approval behind Resume's gate.
+  observeProviderRequest(providerSessionId: string): Promise<void> {
+    return this.pendingAcceptances.get(providerSessionId)?.accept() ?? Promise.resolve()
+  }
 
   constructor(private readonly options: AcpProviderPromptExecutorOptions) {}
 
@@ -282,6 +292,8 @@ class AcpProviderPromptExecutor {
       if (this.observations.get(providerSessionId)?.token === token) {
         this.observations.delete(providerSessionId)
       }
+      if (this.pendingAcceptances.get(providerSessionId)?.token === token)
+        this.pendingAcceptances.delete(providerSessionId)
     }
     const cancelProbe = async (): Promise<void> => {
       if (probeState !== 'open') return
@@ -314,6 +326,41 @@ class AcpProviderPromptExecutor {
         }
       }
 
+      let acceptance: Promise<void> | undefined
+      let accepting = false
+      let acceptanceFailureReported = false
+      const reportAcceptanceFailure = (error: unknown): void => {
+        if (acceptanceFailureReported) return
+        acceptanceFailureReported = true
+        reportBestEffort(input.reportBestEffortFailure, 'accepted', error)
+      }
+      const accept = (): Promise<void> => {
+        if (!input.isCurrent()) return Promise.resolve()
+        if (acceptance) return acceptance
+        accepting = true
+        try {
+          // Invoke immediately, preserving first-update ordering. Deferring this callback to a
+          // later microtask lets an app-owned choice overtake its preceding provider message.
+          acceptance = Promise.resolve(input.onAccepted())
+        } catch (error) {
+          reportAcceptanceFailure(error)
+          acceptance = Promise.resolve()
+        }
+        void acceptance.then(
+          () => {
+            accepting = false
+          },
+          (error) => {
+            accepting = false
+            reportAcceptanceFailure(error)
+          }
+        )
+        return acceptance
+      }
+      this.pendingAcceptances.set(providerSessionId, {
+        token,
+        accept: () => accept().catch(reportAcceptanceFailure)
+      })
       let promptRequest: Promise<unknown>
       try {
         input.onDispatchAttempt?.()
@@ -327,18 +374,16 @@ class AcpProviderPromptExecutor {
         () => new Promise<never>(() => undefined),
         (error) => Object.freeze({ kind: 'provider-rejection' as const, error })
       )
-      let accepted = false
-
       for (;;) {
         const message = await Promise.race([input.session.nextUpdate(), promptFailure])
         if (message.kind === 'provider-rejection') throw message.error
 
-        if (!accepted && input.isCurrent()) {
-          accepted = true
+        // Once acceptance has settled, later updates retain the original synchronous routing.
+        if (!acceptance || accepting) {
           try {
-            await input.onAccepted()
+            await accept()
           } catch (error) {
-            reportBestEffort(input.reportBestEffortFailure, 'accepted', error)
+            reportAcceptanceFailure(error)
           }
         }
         // Acceptance can await durable delivery; the same owner must still hold the message.

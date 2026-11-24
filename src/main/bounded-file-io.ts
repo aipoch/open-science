@@ -242,11 +242,31 @@ const digestFileWithinBudget = async (
   path: string,
   maxBytes: number,
   signal?: AbortSignal
+): Promise<FileDigest> => digestChunksWithinBudget(pacedFileChunks(path, signal), maxBytes)
+
+const pacedFileChunks = async function* (
+  path: string,
+  signal?: AbortSignal
+): AsyncGenerator<Buffer> {
+  for await (const chunk of createReadStream(path, { signal })) {
+    await paceFileIo(chunk.byteLength, signal)
+    yield chunk
+  }
+}
+
+const digestOpenFileWithinBudget = (
+  file: FileHandle,
+  maxBytes: number,
+  signal?: AbortSignal
+): Promise<FileDigest> => digestChunksWithinBudget(readOpenFileChunks(file, signal), maxBytes)
+
+const digestChunksWithinBudget = async (
+  chunks: AsyncIterable<Buffer>,
+  maxBytes: number
 ): Promise<FileDigest> => {
   const hash = createHash('sha256')
   let sizeBytes = 0
-  for await (const chunk of createReadStream(path, { signal })) {
-    await paceFileIo(chunk.byteLength, signal)
+  for await (const chunk of chunks) {
     sizeBytes += chunk.byteLength
     assertWithinResourceBudget('file', sizeBytes, maxBytes)
     hash.update(chunk)
@@ -389,6 +409,7 @@ export {
   copyFileWithinBudget,
   copyOpenFileWithinBudget,
   digestFileWithinBudget,
+  digestOpenFileWithinBudget,
   FileObservationMismatchError,
   inlineDecodedSize,
   observeFile,

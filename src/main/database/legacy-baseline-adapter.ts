@@ -521,11 +521,12 @@ const adaptMigrationOperationsForCurrentSchema = async (
         `PRAGMA table_info(${quoteSqliteIdentifier(table.tableName)})`
       )
       const existingColumns = new Set(columns.map(({ name }) => name))
-      // A pre-ledger Compute table can lack nullable suffix columns. Adapt the rebuild to
-      // the current target DDL while copying every column present in the historical table.
+      // A pre-ledger table can lack known nullable suffix columns. Use the current target DDL
+      // while copying every column present in the historical table.
       const nullableAdditions = [
         ...(SLURM_JOB_RELIABILITY_ADDED_COLUMNS[table.tableName] ?? []),
-        ...(table.tableName === 'ComputeJob' ? ['kubernetesWorkspace'] : [])
+        ...(table.tableName === 'ComputeJob' ? ['kubernetesWorkspace'] : []),
+        ...(table.tableName === 'ArtifactLineage' ? ['outputDeliveryJson'] : [])
       ]
       if (
         [...current.columns.keys()].every(

@@ -26,6 +26,7 @@ import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
 import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
 import { buildSaveAsSkillHistoryReplay } from './save-as-skill-history'
+import { freshSessionAttachment } from './session-agent-target'
 import { bindResumeRequestToProject } from './session-project-binding'
 
 const log = createLogger('acp')
@@ -313,13 +314,25 @@ const createAcpHandlerWorkflows = (
     try {
       const resume = async (projectId: string): Promise<AcpCreateSessionResponse> => {
         const bound = bindResumeRequestToProject(request, projectId)
-        if (
-          interruptedTurnSessions?.prepareRuntimeResume &&
-          !runtime.hasLiveSession(projectId, request.sessionId)
-        ) {
-          await interruptedTurnSessions.prepareRuntimeResume(projectId, request.sessionId)
-        }
-        const attached = await runtime.resumeSession(bound)
+        const detached =
+          interruptedTurnSessions && !runtime.hasLiveSession(projectId, bound.sessionId)
+        if (detached)
+          await interruptedTurnSessions.prepareRuntimeResume?.(projectId, bound.sessionId)
+        const saved =
+          detached && !bound.providerSessionId
+            ? await interruptedTurnSessions.loadSession(projectId, bound.sessionId)
+            : undefined
+        // A new Fork only owns the application Session and its transcript. Request its first
+        // provider attachment explicitly so the runtime does not interpret its ID as legacy history.
+        const unattachedFork =
+          saved?.id === bound.sessionId &&
+          saved.projectId === projectId &&
+          !saved.providerSessionId &&
+          saved.forkOrigin &&
+          saved.branchContextResetRequired === true &&
+          saved.pendingHistoryReplay?.kind === 'all'
+        const resumeRequest = unattachedFork ? { ...bound, [freshSessionAttachment]: true } : bound
+        const attached = await runtime.resumeSession(resumeRequest)
         await interruptedTurnSessions?.completeRuntimeAttachment?.(
           projectId,
           request.sessionId,

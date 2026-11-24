@@ -1,3 +1,5 @@
+import { ProjectFolderNotice } from '@/components/ProjectFolderNotice'
+import { projectFolderFailure, type ProjectFolderProblem } from '@/lib/project-folder-error'
 import type { ArchivedView } from '../../lib/settings-navigation'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { Archive, LoaderCircle, RotateCcw, Trash2 } from 'lucide-react'
@@ -58,6 +60,7 @@ const ArchivedPanel = ({
   const [projectToDelete, setProjectToDelete] = useState<Project | undefined>()
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>()
   const [busyKeys, setBusyKeys] = useState<Set<string>>(() => new Set())
+  const [folderProblem, setFolderProblem] = useState<ProjectFolderProblem>()
   const [panelError, setPanelError] = useState<string | undefined>()
   const [query, setQuery] = useState('')
   const searchTerm = query.trim().toLocaleLowerCase()
@@ -113,15 +116,18 @@ const ArchivedPanel = ({
     if (busyKeys.has(key)) return
     beginOperation(key)
     setPanelError(undefined)
+    setFolderProblem(undefined)
     void updateProjectArchive({
       id: project.id,
       archived: false,
       expectedArchiveRevision: project.archiveRevision ?? 0
     })
       .then(() => onNavigate({ kind: 'list' }))
-      .catch((restoreError: unknown) =>
-        setPanelError(describeError(restoreError, t('Could not restore project.')))
-      )
+      .catch((restoreError: unknown) => {
+        const problem = projectFolderFailure(restoreError)
+        if (problem) setFolderProblem(problem)
+        else setPanelError(describeError(restoreError, t('Could not restore project.')))
+      })
       .finally(() => finishOperation(key))
   }
 
@@ -131,6 +137,7 @@ const ArchivedPanel = ({
     if (busyKeys.has(key)) return
     beginOperation(key)
     setPanelError(undefined)
+    setFolderProblem(undefined)
     void updateSessionArchive({
       projectId: session.projectId,
       sessionId: session.id,
@@ -150,6 +157,7 @@ const ArchivedPanel = ({
 
     beginOperation(key)
     setPanelError(undefined)
+    setFolderProblem(undefined)
     setSessionDeleteError(undefined)
     void window.api.sessions
       .deleteSession({
@@ -255,6 +263,7 @@ const ArchivedPanel = ({
         aria-describedby={!canDeleteProjects ? recoveryDescriptionId : undefined}
         onClick={() => {
           setPanelError(undefined)
+          setFolderProblem(undefined)
           setSessionDeleteError(undefined)
           setSessionToDelete(session)
         }}
@@ -288,6 +297,7 @@ const ArchivedPanel = ({
         onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
         onDeleteRecoveryFile={window.api.sessions.deleteRecoveryFile}
       />
+      {folderProblem ? <ProjectFolderNotice problem={folderProblem} /> : null}
       {panelError ? (
         <InlineNotice level="error" role="alert">
           {panelError}

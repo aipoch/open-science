@@ -267,6 +267,10 @@ describe('Notebook application commands', () => {
       ...notebookEnvironmentApplicationCommands.commands
     ]).toEqual([
       expect.objectContaining({ name: 'notebook:run-evidence' }),
+      expect.objectContaining({ name: 'notebook:inspect-project-folder-change' }),
+      expect.objectContaining({ name: 'notebook:revert-project-folder-change' }),
+      expect.objectContaining({ name: 'notebook:preview-project-folder-change' }),
+      expect.objectContaining({ name: 'notebook:list-project-folder-changes' }),
       expect.objectContaining({ name: 'notebook:run-index' }),
       expect.objectContaining({ name: 'notebook:background-tasks' }),
       expect.objectContaining({ name: 'notebook:state' }),

@@ -986,3 +986,44 @@ describe('AcpProviderPromptExecutor', () => {
     expect(fixture.probe.finalize).toHaveBeenCalledWith({ response })
   })
 })
+
+it('accepts authenticated client file requests before first output and coalesces acceptance', async () => {
+  const h = setup()
+  const firstUpdate = deferred<NextUpdate>()
+  vi.mocked(h.session.nextUpdate).mockReturnValueOnce(firstUpdate.promise)
+  const execution = h.executor.execute(h.input)
+  await vi.waitFor(() => expect(h.session.prompt).toHaveBeenCalledOnce())
+  expect(h.accepted).not.toHaveBeenCalled()
+  await Promise.all([
+    h.executor.observeProviderRequest('provider-1'),
+    h.executor.observeProviderRequest('provider-1')
+  ])
+  expect(h.accepted).toHaveBeenCalledOnce()
+  firstUpdate.resolve(stop({ stopReason: 'end_turn' }))
+  await execution
+  await h.executor.observeProviderRequest('provider-1')
+  expect(h.accepted).toHaveBeenCalledOnce()
+})
+
+it('does not accept unknown, undispatched, or superseded client requests', async () => {
+  const h = setup()
+  const beforeDispatch = deferred<'active' | 'cancelled'>()
+  const next = deferred<NextUpdate>()
+  const isCurrent = vi.fn(() => true)
+  vi.mocked(h.session.nextUpdate).mockReturnValueOnce(next.promise)
+  const execution = h.executor.execute({
+    ...h.input,
+    isCurrent,
+    beforeDispatch: () => beforeDispatch.promise
+  })
+  await h.executor.observeProviderRequest('provider-1')
+  await h.executor.observeProviderRequest('unknown')
+  expect(h.accepted).not.toHaveBeenCalled()
+  beforeDispatch.resolve('active')
+  await vi.waitFor(() => expect(h.session.prompt).toHaveBeenCalledOnce())
+  isCurrent.mockReturnValue(false)
+  await h.executor.observeProviderRequest('provider-1')
+  expect(h.accepted).not.toHaveBeenCalled()
+  next.resolve(stop({ stopReason: 'end_turn' }))
+  await execution
+})

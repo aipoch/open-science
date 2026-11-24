@@ -5,6 +5,7 @@ import {
 } from '../../shared/image-task'
 import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
 import type { ArtifactVersionEvidence } from '../../shared/artifact-provenance'
+import { getProjectRecordRoot } from '../storage/data-location-identity'
 import { persistentContentReferences } from '../storage/prisma-content-references'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
@@ -13,6 +14,10 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { ArtifactVersion, PrismaClient } from '@prisma/client'
+import {
+  readCommittedArtifactRunVersions,
+  reconcileProjectRecordIndexes
+} from '../projects/record-indexes'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 
 import type {
@@ -34,6 +39,7 @@ import type {
 } from '../../shared/artifact-provenance'
 import {
   MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS,
+  type ArtifactFile,
   type ArtifactWriteEncoding,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
@@ -138,6 +144,7 @@ type ArtifactProvenanceRepositoryOptions = {
   resourceBudgets?: LocalResourceBudgetOverrides
   versionFileOperator?: VersionFileOperator & VersionFileRecovery
   managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
+  onHeadActivated?: (versions: ArtifactVersionFile[]) => Promise<void>
 }
 
 type ProjectableVersionFileRecord = Omit<PersistedVersionFileRecord, 'artifactRunId'> & {
@@ -544,6 +551,7 @@ class ArtifactProvenanceRepository {
     })
     this.messageFinalizer = new ArtifactProvenanceMessageFinalizer({
       getClient: options.getClient,
+      onHeadActivated: options.onHeadActivated,
       now: this.now,
       loadSession: options.loadSession,
       projectVersionFile: (version, projectId, appSessionId) =>
@@ -572,6 +580,7 @@ class ArtifactProvenanceRepository {
     })
     this.versionWriter = new ArtifactProvenanceVersionWriter({
       storageRoot: options.storageRoot,
+      resolveVersionPath: (key) => resolveStorageKey(options.storageRoot, key),
       getClient: options.getClient,
       compatibilityRepository: this.compatibilityRepository,
       createId: this.createId,
@@ -579,8 +588,14 @@ class ArtifactProvenanceRepository {
       durability: this.durability,
       resourceBudgets: options.resourceBudgets,
       writeBudgetOwner: this.writeBudgetOwner,
-      captureProducer: (request, createdAt, target, appGeneratedProducer) =>
-        this.producerCapture.captureProducer(request, createdAt, target, appGeneratedProducer),
+      captureProducer: (request, createdAt, target, appGeneratedProducer, projectFolderRoot) =>
+        this.producerCapture.captureProducer(
+          request,
+          createdAt,
+          target,
+          appGeneratedProducer,
+          projectFolderRoot
+        ),
       prepareVersionPersistence: (input) => this.producerCapture.prepareVersionPersistence(input),
       prepareLiteratureManifest: (request, context) =>
         this.literatureManifestOwner.prepare(request, context),
@@ -627,7 +642,11 @@ class ArtifactProvenanceRepository {
     const rows = await (
       await this.options.getClient()
     ).artifactVersion.findMany({
-      where: { id: { in: completed.map((task) => task.result!.versionId) }, state: 'finalized' },
+      where: {
+        id: { in: completed.map((task) => task.result!.versionId) },
+        state: 'finalized',
+        artifact: { projectId: { in: [...new Set(completed.map((task) => task.projectId))] } }
+      },
       select: {
         id: true,
         artifactId: true,
@@ -786,7 +805,7 @@ class ArtifactProvenanceRepository {
         !imageTaskEvidenceMatches(core.evidence, request.taskId, request.sourceVersionId)
       )
         throw new ImageTaskIntegrityError([request.taskId])
-      const version = await client.$transaction(async (tx) => {
+      const { version, activated } = await client.$transaction(async (tx) => {
         const row = await tx.artifactVersion.findFirst({
           where: {
             id: request.versionId,
@@ -813,15 +832,18 @@ class ArtifactProvenanceRepository {
           }
         })
         // Match conversation publication: newer results become current, but retries cannot roll back.
-        if (
+        const advancesHead =
           !row.artifact.currentVersion ||
           row.artifact.currentVersion.versionNumber < row.versionNumber
-        )
+        if (advancesHead)
           await tx.artifactLineage.update({
             where: { id: row.artifactId },
             data: { currentVersionId: row.id }
           })
-        return published
+        return {
+          version: published,
+          activated: advancesHead && row.managedVisibleAt === null
+        }
       })
       const pendingKey = storageKey(
         'artifacts',
@@ -851,11 +873,13 @@ class ArtifactProvenanceRepository {
           )
         }
       }
-      return this.toArtifactVersionFile(
+      const published = await this.toArtifactVersionFile(
         requireGeneratedArtifactVersion(version),
         request.projectId,
         request.appSessionId
       )
+      if (activated) await this.options.onHeadActivated?.([published]).catch(() => undefined)
+      return published
     })
   }
 
@@ -906,7 +930,10 @@ class ArtifactProvenanceRepository {
           (await (
             await this.options.getClient()
           ).artifactVersion.findUnique({
-            where: { writeOperationId: request.writeOperationId },
+            where: {
+              writeOperationId: request.writeOperationId,
+              artifact: { projectId: request.projectId }
+            },
             select: { id: true }
           }))
         ) {
@@ -944,6 +971,7 @@ class ArtifactProvenanceRepository {
             : []
         const workingPath = segments[0] === 'data' && !segments.includes('..')
         const relativeBaseDirs = [
+          ...(sourceScope.projectFolderRoot ? [sourceScope.projectFolderRoot] : []),
           ...(sourceScope.notebookDataDir ? [sourceScope.notebookDataDir] : []),
           ...(workingPath && sourceScope.notebookSessionRoot
             ? [sourceScope.notebookSessionRoot]
@@ -960,6 +988,7 @@ class ArtifactProvenanceRepository {
                 {
                   signal,
                   grantedImportRoots: sourceScope.grantedImportRoots,
+                  projectFolderRoot: sourceScope.projectFolderRoot,
                   maxBytes: Math.max(
                     0,
                     LOCAL_RESOURCE_BUDGETS.requestBytes -
@@ -987,6 +1016,7 @@ class ArtifactProvenanceRepository {
             allowedImportRoots: sourceScope.allowedImportRoots,
             grantedImportRoots: sourceScope.grantedImportRoots,
             relativeBaseDirs,
+            projectFolderRoot: sourceScope.projectFolderRoot,
             signal,
             // Host-generated images already passed the image service's 64 MiB byte check.
             maxInlineBytes:
@@ -999,7 +1029,10 @@ class ArtifactProvenanceRepository {
             preserveRecoveryState: async () => {
               const client = await this.options.getClient()
               const version = await client.artifactVersion.findUnique({
-                where: { writeOperationId: request.writeOperationId },
+                where: {
+                  writeOperationId: request.writeOperationId,
+                  artifact: { projectId: request.projectId }
+                },
                 select: { checksum: true }
               })
               return version !== null && version.checksum === replacementChecksum
@@ -1061,7 +1094,8 @@ class ArtifactProvenanceRepository {
                   resolveStorageKey(this.options.storageRoot, version.contentStorageKey)
                 ),
               signal,
-              app?.producer
+              app?.producer,
+              sourceScope.projectFolderRoot
             )
           }
         )
@@ -1176,6 +1210,7 @@ class ArtifactProvenanceRepository {
     const writeOperationId = assertSafeSegment(request.writeOperationId, 'write operation id')
     const normalizedFilename = normalizeFilename(request.filename)
     const client = await this.options.getClient()
+    await reconcileProjectRecordIndexes(client, [projectId])
     const existing = await client.artifactVersion.findUnique({
       where: { writeOperationId },
       include: { artifact: true }
@@ -1258,6 +1293,88 @@ class ArtifactProvenanceRepository {
     return Promise.all(
       versions.map((version) =>
         this.toArtifactVersionFile(requireAgentArtifactVersion(version), projectId, appSessionId)
+      )
+    )
+  }
+
+  async recoverLiveRunPublication(
+    scope: Omit<FinalizeArtifactVersionsRequest, 'artifactVersionIds' | 'messageId'> & {
+      artifactStorageSessionId: string
+    },
+    pendingFiles: readonly ArtifactFile[]
+  ): Promise<ArtifactVersionFile[] | undefined> {
+    const client = await this.options.getClient()
+    const versions = await readCommittedArtifactRunVersions(client, scope)
+    if (!versions) return undefined
+    if (!versions.length) return pendingFiles.length ? undefined : []
+    if (
+      versions.some(
+        (version) =>
+          version.state !== 'pending' ||
+          version.messageId !== null ||
+          version.managedVisibleAt !== null ||
+          version.rootFrameId !== scope.rootFrameId ||
+          version.agentFrameId !== scope.agentFrameId ||
+          version.messageBranchId !== scope.messageBranchId ||
+          version.runtimeSegmentId !== scope.runtimeSegmentId ||
+          version.promptMessageId !== scope.promptMessageId
+      )
+    )
+      return undefined
+
+    const byId = new Map(versions.map((version) => [version.id, version]))
+    const latestByArtifact = new Map<string, ArtifactVersion>()
+    for (const version of versions) {
+      const previous = latestByArtifact.get(version.artifactId)
+      if (!previous || previous.versionNumber < version.versionNumber)
+        latestByArtifact.set(version.artifactId, version)
+    }
+
+    const routed = new Set<string>()
+    for (const file of pendingFiles) {
+      const version = file.versionId && byId.get(file.versionId)
+      if (
+        !version ||
+        routed.has(version.id) ||
+        file.projectId !== scope.projectId ||
+        file.sessionId !== scope.artifactStorageSessionId ||
+        file.runId !== scope.artifactRunId ||
+        file.artifactId !== version.artifactId ||
+        file.versionNumber !== version.versionNumber ||
+        file.checksum !== version.checksum ||
+        file.size !== Number(version.sizeBytes) ||
+        normalizeFilename(file.name) !== normalizeFilename(version.filename)
+      )
+        return undefined
+
+      const key = storageKey(
+        'artifacts',
+        scope.projectId,
+        scope.artifactStorageSessionId,
+        PENDING_DIR,
+        scope.artifactRunId,
+        file.name
+      )
+      await assertRegularStoragePath(this.options.storageRoot, key)
+      const digest = await digestFileWithinBudget(
+        resolveStorageKey(this.options.storageRoot, key),
+        LOCAL_RESOURCE_BUDGETS.artifactFileBytes
+      )
+      if (digest.checksum !== version.checksum || digest.sizeBytes !== Number(version.sizeBytes))
+        return undefined
+      routed.add(version.id)
+    }
+
+    // A filename can represent multiple Versions in this run. The last one owns the current
+    // pending route, and the exact set in the marker comes from SQLite rather than that route.
+    if ([...latestByArtifact.values()].some((version) => !routed.has(version.id))) return undefined
+    return Promise.all(
+      versions.map((version) =>
+        this.toArtifactVersionFile(
+          requireAgentArtifactVersion(version),
+          scope.projectId,
+          scope.appSessionId
+        )
       )
     )
   }
@@ -1730,7 +1847,20 @@ class ArtifactProvenanceRepository {
   // graph; deleting the Project removes every SQLite authority row plus immutable managed bytes.
   async deleteProjectProvenance(projectIdValue: string): Promise<void> {
     const projectId = assertSafeSegment(projectIdValue, 'project id')
+    const retainedRecords = getProjectRecordRoot(this.options.storageRoot, projectId)
     const client = await this.options.getClient()
+    // A detached project's on-disk records still own sources used by other projects. Keep this
+    // reconstructible source index until those edges disappear; UI/provider state is separate.
+    if (
+      retainedRecords &&
+      (await client.artifactVersionInput.count({
+        where: {
+          sourceProjectId: projectId,
+          artifactVersion: { artifact: { projectId: { not: projectId } } }
+        }
+      }))
+    )
+      return
     const [artifactVersions, uploadVersions, versionWriteOperations, artifactOwners, uploadOwners] =
       await Promise.all([
         client.artifactVersion.findMany({
@@ -1795,7 +1925,7 @@ class ArtifactProvenanceRepository {
       }
       return { sizeBytes, checksum: entry.checksum }
     }
-    for (const entry of [...artifactVersions, ...uploadVersions]) {
+    for (const entry of [...(retainedRecords ? [] : artifactVersions), ...uploadVersions]) {
       const integrity = integrityFor(entry)
       const existing = immutableStorage.get(entry.contentStorageKey)
       if (
@@ -1811,6 +1941,7 @@ class ArtifactProvenanceRepository {
     }
 
     for (const operation of versionWriteOperations) {
+      if (retainedRecords && operation.source === 'artifact') continue
       const expectedIntegrity = integrityFor(operation)
       const versionIntegrity = immutableStorage.get(operation.contentStorageKey)
       if (versionIntegrity) {
@@ -1864,15 +1995,16 @@ class ArtifactProvenanceRepository {
 
     // Auxiliary provenance evidence and legacy compatibility files are not immutable Version
     // content. Remove both source roots before the database transaction so failure keeps authority.
-    await rm(resolveStorageKey(this.options.storageRoot, storageKey('artifacts', projectId)), {
-      recursive: true,
-      force: true
-    })
-    await rm(resolveStorageKey(this.options.storageRoot, storageKey('uploads', projectId)), {
-      recursive: true,
-      force: true
-    })
-
+    if (!retainedRecords) {
+      await rm(resolveStorageKey(this.options.storageRoot, storageKey('artifacts', projectId)), {
+        recursive: true,
+        force: true
+      })
+      await rm(resolveStorageKey(this.options.storageRoot, storageKey('uploads', projectId)), {
+        recursive: true,
+        force: true
+      })
+    }
     await client.$transaction(async (tx) => {
       await tx.artifactVersionInput.deleteMany({
         where: {
@@ -1915,7 +2047,9 @@ class ArtifactProvenanceRepository {
 
     // The registered storage keys remain retry authority after Version rows have been removed.
     // Scope the sweep to this Project's roots; shared content is retained by the reference checks.
-    const projectRoots = ['artifacts', 'uploads'].map((kind) => `${storageKey(kind, projectId)}/`)
+    const projectRoots = (retainedRecords ? ['uploads'] : ['artifacts', 'uploads']).map(
+      (kind) => `${storageKey(kind, projectId)}/`
+    )
     const projectBlobs = await client.contentBlob.findMany({
       where: {
         OR: projectRoots.map((root) => ({ storageKey: { startsWith: root } }))

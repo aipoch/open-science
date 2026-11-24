@@ -1,5 +1,15 @@
 import { configureTestElectronHost } from '../../../test/runtime-host'
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,10 +32,13 @@ import {
   readManagedWorkspaceOwnership,
   reconcileProvisionalManagedWorkspaces,
   removeManagedWorkspaceOwnership,
+  removeManagedWorkspaceDirectory,
+  planProvisionalManagedWorkspaceReconciliation,
   restoreManagedProjectWorkspacesActive,
   restoreManagedWorkspaceActive
 } from './managed-workspace-ownership'
 import { computeStorageUsageWithOwnership } from './usage-ownership'
+import type { ManagedWorkspacePath } from './workspace-location'
 
 const roots: string[] = []
 
@@ -188,6 +201,90 @@ describe('managed workspace ownership', () => {
       bytes: 0
     })
   })
+
+  it.each(['external', 'data-root-ancestor'])(
+    'preserves all bytes through every cleanup path for %s',
+    async (kind) => {
+      const parent = await mkdtemp(join(tmpdir(), 'managed-external-safety-'))
+      roots.push(parent)
+      const dataRoot = join(parent, 'app', 'data')
+      const cwd = kind === 'external' ? join(parent, 'research') : parent
+      await mkdir(join(dataRoot, 'workspaces'), { recursive: true })
+      await mkdir(join(cwd, 'nested'), { recursive: true })
+      await writeFile(join(cwd, 'raw.csv'), Buffer.from([0, 255, 1, 128, 10]))
+      await writeFile(join(cwd, 'nested', '研究.txt'), 'raw data\n未经修改\n')
+      initDataRoot(dataRoot)
+      const snapshot = async (directory: string): Promise<Record<string, Buffer>> => {
+        const result: Record<string, Buffer> = {}
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+          if (entry.isDirectory()) {
+            for (const [path, bytes] of Object.entries(await snapshot(join(directory, entry.name))))
+              result[join(entry.name, path)] = bytes
+          } else result[entry.name] = await readFile(join(directory, entry.name))
+        }
+        return result
+      }
+      const before = await snapshot(cwd)
+      const session: PersistedChatSession = {
+        id: 'external-session',
+        projectId: 'project-1',
+        title: 'External',
+        cwd,
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+      const assertUnchanged = async (): Promise<void> => {
+        expect(await snapshot(cwd)).toEqual(before)
+      }
+      expect(await markManagedWorkspaceRetained(session, dataRoot)).toBe(false)
+      await assertUnchanged()
+      await restoreManagedWorkspaceActive(session, dataRoot)
+      await assertUnchanged()
+      await markManagedProjectWorkspacesRetained(session.projectId, dataRoot)
+      await assertUnchanged()
+      await restoreManagedProjectWorkspacesActive(session.projectId, [cwd], dataRoot)
+      await assertUnchanged()
+      // Deliberately forge the brand to exercise the runtime boundary as well as the type boundary.
+      await removeManagedWorkspaceDirectory(cwd as ManagedWorkspacePath, dataRoot)
+      await assertUnchanged()
+      await removeManagedWorkspaceOwnership(cwd as ManagedWorkspacePath, dataRoot)
+      await assertUnchanged()
+      for (const apply of await planProvisionalManagedWorkspaceReconciliation(
+        [session],
+        100,
+        dataRoot
+      )) {
+        const remove = await apply()
+        await remove?.()
+      }
+      await assertUnchanged()
+      await reconcileProvisionalManagedWorkspaces([session], 100, dataRoot)
+      await assertUnchanged()
+      await createDeletionOwner(new Map([[session.id, session]])).deleteSession(
+        session.projectId,
+        session.id
+      )
+      await assertUnchanged()
+      await createDeletionOwner(new Map([[session.id, session]])).deleteProjectSessions(
+        session.projectId,
+        (_ids, operation) => operation(),
+        () => undefined
+      )
+      await assertUnchanged()
+      const workflow = createAcpCreateSessionWorkflow({
+        createSession: async () => {
+          throw new Error('Creation failed')
+        },
+        deleteSession: async () => undefined
+      })
+      await expect(workflow.create({ projectId: session.projectId, cwd })).rejects.toThrow(
+        'Creation failed'
+      )
+      await assertUnchanged()
+    }
+  )
 
   it('leaves an external Session directory unowned and untouched during Project deletion', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-external-data-'))
@@ -477,6 +574,111 @@ describe('managed workspace ownership', () => {
     })
   })
 
+  it('refuses reserved ownership spellings without changing any receipt bytes', async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), 'managed-reserved-metadata-'))
+    roots.push(dataRoot)
+    const directory = join(dataRoot, 'workspaces', '.ownership')
+    await mkdir(directory, { recursive: true })
+    const receipt = join(directory, 'receipt.json')
+    await writeFile(receipt, 'owned receipt bytes')
+    const capability = createManagedSessionWorkspaceCapability({
+      resolveRoot: () => dataRoot,
+      createId: () => '.OWNERSHIP'
+    })
+    await expect(capability.acquire({ projectId: 'project-1' })).rejects.toThrow(
+      /workspace identity/i
+    )
+    await removeManagedWorkspaceDirectory(
+      join(dataRoot, 'workspaces', '.OWNERSHIP') as ManagedWorkspacePath,
+      dataRoot
+    )
+    await expect(readFile(receipt, 'utf8')).resolves.toBe('owned receipt bytes')
+  })
+
+  it('does not treat a case-sensitive sibling as a managed workspace', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'managed-case-sensitive-parent-'))
+    roots.push(parent)
+    const dataRoot = join(parent, 'data')
+    const sibling = join(parent, 'DATA')
+    await mkdir(dataRoot)
+    await mkdir(sibling, { recursive: true })
+    // Default APFS/NTFS may alias these names; case-sensitive volumes must keep them separate.
+    if ((await realpath(dataRoot)) === (await realpath(sibling))) return
+    const cwd = join(sibling, 'workspaces', 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    await writeFile(join(cwd, 'sentinel'), 'external bytes')
+    await mkdir(join(dataRoot, 'workspaces'), { recursive: true })
+    await removeManagedWorkspaceDirectory(cwd as ManagedWorkspacePath, dataRoot)
+    await expect(readFile(join(cwd, 'sentinel'), 'utf8')).resolves.toBe('external bytes')
+  })
+
+  it('retains both original and external bytes when the data root is rebound during a lease', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'managed-lease-root-change-'))
+    roots.push(parent)
+    const dataRoot = join(parent, 'data')
+    const external = join(parent, 'external')
+    await mkdir(dataRoot)
+    await mkdir(join(external, 'workspaces', 'workspace-1'), { recursive: true })
+    const externalFile = join(external, 'workspaces', 'workspace-1', 'sentinel')
+    await writeFile(externalFile, 'external bytes')
+    const capability = createManagedSessionWorkspaceCapability({
+      resolveRoot: () => dataRoot,
+      createId: () => 'workspace-1'
+    })
+    const lease = await capability.acquire({ projectId: 'project-1' })
+    await writeFile(join(lease.cwd, 'original'), 'original bytes')
+    await rename(dataRoot, join(parent, 'saved-data'))
+    await symlink(external, dataRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    await expect(lease.commit('session-1')).rejects.toThrow(/root alias changed/i)
+    await lease.release()
+    await expect(readFile(externalFile, 'utf8')).resolves.toBe('external bytes')
+    await expect(
+      readFile(join(parent, 'saved-data', 'workspaces', 'workspace-1', 'original'), 'utf8')
+    ).resolves.toBe('original bytes')
+  })
+
+  it.each([
+    ['data-root', 'planned'],
+    ['ownership', 'planned'],
+    ['retired', 'planned'],
+    ['data-root', 'detached'],
+    ['ownership', 'detached'],
+    ['retired', 'detached']
+  ])('preserves external bytes when %s is rebound after cleanup is %s', async (target, phase) => {
+    const parent = await mkdtemp(join(tmpdir(), 'managed-cleanup-root-change-'))
+    roots.push(parent)
+    const dataRoot = join(parent, 'data')
+    const cwd = join(dataRoot, 'workspaces', 'workspace-1')
+    await mkdir(cwd, { recursive: true })
+    await writeFile(join(cwd, 'original'), 'original bytes')
+    await initializeManagedWorkspaceOwnership(cwd, 'project-1', 1, dataRoot)
+    const [apply] = await planProvisionalManagedWorkspaceReconciliation([], 100, dataRoot)
+    const remove = phase === 'detached' ? await apply() : undefined
+    const changedRoot =
+      target === 'data-root'
+        ? dataRoot
+        : target === 'ownership'
+          ? join(dataRoot, 'workspaces', '.ownership')
+          : join(dataRoot, 'workspaces', '.ownership', '.retired-workspaces')
+    const external = join(parent, 'external')
+    await mkdir(external)
+    if (target === 'ownership') await mkdir(join(external, '.retired-workspaces'))
+    await writeFile(join(external, 'sentinel'), 'external bytes')
+    const saved = join(parent, 'saved')
+    await rename(changedRoot, saved)
+    await symlink(external, changedRoot, process.platform === 'win32' ? 'junction' : 'dir')
+    await expect(phase === 'detached' ? remove!() : apply()).rejects.toThrow(/root alias changed/i)
+    await expect(readFile(join(external, 'sentinel'), 'utf8')).resolves.toBe('external bytes')
+    const originalCwd =
+      phase === 'planned'
+        ? target === 'data-root'
+          ? join(saved, 'workspaces', 'workspace-1')
+          : cwd
+        : undefined
+    if (originalCwd)
+      await expect(readFile(join(originalCwd, 'original'), 'utf8')).resolves.toBe('original bytes')
+  })
+
   it('does not remove an external directory through a symlinked workspaces root', async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), 'managed-workspace-allocation-root-'))
     const externalWorkspaces = await mkdtemp(
@@ -523,7 +725,9 @@ describe('managed workspace ownership', () => {
     ).rejects.toThrow(/ownership/i)
     await writeFile(join(externalOwnership, 'workspace-1.json'), 'external receipt')
 
-    await expect(removeManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toBeUndefined()
+    await expect(
+      removeManagedWorkspaceOwnership(cwd as ManagedWorkspacePath, dataRoot)
+    ).resolves.toBeUndefined()
     await expect(readdir(externalOwnership)).resolves.toEqual(['workspace-1.json'])
   })
 
@@ -546,7 +750,9 @@ describe('managed workspace ownership', () => {
     await mkdir(join(externalWorkspaces, '.ownership'))
     await writeFile(join(externalWorkspaces, '.ownership', 'workspace-1.json'), 'external receipt')
 
-    await expect(removeManagedWorkspaceOwnership(cwd, dataRoot)).resolves.toBeUndefined()
+    await expect(
+      removeManagedWorkspaceOwnership(cwd as ManagedWorkspacePath, dataRoot)
+    ).resolves.toBeUndefined()
     await expect(readdir(join(externalWorkspaces, '.ownership'))).resolves.toEqual([
       'workspace-1.json'
     ])

@@ -99,6 +99,99 @@ const registeredCommands = (): Array<{ name: string }> => {
   return commands
 }
 
+it('keeps bound folder reads and health checks on the desktop and local Web', async () => {
+  const deps = createDependencies()
+  const router = createApplicationCommandRouter()
+  registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+  const commands = dataContentApplicationCommands
+  const listing = { projectId: 'project-1', relativePath: '', limit: 100 }
+  const file = { projectId: 'project-1', relativePath: 'raw.csv' }
+  const health = { projectId: 'project-1' }
+  const preview = { source: 'project-folder' as const, projectId: 'project-1', path: 'raw.csv' }
+  for (const caller of [remoteCaller, createTaskCallerContext()]) {
+    await expect(
+      router.dispatcher.invoke(commands.projectListFolder, invocation([listing], caller))
+    ).rejects.toThrow('desktop app or local Web session')
+    await expect(
+      router.dispatcher.invoke(commands.projectReadFolderPreview, invocation([file], caller))
+    ).rejects.toThrow('desktop app or local Web session')
+    await expect(
+      router.dispatcher.invoke(commands.projectCheckFolder, invocation([health], caller))
+    ).rejects.toThrow('desktop app or local Web session')
+    await expect(
+      router.dispatcher.invoke(commands.previewResourceAcquire, invocation([preview], caller))
+    ).rejects.toThrow('desktop app or local Web session')
+  }
+  expect(deps.dependencies.withDataRootWrite).not.toHaveBeenCalled()
+  expect(deps.projects.listFolder).not.toHaveBeenCalled()
+  expect(deps.projects.readFolderPreview).not.toHaveBeenCalled()
+  expect(deps.projects.checkFolder).not.toHaveBeenCalled()
+  expect(deps.managedPreview.acquire).not.toHaveBeenCalled()
+
+  for (const caller of [electronCaller, callerContext]) {
+    await expect(
+      router.dispatcher.invoke(commands.projectListFolder, invocation([listing], caller))
+    ).resolves.toMatchObject({ entries: [] })
+    await expect(
+      router.dispatcher.invoke(commands.projectReadFolderPreview, invocation([file], caller))
+    ).resolves.toMatchObject({ content: 'data' })
+    await expect(
+      router.dispatcher.invoke(commands.projectCheckFolder, invocation([health], caller))
+    ).resolves.toBeNull()
+    await expect(
+      router.dispatcher.invoke(commands.previewResourceAcquire, invocation([preview], caller))
+    ).resolves.toMatchObject({ id: 'resource-1' })
+  }
+  await expect(
+    router.dispatcher.invoke(
+      commands.projectListFolder,
+      invocation([{ ...listing, rootPath: '/unrelated' }], electronCaller)
+    )
+  ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
+})
+
+it('permits folder selection only by local humans while retaining managed Task and remote project creation', async () => {
+  const deps = createDependencies()
+  const router = createApplicationCommandRouter()
+  registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+  const bound = { name: 'Folder project', rootPath: '/project-folder' }
+  for (const caller of [callerContext, remoteCaller, createTaskCallerContext()]) {
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectCreate,
+        invocation([bound], caller)
+      )
+    ).rejects.toMatchObject({ code: 'command-unavailable' })
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectValidateFolder,
+        invocation([{ path: '/project-folder' }], caller)
+      )
+    ).rejects.toMatchObject({ code: 'command-unavailable' })
+  }
+  expect(deps.projects.create).not.toHaveBeenCalled()
+  expect(deps.projects.validateFolder).not.toHaveBeenCalled()
+  await router.dispatcher.invoke(
+    dataContentApplicationCommands.projectCreate,
+    invocation([bound], electronCaller)
+  )
+  expect(deps.projects.create).toHaveBeenCalledWith(bound)
+  await expect(
+    router.dispatcher.invoke(
+      dataContentApplicationCommands.projectValidateFolder,
+      invocation([{ path: '/project-folder' }], electronCaller)
+    )
+  ).resolves.toEqual({ ok: true, path: '/project-folder' })
+  for (const caller of [remoteCaller, createTaskCallerContext()]) {
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectCreate,
+        invocation([{ name: 'Managed' }], caller)
+      )
+    ).resolves.toMatchObject({ id: 'project-1' })
+  }
+})
+
 it('routes research video export to the connected desktop document save dialog', async () => {
   const deps = createDependencies()
   const content = Buffer.from('<meta name="open-science-research-video" content="1">')
@@ -203,6 +296,7 @@ const createDependencies = () => {
   }
   const events = { publish: vi.fn() }
   const managedFileVersions = {
+    retryOutputDelivery: vi.fn(async () => ({ ok: false })),
     inspect: vi.fn(async () => ({ ok: false })),
     saveTextEdit: vi.fn(async () => ({ ok: false })),
     saveBinaryEdit: vi.fn(async () => ({ ok: false })),
@@ -245,6 +339,21 @@ const createDependencies = () => {
     updatedAt: 1
   }
   const projects = {
+    listFolder: vi.fn(async () => ({
+      path: '/project-folder',
+      relativePath: '',
+      totalCount: 0,
+      entries: []
+    })),
+    readFolderPreview: vi.fn(async () => ({
+      content: 'data',
+      encoding: 'utf8' as const,
+      size: 4,
+      truncated: false
+    })),
+    checkFolder: vi.fn(async () => null),
+    locateFolder: vi.fn(async () => project),
+    validateFolder: vi.fn(async () => ({ ok: true as const, path: '/project-folder' })),
     optimizePrompt: vi.fn(async () => ({ text: 'Improved' })),
     cancelPromptOptimization: vi.fn(async () => undefined),
     recordOptimizationEvent: vi.fn(async () => undefined),
@@ -439,6 +548,7 @@ const WRAPPED_COMMAND_KEYS = [
   'lifecycleClientId',
   'runtimeWriterClaim',
   'projectCreate',
+  'projectLocateFolder',
   'projectDelete',
   'projectUpdate',
   'projectUpdateSessionDefaults',
@@ -735,6 +845,12 @@ describe('Data and content application commands', () => {
         'project-files:repair-index',
         'project-files:resolve-file',
         'project-files:search-artifacts',
+        'projects:list-folder',
+        'projects:read-folder-preview',
+        'projects:check-folder',
+        'projects:locate-folder',
+        'projects:inspect-dropped-folder',
+        'projects:validate-folder',
         'projects:optimize-prompt',
         'projects:cancel-prompt-optimization',
         'projects:record-optimization-event',
@@ -800,6 +916,7 @@ describe('Data and content application commands', () => {
         'uploads:stage-local-file',
         'uploads:stage-local-path',
         'uploads:transfer-status',
+        'managed-file-versions:retry-output-delivery',
         'managed-file-versions:inspect',
         'managed-file-versions:save-text-edit',
         'managed-file-versions:save-binary-edit',
@@ -1060,6 +1177,11 @@ describe('Data and content application commands', () => {
         passInvocation: true
       },
       {
+        key: 'managedFileRetryOutputDelivery',
+        args: [request('retry-output-delivery')],
+        owner: deps.managedFileVersions.retryOutputDelivery
+      },
+      {
         key: 'managedFileInspect',
         args: [request('inspect')],
         owner: deps.managedFileVersions.inspect
@@ -1235,6 +1357,16 @@ describe('Data and content application commands', () => {
       { key: 'projectGet', args: ['project-1'], owner: deps.projects.get },
       { key: 'projectList', args: [], owner: deps.projects.list },
       {
+        key: 'projectListFolder',
+        args: [{ projectId: 'project-1', relativePath: '', limit: 100 }],
+        owner: deps.projects.listFolder
+      },
+      {
+        key: 'projectReadFolderPreview',
+        args: [{ projectId: 'project-1', relativePath: 'raw.csv' }],
+        owner: deps.projects.readFolderPreview
+      },
+      {
         key: 'projectListDeletionCleanup',
         args: [],
         owner: deps.projects.listDeletionCleanup
@@ -1243,6 +1375,21 @@ describe('Data and content application commands', () => {
         key: 'projectRetryDeletionCleanup',
         args: [],
         owner: deps.projects.retryDeletionCleanup
+      },
+      {
+        key: 'projectCheckFolder',
+        args: [{ projectId: 'project-1' }],
+        owner: deps.projects.checkFolder
+      },
+      {
+        key: 'projectInspectDroppedFolder',
+        args: [{ path: '/project-folder' }],
+        owner: deps.projects.validateFolder
+      },
+      {
+        key: 'projectValidateFolder',
+        args: [{ path: '/project-folder' }],
+        owner: deps.projects.validateFolder
       },
       {
         key: 'projectUpdateArchive',
@@ -1328,7 +1475,13 @@ describe('Data and content application commands', () => {
         router,
         testCase.key,
         testCase.args,
-        testCase.key === 'sessionOpenRecoveryFolder' ? electronCaller : callerContext
+        [
+          'sessionOpenRecoveryFolder',
+          'projectInspectDroppedFolder',
+          'projectValidateFolder'
+        ].includes(testCase.key)
+          ? electronCaller
+          : callerContext
       )
       await dispatched.result
       const expectedArgs =
@@ -3001,4 +3154,30 @@ it('validates recovery-file deletion and holds the data-root lease for the mutat
     ).rejects.toThrow()
   }
   expect(deps.sessions.deleteRecoveryFile).toHaveBeenCalledOnce()
+})
+
+it('rejects forged browser and Task folder relocation while accepting desktop recovery', async () => {
+  const deps = createDependencies()
+  const router = createApplicationCommandRouter()
+  registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+  const request = {
+    projectId: 'project-1',
+    path: '/new-location',
+    expectedRootPath: '/missing-location'
+  }
+  for (const caller of [callerContext, remoteCaller, createTaskCallerContext()]) {
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.projectLocateFolder,
+        invocation([request], caller)
+      )
+    ).rejects.toMatchObject({ code: 'command-unavailable' })
+  }
+  expect(deps.projects.locateFolder).not.toHaveBeenCalled()
+  await expect(
+    router.dispatcher.invoke(
+      dataContentApplicationCommands.projectLocateFolder,
+      invocation([request], electronCaller)
+    )
+  ).resolves.toMatchObject({ id: 'project-1' })
 })

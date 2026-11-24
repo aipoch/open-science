@@ -1,3 +1,5 @@
+import { artifactOutputDeliveryMigration } from './migrations/0062-artifact-output-delivery'
+import { projectFolderMigration } from './migrations/0061-project-folder'
 import { sessionSchedulesMigration } from './migrations/0058-session-schedules'
 import {
   imageModelsMigration,
@@ -1083,6 +1085,26 @@ const MIGRATION_MANIFEST = [
       imageModelsMigration.statements,
       imageModelsMigration.verifiers,
       imageModelsMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...projectFolderMigration,
+    checksum: checksumMigrationPayload(
+      projectFolderMigration.id,
+      projectFolderMigration.statements,
+      projectFolderMigration.verifiers
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...artifactOutputDeliveryMigration,
+    checksum: checksumMigrationPayload(
+      artifactOutputDeliveryMigration.id,
+      artifactOutputDeliveryMigration.statements,
+      artifactOutputDeliveryMigration.verifiers
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

@@ -44,7 +44,7 @@ import {
   removePendingPointer,
   type PendingFilm
 } from './checkpoint'
-import { stageResearchVideoSessionImages } from './session-images'
+import { stageResearchVideoSessionImages, type ResolveFilmArtifactPath } from './session-images'
 import { stageFilmSessionApp } from './session-app'
 import { operationReplaySource } from './replay-source'
 import { waitForFilmStep } from './wait'
@@ -126,6 +126,7 @@ export function createResearchVideoPresentationOwner(options: {
   writeScreenplay: ResearchFilmAuthor['writeScreenplay']
   reviewScript?: ResearchFilmAuthor['reviewScript']
   confirmSessionApp?: Parameters<typeof stageFilmSessionApp>[6]
+  resolveArtifactPath?: ResolveFilmArtifactPath
   writeAnimation?: ResearchFilmAuthor['writeAnimation']
   writeReplay?: ResearchFilmAuthor['writeReplay']
   loadReplayRecords?: (
@@ -253,7 +254,9 @@ export function createResearchVideoPresentationOwner(options: {
           session!,
           options.dataRoot(),
           undefined,
-          signal
+          signal,
+          undefined,
+          options.resolveArtifactPath
         )
         signal.throwIfAborted()
         await options.checkReadiness?.(signal)
@@ -548,7 +551,8 @@ export function createResearchVideoPresentationOwner(options: {
           options.dataRoot(),
           undefined,
           preparation,
-          checksums
+          checksums,
+          options.resolveArtifactPath
         )
         preparation.throwIfAborted()
         measure('readiness')
@@ -746,7 +750,8 @@ export function createResearchVideoPresentationOwner(options: {
             options.dataRoot(),
             join(job!, 'files'),
             signal,
-            stagedChecksums
+            stagedChecksums,
+            options.resolveArtifactPath
           )
         )
         if (JSON.stringify(checksums) !== JSON.stringify(stagedChecksums))
@@ -764,7 +769,8 @@ export function createResearchVideoPresentationOwner(options: {
             job!,
             checkpoint,
             signal,
-            options.confirmSessionApp
+            options.confirmSessionApp,
+            options.resolveArtifactPath
           )
         await diskStep(() =>
           writeDurableJsonFile(join(job!, 'session.json'), JSON.stringify(source))

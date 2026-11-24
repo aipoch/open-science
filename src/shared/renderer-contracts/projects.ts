@@ -1,3 +1,9 @@
+import type { ArtifactPreviewResult } from '../artifacts'
+import type {
+  ListProjectFolderRequest,
+  ProjectFolderListing,
+  ReadProjectFolderPreviewRequest
+} from '../project-folder-files'
 import type {
   CancelPromptOptimizationRequest,
   OptimizePromptRequest,
@@ -19,10 +25,12 @@ import type { ProjectDeletedEvent } from '../lifecycle-events'
 
 import type {
   CreateProjectRequest,
+  LocateProjectFolderRequest,
   DeleteProjectRequest,
   Project,
   ProjectDeletionCleanup,
   ProjectDeletionOutcome,
+  ProjectFolderValidationResult,
   UpdateProjectArchiveRequest,
   UpdateProjectRequest
 } from '../projects'
@@ -51,7 +59,9 @@ import type {
 
 import {
   callable,
+  ELECTRON,
   WEB,
+  LOCAL,
   RUNTIME_VALIDATED,
   type AcpListener,
   type RemoveListener,
@@ -59,6 +69,31 @@ import {
 } from './definition'
 
 export const projectsCreateContracts = {
+  'projects.listFolder': callable<
+    (request: ListProjectFolderRequest) => Promise<ProjectFolderListing>
+  >()('projects', ['projects:list-folder', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'projects.readFolderPreview': callable<
+    (request: ReadProjectFolderPreviewRequest) => Promise<ArtifactPreviewResult>
+  >()('projects', ['projects:read-folder-preview', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'projects.checkFolder': callable<
+    (request: { projectId: string }) => Promise<ProjectFolderValidationResult | null>
+  >()('projects', ['projects:check-folder', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'projects.locateFolder': callable<(request: LocateProjectFolderRequest) => Promise<Project>>()(
+    'projects',
+    ['projects:locate-folder', LOCAL, undefined, undefined, RUNTIME_VALIDATED]
+  ),
+  'projects.inspectDroppedFolder': callable<
+    (file: File) => Promise<ProjectFolderValidationResult>
+  >()('projects', [
+    'projects:inspect-dropped-folder',
+    ELECTRON,
+    'native-folder-validation-request',
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'projects.validateFolder': callable<
+    (request: { path: string }) => Promise<ProjectFolderValidationResult>
+  >()('projects', ['projects:validate-folder', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'projects.optimizePrompt': callable<
     (request: OptimizePromptRequest) => Promise<OptimizePromptResult>
   >()('projects', ['projects:optimize-prompt', WEB, undefined, undefined, RUNTIME_VALIDATED]),

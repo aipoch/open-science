@@ -53,6 +53,16 @@ type ReviewClient = Pick<
 
 // Resolves the Prisma client on demand so a failed initialization is not held forever (see projects/repository.ts).
 type ReviewClientProvider = () => Promise<ReviewClient>
+type ReviewSummaryClient = {
+  [Model in 'review' | 'finding' | 'reviewFindingDisposition']: Pick<
+    ReviewClient[Model],
+    'findMany'
+  >
+}
+type ReadCommittedReviewProjection = <Result>(
+  client: ReviewSummaryClient,
+  read: (projection: ReviewSummaryClient) => Promise<Result>
+) => Promise<Result>
 
 type ReviewRepositoryOptions = {
   snapshotStorageRoot?: string
@@ -267,10 +277,12 @@ class ReviewRepository {
     private readonly options: ReviewRepositoryOptions = {}
   ) {}
 
-  async recoverInterruptedReviews(): Promise<number> {
+  async recoverInterruptedReviews(projectId?: string): Promise<number> {
     const client = await this.getClient()
+    const projectScope = projectId === undefined ? {} : { projectId }
     const interruptedFixLoops = await client.review.findMany({
       where: {
+        ...projectScope,
         lifecycle: 'running',
         outcome: null,
         findings: { some: { status: { in: ['warn', 'fail'] } } }
@@ -321,6 +333,7 @@ class ReviewRepository {
     const interruptedAssessmentCount = await client.$transaction(async (tx) => {
       const interrupted = await tx.review.findMany({
         where: {
+          ...projectScope,
           lifecycle: 'running',
           outcome: null,
           findings: { none: { status: { in: ['warn', 'fail'] } } }
@@ -750,6 +763,27 @@ class ReviewRepository {
     sessionId: string
   ): Promise<ReviewWithChecks[]> {
     const client = await this.getClient()
+    return this.readReviewSummaries(client, projectId, sessionId)
+  }
+
+  async getCommittedReviewSummariesForProjectSession(
+    projectId: string,
+    sessionId: string,
+    readCommittedProjection: ReadCommittedReviewProjection
+  ): Promise<ReviewWithChecks[]> {
+    return readCommittedProjection(await this.getClient(), (projection) =>
+      this.readReviewSummaries(projection, projectId, sessionId, { retainRunning: true })
+    )
+  }
+
+  private async readReviewSummaries(
+    client: ReviewSummaryClient,
+    projectId: string,
+    sessionId: string,
+    options: { retainRunning?: boolean } = {}
+  ): Promise<ReviewWithChecks[]> {
+    if (![projectId, sessionId].every((id) => typeof id === 'string' && id.length > 0))
+      throw new Error('Review history identity is required.')
     const rows = await client.review.findMany({
       where: { projectId, sessionId },
       orderBy: { createdAt: 'desc' },
@@ -758,12 +792,16 @@ class ReviewRepository {
 
     const projections = await loadReviewSubmissionProjections(
       client,
-      rows.map((row) => row.id)
+      rows.map((row) => row.id),
+      { projectId, sessionId }
     )
     return rows.map((row) => {
       const { checks, submittedChecks } = projections.get(row.id)!
       return {
         ...toReviewSummary(row),
+        // Even if the committed evidence scope is unreadable, its running lifecycle is evidence
+        // that the conversation must wait for the Review owner.
+        ...(options.retainRunning && row.lifecycle === 'running' ? { lifecycle: 'running' } : {}),
         checks,
         submittedChecks,
         // Legacy: expose findings as alias for checks (same data).
@@ -854,6 +892,8 @@ class ReviewRepository {
   async incrementReflagCount(reviewId: string, findingId: string): Promise<void> {
     const client = await this.getClient()
     await client.$transaction(async (tx) => {
+      // Read the owning Review before raw SQL so any checkpoint replay happens before the mutation.
+      await touchReview(tx, reviewId)
       const updated = await tx.$executeRaw`
         UPDATE "Finding"
         SET "reflagCount" = "reflagCount" + 1
@@ -862,7 +902,6 @@ class ReviewRepository {
       if (updated !== 1) {
         throw new Error(`Finding ${findingId} does not belong to review ${reviewId}.`)
       }
-      await touchReview(tx, reviewId)
     })
   }
 

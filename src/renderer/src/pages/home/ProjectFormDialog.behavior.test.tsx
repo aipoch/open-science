@@ -17,12 +17,12 @@ const project: Project = {
   updatedAt: 1
 }
 
-const Harness = (): React.JSX.Element => {
+const Harness = ({ editingProject = project }: { editingProject?: Project }): React.JSX.Element => {
   const form = useProjectFormDialog()
   return (
     <>
       <button onClick={form.openCreateDialog}>Create fixture</button>
-      <button onClick={() => form.openEditDialog(project)}>Edit fixture</button>
+      <button onClick={() => form.openEditDialog(editingProject)}>Edit fixture</button>
       <ProjectFormDialog {...form.dialogProps} />
     </>
   )

@@ -9,13 +9,15 @@
     "src/main/local-fs/windows-drive-listing.ts",
     "src/main/local-fs/notebook-folder-access.integration.test.ts",
     "src/main/local-fs/authorized-directories.ts",
-    "src/main/local-fs/authorized-directories.test.ts"
+    "src/main/local-fs/authorized-directories.test.ts",
+    "src/main/local-fs/directory-validation.ts"
   ],
   "interfacePaths": [
     "src/main/local-fs/granted-roots-repository.ts",
     "src/main/local-fs/ipc.ts",
     "src/main/local-fs/service.ts",
-    "src/main/local-fs/authorized-directories.ts"
+    "src/main/local-fs/authorized-directories.ts",
+    "src/main/local-fs/directory-validation.ts"
   ],
   "consumerModules": [],
   "testFiles": {

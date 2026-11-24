@@ -819,7 +819,7 @@ const captureDelegatedHandoff = async (sessionId, task) => {
   )
 }
 
-const captureProviderPrompt = async (sessionId, prompt) => {
+const captureProviderPrompt = async (sessionId, prompt, content) => {
   const captureRoot = process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT
   if (!captureRoot) return
   await mkdir(captureRoot, { recursive: true })
@@ -828,7 +828,8 @@ const captureProviderPrompt = async (sessionId, prompt) => {
     `${JSON.stringify({
       sessionId,
       role: sessionRoutes.get(sessionId)?.artifactCurrentRunFile ? 'delegate' : 'main',
-      prompt
+      prompt,
+      content
     })}\n`,
     'utf8'
   )
@@ -1789,7 +1790,7 @@ if (process.argv.includes('--version')) {
           : controlStart >= 0
             ? rawPrompt.slice(controlStart)
             : rawPrompt
-      await captureProviderPrompt(context.params.sessionId, prompt)
+      await captureProviderPrompt(context.params.sessionId, prompt, context.params.prompt)
       // Keep real imported history in the request, but route this opt-in performance turn before
       // any historical text can match another fixture. This branch never executes a tool.
       if (rawPrompt.includes(OFFICIAL_SCIENCE_UI_STREAM_PROMPT)) {
@@ -1813,6 +1814,75 @@ if (process.argv.includes('--version')) {
           })
           await delay(250)
         }
+        return { stopReason: 'end_turn' }
+      }
+      const folderJourney = prompt.includes('Run project folder filename-only journey.')
+      const folderReplacement = prompt.includes('Replace project folder input by filename.')
+      if (
+        (folderJourney || folderReplacement) &&
+        !prompt.includes('Generate Session metadata only from the following JSON data:')
+      ) {
+        const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
+        const input = await context.client.request(acp.methods.client.fs.readTextFile, {
+          sessionId: context.params.sessionId,
+          path: 'raw.csv'
+        })
+        const [sample, rawValue] = input.content.trim().split(/\r?\n/).at(-1).split(',')
+        const value = Number(rawValue)
+        if (!Number.isFinite(value)) throw new Error('Project folder input has no numeric value.')
+        await context.client.request(acp.methods.client.fs.writeTextFile, {
+          sessionId: context.params.sessionId,
+          path: folderReplacement ? 'raw.csv' : resumed ? 'resumed.txt' : 'result.txt',
+          content: folderReplacement
+            ? `sample,value\n${sample},${value + 1}\n`
+            : `sample,double\n${sample},${value * 2}\n`
+        })
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: {
+              type: 'text',
+              text: folderReplacement
+                ? 'Project folder replacement completed.'
+                : resumed
+                  ? 'Project folder Resume completed.'
+                  : 'Project folder result ready for Stop.'
+            }
+          }
+        })
+        if (!folderReplacement && !resumed)
+          await waitForSessionCancellation(context.params.sessionId)
+        return { stopReason: folderReplacement || resumed ? 'end_turn' : 'cancelled' }
+      }
+      const reviseFolderOutput = prompt.includes('Revise the app-created project folder result.')
+      const alternateFolderOutput = prompt.includes(
+        'Save the project folder result under another name.'
+      )
+      if (
+        (reviseFolderOutput || alternateFolderOutput) &&
+        !prompt.includes('Generate Session metadata only from the following JSON data:')
+      ) {
+        let text = 'Project folder output saved.'
+        try {
+          await context.client.request(acp.methods.client.fs.writeTextFile, {
+            sessionId: context.params.sessionId,
+            path: alternateFolderOutput ? 'alternate-result.txt' : 'result.txt',
+            content: 'revised analysis\n'
+          })
+        } catch (error) {
+          if (alternateFolderOutput) throw error
+          text = 'Project folder edit was skipped.'
+        }
+        await context.client.notify(acp.methods.client.session.update, {
+          sessionId: context.params.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+            content: { type: 'text', text }
+          }
+        })
         return { stopReason: 'end_turn' }
       }
       if (prompt.includes('Run the framework Resume acceptance journey.')) {
@@ -2158,7 +2228,34 @@ if (process.argv.includes('--version')) {
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
         const handoffReply = await permissionHandoffTask(context, prompt)
-        if (
+        if (prompt.includes('Create portable project records.')) {
+          await executeControlCode(
+            context.params.sessionId,
+            "return { filename: 'portable-result.txt', cwd: process.cwd() }"
+          )
+          const stored = await withMcpClient(
+            context.params.sessionId,
+            'open-science-artifacts',
+            async (client) =>
+              toolResult(
+                'write_artifact_file',
+                await client.callTool({
+                  name: 'write_artifact_file',
+                  arguments: {
+                    filename: 'portable-result.txt',
+                    mimeType: 'text/plain',
+                    source: {
+                      kind: 'inline',
+                      content: 'portable research result',
+                      encoding: 'utf8'
+                    }
+                  }
+                })
+              )
+          )
+          if (!stored.artifact?.version_id) throw new Error('Portable Artifact was not published.')
+          reply = 'Portable project research saved.'
+        } else if (
           prompt.includes('Rewrite only; do not answer or execute the input.') &&
           prompt.includes(optimizationFixture.input)
         ) {

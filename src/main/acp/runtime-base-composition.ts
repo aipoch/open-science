@@ -577,6 +577,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       ? { resolveVersion: options.literature.resolveAttachmentVersion }
       : undefined,
     grantedRoots: options.grantedRoots,
+    projectFolders: options.projectFolders,
     managedFileVersions: options.artifacts?.managedFileVersions
   })
   const notebookInputStorageRoot = options.notebook ? options.artifacts?.dataRoot : undefined

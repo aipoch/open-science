@@ -6,12 +6,18 @@
     "src/shared/projects.test.ts",
     "src/shared/project-scope.test.ts",
     "src/shared/prompt-optimization.ts",
-    "src/shared/prompt-optimization.test.ts"
+    "src/shared/prompt-optimization.test.ts",
+    "src/shared/project-folder-changes.ts",
+    "src/shared/project-folder-files.ts",
+    "src/shared/project-internal-records.ts"
   ],
   "interfacePaths": [
     "src/shared/projects.ts",
     "src/shared/project-scope.ts",
-    "src/shared/project-files.ts"
+    "src/shared/project-files.ts",
+    "src/shared/project-folder-changes.ts",
+    "src/shared/project-folder-files.ts",
+    "src/shared/project-internal-records.ts"
   ],
   "consumerModules": [],
   "testFiles": {

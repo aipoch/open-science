@@ -53,6 +53,7 @@ type ArtifactFinalizationProofVersion = PersistedVersionFileRecord & {
 }
 
 type ArtifactProvenanceMessageFinalizerOptions = {
+  onHeadActivated?: (versions: ArtifactVersionFile[]) => Promise<void>
   getClient: () => Promise<PrismaClient>
   now: () => Date
   loadSession?: (
@@ -461,6 +462,7 @@ export class ArtifactProvenanceMessageFinalizer {
     const ancestry = validateDurableMessageOwnership(durableSession, request)
     const normalizedRequest = normalizeArtifactFinalizationProofRequest({ ...request, ...ancestry })
     const client = await this.options.getClient()
+    const newlyVisible = new Set<string>()
     const versions = await runFinalizationTransaction(client, async (transaction) => {
       const matching = await loadArtifactFinalizationProofVersions(transaction, normalizedRequest)
       validateArtifactFinalizationProof(matching, normalizedRequest)
@@ -470,6 +472,7 @@ export class ArtifactProvenanceMessageFinalizer {
           'Artifact Versions must be finalized before their visible head can advance.'
         )
       }
+      for (const version of matching) if (!version.managedVisibleAt) newlyVisible.add(version.id)
       const publishedAt = this.options.now()
       await transaction.artifactVersion.updateMany({
         where: { id: { in: matching.map((version) => version.id) }, managedVisibleAt: null },
@@ -486,7 +489,7 @@ export class ArtifactProvenanceMessageFinalizer {
         managedVisibleAt: version.managedVisibleAt ?? publishedAt
       }))
     })
-    return Promise.all(
+    const projected = await Promise.all(
       versions.map((version) =>
         this.options.projectVersionFile(
           version,
@@ -495,6 +498,14 @@ export class ArtifactProvenanceMessageFinalizer {
         )
       )
     )
+    // Recovery uses this same activation owner. Replaying already-visible history never exports
+    // again; an interrupted first delivery remains a read-only pending status until explicit retry.
+    if (newlyVisible.size) {
+      await this.options
+        .onHeadActivated?.(projected.filter((version) => newlyVisible.has(version.versionId)))
+        .catch(() => undefined)
+    }
+    return projected
   }
 
   private async finalizeVerifiedRun(

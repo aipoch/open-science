@@ -1,7 +1,8 @@
+import { provenanceStorageRoot, resolveStorageKey } from '../artifacts/provenance-storage'
 import { createHash, randomUUID } from 'node:crypto'
 import { type BigIntStats, createReadStream } from 'node:fs'
 import { copyFile, link, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 import { recoverAnchoredRemoval, removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 
@@ -75,22 +76,7 @@ class ContentOpenError extends Error {
   }
 }
 
-const resolveContentStorageKey = (storageRoot: string, storageKey: string): string => {
-  if (!storageKey || isAbsolute(storageKey) || storageKey.includes('\\')) {
-    throw new Error('Invalid content storage key.')
-  }
-  const segments = storageKey.split('/')
-  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
-    throw new Error('Invalid content storage key.')
-  }
-  const root = resolve(storageRoot)
-  const candidate = resolve(root, ...segments)
-  const relativePath = relative(root, candidate)
-  if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`)) {
-    throw new Error('Invalid content storage key.')
-  }
-  return candidate
-}
+const resolveContentStorageKey = resolveStorageKey
 
 const sha256File = async (path: string): Promise<string> => {
   const hash = createHash('sha256')
@@ -648,6 +634,12 @@ class ContentRepository {
     const claimed = await client.$transaction(async (transaction) => {
       const current = await transaction.contentBlob.findUnique({ where: { id: contentId } })
       if (!current || (createdBefore && current.createdAt >= createdBefore)) return undefined
+      // Project-owned record directories remain authoritative after their app index is removed.
+      if (
+        provenanceStorageRoot(this.options.storageRoot, current.storageKey) !==
+        this.options.storageRoot
+      )
+        return undefined
       if (await this.options.references.hasReferences(transaction, contentId)) return undefined
       await transaction.contentBlob.update({
         where: { id: contentId },
@@ -656,7 +648,7 @@ class ContentRepository {
       return current
     })
     if (!claimed) return false
-    const root = resolve(this.options.storageRoot)
+    const root = resolve(provenanceStorageRoot(this.options.storageRoot, claimed.storageKey))
     const path = resolveContentStorageKey(root, claimed.storageKey)
     const parentPath = dirname(path)
     // lstat rejects pre-existing links; the native operation opens every directory without

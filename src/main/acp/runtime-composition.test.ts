@@ -35,6 +35,22 @@ const message = (
 })
 
 describe('createProjectAgentContextResolver', () => {
+  it('preflights the bound folder on every provider setup without appending its path to Agent Context', async () => {
+    const healthy = vi.fn(async () => '/private/project-data')
+    const resolver = createProjectAgentContextResolver({
+      get: vi.fn(async () => ({ agentContext: 'Research policy' })),
+      assertProjectFolderHealthy: healthy
+    })
+    await expect(resolver('project-1')).resolves.toBe('Research policy')
+    await expect(resolver('project-1')).resolves.toBe('Research policy')
+    expect(healthy).toHaveBeenCalledTimes(2)
+    const missing = Object.assign(new Error('missing folder details'), {
+      code: 'project-folder-not-found'
+    })
+    healthy.mockRejectedValueOnce(missing)
+    await expect(resolver('project-1')).rejects.toBe(missing)
+  })
+
   it('returns the trimmed Agent Context for a known project', async () => {
     const get = vi.fn(async () => ({ agentContext: '  Always cite DOIs.\n' }))
     const resolver = createProjectAgentContextResolver({ get })

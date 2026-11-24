@@ -1,3 +1,6 @@
+import { withProjectRecordIndexes } from './record-indexes'
+import { resolveDataRoot } from '../storage-root'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -54,7 +57,10 @@ const getProjectDbClient = (
         throw migrationService?.classifyDatabaseFailure(error, 'open') ?? error
       }
 
-      return client
+      return withProjectRecordIndexes(
+        client,
+        runtimeMetadataIfConfigured() ? resolveDataRoot() : configRoot
+      )
     })()
 
     clientPromise = pending

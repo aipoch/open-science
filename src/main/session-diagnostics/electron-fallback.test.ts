@@ -6,7 +6,10 @@ const { createSessionDiagnosticsDesktop } = vi.hoisted(() => ({
 }))
 
 vi.mock('./desktop', () => ({ createSessionDiagnosticsDesktop }))
-vi.mock('@aipoch/diagnostics/node', () => ({ getLogFilePath: () => '/logs/main.log' }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
+  getLogFilePath: () => '/logs/main.log'
+}))
 vi.mock('../runtime-metadata', () => ({
   runtimeMetadata: () => ({
     version: 'test',

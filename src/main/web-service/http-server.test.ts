@@ -3348,6 +3348,9 @@ describe('startWebHttpServer', () => {
       'local-fs:open-path',
       'local-fs:read-preview',
       'local-fs:reveal',
+      'projects:list-folder',
+      'projects:read-folder-preview',
+      'projects:check-folder',
       'uploads:stage-local-path'
     ]) {
       expect(REMOTE_LOCAL_ONLY_RPC_CHANNELS, channel).toContain(channel)
@@ -3466,10 +3469,14 @@ describe('startWebHttpServer', () => {
       'notebook:reference',
       'notebook:resource-release',
       'notebook:inspect-namespace',
+      'notebook:inspect-project-folder-change',
+      'notebook:list-project-folder-changes',
+      'notebook:preview-project-folder-change',
       'notebook:read-input-preview',
       'notebook:release-session-resources',
       'notebook:restart',
       'notebook:retry-resource-release',
+      'notebook:revert-project-folder-change',
       'notebook:run-cell',
       'notebook:run-evidence',
       'notebook:run-index',

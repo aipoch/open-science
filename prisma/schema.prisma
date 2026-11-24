@@ -24,6 +24,7 @@ model Project {
   description                String                      @default("")
   agentContext               String                      @default("")
   optimizationPrompt         String                      @default("")
+  rootPath                   String?
   sessionDefaults            String                      @default("{}")
   isExample                  Boolean                     @default(false)
   pinned                     Boolean                     @default(false)
@@ -575,6 +576,7 @@ model ArtifactLineage {
   normalizedFilename String
   filename           String
   currentVersionId   String?           @unique
+  outputDeliveryJson String?
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
   versions           ArtifactVersion[] @relation("ArtifactLineageVersions")

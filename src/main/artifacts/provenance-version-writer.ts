@@ -1,3 +1,4 @@
+import { reconcileProjectRecordIndexes } from '../projects/record-indexes'
 import { bindManagedPdfVersion } from '../pdf-annotations/source-bindings'
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -121,11 +122,13 @@ type WriteVersionWithinSession = (
   request: CreateArtifactVersionRequest,
   publishCompatibilityRouting: PublishCompatibilityRouting,
   signal?: AbortSignal,
-  appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+  appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+  projectFolderRoot?: string
 ) => Promise<ArtifactVersionFile>
 
 type ArtifactProvenanceVersionWriterOptions = {
   storageRoot: string
+  resolveVersionPath: (storageKey: string) => string
   getClient: () => Promise<PrismaClient>
   compatibilityRepository: Pick<ArtifactRepository, 'listPendingRunFiles'>
   createId: () => string
@@ -137,7 +140,8 @@ type ArtifactProvenanceVersionWriterOptions = {
     request: CreateArtifactVersionRequest,
     createdAt: Date,
     target: { versionId: string; filename: string; checksum: string; sizeBytes: number },
-    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+    projectFolderRoot?: string
   ) => Promise<ArtifactVersionProducerCapture>
   prepareVersionPersistence: (input: {
     request: CreateArtifactVersionRequest
@@ -178,10 +182,17 @@ class ArtifactProvenanceVersionWriter {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
     signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+    projectFolderRoot?: string
   ): Promise<ArtifactVersionFile> {
     return this.withSessionWrite(request, (writeVersion) =>
-      writeVersion(request, publishCompatibilityRouting, signal, appGeneratedProducer)
+      writeVersion(
+        request,
+        publishCompatibilityRouting,
+        signal,
+        appGeneratedProducer,
+        projectFolderRoot
+      )
     )
   }
 
@@ -246,7 +257,8 @@ class ArtifactProvenanceVersionWriter {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
     signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+    projectFolderRoot?: string
   ): Promise<ArtifactVersionFile> {
     if (request.resourceReservationId) {
       if (
@@ -277,7 +289,8 @@ class ArtifactProvenanceVersionWriter {
         request,
         publishCompatibilityRouting,
         signal,
-        appGeneratedProducer
+        appGeneratedProducer,
+        projectFolderRoot
       )
     } catch (error) {
       if (request.resourceReservationId) {
@@ -312,7 +325,8 @@ class ArtifactProvenanceVersionWriter {
     request: CreateArtifactVersionRequest,
     publishCompatibilityRouting: PublishCompatibilityRouting,
     signal?: AbortSignal,
-    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer,
+    projectFolderRoot?: string
   ): Promise<ArtifactVersionFile> {
     const projectId = assertSafeSegment(request.projectId, 'project id')
     const appSessionId = assertSafeSegment(request.appSessionId, 'session id')
@@ -328,6 +342,7 @@ class ArtifactProvenanceVersionWriter {
     )
     const normalizedFilename = normalizeArtifactFilename(request.filename)
     const client = await this.options.getClient()
+    await reconcileProjectRecordIndexes(client, [projectId])
     const existing = await client.artifactVersion.findUnique({
       where: { writeOperationId },
       include: {
@@ -396,9 +411,10 @@ class ArtifactProvenanceVersionWriter {
       'versions',
       versionId
     )
-    const stagingDirectory = join(this.options.storageRoot, ...stagingStorageKey.split('/'))
+    const stagingDirectory = this.options.resolveVersionPath(stagingStorageKey)
     const stagingContentPath = join(stagingDirectory, 'content')
 
+    let stagingTransactionStarted = false
     let stagingRowPersisted = false
     let versionCommitted = false
     try {
@@ -425,13 +441,15 @@ class ArtifactProvenanceVersionWriter {
         request,
         createdAt,
         { versionId, filename: request.filename, checksum, sizeBytes },
-        appGeneratedProducer
+        appGeneratedProducer,
+        projectFolderRoot
       )
       const literatureManifest = await this.options.prepareLiteratureManifest(request.literature, {
         projectId,
         appSessionId,
         promptMessageId: request.promptMessageId
       })
+      stagingTransactionStarted = true
       const persisted = await withVersionAllocationRetry(() =>
         client.$transaction(async (transaction) => {
           const origin = await transaction.fileOriginSession.upsert({
@@ -660,10 +678,7 @@ class ArtifactProvenanceVersionWriter {
           signal
         )
       }
-      const finalContentPath = join(
-        this.options.storageRoot,
-        ...persisted.contentStorageKey.split('/')
-      )
+      const finalContentPath = this.options.resolveVersionPath(persisted.contentStorageKey)
       await mkdir(dirname(dirname(finalContentPath)), { recursive: true })
       await this.options.durability.syncDirectory(stagingDirectory)
       const finalDirectory = dirname(finalContentPath)
@@ -703,7 +718,20 @@ class ArtifactProvenanceVersionWriter {
       versionCommitted = true
       return await this.options.projectVersionFile(finalized, projectId, appSessionId)
     } catch (error) {
-      // Once SQLite owns the staging row, its copied bytes are recovery state for an idempotent
+      if (stagingTransactionStarted && !stagingRowPersisted) {
+        // A portable checkpoint may have published before SQLite failed to acknowledge the write.
+        // Preserve the staging copy if the row replays or its ownership cannot be checked.
+        const recovered = await client.artifactVersion
+          .findUnique({
+            where: { id: versionId, artifact: { projectId } },
+            select: { id: true }
+          })
+          .then((row) => row !== null)
+          .catch(() => undefined)
+        if (recovered === undefined) throw error
+        stagingRowPersisted = recovered
+      }
+      // Once the staging row is durable, its copied bytes are recovery state for an idempotent
       // transport retry. Removing them here would force a retry to reread a mutable pending source.
       if (!stagingRowPersisted) {
         await rm(stagingDirectory, { recursive: true, force: true })

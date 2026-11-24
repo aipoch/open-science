@@ -330,6 +330,9 @@ export const createApplicationModules = async (
     readImageTasks: (scope) => imageTasks.list(scope, true),
     modules
   })
+  uploadStorage.managedFileVersionService.setForkContentExclusionCheck((scope, storageKey) =>
+    sessionPackages.sessionPackageService.isForkContentExcluded(scope, storageKey)
+  )
   const managedFiles = composeManagedFiles({
     ...settingsBootstrap,
     managedFileVersionService: uploadStorage.managedFileVersionService,
@@ -337,6 +340,7 @@ export const createApplicationModules = async (
     getNotebookInputRegistry: () => sessionAuthority.notebookInputRegistry,
     captureImageGenerationPreviewScope: (request) =>
       notebookBridge.notebookRpcServer.captureImageGenerationPreviewScope(request),
+    getProject: (id) => sessionPackages.projectRepository.get(id),
     // Catalog access begins after composition, sharing the application's sole Literature owner.
     readLiteratureItems: (itemIds) => researchCatalog.literatureCatalog.getMany(itemIds)
   })
@@ -406,6 +410,7 @@ export const createApplicationModules = async (
     applicationEvents,
     taskNotifications: notifications.taskNotifications,
     previewResources: managedFiles.previewResources,
+    managedFileVersionService: uploadStorage.managedFileVersionService,
     ...settingsBootstrap,
     ...sessionFoundation,
     ...sessionAuthority,
@@ -447,6 +452,7 @@ export const createApplicationModules = async (
   })
   const backendTeardownOwnedByCoordinator: { current: boolean } = { current: false }
   const notebookRuntime = await composeNotebookRuntime({
+    projectRepository: sessionPackages.projectRepository,
     applicationEvents,
     ...settingsBootstrap,
     ...backgroundResults,
@@ -605,6 +611,7 @@ export const createApplicationModules = async (
     publishScheduleChange
   )
   const agentRuntime = await composeAgentRuntime({
+    projectRepository: sessionPackages.projectRepository,
     schedules: new ScheduleMcp(schedules),
     sandboxNetworkApprovalOwner: sessionProjection.sandboxNetworkApprovalOwner,
     ...settingsBootstrap,

@@ -87,3 +87,29 @@ it('honors a live permission change and cancellation while loading saved permiss
   await expect(cancelled).rejects.toThrow()
   expect(h.requestAppApproval).not.toHaveBeenCalled()
 })
+
+it.each(['ask', 'auto', 'full'] as const)(
+  'requires Project original-file confirmation in %s independently of general profile',
+  async (profile) => {
+    let original!: NotebookExecutionApproval
+    const requestAppApproval = vi.fn(async () => false)
+    bindNotebookApprovals(
+      {
+        setExecutionApproval: () => undefined,
+        setRuntimeBindingApproval: () => undefined,
+        setProjectFolderChangeApproval: (handler) => {
+          original = handler
+        }
+      },
+      () =>
+        ({
+          getState: () => ({ permissionProfiles: { session: { selectedProfile: profile } } }),
+          requestAppApproval
+        }) as unknown as Pick<AcpRuntimeCoordinator, 'getState' | 'requestAppApproval'>
+    )
+    expect(await original({ ...request, permissionPrompts: undefined })).toBe(false)
+    expect(requestAppApproval).toHaveBeenCalledOnce()
+    expect(await original(request)).toBe(false)
+    expect(requestAppApproval).toHaveBeenCalledOnce()
+  }
+)

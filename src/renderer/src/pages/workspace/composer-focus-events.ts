@@ -6,3 +6,11 @@ export const FOCUS_COMPOSER_EVENT = 'open-science:focus-composer'
 export const requestComposerFocus = (): void => {
   window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
 }
+
+export const OPEN_INPUT_UPLOAD_EVENT = 'open-science:open-input-upload'
+export type InputUploadScope = { projectId: string; sessionId: string }
+export const requestInputUpload = (scope: InputUploadScope): void => {
+  window.dispatchEvent(
+    new CustomEvent<InputUploadScope>(OPEN_INPUT_UPLOAD_EVENT, { detail: scope })
+  )
+}

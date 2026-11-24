@@ -34,6 +34,10 @@ const createRuntime = (
   retryResourceRelease: unavailable('retryResourceRelease'),
   runEvidence: unavailable('runEvidence'),
   runIndex: unavailable('runIndex'),
+  inspectProjectFolderChange: unavailable('inspectProjectFolderChange'),
+  revertProjectFolderChange: unavailable('revertProjectFolderChange'),
+  previewProjectFolderChange: unavailable('previewProjectFolderChange'),
+  listProjectFolderChanges: unavailable('listProjectFolderChanges'),
   state: unavailable('state'),
   backgroundTasks: unavailable('backgroundTasks'),
   getMemoryPolicyState: unavailable('getMemoryPolicyState'),
@@ -388,5 +392,39 @@ describe('Notebook command workflows', () => {
         source: 'user'
       })
     ).rejects.toBe(failure)
+  })
+})
+
+describe('Project file change command boundaries', () => {
+  const request = {
+    projectId: 'project',
+    sessionId: 'session',
+    id: '11111111-1111-4111-8111-111111111111'
+  }
+  it('accepts only a scoped saved change ID, never caller candidate or backup paths', async () => {
+    const preview = vi.fn().mockResolvedValue({ change: { ...request, state: 'prepared' } })
+    const runtime = createRuntime({ previewProjectFolderChange: preview })
+    const workflows = createNotebookCommandWorkflows(runtime)
+    await workflows.previewProjectFolderChange(request)
+    expect(preview).toHaveBeenCalledWith(request, request.id)
+    expect(() =>
+      workflows.previewProjectFolderChange({ ...request, path: '/outside/original' } as never)
+    ).toThrow()
+    expect(() =>
+      workflows.previewProjectFolderChange({ ...request, id: '../../outside' })
+    ).toThrow()
+    expect(preview).toHaveBeenCalledOnce()
+  })
+  it('gates Undo on data-root admission so backups cannot race relocation', async () => {
+    const revert = vi.fn().mockResolvedValue({ ...request, state: 'reverted' })
+    const workflows = createNotebookCommandWorkflows(
+      createRuntime({ revertProjectFolderChange: revert })
+    )
+    beginMigration()
+    await expect(workflows.revertProjectFolderChange(request)).rejects.toThrow()
+    expect(revert).not.toHaveBeenCalled()
+    clearMigrationPending()
+    await workflows.revertProjectFolderChange(request)
+    expect(revert).toHaveBeenCalledWith(request, request.id)
   })
 })

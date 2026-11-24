@@ -236,7 +236,8 @@ const NotebookRunCell = ({
   staleness,
   causedByRunIndex,
   allowFolderAccess,
-  loadRun
+  loadRun,
+  uploadScope
 }: {
   run: NotebookRunRecord
   index: number
@@ -244,6 +245,7 @@ const NotebookRunCell = ({
   causedByRunIndex?: number
   allowFolderAccess?: boolean
   loadRun?: (runId: string) => Promise<NotebookRunEvidenceSnapshot | null | undefined>
+  uploadScope?: { projectId: string; sessionId: string }
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const isProblem = isProblemRunStatus(run.status)
@@ -298,7 +300,11 @@ const NotebookRunCell = ({
         highlightLine={errorLine}
       />
       <NotebookRunOutputs run={run} allowFolderAccess={allowFolderAccess} />
-      <NotebookRunEvidence run={run} loadRun={loadRun} />
+      <NotebookRunEvidence
+        run={run}
+        loadRun={loadRun}
+        uploadScope={allowFolderAccess ? uploadScope : undefined}
+      />
     </div>
   )
 }
@@ -1501,6 +1507,10 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
             <div key={run.runId} data-run-id={run.runId}>
               <NotebookRunCell
                 run={run}
+                uploadScope={{
+                  projectId: resolveProjectId(item.notebook),
+                  sessionId: item.notebook.sessionId
+                }}
                 allowFolderAccess={Boolean(
                   session && session.contentLoaded !== false && !session.packageOrigin
                 )}

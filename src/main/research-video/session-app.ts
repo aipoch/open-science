@@ -10,6 +10,8 @@ import {
 } from '@aipoch/research-film'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { SAFE_SEGMENT_PATTERN } from '../artifacts/storage-layout'
+import { assertProjectRecordPath, getProjectRecordRoot } from '../storage/data-location-identity'
+import type { ResolveFilmArtifactPath } from './session-images'
 import { waitForFilmStep } from './wait'
 
 /** Only managed archive Versions referenced on the selected branch can supply a live app. */
@@ -20,7 +22,8 @@ export async function stageFilmSessionApp(
   job: string,
   checkpoint: FilmAuthoringCheckpoint,
   signal: AbortSignal,
-  confirm: (app: SessionAppDescription, signal: AbortSignal) => Promise<boolean>
+  confirm: (app: SessionAppDescription, signal: AbortSignal) => Promise<boolean>,
+  resolveArtifactPath?: ResolveFilmArtifactPath
 ): Promise<'drawn' | undefined> {
   const visible = new Set(source.messages.flatMap((m) => m.artifactIds))
   const candidates = (session.artifacts ?? [])
@@ -30,17 +33,19 @@ export async function stageFilmSessionApp(
     .reverse()
   if (!candidates.length) return
   if (!SAFE_SEGMENT_PATTERN.test(session.projectId)) throw new Error('Invalid research Project')
-  const root = join(dataRoot, 'artifacts', session.projectId)
+  const recordRoot = getProjectRecordRoot(dataRoot, session.projectId)
+  const root = join(recordRoot ?? dataRoot, 'artifacts', session.projectId)
   let fallback: 'drawn' | undefined
   for (const artifact of candidates) {
     signal.throwIfAborted()
     const name = basename(artifact.name!).slice(0, 160)
     let app
     try {
-      const bytes = await readVideoSourceFile(
-        root,
-        relative(root, artifact.path).split(sep).join('/')
-      )
+      const path = resolveArtifactPath
+        ? await resolveArtifactPath(session.projectId, artifact)
+        : artifact.path
+      if (recordRoot) assertProjectRecordPath(recordRoot, path)
+      const bytes = await readVideoSourceFile(root, relative(root, path).split(sep).join('/'))
       if (artifact.sha256 && createHash('sha256').update(bytes).digest('hex') !== artifact.sha256)
         throw new Error('The app archive changed.')
       app = await prepareFilmSessionApp(bytes, name, signal)

@@ -2,7 +2,7 @@ import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { ErrorNotice } from '@/components/error-notice'
 // Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
 import type { TFunction } from 'i18next'
-import { ChevronDown, LayoutGrid, List, Maximize2, Minimize2, Search, X } from 'lucide-react'
+import { LayoutGrid, List, Maximize2, Minimize2, Search, X } from 'lucide-react'
 import { ToggleGroup } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,6 +14,7 @@ import { errorDetail } from '@/lib/error-detail'
 import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
+import { useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
@@ -28,6 +29,8 @@ import type { ProjectFilesFilterPreference } from '../../../../shared/settings'
 import { createPreviewFileItem } from './preview-file-item'
 import { FileBrowserModal } from '../settings/FileBrowserModal'
 import { GrantFolderAccessDialog } from './GrantFolderAccessDialog'
+import { projectFolderAccessAvailable } from '@/lib/project-folder'
+import { ProjectFolderBrowser } from './ProjectFolderBrowser'
 import { LocalFileBrowser } from './LocalFileBrowser'
 import {
   useProjectFilePreviewReader,
@@ -40,6 +43,7 @@ import {
   ProjectFilesFilterMenu,
   type ProjectFilesViewMode
 } from './project-files-presentation-owner'
+import { ProjectFilesSectionHeader } from './project-files-navigation'
 import {
   fileLoadMessage,
   indexWarning,
@@ -82,45 +86,6 @@ const formatElapsedAgo = (timestamp: number, t: TFunction): string => {
   const { unit, count } = relativeTimeParts(timestamp)
   return unit === 'now' ? t('now') : t(ELAPSED_AGO[unit], { count })
 }
-
-const SectionHeader = ({
-  id,
-  title,
-  countLabel,
-  isCollapsed,
-  hideTopBorder = false,
-  onToggle
-}: {
-  id: string
-  title: string
-  countLabel: string
-  isCollapsed: boolean
-  hideTopBorder?: boolean
-  onToggle: (id: string) => void
-}): React.JSX.Element => (
-  <button
-    type="button"
-    data-testid="project-file-section-header"
-    className={cn(
-      'flex w-full min-w-0 items-center gap-1.5 px-4 py-2 text-left text-sm text-text-000 hover:bg-bg-100',
-      id.startsWith('session:') && 'cursor-default',
-      !hideTopBorder && 'border-t border-border-300/40'
-    )}
-    aria-expanded={!isCollapsed}
-    onClick={() => onToggle(id)}
-  >
-    <ChevronDown
-      className={cn(
-        'size-3 shrink-0 text-text-300 transition-transform motion-reduce:transition-none',
-        isCollapsed && '-rotate-90'
-      )}
-      strokeWidth={2}
-      aria-hidden="true"
-    />
-    <span className="min-w-0 flex-1 truncate">{title}</span>
-    <span className="shrink-0 text-[11px] text-text-300">{countLabel}</span>
-  </button>
-)
 
 const PageLoadError = ({
   message,
@@ -249,7 +214,7 @@ const ProjectArtifactGroupSection = ({
 
   return (
     <section>
-      <SectionHeader
+      <ProjectFilesSectionHeader
         id={sectionId}
         title={title}
         countLabel={
@@ -332,7 +297,7 @@ const ProjectFilesViewContent = ({
   const [localMachineName, setLocalMachineName] = useState<string | undefined>(undefined)
   // Which container the tab body shows: the artifacts list or the local ("this computer") browser.
   // A persisted local filter only applies where localFs exists (Electron).
-  const [sourceMode, setSourceMode] = useState<'artifacts' | 'local'>(() => {
+  const [sourceMode, setSourceMode] = useState<'artifacts' | 'local' | 'project-folder'>(() => {
     const persisted = readPersistedProjectFilesFilter()
     return persisted?.sourceMode === 'local' && window.api?.localFs ? 'local' : 'artifacts'
   })
@@ -468,10 +433,10 @@ const ProjectFilesViewContent = ({
     // Collapsed sections are intentionally absent: they neither protect cache entries nor enqueue new
     // thumbnail reads. List rows use only the lightweight availability probe and need no thumbnails.
     () =>
-      viewMode === 'grid'
+      sourceMode === 'artifacts' && viewMode === 'grid'
         ? [...(uploadsCollapsed ? [] : visibleUploadFiles), ...visibleArtifactFiles]
         : [],
-    [uploadsCollapsed, viewMode, visibleArtifactFiles, visibleUploadFiles]
+    [sourceMode, uploadsCollapsed, viewMode, visibleArtifactFiles, visibleUploadFiles]
   )
   const currentFilePreviewById = useProjectFilePreviews(previewFiles, previewReader)
 
@@ -511,6 +476,11 @@ const ProjectFilesViewContent = ({
   }
 
   const grantedRoots = useGrantedFoldersStore((state) => state.roots)
+  const boundRootPath = useProjectStore(
+    (state) => state.projects.find((project) => project.id === activeProjectId)?.rootPath
+  )
+  const projectRootPath = projectFolderAccessAvailable() ? boundRootPath : undefined
+  const isFolderMode = sourceMode === 'project-folder' && Boolean(projectRootPath)
   const isLocalMode = sourceMode === 'local'
   // The granted folder the local browser is scoped to; a revoked root reads as the machine itself.
   const selectedLocalRoot = selectedLocalRootId
@@ -559,14 +529,16 @@ const ProjectFilesViewContent = ({
       >
         <ProjectFilesFilterMenu
           label={
-            isLocalMode
-              ? (selectedLocalRoot?.name ?? localMachineName ?? t('This computer'))
-              : isAllFilter
-                ? t('Artifacts')
-                : selectedFilterOption.label
+            isFolderMode
+              ? t('Project folder')
+              : isLocalMode
+                ? (selectedLocalRoot?.name ?? localMachineName ?? t('This computer'))
+                : isAllFilter
+                  ? t('Artifacts')
+                  : selectedFilterOption.label
           }
           options={filterOptions}
-          selectedOptionId={effectiveFilterId}
+          selectedOptionId={isFolderMode ? 'project-folder' : effectiveFilterId}
           onSelect={selectFilter}
           showAllSessions={showAllSessionOptions}
           onShowAllSessionsChange={setShowAllSessionOptions}
@@ -586,11 +558,19 @@ const ProjectFilesViewContent = ({
           localMachineName={localMachineName}
           isLocalSelected={isLocalMode}
           selectedLocalRootId={selectedLocalRoot?.id}
+          projectFolderName={
+            projectRootPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? projectRootPath ?? undefined
+          }
+          isProjectFolderSelected={isFolderMode}
+          onSelectProjectFolder={() => {
+            setSourceMode('project-folder')
+            setSelectedLocalRootId(undefined)
+          }}
         />
         <TooltipProvider delayDuration={200}>
           <div className="flex shrink-0 items-center gap-1.5">
             {/* Local mode has no search row, so its file count stays in the header. */}
-            {isLocalMode ? (
+            {isLocalMode || isFolderMode ? (
               <div className="text-[11px] tabular-nums text-text-000">
                 {formatFileCount(localEntryCount ?? 0, t)}
               </div>
@@ -656,7 +636,7 @@ const ProjectFilesViewContent = ({
       </div>
 
       {/* The search row filters managed artifacts, so local mode hides it. */}
-      {!isLocalMode ? (
+      {!isLocalMode && !isFolderMode ? (
         <div className="flex shrink-0 items-center gap-3 border-y border-border-300/60 px-4 py-2">
           <div className="relative min-w-0 flex-1">
             <Search
@@ -700,7 +680,14 @@ const ProjectFilesViewContent = ({
         </div>
       ) : null}
 
-      {isLocalMode ? (
+      {isFolderMode && activeProjectId && projectRootPath ? (
+        <ProjectFolderBrowser
+          key={`${activeProjectId}:${projectRootPath}`}
+          projectId={activeProjectId}
+          rootPath={projectRootPath}
+          onEntryCountChange={setLocalEntryCount}
+        />
+      ) : isLocalMode ? (
         <LocalFileBrowser
           onEntryCountChange={setLocalEntryCount}
           requestedPath={localRequestedPath}
@@ -748,7 +735,7 @@ const ProjectFilesViewContent = ({
 
           {showsUploadsSection ? (
             <section>
-              <SectionHeader
+              <ProjectFilesSectionHeader
                 id="uploads"
                 title={t('Your uploads')}
                 countLabel={`${index.uploads.totalCount}`}

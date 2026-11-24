@@ -4,6 +4,14 @@ import type {
   NotebookMemoryPolicyState,
   NotebookMemoryPolicyStateRequest
 } from '../notebook-memory'
+import type {
+  ProjectFolderChangeScope,
+  ProjectFolderChange,
+  ProjectFolderChangeRequest,
+  ProjectFolderChangePage,
+  ProjectFolderChangePreview,
+  ListProjectFolderChangesRequest
+} from '../project-folder-changes'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../artifacts'
 import type { ReplayRunIndex } from '../replay'
 import type {
@@ -81,6 +89,21 @@ export const contracts = {
   'notebook.terminateMonitoredProcess': callable<
     (request: TerminateNotebookProcessRequest) => Promise<void>
   >()('notebook', ['notebook:terminate-monitored-process', LOCAL]),
+  'notebook.onProjectFolderChangesChanged': callable<
+    (listener: AcpListener<ProjectFolderChangeScope>) => RemoveListener
+  >()('notebook', ['notebook:project-folder-changes-changed', EVENT]),
+  'notebook.inspectProjectFolderChange': callable<
+    (request: ProjectFolderChangeRequest) => Promise<ProjectFolderChange>
+  >()('notebook', ['notebook:inspect-project-folder-change']),
+  'notebook.revertProjectFolderChange': callable<
+    (request: ProjectFolderChangeRequest) => Promise<ProjectFolderChange>
+  >()('notebook', ['notebook:revert-project-folder-change']),
+  'notebook.previewProjectFolderChange': callable<
+    (request: ProjectFolderChangeRequest) => Promise<ProjectFolderChangePreview>
+  >()('notebook', ['notebook:preview-project-folder-change']),
+  'notebook.listProjectFolderChanges': callable<
+    (request: ListProjectFolderChangesRequest) => Promise<ProjectFolderChangePage>
+  >()('notebook', ['notebook:list-project-folder-changes']),
   'notebook.appendCodeCell': callable<
     (request: AppendNotebookCodeCellRequest) => Promise<{
       sessionId: string

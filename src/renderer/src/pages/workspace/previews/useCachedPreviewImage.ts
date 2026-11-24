@@ -155,7 +155,7 @@ const acquire = (item: PreviewImageItem, key: string, thumbnail: boolean): Cache
     key,
     promise: pending,
     refs: 1,
-    retained: true,
+    retained: item.source !== 'project-folder',
     disposed: false
   }
   entry.promise = pending.then(

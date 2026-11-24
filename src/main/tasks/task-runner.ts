@@ -1,8 +1,4 @@
 import { TaskRunTracingError } from './task-control-ports'
-import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
-import { constants } from 'node:fs'
-import { access, realpath, stat } from 'node:fs/promises'
-import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import { createLogger } from '@aipoch/diagnostics/node'
@@ -16,6 +12,7 @@ import {
   MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
   MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE
 } from '../../shared/acp-image-contract'
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import type {
   ArtifactFile,
@@ -95,6 +92,7 @@ import type {
 } from '../../shared/task-api'
 import { ArchiveAvailabilityError, archiveAvailabilityMessage } from '../archive/availability-error'
 import { toErrorMessage } from '../error-message'
+import { canonicalizeDirectory, DirectoryValidationError } from '../local-fs/directory-validation'
 import type { TaskRunJournal, TaskRunJournalEntry } from './task-run-journal'
 
 const log = createLogger('task-runner')
@@ -715,9 +713,6 @@ class TaskRunnerError extends Error {
   }
 }
 
-const isMissingPathError = (error: unknown): boolean =>
-  typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
-
 const canonicalizeTaskWorkingDirectory = async (value: string): Promise<string> => {
   const cwd = value.trim()
   if (!cwd) {
@@ -726,39 +721,19 @@ const canonicalizeTaskWorkingDirectory = async (value: string): Promise<string> 
       'Working directory is required when cwd is supplied.'
     )
   }
-  if (!isAbsolute(cwd)) {
-    throw new TaskRunnerError('invalid_request', 'Working directory must be an absolute path.')
-  }
-  let canonicalCwd: string
   try {
-    canonicalCwd = await realpath(cwd)
+    return await canonicalizeDirectory(cwd)
   } catch (error) {
-    if (isMissingPathError(error)) {
-      throw new TaskRunnerError('invalid_request', `Working directory does not exist: ${cwd}`)
+    if (!(error instanceof DirectoryValidationError)) throw error
+    const messages = {
+      'not-absolute': 'Working directory must be an absolute path.',
+      'not-found': `Working directory does not exist: ${cwd}`,
+      'not-accessible': `Working directory is not accessible: ${cwd}`,
+      'not-directory': `Working directory is not a directory: ${cwd}`,
+      'not-writable': `Working directory must be readable and writable: ${cwd}`
     }
-    throw new TaskRunnerError('invalid_request', `Working directory is not accessible: ${cwd}`)
+    throw new TaskRunnerError('invalid_request', messages[error.reason])
   }
-  let metadata: Awaited<ReturnType<typeof stat>>
-  try {
-    metadata = await stat(canonicalCwd)
-  } catch (error) {
-    if (isMissingPathError(error)) {
-      throw new TaskRunnerError('invalid_request', `Working directory does not exist: ${cwd}`)
-    }
-    throw new TaskRunnerError('invalid_request', `Working directory is not accessible: ${cwd}`)
-  }
-  if (!metadata.isDirectory()) {
-    throw new TaskRunnerError('invalid_request', `Working directory is not a directory: ${cwd}`)
-  }
-  try {
-    await access(canonicalCwd, constants.R_OK | constants.W_OK)
-  } catch {
-    throw new TaskRunnerError(
-      'invalid_request',
-      `Working directory must be readable and writable: ${cwd}`
-    )
-  }
-  return canonicalCwd
 }
 
 class TaskRunner {
@@ -833,6 +808,12 @@ class TaskRunner {
   }
 
   async createProject(request: CreateTaskProjectRequest): Promise<TaskProject> {
+    if (request && typeof request === 'object' && 'rootPath' in request) {
+      throw new TaskRunnerError(
+        'invalid_request',
+        'Project folders must be selected on this computer.'
+      )
+    }
     if (!request || typeof request.name !== 'string' || !request.name.trim()) {
       throw new TaskRunnerError('invalid_request', 'Project name is required.')
     }

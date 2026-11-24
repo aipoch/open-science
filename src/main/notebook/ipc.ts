@@ -1,3 +1,7 @@
+import type {
+  ProjectFolderChangeRequest,
+  ListProjectFolderChangesRequest
+} from '../../shared/project-folder-changes'
 import { ipcMainHandle } from '../ipc-handler-registry'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { callerContextForEvent, canSatisfyHumanApproval } from '../caller-context'
@@ -92,6 +96,22 @@ const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void =
   )
   ipcMainHandle('notebook:run-evidence', (_event, request: NotebookRunEvidenceRequest) =>
     handlers.runEvidence(request)
+  )
+  ipcMainHandle(
+    'notebook:inspect-project-folder-change',
+    (_event, request: ProjectFolderChangeRequest) => handlers.inspectProjectFolderChange(request)
+  )
+  ipcMainHandle(
+    'notebook:revert-project-folder-change',
+    (_event, request: ProjectFolderChangeRequest) => handlers.revertProjectFolderChange(request)
+  )
+  ipcMainHandle(
+    'notebook:preview-project-folder-change',
+    (_event, request: ProjectFolderChangeRequest) => handlers.previewProjectFolderChange(request)
+  )
+  ipcMainHandle(
+    'notebook:list-project-folder-changes',
+    (_event, request: ListProjectFolderChangesRequest) => handlers.listProjectFolderChanges(request)
   )
   ipcMainHandle('notebook:run-index', (_event, request: NotebookSessionRequest) =>
     handlers.runIndex(request)

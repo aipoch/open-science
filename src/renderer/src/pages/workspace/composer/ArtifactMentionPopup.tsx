@@ -1,14 +1,27 @@
+import { projectFolderAccessAvailable } from '@/lib/project-folder'
 import {
   getDesktopRuntimeEpoch,
   desktopRuntimeWritable,
   useDesktopRuntimeRecoveryStore
 } from '../../../stores/desktop-runtime-recovery-store'
 import { useLiteratureChanges } from '@/pages/literature/public/events'
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { BookOpenText, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { formatByteSize } from '@/lib/utils'
+import { useProjectStore } from '@/stores/project-store'
+import type { ProjectFolderFileReference } from '../../../../../shared/artifacts'
+import { createArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ProjectFileItem } from '../../../../../shared/project-files'
 import type {
@@ -25,7 +38,7 @@ import {
 
 import { createArtifactThumbnailReader, thumbnailRequestKey } from './artifact-thumbnail-reader'
 import { ArtifactFileIcon } from './artifact-file-icon'
-import { fuzzyScore, type FuzzyMatch } from './fuzzy-match'
+import { fuzzyScore } from './fuzzy-match'
 import { HighlightedText } from './HighlightedText'
 import { loadAllProjectFiles } from './load-project-files'
 
@@ -39,7 +52,8 @@ export type PickedArtifact = {
   mimeType?: string
   versionId?: string
 }
-export type PickedMention = PickedArtifact | LiteratureReference | LiteratureScopeReference
+export type PickedMention =
+  PickedArtifact | ProjectFolderFileReference | LiteratureReference | LiteratureScopeReference
 
 // Popup that suggests project files and Literature PDFs for the composer's `@` mention trigger.
 // Like the skill popup the composer keeps caret focus, so this listens for navigation keys on
@@ -63,10 +77,12 @@ type ArtifactRow = {
   source?: PickedArtifact['source'] | 'literature'
   projectId?: string
   sourceFileId?: string
-  picked?: LiteratureReference | LiteratureScopeReference
+  fixedVersionId?: string
+  exactPathMatch?: boolean
+  picked?: LiteratureReference | LiteratureScopeReference | ProjectFolderFileReference
   mimeType?: string
   size?: number
-  tag: 'upload' | 'output' | 'library-scope' | 'collection-scope' | 'library'
+  tag: 'folder' | 'upload' | 'output' | 'library-scope' | 'collection-scope' | 'library'
   iconName?: string
   description?: string
   positions?: number[]
@@ -95,6 +111,18 @@ export const ArtifactMentionPopup = ({
 }: ArtifactMentionPopupProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
+  const boundRootPath = useProjectStore(
+    (state) => state.projects.find((project) => project.id === activeProjectId)?.rootPath
+  )
+  const projectFolder = projectFolderAccessAvailable() ? boundRootPath : undefined
+  const [folder, setFolder] = useState<{
+    projectId?: string
+    root?: string
+    query: string
+    rows: ArtifactRow[]
+    state: 'loading' | 'loaded' | 'error'
+    truncated?: boolean
+  }>({ query: '', rows: [], state: 'loaded' })
   const generatedListboxId = useId()
   const resolvedListboxId = listboxId ?? generatedListboxId
   const selectionRevisionRef = useRef(0)
@@ -123,6 +151,94 @@ export const ArtifactMentionPopup = ({
     setLibraryRetry((value) => value + 1)
     setCollectionRetry((value) => value + 1)
   })
+
+  useEffect(() => {
+    if (!activeProjectId || !projectFolder || !desktopRuntimeWritable()) return
+    let cancelled = false
+    const timeout = window.setTimeout(() => {
+      const normalized = query.trim().replace(/\\/g, '/')
+      const slash = normalized.lastIndexOf('/')
+      const relativePath = slash >= 0 ? normalized.slice(0, slash) : ''
+      const filename = slash >= 0 ? normalized.slice(slash + 1) : normalized
+      void window.api.projects
+        .listFolder({
+          projectId: activeProjectId,
+          relativePath,
+          query: filename,
+          limit: 50,
+          searchDescendants: true,
+          excludePublishedArtifactCopies: true
+        })
+        .then(
+          (page) => {
+            if (cancelled || recoveryEpoch !== getDesktopRuntimeEpoch()) return
+            setFolder({
+              projectId: activeProjectId,
+              root: projectFolder,
+              query,
+              state: 'loaded',
+              truncated: page.truncated,
+              rows: [
+                ...(page.publishedArtifacts ?? []).map((artifact): ArtifactRow => ({
+                  id: artifact.sourceFileId,
+                  projectId: activeProjectId,
+                  source: 'artifact',
+                  sourceFileId: artifact.sourceFileId,
+                  fixedVersionId: artifact.versionId,
+                  exactPathMatch: artifact.exactPathMatch,
+                  name: artifact.name,
+                  path: createArtifactVersionLocator({
+                    projectId: activeProjectId,
+                    appSessionId: artifact.sessionId,
+                    artifactId: artifact.sourceFileId,
+                    versionId: artifact.versionId
+                  }),
+                  mimeType: artifact.mimeType,
+                  size: artifact.size,
+                  description: artifact.relativePath,
+                  tag: 'output'
+                })),
+                ...page.entries
+                  .filter((entry) => !entry.isDirectory && entry.relativePath)
+                  .map((entry): ArtifactRow => {
+                    const path = entry.relativePath!
+                    const picked: ProjectFolderFileReference = {
+                      id: `project-folder:${activeProjectId}:${path}`,
+                      name: entry.name,
+                      source: 'project-folder',
+                      projectId: activeProjectId,
+                      path
+                    }
+                    return {
+                      id: picked.id,
+                      projectId: activeProjectId,
+                      name: entry.name,
+                      description: path,
+                      size: entry.size,
+                      tag: 'folder',
+                      picked
+                    }
+                  })
+              ]
+            })
+          },
+          () => {
+            if (!cancelled && recoveryEpoch === getDesktopRuntimeEpoch())
+              setFolder({
+                projectId: activeProjectId,
+                root: projectFolder,
+                query,
+                state: 'error',
+                rows: []
+              })
+          }
+        )
+    }, 120)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [activeProjectId, projectFolder, query, fileRetry, recoveryEpoch, recoveryPhase])
 
   useEffect(() => {
     let cancelled = false
@@ -216,6 +332,13 @@ export const ArtifactMentionPopup = ({
     }
   }, [activeProjectId, query, collectionRetry, recoveryEpoch, recoveryPhase])
 
+  const folderState = !projectFolder
+    ? 'loaded'
+    : folder.projectId === activeProjectId &&
+        folder.root === projectFolder &&
+        folder.query === query
+      ? folder.state
+      : 'loading'
   const libraryState =
     library.query === query && library.projectId === activeProjectId ? library.state : 'loading'
   const collectionState =
@@ -223,22 +346,27 @@ export const ArtifactMentionPopup = ({
       ? collections.state
       : 'loading'
 
-  // ManagedFile supplies a logical file identity. The consumer resolves its current DB head when the
-  // turn starts; only an explicit history action may attach an immutable Version id.
+  // ManagedFile supplies the logical identity. Selection resolves and pins its current Version.
   const rows = useMemo<ArtifactRow[]>(() => {
+    const folderRows = folderState === 'loaded' && projectFolder ? folder.rows : []
+    const aliasedArtifacts = new Set(folderRows.map((row) => row.sourceFileId))
     const projectRows =
       projectFiles.projectId === activeProjectId
-        ? projectFiles.files.map((file): ArtifactRow => ({
-            id: file.id,
-            sourceFileId: file.sourceFileId,
-            projectId: file.projectId,
-            name: file.name,
-            path: file.path,
-            source: file.source,
-            mimeType: file.mimeType,
-            size: file.size,
-            tag: file.source === 'upload' ? ('upload' as const) : ('output' as const)
-          }))
+        ? projectFiles.files
+            .filter(
+              (file) => file.source !== 'artifact' || !aliasedArtifacts.has(file.sourceFileId)
+            )
+            .map((file): ArtifactRow => ({
+              id: file.id,
+              sourceFileId: file.sourceFileId,
+              projectId: file.projectId,
+              name: file.name,
+              path: file.path,
+              source: file.source,
+              mimeType: file.mimeType,
+              size: file.size,
+              tag: file.source === 'upload' ? ('upload' as const) : ('output' as const)
+            }))
         : []
     const libraryScopeRows: ArtifactRow[] = query.trim()
       ? [
@@ -253,12 +381,25 @@ export const ArtifactMentionPopup = ({
         ]
       : []
     return [
+      ...folderRows,
       ...projectRows,
       ...libraryScopeRows,
       ...(collectionState === 'loaded' ? collections.rows : []),
       ...(libraryState === 'loaded' ? library.rows : [])
     ]
-  }, [activeProjectId, library, libraryState, collections, collectionState, projectFiles, query, t])
+  }, [
+    activeProjectId,
+    library,
+    libraryState,
+    collections,
+    collectionState,
+    projectFiles,
+    folder,
+    folderState,
+    projectFolder,
+    query,
+    t
+  ])
   const loadState =
     !activeProjectId || projectFiles.projectId === activeProjectId ? projectFiles.state : 'loading'
 
@@ -267,22 +408,27 @@ export const ArtifactMentionPopup = ({
   // query preserves the incoming order within each section.
   const matches = useMemo<ArtifactRow[]>(() => {
     const needle = query.trim()
-
     const rankSection = (tag: ArtifactRow['tag']): ArtifactRow[] =>
-      needle.length === 0 || tag === 'library'
+      needle.length === 0 || tag === 'library' || tag === 'folder'
         ? rows.filter((row) => row.tag === tag)
         : rows
             .filter((row) => row.tag === tag)
             .map((row) => ({ row, match: fuzzyScore(needle, row.name) }))
-            .filter(
-              (entry): entry is { row: ArtifactRow; match: FuzzyMatch } => entry.match !== null
+            .filter(({ row, match }) => match !== null || row.fixedVersionId)
+            .sort(
+              (a, b) =>
+                Number(b.row.exactPathMatch ?? false) - Number(a.row.exactPathMatch ?? false) ||
+                (b.match?.score ?? 0) - (a.match?.score ?? 0)
             )
-            .sort((a, b) => b.match.score - a.match.score)
-            .map(({ row, match }) => ({ ...row, positions: match.positions }))
+            .map(({ row, match }) => ({ ...row, positions: match?.positions }))
 
+    const outputs = rankSection('output')
+    const exactOutput = outputs[0]?.exactPathMatch
     return [
+      ...(exactOutput ? outputs : []),
+      ...rankSection('folder'),
       ...rankSection('upload'),
-      ...rankSection('output'),
+      ...(exactOutput ? [] : outputs),
       ...rankSection('library-scope'),
       ...rankSection('collection-scope'),
       ...rankSection('library')
@@ -333,7 +479,10 @@ export const ArtifactMentionPopup = ({
         return
       const revision = ++selectionRevisionRef.current
       if (
-        (row.tag === 'library' || row.tag === 'library-scope' || row.tag === 'collection-scope') &&
+        (row.tag === 'folder' ||
+          row.tag === 'library' ||
+          row.tag === 'library-scope' ||
+          row.tag === 'collection-scope') &&
         row.picked
       ) {
         onSelect(row.picked)
@@ -344,6 +493,18 @@ export const ArtifactMentionPopup = ({
         return
       }
       setSelectionError(undefined)
+      if (row.fixedVersionId) {
+        onSelect({
+          id: row.id,
+          sourceFileId: row.sourceFileId,
+          name: row.name,
+          path: row.path ?? '',
+          source: row.source,
+          mimeType: row.mimeType,
+          versionId: row.fixedVersionId
+        })
+        return
+      }
       const inspect = window.api.managedFileVersions?.inspect
       if (!inspect) {
         setSelectionError(t('File version resolution is unavailable.'))
@@ -432,13 +593,21 @@ export const ArtifactMentionPopup = ({
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [matches, safeIndex, selectRow, onClose, composingRef])
 
-  // Split the flat match list back into its sections, preserving the flat highlight index.
-  const uploadMatches = matches.filter((row) => row.tag === 'upload')
-  const artifactMatches = matches.filter((row) => row.tag === 'output')
-  const scopeMatches = matches.filter(
-    (row) => row.tag === 'library-scope' || row.tag === 'collection-scope'
-  )
-  const libraryMatches = matches.filter((row) => row.tag === 'library')
+  const sectionLabels = {
+    folder: t('Project folder'),
+    upload: t(SECTION_UPLOADS_KEY),
+    output: t(SECTION_ARTIFACTS_KEY),
+    'library-scope': t(SECTION_LIBRARY_KEY),
+    library: t('References')
+  }
+  const sections: { kind: keyof typeof sectionLabels; startIndex: number; rows: ArtifactRow[] }[] =
+    []
+  for (const [index, row] of matches.entries()) {
+    const kind = row.tag === 'collection-scope' ? 'library-scope' : row.tag
+    const previous = sections.at(-1)
+    if (previous?.kind === kind) previous.rows.push(row)
+    else sections.push({ kind, startIndex: index, rows: [row] })
+  }
 
   const renderRow = (row: ArtifactRow, index: number): React.JSX.Element => {
     const isActive = index === safeIndex
@@ -470,7 +639,9 @@ export const ArtifactMentionPopup = ({
           isActive ? ' bg-bg-200 !text-text-000' : ''
         }`}
       >
-        {row.tag === 'library-scope' ? (
+        {row.tag === 'folder' ? (
+          <FolderOpen className="size-4 shrink-0 text-text-200" aria-hidden="true" />
+        ) : row.tag === 'library-scope' ? (
           <BookOpenText className="size-4 shrink-0 text-text-200" aria-hidden="true" />
         ) : row.tag === 'collection-scope' ? (
           <FolderOpen className="size-4 shrink-0 text-text-200" aria-hidden="true" />
@@ -508,15 +679,17 @@ export const ArtifactMentionPopup = ({
         </span>
         {size ? <span className="text-xs text-text-300 shrink-0">{size}</span> : null}
         <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent text-accent-foreground shrink-0">
-          {row.tag === 'upload'
-            ? t('upload')
-            : row.tag === 'output'
-              ? t('output')
-              : row.tag === 'collection-scope'
-                ? t('Collections')
-                : row.tag === 'library'
-                  ? t('Reference')
-                  : t('Library')}
+          {row.tag === 'folder'
+            ? t('Project folder')
+            : row.tag === 'upload'
+              ? t('upload')
+              : row.tag === 'output'
+                ? t('output')
+                : row.tag === 'collection-scope'
+                  ? t('Collections')
+                  : row.tag === 'library'
+                    ? t('Reference')
+                    : t('Library')}
         </span>
       </li>
     )
@@ -529,7 +702,17 @@ export const ArtifactMentionPopup = ({
           {selectionError}
         </div>
       ) : null}
+      {projectFolder && folderState === 'loaded' && folder.truncated ? (
+        <div role="status" className="px-2 py-1.5 text-xs text-text-300">
+          {t('Search limited. Type a folder path to narrow the results.')}
+        </div>
+      ) : null}
       {[
+        {
+          state: folderState,
+          label: t('Could not load project files'),
+          retry: () => setFileRetry((value) => value + 1)
+        },
         {
           state: loadState,
           label: t('Could not load project files'),
@@ -575,14 +758,15 @@ export const ArtifactMentionPopup = ({
             </button>
           </div>
         ))}
-      {matches.length === 0 && ![loadState, libraryState, collectionState].includes('error') ? (
+      {matches.length === 0 &&
+      ![folderState, loadState, libraryState, collectionState].includes('error') ? (
         <div
           role="status"
           aria-live="polite"
           aria-atomic="true"
           className="px-2 py-1.5 text-sm text-text-300"
         >
-          {loadState === 'loading'
+          {folderState === 'loading' || loadState === 'loading'
             ? t('Loading project files…')
             : libraryState === 'loading' || collectionState === 'loading'
               ? t('Loading…')
@@ -595,57 +779,17 @@ export const ArtifactMentionPopup = ({
         aria-label={t('Artifact suggestions')}
         className="min-h-0 overflow-y-auto max-h-[min(45vh,18rem)]"
       >
-        {uploadMatches.length > 0 ? (
-          <>
+        {sections.map(({ kind, startIndex, rows }) => (
+          <Fragment key={kind}>
             <li
               aria-hidden="true"
               className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
             >
-              {t(SECTION_UPLOADS_KEY)}
+              {sectionLabels[kind]}
             </li>
-            {uploadMatches.map((row, index) => renderRow(row, index))}
-          </>
-        ) : null}
-        {artifactMatches.length > 0 ? (
-          <>
-            <li
-              aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
-            >
-              {t(SECTION_ARTIFACTS_KEY)}
-            </li>
-            {artifactMatches.map((row, index) => renderRow(row, uploadMatches.length + index))}
-          </>
-        ) : null}
-        {scopeMatches.length > 0 ? (
-          <>
-            <li
-              aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
-            >
-              {t(SECTION_LIBRARY_KEY)}
-            </li>
-            {scopeMatches.map((row, index) =>
-              renderRow(row, uploadMatches.length + artifactMatches.length + index)
-            )}
-          </>
-        ) : null}
-        {libraryMatches.length > 0 ? (
-          <>
-            <li
-              aria-hidden="true"
-              className="px-2 pt-1 pb-0.5 text-[11px] font-medium uppercase tracking-wide text-text-400 select-none"
-            >
-              {t('References')}
-            </li>
-            {libraryMatches.map((row, index) =>
-              renderRow(
-                row,
-                uploadMatches.length + artifactMatches.length + scopeMatches.length + index
-              )
-            )}
-          </>
-        ) : null}
+            {rows.map((row, index) => renderRow(row, startIndex + index))}
+          </Fragment>
+        ))}
       </ul>
       <div className="shrink-0 mt-1 -mx-1.5 -mb-1.5 px-3.5 pt-1.5 pb-2 border-t border-border-300 flex items-center gap-3 text-[11px] text-text-400 select-none">
         <span>
