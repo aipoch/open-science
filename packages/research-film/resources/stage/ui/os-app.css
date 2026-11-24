@@ -19352,6 +19352,7 @@
 }
 
 .agent-markdown [data-streamdown='code-block-body'] code > span[class*='counter(line)']:before {
+  color: var(--muted-foreground);
   text-align: left !important;
   width: 2ch !important;
   margin-right: 0.5ch !important;

@@ -54,6 +54,31 @@ it.each([401, 403, 500])(
   }
 )
 
+it('checks tracing capability on the selected host before opening a Run event stream', async () => {
+  const fetch = vi.fn(async () => Response.json({ taskCapabilities: ['durable-submissions'] }))
+  await expect(
+    runTaskCommand(
+      parseCliArgs([
+        'run',
+        '--project',
+        'p',
+        '--prompt',
+        'Trace',
+        '--otel-traces',
+        '--wait',
+        '--jsonl'
+      ]),
+      {
+        connect: (options) => connectToOpenScience({ ...options, env: {}, fetch })
+      }
+    )
+  ).rejects.toMatchObject({
+    code: 'unsupported_capability',
+    message: expect.stringContaining('Update the server')
+  })
+  expect(fetch).toHaveBeenCalledOnce()
+})
+
 it('reports a missing daemon when both candidates refuse connections', async () => {
   const log = vi.fn()
   const setExitCode = vi.fn()

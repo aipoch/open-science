@@ -16,6 +16,7 @@ import type {
 } from '@aipoch/skills/document'
 import {
   type ModelProtocol,
+  type ModelReasoningEffort,
   type OfficialVendorId,
   type CustomReasoningEffortTransport
 } from '@aipoch/providers'
@@ -185,6 +186,8 @@ export type ProviderView = {
   labServerUrl?: string
   // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
   modelCapabilities?: Record<string, LabModelCapabilities>
+  // Per-model reasoning levels advertised by CodeBuddy's ACP catalog.
+  modelReasoningEfforts?: Record<string, ModelReasoningEffort[]>
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
   // Non-secret account label returned by the provider during subscription sign-in.

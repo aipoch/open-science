@@ -56,7 +56,8 @@ for (const scenario of scenarios) {
         .fill(`Run the tool collapse scroll probe. Probe gates: ${JSON.stringify(gates)}`)
       await page.getByRole('button', { name: 'Send message' }).click()
       const group = page.locator('[data-message-id="activity-group-e2e-collapse-probe"]')
-      await expect(group).toBeVisible()
+      // The first send also starts the Agent on a cold Windows runner.
+      await expect(group).toBeVisible({ timeout: 60_000 })
       // Finish presenting the introductory message before positioning the reader.
       await expect(
         page.getByText(

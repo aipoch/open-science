@@ -333,7 +333,6 @@ const sourceState = (
     sourceTruncated: Boolean(
       provenance.execution.truncation ||
       producerRun.scriptTruncated ||
-      producerRun.hasOmittedFiles ||
       producerRun.hasOmittedInputs ||
       producerRun.omittedOutputCount
     )

@@ -53,18 +53,17 @@
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-### 💡 AIPOCH Open-Science v1.3.1 更新
+### 💡 AIPOCH Open-Science v1.3.4 更新
 
-_2026 年 11 月 19 日_
+_2026 年 11 月 22 日_
 
-- **网页搜索与页面阅读**：内置 Agent 可以搜索网页并阅读公开页面；搜索审批会以易读的卡片展示查询内容，引用的来源会随对话保留。
-- **引用图谱**：以交互式图谱探索论文的参考文献与施引论文——可重新聚焦到任一相关论文，并按引用方向筛选。
-- **无需打开应用即可使用 MCP**：通过 MCP 连接外部 Agent 会自动启动 Open-Science 服务，设置选项涵盖 30 多种 Agent 与客户端。
-- **Lab 模型与组织案例**：登录 Lab 账号即可使用组织为你分配的模型，并可搜索、导入或与团队成员共享研究案例。
-- **最新的模型列表与更清晰的错误**：可在设置中刷新服务商的模型列表；服务商请求失败时可查看原因与下一步操作。
-- **从 1.3.0 更新**：如果 1.3.0 的更新程序提示有其他进程正在使用安装目录，请完全退出 Open-Science 并手动安装已下载的安装包。
+- **看清内置 Agent 的内部**：项目可选择开启 Agent 追踪，将回合、模型请求与工具执行彼此关联的 span 导出到你自行托管的 OTLP/HTTP 接收端，捕获细节由你掌控。
+- **Windows 更新不再受阻**：内置 Agent 运行时，应用内更新不再停滞；Windows 稳定版更新重新以紧凑的安装器增量包形式应用。
+- **长 Notebook 历史保持快速**：启动与结束 Run、选择结果、打开预览都不再重新读取整个历史。
+- **值得信赖的内存读数**：Compute 摘要现在在 macOS 上与活动监视器一致，在 Windows 上显示已提交内存相对其上限。
+- **CodeBuddy 推理档位**：档位选择器现在只提供所选 CodeBuddy 模型实际支持的级别。
 
-[查看 v1.3.1 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.1)
+[查看 v1.3.4 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +88,14 @@ _2026 年 11 月 19 日_
 | Linux ARM64                             | Linux ARM64 AppImage 或 Debian 软件包     |
 
 安装前的校验方法见[验证下载](../../SECURITY.md#verifying-your-download)。
+
+在 Windows 10/11 x64 上，可以从 [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) 安装桌面应用，也可以在 PowerShell 中使用 WinGet 安装。
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+各分发渠道提供的版本可能不同。详情见[安装和更新指南](https://aipoch.com/docs/guides/installation/)。
 
 macOS 用户也可以通过 [Homebrew](https://brew.sh) 安装：
 

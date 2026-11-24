@@ -39,3 +39,20 @@ it('does not derive a managed interpreter from an unsafe persisted environment',
 })
 
 configureTestRuntimeMetadata()
+
+it('reads dependency inputs without opening history output when the repository supports it', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'analysis-adapter-'))
+  try {
+    const repository = { readAnalysisRuns: vi.fn().mockResolvedValue([]), readSessionRuns: vi.fn() }
+    await createNotebookDependencyAnalyzer({ storageRoot, repository }).project({
+      projectId: 'p',
+      sessionId: 's'
+    })
+    expect(repository.readAnalysisRuns).toHaveBeenCalledWith('p', 's', {
+      includeEnvironmentManifests: true
+    })
+    expect(repository.readSessionRuns).not.toHaveBeenCalled()
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true })
+  }
+})

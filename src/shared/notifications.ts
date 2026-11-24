@@ -30,6 +30,8 @@ export type NotificationSource =
   | 'skill-import'
   | 'session-plan'
 
+export const RESEARCH_FILM_NOTIFICATION_PREFIX = 'research-film:'
+
 export type NotificationAttentionReason =
   | SessionWaitReason
   | 'task-max-tokens'

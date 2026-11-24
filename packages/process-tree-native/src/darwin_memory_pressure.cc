@@ -9,7 +9,12 @@
 #ifdef __APPLE__
 #include <cerrno>
 #include <dispatch/dispatch.h>
+#include <mach/mach_host.h>
+#include <mach/mach_init.h>
+#include <mach/mach_port.h>
+#include <mach/vm_statistics.h>
 #include <sys/sysctl.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -104,6 +109,51 @@ napi_value Sample(napi_env env, napi_callback_info) {
     query.release();
   }
   return promise;
+}
+
+napi_value MemoryUsage(napi_env env, napi_callback_info) {
+  napi_value result = Object(env);
+  Boolean(env, result, "supported", false);
+  Boolean(env, result, "complete", false);
+#ifdef __APPLE__
+  uint64_t total_bytes = 0;
+  size_t total_size = sizeof(total_bytes);
+  if (sysctlbyname("hw.memsize", &total_bytes, &total_size, nullptr, 0) != 0 ||
+      total_size != sizeof(total_bytes)) {
+    Number(env, result, "error", errno);
+    return result;
+  }
+  mach_port_t host = mach_host_self();
+  vm_statistics64_data_t statistics{};
+  mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+  const kern_return_t status = host_statistics64(
+      host, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&statistics), &count);
+  mach_port_deallocate(mach_task_self(), host);
+  const long page_size = sysconf(_SC_PAGESIZE);
+  if (status != KERN_SUCCESS || count != HOST_VM_INFO64_COUNT || page_size <= 0) {
+    Number(env, result, "error", status != KERN_SUCCESS ? status : EINVAL);
+    return result;
+  }
+  const uint64_t page_bytes = static_cast<uint64_t>(page_size);
+  const uint64_t free_pages = statistics.free_count > statistics.speculative_count
+                                  ? statistics.free_count - statistics.speculative_count
+                                  : 0;
+  const uint64_t cached_pages =
+      static_cast<uint64_t>(statistics.external_page_count) + statistics.purgeable_count;
+  const uint64_t free_bytes = free_pages * page_bytes;
+  const uint64_t cached_bytes = cached_pages * page_bytes;
+  if (free_bytes > total_bytes || cached_bytes > total_bytes - free_bytes) {
+    Number(env, result, "error", EOVERFLOW);
+    return result;
+  }
+  Boolean(env, result, "supported", true);
+  Boolean(env, result, "complete", true);
+  Number(env, result, "totalBytes", total_bytes);
+  Number(env, result, "usedBytes", total_bytes - free_bytes - cached_bytes);
+  Number(env, result, "freeBytes", free_bytes);
+  Number(env, result, "cachedBytes", cached_bytes);
+#endif
+  return result;
 }
 
 #ifdef __APPLE__
@@ -267,6 +317,7 @@ napi_value Sequence(napi_env env, napi_callback_info) {
 void RegisterDarwinMemoryPressure(napi_env env, napi_value exports) {
   for (const auto& entry : {
            std::pair<const char*, napi_callback>{"sampleDarwinMemoryPressure", Sample},
+           {"sampleDarwinMemoryUsage", MemoryUsage},
            {"subscribeDarwinMemoryPressure", Subscribe},
            {"stopDarwinMemoryPressureSubscription", Stop},
            {"darwinMemoryPressureEventSequence", Sequence}}) {

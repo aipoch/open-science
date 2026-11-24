@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
+import { isBuiltin } from 'node:module'
 import {
   chmod,
   copyFile,
@@ -15,18 +16,163 @@ import {
   symlink,
   writeFile
 } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { x as extractTar } from 'tar'
 import { unzipSync } from 'fflate'
+import { build } from 'esbuild'
 import { fetch, EnvHttpProxyAgent } from 'undici'
 
 const root = resolve(import.meta.dirname, '..')
 export const nodeRuntime = JSON.parse(await readFile(join(root, 'build/node-runtime.json'), 'utf8'))
 const archiveLimit = 100 * 1024 * 1024
-const stagingVersion = 2
+const stagingVersion = 3
+export const NODE_RUNTIME_DOWNLOAD_BACKOFF_MS = [5_000, 15_000]
 const npmRequiredFiles = ['package.json', 'LICENSE', 'bin/npm-cli.js', 'bin/npx-cli.js']
 const npmDirectory = 'node_modules/npm'
+const cliBundle = 'cli-bundle.cjs'
+const initTemplate = 'node_modules/init-package-json/lib/default-input.js'
+const bundledEntries = {
+  cli: 'lib/cli/entry.js',
+  // The upstream npx launcher imports these definitions before forwarding to npm exec.
+  definitions: 'node_modules/@npmcli/config/lib/definitions/index.js',
+  prefix: 'bin/npm-prefix.js',
+  gyp: 'node_modules/node-gyp/bin/node-gyp.js'
+}
+
+// npm starts its CLI through a runtime-computed path. Keep that loader and the public
+// launchers intact, including their Unix shebangs and npx's npm_execpath handling.
+const keepNpmScript = new Set([
+  'index.js',
+  'bin/npm-cli.js',
+  'bin/npx-cli.js',
+  'lib/cli.js',
+  'lib/cli/validate-engines.js'
+])
+
+function npmBundleSource(name, source) {
+  if (name === 'node_modules/node-gyp/lib/node-gyp.js') {
+    // Give esbuild a bounded glob for the command table and its help text.
+    source = source.replace(/require\('\.\/' \+ (command|c)\)/g, "require('./' + $1 + '.js')")
+  } else if (name === 'node_modules/init-package-json/lib/init-package-json.js') {
+    source = source.replace(
+      "require.resolve('./default-input.js')",
+      "require('node:path').join(__dirname, 'default-input.js')"
+    )
+  } else if (name === 'node_modules/fdir/dist/index.cjs') {
+    // The following require already loads the bundled optional dependency in the same try block.
+    source = source.replace('require.resolve("picomatch");', '')
+  }
+  if (/\b__dirname\b/.test(source)) {
+    // Anchor disk reads to the installed bundle, including when another Node runs npm-cli.js.
+    const directory = JSON.stringify(posix.dirname(name))
+    source = source.replace(
+      /^((?:#![^\n]*\n)?(?:\s*['"]use strict['"];?)?)/,
+      (directive) => directive + `\nconst __dirname = npmAssetPath(${directory});\n`
+    )
+  }
+  return source
+}
+
+async function bundleNpm(runtime) {
+  const output = join(runtime, npmDirectory)
+  const source = join(runtime, 'npm-source')
+  await rename(output, source)
+  const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+  if (manifest.version !== '10.9.9')
+    throw new Error(`Review npm bundle inputs for npm ${manifest.version}.`)
+  const options = {
+    absWorkingDir: source,
+    platform: 'node',
+    target: 'node22',
+    format: 'cjs',
+    bundle: true,
+    keepNames: true,
+    tsconfigRaw: {},
+    metafile: true,
+    write: false
+  }
+  // Each loader returns the module's exports. In particular, cli() returns npm's
+  // entry function; upstream validate-engines calls that function with process.
+  const dispatch = Object.entries(bundledEntries)
+    .map(([key, file]) => `exports.${key} = () => require(${JSON.stringify('./' + file)})`)
+    .join('\n')
+  const bundle = await build({
+    ...options,
+    stdin: { contents: dispatch, resolveDir: source, sourcefile: 'npm-entries.cjs' },
+    outfile: join(output, cliBundle),
+    external: ['node-gyp/bin/node-gyp.js'],
+    banner: { js: "const npmAssetPath = (name) => require('node:path').join(__dirname, name);" },
+    plugins: [
+      {
+        name: 'npm-runtime-paths',
+        setup(builder) {
+          builder.onLoad({ filter: /\.[cm]?js$/ }, async ({ path }) => ({
+            contents: npmBundleSource(
+              relative(source, path).split(sep).join('/'),
+              await readFile(path, 'utf8')
+            ),
+            resolveDir: dirname(path)
+          }))
+        }
+      }
+    ]
+  })
+  // promzard reads this script from disk and evaluates it with the user's project context.
+  const template = await build({
+    ...options,
+    entryPoints: [initTemplate],
+    outfile: join(output, initTemplate)
+  })
+  for (const result of [bundle, template]) {
+    if (
+      Object.keys(result.metafile.inputs).some((name) => isAbsolute(name) || name.startsWith('../'))
+    )
+      throw new Error('npm resolved a build input outside the verified Node archive.')
+    for (const file of Object.values(result.metafile.outputs)) {
+      for (const item of file.imports) {
+        if (
+          !isBuiltin(item.path) &&
+          !(item.kind === 'require-resolve' && item.path === 'node-gyp/bin/node-gyp.js')
+        )
+          throw new Error(`Unbundled npm dependency: ${item.path}`)
+      }
+    }
+    for (const file of result.outputFiles) {
+      await mkdir(dirname(file.path), { recursive: true })
+      await writeFile(file.path, file.contents)
+    }
+  }
+  const notices = []
+  for (const entry of await readdir(source, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) continue
+    const path = join(entry.parentPath, entry.name)
+    const key = relative(source, path).split(sep).join('/')
+    if (/^(licen[cs]e|notice|copying)([.-].*)?$/i.test(posix.basename(key))) {
+      notices.push(key + '\n\n' + (await readFile(path, 'utf8')))
+      if (key !== 'LICENSE') continue
+    }
+    if (/\.[cm]?js$/.test(key) && !keepNpmScript.has(key)) continue
+    await mkdir(dirname(join(output, key)), { recursive: true })
+    // Both trees are in the same private staging directory. Moving retained files
+    // preserves their archive modes, including the POSIX npm and npx launchers.
+    await rename(path, join(output, key))
+  }
+  await writeFile(
+    join(output, 'THIRD-PARTY-NOTICES.txt'),
+    notices.sort().join('\n\n----------\n\n')
+  )
+  for (const [key, name] of Object.entries(bundledEntries)) {
+    const path = join(output, name)
+    const loader = posix.relative(posix.dirname(name), cliBundle)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `#!/usr/bin/env node\nmodule.exports = require('${loader}').${key}()\n`, {
+      mode: 0o755
+    })
+  }
+  await rm(source, { recursive: true })
+}
 const launchers = (platform) =>
   platform === 'win32' ? ['npm', 'npx', 'npm.cmd', 'npx.cmd'] : ['npm', 'npx']
 
@@ -56,6 +202,39 @@ async function runtimeFiles(output, executable) {
 export async function verifyNodeArchive(path, expected) {
   if ((await fileDigest(path, archiveLimit)) !== expected)
     throw new Error('Node runtime archive checksum mismatch.')
+}
+
+export async function fetchNodeRuntimeArchive(
+  url,
+  { dispatcher, fetchImpl = fetch, delay = sleep, log = console.warn } = {}
+) {
+  for (let attempt = 0; attempt <= NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length; attempt += 1) {
+    let response
+    try {
+      response = await fetchImpl(url, {
+        signal: AbortSignal.timeout(120_000),
+        dispatcher
+      })
+    } catch (error) {
+      if (attempt === NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length) throw error
+      const pause = NODE_RUNTIME_DOWNLOAD_BACKOFF_MS[attempt]
+      log(
+        `Node runtime download failed (attempt ${attempt + 1}/${NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length + 1}); retrying after ${pause}ms`
+      )
+      await delay(pause)
+      continue
+    }
+    if (response.ok && response.body) return response
+    if (response.body?.cancel) await response.body.cancel()
+    const error = new Error(`Node runtime download failed (${response.status}).`)
+    const retryable = response.ok || response.status === 429 || response.status >= 500
+    if (!retryable || attempt === NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length) throw error
+    const pause = NODE_RUNTIME_DOWNLOAD_BACKOFF_MS[attempt]
+    log(
+      `Node runtime download failed (attempt ${attempt + 1}/${NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length + 1}); retrying after ${pause}ms`
+    )
+    await delay(pause)
+  }
 }
 
 async function fileDigest(path, limit = Infinity) {
@@ -177,15 +356,10 @@ export async function stageNodeRuntime({
     if (error.code !== 'ENOENT') throw error
     const dispatcher = new EnvHttpProxyAgent()
     try {
-      const response = await fetch(
+      const response = await fetchNodeRuntimeArchive(
         `https://nodejs.org/dist/v${nodeRuntime.version}/${source.file}`,
-        {
-          signal: AbortSignal.timeout(120_000),
-          dispatcher
-        }
+        { dispatcher }
       )
-      if (!response.ok || !response.body)
-        throw new Error(`Node runtime download failed (${response.status}).`)
       const temporary = `${archive}.${randomUUID()}.partial`
       try {
         const chunks = []
@@ -219,7 +393,7 @@ export async function stageNodeRuntime({
   const temporary = await mkdtemp(join(dirname(output), '.node-runtime-'))
   try {
     await extractNodeRuntime(archive, temporary, platform, arch)
-    // npm contains thousands of files; hashing them all concurrently can exhaust file handles.
+    await bundleNpm(resolve(temporary))
     const files = {}
     for (const name of await runtimeFiles(temporary, executable))
       files[name] = await fileDigest(join(temporary, name))

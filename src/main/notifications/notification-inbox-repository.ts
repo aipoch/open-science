@@ -11,6 +11,7 @@ import type {
   NotificationKind,
   NotificationSource
 } from '../../shared/notifications'
+import { RESEARCH_FILM_NOTIFICATION_PREFIX } from '../../shared/notifications'
 
 export const MAX_NOTIFICATION_INBOX_ITEMS = 1000
 const DEFAULT_SNAPSHOT_LIMIT = 50
@@ -20,6 +21,10 @@ const SQLITE_IN_CHUNK_SIZE = 500
 const ACTIVE_PENDING_WHERE = {
   actionState: 'pending',
   targetInvalidatedAt: null
+} satisfies Prisma.NotificationInboxItemWhereInput
+// A completed film is available in its own dialog, outside the conversation transcript.
+const SESSION_READ_WHERE = {
+  NOT: { dedupeKey: { startsWith: RESEARCH_FILM_NOTIFICATION_PREFIX } }
 } satisfies Prisma.NotificationInboxItemWhereInput
 const NOTIFICATION_HISTORY_WHERE = {
   OR: [
@@ -289,12 +294,25 @@ export class NotificationInboxDbRepository {
     })
   }
 
+  markVisibleSessionsRead(
+    sessionIds: readonly string[],
+    readAt: number
+  ): Promise<NotificationRepositoryState> {
+    return this.updateReadStateForValues(
+      'sessionId',
+      normalizeIds(sessionIds),
+      readAt,
+      SESSION_READ_WHERE
+    )
+  }
+
   markSessionCompletionsRead(
     sessionIds: readonly string[],
     readAt: number
   ): Promise<NotificationRepositoryState> {
     const normalized = normalizeIds(sessionIds)
     return this.updateReadStateForValues('sessionId', normalized, readAt, {
+      ...SESSION_READ_WHERE,
       kind: 'task.completed'
     })
   }

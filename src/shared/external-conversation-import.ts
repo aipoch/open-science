@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from './agent-framework-id'
 import type { AgentFrameworkId } from './settings'
 import type { PersistedChatMessage, PersistedMessageRole } from './session-persistence'
 import {
@@ -262,7 +263,7 @@ const importExternalConversationGraph = (
     runtimeSegments.push({
       id: runtimeSegmentId,
       agentFrameId: frameId,
-      frameworkId: options.frameworkId ?? 'claude-code',
+      frameworkId: options.frameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
       agentName,
       model: asString(context?.model),
       startedAt: createdAt,

@@ -517,7 +517,13 @@ export function mapReflowLinks(
         closedNumericHit(unit.source, unit.translation, source, nativeOccurrence) ??
         (compact(source.text) === compact(unit.source)
           ? { start: 0, text: unit.translation }
-          : (translatedPdfLinkLabel(unit.source, unit.translation, source.text, source.start) ??
+          : (translatedPdfLinkLabel(
+              unit.source,
+              unit.translation,
+              source.text,
+              source.start,
+              link.uri
+            ) ??
             translatedPdfLinkFragment(unit.source, unit.translation, source.text, source.start) ??
             (unit.kind === 'text'
               ? literalSourceIdentity(unit.source, unit.translation, source.text, source.start)

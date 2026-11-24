@@ -6,9 +6,13 @@ import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import * as fontkit from 'fontkit'
 import { PDFDict, PDFDocument, PDFName } from 'pdf-lib'
+import type { PDFPageProxy } from 'pdfjs-dist'
 import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
-import { applyCachedPdfFigureSources } from '../../src/reader/figure-source.js'
+import {
+  applyCachedPdfFigureSources,
+  preservePdfFigureSources
+} from '../../src/reader/figure-source.js'
 import { nativeFigurePanels, retainNativeFigurePanels } from '../../src/reader/figure-panels.js'
 import { createPdfTranslationSource } from '../../src/reader/source.js'
 
@@ -259,4 +263,67 @@ it('uses an owned auxiliary document when the primary panel outlines are absent'
     await task.destroy()
     vi.unstubAllGlobals()
   }
+})
+
+it.each([0, 0.03])('retains paired exposure keys on aligned raster panels (%s)', async (shift) => {
+  const units = ['BLUE', 'RED'].map((arm, i) => ({
+    id: String(i),
+    source: `FLAT ${arm}`,
+    fragments: [
+      {
+        pageNumber: 1,
+        rect: { x: 0.11 + i * 0.31, y: 0.38 - i * shift, width: 0.08, height: 0.01 },
+        items: [
+          { index: i * 2, text: 'FLAT' },
+          { index: i * 2 + 1, text: arm }
+        ]
+      }
+    ]
+  }))
+  const source = createPdfTranslationSource({
+    fingerprint: 'exposure-panels',
+    resourceRequestKey: 'exposure-panels',
+    pages: [{ width: 100, height: 100 }],
+    units
+  })
+  const page = {
+    rotate: 0,
+    getViewport: () => ({ width: 100, height: 100, transform: [1, 0, 0, -1, 0, 100] }),
+    getOperatorList: async () => ({
+      fnArray: [
+        OPS.save,
+        OPS.transform,
+        OPS.paintImageXObject,
+        OPS.restore,
+        OPS.save,
+        OPS.transform,
+        OPS.paintImageXObject,
+        OPS.restore
+      ],
+      argsArray: [
+        [],
+        [30, 0, 0, 30, 10, 60],
+        ['left'],
+        [],
+        [],
+        [30, 0, 0, 30, 41, 60],
+        ['right'],
+        []
+      ]
+    }),
+    cleanup: () => {}
+  } as unknown as PDFPageProxy
+  const result = await preservePdfFigureSources({
+    document: { getPage: async () => page },
+    extraction: { source },
+    operators: OPS,
+    signal: new AbortController().signal,
+    skipTranslation: false
+  })
+  expect(result.source.units.map(({ fragments }) => fragments)).toEqual(
+    units.map(({ fragments }) => fragments)
+  )
+  expect(result.source.units.map(({ preserve }) => preserve)).toEqual(
+    shift ? [undefined, undefined] : ['literal', 'literal']
+  )
 })

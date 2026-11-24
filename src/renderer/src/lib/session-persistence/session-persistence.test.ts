@@ -816,7 +816,8 @@ describe('renderer session persistence bridge', () => {
     expect(loadOne).toHaveBeenCalledOnce()
     expect(loadOne).toHaveBeenCalledWith({
       projectId: recovering.projectId,
-      sessionId: recovering.id
+      sessionId: recovering.id,
+      reportReadFailure: true
     })
     expect(useSessionStore.getState().sessions).toMatchObject([
       { id: selected.id, contentLoaded: false },
@@ -898,7 +899,11 @@ describe('renderer session persistence bridge', () => {
       sessionId: selected.id
     })
 
-    expect(loadOne).toHaveBeenCalledWith({ projectId: selected.projectId, sessionId: selected.id })
+    expect(loadOne).toHaveBeenCalledWith({
+      projectId: selected.projectId,
+      sessionId: selected.id,
+      reportReadFailure: true
+    })
     expect(useSessionStore.getState().sessions[0]?.contentLoaded).not.toBe(false)
   })
 

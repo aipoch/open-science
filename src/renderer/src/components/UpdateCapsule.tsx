@@ -115,7 +115,11 @@ const UpdateCapsule = ({
     status.state === 'downloading' ||
     status.state === 'ready' ||
     (status.state === 'error' && Boolean(status.latest))
-  if (!isVisible) return null
+  if (
+    !isVisible ||
+    (status.backgroundDownload && (status.state === 'downloading' || status.state === 'error'))
+  )
+    return null
 
   const copy = updateCopy(status, t)
   const Icon = copy.icon

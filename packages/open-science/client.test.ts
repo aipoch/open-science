@@ -169,6 +169,23 @@ describe('OpenScienceClient', () => {
     }
   )
 
+  it('rejects per-Run tracing before sending a direct or unsupported durable request', async () => {
+    const fetch = vi.fn(async () => response(200, { taskCapabilities: ['durable-submissions'] }))
+    const client = new OpenScienceClient({ baseUrl: 'http://localhost', token: 'test', fetch })
+    const input = { project: 'project', prompt: 'Trace', otelTraces: true as const }
+    await expect(client.startRun(input)).rejects.toMatchObject({ code: 'invalid_request' })
+    expect(fetch).not.toHaveBeenCalled()
+    await expect(client.startRun(input, { requestId: 'trace-request' })).rejects.toMatchObject({
+      code: 'unsupported_capability',
+      message: expect.stringContaining('Update the server')
+    })
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/bootstrap$/),
+      expect.anything()
+    )
+  })
+
   it('pins the SDK method inventory including Connector management', () => {
     expect(Object.getOwnPropertyNames(OpenScienceClient.prototype).sort()).toEqual(
       [

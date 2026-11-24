@@ -8,7 +8,8 @@ import { RemoteSessionPairingManager } from '../remote-access/pairing'
 import { RemoteAccessRepository } from '../remote-access/repository'
 import { requirePairingManager } from '../remote-access/ipc'
 import { remoteAccessApplicationCommandContracts } from '../../shared/remote-access'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { packWebAssets } from '../../../scripts/pack-web-assets.mjs'
 import { request as httpRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -846,9 +847,15 @@ describe('startWebHttpServer', () => {
   })
 
   it('serves static resources with browser security policies', async () => {
-    const staticRoot = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
-    roots.push(staticRoot)
-    await writeFile(join(staticRoot, 'index.html'), '<!doctype html><title>Web test</title>')
+    const output = await mkdtemp(join(tmpdir(), 'open-science-web-static-'))
+    roots.push(output)
+    const staticRoot = join(output, 'web')
+    const input = join(output, 'source')
+    await mkdir(join(input, 'assets'), { recursive: true })
+    const asset = 'export default 42\n'.repeat(100)
+    await writeFile(join(input, 'assets/module.js'), asset)
+    await writeFile(join(input, 'index.html'), '<!doctype html><title>Web test</title>')
+    await packWebAssets(input, staticRoot)
     await writeFile(join(staticRoot, 'app.js'), 'window.__staticTest = true')
     await writeFile(join(staticRoot, 'worker.mjs'), 'export const ready = true')
     const server = await startTestWebHttpServer({
@@ -904,6 +911,21 @@ describe('startWebHttpServer', () => {
       headers: { authorization: 'Bearer test-token' }
     })
     expect(moduleResponse.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
+    const packedUrl = `http://127.0.0.1:${server.port}/assets/module.js`
+    const headers = { authorization: 'Bearer test-token', 'accept-encoding': 'gzip' }
+    const indexPath = join(output, 'web-assets.json')
+    const index = await readFile(indexPath)
+    await rm(indexPath)
+    expect((await fetch(packedUrl, { headers })).status).toBe(503)
+    await writeFile(indexPath, index)
+    const packed = await fetch(packedUrl, { headers })
+    expect(packed.headers.get('content-encoding')).toBe('gzip')
+    expect(await packed.text()).toBe(asset)
+    const head = await fetch(packedUrl, { headers, method: 'HEAD' })
+    expect(head.headers.get('content-length')).toBe(packed.headers.get('content-length'))
+    expect(await head.text()).toBe('')
+    await writeFile(join(output, 'web-assets.asar'), 'truncated')
+    expect((await fetch(packedUrl, { headers })).status).toBe(503)
   })
 
   it('dispatches local Web RPC through the narrow application command view', async () => {
@@ -1007,6 +1029,7 @@ describe('startWebHttpServer', () => {
       ['command-unavailable', 404],
       ['session-details-conflict', 409],
       ['session-revision-conflict', 409],
+      ['session-package-busy', 409],
       ['csl-undefined-macro', 400]
     ] as const) {
       directInvoke.mockRejectedValueOnce(
@@ -3431,6 +3454,7 @@ describe('startWebHttpServer', () => {
     ).toEqual([
       'notebook:abort-code-cell',
       'notebook:append-code-cell',
+      'notebook:background-tasks',
       'notebook:begin-code-cell',
       'notebook:cancel-background-run',
       'notebook:execute',
@@ -3447,6 +3471,7 @@ describe('startWebHttpServer', () => {
       'notebook:restart',
       'notebook:retry-resource-release',
       'notebook:run-cell',
+      'notebook:run-evidence',
       'notebook:run-index',
       'notebook:shutdown',
       'notebook:state'
@@ -5605,14 +5630,35 @@ it('recovers a lost submission response through the real SDK and CLI without sta
   try {
     await expect(
       lostResponse.startRun(
-        { project: 'project', prompt: 'Research' },
+        { project: 'project', prompt: 'Research', otelTraces: true },
         { requestId: 'request-receipt' }
       )
     ).rejects.toMatchObject({ code: 'timeout', requestId: 'request-receipt' })
     expect(
-      await client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
+      await client.submitRun('request-receipt', {
+        project: 'project',
+        prompt: 'Research',
+        otelTraces: true
+      })
     ).toMatchObject({ status: 'pending' })
+    await expect(
+      client.submitRun('request-receipt', { project: 'project', prompt: 'Research' })
+    ).rejects.toMatchObject({ code: 'submission_conflict' })
     expect(startRun).toHaveBeenCalledOnce()
+    expect(startRun).toHaveBeenCalledWith(
+      { project: 'project', prompt: 'Research', otelTraces: true },
+      'request-receipt'
+    )
+    const remote = await (await fetch(`${baseUrl}/api/bootstrap`)).json()
+    expect(remote.taskCapabilities).not.toContain('run-otel-traces')
+    expect(
+      (
+        await fetch(`${baseUrl}/api/v1/run-submissions/remote`, {
+          method: 'PUT',
+          body: JSON.stringify({ project: 'project', prompt: 'Trace', otelTraces: true })
+        })
+      ).status
+    ).toBe(403)
     expect((await fetch(`${baseUrl}/api/v1/run-submissions/request-receipt`)).status).toBe(403)
     finish()
     const log = vi.fn()

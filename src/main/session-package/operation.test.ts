@@ -222,9 +222,10 @@ describe('SessionPackageOperation', () => {
     await Promise.resolve()
     expect(owner.active).toBe(true)
     expect(closed).toBe(false)
-    await expect(owner.run('import', undefined, async () => null)).rejects.toThrow(
-      'already in progress'
-    )
+    await expect(owner.run('import', undefined, async () => null)).rejects.toMatchObject({
+      code: 'session-package-busy',
+      message: 'A Session package operation is already in progress.'
+    })
     cleanup.resolve()
     await Promise.all([failure, closing])
     expect(owner.active).toBe(false)

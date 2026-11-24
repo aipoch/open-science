@@ -143,6 +143,30 @@ const renderAnsi = (text: string): React.ReactNode => {
 
 // --- output rendering ---
 
+const OutputTextBlock = ({
+  text,
+  tone = 'text-text-200',
+  testId
+}: {
+  text: string
+  tone?: string
+  testId?: string
+}): React.JSX.Element => {
+  const large = text.length >= 64 * 1024
+  // Freeze the container during a divider drag. Changing the pre's own width invalidates
+  // its line layout at pointer-down even when the measured width is identical.
+  return (
+    <div className={large ? 'notebook-large-text-output' : undefined}>
+      <pre
+        data-testid={testId}
+        className={`${notebookOutputTextClassName} ${tone} ${large ? '[content-visibility:auto] [contain-intrinsic-block-size:auto_16rem]' : ''}`}
+      >
+        {renderAnsi(text)}
+      </pre>
+    </div>
+  )
+}
+
 // Renders only the textual part of a display bundle. Figure mimes have a separate, always-visible
 // surface below the independently collapsible text output.
 const NotebookDisplayTextOutput = ({
@@ -157,13 +181,7 @@ const NotebookDisplayTextOutput = ({
   return (
     <>
       {textEntries.map(([mime, payload]) => (
-        <pre
-          key={mime}
-          data-testid="notebook-output-text"
-          className={`${notebookOutputTextClassName} text-text-200`}
-        >
-          {renderAnsi(payload)}
-        </pre>
+        <OutputTextBlock key={mime} text={payload} testId="notebook-output-text" />
       ))}
     </>
   )
@@ -182,12 +200,11 @@ const renderTextOutput = (
       if (text.trim().length === 0) return null
 
       return (
-        <pre
+        <OutputTextBlock
           key={index}
-          className={`${notebookOutputTextClassName} ${output.name === 'stderr' ? errorClassName : 'text-text-200'}`}
-        >
-          {renderAnsi(text)}
-        </pre>
+          text={text}
+          tone={output.name === 'stderr' ? errorClassName : undefined}
+        />
       )
     }
     case 'text': {
@@ -195,18 +212,12 @@ const renderTextOutput = (
 
       if (text.trim().length === 0) return null
 
-      return (
-        <pre key={index} className={`${notebookOutputTextClassName} text-text-200`}>
-          {renderAnsi(text)}
-        </pre>
-      )
+      return <OutputTextBlock key={index} text={text} />
     }
-    case 'json':
-      return (
-        <pre key={index} className={`${notebookOutputTextClassName} text-text-200`}>
-          {renderAnsi(safeJson(output.data))}
-        </pre>
-      )
+    case 'json': {
+      const text = safeJson(output.data)
+      return <OutputTextBlock key={index} text={text} />
+    }
     case 'error': {
       // The traceback already begins with the error type/message, so render it alone; only fall back
       // to name/message when there is no traceback. Prevents a doubled "Traceback …" header (the
@@ -219,11 +230,7 @@ const renderTextOutput = (
 
       if (body.trim().length === 0) return null
 
-      return (
-        <pre key={index} className={`${notebookOutputTextClassName} ${errorClassName}`}>
-          {renderAnsi(body)}
-        </pre>
-      )
+      return <OutputTextBlock key={index} text={body} tone={errorClassName} />
     }
     case 'display':
       return <NotebookDisplayTextOutput key={index} data={output.data} />
@@ -243,15 +250,12 @@ const LegacyTextOutput = ({ run }: { run: NotebookRunRecord }): React.JSX.Elemen
 
   return (
     <>
-      {stdout.trim().length > 0 ? (
-        <pre className={`${notebookOutputTextClassName} text-text-200`}>{renderAnsi(stdout)}</pre>
-      ) : null}
+      {stdout.trim().length > 0 ? <OutputTextBlock text={stdout} /> : null}
       {stderr.trim().length > 0 ? (
-        <pre
-          className={`${notebookOutputTextClassName} ${run.status === 'failed' ? 'text-danger-000' : 'text-text-200'}`}
-        >
-          {renderAnsi(stderr)}
-        </pre>
+        <OutputTextBlock
+          text={stderr}
+          tone={run.status === 'failed' ? 'text-danger-000' : undefined}
+        />
       ) : null}
     </>
   )

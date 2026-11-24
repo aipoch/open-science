@@ -329,6 +329,8 @@ describe('notebook IPC handlers', () => {
       'notebook:retry-resource-release',
       'notebook:process-monitor',
       'notebook:terminate-monitored-process',
+      'notebook:background-tasks',
+      'notebook:run-evidence',
       'notebook:run-index',
       'notebook:state',
       'notebook:memory-policy-state',

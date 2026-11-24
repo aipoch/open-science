@@ -283,6 +283,31 @@ describe('WorkspaceDelegatedQuestionCard', () => {
     )
   })
 
+  it('keeps the confirmation result when an earlier draft fails later', async () => {
+    const draft = Promise.withResolvers<void>()
+    const onRespond = vi.fn((response: ElicitationResponse) =>
+      response.delegatedQuestion?.action === 'draft'
+        ? draft.promise
+        : Promise.reject(new Error('Receipt unavailable'))
+    )
+    render(
+      <WorkspaceDelegatedQuestionCard
+        projectId="project-1"
+        sessionId="session-1"
+        request={{ ...request, questions: request.questions.slice(0, 1) }}
+        onRespond={onRespond}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Strict' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }))
+    await screen.findByRole('alert')
+    await act(async () => draft.reject(new Error('Earlier draft failed')))
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Could not confirm that your response was submitted.'
+    )
+    expect(screen.queryByText('Earlier draft failed')).toBeNull()
+  })
+
   it('finishes with the latest answer without waiting for an in-flight draft', async () => {
     vi.useFakeTimers()
     let releaseDraft: (() => void) | undefined

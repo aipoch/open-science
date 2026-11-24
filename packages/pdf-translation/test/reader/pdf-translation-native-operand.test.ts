@@ -393,3 +393,78 @@ it.each([true, false])(
     )
   }
 )
+
+it.each([false, true])(
+  'retains only the closed native numbered display (offset label=%s)',
+  (offset) => {
+    const glyph = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height = 12,
+      fontName = 'body',
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      transform: [height, 0, 0, height, x, y],
+      fontName,
+      hasEOL,
+      fontAscent: fontName === 'extension' ? 0.08 : 0.78,
+      fontDescent: fontName === 'extension' ? -0.82 : -0.22,
+      fontVertical: false
+    })
+    const items = [
+      glyph('The following inequality is useful for comparisons.', 70, 540, 410, 12, 'body', true),
+      glyph('(1)', 70, 500, 15),
+      glyph('exp', 180, 500, 18),
+      glyph('(', 200, 520, 9, 12, 'extension'),
+      glyph('3', 209, 500, 6),
+      glyph('(', 217, 520, 9, 12, 'extension'),
+      glyph('1', 226, 500, 6),
+      glyph('−', 235, 500, 9, 12, 'symbol'),
+      glyph('∑', 254, 517, 13, 12, 'extension'),
+      glyph('m', 267, 514, 4, 8, 'index', true),
+      glyph('j', 267, 505, 3, 8, 'index'),
+      glyph('=1', 270, 505, 8, 8, 'index'),
+      glyph('u', 283, 508, 6, 12, 'italic'),
+      glyph('3', 289, 514, 4, 8, 'index'),
+      glyph('(', 248, 489, 5),
+      glyph('∑', 253, 498, 13, 12, 'extension'),
+      glyph('m', 266, 495, 4, 8, 'index', true),
+      glyph('j', 266, 486, 3, 8, 'index'),
+      glyph('=1', 269, 486, 8, 8, 'index'),
+      glyph('u', 282, 489, 6, 12, 'italic'),
+      glyph(')', 293, 489, 5),
+      glyph('))', 321, 520, 19, 12, 'extension'),
+      glyph('m', 347, 515, 4, 8, 'index'),
+      glyph('∏', 342, 511, 15, 12, 'extension'),
+      glyph('j', 343, 486, 3, 8, 'index'),
+      glyph('=1', 346, 486, 8, 8, 'index'),
+      glyph('u', 359, 500, 6, 12, 'italic'),
+      glyph('≤', 379, 500, 9, 12, 'symbol'),
+      glyph('m', 397, 515, 4, 8, 'index'),
+      glyph('∑', 391, 511, 13, 12, 'extension'),
+      glyph('j', 393, 486, 3, 8, 'index'),
+      glyph('=1', 396, 486, 8, 8, 'index'),
+      glyph('u', 410, 500, 6, 12, 'italic'),
+      glyph('.', 416, 500, 3, 12, 'italic'),
+      glyph('The assumptions', 71, 467, 91),
+      glyph('ensure all terms are nonnegative.', 168, 467, 185, 12, 'body', true),
+      glyph('(2)', offset ? 85 : 70, 415, 15),
+      glyph('p', 235, 415, 6, 12, 'italic'),
+      glyph('=', 245, 415, 8, 12, 'symbol'),
+      glyph('q', 255, 415, 6, 12, 'italic'),
+      glyph('.', 261, 415, 3, 12, 'body', true)
+    ]
+    const units = extract(items)
+    const operator = units.find((unit) => unit.items.includes('1:2'))
+    expect(operator?.items).toEqual(['1:2'])
+    expect(operator?.preserve).toBe(offset ? undefined : 'formula')
+    expect(units.find((unit) => unit.items.includes('1:34'))?.sourceOnly).toBeUndefined()
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(items.map((_, i) => `1:${i}`).sort())
+  }
+)

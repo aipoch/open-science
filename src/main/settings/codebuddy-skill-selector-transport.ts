@@ -54,6 +54,7 @@ export function createCodeBuddySkillSelectorTransport(input: {
       ...(provider.reasoningEffortTransport
         ? { reasoningEffortTransport: provider.reasoningEffortTransport }
         : {}),
+      reasoningSupported: input.activeTarget.reasoningEffortProfile.supported,
       ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {})
     },
     { skillSelectorFailureMode: 'throw' }

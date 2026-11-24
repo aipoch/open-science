@@ -5,6 +5,8 @@ it.each([
   ['Figure 2 flips the comparison between groups.', false],
   ['Figure 3 clarifies in more detail the change between groups.', false],
   ['Figure 4 assesses the effect of the settings.', false],
+  ['Figure 4 visualizes the residuals from both runs.', false],
+  ['Figure 4. Visualizes the residuals from both runs.', true],
   ['Figure 4: Assesses the effect of the settings.', true],
   ['Figure 2: Flips between measured states.', true],
   ['Figure 3. Clarifies the notation used below.', true],

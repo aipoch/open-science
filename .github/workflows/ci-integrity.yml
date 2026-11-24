@@ -1,22 +1,77 @@
 name: CI Integrity
 
 on:
-  pull_request_target:
-    branches: [main]
-    types: [opened, edited, synchronize, reopened, ready_for_review]
+  workflow_run:
+    workflows: [PR Automation Signal]
+    types: [completed]
+  workflow_call:
+    inputs:
+      run_id:
+        description: PR Automation Signal run to inspect without publishing a check
+        required: true
+        type: string
   merge_group:
     types: [checks_requested]
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-integrity-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}
-  cancel-in-progress: true
-
 jobs:
+  preview_target:
+    name: Validate preview target
+    needs: resolve
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && (needs.resolve.result != 'success' || needs.resolve.outputs.number == '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - run: |
+          echo 'Signal did not resolve to a current PR' >&2
+          exit 1
+
+  check:
+    name: Initialize PR integrity check
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: write
+    outputs:
+      id: ${{ steps.check.outputs.id }}
+    steps:
+      - name: Start PR integrity check
+        id: check
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            if (run.repository.id !== context.payload.repository.id || run.event !== 'pull_request' ||
+                run.path !== '.github/workflows/pr-automation-signal.yml' || !/^[0-9a-f]{40}$/.test(run.head_sha)) return;
+            // Source metadata may start a pending check, never authorize a successful one.
+            // Do this independently of resolution so an API failure cannot preserve an old green check.
+            const { data: check } = await github.rest.checks.create({
+              ...context.repo, name: 'CI Integrity', head_sha: run.head_sha, status: 'in_progress',
+              details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+            core.setOutput('id', String(check.id));
+
+  resolve:
+    if: github.event_name != 'merge_group'
+    permissions:
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/resolve-pr-signal.yml
+    with:
+      run_id: ${{ inputs.run_id || format('{0}', github.event.workflow_run.id) }}
+      run_attempt: ${{ github.event_name == 'workflow_run' && format('{0}', github.event.workflow_run.run_attempt) || '' }}
+
   integrity:
     name: CI Integrity
+    needs: [resolve, check]
+    if: ${{ always() && (github.event_name == 'merge_group' || (needs.resolve.result == 'success' && needs.resolve.outputs.number != '' && (github.event_name == 'workflow_dispatch' || needs.check.result == 'success'))) }}
+    concurrency:
+      group: ci-integrity-${{ github.event.merge_group.head_ref || format('{0}-{1}', needs.resolve.outputs.number, github.run_id) }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -29,7 +84,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           # Merge groups start from the target branch tip so stacked entries are inspected as one revision.
-          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_ref }}
+          ref: ${{ needs.resolve.outputs.base_sha || github.event.merge_group.base_ref }}
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -47,18 +102,23 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           MERGE_HEAD_REF: ${{ github.event.merge_group.head_ref }}
           MERGE_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ needs.resolve.outputs.number }}
+          PR_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         run: |
           set -euo pipefail
           base_sha="$(git rev-parse HEAD)"
 
-          if [[ "$EVENT_NAME" == "pull_request_target" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_run" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
             if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
               echo "Invalid pull request number" >&2
               exit 1
             fi
             git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
             head_sha="$(git rev-parse FETCH_HEAD)"
+            if [[ "$head_sha" != "$PR_HEAD_SHA" ]]; then
+              echo "Pull request head changed while resolving revisions" >&2
+              exit 1
+            fi
           elif [[ "$EVENT_NAME" == "merge_group" ]]; then
             if [[ ! "$MERGE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
               echo "Invalid merge-group head SHA" >&2
@@ -114,8 +174,8 @@ jobs:
 
       - name: Validate pull request metadata
         env:
-          EVENT_NAME: ${{ github.event_name == 'pull_request_target' && 'pull_request' || github.event_name }}
-          PR_TITLE: ${{ github.event.pull_request.title || steps.merge_group_title.outputs.title }}
+          EVENT_NAME: ${{ github.event_name == 'merge_group' && 'merge_group' || 'pull_request' }}
+          PR_TITLE: ${{ needs.resolve.outputs.title || steps.merge_group_title.outputs.title }}
           POLICY_SCOPE: title
         run: node scripts/ci/check-pr-policy.mjs
 
@@ -124,3 +184,38 @@ jobs:
           BASE_SHA: ${{ steps.revisions.outputs.base }}
           HEAD_SHA: ${{ steps.revisions.outputs.head }}
         run: node scripts/ci/check-ci-integrity.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
+
+  publish:
+    name: Publish PR integrity result
+    needs: [check, resolve, integrity]
+    if: ${{ always() && needs.check.outputs.id != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: write
+      pull-requests: read
+    steps:
+      - name: Complete PR integrity check
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CHECK_ID: ${{ needs.check.outputs.id }}
+          RESULT: ${{ needs.integrity.result }}
+          PR_NUMBER: ${{ needs.resolve.outputs.number }}
+          PR_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          PR_TITLE: ${{ needs.resolve.outputs.title }}
+        with:
+          script: |
+            let current = false;
+            if (process.env.RESULT === 'success' && process.env.PR_NUMBER) {
+              try {
+                const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(process.env.PR_NUMBER) });
+                current = pr.state === 'open' && pr.head.sha === process.env.PR_HEAD_SHA && pr.title === process.env.PR_TITLE;
+              } catch (error) {
+                core.warning(`Could not confirm the current PR: ${error.message}`);
+              }
+            }
+            await github.rest.checks.update({
+              ...context.repo, check_run_id: Number(process.env.CHECK_ID), status: 'completed',
+              conclusion: current ? 'success' : 'failure',
+              output: { title: 'CI Integrity', summary: 'Trusted policy validation; see the linked workflow run for details.' },
+            });

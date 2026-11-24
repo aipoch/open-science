@@ -392,8 +392,19 @@ export const createApplicationModules = async (
     sessionRepository: sessionFoundation.sessionRepository,
     modules
   })
+  const notifications = composeNotifications({
+    surfaceAdapters,
+    settingsBootstrap,
+    storageStartup,
+    sessionAuthority,
+    notificationDelivery,
+    headless,
+    translate
+  })
   const researchFilm = await composeResearchFilm({
     translate,
+    applicationEvents,
+    taskNotifications: notifications.taskNotifications,
     previewResources: managedFiles.previewResources,
     ...settingsBootstrap,
     ...sessionFoundation,
@@ -477,15 +488,6 @@ export const createApplicationModules = async (
     ...notebookRuntime,
     ...specialistCatalog,
     modules
-  })
-  const notifications = composeNotifications({
-    surfaceAdapters,
-    settingsBootstrap,
-    storageStartup,
-    sessionAuthority,
-    notificationDelivery,
-    headless,
-    translate
   })
   const connectors = await composeConnectors({
     canRequestDesktopCredential,
@@ -1090,8 +1092,8 @@ export const createApplicationModules = async (
         } catch (error) {
           if (!(error instanceof Error) || error.message !== 'Session projection is not ready.')
             throw error
-          await sessionProjection.ensureSessionProjection()
-          summaries = await sessionFoundation.sessionRepository.loadSessionSummaries()
+          // Recovery can return readable sessions while the projection is still incomplete.
+          summaries = (await sessionProjection.ensureSessionProjection()).sessions
         }
         const projects = await sessionPackages.projectRepository.list()
         const projectsById = new Map(

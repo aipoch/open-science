@@ -1,4 +1,5 @@
 import { projectSessionEventPayload } from '../session-event-payload'
+import { createPackedWebAssetReader } from './packed-web-assets'
 import { RUNTIME_PAYLOAD_CAPABILITY } from '../../shared/runtime-payload-transfer'
 import { runtimePayloadTransfers } from '../runtime-payload-transfers'
 import { createHash } from 'node:crypto'
@@ -45,6 +46,7 @@ import { PlanCommandError } from '../../shared/session-plan/contract'
 import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
+  SubmitTaskRunRequest,
   TaskPlanResponseRequest,
   UpdateTaskAgentRoutingRequest,
   UpdateTaskProjectRequest
@@ -467,8 +469,12 @@ const publicApplicationCommandError = (
 const applicationCommandErrorStatus = (error: ApplicationCommandError): number => {
   if (error.code === 'invalid-command-arguments' || error.code.startsWith('csl-')) return 400
   if (error.code === 'command-unavailable') return 404
-  if (error.code === 'session-details-conflict') return 409
-  if (error.code === 'session-revision-conflict') return 409
+  if (
+    error.code === 'session-details-conflict' ||
+    error.code === 'session-revision-conflict' ||
+    error.code === 'session-package-busy'
+  )
+    return 409
   return 500
 }
 
@@ -1256,8 +1262,9 @@ const handleTaskApiRequest = async (
             requestBodyBudgetRegistry,
             requestBodyClientId
           )
+          assertExternalAuthorizationCurrent(externalAuthorization)
           reply(202, {
-            data: await tasks.submitRun(requestId, body as StartTaskRunRequest)
+            data: await tasks.submitRun(requestId, body as SubmitTaskRunRequest)
           })
         }
         return true
@@ -1425,7 +1432,8 @@ const serveStatic = async (
   request: IncomingMessage,
   response: ServerResponse,
   staticRoot: string,
-  pathname: string
+  pathname: string,
+  readPackedAsset: ReturnType<typeof createPackedWebAssetReader>
 ): Promise<void> => {
   const root = resolve(staticRoot)
   const requested = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1))
@@ -1436,13 +1444,15 @@ const serveStatic = async (
   }
 
   try {
-    if (!(await stat(filePath)).isFile()) throw new Error('Not a file')
-  } catch {
-    filePath = resolve(root, 'index.html')
-  }
-
-  try {
-    const content = await readFile(filePath)
+    const packed = await readPackedAsset(filePath)
+    if (packed === undefined) {
+      try {
+        if (!(await stat(filePath)).isFile()) throw new Error('Not a file')
+      } catch {
+        filePath = resolve(root, 'index.html')
+      }
+    }
+    const content = packed ?? (await readFile(filePath))
     const extension = extname(filePath).toLowerCase()
     const canCompress =
       content.byteLength >= MIN_GZIP_BYTES && COMPRESSIBLE_EXTENSIONS.has(extension)
@@ -1470,6 +1480,7 @@ const serveStatic = async (
 }
 
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
+  const readPackedAsset = createPackedWebAssetReader(options.staticRoot)
   const sockets = new Set<WebSocket>()
   const outboundBudget = createWebSocketFrameBudget()
   const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
@@ -1618,7 +1629,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             ? [
                 'permission-prompts-none',
                 ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
-                  ? ['durable-submissions']
+                  ? ['durable-submissions', 'run-otel-traces']
                   : [])
               ]
             : [],
@@ -1886,7 +1897,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       if (request.method === 'GET' || request.method === 'HEAD') {
-        await serveStatic(request, response, options.staticRoot, url.pathname)
+        await serveStatic(request, response, options.staticRoot, url.pathname, readPackedAsset)
         return
       }
 
@@ -2076,19 +2087,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
     const projection = projectWebRendererEvent(event)
-    const internalProjection = projection
-      ? { ...projection, payload: projectSessionEventPayload(projection) }
-      : undefined
-    const needsPayloadClient = internalProjection?.payload !== projection?.payload
     const publicMessages = projectPublicTaskEvents(event, (sessionId, promptMessageId) =>
       options.tasks?.resolveActiveRun?.(sessionId, promptMessageId)
     ).map((projection) => publicTaskEventStream.publish(projection))
-    const legacyInternalMessage = internalProjection
-      ? JSON.stringify(internalProjection)
-      : undefined
-    const replayInternalMessage = internalProjection
-      ? internalEventStream.publish(internalProjection)
-      : undefined
+    const replayInternalMessage = projection ? internalEventStream.publish(projection) : undefined
+    // Legacy sockets cannot hydrate invalidations. Encode their live-only message on demand.
+    let legacyInternalMessage: string | null | undefined
     for (const socket of sockets) {
       if (publicEventSockets.has(socket)) {
         for (const publicMessage of publicMessages) {
@@ -2096,8 +2100,14 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         }
       } else if (internalEventSockets.get(socket) === 'replay') {
         if (replayInternalMessage) sendCurrentWebSocketMessage(socket, replayInternalMessage)
-      } else if (legacyInternalMessage) {
-        if (needsPayloadClient) {
+      } else if (projection) {
+        if (legacyInternalMessage === undefined) {
+          legacyInternalMessage =
+            projectSessionEventPayload(projection) === projection.payload
+              ? JSON.stringify(projection)
+              : null
+        }
+        if (legacyInternalMessage === null) {
           socket.close(1002, 'Reload to receive large Session updates')
           continue
         }

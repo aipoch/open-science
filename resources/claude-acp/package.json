@@ -1,0 +1,10 @@
+{
+  "name": "open-science-managed-claude-acp",
+  "private": true,
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.70.0",
+    "@anthropic-ai/sdk": "0.129.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "zod": "4.6.7"
+  }
+}

@@ -15,6 +15,7 @@ import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type {
   ModelProtocol,
+  ModelReasoningEffort,
   OfficialVendorId,
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
@@ -135,6 +136,8 @@ export type StoredProvider = {
   labCatalogToken?: string
   // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
   modelCapabilities?: Record<string, LabModelCapabilities>
+  // Per-model reasoning levels advertised by CodeBuddy's ACP catalog.
+  modelReasoningEfforts?: Record<string, ModelReasoningEffort[]>
   // Non-secret identity returned by xAI after device authorization.
   accountEmail?: string
   keyRef?: string
@@ -264,7 +267,7 @@ export type StoredSettings = {
   imageServices?: StoredImageService[]
   imageModel?: ImageModelBinding
   claude?: ClaudeInfo
-  // Selected agent backend. Absent means the default (Claude Code). Switching needs a reconnect.
+  // Selected agent backend. Absent means the built-in Open Science Agent. Switching needs a reconnect.
   agentFrameworkId?: AgentFrameworkId
   // Reasoning-effort preference. Absent (or 'default') means the agent keeps its own default.
   reasoningEffort?: ReasoningEffort

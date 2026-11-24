@@ -62,6 +62,28 @@ const computeRow = (): BackgroundResultDelivery => ({
 })
 
 describe('resolveBackgroundResultSources', () => {
+  it('retains both ends of failure diagnostics when stdout exceeds the summary budget', async () => {
+    const failed = run('run-1', 'failed')
+    const [resolved] = await resolveBackgroundResultSources([row(failed.runId)], {
+      loadNotebookRuns: async () => [
+        {
+          ...failed,
+          text: {
+            ...failed.text,
+            stdout: 'x'.repeat(9000),
+            stderr: 'stderr start' + 'x'.repeat(9000) + 'stderr end',
+            traceback: 'trace start' + 'x'.repeat(9000) + 'final cause'
+          }
+        }
+      ],
+      loadComputeJobs: async () => new Map()
+    })
+    const summary =
+      resolved?.outcome?.sourceKind === 'local-run' ? resolved.outcome.resultSummary : ''
+    expect(summary).toMatch(/trace start[\s\S]*final cause[\s\S]*stderr start[\s\S]*stderr end/u)
+    expect(typeof summary === 'string' && summary.length <= 8000).toBe(true)
+  })
+
   it('delivers external cancellation before collection with the same Agent conclusion', async () => {
     const job = computeJob({ error_code: 'job_cancelled' })
     const [resolved] = await resolveBackgroundResultSources([computeRow()], {

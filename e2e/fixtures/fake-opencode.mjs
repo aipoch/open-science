@@ -46,6 +46,8 @@ const VERSION = '1.0.0'
 const WSL_SETUP_DIAGNOSTICS_PROMPT = 'Verify WSL setup diagnostic tools.'
 const WSL_SETUP_UNAVAILABLE_PROMPT = 'Verify WSL setup tools are unavailable.'
 const PERMISSION_PROMPT = 'Request fixture permission.'
+const MEMORY_DENIAL_PROMPT = '请把测试用的周报格式保存到项目记忆里。'
+const PARTIAL_MEMORY_PROMPT = '请先读取记忆分类，再把测试用的周报格式保存到项目记忆里。'
 const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
 const MEMORY_RECALL_PROMPT = 'Verify automatic memory recall.'
 const MEMORY_RECALL_ENTRY = 'Keep every response concise and welcoming.'
@@ -548,14 +550,15 @@ const verifyRuntimeApproval = async (context, prompt) =>
     return `Runtime ${language} ${continued ? 'continued' : 'first'} cell verified: ${continued ? '42' : '41'}.`
   })
 
-const executeControlCode = async (sessionId, code) =>
+const executeControlCode = async (sessionId, code, options) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) =>
     toolResult(
       'repl_execute',
       await client.callTool({
         name: 'repl_execute',
         arguments: { code, timeoutMs: 120_000 }
-      })
+      }),
+      options
     )
   )
 
@@ -997,10 +1000,11 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     // Hosted runners need 30-80s per AppContainer launch; the MCP SDK's default per-request
     // timeout (-32001) is far below the certification's per-cell budget.
-    const call = async (name, arguments_ = {}) =>
+    const call = async (name, arguments_ = {}, options) =>
       toolResult(
         name,
-        await client.callTool({ name, arguments: arguments_ }, undefined, { timeout: 240_000 })
+        await client.callTool({ name, arguments: arguments_ }, undefined, { timeout: 240_000 }),
+        options
       )
     const execute = async (code) =>
       controlResultValue(await call('repl_execute', { code, timeoutMs: 180_000 }))
@@ -1027,8 +1031,19 @@ const verifyWindowsReplLifecycle = async (sessionId) =>
     if (second.marker !== 'second-cell' || !second.reset)
       throw new Error('REPL restart did not produce a fresh interpreter.')
     // Exercise an actual child exit, then verify cleanup does not fence the next Shell run.
-    const exited = await call('repl_execute', { code: 'process.exit(23)', timeoutMs: 180_000 })
-    if (exited.status !== 'failed') throw new Error('The deliberate REPL exit was not reported.')
+    const exited = await call(
+      'repl_execute',
+      { code: 'process.exit(23)', timeoutMs: 180_000 },
+      { allowToolError: true }
+    )
+    const kernel = exited.recovery?.kernel
+    if (
+      exited.status !== 'failed' ||
+      kernel?.kind !== 'repl' ||
+      kernel.exitCode !== 23 ||
+      kernel.cleanup !== 'verified'
+    )
+      throw new Error(`Unexpected result for the deliberate REPL exit: ${JSON.stringify(exited)}`)
     const shell = await call('bash_execute', { command: "Write-Output 'REPL_CLEANUP_SHELL_OK'" })
     if (shell.exitCode !== 0 || !shell.stdout?.includes('REPL_CLEANUP_SHELL_OK'))
       throw new Error('Shell remained blocked after REPL exit.')
@@ -3398,10 +3413,14 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(DELEGATION_UNAVAILABLE_PROMPT)) {
           const delegated = await executeControlCode(
             context.params.sessionId,
-            `return await host.delegate({ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: ${JSON.stringify(DELEGATED_TERMINAL_NAME)}, profile: "missing-e2e-specialist" }, { wait: true })`
+            `return await host.delegate({ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: ${JSON.stringify(DELEGATED_TERMINAL_NAME)}, profile: "missing-e2e-specialist" }, { wait: true })`,
+            { allowToolError: true }
           )
-          if (delegated.status !== 'failed') {
-            throw new Error(`Unsupported delegation was admitted: ${JSON.stringify(delegated)}`)
+          if (
+            delegated.status !== 'failed' ||
+            !delegated.traceback?.includes('Requested Specialist is unknown')
+          ) {
+            throw new Error(`Unexpected Specialist rejection result: ${JSON.stringify(delegated)}`)
           }
           reply = 'Subagents are unavailable for this session configuration.'
         } else if (prompt.includes(DELEGATION_INHERITED_SPECIALIST_PROMPT)) {
@@ -3540,10 +3559,16 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(SUBAGENT_MODEL_UNAVAILABLE_PROMPT)) {
           const delegated = await executeControlCode(
             context.params.sessionId,
-            'return await host.delegate([{ task: "Unavailable batch A", name: "Unavailable batch A" }, { task: "Unavailable batch B", name: "Unavailable batch B" }], { wait: false })'
+            'return await host.delegate([{ task: "Unavailable batch A", name: "Unavailable batch A" }, { task: "Unavailable batch B", name: "Unavailable batch B" }], { wait: false })',
+            { allowToolError: true }
           )
-          if (delegated.status !== 'failed') {
-            throw new Error(`Unavailable Subagent model was admitted: ${JSON.stringify(delegated)}`)
+          if (
+            delegated.status !== 'failed' ||
+            !delegated.traceback?.includes('configured Subagent model is unavailable')
+          ) {
+            throw new Error(
+              `Unexpected Subagent model rejection result: ${JSON.stringify(delegated)}`
+            )
           }
           reply = 'Unavailable Subagent model rejected the whole batch.'
         } else if (prompt.includes(SUBAGENT_MODEL_INHERITED_PROMPT)) {
@@ -3809,6 +3834,91 @@ if (process.argv.includes('--version')) {
             throw new Error(`Delegated answers did not reach the continuation: ${prompt}`)
           } else {
             reply = 'Delegated answer continuation completed.'
+          }
+        } else if (
+          prompt.includes(MEMORY_DENIAL_PROMPT) &&
+          prompt.includes('Do not retry the denied operations or use another tool or route')
+        ) {
+          reply = '保存记忆的授权被拒绝，这次没有保存。'
+        } else if (
+          prompt.includes(MEMORY_DENIAL_PROMPT) ||
+          prompt.includes(PARTIAL_MEMORY_PROMPT)
+        ) {
+          const partialReply = prompt.includes('测试情形：只回复已读部分。')
+          if (partialReply) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+                content: { type: 'text', text: '我会先读取记忆分类。' }
+              }
+            })
+          }
+          if (prompt.includes(PARTIAL_MEMORY_PROMPT)) {
+            const categories = await withMcpClient(
+              context.params.sessionId,
+              'open-science-notebook',
+              async (client) =>
+                toolResult(
+                  'list_memory_categories',
+                  await client.callTool({ name: 'list_memory_categories', arguments: {} })
+                )
+            )
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'tool_call',
+                toolCallId: makeToolCallId('memory-categories'),
+                title: 'mcp__open_science_notebook__list_memory_categories',
+                kind: 'other',
+                status: 'completed',
+                rawOutput: categories
+              }
+            })
+          }
+          const input = {
+            content: '周报按本周进展、当前阻塞、下周计划三个小节组织。',
+            analysis: {
+              scope: 'project',
+              durability: 'cross-session',
+              evidence: 'user-stated',
+              subject: '周报格式',
+              reason: '用户要求后续会话沿用该格式。'
+            }
+          }
+          const permission = await context.client.request(
+            acp.methods.client.session.requestPermission,
+            {
+              sessionId: context.params.sessionId,
+              toolCall: {
+                toolCallId: makeToolCallId('save-memory'),
+                title: 'mcp__open_science_notebook__remember_memory',
+                kind: 'other',
+                status: 'pending',
+                rawInput: input
+              },
+              options: [
+                { kind: 'allow_once', name: 'Allow once', optionId: 'allow-once' },
+                { kind: 'reject_once', name: 'Deny', optionId: 'deny-once' }
+              ]
+            }
+          )
+          if (
+            permission.outcome.outcome === 'selected' &&
+            permission.outcome.optionId === 'allow-once'
+          ) {
+            await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) =>
+              toolResult(
+                'remember_memory',
+                await client.callTool({ name: 'remember_memory', arguments: input })
+              )
+            )
+            reply = '已保存周报格式。'
+          } else if (partialReply) {
+            reply = '已读取记忆分类。'
+          } else {
+            return { stopReason: 'cancelled' }
           }
         } else if (prompt.includes(PERMISSION_PROMPT)) {
           const permission = await context.client.request(

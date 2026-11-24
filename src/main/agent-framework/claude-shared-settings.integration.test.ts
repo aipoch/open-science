@@ -5,13 +5,13 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
-import { fileURLToPath } from 'node:url'
+import { pathToFileURL } from 'node:url'
 import * as acp from '@agentclientprotocol/sdk'
-import { claudeCliPath } from '@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { claudeCodeFramework } from './claude-code'
 import { provisionAppClaudePrivateProfile } from '../settings/claude-config-provision'
 import { terminateProcessTree } from '../process-tree'
+import { externalAcpAvailable, externalAcpFile } from '../../../test/acp-agent-runtime'
 
 const instruction = 'ISSUE_3283_PERSONAL_INSTRUCTION'
 const rule = 'ISSUE_3283_PERSONAL_RULE'
@@ -153,6 +153,11 @@ async function probe(): Promise<ProbeResult> {
   })
   await writeFile(join(root, '.claude.json'), personalConfig)
   await writeFile(join(profile, '.claude.json'), personalConfig)
+  const { claudeCliPath } = (await import(
+    pathToFileURL(externalAcpFile('claude', 'acp-agent.js')).href
+  )) as {
+    claudeCliPath: () => Promise<string>
+  }
   const native = await claudeCliPath()
   const launcher = join(root, 'claude-probe.js')
   const argvLog = join(root, 'argv.json')
@@ -218,11 +223,11 @@ child.on('exit',code=>process.exit(code??1));
       }
     }
   })
-  const child = spawn(
-    process.execPath,
-    [fileURLToPath(import.meta.resolve('@agentclientprotocol/claude-agent-acp/dist/index.js'))],
-    { cwd: workspace, env, stdio: ['pipe', 'pipe', 'pipe'] }
-  )
+  const child = spawn(process.execPath, [externalAcpFile('claude', 'index.js')], {
+    cwd: workspace,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe']
+  })
   let stderr = ''
   child.stderr.on('data', (chunk) => {
     stderr += String(chunk)
@@ -316,28 +321,31 @@ child.on('exit',code=>process.exit(code??1));
   }
 }
 
-describe('issue 3283: shared Claude personal settings', () => {
-  let baseline: ProbeResult
-  beforeAll(async () => {
-    baseline = await probe()
-    console.info('ISSUE_3283_BASELINE', JSON.stringify(baseline))
-  }, 60_000)
-  it('excludes personal global instructions and rules from actual model requests', () => {
-    expect(baseline.appInstruction).toBe(true)
-    expect(baseline.personalInstruction).toBe(false)
-    expect(baseline.personalRule).toBe(false)
-  })
-  it('exposes app MCP tools without exposing user-scoped MCP tools', () => {
-    expect(baseline.appTool).toBe(true)
-    expect(baseline.personalTool).toBe(false)
-    expect(baseline.strictMcp).toBe(true)
-  })
-  it('starts fresh and resumed sessions in the app permission mode', () => {
-    expect(baseline.appliedMode).toBe('default')
-    expect(baseline.startPermissionModes).toEqual(['default', 'default'])
-  })
-  it('does not let personal allow rules skip the app permission callback', () => {
-    expect(baseline.personalPermissionAllowedWrite).toBe(false)
-    expect(baseline.permissionRequests).toBe(1)
-  })
-})
+describe.runIf(externalAcpAvailable('claude'))(
+  'issue 3283: shared Claude personal settings',
+  () => {
+    let baseline: ProbeResult
+    beforeAll(async () => {
+      baseline = await probe()
+      console.info('ISSUE_3283_BASELINE', JSON.stringify(baseline))
+    }, 60_000)
+    it('excludes personal global instructions and rules from actual model requests', () => {
+      expect(baseline.appInstruction).toBe(true)
+      expect(baseline.personalInstruction).toBe(false)
+      expect(baseline.personalRule).toBe(false)
+    })
+    it('exposes app MCP tools without exposing user-scoped MCP tools', () => {
+      expect(baseline.appTool).toBe(true)
+      expect(baseline.personalTool).toBe(false)
+      expect(baseline.strictMcp).toBe(true)
+    })
+    it('starts fresh and resumed sessions in the app permission mode', () => {
+      expect(baseline.appliedMode).toBe('default')
+      expect(baseline.startPermissionModes).toEqual(['default', 'default'])
+    })
+    it('does not let personal allow rules skip the app permission callback', () => {
+      expect(baseline.personalPermissionAllowedWrite).toBe(false)
+      expect(baseline.permissionRequests).toBe(1)
+    })
+  }
+)

@@ -14,6 +14,7 @@ import type { ImageTaskOwner } from './image-model/tasks'
 import { ImageModelError } from './image-model/contract'
 import type { LocalModelSnapshot } from '../shared/local-models'
 import type {
+  ResearchVideoActiveSession,
   ResearchVideoPresentationRequest,
   ResearchVideoStartRequest,
   ResearchVideoStatusRequest,
@@ -524,6 +525,11 @@ const dataContentApplicationCommands = Object.freeze({
     readonly [request: ImageTaskIdentity],
     void
   >('image-tasks:cancel'),
+  researchVideoPresentationActive: defineApplicationCommand<
+    'research-video:active-sessions',
+    readonly [],
+    readonly ResearchVideoActiveSession[]
+  >('research-video:active-sessions'),
   researchVideoPresentationStart: defineApplicationCommand<
     'research-video:start',
     readonly [request: ResearchVideoStartRequest],
@@ -846,6 +852,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.imageTaskGet,
     dataContentApplicationCommands.imageTaskList,
     dataContentApplicationCommands.imageTaskCancel,
+    dataContentApplicationCommands.researchVideoPresentationActive,
     dataContentApplicationCommands.researchVideoPresentationStart,
     dataContentApplicationCommands.researchVideoPresentationStatus,
     dataContentApplicationCommands.researchVideoPresentationRemove,
@@ -1163,6 +1170,12 @@ const registerDataContentApplicationCommands = (
       'image-tasks:cancel': (invocation) => {
         if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
         return dependencies.imageTasks.cancel(invocation.args[0])
+      },
+      'research-video:active-sessions': (invocation) => {
+        assertElectronCaller(invocation, 'research-video:active-sessions')
+        if (!dependencies.researchVideoPresentation)
+          throw new Error('Research explanation service is unavailable.')
+        return dependencies.researchVideoPresentation.activeSessions()
       },
       'research-video:start': (invocation) => {
         assertElectronCaller(invocation, 'research-video:start')

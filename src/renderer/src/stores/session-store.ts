@@ -32,6 +32,8 @@ export {
   hasLocalSessionWork,
   retainSessionRecoveryDrafts,
   hydrateSession,
+  hydrateSessionSummary,
+  stripTransientMessageState,
   isExternallyHydratedSession,
   toPersistedSession,
   type ActiveRun,

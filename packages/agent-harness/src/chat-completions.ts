@@ -1,6 +1,7 @@
 import { mediaCapabilities, nativeMedia, requestBody, type InputCapabilities } from './media'
 import {
   normalizeProviderError,
+  type SummarizeProviderError,
   normalizeUpstreamError,
   responseErrorDiagnostics,
   type ProviderErrorReason
@@ -16,6 +17,7 @@ export type ChatCompletionsOptions = {
   id?: string
   apiKey(signal: AbortSignal): string | Promise<string>
   fetch?: typeof globalThis.fetch
+  summarizeProviderError?: SummarizeProviderError
   /** Provider tuning only. Cannot replace messages, model, tools, streaming or output limits. */
   parameters?: Readonly<Record<string, Json>>
   maxResponseBytes?: number
@@ -47,6 +49,7 @@ export type ChatCompletionsDiagnostics = Readonly<{
   usage?: Readonly<ModelUsage>
   /** Allowlisted provider diagnostics for HTTP/SSE failures. */
   reason?: ProviderErrorReason
+  providerExcerpt?: string
   requestId?: string
 }>
 
@@ -372,7 +375,11 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
         !response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')
       ) {
         if (!response.ok) {
-          const diagnostics = await normalizeUpstreamError(response, signal)
+          const diagnostics = await normalizeUpstreamError(
+            response,
+            signal,
+            input.summarizeProviderError
+          )
           throw new ChatCompletionsError('http', response.status, {
             httpStatus: response.status,
             phase: 'response',
@@ -381,7 +388,11 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
             ...diagnostics
           })
         }
-        const diagnostics = await normalizeUpstreamError(response, signal)
+        const diagnostics = await normalizeUpstreamError(
+          response,
+          signal,
+          input.summarizeProviderError
+        )
         throw new ChatCompletionsError('protocol', response.status, {
           httpStatus: response.status,
           phase: 'response',
@@ -417,7 +428,11 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
               phase: 'provider',
               eventCount,
               receivedDone: ended,
-              ...normalizeProviderError(event.error ? event : detail)
+              ...normalizeProviderError(
+                event.error ? event : detail,
+                undefined,
+                input.summarizeProviderError
+              )
             })
           }
           phase = 'usage'
@@ -485,14 +500,16 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
                   return protocol()
                 const fn = object(part.function ?? {})
                 const prior = calls.get(index) ?? { id: '', name: '', arguments: '' }
-                if (part.id !== undefined) {
-                  if (typeof part.id !== 'string' || (prior.id && prior.id !== part.id))
-                    return protocol()
-                  prior.id = part.id
+                // Some gateways repeat null for identity fields already sent on this index.
+                const id = part.id === null && prior.id ? undefined : part.id
+                const name = fn.name === null && prior.name ? undefined : fn.name
+                if (id !== undefined) {
+                  if (typeof id !== 'string' || (prior.id && prior.id !== id)) return protocol()
+                  prior.id = id
                 }
-                if (fn.name !== undefined) {
-                  if (typeof fn.name !== 'string') return protocol()
-                  prior.name += fn.name
+                if (name !== undefined) {
+                  if (typeof name !== 'string') return protocol()
+                  prior.name += name
                 }
                 if (fn.arguments !== undefined && typeof fn.arguments !== 'string')
                   return protocol()
@@ -502,8 +519,8 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
                   type: 'tool-delta',
                   index,
                   arguments: (fn.arguments ?? '') as string,
-                  ...(part.id !== undefined ? { id: part.id as string } : {}),
-                  ...(fn.name !== undefined ? { name: fn.name as string } : {})
+                  ...(id !== undefined ? { id } : {}),
+                  ...(name !== undefined ? { name } : {})
                 }
               }
             }
@@ -572,6 +589,9 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
             ...(error instanceof ChatCompletionsError
               ? {
                   reason: error.diagnostics?.reason,
+                  ...(error.diagnostics?.providerExcerpt
+                    ? { providerExcerpt: error.diagnostics.providerExcerpt }
+                    : {}),
                   requestId: error.diagnostics?.requestId
                 }
               : {}),

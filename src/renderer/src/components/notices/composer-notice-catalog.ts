@@ -1,3 +1,5 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import type {
   ClassifiedFailure,
   FailureCategory,
@@ -219,15 +221,60 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     ...noticeCatalog.configuration,
     primaryAction: 'open-agent-settings'
   },
+  'internal/model-request-stack-overflow': {
+    ...noticeCatalog.internal,
+    titleKey: 'Call stack limit reached during a model request',
+    descriptionKey:
+      'This turn stopped. Export diagnostics to help identify where the call stack limit was reached.'
+  },
   'internal/reconfigure': {
     ...noticeCatalog.internal,
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']
   }
 }
-export const noticePresentation = (failure: ClassifiedFailure): NoticePresentation => {
+// This is the SDK's display prefix, outside the returned body. Its presence alone
+// does not identify which service failed. Keep the body opaque, including JSON.
+const rpcInternalPrefix = /^\s*(?:RequestError:\s*)?internal error(?:\s*:\s*|\.?\s*$)/i
+
+const isUnattributedRequest = ({ category, reason, diagnostics }: ClassifiedFailure): boolean =>
+  category === 'internal' &&
+  !reason &&
+  (diagnostics.status !== undefined ||
+    diagnostics.code === '-32603' ||
+    rpcInternalPrefix.test(diagnostics.raw ?? ''))
+
+export const noticePresentation = (
+  failure: ClassifiedFailure,
+  operation?: string
+): NoticePresentation => {
+  // Attachment recovery belongs to the transfer row or the editable draft.
+  if (operation === 'attachment' || operation === 'stop')
+    return {
+      ...noticeCatalog.internal,
+      level: 'warning',
+      primaryAction: undefined,
+      secondaryActions: [],
+      feedback: 'none'
+    }
+  if (isUnattributedRequest(failure))
+    return {
+      ...noticeCatalog.internal,
+      titleKey: 'Request failed',
+      descriptionKey: 'The action could not be completed. See details and try again.'
+    }
   const presentation =
     (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
-  return failure.responseMessage ? { ...presentation, feedback: 'none' } : presentation
+  if (!failure.responseMessage) return presentation
+  return {
+    ...presentation,
+    titleKey:
+      failure.diagnostics.protocol ||
+      (failure.reason === 'configuration/billing' && failure.diagnostics.status === 402) ||
+      providerErrorExcerpt(failure.responseMessage)
+        ? presentation.titleKey
+        : 'Model provider error',
+    feedback: 'none'
+  }
 }
 
 export type ComposerNotice = Readonly<{
@@ -265,14 +312,36 @@ export const formatNoticeDiagnostics = (
   notice: ComposerNotice,
   title: string,
   description: string
-): string =>
-  [
-    title,
-    ...(description ? [description] : []),
-    ...Object.entries(notice.failure.diagnostics)
-      .filter(
-        ([key, value]) =>
-          value !== undefined && (key !== 'raw' || (value !== title && value !== description))
-      )
-      .map(([key, value]) => (key === 'raw' ? String(value) : `${key}: ${value}`))
-  ].join('\n')
+): { details: string; fullText: string } => {
+  const { raw, providerExcerpt, ...fields } = notice.failure.diagnostics
+  const reportedResponse = fields.protocol ? providerExcerpt : notice.failure.responseMessage
+  const response = reportedResponse && redactSensitiveText(reportedResponse)
+  const showResponseInfo = Boolean(
+    response ||
+    fields.protocol ||
+    fields.status !== undefined ||
+    notice.failure.category === 'service' ||
+    (notice.failure.category !== 'internal' && rpcInternalPrefix.test(raw ?? '')) ||
+    isUnattributedRequest(notice.failure)
+  )
+  const diagnostic =
+    raw && redactSensitiveText(showResponseInfo ? raw.replace(rpcInternalPrefix, '') : raw)
+  const detail = [
+    diagnostic !== title && diagnostic !== description ? diagnostic : undefined,
+    response !== title && response !== description && response && !diagnostic?.includes(response)
+      ? response
+      : undefined
+  ]
+    .filter(Boolean)
+    .join('\n')
+  const responseDetail = detail && showResponseInfo ? `Info: ${detail}` : undefined
+  const metadata = Object.entries(fields)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}: ${value}`)
+  const diagnosticText = [...metadata, responseDetail ?? detail].filter(Boolean).join('\n')
+  const fullText = [title, description, diagnosticText].filter(Boolean).join('\n')
+  // Local operations may use their recovery instructions as the entire diagnostic.
+  const localInstructions =
+    notice.source === 'operation' && !notice.summary && diagnostic === description
+  return { details: localInstructions ? fullText : diagnosticText, fullText }
+}

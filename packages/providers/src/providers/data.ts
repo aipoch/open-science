@@ -9,7 +9,7 @@ import type { OfficialVendor } from './types'
 
 // The shipped vendor set. Each entry owns its endpoint and catalog; model lists are intentionally
 // conservative so a vendor's unrelated model types do not appear in the composer.
-// Output limits are per vendor and model. Sources (2026-11-11): models.dev/api.json,
+// Output limits are per vendor and model. Sources (2026-11-21): models.dev/api.json,
 // openrouter.ai/api/v1/models (top_provider.max_completion_tokens), router.requesty.ai/v1/models
 // (max_output_tokens), and the vendors' published limits. Omit unknown or dynamically routed limits.
 const definitions: readonly OfficialVendor[] = [
@@ -288,9 +288,21 @@ const definitions: readonly OfficialVendor[] = [
     // contains image, audio, video, embedding, and other models outside this chat-provider surface.
     models: [
       {
+        id: 'qwen4-max-preview',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
+      },
+      {
         id: 'qwen3.8-max',
         contextWindow: 983_616,
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
+      },
+      {
+        id: 'qwen4-max',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 262_144,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'xhigh'] }
       },
       { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
       { id: 'qwen3.7-max', contextWindow: 1_000_000 },
@@ -317,7 +329,9 @@ const definitions: readonly OfficialVendor[] = [
       }
     ],
     responsesModels: [
+      'qwen4-max-preview',
       'qwen3.8-max',
+      'qwen4-max',
       'qwen3.7-plus',
       'qwen3.7-max',
       'qwen3.7-flash',
@@ -326,7 +340,9 @@ const definitions: readonly OfficialVendor[] = [
     ],
     multimodal: {
       multimodalModels: [
+        'qwen4-max-preview',
         'qwen3.8-max',
+        'qwen4-max',
         'qwen3.7-plus',
         'qwen3.7-flash',
         'qwen3.6-plus',
@@ -360,9 +376,15 @@ const definitions: readonly OfficialVendor[] = [
           'https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=plan#/efm/subscription/overview'
       }
     ],
-    responsesModels: ['qwen4-max-preview'],
+    responsesModels: ['qwen4-max-preview', 'qwen4-max'],
     // General-purpose chat models listed by both the Beijing and Singapore Token Plans.
     models: [
+      {
+        id: 'qwen4-max-preview',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 393_216,
+        reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
+      },
       {
         id: 'qwen3.8-max',
         contextWindow: 983_616,
@@ -370,10 +392,10 @@ const definitions: readonly OfficialVendor[] = [
         reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
       },
       {
-        id: 'qwen4-max-preview',
+        id: 'qwen4-max',
         contextWindow: 1_000_000,
-        maxOutputTokens: 393_216,
-        reasoningEffort: { supported: true, values: ['low', 'medium', 'xhigh'] }
+        maxOutputTokens: 262_144,
+        reasoningEffort: { supported: true, values: ['low', 'high', 'xhigh'] }
       },
       { id: 'auto', contextWindow: 1_000_000, maxOutputTokens: 393_216 },
       {
@@ -431,6 +453,7 @@ const definitions: readonly OfficialVendor[] = [
       multimodalModels: [
         'qwen3.8-max',
         'qwen4-max-preview',
+        'qwen4-max',
         'qwen3.8-flash',
         'deepseek-v4.1-flash',
         'deepseek-v4.1-flash-1017',
@@ -470,6 +493,8 @@ const definitions: readonly OfficialVendor[] = [
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
+      // Pre-register the Coding Plan model ID for the standard API rollout.
+      { id: 'glm-5.4', contextWindow: 1_000_000 },
       {
         id: 'glm-5.3',
         contextWindow: 1_000_000,
@@ -489,10 +514,10 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'glm-4.5-air', contextWindow: 128_000, maxOutputTokens: 98_304 }
     ],
     // GLM usually marks vision variants with a `v` after the major version (e.g. glm-5v-turbo), but
-    // GLM-5.3-Flash is also natively multimodal without that marker.
+    // GLM-5.3-Flash and GLM-5.4 support image input without that marker.
     multimodal: {
       multimodalModelPattern: /glm-\d+v/i,
-      multimodalModels: ['glm-5.3-flash']
+      multimodalModels: ['glm-5.3-flash', 'glm-5.4']
     }
   },
   {
@@ -520,7 +545,6 @@ const definitions: readonly OfficialVendor[] = [
         apiKeyUrl: 'https://bigmodel.cn/glm-coding'
       }
     ],
-    // The coding plan omits glm-5v-turbo, but serves the natively multimodal GLM-5.3-Flash.
     models: [
       {
         id: 'glm-5.3-flash',
@@ -528,6 +552,7 @@ const definitions: readonly OfficialVendor[] = [
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
+      { id: 'glm-5.4', contextWindow: 1_000_000 },
       {
         id: 'glm-5.3',
         contextWindow: 1_000_000,
@@ -544,7 +569,7 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'glm-5', contextWindow: 200_000 },
       { id: 'glm-5-turbo', contextWindow: 200_000, maxOutputTokens: 131_072 }
     ],
-    multimodal: { multimodalModels: ['glm-5.3-flash'] }
+    multimodal: { multimodalModels: ['glm-5.3-flash', 'glm-5.4'] }
   },
   {
     id: 'kimi',

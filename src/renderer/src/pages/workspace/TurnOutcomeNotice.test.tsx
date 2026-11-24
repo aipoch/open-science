@@ -45,13 +45,15 @@ describe('turn outcome notice action ownership', () => {
     render({
       kind: 'failed',
       settledAt: 1,
-      error: 'Historical opaque error',
+      error: 'Historical opaque error: Bearer private-credential',
       failure: { category: 'internal' as const, diagnostics: {} }
     })
     act(() =>
       container.querySelector<HTMLButtonElement>('[aria-label="Report this error"]')?.click()
     )
-    expect(actions.onReportError).toHaveBeenCalledExactlyOnceWith('Historical opaque error')
+    expect(actions.onReportError).toHaveBeenCalledExactlyOnceWith(
+      'Historical opaque error: Bearer [redacted]'
+    )
   })
 
   it('uses each outcome reportability without borrowing the current turn flag', () => {
@@ -71,26 +73,61 @@ describe('turn outcome notice action ownership', () => {
     expect(container.querySelector('[aria-label="Report this error"]')).not.toBeNull()
   })
 
-  it('shows the provider response directly without an application report action', () => {
+  it.each([
+    ['internal', 'Request failed'],
+    ['service', 'Model provider error']
+  ] as const)('keeps the opaque ACP response in Details for category %s', (category, title) => {
+    const body = '{"vendor_detail":"stream ended","api_key":"private-value"}'
     render({
       kind: 'failed',
       settledAt: 1,
       failure: {
-        category: 'service',
-        responseMessage: 'Example service is unavailable',
-        diagnostics: { status: 503, provider: 'Example Provider', model: 'example-model' }
+        category,
+        ...(category === 'service' ? { responseMessage: body } : {}),
+        diagnostics: { raw: 'Internal error: ' + body }
       }
     })
-    expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
-    expect(container.querySelector('[role="status"]')?.textContent).toContain(
-      'Example service is unavailable'
+
+    expect(container.querySelector('h2')?.textContent).toBe(title)
+    expect(container.querySelector('[role="alert"], [role="status"]')?.textContent).not.toContain(
+      'stream ended'
     )
-    expect(container.textContent).toContain('status: 503')
-    expect(container.textContent).toContain('provider: Example Provider')
-    expect(container.textContent).toContain('model: example-model')
-    expect(container.querySelector('[data-notice-action="report"]')).toBeNull()
-    expect(container.textContent).not.toContain('Report this error')
+    const details = container.querySelector('details')
+    expect(details?.open).toBe(false)
+    expect(details?.querySelector('pre')?.textContent).toContain('stream ended')
+    expect(details?.querySelector('pre')?.textContent).toMatch(/^Info: \{"vendor_detail"/)
+    expect(details?.querySelector('pre')?.textContent).not.toContain('Internal error')
+    expect(details?.querySelector('pre')?.textContent).not.toContain('-32603')
+    expect(container.textContent).not.toContain('private-value')
   })
+
+  it.each([undefined, 'Internal error'])(
+    'keeps the saved provider message in Details with raw %s',
+    (raw) => {
+      render({
+        kind: 'failed',
+        settledAt: 1,
+        failure: {
+          category: 'service',
+          responseMessage: 'Example service is unavailable',
+          diagnostics: { raw, status: 503, provider: 'Example Provider', model: 'example-model' }
+        }
+      })
+      expect(container.querySelector('h2')?.textContent).toBe('Model provider error')
+      expect(container.querySelector('[role="status"]')?.textContent).not.toContain(
+        'Example service is unavailable'
+      )
+      expect(container.querySelector('details pre')?.textContent).toContain(
+        'Example service is unavailable'
+      )
+      expect(container.querySelector('details pre')?.textContent).not.toContain('Internal error')
+      expect(container.textContent).toContain('status: 503')
+      expect(container.textContent).toContain('provider: Example Provider')
+      expect(container.textContent).toContain('model: example-model')
+      expect(container.querySelector('[data-notice-action="report"]')).toBeNull()
+      expect(container.textContent).not.toContain('Report this error')
+    }
+  )
 
   it('opens model settings for a provider configuration failure while showing its response', () => {
     const openSettings = vi.fn()

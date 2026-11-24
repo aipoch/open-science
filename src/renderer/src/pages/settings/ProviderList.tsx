@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../../shared/agent-framework-id'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
 import { CodeBuddySubscriptionRow } from './CodeBuddySubscriptionRow'
 import type { TFunction } from 'i18next'
@@ -153,7 +154,7 @@ const ProviderList = ({
   providers,
   activeProviderId,
   activeModel,
-  agentFrameworkId = 'claude-code',
+  agentFrameworkId = DEFAULT_AGENT_FRAMEWORK_ID,
   frameworkEndpoints = DEFAULT_FRAMEWORK_ENDPOINTS,
   frameworkName,
   claudeSubscriptionProviderId,

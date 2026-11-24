@@ -1,7 +1,13 @@
+import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import { SessionPromptAdmissionError } from './runtime-activity-port'
 import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
-import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
+import type {
+  ActiveSession,
+  ClientConnection,
+  PromptResponse,
+  SessionNotification
+} from '@agentclientprotocol/sdk'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest } from '../../shared/acp'
@@ -92,6 +98,7 @@ type AcpPromptTurnPlanContext = Readonly<{
 type AcpActivatedPromptTurn = Readonly<{
   request: AcpPromptRequest
   connectionGeneration: number
+  traceThisRun: boolean
   mode: AcpPromptTurnMode
   session: ActiveSession
   interaction: AcpPromptSessionInteractionScope
@@ -101,6 +108,7 @@ type AcpActivatedPromptTurn = Readonly<{
 
 type AcpPromptTurnEnvironment = Readonly<{
   authorizedDirectories?: Pick<AuthorizedDirectoryNotices, 'prepareNotice'>
+  connection?: () => ClientConnection | undefined
   connectionGeneration?: () => number
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
@@ -150,6 +158,7 @@ type AcpPromptTurnEnvironment = Readonly<{
     signal?: AbortSignal
     assertCurrent?: () => void
   }) => Promise<void>
+  commitNotebookDispatch?: (appSessionId: string) => void
   prepareNotebookIntent?: (request: AcpPromptRequest, mode: AcpPromptTurnMode) => void
   observeNotebookExecutionLoop?: (input: {
     appSessionId: string
@@ -227,6 +236,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     AcpSessionInteractionOwner,
     | 'activatePrompt'
     | 'cancellationCheckpoint'
+    | 'isCancellationAccepted'
     | 'captureTerminal'
     | 'current'
     | 'release'
@@ -248,6 +258,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
   finalization: AcpPromptTurnFinalization
   currentCwd: () => string
   resolveProjectId: (sessionId: string) => string
+  resolveProjectTracing?: (projectId: string) => Promise<boolean>
   prepareContinuationReplay: (
     request: AcpPromptRequest
   ) => Promise<AcpPromptRequest['resumeFallback']>
@@ -470,11 +481,28 @@ class AcpPromptTurnWorkflow {
     }
 
     let interaction: AcpPromptSessionInteractionScope | undefined
+    const traceThisRun =
+      mode.kind === 'user' && mode.runtimeReviewOwner === 'task' && requiresTaskRunTracing(request)
     let admittedRequest = request
     try {
       interaction = this.options.interactions.activatePrompt(reservation)
       // Activate the prompt before releasing startup protection so reconnect never sees an idle gap.
       this.releaseReloadStartup(cancellation, 'prompt-activated')
+      if (traceThisRun) {
+        // Skill preparation can replace the helper after Task admission.
+        await assertTaskRunTracingReady(
+          this.options.environment.backend().framework.id,
+          this.options.environment.connection?.()
+        )
+        if ((await this.checkpoint(interaction)) === 'cancelled') {
+          notebookExecutionIntent(request)?.abandonUserExecution()
+          skill.close('cancelled')
+          this.options.interactions.release(interaction)
+          return { stopReason: 'cancelled' }
+        }
+        if (!this.isCurrent({ request, session: activeSession, interaction }))
+          throw new Error('ACP prompt interaction is no longer active')
+      }
       const admittedPlan = this.options.plan.admit(request, interaction, plan)
       plan = admittedPlan instanceof Promise ? await admittedPlan : admittedPlan
       // Admission-dependent state may commit only while this interaction owns the Session. A
@@ -557,6 +585,7 @@ class AcpPromptTurnWorkflow {
     })
     return this.executeTurn({
       request: admittedRequest,
+      traceThisRun,
       connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
       mode,
       session: activeSession,
@@ -635,6 +664,11 @@ class AcpPromptTurnWorkflow {
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
       const backend = env.backend()
       promptBackend = backend
+      const visibleUserPrompt =
+        turn.mode.kind === 'user' &&
+        turn.mode.runtimeReviewOwner !== 'task' &&
+        !request.continuation &&
+        !request.suppressUserMessage
       const planContext =
         turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
       // Only an explicit user send carries the notice; continuations never consume it.
@@ -644,11 +678,8 @@ class AcpPromptTurnWorkflow {
           : undefined
       prepared = await preparation.prepare({
         request: preparationRequest,
-        classificationEnabled:
-          turn.mode.kind === 'user' &&
-          turn.mode.runtimeReviewOwner !== 'task' &&
-          !request.continuation &&
-          !request.suppressUserMessage,
+        classificationEnabled: visibleUserPrompt,
+        markUserPromptText: visibleUserPrompt,
         connectionGeneration: turn.connectionGeneration,
         backend,
         tooling: env.tooling(),
@@ -741,6 +772,8 @@ class AcpPromptTurnWorkflow {
       let providerDispatched = false
       let accumulatedFacts: AcpProviderTurnResult | undefined
       let releaseNotebookBranch: (() => void) | undefined
+      const frameworkId = promptSnapshot?.frameworkId ?? framework.id
+      const resolveProjectTracing = this.options.resolveProjectTracing
       const executeProviderTurn = (): Promise<ProviderPromptOutcome> =>
         executor.execute({
           session,
@@ -759,11 +792,24 @@ class AcpPromptTurnWorkflow {
               ]
             : providerContent,
           cwd,
-          frameworkId: promptSnapshot?.frameworkId ?? framework.id,
+          frameworkId,
+          signal: interaction.signal,
+          cancellationCheckpoint: () => this.checkpoint(interaction),
+          ...(turn.traceThisRun
+            ? { authorizeHarnessTracing: true as const }
+            : frameworkId === 'open-science-agent' && resolveProjectTracing
+              ? {
+                  authorizeHarnessTracing: async (): Promise<boolean> => {
+                    const projectId = registry.lookup(sessionId)?.aggregate.snapshot().projectId
+                    return projectId ? resolveProjectTracing(projectId) : false
+                  }
+                }
+              : {}),
           ...(!accumulatedFacts && readyPrepared.preDispatchModelCalls
             ? { preDispatchModelCalls: readyPrepared.preDispatchModelCalls }
             : {}),
           isCurrent: () => this.isCurrent(turn),
+          isUserStopped: () => interactions.isCancellationAccepted(interaction, 'user'),
           beforeDispatch: async () => {
             if ((await this.checkpoint(interaction)) === 'cancelled') return 'cancelled'
             if (publicationPrompt && artifact) {
@@ -817,29 +863,28 @@ class AcpPromptTurnWorkflow {
               await resumeDispatch()
               deliveryClaimed = true
             }
-            const dispatch = await this.checkpoint(interaction)
-            if (dispatch !== 'cancelled') {
-              releaseNotebookBranch = env.observeNotebookExecutionLoop?.({
-                appSessionId: sessionId,
-                providerSessionId: session.sessionId,
-                request,
-                signal: interaction.signal,
-                assertCurrent: () => {
-                  interaction.signal.throwIfAborted()
-                  if (!this.isCurrent(turn)) throw new Error('Notebook Provider dispatch ended.')
-                }
-              })
-            }
-            // Mark the boundary before calling the adapter: a synchronous throw from
-            // session.prompt cannot prove that no request left the process.
-            if (dispatch !== 'cancelled' && turn.mode.kind === 'app-continuation') {
+            return this.checkpoint(interaction)
+          },
+          onDispatchAttempt: () => {
+            releaseNotebookBranch = env.observeNotebookExecutionLoop?.({
+              appSessionId: sessionId,
+              providerSessionId: session.sessionId,
+              request,
+              signal: interaction.signal,
+              assertCurrent: () => {
+                interaction.signal.throwIfAborted()
+                if (!this.isCurrent(turn)) throw new Error('Notebook Provider dispatch ended.')
+              }
+            })
+            // A synchronous throw from session.prompt cannot prove that no request left.
+            if (turn.mode.kind === 'app-continuation') {
               turn.mode.onProviderDispatched?.()
             }
-            return dispatch
           },
           onDispatched: () => {
             providerDispatched = true
             notebookProviderDispatched = true
+            env.commitNotebookDispatch?.(sessionId)
             notebookExecutionIntent(request)?.commitUserExecution()
           },
           captureStop: (response) => {
@@ -1093,7 +1138,9 @@ class AcpPromptTurnWorkflow {
     return this.options.interactions.cancellationCheckpoint(interaction)
   }
 
-  private isCurrent(turn: AcpActivatedPromptTurn): boolean {
+  private isCurrent(
+    turn: Pick<AcpActivatedPromptTurn, 'request' | 'session' | 'interaction'>
+  ): boolean {
     return (
       this.options.interactions.current(turn.request.sessionId) === turn.interaction &&
       this.activeSession(turn.request.sessionId) === turn.session

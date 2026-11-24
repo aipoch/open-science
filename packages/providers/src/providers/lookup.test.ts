@@ -604,6 +604,11 @@ describe('provider registry', () => {
     expect(getOfficialVendor('glmcodingplan')?.models).toContainEqual(expected)
   })
 
+  it.each(['zhipu', 'glmcodingplan'] as const)('lists GLM-5.4 with vision for %s', (vendor) => {
+    expect(getVendorModelContextWindow(vendor, 'glm-5.4')).toBe(1_000_000)
+    expect(isVendorModelMultimodal(vendor, 'glm-5.4')).toBe(true)
+  })
+
   it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
     expect(vendorHasRegions('glmcodingplan')).toBe(true)
     expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['messages', 'chat-completions'])
@@ -622,7 +627,6 @@ describe('provider registry', () => {
     // Quota-based plan: fixed catalog, no live model-list refresh.
     expect(resolveVendorModelsUrl('glmcodingplan')).toBeUndefined()
 
-    // The coding plan omits the older vision variant but serves the natively multimodal Flash model.
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5v-turbo')).toBe(false)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3')).toBe(false)
@@ -1233,6 +1237,8 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('bailian')).toBe(true)
     expect(resolveVendorApiEndpoints(bailianId)).toEqual(['messages', 'chat-completions'])
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.8-max')).toBe(true)
+    expect(isVendorModelResponsesSupported(bailianId, 'qwen4-max-preview')).toBe(true)
+    expect(isVendorModelResponsesSupported(bailianId, 'qwen4-max')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.7-max')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.6-flash')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'deepseek-v4-pro')).toBe(false)
@@ -1262,7 +1268,9 @@ describe('provider registry', () => {
     expect(
       getOfficialVendor(bailianId)?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
     ).toEqual([
+      { id: 'qwen4-max-preview', contextWindow: 1_000_000 },
       { id: 'qwen3.8-max', contextWindow: 983_616 },
+      { id: 'qwen4-max', contextWindow: 1_000_000 },
       { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
       { id: 'qwen3.7-max', contextWindow: 1_000_000 },
       { id: 'qwen3.7-flash', contextWindow: 1_000_000 },
@@ -1305,8 +1313,9 @@ describe('provider registry', () => {
     )
     expect(getVendorModelIds(planId, 'global')).toEqual(getVendorModelIds(planId, 'china'))
     expect(getVendorModelIds(planId)).toEqual([
-      'qwen3.8-max',
       'qwen4-max-preview',
+      'qwen3.8-max',
+      'qwen4-max',
       'auto',
       'qwen3.8-flash',
       'qwen3.7-max',
@@ -1326,9 +1335,18 @@ describe('provider registry', () => {
       contextWindow: 1_000_000,
       maxOutputTokens: 393_216
     })
+    expect(getOfficialVendor(planId)?.models.find(({ id }) => id === 'qwen4-max')).toMatchObject({
+      contextWindow: 1_000_000,
+      maxOutputTokens: 262_144
+    })
     expect(resolveVendorModelsUrl(planId)).toBeUndefined()
 
     expect(resolveVendorModelApiEndpoints(planId, 'qwen4-max-preview')).toEqual([
+      'messages',
+      'chat-completions',
+      'responses'
+    ])
+    expect(resolveVendorModelApiEndpoints(planId, 'qwen4-max')).toEqual([
       'messages',
       'chat-completions',
       'responses'
@@ -1349,9 +1367,20 @@ describe('provider registry', () => {
     }
 
     expect(getVendorModelReasoningCapability('bailian', 'qwen3.8-max')).toEqual(expectedProfile)
+    expect(getVendorModelReasoningCapability('bailian', 'qwen4-max-preview')).toEqual(
+      expectedProfile
+    )
+    expect(getVendorModelReasoningCapability('bailianplan', 'qwen4-max')).toEqual({
+      supported: true,
+      values: ['low', 'high', 'xhigh']
+    })
     expect(getVendorModelReasoningCapability('bailianplan', 'qwen4-max-preview')).toEqual(
       expectedProfile
     )
+    expect(getVendorModelReasoningCapability('bailian', 'qwen4-max')).toEqual({
+      supported: true,
+      values: ['low', 'high', 'xhigh']
+    })
     expect(getVendorModelReasoningCapability('bailianplan', 'qwen3.8-max')).toEqual(expectedProfile)
     expect(getVendorModelReasoningCapability('bailianplan', 'qwen3.8-flash')).toEqual(
       expectedProfile
@@ -1468,6 +1497,7 @@ describe('provider registry', () => {
       const bailianId = 'bailian' as OfficialVendorId
 
       expect(isVendorModelMultimodal(bailianId, 'qwen3.8-max')).toBe(true)
+      expect(isVendorModelMultimodal(bailianId, 'qwen4-max')).toBe(true)
       expect(isVendorModelMultimodal(bailianId, 'qwen3.7-plus')).toBe(true)
       expect(isVendorModelMultimodal(bailianId, 'qwen3.7-flash')).toBe(true)
       expect(isVendorModelMultimodal(bailianId, 'qwen3.6-plus')).toBe(true)
@@ -1481,6 +1511,7 @@ describe('provider registry', () => {
 
       expect(isVendorModelMultimodal(planId, 'qwen3.8-max')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen4-max-preview')).toBe(true)
+      expect(isVendorModelMultimodal(planId, 'qwen4-max')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'deepseek-v4.1-flash-1017')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen3.7-plus')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen3.6-flash')).toBe(true)

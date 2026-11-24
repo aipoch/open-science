@@ -316,6 +316,15 @@ describe('OfficePreviewRenderer', () => {
     expect(onSlideView).toHaveBeenCalledWith(
       expect.objectContaining({ slideIndex: 3, width: 30, height: 40 })
     )
+    await act(async () => {
+      emitState({
+        sessionId: 'office-session-1',
+        phase: 'error',
+        error: 'PREVIEW_PROCESS_NOT_ISOLATED'
+      })
+    })
+    expect(container.textContent).toContain('The secure Office preview could not start.')
+    expect(container.textContent).not.toContain('Download')
   })
 
   it('keeps the attached runtime when the preview menu callback changes', async () => {
@@ -614,7 +623,7 @@ describe('OfficePreviewRenderer', () => {
     await renderPreview(createItem(), true)
 
     expect(container.textContent).toContain('File too large to preview')
-    expect(container.textContent).toContain('This file is larger than 40 MB. Download it to view.')
+    expect(container.textContent).toContain('This file is larger than 40 MB.')
     expect(container.textContent).toContain('Download')
     expect(container.textContent).not.toContain('Retry')
   })
@@ -668,11 +677,10 @@ describe('OfficePreviewRenderer', () => {
   })
 
   it.each([
-    ['INVALID_PACKAGE', 'This Office file is damaged or unsupported. Download it to view.'],
-    [
-      'RESOURCE_LIMIT_EXCEEDED',
-      'This Office file exceeds the safe preview limits. Download it to view.'
-    ]
+    ['ENCRYPTED_PACKAGE', 'This file contains encrypted content.'],
+    ['EXTERNAL_RESOURCES', 'This file uses external content that the preview cannot load.'],
+    ['INVALID_PACKAGE', 'This Office file is damaged or unsupported.'],
+    ['RESOURCE_LIMIT_EXCEEDED', 'This Office file exceeds the safe preview limits.']
   ])('shows a download-only fallback for %s', async (error, message) => {
     await renderPreview(createItem(), true)
 
@@ -756,7 +764,9 @@ describe('OfficePreviewRenderer', () => {
       await flushMicrotasks()
     })
 
-    expect(container.textContent).toContain("This Office file couldn't be rendered for preview")
+    expect(container.textContent).toContain(
+      'The Office file could not be read. Try opening it again.'
+    )
     expect(container.textContent).not.toContain('exceeds the safe preview limits')
   })
 

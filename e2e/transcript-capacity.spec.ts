@@ -165,7 +165,8 @@ test('does not force unannotated transcript geometry during native layout change
   await expect(
     page.getByRole('button', { name: 'Load full conversation', exact: true })
   ).toHaveCount(0)
-  await expect(page.locator('[data-message-id]')).toHaveCount(80)
+  // Completion and history-loading rows have their own scroll anchors. Count the fixture messages.
+  await expect(page.locator('[data-message-id^="layout-"]')).toHaveCount(80)
   await expect(page.locator('[data-annotation-surface]').first()).toBeAttached()
 
   // Count the synchronous geometry reads identified by the issue's CPU reproduction.
@@ -436,27 +437,43 @@ for (const { count, contextLines } of [
               runIndexMs: number[] = []
             let payloadBytes = 0,
               reviewCount = 0
-            for (let i = 0; i < 3; i++) {
-              let start = performance.now()
+            const conflictRetryMs: number[] = []
+            while (saveMs.length < 3) {
+              const start = performance.now()
               const loaded = await window.api.sessions.loadOne(request)
-              loadMs.push(performance.now() - start)
+              const loadedAt = performance.now()
               if (!loaded) throw new Error('Capacity Session disappeared')
-              if (i === 0) {
+              // Opening a Session can commit metadata between the read and this round trip.
+              // Measure three successful pairs and report the cost of one fresh-snapshot retry.
+              try {
+                await window.api.sessions.saveSession(loaded)
+              } catch (error) {
+                if (
+                  conflictRetryMs.length ||
+                  !error ||
+                  typeof error !== 'object' ||
+                  !('code' in error) ||
+                  error.code !== 'session-revision-conflict'
+                )
+                  throw error
+                conflictRetryMs.push(performance.now() - start)
+                continue
+              }
+              loadMs.push(loadedAt - start)
+              saveMs.push(performance.now() - loadedAt)
+              if (saveMs.length === 1) {
                 payloadBytes = new TextEncoder().encode(JSON.stringify(loaded)).byteLength
                 reviewCount = loaded.conversationGraph!.activities.filter((item) =>
                   item.id.startsWith('app-approval:')
                 ).length
               }
-              start = performance.now()
-              await window.api.sessions.saveSession(loaded)
-              saveMs.push(performance.now() - start)
-              start = performance.now()
+              const indexStart = performance.now()
               const index = await window.api.notebook.runIndex({ ...request, workspaceCwd: cwd })
-              runIndexMs.push(performance.now() - start)
+              runIndexMs.push(performance.now() - indexStart)
               if (index.length !== count)
                 throw new Error(`Lost Notebook runs: ${index.length}/${count}`)
             }
-            return { loadMs, saveMs, runIndexMs, payloadBytes, reviewCount }
+            return { loadMs, saveMs, runIndexMs, conflictRetryMs, payloadBytes, reviewCount }
           },
           { projectId, id, cwd, count }
         )
@@ -535,6 +552,8 @@ for (const { count, contextLines } of [
         await captureHeap('restored-view')
         await app.captureResourceTimings('capacity:')
         await page.screenshot({ path: testInfo.outputPath('notebook-capacity.png') })
+        // Read a stable journal after the application flushes and releases its writer.
+        await app.close(count === 1000 ? 120_000 : undefined)
         // Notebook data root is separate from settings/Session storage; derive the latter from
         // the profiler's documented fixture root, without inspecting any user storage.
         const sessionPath = join(dataRoot, '..', 'storage', 'sessions', projectId, `${id}.json`)

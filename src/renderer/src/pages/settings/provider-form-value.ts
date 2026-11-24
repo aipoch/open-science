@@ -499,6 +499,37 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   }
 ]
 
+export type ProviderKindAvailability = {
+  // Desktop CodeBuddy accounts; undefined hides them. Listed ids are already added and stay disabled.
+  codeBuddyProviders?: readonly string[]
+  showCodexSubscriptions?: boolean
+  showClaudeIsolated?: boolean
+}
+
+// Whether a provider kind is offered for the active framework. The type dropdown and the Add provider
+// picker share this so both surfaces list the same kinds.
+export const isProviderKindAvailable = (
+  kind: ProviderKind,
+  { codeBuddyProviders, showCodexSubscriptions, showClaudeIsolated }: ProviderKindAvailability
+): boolean => {
+  if (codeBuddySiteForId(kind.key) && !codeBuddyProviders) return false
+  // Codex and the built-in Agent share the app-owned subscription sign-in.
+  if (kind.group === 'codex' && !showCodexSubscriptions) return false
+  // The Claude subscription section mirrors it: gate on Claude Code being active, the only
+  // framework that speaks the app-owned bearer token.
+  if (kind.group === 'claude' && !showClaudeIsolated) return false
+  return true
+}
+
+// Local model presets are offered as their own provider kinds in the Add provider picker. Each one
+// opens a custom gateway seeded with that preset.
+export const LOCAL_MODEL_KIND_PREFIX = 'local:'
+
+export const localModelPresetForKindKey = (key: string): LocalModelPreset | undefined =>
+  key.startsWith(LOCAL_MODEL_KIND_PREFIX)
+    ? LOCAL_MODEL_PRESETS.find((preset) => preset.id === key.slice(LOCAL_MODEL_KIND_PREFIX.length))
+    : undefined
+
 // The patch applied to the form value when a provider-kind is picked. Switching to an official vendor
 // seeds its default region + model; switching to custom clears vendor-only fields and applies the
 // active framework's preferred endpoint.
@@ -616,6 +647,17 @@ export const providerKindPatch = (
         manualConnection,
         model: manualProviderPresetModels(vendorId, manualConnection)[0] ?? ''
       })
+    }
+  }
+
+  const localPreset = localModelPresetForKindKey(key)
+  if (localPreset) {
+    return {
+      ...reset,
+      type: 'custom',
+      name: localPreset.label,
+      baseUrl: localPreset.baseUrl,
+      apiEndpoint: 'chat-completions'
     }
   }
 

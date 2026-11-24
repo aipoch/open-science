@@ -53,18 +53,17 @@
 
 > 이 문서는 영어 `README.md`의 번역본입니다. 내용이 다르면 [영문 원본](../../README.md)을 기준으로 합니다.
 
-### 💡 AIPOCH Open-Science v1.3.1 업데이트
+### 💡 AIPOCH Open-Science v1.3.4 업데이트
 
-_2026년 11월 19일_
+_2026년 11월 22일_
 
-- **웹 검색과 페이지 읽기**: 내장 에이전트가 웹을 검색하고 공개 페이지를 읽을 수 있습니다. 검색 승인은 검색어를 읽기 쉬운 카드로 보여 주며, 인용된 출처는 대화와 함께 유지됩니다.
-- **인용 그래프**: 논문의 참고문헌과 인용 논문을 대화형 그래프로 탐색하세요. 관련 논문을 중심으로 다시 배치하고 방향별로 필터링할 수 있습니다.
-- **앱을 열지 않고 MCP 사용**: 외부 에이전트를 MCP로 연결하면 Open-Science 서비스가 자동으로 시작되며, 30개가 넘는 에이전트와 클라이언트의 설정 방법을 제공합니다.
-- **Lab 모델과 조직 사례**: Lab 계정으로 로그인해 조직의 모델을 사용하고, 팀원과 연구 사례를 검색하거나 가져오거나 공유하세요.
-- **최신 모델 목록과 더 명확한 오류**: 설정에서 공급자의 모델 목록을 새로 고치고, 공급자 요청이 실패하면 원인과 다음 단계를 확인할 수 있습니다.
-- **1.3.0에서 업데이트**: 1.3.0 업데이터가 다른 프로세스가 설치 위치를 사용 중이라고 알리면 Open-Science를 완전히 종료한 뒤 다운로드한 패키지를 수동으로 설치하세요.
+- **내장 Agent 안을 들여다보기**: 프로젝트는 Agent 추적을 선택할 수 있고, 턴과 모델 요청, 도구 실행에 대한 연관된 스팬을 직접 호스팅하는 OTLP/HTTP 수신자로 내보낼 수 있으며, 캡처 수준은 직접 조절합니다.
+- **막히지 않는 Windows 업데이트**: 내장 Agent가 실행 중일 때도 앱 내 업데이트가 멈추지 않고, 안정 Windows 업데이트는 다시 작은 설치 프로그램 델타로 적용됩니다.
+- **긴 Notebook 기록도 빠르게 유지**: Run 시작과 완료, 결과 선택, 미리보기 열기가 더 이상 전체 기록을 다시 읽지 않습니다.
+- **믿을 수 있는 메모리 읽기**: Compute 요약이 이제 macOS의 활성 상태 보기와 일치하고, Windows에서는 물리 메모리와 함께 한도 대비 확정 메모리를 표시합니다.
+- **CodeBuddy 추론 수준**: 수준 선택기는 이제 선택한 CodeBuddy 모델이 실제로 지원하는 수준만 제공합니다.
 
-[v1.3.1 전체 릴리스 노트 보기](https://github.com/aipoch/open-science/releases/tag/v1.3.1)
+[v1.3.4 전체 릴리스 노트 보기](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +88,14 @@ _2026년 11월 19일_
 | Linux ARM64                        | Linux ARM64 AppImage 또는 Debian 패키지 |
 
 설치 전 확인 사항은 [다운로드 검증](../../SECURITY.md#verifying-your-download)을 참고하세요.
+
+Windows 10/11 x64에서는 [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X)에서 데스크톱 앱을 설치하거나 PowerShell에서 WinGet을 사용할 수 있습니다.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+배포 채널에 따라 제공되는 버전이 다를 수 있습니다. 자세한 내용은 [설치 및 업데이트 가이드](https://aipoch.com/docs/guides/installation/)를 참고하세요.
 
 macOS에서는 [Homebrew](https://brew.sh)로도 설치할 수 있습니다:
 

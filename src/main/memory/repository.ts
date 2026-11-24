@@ -264,9 +264,19 @@ class MemoryRepository {
 
   deleteCategory(request: DeleteMemoryCategoryRequest): Promise<void> {
     return this.mutate(async (client) => {
-      const current = await client.memoryCategory.findUnique({ where: { id: request.id } })
+      const current = await client.memoryCategory.findUnique({
+        where: { id: request.id },
+        select: { systemKey: true, entries: { select: { id: true } } }
+      })
       if (!current) throw new Error('Memory category not found.')
       if (current.systemKey) throw new Error('The About you category cannot be deleted.')
+      const expected = new Set(request.expectedEntryIds)
+      if (
+        current.entries.length !== expected.size ||
+        current.entries.some(({ id }) => !expected.has(id))
+      ) {
+        throw new Error('Memory category changed. Refresh and try again.')
+      }
       const result = await client.memoryCategory.deleteMany({
         where: { id: request.id, revision: request.expectedRevision, systemKey: null }
       })

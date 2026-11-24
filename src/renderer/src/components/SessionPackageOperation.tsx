@@ -1229,7 +1229,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                               tone="amber"
                               description={packageErrorText(error ?? operation.error, t)}
                             />
-                            {operation.state === 'failed' ? (
+                            {operation.state === 'failed' &&
+                            !(
+                              operation.exportBlocked &&
+                              operation.kind === 'export' &&
+                              operation.progress.phase === 'preparing'
+                            ) ? (
                               <details className="min-w-0 pt-0.5 text-xs text-muted-foreground open:basis-full">
                                 <summary className="w-fit cursor-pointer rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
                                   {t('Details')}
@@ -1446,6 +1451,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     </Button>
                   ) : null}
                   {operation.state === 'failed' &&
+                  !operation.exportBlocked &&
                   !operation.cleanupPending &&
                   !operation.result?.recovery ? (
                     <Button

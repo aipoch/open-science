@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import {
   PROJECT_DESCRIPTION_MAX_LENGTH,
   PROJECT_NAME_MAX_LENGTH
@@ -38,6 +39,7 @@ type ProjectFormDialogProps = {
   descriptionDraft: string
   agentContextDraft: string
   optimizationPromptDraft: string
+  agentTracingDraft?: boolean
   isSubmitting: boolean
   error: string | undefined
   errorDetail?: string
@@ -48,6 +50,7 @@ type ProjectFormDialogProps = {
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
   onOptimizationPromptChange: (value: string) => void
+  onAgentTracingChange?: (enabled: boolean) => void
   discardConfirmationOpen: boolean
   onKeepEditing: () => void
   onDiscardChanges: () => void
@@ -66,6 +69,7 @@ const ProjectFormDialog = ({
   descriptionDraft,
   agentContextDraft,
   optimizationPromptDraft,
+  agentTracingDraft,
   isSubmitting,
   error,
   errorDetail,
@@ -76,6 +80,7 @@ const ProjectFormDialog = ({
   onDescriptionChange,
   onAgentContextChange,
   onOptimizationPromptChange,
+  onAgentTracingChange,
   discardConfirmationOpen,
   onKeepEditing,
   onDiscardChanges,
@@ -241,6 +246,28 @@ const ProjectFormDialog = ({
                       className={dialogFormTextareaClassName}
                     />
                   </div>
+                  {agentTracingDraft !== undefined ? (
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <label className={dialogFormLabelClassName} htmlFor="project-agent-tracing">
+                          {t('Agent tracing')}
+                        </label>
+                        <p id="project-agent-tracing-help" className={dialogFormHelpClassName}>
+                          {t(
+                            "Send traces from this project's built-in agent to the configured receiver. Traces can include conversation content, model requests, and tool data."
+                          )}
+                        </p>
+                      </div>
+                      <Switch
+                        id="project-agent-tracing"
+                        aria-describedby="project-agent-tracing-help"
+                        checked={agentTracingDraft}
+                        onCheckedChange={onAgentTracingChange}
+                        disabled={isSubmitting}
+                        className="mt-1"
+                      />
+                    </div>
+                  ) : null}
                 </div>
               </details>
             </div>
@@ -261,6 +288,10 @@ const ProjectFormDialog = ({
                   <dd>{conflictProject.agentContext}</dd>
                   <dt>{t('Optimization prompt')}</dt>
                   <dd>{conflictProject.optimizationPrompt}</dd>
+                  <dt>{t('Agent tracing')}</dt>
+                  <dd>
+                    {conflictProject.sessionDefaults?.agentTracingEnabled ? t('On') : t('Off')}
+                  </dd>
                 </dl>
                 <p className="text-sm text-muted-foreground">
                   {t(

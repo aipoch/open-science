@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 
+import { providerErrorDetails, providerErrorExcerpt } from '../transport/body'
 import type { ResponsesNamespacedTool } from './types'
 
 // Upstream protocol payloads are open-ended and validated at this response seam.
@@ -17,6 +18,49 @@ export class ResponsesProtocolError extends Error {
   }
 }
 
+export function parseUpstreamJson(text: string): JsonObject {
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error
+    throw new ResponsesProtocolError(
+      'The model service returned invalid JSON.',
+      502,
+      'invalid_upstream_response'
+    )
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ResponsesProtocolError(
+      'The model service returned a JSON value where an object was expected.',
+      502,
+      'invalid_upstream_response'
+    )
+  }
+  return value as JsonObject
+}
+
+function displayUpstreamError(
+  detail: unknown,
+  fallback: string,
+  secrets: readonly string[] = []
+): string {
+  if (typeof detail !== 'string') return fallback
+  const message = detail.trim()
+  if (!message || /^(?:<|\{|\[)/.test(message)) return fallback
+  return providerErrorExcerpt(message) ?? (providerErrorDetails(message, secrets) || fallback)
+}
+
+export function throwIfUpstreamError(error: unknown): void {
+  if (error == null) return
+  const detail = typeof error === 'object' && 'message' in error ? error.message : error
+  throw new ResponsesProtocolError(
+    providerErrorExcerpt(detail) ?? 'The model service reported an error.',
+    502,
+    'upstream_error'
+  )
+}
+
 const UPSTREAM_IMAGE_TYPES = new Set(['image', 'image_url', 'input_image', 'output_image'])
 
 export const unsupportedUpstreamImageOutput = (): ResponsesProtocolError =>
@@ -26,23 +70,23 @@ export const unsupportedUpstreamImageOutput = (): ResponsesProtocolError =>
     'unsupported_upstream_output'
   )
 
-export const upstreamErrorMessage = (body: string, status: number): string => {
-  const trimmed = body.trim()
-  if (trimmed) {
-    try {
-      const parsed = JSON.parse(trimmed) as JsonObject
-      const error = parsed.error
-      if (typeof error === 'string') return error
-      if (error && typeof error === 'object' && typeof error.message === 'string') {
-        return error.message
-      }
-      if (typeof parsed.message === 'string') return parsed.message
-    } catch {
-      return trimmed.slice(0, 500)
-    }
+export const upstreamErrorMessage = (
+  body: string,
+  status: number,
+  secrets: readonly string[] = []
+): string => {
+  const fallback = `Chat Completions upstream returned ${status}`
+  try {
+    const payload = JSON.parse(body) as JsonObject
+    const error = payload?.error
+    return displayUpstreamError(
+      typeof error === 'string' ? error : (error?.message ?? payload?.message),
+      fallback,
+      secrets
+    )
+  } catch {
+    return displayUpstreamError(body, fallback, secrets).slice(0, 500)
   }
-
-  return `Chat Completions upstream returned ${status}`
 }
 
 export const upstreamTextFromContent = (content: unknown): string => {
@@ -110,15 +154,14 @@ export const responseEnvelope = (
   id: string,
   model: string,
   output: JsonObject[],
-  usage?: unknown,
-  status: string = 'completed',
-  error: unknown = null
+  status: 'in_progress' | 'completed' | 'incomplete',
+  usage?: unknown
 ): JsonObject => ({
   id,
   object: 'response',
   created_at: Math.floor(Date.now() / 1000),
   status,
-  error,
+  error: null,
   incomplete_details: null,
   instructions: null,
   max_output_tokens: null,
@@ -187,8 +230,18 @@ export const completionToResponse = (
   completion: JsonObject,
   namespacedTools: readonly ResponsesNamespacedTool[] = []
 ): JsonObject => {
-  const message = completion.choices?.[0]?.message ?? {}
-  const terminal = chatTerminalDetails(completion.choices?.[0]?.finish_reason)
+  throwIfUpstreamError(completion?.error)
+  const choice = Array.isArray(completion?.choices) ? completion.choices[0] : undefined
+  const terminal = chatTerminalDetails(choice?.finish_reason)
+  // Filtering or an output limit can end a choice before the first message.
+  const message = choice?.message ?? (terminal.status === 'incomplete' ? {} : undefined)
+  if (!message || typeof message !== 'object' || Array.isArray(message)) {
+    throw new ResponsesProtocolError(
+      'The model service returned no Chat Completions message.',
+      502,
+      'invalid_upstream_response'
+    )
+  }
   const responseId = completion.id ?? `resp_${randomBytes(6).toString('hex')}`
   const output: JsonObject[] = []
   if (hasUpstreamImageField(message)) throw unsupportedUpstreamImageOutput()
@@ -224,8 +277,8 @@ export const completionToResponse = (
       responseId,
       completion.model,
       output,
-      chatUsageToResponsesUsage(completion.usage),
-      terminal.status
+      terminal.status,
+      chatUsageToResponsesUsage(completion.usage)
     ),
     ...terminal
   }

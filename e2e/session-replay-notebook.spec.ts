@@ -199,17 +199,13 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   expect((await conversationPrompts()).at(-1)!.prompt).not.toContain('ARCHIVED_RESULT_42')
   page = await app.restart()
   await open(true)
-  await page
-    .getByRole('region', { name: 'Conversation', exact: true })
-    .getByRole('button', { name: 'Show annotation source', exact: true })
-    .click()
   const restoredReplay = page.getByTestId('replay-panel')
   const restoredSlider = restoredReplay.getByRole('slider', {
     name: 'Replay progress',
     exact: true
   })
-  await restoredSlider.focus()
-  await page.keyboard.press('End')
+  await expect(restoredSlider).toHaveAttribute('aria-valuenow', String(offset))
+  await restoredSlider.press('End')
   await restoredReplay.getByRole('button', { name: 'Notebook', exact: true }).click()
   await expect(restoredReplay.getByText('ARCHIVED_RESULT_42', { exact: true })).toBeVisible()
   const restoredConversation = page.getByRole('region', { name: 'Conversation', exact: true })

@@ -17,6 +17,7 @@ export type ResponsesToChatCompletionsBridgeTarget = {
   azureChatBaseUrl?: string
   vendorId?: OfficialVendorId
   reasoningEffortTransport?: CustomReasoningEffortTransport
+  reasoningSupported?: boolean
   // Codex uses a catalog model for its local metadata; bridge providers may need a different
   // upstream model id (for example, DeepSeek's model name).
   model?: string

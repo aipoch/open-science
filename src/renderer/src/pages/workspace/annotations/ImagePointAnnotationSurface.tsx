@@ -53,6 +53,7 @@ const ImagePointAnnotationSurface = ({
   src,
   sourceSize,
   activeAnnotations,
+  requireAltToAdd,
   onAdd,
   onUpdateNote,
   onRemove,
@@ -63,6 +64,7 @@ const ImagePointAnnotationSurface = ({
   src: string
   sourceSize?: ImageNaturalSize
   activeAnnotations: readonly Annotation[]
+  requireAltToAdd?: boolean
   onAdd?: (annotation: ImagePointAnnotation) => AnnotationValidationError | undefined
   onUpdateNote?: (id: string, note: string) => AnnotationValidationError | undefined
   onRemove?: (id: string) => void
@@ -247,6 +249,7 @@ const ImagePointAnnotationSurface = ({
           !naturalSize ||
           !source ||
           !onAdd ||
+          (requireAltToAdd && !event.altKey) ||
           (event.target instanceof Element && event.target.closest('button'))
         ) {
           return

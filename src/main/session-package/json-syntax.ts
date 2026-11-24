@@ -15,8 +15,13 @@ export class PackageJsonSyntax {
   private multiple = false
   private separated = false
 
-  write(text: string): void {
-    for (const char of text) {
+  write(
+    text: string,
+    onString?: (start: number, end: number, closed: boolean, pendingEscape: number) => void
+  ): void {
+    let start = 0
+    for (let index = 0; index < text.length; index++) {
+      const char = text[index]
       if (this.failed) return
       if (this.string) {
         if (this.unicode) {
@@ -28,6 +33,7 @@ export class PackageJsonSyntax {
           this.escape = false
         } else if (char === '\\') this.escape = true
         else if (char === '"') {
+          onString?.(start, index, true, 0)
           this.string = false
           this.accept('string')
         } else if (char.charCodeAt(0) < 32) this.failed = true
@@ -69,9 +75,16 @@ export class PackageJsonSyntax {
         this.stack.push('value')
       }
       this.started = true
-      if (char === '"') this.string = true
-      else if (/[0-9tfn-]/.test(char)) this.token = char
+      if (char === '"') {
+        this.string = true
+        start = index + 1
+      } else if (/[0-9tfn-]/.test(char)) this.token = char
       else this.accept(char)
+    }
+    if (this.string && !this.failed && start < text.length) {
+      // An escape can straddle reads. Only the preceding source is decodable.
+      const pendingEscape = this.unicode ? 6 - this.unicode : Number(this.escape)
+      onString?.(start, text.length, false, pendingEscape)
     }
   }
 

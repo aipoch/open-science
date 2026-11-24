@@ -59,6 +59,7 @@ export const updateProjectRequestSchema = z
     agentContext: z.string().max(16000).optional(),
     optimizationPrompt: z.string().max(16000).optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),
+    agentTracingEnabled: z.boolean().optional(),
     pinned: z.boolean().optional()
   })
   .strict()

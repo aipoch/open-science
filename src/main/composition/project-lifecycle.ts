@@ -227,6 +227,7 @@ export function composeProjectLifecycle({
         await owner.completeProjectDeletion(projectId)
         await getNotebookService().deleteProjectFileEvidence(projectId)
         await getNotebookService().deleteProjectInputs(projectId)
+        await getNotebookService().finishPendingRunDeletion({ projectId })
         await backgroundResultDelivery.commitProjectDeletion(projectId)
         await scheduleRepository?.deleteTarget(projectId)
         schedulesChanged(projectId, null)
@@ -294,17 +295,23 @@ export function composeProjectLifecycle({
         // Read synchronous activity after the database await so a newly active runtime is visible.
         return jobs > 0 || this.isSessionLocallyBusy!(projectId, sessionId)
       },
-      isSessionExportBusy: async (projectId, sessionId) => {
+      getSessionExportBlocker: async (projectId, sessionId) => {
         const computeJobs = computeJobActivityRef.current
         if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
         const jobs = await computeJobs.countNonTerminalBySession(sessionId)
-        return (
-          imageTasks?.isBusy(projectId, sessionId) === true ||
-          jobs > 0 ||
-          detectSessionExportBlockingSessions().some(
-            (session) => session.projectId === projectId && session.sessionId === sessionId
-          )
+        if (imageTasks?.isBusy(projectId, sessionId)) return 'image'
+        if (jobs > 0) return 'compute'
+        const activity = detectSessionExportBlockingSessions().find(
+          (session) => session.projectId === projectId && session.sessionId === sessionId
         )
+        if (activity?.kind === 'agent') {
+          const snapshot = runtimeRef.current?.getSnapshot()
+          if (snapshot?.pendingPermissions?.some((item) => item.sessionId === sessionId))
+            return 'permission'
+          if (snapshot?.pendingElicitations?.some((item) => item.sessionId === sessionId))
+            return 'question'
+        }
+        return activity?.kind
       },
       isProjectBusy: async (projectId) => {
         if (
@@ -358,6 +365,7 @@ export function composeProjectLifecycle({
       imageTasks?.cancelSessions(sessionIds)
       for (const sessionId of sessionIds) clearSessionCredentials(sessionId)
       const results = await Promise.allSettled([
+        getNotebookService().finishPendingRunDeletion({ sessionIds }),
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
         visionEvidenceRepository.deleteSessions(sessionIds),

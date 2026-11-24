@@ -1183,28 +1183,32 @@ describe('ProviderAccountsModule', () => {
     }
   )
 
-  it('publishes only validated API credentials, repeats safely, and refuses replacement', async () => {
-    await repository.setAgentFramework('codex')
-    const validate = vi
-      .spyOn(module, 'validateProvider')
-      .mockResolvedValue({ ok: true, category: 'ok' })
-    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
-    const first = await repository.getSettings()
-    await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
-    const restored = await new SettingsRepository(dir).getSettings()
-    expect(restored.providers).toHaveLength(1)
-    expect(restored.providers[0].keyRef).toBe(first.providers[0].keyRef)
-    expect(restored.providers[0].lastValidatedTarget).toEqual({
-      model: 'gpt-5.4',
-      endpoint: 'responses'
-    })
-    expect(restored.activeProviderId).toBe('cli-openai')
-    await expect(module.bootstrapOpenAi('different-key', 'gpt-5.4')).rejects.toMatchObject({
-      code: 'configuration_conflict'
-    })
-    expect(await repository.getSettings()).toEqual(restored)
-    expect(validate).toHaveBeenCalledTimes(2)
-  })
+  it.each([undefined, 'codex'] as const)(
+    'publishes validated API credentials without changing the configured framework (%s)',
+    async (framework) => {
+      if (framework) await repository.setAgentFramework(framework)
+      const validate = vi
+        .spyOn(module, 'validateProvider')
+        .mockResolvedValue({ ok: true, category: 'ok' })
+      await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+      const first = await repository.getSettings()
+      await module.bootstrapOpenAi('synthetic-key', 'gpt-5.4')
+      const restored = await new SettingsRepository(dir).getSettings()
+      expect(restored.providers).toHaveLength(1)
+      expect(restored.providers[0].keyRef).toBe(first.providers[0].keyRef)
+      expect(restored.providers[0].lastValidatedTarget).toEqual({
+        model: 'gpt-5.4',
+        endpoint: 'responses'
+      })
+      expect(restored.agentFrameworkId).toBe(framework)
+      expect(restored.activeProviderId).toBe('cli-openai')
+      await expect(module.bootstrapOpenAi('different-key', 'gpt-5.4')).rejects.toMatchObject({
+        code: 'configuration_conflict'
+      })
+      expect(await repository.getSettings()).toEqual(restored)
+      expect(validate).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it('revalidates the selected model without replacing the provider default or key', async () => {
     await repository.setAgentFramework('codex')
@@ -1528,7 +1532,8 @@ describe('ProviderAccountsModule', () => {
     const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth').mockResolvedValue({
       authenticated: true,
       model: 'model',
-      models: ['model']
+      models: ['model'],
+      modelReasoningEfforts: { model: ['high'] }
     })
     const login = { site: 'internal', action: 'login', mode: 'shared' } as const
     const id = codeBuddyAccounts.internal.id
@@ -1546,12 +1551,14 @@ describe('ProviderAccountsModule', () => {
       )
       expect(await stored()).toMatchObject({
         codeBuddyAuthMode: 'shared',
-        fetchedModels: ['model']
+        fetchedModels: ['model'],
+        modelReasoningEfforts: { model: ['high'] }
       })
       auth.mockClear()
       await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
       expect((await stored())?.disconnectedAt).toEqual(expect.any(Number))
       expect((await stored())?.fetchedModels).toBeUndefined()
+      expect((await stored())?.modelReasoningEfforts).toBeUndefined()
       expect(await module.codeBuddyAccount({ site: 'internal', action: 'status' })).toMatchObject({
         ok: false
       })
@@ -1570,10 +1577,20 @@ describe('ProviderAccountsModule', () => {
   it('replaces only the refreshed CodeBuddy catalog, keeps it on failure, and clears it on logout', async () => {
     const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth')
     try {
-      auth.mockResolvedValue({ authenticated: true, model: 'old', models: ['old'] })
+      auth.mockResolvedValue({
+        authenticated: true,
+        model: 'old',
+        models: ['old'],
+        modelReasoningEfforts: { old: ['low', 'high'] }
+      })
       await module.codeBuddyAccount({ site: 'internal', action: 'login' })
       await module.codeBuddyAccount({ site: 'external', action: 'login' })
-      auth.mockResolvedValue({ authenticated: true, model: 'new', models: ['new'] })
+      auth.mockResolvedValue({
+        authenticated: true,
+        model: 'new',
+        models: ['new'],
+        modelReasoningEfforts: { new: ['high'] }
+      })
       await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })
       auth.mockResolvedValue({ authenticated: true })
       expect(await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })).toMatchObject({
@@ -1584,6 +1601,9 @@ describe('ProviderAccountsModule', () => {
       expect(
         (await records()).find((p) => p.id === codeBuddyAccounts.internal.id)?.fetchedModels
       ).toEqual(['new'])
+      expect(
+        (await records()).find((p) => p.id === codeBuddyAccounts.internal.id)?.modelReasoningEfforts
+      ).toEqual({ new: ['high'] })
       auth.mockResolvedValue({ authenticated: false })
       await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
       const providers = await records()
@@ -1591,6 +1611,7 @@ describe('ProviderAccountsModule', () => {
       expect(china).toBeDefined()
       expect(china?.model).toBeUndefined()
       expect(china?.fetchedModels).toBeUndefined()
+      expect(china?.modelReasoningEfforts).toBeUndefined()
       expect(providers.find((p) => p.id === codeBuddyAccounts.external.id)?.fetchedModels).toEqual([
         'old'
       ])

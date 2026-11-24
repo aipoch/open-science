@@ -51,18 +51,17 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-### 💡 AIPOCH Open-Science v1.3.1 updates
+### 💡 AIPOCH Open-Science v1.3.4 updates
 
-_November 19, 2026_
+_November 22, 2026_
 
-- **Web search & page reading**: The built-in agent can search the web and read public pages; search approvals show the query in a readable card, and cited sources stay with the conversation.
-- **Citation graph**: Explore a paper's references and citing papers as an interactive graph — re-center on any related paper and filter by direction.
-- **MCP without opening the app**: Connecting an external agent through MCP starts the Open-Science service for you, with setup options for more than 30 agents and clients.
-- **Lab models & organization cases**: Sign in with a Lab account to use your organization's models and to search, import, or share research cases with teammates.
-- **Fresh model lists & clearer errors**: Refresh a provider's model list from Settings, and see the cause and next step when a provider request fails.
-- **Updating from 1.3.0**: If the 1.3.0 updater reports that another process is using the installation, fully quit Open-Science and install the downloaded package manually.
+- **See inside the built-in Agent**: Projects can opt in to Agent tracing, exporting correlated spans for turns, model requests, and tool executions to an OTLP/HTTP receiver you host, with capture detail you control.
+- **Windows updates, unblocked**: An in-app update no longer stalls when the built-in Agent is running, and stable Windows updates apply as compact installer deltas again.
+- **Long Notebook histories stay fast**: Starting and finishing Runs, selecting results, and opening previews no longer re-read the whole history.
+- **Memory readings you can trust**: The Compute summary now matches Activity Monitor on macOS and shows committed memory against its limit on Windows.
+- **CodeBuddy reasoning efforts**: The effort picker now offers only the levels the selected CodeBuddy model actually supports.
 
-[View the full v1.3.1 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.1)
+[View the full v1.3.4 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 
@@ -87,6 +86,14 @@ Open the [official download page](https://aipoch.com/open-science/download) and 
 | Linux ARM64                             | The Linux ARM64 AppImage or Debian package |
 
 See [download verification](SECURITY.md#verifying-your-download) for checks before installation.
+
+On Windows 10/11 x64, you can install the desktop app from the [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) or use WinGet in PowerShell.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+Available versions may differ by channel. See the [installation and updates guide](https://aipoch.com/docs/guides/installation/) for details.
 
 On macOS, you can also install with [Homebrew](https://brew.sh):
 

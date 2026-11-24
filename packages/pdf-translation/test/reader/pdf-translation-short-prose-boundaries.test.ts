@@ -1765,3 +1765,220 @@ it.each([true, false])(
     expect(units.find((unit) => unit.items.includes('1:5'))?.source).toBe('Jo Rowan')
   }
 )
+
+it.each([0, 5])('keeps a witnessed word on a numbered hanging rail (shift=%s)', (shift) => {
+  const { units } = groupPdfTranslationPages({
+    pages: [
+      page(1, [
+        item(
+          'The calibration cycle uses different settings for each trial.',
+          72,
+          575,
+          468,
+          true,
+          12
+        ),
+        item(
+          '1. We assessed the samples with a separate sequence of trials',
+          86,
+          440,
+          454,
+          true,
+          12
+        ),
+        item('and recorded the observations over the whole period.', 101, 425.6, 280, false, 12),
+        item('', 86, 401, 0, true, 12),
+        item(
+          '2. Use the most stable observations for the initial calibra-',
+          86,
+          401,
+          454,
+          true,
+          12
+        ),
+        item(
+          'tion, then compare each controlled reading to the recorded',
+          101 + shift,
+          386.6,
+          439 - shift,
+          true,
+          12
+        ),
+        item('value and complete the separate review.', 101 + shift, 372.2, 240, true, 12)
+      ])
+    ]
+  })
+  const lead = units.find((unit) => unit.items.includes('1:4'))!
+  const tail = units.find((unit) => unit.items.includes('1:5'))!
+  expect(lead === tail).toBe(shift === 0)
+  expect(lead.source).toContain(shift ? 'calibra-' : 'initial calibration, then')
+  expect(lead.fragments).toHaveLength(shift ? 1 : 2)
+})
+
+it.each(['exact header', 'different heading', 'wrong folio'] as const)(
+  'joins two long rows of a title repeated next to its folio (%s)',
+  (shape) => {
+    const first = 'A DIRECT COUNT OF SMALL PATTERNS IN MESHES'
+    const last = 'WITH DISTINCT BOUNDARY COLORS'
+    const complete = first + ' ' + last
+    const { units } = groupPdfTranslationPages({
+      pages: [
+        page(1, [
+          item(first, 104, 685, 404, true, 12, 'Title'),
+          item(last, 146, 671, 320, false, 12, 'Title'),
+          item('', 0, 0, 0),
+          item('AVERY WEST AND LIN PARK', 192, 641, 228, false, 10, 'Author'),
+          item('', 0, 0, 0),
+          item('Abstract.', 107, 612, 48, false, 10, 'Label'),
+          item(' ', 155, 612, 3, false),
+          item('We give a way to enumerate every small pattern.', 158, 612, 293)
+        ]),
+        page(2, [
+          item(
+            shape === 'different heading' ? first + ' WITH AN INDEPENDENT METHOD' : complete,
+            73,
+            744,
+            484,
+            false,
+            9,
+            'Running'
+          ),
+          item(shape === 'wrong folio' ? '9' : '2', 560, 744, 5, false, 9, 'Running'),
+          item('', 0, 0, 0),
+          item('We begin with a fixed ordering of the small cells.', 73, 709, 440)
+        ])
+      ]
+    })
+    const title = units.find((unit) => unit.items.includes('1:0'))!
+    expect(title.source).toBe(shape === 'exact header' ? complete : first)
+    expect(title.fragments).toHaveLength(shape === 'exact header' ? 2 : 1)
+    expect(units.find((unit) => unit.items.includes('1:3'))?.source).toBe('AVERY WEST AND LIN PARK')
+  }
+)
+
+it.each(['display argument', 'displaced closing bracket'] as const)(
+  'keeps the comma and second variable with a stacked fraction (%s)',
+  (shape) => {
+    const target = ', v'
+    const closeY = shape === 'displaced closing bracket' ? 603 : 617
+    const items = [
+      item('We use the following substitution in the calculation.', 72, 650, 395),
+      item('F', 145, 600, 7, false, 12, 'Italic'),
+      item('N', 152, 598, 8, false, 8, 'Index'),
+      item('(', 164, 617, 9, false, 12, 'Delimiter'),
+      item('v', 184, 608.2, 5.5, false, 12, 'Italic'),
+      item('v', 174, 591.8, 5.5, false, 12, 'Italic'),
+      item('−', 182.6, 591.8, 9.3, false, 12, 'Symbol'),
+      item('1', 194.5, 591.8, 5.8, false, 12),
+      item(target, 201.5, 600, 10.7, false, 12, 'Italic'),
+      item(')', 212.6, closeY, 9, false, 12, 'Delimiter'),
+      item('=', 225, 600, 9, false, 12),
+      item('v', 237, 600, 5.5, false, 12, 'Italic'),
+      item('The resulting identity gives the desired value.', 72, 554, 368)
+    ]
+    const { units } = groupPdfTranslationPages({ pages: [page(1, items)] })
+    const argument = units.find((unit) => unit.items.includes('1:8'))!
+    expect(argument.source).toBe(target)
+    expect(argument.sourceOnly ?? false).toBe(shape === 'display argument')
+  }
+)
+
+it.each([0, 12])(
+  'keeps a counted final noun with its equation explanation (offset=%s)',
+  (offset) => {
+    const { units } = groupPdfTranslationPages({
+      pages: [
+        page(1, [
+          item('Substituting the trial parameters into the estimator yields', 316, 486, 244),
+          item('v', 409, 462, 6, false, 10, 'Math'),
+          item('=', 419, 462, 7, false, 10, 'Operator'),
+          item('u', 429, 462, 6, false, 10, 'Math'),
+          item('(8)', 543 - offset, 462, 17),
+          item('where', 316, 438, 23, false),
+          item('U', 344, 438, 7, false, 10, 'Math'),
+          item('⊥', 351, 442, 6, false, 7, 'Script'),
+          item('is formed by removing the first four', 361, 438, 199),
+          item('rows.', 316, 426, 21),
+          item('The retained subspace provides an independent estimate.', 326, 414, 234),
+          item('An alternative trial provides a separate comparison.', 326, 402, 234)
+        ])
+      ]
+    })
+    const head = units.find((unit) => unit.items.includes('1:5'))!
+    const tail = units.find((unit) => unit.items.includes('1:9'))!
+    expect(head === tail).toBe(offset === 0)
+    expect(head.source).toBe(
+      'where U⊥ is formed by removing the first four' + (offset === 0 ? ' rows.' : '')
+    )
+    expect(units.find((unit) => unit.items.includes('1:4'))).toMatchObject({
+      source: '(8)',
+      sourceOnly: true,
+      preserve: 'formula'
+    })
+    expect(units.find((unit) => unit.items.includes('1:10'))).not.toBe(head)
+  }
+)
+
+it.each([0, 4])('joins a short same-column comparison-year tail (offset=%s)', (offset) => {
+  const { units } = groupPdfTranslationPages({
+    pages: [
+      page(1, [
+        item('The field tests use the same sites each year.', 72, 610, 449),
+        item('Surveyors took weekly readings at every site.', 72, 592, 450),
+        item('The average reading was lower in 2018 compared', 72, 574, 451),
+        item('to 2017.', 72 + offset, 556, 36),
+        item('A new field test changed the sensor position.', 72, 532, 451)
+      ])
+    ]
+  })
+  const head = units.find((unit) => unit.items.includes('1:2'))!
+  const tail = units.find((unit) => unit.items.includes('1:3'))!
+  expect(tail).toBeDefined()
+  expect(head === tail).toBe(offset === 0)
+  expect(units.find((unit) => unit.items.includes('1:4'))).not.toBe(head)
+})
+
+it.each([0, 4])('joins a repeated named term before the next section (offset=%s)', (offset) => {
+  const { units } = groupPdfTranslationPages({
+    pages: [
+      page(1, [
+        item(
+          'The preliminary estimates imply an independent result for the',
+          64,
+          631,
+          252,
+          true,
+          9
+        ),
+        item(
+          'filters and show that the Damped Responses describe the output.',
+          64,
+          620,
+          252,
+          true,
+          9
+        ),
+        item('The output is nearly constant.', 64, 609, 111, false, 9),
+        item(' ', 175, 609, 5, false, 0),
+        item('We now give a clear estimate for', 180, 609, 136, true, 9),
+        item('the response of the fixed filter', 64, 598, 160, false, 9),
+        item(' ', 224, 598, 3.5, false, 0),
+        item('ξ', 227.5, 598, 4.3, false, 9, 'Math'),
+        item(' ', 231.8, 598, 3.7, false, 0),
+        item('satisfying the Damped', 235.5, 598, 80.5, true, 9),
+        item('Responses.', 64 + offset, 587, 34, true, 9),
+        item('2.4.', 64, 562, 14, false, 9),
+        item(' ', 78, 562, 4, false, 0),
+        item('Independent validation.', 82, 562, 100, false, 9, 'Title'),
+        item(' ', 182, 562, 4, false, 0),
+        item('The procedure uses a second trial.', 186, 562, 130, true, 9),
+        item('A second trial is used to confirm the measurements.', 64, 551, 252, true, 9)
+      ])
+    ]
+  })
+  const head = units.find((unit) => unit.items.includes('1:9'))!
+  const tail = units.find((unit) => unit.items.includes('1:10'))!
+  expect(tail).toBeDefined()
+  expect(head === tail).toBe(offset === 0)
+  expect(units.find((unit) => unit.items.includes('1:11'))).not.toBe(head)
+})

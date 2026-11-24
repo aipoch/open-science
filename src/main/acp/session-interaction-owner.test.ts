@@ -203,6 +203,34 @@ describe('AcpSessionInteractionOwner', () => {
     expect(onTimeout).toHaveBeenCalledOnce()
   })
 
+  it.each([true, false])(
+    'retains a user Stop joining a pending runtime cancel only on acceptance (%s)',
+    async (accepted) => {
+      const owner = new AcpSessionInteractionOwner()
+      const scope = owner.claim({ sessionId: 's1', kind: 'prompt' })
+      const notification = Promise.withResolvers<void>()
+      const request = {
+        sessionId: 's1',
+        notify: vi.fn(() => notification.promise),
+        onAccepted: vi.fn(),
+        onTimeout: vi.fn()
+      }
+      const outcomes = Promise.allSettled([
+        owner.cancelPrompt(request),
+        owner.cancelPrompt({ ...request, userInitiated: true })
+      ])
+      expect(owner.isCancellationAccepted(scope, 'user')).toBe(false)
+      if (accepted) notification.resolve()
+      else notification.reject(new Error('cancel write failed'))
+      expect((await outcomes).map((outcome) => outcome.status)).toEqual(
+        accepted ? ['fulfilled', 'fulfilled'] : ['rejected', 'rejected']
+      )
+      expect(owner.isCancellationAccepted(scope, 'user')).toBe(accepted)
+      expect(request.notify).toHaveBeenCalledOnce()
+      owner.release(scope)
+    }
+  )
+
   it('shares a pending cancellation and settles it when its interaction is released', async () => {
     const owner = new AcpSessionInteractionOwner()
     const scope = owner.claim({ sessionId: 'session-1', kind: 'prompt' })

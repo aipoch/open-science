@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/agent-framework-id'
 import type { Annotation } from '../../../shared/annotation-contract'
 import {
   createLinearConversationGraph,
@@ -127,7 +128,7 @@ export type SessionMessageGraphActions = {
         >
       | undefined,
     contextReset: boolean,
-    preparationId?: string
+    preparation?: { id: string; authority: PersistedChatSession }
   ) => { runtimeSegmentId?: string } | undefined
   appendUserMessage: (input: AppendUserMessageInput) => AppendMessageResult | undefined
   appendRoutedUserMessage: (input: AppendRoutedUserMessageInput) => AppendMessageResult | undefined
@@ -167,7 +168,7 @@ export const projectSessionGraph = (
   messages: ChatMessage[],
   now: number,
   runtimeSegmentId: string,
-  frameworkId = session.agentFrameworkId ?? 'claude-code',
+  frameworkId = session.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
   backendId = session.agentBackendId,
   model = session.agentModel,
   forceRuntimeSegment = false
@@ -216,7 +217,7 @@ export const synchronizeSessionGraph = (
   session: ChatSession,
   messages: ChatMessage[],
   now: number,
-  frameworkId = session.agentFrameworkId ?? 'claude-code',
+  frameworkId = session.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
   backendId = session.agentBackendId,
   model = session.agentModel,
   forceRuntimeSegment = false

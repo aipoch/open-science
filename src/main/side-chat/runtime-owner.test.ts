@@ -1,3 +1,4 @@
+import { getAgentFramework } from '../agent-framework/registry'
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -309,6 +310,15 @@ describe('Side chat restricted backend profile', () => {
         }
       }
     })
+  })
+
+  it('stores built-in Agent checkpoints beneath the Side chat profile', async () => {
+    const profile = join(tmpdir(), 'side-chat-profile')
+    const prepared = await prepareSideChatBackend(
+      backend(getAgentFramework('open-science-agent')),
+      profile
+    )
+    expect(prepared.args).toEqual(['--internal-agent-acp', join(profile, 'sessions')])
   })
 
   it('preserves the regional subscription login and disables native tools in a Side chat', async () => {

@@ -1576,7 +1576,7 @@ const terminateDirectoryProcesses = async (directory, run = runProcess) => {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      `$ErrorActionPreference = 'Stop'; $root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedRoot}')); Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+      `$ErrorActionPreference = 'Stop'; $root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedRoot}')); $processes = Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) }; $processes | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; $processes | ForEach-Object { Wait-Process -Id $_.ProcessId -Timeout 10 -ErrorAction SilentlyContinue | Out-Null; Start-Sleep -Milliseconds 300 }`
     ],
     {}
   )
@@ -1761,7 +1761,11 @@ const deleteOwnedRegistryKey = async (key, run) => {
   }
 }
 
-const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = runProcess } = {}) => {
+const cleanupOwnedSmokeRegistrations = async (
+  root,
+  expectedVersions,
+  { run = runProcess } = {}
+) => {
   if (!win32.basename(root).startsWith(SMOKE_ROOT_PREFIX)) {
     throw new Error(`Refusing to clean registrations for unexpected smoke root: ${root}`)
   }
@@ -1777,7 +1781,7 @@ const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = run
     const installLocation = registryValue(uninstallOutput, 'InstallLocation')
     const ownedStaleRegistration =
       registryValue(uninstallOutput, 'DisplayName') === APP_DISPLAY_NAME &&
-      registryValue(uninstallOutput, 'DisplayVersion') === expectedVersion &&
+      expectedVersions.includes(registryValue(uninstallOutput, 'DisplayVersion')) &&
       (!installLocation || isOwnedSmokePath(root, installLocation)) &&
       isOwnedSmokePath(root, uninstallTarget) &&
       isOwnedSmokePath(root, quietUninstallTarget)
@@ -1796,12 +1800,12 @@ const cleanupOwnedSmokeRegistrations = async (root, expectedVersion, { run = run
 
 const cleanupSmokeRegistrations = async (
   root,
-  expectedVersion,
+  expectedVersions,
   primaryError,
   cleanup = cleanupOwnedSmokeRegistrations
 ) => {
   try {
-    await cleanup(root, expectedVersion)
+    await cleanup(root, expectedVersions)
   } catch (cleanupError) {
     if (!primaryError) throw cleanupError
     const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
@@ -1810,6 +1814,7 @@ const cleanupSmokeRegistrations = async (
 }
 
 const runOrphanedUninstallerLockSmoke = async (installer) => {
+  const version = installerVersion(installer)
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const installDirectory = join(root, 'installed app 程序')
   const profileDirectory = join(root, 'profile 数据 with spaces')
@@ -1826,7 +1831,7 @@ const runOrphanedUninstallerLockSmoke = async (installer) => {
   } catch (error) {
     primaryError = error
   }
-  await cleanupSmokeRegistrations(root, installerVersion(installer), primaryError)
+  await cleanupSmokeRegistrations(root, [version], primaryError)
   await cleanupSmokeRoot(root, primaryError)
   if (primaryError) throw primaryError
   console.log('Windows orphaned-uninstaller lock smoke completed successfully.')
@@ -1843,6 +1848,9 @@ const main = async () => {
   const previousInstaller = options.previousInstallerDirectory
     ? await findSetupInstaller(options.previousInstallerDirectory)
     : undefined
+  // A failure during upgrade or rollback can leave either installer registered.
+  const expectedVersions = [installerVersion(currentInstaller)]
+  if (previousInstaller) expectedVersions.push(installerVersion(previousInstaller))
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const installDirectory = join(root, 'installed app 程序')
   const lockedInstallDirectory = join(root, 'locked uninstaller 程序')
@@ -2030,11 +2038,7 @@ const main = async () => {
     sentinelCleanupError = error
   }
   if (!options.retainInstallation || primaryError || sentinelCleanupError) {
-    await cleanupSmokeRegistrations(
-      root,
-      installerVersion(currentInstaller),
-      primaryError ?? sentinelCleanupError
-    )
+    await cleanupSmokeRegistrations(root, expectedVersions, primaryError ?? sentinelCleanupError)
     await cleanupSmokeRoot(root, primaryError ?? sentinelCleanupError)
   }
   if (primaryError) throw primaryError

@@ -66,6 +66,31 @@ describe('session message artifact references', () => {
     expect(resolveMessageArtifactReference('sin_curve.png', [working, artifact])).toBe(artifact)
   })
 
+  it('uses the saved version for bare image and download references alongside a Notebook working copy', () => {
+    const artifact = createArtifact()
+    const working: MessageArtifact = {
+      id: 'working:plot',
+      kind: 'workspace-file',
+      path: '/notebook/data/sin_curve.png',
+      referencePath: 'data/sin_curve.png'
+    }
+    const files = [working, artifact]
+
+    expect(
+      normalizeSessionArtifactReferences(
+        '![Curve](sin_curve.png)\n[Download](sin_curve.png)',
+        files
+      )
+    ).toBe(
+      '<session-artifact-image artifact_ref="version-1" alt_text="Curve"></session-artifact-image>\n[Download](/.open-science/artifact/version-1)'
+    )
+    expect(resolveMessageArtifactReference('data/sin_curve.png', files)).toBe(working)
+    const otherVersion = createArtifact({ id: 'version-2', versionId: 'version-2' })
+    expect(
+      resolveMessageArtifactReference('sin_curve.png', [...files, otherVersion])
+    ).toBeUndefined()
+  })
+
   it('resolves Windows absolute artifact paths before checking URL schemes', () => {
     const artifact = createArtifact({
       path: 'C:/managed/session/sin_curve.png',

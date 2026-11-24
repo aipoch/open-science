@@ -238,6 +238,25 @@ const composeAcpRuntimePromptOwners = (
     assertCurrent?: () => void
   }): Promise<void> => {
     session.sessionUpdateProjector.clearAssistantOutput(input.appSessionId)
+    const prepareFramework = async (): Promise<void> => {
+      if (!input.framework.beforePromptDispatch) return
+      const connection = base.connectionResources.connection
+      if (!connection) throw new Error('ACP connection is not available.')
+      const { codeBuddySharedSite } = base.backendGeneration.current.adapter
+      await input.framework.beforePromptDispatch({
+        ...(codeBuddySharedSite && { codeBuddySharedSite }),
+        connection,
+        providerSessionId: input.providerSessionId,
+        cwd: input.cwd,
+        mcpServers: base.sessionCapabilities.mcpServersFor(input.appSessionId),
+        ...(base.backendGeneration.current.session.model
+          ? { sessionModel: base.backendGeneration.current.session.model }
+          : {}),
+        ...(input.skillRuntimeAllowlist
+          ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist }
+          : {})
+      })
+    }
     const intent = input.request && notebookExecutionIntent(input.request)
     // A distinct Provider dispatch has its own credential even when it inherits the same stopped
     // intent. A late callback from its predecessor must never stop a newer explanatory branch.
@@ -258,20 +277,26 @@ const composeAcpRuntimePromptOwners = (
           if (input.request) notebookUserOperation(input.request)?.assertCurrent()
         }
         assertCurrent()
-        if (!host.refreshNotebookConnection)
-          throw new Error('Notebook provider refresh is unavailable.')
-        const shellRuntime = base.sessionCapabilities.shellRuntimeBindingFor(input.appSessionId)
-        await host.refreshNotebookConnection({
-          sessionId: input.appSessionId,
-          cwd: input.cwd,
-          mcpServers: refresh.mcpServers,
-          skillRuntimeAllowlist: input.skillRuntimeAllowlist,
-          ...(shellRuntime
-            ? { shellRuntimeAgentContract: shellRuntimeAgentContract(shellRuntime) }
-            : {}),
-          signal: input.signal,
-          assertCurrent
-        })
+        if (refresh.providerRefreshRequired) {
+          if (!host.refreshNotebookConnection)
+            throw new Error('Notebook provider refresh is unavailable.')
+          const shellRuntime = base.sessionCapabilities.shellRuntimeBindingFor(input.appSessionId)
+          await host.refreshNotebookConnection({
+            sessionId: input.appSessionId,
+            cwd: input.cwd,
+            mcpServers: refresh.mcpServers,
+            skillRuntimeAllowlist: input.skillRuntimeAllowlist,
+            ...(shellRuntime
+              ? { shellRuntimeAgentContract: shellRuntimeAgentContract(shellRuntime) }
+              : {}),
+            signal: input.signal,
+            assertCurrent
+          })
+        } else {
+          // CodeBuddy selects its process-global native Session and validates its shared login.
+          // Keep the framework hook; only the generic Notebook-driven resume is unnecessary.
+          await prepareFramework()
+        }
         assertCurrent()
         refresh.commit()
       } catch (error) {
@@ -283,18 +308,7 @@ const composeAcpRuntimePromptOwners = (
       }
       return
     }
-    if (!input.framework.beforePromptDispatch) return
-    const connection = base.connectionResources.connection
-    if (!connection) throw new Error('ACP connection is not available.')
-    const { codeBuddySharedSite } = base.backendGeneration.current.adapter
-    await input.framework.beforePromptDispatch({
-      ...(codeBuddySharedSite && { codeBuddySharedSite }),
-      connection,
-      providerSessionId: input.providerSessionId,
-      cwd: input.cwd,
-      mcpServers: base.sessionCapabilities.mcpServersFor(input.appSessionId),
-      ...(input.skillRuntimeAllowlist ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist } : {})
-    })
+    await prepareFramework()
   }
   const contextCompactionWorkflow = new AcpContextCompactionWorkflow({
     sessions: { activeSession, currentFramework },
@@ -388,6 +402,7 @@ const composeAcpRuntimePromptOwners = (
     permission: session.permissionContext,
     environment: {
       authorizedDirectories: options.authorizedDirectories,
+      connection: () => base.connectionResources.connection,
       connectionGeneration: () => base.connectionResources.epoch,
       backend: () => base.backendGeneration.current,
       tooling: () => session.sessionEnvironment.toolingAvailability(),
@@ -439,6 +454,8 @@ const composeAcpRuntimePromptOwners = (
           text
         }),
       beforePromptDispatch: beforeFrameworkPromptDispatch,
+      commitNotebookDispatch: (appSessionId) =>
+        base.sessionCapabilities.commitNotebookDispatch(appSessionId),
       prepareNotebookIntent: (request, mode) => {
         const notebook = options.notebook
         if (!notebook) return
@@ -618,6 +635,7 @@ const composeAcpRuntimePromptOwners = (
     },
     currentCwd: () => base.snapshotOwner.cwd,
     resolveProjectId: projectId,
+    resolveProjectTracing: options.resolveProjectTracing,
     prepareContinuationReplay: host.reload.prepareContinuationReplay,
     disconnectForReload: host.reload.disconnect,
     resumeAfterReload: host.reload.resume,

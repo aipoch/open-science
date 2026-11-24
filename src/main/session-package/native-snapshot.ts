@@ -1,3 +1,4 @@
+import { PENDING_RUN_DIRECTORY } from '../notebook/pending-run-files'
 import {
   packageResearchFilmsSchema,
   researchFilmStorageKeys,
@@ -381,7 +382,11 @@ export const notebookStorageKeys = async (
       })
     for (const entry of entries) {
       // The package carries hydrated v1 documents, not local immutable record storage.
-      if (entry.name === '.run-records' && notebookDocumentIdentity(`${key}/run.json`)) continue
+      if (
+        (entry.name === '.run-records' || entry.name === PENDING_RUN_DIRECTORY) &&
+        notebookDocumentIdentity(`${key}/run.json`)
+      )
+        continue
       const child = `${key}/${entry.name}`
       if (entry.isDirectory()) await visit(child, depth + 1)
       else if (entry.isFile()) keys.push(child)

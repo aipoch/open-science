@@ -9,10 +9,71 @@ import {
   pdfLinkAddressMatches,
   translatedPdfLinkLabel,
   translatedPdfLinkFragment,
+  translatedPdfDatedReportFootnote,
   translatedPdfBracketedReference
 } from '../resources/link-labels.mjs'
 import { PdfTranslationWriter } from '../src/writer.js'
 import { TestCallerRegistry } from './support/callers.js'
+
+it('localizes a figure number selected together with native punctuation', () => {
+  const source = 'As illustrated in Fig.4, the blue region shrinks.'
+  const target = '如图4所示，蓝色区域缩小。'
+  const label = '.4,'
+  const offset = source.indexOf(label)
+  expect(translatedPdfLinkFragment(source, target, label, offset)).toEqual({
+    start: target.indexOf('4'),
+    text: '4'
+  })
+  expect(translatedPdfLinkFragment(source, target + ' 见图4。', label, offset)).toBeNull()
+  expect(translatedPdfLinkFragment(source, target.replace('4', '5'), label, offset)).toBeNull()
+  expect(translatedPdfLinkFragment(source, target, label, offset - 1)).toBeNull()
+})
+
+it('locates a raised report footnote using its localized date and acronym', () => {
+  const source = 'Three tests refer to the Audit Summary (AS) report released on March 5, 2034 3.'
+  const target = '有 3 项试验涉及 2034 年 3 月 5 日发布的审计汇总（AS）报告 3 所述的设置。'
+  const offset = source.lastIndexOf('3')
+  expect(translatedPdfDatedReportFootnote(source, target, '3', offset)).toEqual({
+    start: target.lastIndexOf('3'),
+    text: '3',
+    reportStart: target.indexOf('2034')
+  })
+  for (const altered of [
+    target.replace('5 日', '6 日'),
+    target.replace('（AS）', '（OR）'),
+    target + target
+  ])
+    expect(translatedPdfDatedReportFootnote(source, altered, '3', offset)).toBeNull()
+  expect(translatedPdfDatedReportFootnote(source, target, '3', offset - 4)).toBeNull()
+})
+
+it('maps complete keyword labels through their original thesaurus action', () => {
+  const source = 'Keywords: Blue stars (84001) — Infrared bands (84002)',
+    translation = '关键词：蓝星（84001）— 红外波段（84002）',
+    label = 'Blue stars (84001)',
+    localized = '蓝星（84001）',
+    uri = 'https://astrothesaurus.org/uat/84001',
+    offset = source.indexOf(label),
+    localizedOffset = translation.indexOf(localized)
+  expect(translatedPdfLinkLabel(source, translation, label, offset, uri)).toEqual({
+    start: localizedOffset,
+    text: localized
+  })
+  expect(translatedPdfLinkLabel(translation, source, localized, localizedOffset, uri)).toEqual({
+    start: offset,
+    text: label
+  })
+
+  expect(translatedPdfLinkLabel(source, translation, label, offset + 1, uri)).toBeNull()
+  expect(translatedPdfLinkLabel(source, translation, 'Blue stars', offset, uri)).toBeNull()
+  expect(translatedPdfLinkLabel(source, translation, label, offset, uri + '?other')).toBeNull()
+  expect(
+    translatedPdfLinkLabel(source, translation, label, offset, uri.replace('84001', '84002'))
+  ).toBeNull()
+  expect(
+    translatedPdfLinkLabel(source, translation.replace('84002', '84001'), label, offset, uri)
+  ).toBeNull()
+})
 
 it.each(
   readPdfTranslationCases<{
@@ -1294,6 +1355,45 @@ it('maps repeated complete numeric lists by block occurrence and numeric ordinal
   ).toBeNull()
 })
 
+it('maps a linked closing suffix to the same repeated citation block', () => {
+  const source = 'See [12] and compare [12].',
+    translation = '请参见［12］并与［12］比较。'
+  for (const [offset, start] of [
+    [source.indexOf('12]'), translation.indexOf('12］')],
+    [source.lastIndexOf('12]'), translation.lastIndexOf('12］')]
+  ]) {
+    expect(translatedPdfLinkFragment(source, translation, '12]', offset)).toEqual({
+      start,
+      text: '12］'
+    })
+    expect(translatedPdfLinkFragment(translation, source, '12］', start)).toEqual({
+      start: offset,
+      text: '12]'
+    })
+  }
+  expect(translatedPdfBracketedReference(source, '参见［12］和数字12。', '12]', 5)).toBeNull()
+  expect(translatedPdfBracketedReference('Unclosed 12]', translation, '12]', 9)).toBeUndefined()
+})
+
+it('maps a linked opening prefix only within the identical complete citation', () => {
+  const source = 'See [7, 9] and compare [7].',
+    target = '数字 7，见［7，9］并与［7］比较。',
+    prefix = '[7',
+    offset = source.indexOf(prefix)
+  const proof = translatedPdfBracketedReference(source, target, prefix, offset)
+  expect(proof?.start).toBe(target.indexOf('［7'))
+  expect(proof?.text).toBe('［7')
+  expect(translatedPdfLinkFragment(target, source, '［7', proof!.start)).toEqual({
+    start: offset,
+    text: prefix
+  })
+  expect(
+    translatedPdfBracketedReference(source, target.replace('7，9', '9，7'), prefix, offset)
+  ).toBeNull()
+  expect(translatedPdfBracketedReference(source, target + '［7，9］', prefix, offset)).toBeNull()
+  expect(translatedPdfBracketedReference('See [7, 9.', target, prefix, offset)).toBeUndefined()
+})
+
 it.each(['S2 图', 'S2 圖', 'S2 Figure'])(
   'preserves the complete supplementary figure identity: %s',
   (target) => {
@@ -1875,3 +1975,127 @@ it.each([
     else expect(proof).toBeNull()
   }
 })
+
+it('preserves a corollary locator without selecting it as a citation link', () => {
+  const source = 'As proved in [9, Corollary 9].'
+  const target = '此前已在［9，推论 9］中证明。'
+  const citation = source.indexOf('9')
+  const locator = source.lastIndexOf('9')
+  expect(translatedPdfBracketedReference(source, target, '9', citation)).toMatchObject({
+    start: target.indexOf('9'),
+    text: '9'
+  })
+  expect(translatedPdfBracketedReference(source, target, '9', locator)).toBeNull()
+  expect(
+    translatedPdfBracketedReference(source, target.replace('论 9', '论 8'), '9', citation)
+  ).toBeNull()
+})
+
+it('binds independently linked accent and year runs to the closed citation', () => {
+  const author = 'Ber´et et al.',
+    source = `${author} (2020b) reported the result. See (${author} 2021).`,
+    target = 'Ber´et 等人（2020b）报告了结果。另见（Ber´et 等人 2021）。',
+    localized = 'Ber´et 等人'
+  for (const [label, offset, text, start] of [
+    [author, 0, localized, 0],
+    ['2020b', source.indexOf('2020b'), '2020b', target.indexOf('2020b')],
+    [
+      `${author} 2021`,
+      source.lastIndexOf(author),
+      `${localized} 2021`,
+      target.lastIndexOf(localized)
+    ]
+  ] as const) {
+    for (const map of [translatedPdfLinkLabel, translatedPdfLinkFragment]) {
+      expect(map(source, target, label, offset)).toEqual({ start, text })
+      expect(map(target, source, text, start)).toEqual({ start: offset, text: label })
+      expect(map(source, target.replaceAll('Ber´et', 'Baret'), label, offset)).toBeNull()
+      expect(
+        map(source, target.replaceAll('2020b', '2020a').replaceAll('2021', '2022'), label, offset)
+      ).toBeNull()
+      expect(map(source, target + target, label, offset)).toBeNull()
+    }
+  }
+})
+
+it('maps a whole narrative citation past a parenthetical occurrence of the same author and year', () => {
+  const source = 'See (Hale et al., 2020). Hale et al. (2020) describes the result.',
+    target = '见（Hale等人，2020）。Hale 等人（2020年）说明了结果。',
+    label = 'Hale et al. (2020)',
+    localized = 'Hale 等人（2020年）',
+    offset = source.indexOf(label),
+    start = target.indexOf(localized)
+  for (const map of [translatedPdfLinkLabel, translatedPdfLinkFragment]) {
+    expect(map(source, target, label, offset)).toEqual({ start, text: localized })
+    expect(map(target, source, localized, start)).toEqual({ start: offset, text: label })
+    expect(map(source, target.replace('（2020年）', '（2021年）'), label, offset)).toBeNull()
+    expect(map(source, target.replace(localized, 'Cole 等人（2020年）'), label, offset)).toBeNull()
+    expect(map(source, target.replace('（2020年）', '（2020年)'), label, offset)).toBeNull()
+    expect(map(source, target + localized, label, offset)).toBeNull()
+  }
+})
+
+it('keeps a self-reference page-count link with the same terminal DOI', () => {
+  const doi = 'https://doi.org/10.0000/987.654'
+  const source = `ACM Reference Format: Sample Author. 2041. Notes from Trial 7. 7 pages. ${doi}`
+  const target = `ACM 參考格式：Sample Author。2041。第 7 次試驗的筆記。共 7 頁。${doi}`
+  const start = source.indexOf('7 pages')
+  const end = target.indexOf('7 頁')
+
+  expect(translatedPdfLinkLabel(source, target, '7', start)).toEqual({ start: end, text: '7' })
+  expect(translatedPdfLinkLabel(target, source, '7', end)).toEqual({ start, text: '7' })
+  expect(translatedPdfLinkLabel(source, target, '7', source.indexOf('7.'))).toBeNull()
+  expect(translatedPdfLinkLabel(source, target.replace('7 頁', '8 頁'), '7', start)).toBeNull()
+  expect(
+    translatedPdfLinkLabel(source, target.replace('987.654', '987.765'), '7', start)
+  ).toBeNull()
+  expect(translatedPdfLinkLabel(source, target, '7', start, doi)).toBeNull()
+})
+
+it.each([
+  [
+    'Users can submit a resource to the catalog.',
+    '用户可以向目录提交资源。',
+    'submit',
+    '提交',
+    ' https://example.test/new'
+  ],
+  [
+    'The library offers a subscription service.',
+    '该图书馆提供订阅服务。',
+    'subscription service',
+    '订阅服务',
+    'https://example.test/alerts'
+  ],
+  [
+    'Updates appear in the RSS feed.',
+    '更新通过 RSS 订阅源发布。',
+    'RSS feed',
+    'RSS 订阅源',
+    'https://example.test/feed'
+  ],
+  [
+    'Readers can connect with our team.',
+    '读者可以与我们的团队联系。',
+    'connect',
+    '联系',
+    'mailto:team@example.test'
+  ]
+])(
+  'identifies a unique localized resource link in both directions: %s',
+  (source, target, label, localized, uri) => {
+    const offset = source.indexOf(label)
+    const start = target.indexOf(localized)
+    expect(translatedPdfLinkLabel(source, target, label, offset, uri)).toEqual({
+      start,
+      text: localized
+    })
+    expect(translatedPdfLinkLabel(target, source, localized, start, uri)).toEqual({
+      start: offset,
+      text: label
+    })
+    expect(translatedPdfLinkLabel(source, target + target, label, offset, uri)).toBeNull()
+    expect(translatedPdfLinkLabel(source, target, label, offset + 1, uri)).toBeNull()
+    expect(translatedPdfLinkLabel(source, target, label, offset, undefined)).toBeNull()
+  }
+)

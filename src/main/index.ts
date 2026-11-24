@@ -41,6 +41,7 @@ import { deliverDesktopEvent } from './desktop-event-delivery'
 import {
   app,
   BrowserWindow,
+  autoUpdater as nativeUpdater,
   Menu,
   Notification,
   crashReporter,
@@ -51,10 +52,12 @@ import {
   net,
   powerMonitor,
   protocol,
-  session
+  session,
+  shell
 } from 'electron'
 import type { BaseWindow, MenuItem, MenuItemConstructorOptions, WebContents } from 'electron'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { InterfaceScaleShortcut } from '../shared/interface-scale'
 import type { DatabaseStartupState } from '../shared/database-startup'
 import { DATABASE_STARTUP_CHANNELS } from '../shared/database-startup'
@@ -66,8 +69,17 @@ import {
   type RuntimeDirectoryLease
 } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
+import {
+  canDownloadWindowsUpdate,
+  loadWindowsDownloadPreference
+} from './update/windows-background-download'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
-import { installationRootForEntry } from './update/installation-protection'
+import {
+  inspectInstallationAvailability,
+  installationRootForEntry
+} from './update/installation-protection'
+import { applyPreparedWindowsUpdate } from './update/windows-desktop-version'
+import { openSystemProcessManager } from './system-process-manager'
 import {
   discardPreparedMacInstallation,
   prepareSupervisedMacInstallation,
@@ -81,6 +93,15 @@ import { UpdateLifecycleError } from '../shared/update'
 import type { RuntimeStartupOptions } from './desktop-runtime-info'
 import { CredentialIdentityError } from './credential-identity/selection'
 import { credentialRecoveryMessage } from './credential-identity/recovery'
+import {
+  canDownloadMacUpdate,
+  MAC_NATIVE_PREPARATION_TIMEOUT_MS,
+  planMacUpdateOnQuit
+} from './update/mac-background-update'
+import { MAC_HANDOFF_ACK_TIMEOUT_MS, macQuitHandoff } from './update/mac-quit-handoff'
+import { applyLinuxAppImageOnQuit, forwardLinuxAppImageLaunch } from './update/linux-appimage-quit'
+import { loadLinuxBackgroundDownloads } from './update/linux-background-download'
+import { profileDownloadPreference } from './update/download-preference'
 import { currentApplicationShutdownTrigger } from './application-shutdown-trigger'
 import { configureRuntimeMetadata } from './runtime-metadata'
 import { configureIpcHandlerRegistry, ipcMainHandle } from './ipc-handler-registry'
@@ -107,7 +128,10 @@ import { parseWebModeOptions } from './web-service/options'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import { desktopQuitImpactChanged, type DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
-import { BrowserImportLaunchRelay } from './session-package/browser-import-protocol'
+import {
+  BrowserImportLaunchRelay,
+  parseBrowserImportUrl
+} from './session-package/browser-import-protocol'
 import { MANAGED_PREVIEW_SCHEME } from './managed-preview-resources'
 import {
   OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG,
@@ -226,6 +250,11 @@ const buildZoomSafeApplicationMenu = (
 }
 
 async function startDesktop(): Promise<void> {
+  // Consume the native sender's one-launch signal before starting any child processes.
+  let updateOpenInterrupted =
+    (process.platform === 'darwin' || process.platform === 'linux') &&
+    process.env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED === '1'
+  delete process.env.OPEN_SCIENCE_UPDATE_OPEN_INTERRUPTED
   const { headless } = parseWebModeOptions(process.argv)
   configureRuntimeMetadata(() => ({
     version: app.getVersion(),
@@ -241,6 +270,15 @@ async function startDesktop(): Promise<void> {
     MANAGED_PREVIEW_SCHEME,
     OFFICE_PREVIEW_RUNTIME_SCHEME_CONFIG
   ])
+  const packageFiles = new PackageFileOpenRelay(() => {
+    void client?.invokeHost('desktop:open-package', [null]).catch(reportError)
+  })
+  app.on('open-file', (event, path) => {
+    event.preventDefault()
+    packageFiles.receive(path)
+  })
+  for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
+  browserImports.receiveArgv(process.argv)
   const initialBackendPaths = desktopBackendPaths({
     applicationPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
@@ -325,10 +363,10 @@ async function startDesktop(): Promise<void> {
     app.quit()
     return
   }
+  // The existing profile log also records why a cold-launch installer handoff was declined.
+  initLogger({ logDir: join(profilePath, 'desktop-logs') })
   // Verified handoff configuration selects the credential identity before Chromium starts.
   // An incomplete installation opens only the recovery shell and never reads application secrets.
-  // Configure the existing sink before credential preflight; full diagnostics start after ready.
-  initLogger({ logDir: join(profilePath, 'desktop-logs') })
   if (!initialRecoveryError) {
     const bootstrapLease = acquireCredentialBootstrapLease({
       home: app.getPath('home'),
@@ -357,6 +395,29 @@ async function startDesktop(): Promise<void> {
     } finally {
       bootstrapLease.release()
     }
+  }
+  // Checking the installer cache yields to Chromium, which may then load Local State.
+  if (
+    process.platform === 'win32' &&
+    app.isPackaged &&
+    !headless &&
+    !initialRecoveryError &&
+    !preservedStartupOptions &&
+    (await applyPreparedWindowsUpdate({
+      current: app.getVersion(),
+      enabled: async () => Boolean((await loadWindowsDownloadPreference(profilePath))?.enabled),
+      checkOccupancy: (signal) =>
+        inspectInstallationAvailability(
+          {
+            installationRoot: installationRootForEntry(initialBackendPaths.entry),
+            allowedProcessIds: allowedInstallationProcessIds
+          },
+          signal
+        )
+    }))
+  ) {
+    app.exit(0)
+    return
   }
   const BLOCKED_QUIT_DEADLINE_MS = 8_000
   let startupQuitRequested = false
@@ -394,23 +455,28 @@ async function startDesktop(): Promise<void> {
     if (startupBlocked) void exitFromBlockedStartup()
   }
   app.on('before-quit', holdStartupQuit)
-  const packageFiles = new PackageFileOpenRelay(() => {
-    void client?.invokeHost('desktop:open-package', [null]).catch(reportError)
-  })
-  app.on('open-file', (event, path) => {
-    event.preventDefault()
-    packageFiles.receive(path)
-  })
   let showMainWindow: (() => BrowserWindow) | undefined = undefined
   let secondInstancePending = false
+  let quittingImageLaunch: { requested: boolean; args: Set<string> } | undefined
   app.on('second-instance', (_event, argv, cwd) => {
+    if (quittingImageLaunch) {
+      quittingImageLaunch.requested = true
+      for (const path of packagePathsFromArgv(argv, cwd)) quittingImageLaunch.args.add(path)
+      for (const url of argv.slice(1)) {
+        if (
+          url === 'open-science://open' ||
+          url === 'open-science://open/' ||
+          parseBrowserImportUrl(url)
+        )
+          quittingImageLaunch.args.add(url)
+      }
+      return
+    }
     browserImports.receiveArgv(argv)
     for (const path of packagePathsFromArgv(argv, cwd)) packageFiles.receive(path)
     if (showMainWindow) showMainWindow()
     else secondInstancePending = true
   })
-  for (const path of packagePathsFromArgv(process.argv, process.cwd())) packageFiles.receive(path)
-  browserImports.receiveArgv(process.argv)
   let client: DesktopRuntimeClient | undefined = undefined
   let launch!: Awaited<ReturnType<typeof startOrAttachDesktopBackend>>
   let initialBackendLaunch: Promise<void> | undefined
@@ -424,6 +490,31 @@ async function startDesktop(): Promise<void> {
   }
   bootstrapPhase = 'electron-ready'
   await app.whenReady()
+  if (
+    process.platform === 'darwin' &&
+    app.isPackaged &&
+    !headless &&
+    !startupQuitRequested &&
+    (await macQuitHandoff('reopen', app.getVersion(), [], async () => {
+      return {
+        args: process.argv
+          .slice(1)
+          .filter(
+            (arg) =>
+              !/^open-science:/i.test(arg) && !packageFiles.pendingPaths.includes(resolve(arg))
+          ),
+        urls: [
+          ...new Set([
+            ...packageFiles.pendingPaths.map((path) => pathToFileURL(path).href),
+            ...browserImports.pendingUrls
+          ])
+        ]
+      }
+    }))
+  ) {
+    app.exit(0)
+    return
+  }
   if (!ensureWindowsProtocolRegistration(app))
     bootstrapLog.warn('Windows open-science protocol association could not be repaired')
   if (process.platform === 'win32')
@@ -759,6 +850,7 @@ async function startDesktop(): Promise<void> {
     'cli:install',
     'cli:uninstall',
     'update:get-app-info',
+    'update:set-automatic-downloads',
     'update:get-status',
     'update:get-installer',
     'update:reveal-installer',
@@ -767,7 +859,8 @@ async function startDesktop(): Promise<void> {
     'update:cancel',
     'update:apply',
     'update:recheck',
-    'update:recover'
+    'update:recover',
+    'update:open-process-manager'
   ])
   const recoveryReadChannels = new Set([
     'sessions:list',
@@ -784,6 +877,8 @@ async function startDesktop(): Promise<void> {
     'acp:get-state',
     'compute:jobs:list',
     'compute:list',
+    'notebook:background-tasks',
+    'notebook:run-evidence',
     'notebook:state'
   ])
   const installRelay = (): void => {
@@ -936,9 +1031,14 @@ async function startDesktop(): Promise<void> {
   // Keep the protocol presentation available before Node/DB readiness, with no secret in IPC.
   // Chromium may open its persistent session only after credential preflight has finished.
   let browserImportShellReady = false
+  const createDesktopWindow = (options?: Parameters<typeof createMainWindow>[0]): BrowserWindow => {
+    const window = createMainWindow(options, translate, updateOpenInterrupted)
+    updateOpenInterrupted = false
+    return window
+  }
   const showStartupWindow = (): BrowserWindow => {
     if (!startupWindow || startupWindow.isDestroyed()) {
-      const window = createMainWindow(undefined, translate)
+      const window = createDesktopWindow()
       startupWindow = window
       window.once('closed', () => {
         if (startupWindow !== window) return
@@ -1797,7 +1897,28 @@ async function startDesktop(): Promise<void> {
         if (isMainWindow(window)) window.webContents.reload()
     }
   })
+  const desktopStable = app.isPackaged && !headless && !app.getVersion().includes('-')
+  const linuxDownloads =
+    desktopStable && process.platform === 'linux'
+      ? loadLinuxBackgroundDownloads(
+          profilePath,
+          process.resourcesPath,
+          process.env.XDG_CACHE_HOME || join(app.getPath('home'), '.cache'),
+          process.env.APPIMAGE,
+          process.env.APPDIR
+        )
+      : undefined
+  const backgroundDownloads = !desktopStable
+    ? undefined
+    : process.platform === 'win32'
+      ? loadWindowsDownloadPreference(profilePath)
+      : process.platform === 'darwin'
+        ? Promise.resolve(profileDownloadPreference(profilePath))
+        : linuxDownloads?.then((policy) => policy?.preference)
+  const macBundle = dirname(dirname(dirname(process.execPath)))
+  const macCache = join(app.getPath('home'), 'Library', 'Caches')
   const update = createUpdateStrategy(process.platform, {
+    downloadPreference: backgroundDownloads,
     translate,
     getStartupOptions: () => client!.runtimeInfo().startupOptions,
     ...updateIntegration,
@@ -1833,14 +1954,43 @@ async function startDesktop(): Promise<void> {
         }
       : {})
   })
-  registerUpdateIpcHandlers(update, undefined, requireRecoveryFrame)
-  const stopUpdates = startUpdateScheduler(update)
+  registerUpdateIpcHandlers(update, undefined, requireRecoveryFrame, () =>
+    openSystemProcessManager(process.platform, (path) => shell.openPath(path))
+  )
+  const stopUpdates = startUpdateScheduler(
+    update,
+    undefined,
+    backgroundDownloads
+      ? {
+          isInBackground: () => {
+            const activity = resourceActivityRelay.state()
+            return (
+              ready &&
+              !runtimeStopped &&
+              !updateCommitted &&
+              !activity.suspended &&
+              !activity.foreground
+            )
+          },
+          canDownload: async (bytes) => {
+            if (linuxDownloads) return (await linuxDownloads)?.canDownload(bytes) ?? false
+            return process.platform === 'darwin'
+              ? canDownloadMacUpdate(macBundle, macCache, bytes)
+              : process.env.LOCALAPPDATA
+                ? canDownloadWindowsUpdate(bytes, process.env.LOCALAPPDATA)
+                : false
+          }
+        }
+      : undefined
+  )
   app.once('will-quit', () => {
     stopUpdates()
     removeNativeBroadcast()
   })
   const settings = async (): Promise<SettingsSnapshot> =>
     client!.invokeHost('settings:get-settings') as Promise<SettingsSnapshot>
+  let installedLinuxImage: Awaited<ReturnType<typeof applyLinuxAppImageOnQuit>>
+  let quitStoppedService = false
   let work: DesktopShutdownWork | undefined
   let admission: Promise<unknown> = Promise.resolve()
   app.removeListener('before-quit', holdStartupQuit)
@@ -1850,7 +2000,7 @@ async function startDesktop(): Promise<void> {
     app,
     createInitialWindow: !headless || Boolean(finishedStartupWindow),
     initialWindow: finishedStartupWindow,
-    createMainWindow: (options) => createMainWindow(options, translate),
+    createMainWindow: createDesktopWindow,
     configureMainWindow,
     createTray: (handlers) =>
       (tray = createAppTray({
@@ -1926,6 +2076,21 @@ async function startDesktop(): Promise<void> {
     detectActiveSessions: () => work?.sessions ?? [],
     hasActiveReviewerWork: () => work?.reviewerActive ?? false,
     getActiveSettingsInstallId: () => work?.settingsInstallId,
+    holdPendingLaunchOnQuit: () => {
+      if (process.platform !== 'linux' || !process.env.APPIMAGE || quittingImageLaunch) return
+      const offer = update.getStatus()
+      if (offer.automaticDownloads && offer.state === 'ready' && !offer.recovery)
+        quittingImageLaunch = { requested: false, args: new Set() }
+    },
+    resumePendingLaunchAfterCancelledQuit: () => {
+      const deferred = quittingImageLaunch
+      quittingImageLaunch = undefined
+      if (!deferred?.requested) return
+      for (const entry of deferred.args) {
+        if (!browserImports.receive(entry)) packageFiles.receive(entry)
+      }
+      showMainWindow?.()
+    },
     holdSettingsInstallAdmission: () => {
       recovery!.setClosing(true)
       if (
@@ -2015,17 +2180,82 @@ async function startDesktop(): Promise<void> {
       reportError(error)
     },
     shutdownBackends: async (deadlineAt) => {
-      if (!runtimeStopped && recovery.state().phase === 'connected')
-        retainShutdownLease(await client!.quit({ deadlineAt }))
-      else client?.close()
+      if (!runtimeStopped && recovery.state().phase === 'connected') {
+        const lease = await client!.quit({ deadlineAt })
+        quitStoppedService = Boolean(lease)
+        retainShutdownLease(lease)
+      } else client?.close()
       preview?.dispose()
       notifications.dispose()
       visibility.dispose()
       relay?.uninstall()
     },
-    beforeExit: async () => {
+    forwardPendingLaunchOnExit: () => {
+      if (quittingImageLaunch?.requested && process.env.APPIMAGE) {
+        forwardLinuxAppImageLaunch(
+          process.env.APPIMAGE,
+          [...credentialArgs, ...(process.argv.includes('--no-sandbox') ? ['--no-sandbox'] : [])],
+          [...quittingImageLaunch.args],
+          installedLinuxImage
+        )
+      }
+    },
+    beforeExit: async (cleanOrdinaryQuit) => {
       const { completeMacInstallationHandoff } = await import('./mac-installation')
       completeMacInstallationHandoff()
+      if (
+        process.platform === 'linux' &&
+        process.env.APPIMAGE &&
+        cleanOrdinaryQuit &&
+        quitStoppedService &&
+        !plannedRelaunch &&
+        !updateCommitted &&
+        !work?.preserveService
+      ) {
+        const image = process.env.APPIMAGE
+        return {
+          timeoutMs: 10_000,
+          run: async () => {
+            installedLinuxImage = await applyLinuxAppImageOnQuit(
+              update,
+              image,
+              allowedInstallationProcessIds,
+              AbortSignal.timeout(9500)
+            )
+          }
+        }
+      }
+      if (
+        process.platform === 'darwin' &&
+        cleanOrdinaryQuit &&
+        quitStoppedService &&
+        !plannedRelaunch &&
+        !updateCommitted &&
+        !work?.preserveService
+      ) {
+        const stage = await planMacUpdateOnQuit(update, nativeUpdater, macBundle, macCache, () =>
+          inspectInstallationAvailability(
+            {
+              installationRoot: installationRootForEntry(backendPaths.entry),
+              allowedProcessIds: allowedInstallationProcessIds
+            },
+            AbortSignal.timeout(10_000)
+          )
+        )
+        if (stage) {
+          const targetVersion = update.getStatus().latest
+          if (!targetVersion) return undefined
+          return {
+            timeoutMs: MAC_NATIVE_PREPARATION_TIMEOUT_MS + MAC_HANDOFF_ACK_TIMEOUT_MS,
+            run: async () => {
+              await stage()
+              if (!(await macQuitHandoff('watch', app.getVersion(), [macCache, targetVersion])))
+                bootstrapLog.warn('macOS update handoff observer unavailable')
+            }
+          }
+        }
+      }
+      return undefined
     }
   })
   // Install the normal lifecycle and its first window before closing the startup gate.

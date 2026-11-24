@@ -87,17 +87,17 @@ describe('AppVersionSection', () => {
     expect(container.textContent).toContain('更新到 0.3.0')
   })
 
-  it('interpolates download progress in both the status line and the button', () => {
+  it('keeps download progress in the localized status line', () => {
     useUpdateStore.setState({
       status: { state: 'downloading', current: '0.2.0', latest: '0.3.0', progress: 42 }
     })
     render(<AppVersionSection />)
     expect(container.textContent).toContain('Downloading… 42%')
-    expect(container.textContent).toContain('Downloading 42%')
+    expect(container.textContent).toContain('View details')
 
     switchTo('zh-Hant')
     expect(container.textContent).toContain('正在下載… 42%')
-    expect(container.textContent).toContain('正在下載 42%')
+    expect(container.textContent).toContain('檢視詳細資料')
   })
 
   it('passes a backend-supplied update error through verbatim in every locale', () => {

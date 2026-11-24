@@ -233,3 +233,170 @@ it.each(['plain', 'numbered', 'misaligned'])(
     )
   }
 )
+
+it('retains a numbered display logarithm with a native lowered base and no page-wide metrics', () => {
+  const f = fixture()
+  f.items.splice(
+    0,
+    f.items.length,
+    item('Ordinary neighboring prose.', 40, 700),
+    item('S', 120, 600),
+    item('=', 128, 600),
+    item('Tr', 136, 600),
+    item('log', 149, 600),
+    { ...item('2', 162.7, 597.5, 7), fontName: 'subscript' },
+    item('λ', 168, 600),
+    item('.', 175, 600),
+    { ...item('(1)', 225, 600), hasEOL: true },
+    { ...item('(2)', 225, 500), hasEOL: true },
+    item('Following ordinary explanation.', 40, 420)
+  )
+  f.units.splice(
+    0,
+    f.units.length,
+    ...f.items.map((i, index): Unit => ({
+      id: 'owner-' + index,
+      source: i.str,
+      ...(index > 0 && index < 10 && index !== 4
+        ? { sourceOnly: true as const, preserve: 'formula' as const }
+        : {}),
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: 0.1, y: 0.1, width: 0.1, height: 0.02 },
+          items: [{ index, text: i.str }]
+        }
+      ]
+    }))
+  )
+  const read = (): ReadonlySet<string> => literalMathCandidates(f.units, f.content, 1, false)
+  const before = structuredClone(f.units)
+  expect([...read()]).toEqual([f.find('log').id])
+  expect(f.units).toEqual(before)
+
+  f.items[5].transform[5] = 600
+  expect([...read()]).toEqual([])
+  f.items[5].transform[5] = 597.5
+
+  f.items[9].transform[4] -= 10
+  expect([...read()]).toEqual([])
+  f.items[9].transform[4] += 10
+
+  const following = f.units.pop()!
+  const logarithm = f.find('log')
+  logarithm.source += ' ' + following.source
+  logarithm.fragments.push(...following.fragments)
+  expect([...read()]).toEqual([])
+})
+
+it.each([
+  {
+    limit: [
+      item('v', 102.275, 579, 7),
+      { ...item('∈', 105.425, 579, 7), fontName: 'symbol' },
+      item('V', 108.575, 579, 7)
+    ],
+    term: item('x', 116, 590.5)
+  },
+  {
+    limit: [item('j', 101.6, 577.8, 8), { ...item('∈B', 105.2, 577.8, 8), fontName: 'symbol' }],
+    term: item('y', 117, 590.5, 11)
+  },
+  {
+    limit: [
+      item('i', 95.3, 577.8, 8),
+      { ...item('∈', 98.9, 577.8, 8), fontName: 'symbol' },
+      item('B', 102.5, 577.8, 8),
+      { ...item('ij', 106.1, 576.8, 6), fontName: 'index' },
+      { ...item('∩', 111.5, 577.8, 8), fontName: 'symbol' },
+      item('D', 115.1, 577.8, 8)
+    ],
+    term: item('z', 121, 590.5, 11)
+  }
+])('retains a complete centered lower limit with $limit.length source runs', ({ limit, term }) => {
+  const sum = { ...item('∑', 100, 600), width: 14 }
+  const content = { ...fixture().content, items: [sum, ...limit, term] }
+  const lowerIndexes = limit.map((_, i) => i + 1)
+  const termIndex = limit.length + 1
+  const makeUnit = (id: string, indexes: number[], sourceOnly?: true): Unit => ({
+    id,
+    source: indexes.map((i) => content.items[i].str).join(''),
+    sourceOnly,
+    preserve: sourceOnly ? 'formula' : undefined,
+    fragments: [
+      {
+        pageNumber: 1,
+        rect: { x: 0.1, y: 0.1, width: 0.1, height: 0.02 },
+        items: indexes.map((index) => ({ index, text: content.items[index].str }))
+      }
+    ]
+  })
+  const operator = makeUnit('operator', [0], true)
+  const lower = makeUnit('lower', lowerIndexes)
+  const body = makeUnit('body', [termIndex], true)
+  const units = [operator, lower, body]
+  expect([...literalMathCandidates(units, content, 1)]).toEqual(['lower'])
+  expect([...literalMathCandidates(units, content, 1, false)]).toEqual([])
+  expect([
+    ...literalMathCandidates(
+      [operator, makeUnit('mixed', [...lowerIndexes, termIndex])],
+      content,
+      1
+    )
+  ]).toEqual([])
+  for (const part of limit) part.transform[4] += 3
+  expect([...literalMathCandidates(units, content, 1)]).toEqual([])
+})
+
+it.each(['display', 'inline', 'displaced', 'mixed prose'])(
+  'protects only complete native stacked integral limits (%s)',
+  (shape) => {
+    const inline = shape === 'inline'
+    const items = [
+      { ...item('∫', 150, 600), width: inline ? 4.7 : 5.5, fontName: 'symbol' },
+      {
+        ...item('z', inline ? 157 : 160, 597.5, 7),
+        width: 3,
+        fontName: 'variable'
+      },
+      { ...item('stop', inline ? 160 : 163, 596.5, 5), width: 10, fontName: 'script' },
+      {
+        ...item('z', shape === 'displaced' ? 170 : inline ? 155 : 155.5, inline ? 588.4 : 577.3, 7),
+        width: 3,
+        fontName: 'variable'
+      },
+      {
+        ...item('2', inline ? 158 : 158.5, inline ? 587.4 : 576.3, 5),
+        width: 3,
+        fontName: 'script'
+      },
+      item('φ', inline ? 172 : 176, inline ? 592 : 586.4),
+      item('for every test function', 215, inline ? 592 : 586.4)
+    ]
+    const withUnit = (id: string, indices: number[], formula = false): Unit => ({
+      id,
+      source: indices.map((index) => items[index].str).join(' '),
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: { x: 0.1, y: 0.1, width: 0.2, height: 0.1 },
+          items: indices.map((index) => ({ index, text: items[index].str }))
+        }
+      ],
+      ...(formula ? { sourceOnly: true as const, preserve: 'formula' as const } : {})
+    })
+    const units = [
+      withUnit('upper', [0, 1], true),
+      withUnit('upper-script', shape === 'mixed prose' ? [2, 6] : [2]),
+      ...(inline
+        ? [withUnit('integrand', [3, 4, 5], true)]
+        : [withUnit('lower', [3, 4]), withUnit('integrand', [5], true)]),
+      ...(shape === 'mixed prose' ? [] : [withUnit('ordinary-prose', [6])])
+    ]
+    const before = structuredClone(units)
+    expect(literalMathCandidates(units, { items, styles: {}, lang: null }, 1)).toEqual(
+      new Set(shape === 'display' ? ['upper-script', 'lower'] : inline ? ['upper-script'] : [])
+    )
+    expect(units).toEqual(before)
+  }
+)

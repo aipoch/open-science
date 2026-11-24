@@ -1,3 +1,4 @@
+import type { NotebookMemoryCgroupConstraint } from '../../shared/notebook-memory'
 import { performance } from 'node:perf_hooks'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { DEFAULT_NOTEBOOK_MEMORY_POLICY, type NotebookMemoryPolicy } from './memory-policy-config'
@@ -6,12 +7,7 @@ export type MemoryPressureLevel = 'normal' | 'warning' | 'critical'
 export type MemoryPolicyStatus = 'healthy' | 'pressured' | 'unavailable'
 export type MemoryPolicyPlatform = 'win32' | 'darwin' | 'linux'
 
-export type MemoryCgroupConstraint = {
-  path: string
-  currentBytes: number
-  maxBytes?: number
-  highBytes?: number
-}
+export type MemoryCgroupConstraint = NotebookMemoryCgroupConstraint
 
 export type MemoryPolicyFacts = {
   availableBytes?: number
@@ -37,6 +33,7 @@ export type MemoryPolicySample = {
 
 export type MemoryPolicyReason = {
   code: string
+  remainingThresholdRatio?: number
   detail?: string
   // A local limit cannot authorize reclamation in unrelated cgroups.
   pressureScope?: 'host' | 'execution-domain'
@@ -415,7 +412,15 @@ export class MemoryPolicyService {
       return { code: 'healthy' }
     }
 
-    const signals: Array<{ ratio: number; reason: MemoryPolicyReason; high?: boolean }> = []
+    const windows = sample.platform === 'win32'
+    const enter = windows ? this.policy.windowsEnterRatio : this.policy.linuxEnterRatio
+    const exit = windows ? this.policy.windowsExitRatio : this.policy.linuxExitRatio
+    const signals: Array<{
+      ratio: number
+      enter: number
+      exit: number
+      reason: MemoryPolicyReason
+    }> = []
     if (
       !validBytes(facts.totalBytes) ||
       facts.totalBytes === 0 ||
@@ -427,8 +432,15 @@ export class MemoryPolicyService {
         'Physical memory counters are incomplete or invalid.'
       )
     }
+    const caps = windows
+      ? this.policy.windowsPhysicalCaps
+      : sample.platform === 'linux'
+        ? this.policy.linuxPhysicalCaps
+        : undefined
     signals.push({
       ratio: facts.availableBytes / facts.totalBytes,
+      enter: caps ? Math.min(enter, caps.enterBytes / facts.totalBytes) : enter,
+      exit: caps ? Math.min(exit, caps.exitBytes / facts.totalBytes) : exit,
       reason: pressureReason(
         sample.platform === 'win32' ? 'windows-physical-low' : 'linux-memory-low'
       )
@@ -447,6 +459,8 @@ export class MemoryPolicyService {
       }
       signals.push({
         ratio: (facts.commitLimitBytes - facts.committedBytes) / facts.commitLimitBytes,
+        enter,
+        exit,
         reason: pressureReason(
           sample.platform === 'win32' ? 'windows-commit-low' : 'linux-commit-low'
         )
@@ -480,24 +494,21 @@ export class MemoryPolicyService {
                 kind === 'high' ? 'linux-cgroup-high' : 'linux-cgroup-low',
                 constraint.path
               ),
-              high: kind === 'high'
+              enter: kind === 'high' ? 0 : enter,
+              exit: kind === 'high' ? 0.2 : exit
             })
           }
         }
       }
     }
-    const enter =
-      sample.platform === 'win32' ? this.policy.windowsEnterRatio : this.policy.linuxEnterRatio
-    const exit =
-      sample.platform === 'win32' ? this.policy.windowsExitRatio : this.policy.linuxExitRatio
-    const entering = signals.find((signal) => signal.ratio <= (signal.high ? 0 : enter))
+    const entering = signals.find((signal) => signal.ratio <= signal.enter)
     if (entering) {
       state.pressure = true
-      return entering.reason
+      return { ...entering.reason, remainingThresholdRatio: entering.enter }
     }
     if (state.pressure) {
-      const holding = signals.find((signal) => signal.ratio <= (signal.high ? 0.2 : exit))
-      if (holding) return holding.reason
+      const holding = signals.find((signal) => signal.ratio <= signal.exit)
+      if (holding) return { ...holding.reason, remainingThresholdRatio: holding.exit }
     }
     state.pressure = false
     return { code: 'healthy' }

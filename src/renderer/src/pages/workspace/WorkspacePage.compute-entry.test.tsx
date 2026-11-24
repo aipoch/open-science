@@ -80,10 +80,9 @@ describe('WorkspacePage Compute entry with Web capabilities', () => {
       .mockResolvedValue({ sessionId: 'sess-1', messageId: 'new-prompt' })
     useNotebookMemoryNoticeStore.setState({
       rejection: undefined,
-      warning: undefined,
       pressure: undefined,
       terminal: undefined,
-      criticalScopes: [],
+      dismissedPressureScopes: [],
       dismissedRefusalIds: []
     })
     useSessionStore.setState(createInitialSessionState())

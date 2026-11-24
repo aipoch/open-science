@@ -5,7 +5,7 @@
 // paint order. A pixel-identical native render is required before accepting it.
 // Fully owned runs can also shed redundant clipping, but only when the
 // unclipped glyphs paint identical pixels. Effective clips and complex fonts stay native.
-export function splitSharedTextRuns(e, doc, page, regions) {
+export function splitSharedTextRuns(e, doc, page, regions, nativeFontName = undefined) {
   // Citation hit areas must never participate in the existing table/prose
   // ownership or grouping rules. They have one independent glyph proof below.
   const rectangles = regions.filter((r) => !r.nativeCitation),
@@ -14,13 +14,51 @@ export function splitSharedTextRuns(e, doc, page, regions) {
     width = Math.ceil(p.FPDF_GetPageWidthF(page) * 2),
     height = Math.ceil(p.FPDF_GetPageHeightF(page) * 2)
   if (width * height > 16 * 1024 ** 2) return
-  const candidates = e
-    .objects(page)
-    .filter(
-      (o) =>
-        o.type === 1 &&
-        /^[\x20-\x7e\u2018\u2019]{1,512}$/u.test(o.text) &&
-        (rectangles.some(
+  const objects = e.objects(page)
+  // The digit and closing delimiter can share the following prose's native run.
+  // Only a same-row minus and the independently owned complete run prove a seam.
+  const mathClosings = new Map()
+  if (
+    nativeFontName &&
+    rectangles.some((r) => /^\d{1,4}\)[–-]\p{Ll}{3}/u.test(r.sourceItems?.[0] ?? ''))
+  ) {
+    for (const [i, object] of objects.entries()) {
+      const minus = objects[i - 1],
+        label =
+          object.type === 1 ? /^(\d{1,4}\))(?=[–-]\p{Ll}{3})/u.exec(object.text)?.[1] : undefined
+      if (
+        !label ||
+        minus?.type !== 1 ||
+        minus.text.trim() !== '−' ||
+        !/^(?:[A-Z]{6}\+)?CMSY\d+$/u.test(nativeFontName(minus)) ||
+        !/^(?:[A-Z]{6}\+)?CMR\d+$/u.test(nativeFontName(object))
+      )
+        continue
+      const [left, bottom, , top] = object.bounds
+      if (
+        left > minus.bounds[2] &&
+        left - minus.bounds[2] < (top - bottom) * 0.55 &&
+        bottom <= minus.bounds[1] &&
+        top >= minus.bounds[3] &&
+        rectangles.some(
+          (region) =>
+            region.sourceItems?.[0]?.trim() === object.text.trim() &&
+            left >= region.x &&
+            left - region.x < 2 &&
+            bottom >= region.bottom - 2 &&
+            top <= region.top + 2
+        )
+      )
+        mathClosings.set(object.obj, label.length)
+    }
+  }
+  const candidates = objects.filter(
+    (o) =>
+      o.type === 1 &&
+      (/^[\x20-\x7e\u2018\u2019]{1,512}$/u.test(o.text) ||
+        (mathClosings.has(o.obj) && /^[\x20-\x7e\u2013\u2018\u2019]{1,512}$/u.test(o.text))) &&
+      (mathClosings.has(o.obj) ||
+        rectangles.some(
           (r) =>
             o.bounds[0] < r.x + r.width &&
             o.bounds[2] > r.x &&
@@ -30,15 +68,15 @@ export function splitSharedTextRuns(e, doc, page, regions) {
               o.bounds[2] > r.x + r.width + 2 ||
               p.FPDFClipPath_CountPaths(p.FPDFPageObj_GetClipPath(o.obj)) > 0)
         ) ||
-          (/^,\d{1,3}\s*$/u.test(o.text) &&
-            citations.some(
-              (r) =>
-                o.bounds[0] < r.x + r.width &&
-                o.bounds[2] > r.x &&
-                o.bounds[1] >= r.bottom - 2 &&
-                o.bounds[3] <= r.top + 2
-            )))
-    )
+        (/^,\d{1,3}\s*$/u.test(o.text) &&
+          citations.some(
+            (r) =>
+              o.bounds[0] < r.x + r.width &&
+              o.bounds[2] > r.x &&
+              o.bounds[1] >= r.bottom - 2 &&
+              o.bounds[3] <= r.top + 2
+          )))
+  )
   if (!candidates.length) return
   const render = () => {
     const bitmap = p.FPDFBitmap_Create(width, height, 1)
@@ -59,6 +97,7 @@ export function splitSharedTextRuns(e, doc, page, regions) {
   const at = e.alloc(64)
   try {
     for (const object of candidates) {
+      const close = mathClosings.get(object.obj) ?? 0
       if (
         p.FPDFTextObj_GetTextRenderMode(object.obj) !== 0 ||
         p.FPDFPageObj_CountMarks(object.obj) !== 0 ||
@@ -84,7 +123,8 @@ export function splitSharedTextRuns(e, doc, page, regions) {
           const code = p.FPDFText_GetUnicode(text, i)
           if (code === 32) continue
           if (
-            !/^[\x21-\x7e\u2018\u2019]$/u.test(String.fromCharCode(code)) ||
+            (!/^[\x21-\x7e\u2018\u2019]$/u.test(String.fromCharCode(code)) &&
+              !(close && code === 0x2013)) ||
             !p.FPDFText_GetCharOrigin(text, i, at, at + 8)
           )
             break
@@ -198,7 +238,7 @@ export function splitSharedTextRuns(e, doc, page, regions) {
             object.bounds[1] >= r.bottom - 2 &&
             object.bounds[3] <= r.top + 2
         )
-      if (!tableGap && !ownedItem && !ownedClippedRun && !ownedCitation) continue
+      if (!close && !tableGap && !ownedItem && !ownedClippedRun && !ownedCitation) continue
       // Keep naturally positioned adjacent letters in one native text object.
       // Splitting overlapping antialiased glyph masks can change edge pixels.
       // Try those bounded groups first, retaining the original per-glyph fallback.
@@ -267,6 +307,7 @@ export function splitSharedTextRuns(e, doc, page, regions) {
                 // cells or capture unowned prose/operators between their regions.
                 if (
                   (ownedCitation && span.some((char) => char.code === 44)) ||
+                  (close && i < close && end >= close) ||
                   !(ownedCitation ? citations : rectangles).some((r) =>
                     span.every(
                       (char) =>

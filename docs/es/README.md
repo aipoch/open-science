@@ -53,18 +53,17 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-### 💡 AIPOCH Open-Science v1.3.1 — Novedades
+### 💡 AIPOCH Open-Science v1.3.4 — Novedades
 
-_19 de noviembre de 2026_
+_22 de noviembre de 2026_
 
-- **Búsqueda web y lectura de páginas**: El agente integrado puede buscar en la web y leer páginas públicas; las aprobaciones de búsqueda muestran la consulta en una tarjeta legible y las fuentes citadas permanecen con la conversación.
-- **Grafo de citas**: Explora las referencias de un artículo y los artículos que lo citan como un grafo interactivo; vuelve a centrarlo en cualquier artículo relacionado y filtra por dirección.
-- **MCP sin abrir la aplicación**: Al conectar un agente externo a través de MCP, el servicio de Open-Science se inicia por ti, con opciones de configuración para más de 30 agentes y clientes.
-- **Modelos de Lab y casos de la organización**: Inicia sesión con una cuenta de Lab para usar los modelos de tu organización y buscar, importar o compartir casos de investigación con tu equipo.
-- **Listas de modelos actualizadas y errores más claros**: Actualiza la lista de modelos de un proveedor desde Ajustes y consulta la causa y el siguiente paso cuando falla una solicitud al proveedor.
-- **Actualizar desde 1.3.0**: Si el actualizador de 1.3.0 indica que otro proceso está usando la instalación, cierra por completo Open-Science e instala manualmente el paquete descargado.
+- **Vea dentro del Agente integrado**: Los proyectos pueden activar el rastreo del Agente, que exporta trazas correlacionadas de turnos, solicitudes de modelo y ejecuciones de herramientas a un receptor OTLP/HTTP alojado por usted, con el nivel de detalle de captura que usted elija.
+- **Actualizaciones de Windows, sin bloqueos**: Una actualización dentro de la aplicación ya no se detiene cuando el Agente integrado está en ejecución, y las actualizaciones estables de Windows se aplican de nuevo como deltas compactos del instalador.
+- **Los historiales largos de Notebook siguen siendo rápidos**: Iniciar y finalizar ejecuciones, seleccionar resultados y abrir vistas previas ya no releen todo el historial.
+- **Lecturas de memoria en las que puede confiar**: El resumen de Compute ahora coincide con Monitor de Actividad en macOS y muestra la memoria confirmada respecto a su límite en Windows.
+- **Esfuerzos de razonamiento de CodeBuddy**: El selector de esfuerzo ahora solo ofrece los niveles que el modelo CodeBuddy seleccionado realmente admite.
 
-[Notas completas v1.3.1](https://github.com/aipoch/open-science/releases/tag/v1.3.1)
+[Notas completas v1.3.4](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +88,14 @@ Abra la [página oficial de descargas](https://aipoch.com/open-science/download)
 | Linux ARM64                               | AppImage o paquete Debian de Linux ARM64           |
 
 Consulte la [verificación de descargas](../../SECURITY.md#verifying-your-download) para realizar comprobaciones antes de instalar.
+
+En Windows 10/11 x64, puede instalar la aplicación de escritorio desde [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) o usar WinGet en PowerShell.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+La versión disponible puede variar según el canal de distribución. Consulte la [guía de instalación y actualizaciones](https://aipoch.com/docs/guides/installation/) para obtener más información.
 
 Los archivos de la CLI independiente para macOS, Linux y Windows incluyen Node.js y se pueden usar sin Homebrew ni npm.
 

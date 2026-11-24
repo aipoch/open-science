@@ -7,7 +7,7 @@ import {
   type ReasoningEffortPresetSetting,
   type ReasoningEffortProfile
 } from './reasoning-effort'
-import { type OfficialVendorId } from '@aipoch/providers'
+import { type ModelReasoningEffort, type OfficialVendorId } from '@aipoch/providers'
 
 import {
   isClaudeSubscriptionProvider,
@@ -27,6 +27,7 @@ export type ProviderReasoningEffortSource = {
   reasoningEffortPreset?: ReasoningEffortPresetSetting
   localModels?: readonly LocalProviderModel[]
   modelCapabilities?: Readonly<Record<string, LabModelCapabilities>>
+  modelReasoningEfforts?: Readonly<Record<string, readonly ModelReasoningEffort[]>>
 }
 
 // Resolves the effective selection with the same rules in main and renderer. Subscription runtimes
@@ -101,7 +102,12 @@ export const resolveProviderReasoningEffortProfile = (
     case 'claude-isolated':
       return model ? resolveVendorModelReasoningEffort('anthropic', model) : { supported: false }
     case 'codebuddy-subscription':
-      return { supported: false }
+      return model && provider.modelReasoningEfforts?.[model]
+        ? reasoningProfileFromCapability({
+            supported: true,
+            values: provider.modelReasoningEfforts[model]
+          })
+        : { supported: false }
     case 'xai-subscription':
       return resolveVendorModelReasoningEffort('xai', model)
     case 'lab': {

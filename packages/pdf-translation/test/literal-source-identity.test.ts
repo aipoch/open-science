@@ -70,3 +70,37 @@ it.each(['text', 'code', 'formula'])(
     expect(result.mapped.length).toBe(kind === 'text' ? 1 : 0)
   }
 )
+
+it('maps a translated resource label using its original external destination', () => {
+  const source = 'Readers can submit a resource to the catalog.',
+    translation = '读者可以向目录提交资源。',
+    uri = 'https://example.test/resources',
+    rect = { x: 0.1, y: 0.1, width: 0.8, height: 0.1 }
+  const result = mapReflowLinks(
+    {
+      links: [{ pageNumber: 1, index: 0, labels: ['submit'], regions: [rect], uri }],
+      geometry: [{ left: 0, top: 100, width: 100, height: 100 }],
+      outlines: [],
+      outlineCount: 0
+    },
+    { units: [{ source, translation, kind: 'text', fragments: [{ pageNumber: 1, rect }] }] },
+    {
+      originals: new Map(),
+      crops: [],
+      placements: new Map(),
+      sourcePages: [],
+      firstContent: new Map(),
+      lines: new Map([[0, [{ text: translation, start: 0, pageNumber: 1, rect }]]])
+    },
+    (text: string): number => text.length
+  )
+  expect(result.failed.size).toBe(0)
+  expect(result.mapped).toHaveLength(1)
+  expect(result.mapped[0].link.uri).toBe(uri)
+  expect(result.mapped[0].regions).toEqual([
+    {
+      pageNumber: 1,
+      rect: { ...rect, x: rect.x + translation.indexOf('提交') / 595.28, width: 2 / 595.28 }
+    }
+  ])
+})

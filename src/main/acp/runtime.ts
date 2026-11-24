@@ -1,3 +1,4 @@
+import { assertTaskRunTracingReady } from './task-run-tracing'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
   registerResourceObservation,
@@ -20,7 +21,6 @@ import {
   ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
-  type AcpCancelPromptRequest,
   type AcpCompactSessionRequest,
   type AcpConnectRequest,
   type AcpCreateSessionRequest,
@@ -119,7 +119,11 @@ import type {
 } from './reviewer-session-owner'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
-import type { AcpRuntimeArtifactOptions, AcpRuntimeOptions } from './runtime-contract'
+import type {
+  AcpRuntimeArtifactOptions,
+  AcpRuntimeOptions,
+  RuntimeCancelPromptRequest
+} from './runtime-contract'
 import { composeAcpRuntimeContinuations } from './runtime-continuation-composition'
 import {
   PERMISSION_DENIED_CONTINUATION_TEXT,
@@ -929,6 +933,16 @@ class AcpRuntime {
     return this.withOperationLease(() => this.providerSessionCreator.create(request, beforePublish))
   }
 
+  async assertAttachedTracingReady(sessionId: string): Promise<void> {
+    const connection = this.connection
+    const session = this.activeSessionFor(sessionId)
+    if (!session || !connection) throw new Error('ACP session is no longer attached.')
+    await assertTaskRunTracingReady(this.backend.framework.id, connection)
+    this.assertCurrentConnectedConnection(connection)
+    if (this.activeSessionFor(sessionId) !== session)
+      throw new Error('ACP session startup was superseded.')
+  }
+
   getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {
     const session = this.activeSessionFor(sessionId)
     return session ? this.sessionEfforts.get(session) : undefined
@@ -1433,6 +1447,13 @@ class AcpRuntime {
       toolLess: this.sessionEnvironment.role() === 'restricted-inference',
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
       requestPermission: (params) => this.clientInteractions.requestPermission(params),
+      captureUserStop: (providerSessionId) => {
+        const appSessionId = this.sessionRegistry.resolveAppSessionId(providerSessionId)
+        const scope = this.sessionInteractions.current(appSessionId)
+        return scope?.kind === 'prompt'
+          ? () => this.sessionInteractions.isCancellationAccepted(scope, 'user')
+          : undefined
+      },
       observeSessionUpdate: (notification) => {
         this.providerSessionResumer.observeProgress(notification.sessionId)
         this.permissionContext.observeProviderUpdate(notification)
@@ -1818,7 +1839,7 @@ class AcpRuntime {
   }
 
   // Requests cancellation without clearing in-flight state before the agent stops.
-  async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpStateSnapshot> {
+  async cancelPrompt(request: RuntimeCancelPromptRequest): Promise<AcpStateSnapshot> {
     this.options.web?.cancelSession?.(request.sessionId)
     // A timed-out cancellation may already be closing the shared connection. Wait before taking
     // any early permission/continuation path so every caller observes the same teardown boundary.
@@ -1896,6 +1917,7 @@ class AcpRuntime {
     if (connection && activeSession) {
       try {
         await this.sessionInteractions.cancelPrompt({
+          userInitiated: request.userInitiated,
           sessionId: request.sessionId,
           notify: () =>
             connection.agent.notify(acp.methods.agent.session.cancel, {

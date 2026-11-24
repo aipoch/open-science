@@ -50,6 +50,8 @@ files:
   - '!node_modules/{tesseract.js,tesseract.js-core,@tesseract.js-data}{,/**/*}'
   - '!node_modules/@anthropic-ai{,/**/*}'
   - '!node_modules/@agentclientprotocol/claude-agent-acp{,/**/*}'
+  # The Node backend owns Claude ACP install assets. Keep the Electron host copy out of app.asar.
+  - '!resources/claude-acp{,/**/*}'
   - '!node_modules/{tiktoken,js-tiktoken,web-tree-sitter,openchemlib,citeme-engine-wasm}{,/**/*}'
   # These feature packages run in resources/backend; renderer imports are already bundled.
   # electronHostDependencyGuard rejects new direct/transitive Electron consumers before packaging.
@@ -130,6 +132,8 @@ win:
   target:
     - nsis
   extraResources:
+    - from: out/windows-delta/${arch}/bin
+      to: windows-delta
     - from: packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe
       to: notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe
     - from: packages/notebook-network-sandbox/vendor/wsl2/manifest.json
@@ -149,6 +153,8 @@ nsis:
   include: build/installer-license.nsh
 mac:
   extraResources:
+    - from: build/mac-quit-handoff.cjs
+      to: mac-quit-handoff.cjs
     - from: out/desktop-service-launcher
       to: backend/desktop-service-launcher
   # Windows ProgID is a persisted association identity; other platforms use a display name.

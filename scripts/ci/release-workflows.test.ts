@@ -62,7 +62,9 @@ describe('release and scheduled workflow topology', () => {
       ['Smoke test Linux packages', 'linux']
     ]) {
       const gate = step(smoke, name)
-      expect(gate.if).toBe(`\${{ !inputs.install_only && matrix.platform == '${platform}' }}`)
+      expect(gate.if).toBe(
+        `\${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == '${platform}' }}`
+      )
       expect(gate['continue-on-error']).not.toBe(true)
       expect(gate.run).toContain(
         'node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/e2e.json'
@@ -79,6 +81,31 @@ describe('release and scheduled workflow topology', () => {
     expect(evidence.if).not.toContain('always()')
     expect(workflow('release.yml').jobs.publish.needs).toContain('package-smoke')
     expect(workflow('nightly.yml').jobs.prepare.needs).toContain('package-smoke')
+  })
+
+  it('requires executed default Agent journeys before certifying every native package', () => {
+    const smoke = workflow('package-smoke.yml').jobs.smoke
+    const gate = step(smoke, 'Certify default Agent conversations')
+    const evidence = step(smoke, 'Record platform certification evidence')
+    expect(gate.if).toBe('${{ !inputs.install_only }}')
+    expect(gate['continue-on-error']).not.toBe(true)
+    expect(gate.run).toContain('node scripts/ci/run-default-agent-conversation.mjs')
+    expect(smoke.steps!.indexOf(gate)).toBeLessThan(smoke.steps!.indexOf(evidence))
+    expect(evidence.run).toContain(
+      '--default-agent-conversation test-results/default-agent-conversation/certification.json'
+    )
+    expect(evidence.if).toContain('!inputs.artifact_run_id')
+    expect(workflow('release.yml').jobs.publish.needs).toContain('package-smoke')
+    expect(workflow('nightly.yml').jobs.prepare.needs).toContain('package-smoke')
+    for (const name of ['verify', 'publish']) {
+      const job = workflow('nightly-publish.yml').jobs[name]
+      const validation = step(job, 'Require default Agent conversation certification')
+      expect(validation.if).toBeUndefined()
+      expect(validation.run).toContain('published artifacts/RELEASE-CERTIFICATION.json')
+      expect(job.steps!.indexOf(validation)).toBeLessThan(
+        job.steps!.indexOf(step(job, 'Check existing nightly release'))
+      )
+    }
   })
 
   it('validates a source-only baseline before installing and restores the candidate before packaging', () => {
@@ -282,17 +309,20 @@ describe('release and scheduled workflow topology', () => {
       }
     })
     expect(step(dependencies, 'Install dependencies').run).toBe('node scripts/ci/npm-ci.mjs')
+    expect(step(dependencies, 'Verify generated test dependencies').run).toBe(
+      'node scripts/check-prisma-client.mjs'
+    )
     expect(step(dependencies, 'Pack dependencies').run).toContain('pack-dependencies')
     expect(step(dependencies, 'Pack dependencies').shell).toBe('bash')
     expect(step(job, 'Restore dependencies').shell).toBe('bash')
     expect(step(windows.jobs.notebook_mutation, 'Restore dependencies').shell).toBe('bash')
     expect(step(dependencies, 'Upload dependencies').with?.['compression-level']).toBe(0)
     expect(job.env).toMatchObject({ VITEST_WINDOWS_FULL_TEST: '1' })
-    expect(test.run).toContain('--shard=${{ matrix.shard }}/8')
+    expect(test.run).toContain('npx vitest run --shard=${{ matrix.shard }}/8')
     expect(test.run).toContain('--maxWorkers=1')
     expect(test.run).toContain('--reporter=github-actions')
     expect(windows.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '47 16 * * *' }])
+    expect(schedule).toEqual([{ cron: '47 13 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'full',
       options: [
@@ -416,7 +446,7 @@ describe('release and scheduled workflow topology', () => {
     const profile = step(soak, 'Record runtime resource profile')
     const upload = step(soak, 'Upload runtime resource evidence')
 
-    expect(schedule).toEqual([{ cron: '23 19 * * *' }])
+    expect(schedule).toEqual([{ cron: '53 16 * * *' }])
     expect(dispatch.inputs?.mode).toMatchObject({
       default: 'smoke',
       options: ['smoke', 'soak', 'package-macos-arm64']
@@ -474,7 +504,7 @@ describe('release and scheduled workflow topology', () => {
     const prepare = nightly.jobs.prepare
 
     expect(nightly.on).not.toHaveProperty('push')
-    expect(schedule).toEqual([{ cron: '17 15 * * *' }])
+    expect(schedule).toEqual([{ cron: '17 12 * * *' }])
     expect(nightly.on).toHaveProperty('workflow_dispatch')
     expect(nightly.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(nightly.concurrency).toEqual({
@@ -624,7 +654,17 @@ describe('release and scheduled workflow topology', () => {
     expect(step(publish, 'Verify prepared nightly metadata').run).toContain(
       'test -s artifacts/RELEASE-CERTIFICATION.json'
     )
-    expect(publish.steps?.some(({ uses }) => uses?.startsWith('actions/checkout@'))).toBe(false)
+    expect(
+      publish.steps
+        ?.filter(({ uses }) => uses?.startsWith('actions/checkout@'))
+        .map(({ name }) => name)
+    ).toEqual(['Checkout trusted conversation gate'])
+    expect(step(publish, 'Checkout trusted conversation gate').with?.['sparse-checkout']).toBe(
+      'scripts/ci/default-agent-conversation.mjs'
+    )
+    expect(step(publish, 'Checkout trusted conversation gate').with?.ref).toContain(
+      "'refs/heads/main'"
+    )
     expect(
       publish.steps?.some(({ run }) => run?.includes('release-certification-evidence.mjs'))
     ).toBe(false)
@@ -688,10 +728,12 @@ describe('release and scheduled workflow topology', () => {
     expect(publish.if).toBe(
       "needs.plan.outputs.should_publish == 'true' && (github.event_name == 'workflow_run' ||\n (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && !inputs.dry_run))"
     )
-    expect(verify.steps).toEqual(publish.steps!.slice(0, 3))
-    expect(verify.steps).toHaveLength(3)
+    expect(verify.steps).toEqual(publish.steps!.slice(0, 5))
+    expect(verify.steps).toHaveLength(5)
     expect(verify.steps!.map(({ name }) => name)).toEqual([
       'Download prepared nightly artifacts',
+      'Checkout trusted conversation gate',
+      'Require default Agent conversation certification',
       'Verify prepared nightly metadata',
       'Check existing nightly release'
     ])
@@ -1074,7 +1116,10 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     expect(report).toMatchObject({
       'runs-on': 'ubuntu-latest',
       'timeout-minutes': 5,
-      permissions: { contents: 'read', issues: 'write' }
+      permissions:
+        name === 'source-regression.yml'
+          ? { actions: 'read', contents: 'read', issues: 'write' }
+          : { contents: 'read', issues: 'write' }
     })
     expect(document.permissions).toEqual({ actions: 'read', contents: 'read' })
     const scheduledJobIds: string[] = []
@@ -1155,7 +1200,7 @@ describe('website mirror publication intent', () => {
     expect(dispatch.inputs.bootstrap_linux_arm64).toMatchObject({ default: false, type: 'boolean' })
     expect(publication.env?.BOOTSTRAP_LINUX_ARM64).toBe('${{ inputs.bootstrap_linux_arm64 }}')
     expect(publication.env?.MODE).toBe('${{ inputs.mode }}')
-    expect(publication.if).toBe('${{ !inputs.dry_run }}')
+    expect(publication.if).toBe('${{ !inputs.dry_run && !inputs.windows_delta_repair }}')
     expect(publication.run).toBe('node scripts/publish-update-channel.mjs')
   })
 })
@@ -1314,6 +1359,7 @@ describe('build verification throughput', () => {
       uses: './.github/workflows/package-smoke.yml',
       with: {
         artifact_run_id: '${{ inputs.package_smoke_run_id }}',
+        conversation_only: '${{ inputs.conversation_only }}',
         require_windows_signing: false
       }
     })

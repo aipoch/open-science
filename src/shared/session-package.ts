@@ -195,6 +195,7 @@ export type PackageOperationSnapshot = {
     recovery?: SessionPackageRequest & { operationId: string; outcome: 'committed' | 'unconfirmed' }
   }
   error?: string
+  exportBlocked?: true
   sensitiveContent?: SensitiveContentEvidence[]
   cleanupPending?: boolean
   transferBytesPerSecond?: number
@@ -516,6 +517,7 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .strict()
       .optional(),
     error: z.string().optional(),
+    exportBlocked: z.literal(true).optional(),
     sensitiveContent: z
       .array(
         z

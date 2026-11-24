@@ -24,6 +24,9 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  ArrowUpRight,
+  ScrollText,
+  Users,
   Bell,
   Bot,
   Brain,
@@ -78,7 +81,8 @@ import { cn } from '@/lib/utils'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { preloadComputeHosts, useComputeStore } from '@/stores/compute-store'
 import { useMemoryStore } from '@/stores/memory-store'
-import { useNavigationStore } from '@/stores/navigation-store'
+import { ConnectorsNavIcon } from './connector-icons'
+import { useNavigationStore, type ResourceCenterIntent } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import {
@@ -106,6 +110,7 @@ import type { MemoryView } from '@/lib/settings-navigation'
 import type { TagsView } from '@/lib/settings-navigation'
 import type { CredentialsView } from '@/lib/settings-navigation'
 import { ProviderForm } from './ProviderForm'
+import { ProviderKindPicker } from './ProviderKindPicker'
 import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
@@ -350,12 +355,15 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
     panels: [
       { id: 'model', labelKey: 'Model', Icon: Brain },
       { id: 'agent', labelKey: 'Agent', Icon: Bot },
+      { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
+      { id: 'specialists', labelKey: 'Specialists', Icon: Users },
       { id: 'memory', labelKey: 'Memory', Icon: BrainCircuit }
     ]
   },
   {
     labelKey: 'Connections',
     panels: [
+      { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'network', labelKey: 'Network', Icon: Globe },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
       { id: 'lab', labelKey: 'Lab', Icon: FlaskConical },
@@ -569,36 +577,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       setPendingSkillLeave(() => leave)
     } else leave()
   }, [])
-  const openResourceCenterSkill = useCallback(
-    (skillId: string): void => {
+  const currentRoute = history[historyIndex]
+  const openResourceFromSettings = useCallback(
+    (intent: ResourceCenterIntent, onNavigated?: () => void): void => {
       requestLeave(() => {
-        useNavigationStore.getState().openResourceCenter(
+        const navigation = useNavigationStore.getState()
+        navigation.openResourceCenter(
           'user',
-          {
-            resource: 'skills',
-            skillId
-          },
-          onClose
+          { ...intent, settingsOrigin: { view: navigation.view, route: currentRoute } },
+          () => {
+            onClose()
+            onNavigated?.()
+          }
         )
       })
     },
-    [onClose, requestLeave]
-  )
-  const openResourceCenterSpecialist = useCallback(
-    (specialistId: string, kind: 'builtin' | 'edit' = 'edit'): void => {
-      requestLeave(() => {
-        useNavigationStore.getState().openResourceCenter(
-          'user',
-          {
-            resource: 'specialists',
-            specialistId,
-            specialistKind: kind
-          },
-          onClose
-        )
-      })
-    },
-    [onClose, requestLeave]
+    [currentRoute, onClose, requestLeave]
   )
   const requestClose = (): void => requestLeave(onClose)
   const returnFocusRef = useRef<HTMLElement | null>(null)
@@ -704,40 +698,42 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     if (!pendingSettingsIntent || pendingSettingsIntent.requestId === seededIntentId.current) return
     seededIntentId.current = pendingSettingsIntent.requestId
     consumePendingSettingsIntent(pendingSettingsIntent.requestId)
+    const route = pendingSettingsIntent.route
+    if (route.panel === 'skills' || route.panel === 'connectors' || route.panel === 'specialists') {
+      openResourceFromSettings(
+        route.panel === 'connectors'
+          ? { resource: 'connectors', view: route.view }
+          : route.panel === 'skills'
+            ? {
+                resource: 'skills',
+                skillId: route.view.kind === 'detail' ? route.view.id : undefined
+              }
+            : {
+                resource: 'specialists',
+                specialistId: route.view.kind === 'edit' ? route.view.id : undefined
+              }
+      )
+      return
+    }
+    // Returning to the still-mounted route preserves its Back/Forward history.
+    if (route === currentRoute) return
     requestLeave(() => {
-      const route = pendingSettingsIntent.route
-      if (
-        route.panel === 'skills' ||
-        route.panel === 'connectors' ||
-        route.panel === 'specialists'
-      ) {
-        useNavigationStore.getState().openResourceCenter(
-          'user',
-          route.panel === 'connectors'
-            ? { resource: 'connectors', view: route.view }
-            : route.panel === 'skills'
-              ? {
-                  resource: 'skills',
-                  skillId: route.view.kind === 'detail' ? route.view.id : undefined
-                }
-              : {
-                  resource: 'specialists',
-                  specialistId: route.view.kind === 'edit' ? route.view.id : undefined
-                },
-          onClose
-        )
-        return
-      }
       setHistory([route])
       setHistoryIndex(0)
     })
-  }, [consumePendingSettingsIntent, onClose, open, pendingSettingsIntent, requestLeave])
+  }, [
+    consumePendingSettingsIntent,
+    currentRoute,
+    open,
+    openResourceFromSettings,
+    pendingSettingsIntent,
+    requestLeave
+  ])
 
   useEffect(() => {
     if (!open) setPendingSkillLeave(null)
   }, [open])
 
-  const currentRoute = history[historyIndex]
   const activePanel = currentRoute.panel
 
   useEffect(() => {
@@ -845,20 +841,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // navigation values, so comparing the whole route automatically covers fields added later.
   const navigate = (route: SettingsRoute, onNavigated?: () => void): void => {
     if (route.panel === 'skills' || route.panel === 'connectors' || route.panel === 'specialists') {
-      requestLeave(() => {
-        useNavigationStore
-          .getState()
-          .openResourceCenter(
-            'user',
-            route.panel === 'connectors'
-              ? { resource: 'connectors', view: route.view }
-              : { resource: route.panel },
-            () => {
-              onClose()
-              onNavigated?.()
-            }
-          )
-      })
+      openResourceFromSettings(
+        route.panel === 'connectors'
+          ? { resource: 'connectors', view: route.view }
+          : { resource: route.panel },
+        onNavigated
+      )
       return
     }
     if (JSON.stringify(route) === JSON.stringify(currentRoute)) {
@@ -1107,9 +1095,23 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
   }))
 
-  // Only create/edit locations open a provider form.
+  // Add provider first shows the kind picker; the form opens once a kind is chosen, or for an edit.
+  const isProviderPickerOpen =
+    activePanel === 'model' && modelView.kind === 'create' && !modelView.providerKindKey
   const isProviderFormOpen =
-    activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')
+    activePanel === 'model' &&
+    ((modelView.kind === 'create' && Boolean(modelView.providerKindKey)) ||
+      modelView.kind === 'edit')
+  // Kinds offered when adding a provider; the picker and the form's type dropdown share them.
+  const createKindAvailability = {
+    codeBuddyProviders:
+      agentFrameworkId === 'codebuddy' && isDesktopRenderer()
+        ? providers.map((provider) => provider.id)
+        : undefined,
+    showCodexSubscriptions:
+      agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent',
+    showClaudeIsolated: agentFrameworkId === 'claude-code'
+  }
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
   // reflected in the form; undefined until the provider is found (or when creating).
   const editingProvider =
@@ -1150,9 +1152,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
-  // loads). A create pre-selects the official vendor matching the active agent framework. Also
-  // clears any stale status message on entry.
-  const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
+  // loads). A create is seeded from the kind chosen in the picker. Also clears any stale status
+  // message on entry.
+  const modelViewKey =
+    modelView.kind === 'edit'
+      ? `edit:${modelView.providerId}`
+      : modelView.kind === 'create'
+        ? `create:${modelView.providerKindKey ?? ''}`
+        : modelView.kind
   const catalogSignature = JSON.stringify([
     modelViewKey,
     editingProvider && (editingProvider.configRevision ?? 0),
@@ -1174,9 +1181,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [seededModelView, setSeededModelView] = useState<string | undefined>(modelViewKey)
   if (open && modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
-    if (modelView.kind === 'create') {
+    if (modelView.kind === 'create' && modelView.providerKindKey) {
       const initial = createEmptyProviderFormValue(
-        providerKindPatch(defaultProviderKindKey(agentFrameworkId))
+        providerKindPatch(
+          modelView.providerKindKey,
+          customApiEndpoint,
+          activeFramework?.supportedApiTypes
+        )
       )
       setFormValue(initial)
       setProviderDraftBaseline(initial)
@@ -1248,6 +1259,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setBusyProviderId(undefined)
     setPostSaveValidationFailed(false)
     navigate({ panel: 'model', view: { kind: 'create' } })
+  }
+
+  const selectProviderKind = (providerKindKey: string): void =>
+    navigate({ panel: 'model', view: { kind: 'create', providerKindKey } })
+
+  // Return to the picker the user came from, keeping history linear; otherwise open a fresh one.
+  const navigateModel = (view: ModelView): void => {
+    const route: SettingsRoute = { panel: 'model', view }
+    const returningToPicker =
+      view.kind === modelView.kind &&
+      ((view.kind === 'create' && !view.providerKindKey) ||
+        (view.kind === 'image-service-create' && !view.vendorId))
+    if (returningToPicker && JSON.stringify(history[historyIndex - 1]) === JSON.stringify(route))
+      goBack()
+    else navigate(route)
   }
 
   const openEdit = (provider: ProviderView): void => {
@@ -1614,6 +1640,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                                     aria-hidden="true"
                                   />
                                   <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
+                                  {(id === 'skills' ||
+                                    id === 'specialists' ||
+                                    id === 'connectors') && (
+                                    <ArrowUpRight
+                                      className="size-3.5 shrink-0"
+                                      aria-hidden="true"
+                                    />
+                                  )}
                                 </button>
                               </li>
                             )
@@ -1877,7 +1911,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           onSelectedTagChange={recordSelectedTag}
                           onOpenResource={(reference) => {
                             if (reference.resourceType === 'catalog.skill') {
-                              openResourceCenterSkill(reference.resourceId)
+                              openResourceFromSettings({
+                                resource: 'skills',
+                                skillId: reference.resourceId
+                              })
                               return
                             }
                             if (reference.resourceType === 'catalog.connector') {
@@ -1905,10 +1942,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             const specialist = specialistItems.find(
                               (item) => item.id === reference.resourceId
                             )
-                            openResourceCenterSpecialist(
-                              reference.resourceId,
-                              specialist?.kind === 'builtin' ? 'builtin' : 'edit'
-                            )
+                            openResourceFromSettings({
+                              resource: 'specialists',
+                              specialistId: reference.resourceId,
+                              specialistKind: specialist?.kind === 'builtin' ? 'builtin' : 'edit'
+                            })
                           }}
                         />
                       </>
@@ -2177,29 +2215,28 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           isRefreshingModels={isRefreshingModels}
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
-                          codeBuddyProviders={
-                            agentFrameworkId === 'codebuddy' &&
-                            modelView.kind === 'create' &&
-                            isDesktopRenderer()
-                              ? providers.map((p) => p.id)
-                              : undefined
-                          }
-                          showCodexSubscriptions={
-                            (agentFrameworkId === 'codex' ||
-                              agentFrameworkId === 'open-science-agent') &&
+                          {...(modelView.kind === 'create' ? createKindAvailability : {})}
+                          onChangeProviderKind={
                             modelView.kind === 'create'
-                          }
-                          showClaudeIsolated={
-                            agentFrameworkId === 'claude-code' && modelView.kind === 'create'
+                              ? () => navigateModel({ kind: 'create' })
+                              : undefined
                           }
                           defaultCustomApiEndpoint={customApiEndpoint}
                           framework={activeFramework}
                         />
                       </div>
+                    ) : isProviderPickerOpen ? (
+                      <div className="p-5">
+                        <ProviderKindPicker
+                          {...createKindAvailability}
+                          recommendedKey={defaultProviderKindKey(agentFrameworkId)}
+                          onSelect={selectProviderKind}
+                        />
+                      </div>
                     ) : (
                       <ModelPanel
                         view={modelView}
-                        navigate={(view) => navigate({ panel: 'model', view })}
+                        navigate={navigateModel}
                         local={modelView.kind === 'local-models'}
                         onChange={(local) =>
                           navigate({

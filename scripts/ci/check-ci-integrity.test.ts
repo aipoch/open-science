@@ -9,7 +9,12 @@ import { checkCiIntegrityChanges, ciIntegrityFilesFromRevisions } from './check-
 
 describe('CI integrity policy', () => {
   it('accepts the repository PR Gate and CI Integrity workflows as new files', () => {
-    const paths = ['.github/workflows/pr-gate.yml', '.github/workflows/ci-integrity.yml']
+    const paths = [
+      '.github/workflows/pr-gate.yml',
+      '.github/workflows/ci-integrity.yml',
+      '.github/workflows/pr-automation-signal.yml',
+      '.github/workflows/resolve-pr-signal.yml'
+    ]
     const result = checkCiIntegrityChanges(
       paths.map((path) => ({
         path,
@@ -19,6 +24,205 @@ describe('CI integrity policy', () => {
     )
 
     expect(result).toMatchObject({ ok: true, violations: [] })
+  })
+
+  it.each([
+    { signal: 'workflows: [PR Automation Signal]\n    types: [completed]', ok: true },
+    { signal: 'workflows: [Other]\n    types: [completed]', ok: false },
+    { signal: 'workflows: [PR Automation Signal]\n    types: [requested]', ok: false },
+    {
+      signal: 'workflows: [PR Automation Signal]\n    types: [completed]\n    branches: [main]',
+      ok: false
+    }
+  ])('accepts only the unfiltered PR completion signal: $signal', ({ signal, ok }) => {
+    const path = '.github/workflows/ci-integrity.yml'
+    const result = checkCiIntegrityChanges([
+      ...['pr-automation-signal', 'resolve-pr-signal'].map((name) => ({
+        path: `.github/workflows/${name}.yml`,
+        headText: readFileSync(`.github/workflows/${name}.yml`, 'utf8')
+      })),
+      {
+        path,
+        baseText: readFileSync(resolve(path), 'utf8'),
+        headText: `on:
+  workflow_run:
+    ${signal}
+  merge_group:
+    types: [checks_requested]
+jobs:
+  resolve:
+    uses: ./.github/workflows/resolve-pr-signal.yml
+  integrity:
+    name: CI Integrity
+    needs: [resolve]
+    if: \${{ needs.resolve.result == 'success' && needs.resolve.outputs.number != '' }}
+    env:
+      PR_NUMBER: \${{ needs.resolve.outputs.number }}
+      PR_HEAD_SHA: \${{ needs.resolve.outputs.head_sha }}
+      BASE_SHA: \${{ needs.resolve.outputs.base_sha }}
+      PR_TITLE: \${{ needs.resolve.outputs.title }}
+`
+      }
+    ])
+    expect(result.ok).toBe(ok)
+    if (!ok)
+      expect(result.violations).toContainEqual(
+        expect.objectContaining({ rule: 'required-check-triggers' })
+      )
+  })
+
+  it('checks unchanged successor dependencies when a later PR disables its signal', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ci-signal-contract-'))
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+    try {
+      git('init', '--quiet')
+      git('config', 'user.email', 'ci@example.com')
+      git('config', 'user.name', 'CI Test')
+      mkdirSync(join(root, '.github/workflows'), { recursive: true })
+      const signal = '.github/workflows/pr-automation-signal.yml'
+      const resolver = '.github/workflows/resolve-pr-signal.yml'
+      const integrity = '.github/workflows/ci-integrity.yml'
+      for (const path of [signal, resolver]) writeFileSync(join(root, path), readFileSync(path))
+      writeFileSync(
+        join(root, integrity),
+        `on:
+  workflow_run:
+    workflows: [PR Automation Signal]
+    types: [completed]
+  merge_group:
+    types: [checks_requested]
+jobs:
+  resolve:
+    uses: ./.github/workflows/resolve-pr-signal.yml
+  integrity:
+    name: CI Integrity
+    needs: [resolve]
+    if: \${{ needs.resolve.result == 'success' && needs.resolve.outputs.number != '' }}
+    env:
+      PR_NUMBER: \${{ needs.resolve.outputs.number }}
+      PR_HEAD_SHA: \${{ needs.resolve.outputs.head_sha }}
+      BASE_SHA: \${{ needs.resolve.outputs.base_sha }}
+      PR_TITLE: \${{ needs.resolve.outputs.title }}
+`
+      )
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'baseline')
+      const base = git('rev-parse', 'HEAD')
+      writeFileSync(
+        join(root, signal),
+        readFileSync(signal, 'utf8').replace(
+          'name: Signal PR automation',
+          'name: Signal PR automation\n    if: false'
+        )
+      )
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'disable signal')
+      const files = ciIntegrityFilesFromRevisions(base, git('rev-parse', 'HEAD'), { cwd: root })
+      expect(files.map(({ path }) => path)).toEqual(
+        expect.arrayContaining([signal, resolver, integrity])
+      )
+      expect(checkCiIntegrityChanges(files).violations).toContainEqual(
+        expect.objectContaining({ path: signal, rule: 'pr-automation-support' })
+      )
+      expect(
+        checkCiIntegrityChanges(
+          files.map((file) => (file.path === signal ? { ...file, headText: '' } : file))
+        ).ok
+      ).toBe(false)
+      expect(
+        checkCiIntegrityChanges(
+          files.map((file) =>
+            file.path === signal ? { ...file, headText: readFileSync(signal, 'utf8') } : file
+          )
+        ).ok
+      ).toBe(true)
+      const validFiles = files.map((file) =>
+        file.path === signal ? { ...file, headText: readFileSync(signal, 'utf8') } : file
+      )
+      const noOpResolver = validFiles.map((file) =>
+        file.path === resolver
+          ? {
+              ...file,
+              headText: `on:
+  workflow_call:
+    inputs:
+      run_id:
+        required: true
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+`
+            }
+          : file
+      )
+      expect(checkCiIntegrityChanges(noOpResolver).violations).toContainEqual(
+        expect.objectContaining({ path: resolver, rule: 'pr-automation-support' })
+      )
+      const resolverText = readFileSync(resolver, 'utf8')
+      const scriptOffset = resolverText.indexOf('          script: |')
+      const inertMarkerResolver = validFiles.map((file) =>
+        file.path === resolver
+          ? {
+              ...file,
+              headText:
+                resolverText.slice(0, scriptOffset) +
+                `          script: |
+            // run.repository.id !== repo.id; run.event !== 'pull_request'; run.path !== '.github/workflows/pr-automation-signal.yml'
+            // run.status !== 'completed'; run.conclusion !== 'success'; run.display_title; run.head_repository
+            // job.name === 'Signal PR automation'; pr.state !== 'open'; pr.base.ref !== repo.default_branch
+            // pr.head.sha !== run.head_sha; listJobsForWorkflowRunAttempt; run.pull_requests; run.run_attempt
+            core.setOutput('number', '')
+            core.setOutput('head_sha', '')
+            core.setOutput('base_sha', '')
+            core.setOutput('action', '')
+            core.setOutput('title', '')
+`
+            }
+          : file
+      )
+      expect(checkCiIntegrityChanges(inertMarkerResolver).violations).toContainEqual(
+        expect.objectContaining({ path: resolver, rule: 'pr-automation-support' })
+      )
+      const skippedResolver = validFiles.map((file) =>
+        file.path === resolver
+          ? {
+              ...file,
+              headText: file.headText.replace(
+                '  resolve:\n    runs-on:',
+                '  resolve:\n    if: false\n    runs-on:'
+              )
+            }
+          : file
+      )
+      expect(checkCiIntegrityChanges(skippedResolver).violations).toContainEqual(
+        expect.objectContaining({ path: resolver, rule: 'pr-automation-support' })
+      )
+      for (const needs of ['resolve', 'unrelated-resolve']) {
+        const candidate = validFiles.map((file) =>
+          file.path === integrity
+            ? { ...file, headText: file.headText.replace('needs: [resolve]', `needs: ${needs}`) }
+            : file
+        )
+        expect(checkCiIntegrityChanges(candidate).ok).toBe(needs === 'resolve')
+      }
+      const renamedSignal = validFiles.map((file) =>
+        file.path === signal
+          ? {
+              ...file,
+              headText: file.headText.replace(
+                'run-name: PR automation',
+                'run-name: Renamed automation'
+              )
+            }
+          : file
+      )
+      expect(checkCiIntegrityChanges(renamedSignal).ok).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('fails its Git revision CLI and publishes violations for Actions', () => {

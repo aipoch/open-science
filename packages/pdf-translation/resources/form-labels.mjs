@@ -12,7 +12,8 @@ import { engine } from './pdfium.mjs'
 import { createHash } from 'node:crypto'
 
 // PDFium serializes a four-corner open path as `re`, closing its missing edge.
-// An empty final subpath preserves butt-capped paint and prevents that rewrite.
+// The same rewrite can shorten a collinear stroke that doubles back.
+// An empty final subpath preserves butt-capped paint and prevents either rewrite.
 export function preserveOpenRectanglePaths(native, page) {
   const { p, m } = native
   const at = native.alloc(8)
@@ -37,11 +38,18 @@ export function preserveOpenRectanglePaths(native, page) {
       }
       if (points.length !== 4) continue
       const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = points
-      if (!(
+      const rectangle =
         (x0 === x1 && y1 === y2 && x2 === x3 && y3 === y0 && x0 !== x2 && y0 !== y2) ||
         (y0 === y1 && x1 === x2 && y2 === y3 && x3 === x0 && x0 !== x2 && y0 !== y2)
-      ))
-        continue
+      const backtrackingStroke =
+        y0 === y1 &&
+        y1 === y2 &&
+        y2 === y3 &&
+        ((x0 < x2 && x2 < x1 && x1 < x3) || (x0 > x2 && x2 > x1 && x1 > x3)) &&
+        p.FPDFPath_GetDrawMode(object, at, at + 4) &&
+        m.HEAP32[at / 4] === 0 &&
+        m.HEAP32[at / 4 + 1] === 1
+      if (!rectangle && !backtrackingStroke) continue
       if (!p.FPDFPath_MoveTo(object, x3, y3)) throw Error('Could not preserve open PDF rectangle')
     }
   } finally {

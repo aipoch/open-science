@@ -3,7 +3,7 @@ import {
   type LocalProviderPresetId
 } from '../../../../shared/local-provider-preset'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
-import { CirclePlus, FlaskConical, Sparkles } from 'lucide-react'
+import { CirclePlus, FlaskConical, Server, Sparkles } from 'lucide-react'
 
 import {
   AipochMono,
@@ -71,8 +71,17 @@ export const AgentFrameworkIcon = ({
   return <CodexMono size={size} className={cn('text-foreground', className)} />
 }
 
+// Keep the original artwork on the same light surface throughout the dark provider UI.
+// Inline monochrome glyphs use the matching dark ink through currentColor.
+const darkLogoBacking =
+  'dark:rounded-xs dark:bg-foreground dark:text-background dark:ring-2 dark:ring-foreground'
+
 export const TypeSafeIcon = ({ className }: { className?: string }): React.JSX.Element => (
-  <img src={typesafeLogo} alt="" className={cn('size-3 shrink-0 object-contain', className)} />
+  <img
+    src={typesafeLogo}
+    alt=""
+    className={cn('size-3 shrink-0 object-contain', darkLogoBacking, className)}
+  />
 )
 
 // Official vendor brand marks, bundled as assets. Providers from the same vendor share one mark:
@@ -121,13 +130,10 @@ export const ProviderKindIcon = ({
   kindKey: string
   className?: string
 }): React.JSX.Element => {
+  const iconClass = cn('size-5 shrink-0', darkLogoBacking, className)
+
   if (kindKey === 'custom') {
-    return (
-      <CirclePlus
-        className={cn('size-5 shrink-0 text-muted-foreground', className)}
-        aria-hidden="true"
-      />
-    )
+    return <CirclePlus className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />
   }
 
   if (
@@ -135,26 +141,19 @@ export const ProviderKindIcon = ({
     kindKey === 'codex-shared' ||
     kindKey === 'codex-isolated'
   ) {
-    return <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', className)} />
+    return <img src={openaiLogo} alt="" className={iconClass} />
   }
 
   if (kindKey === 'codebuddy-subscription' || codeBuddySiteForId(kindKey)) {
-    return (
-      <AgentFrameworkIcon frameworkId="codebuddy" className={cn('size-5 shrink-0', className)} />
-    )
+    return <AgentFrameworkIcon frameworkId="codebuddy" className={iconClass} />
   }
 
   if (kindKey === 'xai-subscription') {
-    return <img src={grokLogo} alt="" className={cn('size-5 shrink-0', className)} />
+    return <img src={grokLogo} alt="" className={iconClass} />
   }
 
   if (kindKey === 'lab') {
-    return (
-      <FlaskConical
-        className={cn('size-5 shrink-0 text-muted-foreground', className)}
-        aria-hidden="true"
-      />
-    )
+    return <FlaskConical className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />
   }
 
   if (
@@ -162,21 +161,17 @@ export const ProviderKindIcon = ({
     kindKey === 'claude-shared' ||
     kindKey === 'claude-isolated'
   ) {
-    return <img src={claudeLogo} alt="" className={cn('size-5 shrink-0', className)} />
+    return <img src={claudeLogo} alt="" className={iconClass} />
   }
 
   if (kindKey === 'official:opencode-go' || kindKey === 'official:opencode') {
     return (
-      <OpenCodeMono
-        size={20}
-        className={cn('size-5 shrink-0 text-foreground', className)}
-        aria-hidden="true"
-      />
+      <OpenCodeMono size={20} className={cn('text-foreground', iconClass)} aria-hidden="true" />
     )
   }
 
   if (kindKey === 'official:nvidia') {
-    return <NvidiaColor size={20} className={cn('size-5 shrink-0', className)} aria-hidden="true" />
+    return <NvidiaColor size={20} className={iconClass} aria-hidden="true" />
   }
 
   if (
@@ -184,13 +179,7 @@ export const ProviderKindIcon = ({
     kindKey === 'official:tencentcodingplan' ||
     kindKey === 'official:tencenttokenplan'
   ) {
-    return (
-      <TencentCloudColor
-        size={20}
-        className={cn('size-5 shrink-0', className)}
-        aria-hidden="true"
-      />
-    )
+    return <TencentCloudColor size={20} className={iconClass} aria-hidden="true" />
   }
 
   const localId = kindKey.startsWith('local:') ? kindKey.slice('local:'.length) : undefined
@@ -201,24 +190,13 @@ export const ProviderKindIcon = ({
       : undefined
 
   if (logo) {
-    return (
-      <img
-        src={logo}
-        alt=""
-        className={cn(
-          'size-5 shrink-0 object-contain',
-          (localId === 'llamacpp' || localId === 'ollama') && 'dark:invert',
-          className
-        )}
-      />
-    )
+    return <img src={logo} alt="" className={cn('object-contain', iconClass)} />
+  }
+
+  if (localId !== undefined) {
+    return <Server className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />
   }
 
   // No official asset bundled for this vendor yet (e.g. GLM/Z.AI): neutral placeholder, not a guess.
-  return (
-    <Sparkles
-      className={cn('size-5 shrink-0 text-muted-foreground', className)}
-      aria-hidden="true"
-    />
-  )
+  return <Sparkles className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />
 }

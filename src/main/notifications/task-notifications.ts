@@ -2,6 +2,7 @@ import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
 import { ACP_PROMPT_FAILED_EVENT_TITLE } from '../../shared/acp'
 import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import type { ComputeApprovalRequest } from '../../shared/compute'
+import { RESEARCH_FILM_NOTIFICATION_PREFIX } from '../../shared/notifications'
 import type {
   NotificationActionState,
   NotificationAttentionReason,
@@ -796,6 +797,40 @@ export class TaskNotificationService {
     } catch (error) {
       reportTaskNotificationError(this.deps.onInboxError, error)
     }
+  }
+
+  handleResearchFilmOutcome = async ({
+    invocationId,
+    projectId,
+    sessionId,
+    outcome
+  }: {
+    invocationId: string
+    projectId: string
+    sessionId: string
+    outcome: 'completed' | 'failed'
+  }): Promise<void> => {
+    const completed = outcome === 'completed'
+    const kind = completed ? 'task.completed' : 'task.failed'
+    const inboxUpdate = this.recordInbox({
+      dedupeKey: `${RESEARCH_FILM_NOTIFICATION_PREFIX}${invocationId}`,
+      kind,
+      projectId,
+      sessionId,
+      originId: invocationId,
+      title: completed ? 'Research film ready' : 'Research film generation failed',
+      summary: TASK_INBOX_SUMMARY[kind]
+    })
+    await this.deliver(
+      {
+        title: completed
+          ? this.deps.translate('Research film ready')
+          : this.deps.translate('Research film generation failed'),
+        body: this.deps.translate('Open the app for details.')
+      },
+      sessionId
+    )
+    await inboxUpdate
   }
 
   private async recordInbox(

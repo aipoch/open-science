@@ -53,12 +53,15 @@ export const serializedFileContext = async (
   let inspected = 0
   // The source proof belongs to a file generation, not a kernel namespace. It can bridge epochs.
   for (const run of [...preceding].reverse()) {
-    const facts = factsFor(run)
     if (
       !['r', 'python'].includes(run.kernelKind) ||
       run.status !== 'completed' ||
       run.fileEvidence?.state !== 'available' ||
-      run.fileEvidence.writerAttribution !== 'complete' ||
+      run.fileEvidence.writerAttribution !== 'complete'
+    )
+      continue
+    const facts = factsFor(run)
+    if (
       !facts?.serializedValueWrites?.length ||
       (facts.state === 'unknown' && facts.reasons.some((reason) => reason !== 'external-state'))
     )
