@@ -17,7 +17,7 @@ import { NotebookExecutionAdmissionError } from '../notebook/execution-admission
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { formatPackageBytes, packageImportPercent } from '../../shared/session-package'
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdtemp, opendir, readdir, realpath, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, opendir, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type {
@@ -39,7 +39,7 @@ import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import { PackageExportBlockedError, SessionPackageOperation } from './operation'
 import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
-import { assertPackageCapacity, PackageCapacityError } from './capacity'
+import { assertPackageCapacity, PackageCapacityError, packageDiskReserveBytes } from './capacity'
 import { withPackageTransfer } from './transfer'
 import type { OrgCaseDetail, OrgCaseErrorCode, OrgCaseUploadMetadata } from '../../shared/org-cases'
 import type { UploadOrgCaseInput } from '../settings/lab-api'
@@ -711,11 +711,12 @@ export class SessionPackageDesktop {
     source: string,
     destination: string,
     phase: 'copying' | 'saving',
-    signal: AbortSignal
+    signal: AbortSignal,
+    reservePolicy?: number | ((writeBytes: number) => number)
   ): Promise<PackageFileDigest> {
     return withPackageTransfer(async (transfer) => {
       const size = (await stat(source)).size
-      await assertPackageCapacity(dirname(destination), size)
+      await assertPackageCapacity(dirname(destination), size, reservePolicy)
       return copyFileWithinBudget(
         source,
         destination,
@@ -826,13 +827,15 @@ export class SessionPackageDesktop {
 
   private staged<T>(
     work: (directory: string) => Promise<T>,
-    request?: SessionPackageRequest
+    request?: SessionPackageRequest,
+    temporaryRoot = tmpdir(),
+    beforeStage?: () => Promise<void>
   ): Promise<T> {
     if (this.shutdown.signal.aborted) return Promise.reject(this.shutdown.signal.reason)
     if (this.busy)
       return Promise.reject(new Error('A Session package operation is already in progress.'))
     const result = withPackageTransfer(
-      () => this.stagedNow(work, request),
+      () => this.stagedNow(work, request, temporaryRoot, beforeStage),
       () => this.operations.transferBytesPerSecond,
       this.operations.reportIo
     )
@@ -842,11 +845,17 @@ export class SessionPackageDesktop {
 
   private async stagedNow<T>(
     work: (directory: string) => Promise<T>,
-    request?: SessionPackageRequest
+    request?: SessionPackageRequest,
+    temporaryRoot = tmpdir(),
+    beforeStage?: () => Promise<void>
   ): Promise<T> {
     this.busy = true
     try {
-      const directory = await mkdtemp(join(tmpdir(), 'open-science-package-dialog-'))
+      await beforeStage?.()
+      if (temporaryRoot === this.options.service.packageTemporaryRoot)
+        await this.options.service.ensurePackageTemporaryRoot()
+      else await mkdir(temporaryRoot, { recursive: true, mode: 0o700 })
+      const directory = await mkdtemp(join(temporaryRoot, 'open-science-package-dialog-'))
       return await this.acceptCleanup(() =>
         withPackageCleanup(
           async () => {
@@ -1565,11 +1574,13 @@ export class SessionPackageDesktop {
             const requestId = randomUUID()
             this.pendingUseCase = { requestId, source: { useCase }, callerId, originClientId }
             this.operations.setImportSource(requestId, `${useCase}.science`, target)
+            await this.options.service.preparePackageTemporaryRoot()
             const downloaded = await downloadUseCase(
               useCase,
               signal,
               (completedBytes, totalBytes) =>
-                this.operations.reportUseCaseDownload(completedBytes, totalBytes)
+                this.operations.reportUseCaseDownload(completedBytes, totalBytes),
+              this.options.service.packageTemporaryRoot ?? tmpdir()
             ).catch((error) => this.failOperation(error))
             this.pendingUseCase = undefined
             sourcePath = downloaded.path
@@ -1665,96 +1676,103 @@ export class SessionPackageDesktop {
           const release = target.projectId
             ? await this.options.reserveImport?.(target.projectId, signal)
             : undefined
+          let selectedInput: string | undefined
           try {
-            return await this.staged(async (directory) => {
-              const pickerOptions = {
-                title: this.options.translate('Import Session package'),
-                properties: ['openFile'] as ['openFile'],
-                filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
-              }
-              const selected = sourcePath
-                ? { canceled: false, filePaths: [sourcePath] }
-                : await this.nativeDialog(
-                    desktopFileInteraction().chooseFiles(pickerOptions, callerId),
-                    signal
-                  )
-              if (selected.canceled || !selected.filePaths[0]) {
-                this.operations.cancel()
-                signal.throwIfAborted()
-              }
-              const input = selected.filePaths[0]
-              rememberSource(input)
-              const info = await stat(input).catch((error: NodeJS.ErrnoException) => {
-                if (['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code ?? ''))
-                  throw new PackageSourceUnavailableError('Package source is unavailable.', {
-                    cause: error
-                  })
-                throw error
-              })
-              if (!info.isFile())
-                throw new PackageSourceUnavailableError('Package source is not a file.')
-              if (info.size > PACKAGE_MAX_BYTES)
-                throw new Error('Session package exceeds the archive limit.')
-              const archive = join(directory, 'session.science')
-              await this.copyArchive(input, archive, 'copying', signal)
-              this.operations.report({ phase: 'validating' })
-              let confirmed = false
-              const result = await this.options.withDataRootWrite(() =>
-                this.acceptCleanup(() =>
-                  this.options.service
-                    .importFrom(
-                      archive,
-                      signal,
-                      // Inspection reports before confirmation; subsequent validation belongs to import.
-                      (progress) =>
-                        this.operations.report({
-                          ...progress,
-                          phase:
-                            confirmed && progress.phase === 'validating'
-                              ? 'importing'
-                              : progress.phase,
-                          ...(validateBeforeTarget
-                            ? {
-                                overallPercent:
-                                  10 +
-                                  (packageImportPercent(progress) ?? (confirmed ? 40 : 0)) * 0.9
-                              }
-                            : {})
-                        }),
-                      options?.agent
-                        ? async ({ omissions, webOmissions, ...summary }) => {
-                            confirmed = true
-                            packageSummary = {
-                              ...summary,
-                              omissionCount: omissions.length + (webOmissions?.length ?? 0),
-                              externalOmissionCount: omissions.filter(
-                                ({ kind }) => kind === 'external'
-                              ).length
-                            }
-                          }
-                        : nonInteractive
-                          ? undefined
-                          : async (preview, budgetSignal) => {
-                              await this.operations.waitForImport(
-                                { preview, filename: basename(input) },
-                                budgetSignal
-                              )
-                              confirmed = true
-                              signal.throwIfAborted()
-                            },
-                      target
-                    )
-                    .catch((error: unknown) => {
-                      if (error instanceof PackageImportRecoveryRequiredError) {
-                        importFile!.recovery = error
-                        this.operations.setAgentFailure('import-unconfirmed')
-                      }
-                      throw error
+            return await this.staged(
+              async (directory) => {
+                const input = sourcePath ?? selectedInput!
+                rememberSource(input)
+                const info = await stat(input).catch((error: NodeJS.ErrnoException) => {
+                  if (['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(error.code ?? ''))
+                    throw new PackageSourceUnavailableError('Package source is unavailable.', {
+                      cause: error
                     })
+                  throw error
+                })
+                if (!info.isFile())
+                  throw new PackageSourceUnavailableError('Package source is not a file.')
+                if (info.size > PACKAGE_MAX_BYTES)
+                  throw new Error('Session package exceeds the archive limit.')
+                const archive = join(directory, 'session.science')
+                await this.copyArchive(input, archive, 'copying', signal, packageDiskReserveBytes)
+                this.operations.report({ phase: 'validating' })
+                let confirmed = false
+                const result = await this.options.withDataRootWrite(() =>
+                  this.acceptCleanup(() =>
+                    this.options.service
+                      .importFrom(
+                        archive,
+                        signal,
+                        // Inspection reports before confirmation; subsequent validation belongs to import.
+                        (progress) =>
+                          this.operations.report({
+                            ...progress,
+                            phase:
+                              confirmed && progress.phase === 'validating'
+                                ? 'importing'
+                                : progress.phase,
+                            ...(validateBeforeTarget
+                              ? {
+                                  overallPercent:
+                                    10 +
+                                    (packageImportPercent(progress) ?? (confirmed ? 40 : 0)) * 0.9
+                                }
+                              : {})
+                          }),
+                        options?.agent
+                          ? async ({ omissions, webOmissions, ...summary }) => {
+                              confirmed = true
+                              packageSummary = {
+                                ...summary,
+                                omissionCount: omissions.length + (webOmissions?.length ?? 0),
+                                externalOmissionCount: omissions.filter(
+                                  ({ kind }) => kind === 'external'
+                                ).length
+                              }
+                            }
+                          : nonInteractive
+                            ? undefined
+                            : async (preview, budgetSignal) => {
+                                await this.operations.waitForImport(
+                                  { preview, filename: basename(input) },
+                                  budgetSignal
+                                )
+                                confirmed = true
+                                signal.throwIfAborted()
+                              },
+                        target
+                      )
+                      .catch((error: unknown) => {
+                        if (error instanceof PackageImportRecoveryRequiredError) {
+                          importFile!.recovery = error
+                          this.operations.setAgentFailure('import-unconfirmed')
+                        }
+                        throw error
+                      })
+                  )
                 )
-              )
-              return completeImport(result)
-            }, undefined)
+                return completeImport(result)
+              },
+              undefined,
+              this.options.service.packageTemporaryRoot ?? tmpdir(),
+              async () => {
+                if (sourcePath) return
+                const options = {
+                  title: this.options.translate('Import Session package'),
+                  properties: ['openFile'] as ['openFile'],
+                  filters: [{ name: 'Open-Science Session', extensions: ['science'] }]
+                }
+                const selected = await this.nativeDialog(
+                  desktopFileInteraction().chooseFiles(options, callerId),
+                  signal
+                )
+                if (selected.canceled || !selected.filePaths[0]) {
+                  this.operations.cancel()
+                  signal.throwIfAborted()
+                }
+                selectedInput = selected.filePaths[0]
+              }
+            )
           } finally {
             release?.()
           }

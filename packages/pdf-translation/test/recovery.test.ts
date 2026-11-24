@@ -459,6 +459,24 @@ it('rejects a translated standalone proper name', () => {
   )
 })
 
+it('accepts a rubric criterion translation and preserves a containing organization name', () => {
+  const criterion = 'Algebraic Procedures'
+  const translation = '代数步骤'
+  expect(pdfTranslationDropsStandaloneProperName(criterion, translation)).toBe(false)
+  expect(pdfTranslationDropsStandaloneProperName(`${criterion} Institute`, '代数步骤研究所')).toBe(
+    true
+  )
+  const checkpoint = {
+    ...saved,
+    sources: [criterion],
+    translations: [translation],
+    translatedSourceIndices: [0]
+  }
+  expect(reconcilePdfTranslationCheckpoint(checkpoint, saved.fingerprint, [criterion])).toEqual(
+    checkpoint
+  )
+})
+
 it.each(
   readPdfTranslationCases<{
     name: string

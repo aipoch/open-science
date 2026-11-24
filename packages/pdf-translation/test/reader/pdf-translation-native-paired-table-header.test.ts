@@ -32,6 +32,93 @@ const blank = (): PdfLayoutTextItem => ({
   transform: [0, 0, 0, 0, 0, 0],
   hasEOL: true
 })
+it.each([0, 6])(
+  'separates neighboring three-row headers using their own numeric columns (%s)',
+  (offset) => {
+    const part = (str: string, x: number, y: number, width: number): PdfLayoutTextItem => ({
+      ...word(str, x, y, width),
+      height: 12,
+      transform: [12, 0, 0, 12, x, y]
+    })
+    const items = [
+      part('Spacing between', 73.6, 752.4, 84.8),
+      part('three', 107, 738.6, 18),
+      part('reference rods (m)', 74, 724.8, 84),
+      part('Trigger delay', 168.6, 752.4, 64.8),
+      part('between', 181, 738.6, 40),
+      part('three pulses (s)', 169, 724.8, 64),
+      part('0.120', 102.5 + offset, 686.3, 27),
+      part('1.10', 190.6, 704.7, 21),
+      part('0.0410', 255.4, 704.7, 33),
+      part('0.130', 102.5 + offset, 627.8, 27),
+      part('1.12', 190.6, 509.7, 21),
+      part('0.0412', 255.4, 509.7, 33),
+      part('1.08', 190.6, 490.3, 21),
+      part('0.0409', 255.4, 490.3, 33),
+      part('0.140', 102.5 + offset, 452.2, 27)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 595, height: 842, rotation: 0, items }]
+    })
+    const left = units.find((unit) => unit.items.includes('1:0'))
+    const right = units.find((unit) => unit.items.includes('1:3'))
+    if (offset) {
+      expect(left).toBe(right)
+    } else {
+      expect(left?.items).toEqual(['1:0', '1:1', '1:2'])
+      expect(right?.items).toEqual(['1:3', '1:4', '1:5'])
+      expect(left?.source).toBe('Spacing between three reference rods (m)')
+      expect(right?.source).toBe('Trigger delay between three pulses (s)')
+    }
+    expect(units.find((unit) => unit.items.includes('1:7'))?.preserve).toBe('literal')
+  }
+)
+
+it.each([0, 6])(
+  'keeps a stacked measurement heading together on a proven table rail (%s)',
+  (offset) => {
+    const part = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      size = 12,
+      face = 'header'
+    ): PdfLayoutTextItem => ({
+      ...word(str, x, y, width, false, face),
+      height: size,
+      transform: [size, 0, 0, size, x, y]
+    })
+    const items = [
+      part('Change in outlet flow when', 304.5, 579, 108),
+      part('the valve rotates and', 314.5, 563, 88),
+      part('the probe remains', 308, 547, 101),
+      part('within the duct,', 303, 531, 67.5),
+      part('Q', 373.5, 531, 7.3, 12, 'variable'),
+      part('2', 380.8, 530.1, 4, 8, 'variable'),
+      part('(Lpm)', 388, 531, 26),
+      part('setting', 425, 547, 49),
+      ...[511, 487.5, 461].flatMap((y, row) =>
+        [87, 164, 336 + offset, 442].map((x, column) =>
+          part(`${270 + row * 7 + column}.81`, x, y, column === 3 ? 27 : 45)
+        )
+      )
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const head = units.find((unit) => unit.items.includes('1:0'))
+    expect(head?.items).toEqual(
+      offset ? ['1:0'] : ['1:0', '1:1', '1:2', '1:3', '1:4', '1:5', '1:6']
+    )
+    if (!offset)
+      expect(head?.source).toBe(
+        'Change in outlet flow when the valve rotates and the probe remains within the duct, Q2 (Lpm)'
+      )
+    expect(units.find((unit) => unit.items.includes('1:7'))?.source).toBe('setting')
+  }
+)
+
 const fixture = (): { pageCount: number; pages: PdfLayoutPage[] } => ({
   pageCount: 1,
   pages: [

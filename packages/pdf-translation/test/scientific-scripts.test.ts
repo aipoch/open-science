@@ -4093,3 +4093,58 @@ it.each([3.5, 0])(
     )
   }
 )
+
+it.each([
+  [9, 6, 3.81],
+  [10, 7, 3.62]
+])('keeps an attached symbolic superscript in Computer Modern %s', (body, script, rise) => {
+  const label = '∼ V k'
+  const source = `The estimate is ${label} in this range.`
+  const translation = `这个范围内的估计值 ${label}。`
+  const sourceOffset = source.indexOf(label)
+  const runs = [
+    ['∼', `CMSY${body}`, 1, 0, [20, 101, 26, 103]],
+    ['V', `CMMI${body}`, 1, 0, [29, 100, 35.5, 106.2]],
+    ['k', `CMMI${script}`, script / body, rise, [36, 100 + rise, 39, 104 + rise]]
+  ] as const
+  const markers: ScientificScriptMarker[] = runs.map(
+    ([part, fontName, scale, elevation, bounds], index) => ({
+      label: part,
+      fontName,
+      scale,
+      rise: elevation,
+      baseline: 100 + elevation,
+      bounds: [...bounds],
+      sourceOffset: sourceOffset + index * 2,
+      sourceIndices: [index + 4]
+    })
+  )
+  expect(resolveNestedScriptGroups(source, translation, markers)).toEqual([
+    {
+      sourceOffset,
+      targetOffset: translation.indexOf(label),
+      label,
+      sourceIndices: [4, 5, 6],
+      baselineIndex: 5,
+      nativeScriptGroup: true,
+      needsInlineReflow: true
+    }
+  ])
+  const [relation, base, exponent] = markers
+  expect(resolveNestedScriptGroups(source, translation.replace('V k', 'V m'), markers)).toEqual([])
+  expect(resolveNestedScriptGroups(source, translation + label, markers)).toEqual([])
+  expect(
+    resolveNestedScriptGroups(source, translation, [
+      relation,
+      base,
+      { ...exponent, rise: 0, baseline: 100 }
+    ])
+  ).toEqual([])
+  expect(
+    resolveNestedScriptGroups(source, translation, [
+      relation,
+      base,
+      { ...exponent, bounds: [40, 100 + rise, 43, 104 + rise] }
+    ])
+  ).toEqual([])
+})

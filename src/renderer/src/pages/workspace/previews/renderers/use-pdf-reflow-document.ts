@@ -16,6 +16,7 @@ import {
 import { pdfTranslationCheckpointRequestSchema } from '../../../../../../shared/pdf-translation'
 import { pdfjsLib } from '../pdfjs'
 import type { PdfTranslationDocumentState } from './pdf-translation-document-state'
+import { includeJoinedPdfPages } from './pdf-translation-page-groups'
 import {
   preparePdfTranslationStructure,
   type PdfTranslationStructureContext
@@ -162,17 +163,7 @@ export function usePdfReflowDocument(
             ? recovery.pages
             : undefined
         for (const page of recoveryPages ?? []) retainedPages.add(page)
-        // Keep a cross-page paragraph whole when any of its pages needs an original-page fallback.
-        const includeJoinedPages = (pages: Set<number>): void => {
-          let previousSize: number
-          do {
-            previousSize = pages.size
-            for (const unit of units)
-              if (unit.fragments.some((fragment) => pages.has(fragment.pageNumber)))
-                for (const fragment of unit.fragments) pages.add(fragment.pageNumber)
-          } while (pages.size !== previousSize)
-        }
-        includeJoinedPages(retainedPages)
+        includeJoinedPdfPages(retainedPages, units)
         // Verified native ownership can suppress historical table/figure label
         // translations without rewriting the edition's source IDs or saved text.
         const structure = await preparePdfTranslationStructure({
@@ -185,7 +176,7 @@ export function usePdfReflowDocument(
         })
         if (cancelled) return
         for (const page of structure.retainedSourcePageNumbers ?? []) retainedPages.add(page)
-        includeJoinedPages(retainedPages)
+        includeJoinedPdfPages(retainedPages, units)
         const structureRetained = new Set(structure.retainedUnitIds)
         // Geometric guesses remain advisory: only the verified IDs above can
         // override an accepted translation. Uncertain prose must still be emitted.
@@ -345,7 +336,7 @@ export function usePdfReflowDocument(
         if (validationDetail) {
           // Retry the snapshot once if a translated page can survive. A global
           // mapping error or a second failed verification never reaches display.
-          includeJoinedPages(invalidPages)
+          includeJoinedPdfPages(invalidPages, units)
           if (
             !recoveryPages &&
             requestUnits.some(

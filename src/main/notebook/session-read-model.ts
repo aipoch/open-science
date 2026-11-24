@@ -7,6 +7,7 @@ import {
 import type {
   NotebookBackgroundTaskSnapshot,
   NotebookRunEvidenceSnapshot,
+  NotebookRunFigureRequest,
   NotebookCell,
   NotebookEnvironmentStatus,
   NotebookKernelInstanceIdentity,
@@ -212,6 +213,29 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
+  async runFigure(
+    projectId: string,
+    sessionId: string,
+    request: NotebookRunFigureRequest,
+    session?: Session
+  ): Promise<string | null> {
+    const { window } = await this.historyWindow(
+      projectId,
+      sessionId,
+      0,
+      [request.runId],
+      undefined,
+      undefined,
+      session
+    )
+    const output = window.runs.find((run) => run.runId === request.runId)?.outputs[
+      request.outputIndex
+    ]
+    return output?.type === 'display' && Object.hasOwn(output.data, request.mimeType)
+      ? output.data[request.mimeType]
+      : null
+  }
+
   async runEvidence(
     projectId: string,
     sessionId: string,
@@ -309,7 +333,8 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     historySummaryFrameId?: string,
     historyBefore?: NotebookRunCursor,
     historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT,
-    historyByteLimit?: number
+    historyByteLimit?: number,
+    deferImages = false
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const targetedRunRead = includeRunIds.length > 0
     const summaryOnlyRead = historySummaryFrameId !== undefined && !targetedRunRead
@@ -377,10 +402,10 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       ...(!targetedRunRead && !summaryOnlyRead && runWindow.historyPage
         ? { historyPage: runWindow.historyPage }
         : {}),
-      runs: runWindow.runs.map((run) => this.toPublicRunRecord(run, targetedRunRead)),
+      runs: runWindow.runs.map((run) => this.toPublicRunRecord(run, targetedRunRead, deferImages)),
       recentRuns: sparseRunRead
         ? []
-        : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run, false)),
+        : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run, false, deferImages)),
       runStaleness: projectVisibleRunStaleness(dependencyProjection, runWindow.runs),
       environments: this.environmentStatuses(session, terminatedKernelInstances),
       runtimeBindings: this.options.runtimeBindings(session)
@@ -393,13 +418,14 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     historySummaryFrameId: string | undefined,
     historyBefore: NotebookRunCursor | undefined,
     historyLimit: number,
-    historyByteLimit?: number
+    historyByteLimit?: number,
+    deferImages = false
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     const { window } = await this.historyWindow(
       projectId,
       request.sessionId,
-      historyLimit,
+      runIds.length && deferImages ? 0 : historyLimit,
       runIds,
       historySummaryFrameId,
       historyBefore,
@@ -407,7 +433,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       { bytes: historyByteLimit ?? DEFAULT_HISTORY_BYTES, includeRecent: true }
     )
     const root = getNotebookSessionRoot(this.options.storageRoot, projectId, request.sessionId)
-    const runs = window.runs.map((run) => this.toPublicRunRecord(run, runIds.length > 0))
+    const runs = window.runs.map((run) =>
+      this.toPublicRunRecord(run, runIds.length > 0, deferImages)
+    )
     return {
       id: request.sessionId,
       sessionId: request.sessionId,
@@ -424,7 +452,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       ...(window.historySummary ? { historySummary: window.historySummary } : {}),
       ...(window.historyPage ? { historyPage: window.historyPage } : {}),
       runs,
-      recentRuns: runs.slice(-20),
+      recentRuns: runIds.length && deferImages ? [] : runs.slice(-20),
       environments: [],
       runtimeBindings: {}
     }
@@ -575,9 +603,26 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
 
   private toPublicRunRecord(
     run: NotebookRunRecord,
-    includeEnvironmentManifest = false
+    includeEnvironmentManifest = false,
+    deferImages = false
   ): NotebookRunRecord {
     const publicRun = { ...run } as Partial<NotebookRunRecord>
+    if (deferImages) {
+      publicRun.outputs = run.outputs.map((output) => {
+        if (output.type !== 'display') return output
+        const deferredImageTypes = Object.keys(output.data).filter((mime) =>
+          mime.startsWith('image/')
+        )
+        if (!deferredImageTypes.length) return output
+        return {
+          ...output,
+          deferredImageTypes,
+          data: Object.fromEntries(
+            Object.entries(output.data).filter(([mime]) => !mime.startsWith('image/'))
+          )
+        }
+      })
+    }
     delete publicRun.runtimeId
     delete publicRun.helperModules
     delete publicRun.submissionIdentity

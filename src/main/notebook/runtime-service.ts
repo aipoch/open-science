@@ -113,6 +113,7 @@ import type {
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookBackgroundTaskSnapshot,
+  NotebookRunFigureRequest,
   NotebookRunEvidenceRequest,
   NotebookRunEvidenceSnapshot,
   NotebookSessionRequest,
@@ -3088,6 +3089,26 @@ class NotebookRuntimeService {
     )
   }
 
+  async runFigure(request: NotebookRunFigureRequest): Promise<string | null> {
+    if (
+      !request.runId ||
+      !Number.isSafeInteger(request.outputIndex) ||
+      request.outputIndex < 0 ||
+      typeof request.mimeType !== 'string' ||
+      !request.mimeType.startsWith('image/')
+    )
+      return null
+    return this.readHistory(request, async (projectId) => {
+      const session = await this.sessionForHistoryRead(request, projectId)
+      return this.sessionReadModel.runFigure(
+        session?.projectId ?? projectId,
+        session?.sessionId ?? request.sessionId,
+        request,
+        session
+      )
+    })
+  }
+
   async runEvidence(
     request: NotebookRunEvidenceRequest
   ): Promise<NotebookRunEvidenceSnapshot | null> {
@@ -3151,7 +3172,8 @@ class NotebookRuntimeService {
           request.historySummaryFrameId,
           request.historyBefore,
           historyLimit,
-          historyByteLimit
+          historyByteLimit,
+          request.deferImages
         )
       }
       return this.sessionReadModel.state(
@@ -3160,7 +3182,8 @@ class NotebookRuntimeService {
         request.historySummaryFrameId,
         request.historyBefore,
         historyLimit,
-        historyByteLimit
+        historyByteLimit,
+        request.deferImages
       )
     })
   }
