@@ -1,4 +1,4 @@
-import type { CloudflareGateway } from '@aipoch/providers/protocol'
+import type { CloudflareGateway } from '@aipoch/providers'
 
 export {
   cloudflareGatewayBase,
@@ -7,7 +7,7 @@ export {
   validCloudflareAccountId,
   validCloudflareGatewayId,
   type CloudflareGateway
-} from '@aipoch/providers/protocol'
+} from '@aipoch/providers'
 
 export const DEFAULT_CLOUDFLARE_GATEWAY: CloudflareGateway = {
   accountId: '',

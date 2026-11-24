@@ -2,7 +2,6 @@ import {
   isLocalProviderPresetId,
   type LocalProviderPresetId
 } from '../../../../shared/local-provider-preset'
-import { cloudflareGatewayAcceptsModel } from '@aipoch/providers/protocol'
 import { PROVIDER_MODEL_LIMIT } from '../../../../shared/configured-provider-model'
 import {
   providerModelFormRow,
@@ -28,6 +27,7 @@ import {
 } from '../../../../shared/codebuddy-subscription'
 import {
   CLOUDFLARE_GATEWAY_MODELS,
+  cloudflareGatewayAcceptsModel,
   manualProviderDefinition,
   manualProviderPresetModels,
   publishedManualProviderContextWindow,

@@ -1,4 +1,3 @@
-import { cloudflareGatewayAcceptsModel } from '@aipoch/providers/protocol'
 import {
   cloudflareGatewayBase,
   cloudflareGatewayProtocol,
@@ -6,6 +5,7 @@ import {
 } from './cloudflare-gateway'
 import {
   CLOUDFLARE_GATEWAY_MODELS,
+  cloudflareGatewayAcceptsModel,
   manualProviderDefaultContextWindow,
   manualProviderDefinition,
   manualProviderPresetModels,

@@ -21,6 +21,17 @@ export type {
 } from './providers/types'
 export { getVendorModelReasoningCapability } from './providers/lookup'
 export {
+  cloudflareGatewayAcceptsModel,
+  cloudflareGatewayBase,
+  cloudflareGatewayProtocol,
+  foundryGatewayBase,
+  parseCloudflareGateway,
+  parseFoundryLocation,
+  validCloudflareAccountId,
+  validCloudflareGatewayId,
+  type CloudflareGateway
+} from './protocols/gateway-endpoints'
+export {
   CLOUDFLARE_GATEWAY_MODELS,
   manualProviderDefaultContextWindow,
   manualProviderDefinition,

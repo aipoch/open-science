@@ -5,7 +5,6 @@ import {
 } from '../../shared/local-provider-preset'
 import { sameManualProviderConnection, usesCloudProviderModels } from '../../shared/manual-provider'
 import { decodeProviderModels } from '../../shared/configured-provider-model'
-import { cloudflareGatewayAcceptsModel } from '@aipoch/providers/protocol'
 import { parseCloudflareGateway, sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
   decodeCatalogParameters,
@@ -28,6 +27,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
 import {
   type ModelProtocol,
+  cloudflareGatewayAcceptsModel,
   isOfficialVendorId,
   manualProviderDefinition,
   resolveManualProviderConnection,

@@ -1,10 +1,11 @@
-import { resolveManualProviderConnection, type OfficialVendorId } from '@aipoch/providers'
 import {
   cloudflareGatewayAcceptsModel,
   cloudflareGatewayBase,
   cloudflareGatewayProtocol,
-  parseCloudflareGateway
-} from '@aipoch/providers/protocol'
+  parseCloudflareGateway,
+  resolveManualProviderConnection,
+  type OfficialVendorId
+} from '@aipoch/providers'
 import { cloudflareGatewayRequestPolicy, foundryRequestPolicy } from '@aipoch/providers/transport'
 import type { ResolvedProvider } from './provider-env'
 
