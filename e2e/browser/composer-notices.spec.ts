@@ -53,7 +53,7 @@ for (const width of [320, 375, 414, 768])
       ).toContain('underline')
       const detailsBox = (await slot.locator('summary').boundingBox())!
       expect(detailsBox.y).toBeLessThan((await feedback.boundingBox())!.y)
-      await expect(slot.locator('summary')).toHaveText('example-model-with-a-long-nameDetails')
+      await expect(slot.locator('summary span[aria-hidden="true"]')).toHaveCount(3)
       await slot.locator('summary').click()
       expect(
         await slot.locator('pre').evaluate((element) => element.clientHeight)
@@ -106,6 +106,10 @@ test('action affordances cover hover, focus, pressed, disabled, loading, error a
     })
   })
   await page.goto('/composer-notices.html?category=configuration')
+  await expect(page.locator('summary')).toContainText('status: 401')
+  await expect(page.locator('summary')).toContainText('provider: Example Provider')
+  await expect(page.locator('summary')).toContainText('model: example-model-with-a-long-name')
+  await expect(page.locator('summary')).not.toContainText('adapterCode')
   const retry = page.getByRole('button', { name: 'Retry', exact: true })
   const resting = await retry.boundingBox()
   await retry.hover()
@@ -119,6 +123,9 @@ test('action affordances cover hover, focus, pressed, disabled, loading, error a
   await expect(page.getByText('Copied', { exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.dataset.copiedDiagnostic)).toContain(
     'request-request-'
+  )
+  expect(await page.evaluate(() => document.documentElement.dataset.copiedDiagnostic)).toContain(
+    'adapterCode: provider'
   )
   for (const state of ['disabled', 'loading']) {
     await page.goto(`/composer-notices.html?category=configuration&state=${state}`)

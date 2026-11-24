@@ -4,7 +4,10 @@ import { pipeline } from 'node:stream/promises'
 import { randomBytes } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
-import { PROVIDER_CONNECTION_FAILED_PREFIX } from '../../shared/failure/messages'
+import {
+  PROVIDER_CONNECTION_FAILED_PREFIX,
+  upstreamHttpErrorPrefix
+} from '../../shared/failure/messages'
 import { observeProviderFailure, safeNetworkErrorCode } from './provider-failure-observation'
 import type {
   ResponsesConnection,
@@ -546,7 +549,9 @@ export class ResponsesToChatCompletionsBridge {
       json(response, providerErrorClientStatus(upstream.status), {
         error: {
           type: 'upstream_error',
-          message,
+          // Codex keeps only the message after retrying 5xx responses. Preserve its source.
+          message:
+            upstream.status >= 500 ? upstreamHttpErrorPrefix(upstream.status) + message : message,
           status: upstream.status
         }
       })
