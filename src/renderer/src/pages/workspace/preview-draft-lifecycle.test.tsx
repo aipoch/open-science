@@ -47,10 +47,10 @@ const file: PreviewFileItem = {
   managedFileId: 'readme',
   selectedVersionId: 'v1',
   sessionId: 'session-1',
-  title: 'README.md',
-  name: 'README.md',
+  title: 'README.txt',
+  name: 'README.txt',
   path: 'upload-version:project/session-1/readme/v1',
-  format: 'markdown'
+  format: 'text'
 }
 
 const editor = (): HTMLTextAreaElement | null => document.body.querySelector('textarea')
@@ -58,7 +58,7 @@ const confirmation = (): HTMLElement | null =>
   document.body.querySelector('[data-testid="discard-preview-changes-confirmation"]')
 
 const startEditing = async (): Promise<void> => {
-  const button = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit README.md"]')
+  const button = document.body.querySelector<HTMLButtonElement>('[aria-label="Edit README.txt"]')
   expect(button).not.toBeNull()
   await act(async () => button!.click())
   expect(editor()?.value).toBe('# Current\n')
@@ -120,7 +120,7 @@ beforeEach(() => {
           projectId,
           fileId: 'readme',
           sessionId: 'session-1',
-          displayName: 'README.md',
+          displayName: 'README.txt',
           headVersionId: 'v1',
           selectedVersionId: 'v1',
           versions: [
@@ -129,10 +129,10 @@ beforeEach(() => {
               source: 'upload',
               fileId: 'readme',
               versionNumber: 1,
-              displayName: 'README.md',
+              displayName: 'README.txt',
               originKind: 'user_upload',
               basedOnVersionId: null,
-              contentType: 'text/markdown',
+              contentType: 'text/plain',
               sizeBytes: 10,
               checksum: '1',
               createdAt: '2026-09-07T00:00:00.000Z'
@@ -227,8 +227,8 @@ describe('preview draft lifecycle', () => {
         ...file,
         id: 'upload:background',
         managedFileId: 'background',
-        title: 'other.md',
-        name: 'other.md',
+        title: 'other.txt',
+        name: 'other.txt',
         projectId
       })
     })

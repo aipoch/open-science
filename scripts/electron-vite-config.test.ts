@@ -220,7 +220,8 @@ describe('DOCX rich-editor codec browser bundle', () => {
     expect(webConfig.resolve?.alias).toMatchObject({
       mammoth: expectedMammothBrowser
     })
-    expect(browserTestConfig.resolve?.alias).toMatchObject({
+    const browserBuild = browserTestConfig({ command: 'build', mode: 'production' })
+    expect(browserBuild.resolve?.alias).toMatchObject({
       mammoth: expectedMammothBrowser
     })
   })

@@ -113,7 +113,8 @@ describe('core Electron production composition', () => {
     ).install()
     const disposed: string[] = []
     const runtime = await compose(dependencies, disposed)
-    expect(native.handlers.size).toBe(34) // 33 production channels plus the independently owned one.
+    expect(native.handlers.has('managed-file-versions:save-binary-edit')).toBe(true)
+    expect(native.handlers.size).toBe(35) // 34 production channels plus the independently owned one.
     const event = { sender: { id: 42 } } as Parameters<Parameters<IpcMain['handle']>[1]>[0]
     const request = { projectId: 'project', fileId: 'file' }
     for (const channel of [

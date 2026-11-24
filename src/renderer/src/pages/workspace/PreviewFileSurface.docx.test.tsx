@@ -142,6 +142,7 @@ describe('PreviewFileSurface DOCX rich-text editing', () => {
   let root: Root
   let currentDocxBytes: Uint8Array
   let inspectMock: ReturnType<typeof vi.fn>
+  let binarySaveStarted: ReturnType<typeof Promise.withResolvers<void>>
   let saveBinaryEditMock: ReturnType<typeof vi.fn>
   let acquireMock: ReturnType<typeof vi.fn>
   let readRangeMock: ReturnType<typeof vi.fn>
@@ -203,11 +204,15 @@ describe('PreviewFileSurface DOCX rich-text editing', () => {
       ok: true,
       value: createDocxInspect()
     })
-    saveBinaryEditMock = vi.fn().mockResolvedValue({
-      ok: true,
-      value: {
-        kind: 'created',
-        version: createDocxVersionSummary('docx-v3', 3, 'docx-v2')
+    binarySaveStarted = Promise.withResolvers<void>()
+    saveBinaryEditMock = vi.fn(async () => {
+      binarySaveStarted.resolve()
+      return {
+        ok: true,
+        value: {
+          kind: 'created',
+          version: createDocxVersionSummary('docx-v3', 3, 'docx-v2')
+        }
       }
     })
     acquireMock = vi.fn().mockImplementation(async () => ({
@@ -382,9 +387,11 @@ describe('PreviewFileSurface DOCX rich-text editing', () => {
 
     await click(findButtonByLabel('Save changes'))
 
-    await waitFor(() => {
-      expect(saveBinaryEditMock).toHaveBeenCalledTimes(1)
+    // Real DOCX export may outlast waitFor's DOM polling timeout on a loaded runner.
+    await act(async () => {
+      await binarySaveStarted.promise
     })
+    expect(saveBinaryEditMock).toHaveBeenCalledTimes(1)
 
     const savedRequest = saveBinaryEditMock.mock.calls[0]?.[0] as {
       source: string

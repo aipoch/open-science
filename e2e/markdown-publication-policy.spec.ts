@@ -202,16 +202,12 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await expect(provenance.getByRole('button', { name: 'Generate script' })).toBeEnabled()
   await provenance.evaluate((element) => element.setAttribute('data-continuously-open', 'true'))
   let editor = preview.getByTestId('markdown-plate-editor')
-  await expect(editor).toContainText('Original result.')
-  await editor.press('ControlOrMeta+a')
-  await editor.press('Backspace')
-  await editor.evaluate((element, content) => {
-    const clipboardData = new DataTransfer()
-    clipboardData.setData('text/plain', content)
-    element.dispatchEvent(
-      new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true })
-    )
-  }, edited)
+  const paragraph = editor.getByText('Original result.', { exact: true })
+  // Select the word being corrected in the rendered paragraph, not the entire rich-text document.
+  await paragraph.dblclick({ position: { x: 4, y: 8 } })
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe('Original')
+  await page.keyboard.insertText('Manually corrected')
+  await expect(editor.getByText('Manually corrected result.', { exact: true })).toBeVisible()
   await preview.getByRole('button', { name: 'Save changes' }).click()
   await expect(preview.getByRole('button', { name: 'Save changes' })).toBeDisabled()
   await expect.poll(async () => (await inspect()).selectedVersion?.versionNumber).toBe(2)
@@ -447,7 +443,9 @@ test('legacy Markdown v3 opens from an old message card as current after restart
     await page.screenshot({ path: testInfo.outputPath('legacy-opened-v3.png') })
     await preview.getByRole('button', { name: 'Previous file version' }).click()
     await expect(preview.getByText('Manually corrected result.', { exact: true })).toBeVisible()
-    await preview.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
+    await expect(preview.getByRole('button', { name: 'Save changes' })).toHaveText(
+      'Restore as new version'
+    )
     await preview.getByRole('button', { name: 'Save changes' }).click()
     await expect(page.getByTestId('artifact-provenance')).toContainText('v4 contains manual edits')
     await page.screenshot({ path: testInfo.outputPath('legacy-restored-v4.png') })

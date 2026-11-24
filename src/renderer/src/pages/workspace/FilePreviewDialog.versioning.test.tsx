@@ -121,6 +121,14 @@ const StoreConnectedDialog = (): React.JSX.Element => {
 let container: HTMLDivElement
 let root: Root
 
+const expectMarkdownVersion = async (versionId: string): Promise<void> => {
+  await vi.waitFor(() => {
+    expect(
+      document.body.querySelector('[data-testid="markdown-plate-editor"] h1')?.textContent
+    ).toBe(versionId)
+  })
+}
+
 const click = async (selector: string): Promise<void> => {
   const element = document.body.querySelector<HTMLElement>(selector)
   if (!element) throw new Error(`element not found: ${selector}`)
@@ -225,9 +233,7 @@ describe('FilePreviewDialog managed version transitions', () => {
       await Promise.resolve()
     })
 
-    expect(document.body.querySelector('[data-testid="preview-content"]')?.textContent).toContain(
-      'upload-v2'
-    )
+    await expectMarkdownVersion('upload-v2')
     expect(
       document.body.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
     ).toBe('v2')
@@ -245,9 +251,7 @@ describe('FilePreviewDialog managed version transitions', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(document.body.querySelector('[data-testid="preview-content"]')?.textContent).toContain(
-      'upload-v2'
-    )
+    await expectMarkdownVersion('upload-v2')
 
     await act(async () => {
       usePreviewWorkbenchStore.getState().openFileDialog(versionThreeItem, true)
@@ -258,9 +262,7 @@ describe('FilePreviewDialog managed version transitions', () => {
     expect(usePreviewWorkbenchStore.getState().fileDialogItem).toMatchObject({
       selectedVersionId: 'upload-v3'
     })
-    expect(document.body.querySelector('[data-testid="preview-content"]')?.textContent).toContain(
-      'upload-v3'
-    )
+    await expectMarkdownVersion('upload-v3')
     expect(
       document.body.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
     ).toBe('v3')
