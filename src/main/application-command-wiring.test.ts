@@ -604,7 +604,7 @@ describe('production application command wiring', () => {
       "taskNotebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>"
     )
     expect(compact(webServiceSource)).toContain(
-      '{ commands: applicationCommands.task, agent: taskAgent, notebook: taskNotebook, notebookEnvironment: taskNotebookEnvironment, controls: taskControls, computePreferences, detectActiveSessions }'
+      '{ commands: applicationCommands.task, agent: taskAgent, notebook: taskNotebook, notebookEnvironment: taskNotebookEnvironment, notebookRuntimes: taskNotebookRuntimes, controls: taskControls, computePreferences, detectActiveSessions }'
     )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
@@ -790,6 +790,7 @@ async function startDesktopTestRuntime(
     settingsService: {},
     settingsRepository: { getSettings: async () => ({}) },
     sessionPackageDesktop: {},
+    notebookEnvironmentLifecycle: { managedSetup: {} },
     computeIpcModule: { handlers: {} },
     createDeferredRecovery: () => ({}),
     ...owners

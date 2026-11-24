@@ -51,10 +51,13 @@ const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {} as const satisfies Record<
 // does not recognize. T1b must make each omission explicit.
 const GENERATED_SOURCE_OMISSIONS = [
   'acp.continueNotebookExecution',
+  'update.openProcessManager',
   'previewResources.cancelResearchVideoExport',
   'previewResources.exportResearchVideo',
   'previewResources.researchVideoExportProgress',
+  'researchVideo.activeSessions',
   'researchVideo.cancel',
+  'researchVideo.onActivityChanged',
   'researchVideo.remove',
   'researchVideo.start',
   'researchVideo.status',
@@ -186,6 +189,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'specialist.retryHandoff',
   'specialist.savePackageReport',
   'specialist.selectPackage',
+  'update.setAutomaticDownloads',
   'uploads.onTransferProgress',
   'window.announceWindowFindAppearance',
   'window.announceWindowFindContentReady',

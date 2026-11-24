@@ -113,10 +113,7 @@ const executeToolSchema = {
     .optional()
     .describe('Return after durable admission; keep this Python/R Run active in the Session.'),
   cellId: z.string().min(1).optional(),
-  language: z
-    .enum(['python', 'r'])
-    .optional()
-    .describe('Omitting language selects Python. Set language to "r" for R code.'),
+  language: z.enum(['python', 'r']).optional().describe('Defaults to Python. Use "r" for R.'),
   kernelSkillIds: z
     .array(z.string().min(1).max(128))
     .optional()
@@ -290,7 +287,7 @@ const LIST_NOTEBOOK_RUNTIMES_DOC = [
 
 const BIND_RUNTIME_DOC = [
   'Bind one enabled runtimeId per language for this session. Disabled/unknown IDs are refused.',
-  'Use notebook_execute directly when the installed, enabled app-managed default meets the request. If explicit selection is needed, bind when no binding exists; otherwise switch.'
+  'Use notebook_execute with the installed, enabled app-managed default when suitable. For explicit selection, bind if unbound or switch the existing binding.'
 ].join('\n')
 
 const SWITCH_RUNTIME_DOC = [

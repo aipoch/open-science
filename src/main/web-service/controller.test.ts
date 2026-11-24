@@ -15,6 +15,7 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
 
 import type {
   FailTaskSessionRunRequest,
+  LoadSessionRequest,
   PersistedChatSession,
   SettleTaskSessionCompletionRequest,
   StageTaskSessionCompletionRequest
@@ -170,11 +171,11 @@ describe('createWebServiceController', () => {
       localWeb: { commandNames: () => [], invoke: vi.fn() },
       remoteWeb: { commandNames: () => [], rejectedCommandNames: () => [], invoke: vi.fn() },
       task: {
-        commandNames: () => ['sessions:load-all'],
+        commandNames: () => ['sessions:load-one'],
         invoke: vi.fn(async (name: string) => {
-          if (name !== 'sessions:load-all') throw new Error(`Unexpected Task command: ${name}`)
+          if (name !== 'sessions:load-one') throw new Error(`Unexpected Task command: ${name}`)
           await sessionLoadGate
-          return { sessions: [], manifest: { version: 1 } }
+          return undefined
         })
       }
     } satisfies Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
@@ -505,6 +506,10 @@ describe('createWebServiceController', () => {
             if (name === 'projects:list') return [project]
             if (name === 'settings:get-settings') return taskSettings
             if (name === 'sessions:load-all') return { sessions, manifest: { version: 1 } }
+            if (name === 'sessions:load-one') {
+              const { sessionId } = invocation.args[0] as LoadSessionRequest
+              return sessions.find((session) => session.id === sessionId)
+            }
             if (name === 'sessions:save-session') {
               const durable = invocation.args[0] as PersistedChatSession
               sessions.splice(0, sessions.length, durable)

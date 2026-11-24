@@ -208,7 +208,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: default runtime advice and no-retry guidance for declines and stops only change
         // tool text. RPC dispatch, input schemas and Auto authorization remain unchanged.
         'notebook/mcp-server.ts':
-          '8fdc3316b386978fb8a7a92ba00bc9a874b5bc48e5083d29de4394b624822c5e',
+          'b73ee43c7d0915c717590aff6b16d08874208c3128413f59d3bcb3fc42acd465',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
