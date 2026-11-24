@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { createHash } from 'node:crypto'
-import { closeSync, openSync, readSync, statSync } from 'node:fs'
+import { createHash, createPublicKey, verify } from 'node:crypto'
+import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
@@ -66,6 +66,76 @@ export function validateUpdateFeed(
     }
     if (!metadataOnly && artifactHash(join(dir, file.url), 'sha512', 'base64') !== file.sha512) {
       throw new Error(`Feed artifact SHA512 mismatch: ${file.url}`)
+    }
+    if (file.sparklePublicKey !== undefined || file.sparkleDelta !== undefined) {
+      if (
+        !/-mac-(arm64|x64)\.zip$/.test(file.url) ||
+        !/^[A-Za-z0-9+/]{43}=$/.test(file.sparklePublicKey ?? '')
+      )
+        throw new Error('Invalid Sparkle-capable ZIP')
+      const patch = file.sparkleDelta
+      if (patch !== undefined) {
+        if (
+          !patch ||
+          typeof patch.from !== 'string' ||
+          !/^\d+\.\d+\.\d+$/.test(patch.from) ||
+          !Number.isSafeInteger(patch.size) ||
+          patch.size <= 0 ||
+          patch.size >= file.size ||
+          patch.size > 64 * 1024 ** 2 ||
+          ![patch.sourceBuild, patch.targetBuild].every(
+            (s) => typeof s === 'string' && /^\d+(?:\.\d+){0,3}$/.test(s)
+          ) ||
+          ![patch.signature, patch.sha512, patch.zipSignature, patch.pairSignature].every(
+            (s) => typeof s === 'string' && /^[A-Za-z0-9+/]{86}==$/.test(s)
+          )
+        )
+          throw new Error('Invalid Sparkle patch metadata')
+        const path = join(dir, file.url + '.from-' + patch.from + '.delta')
+        if (!statSync(path).isFile() || statSync(path).size !== patch.size)
+          throw new Error('Sparkle patch size mismatch')
+        if (!metadataOnly) {
+          const key = createPublicKey({
+            format: 'jwk',
+            key: {
+              kty: 'OKP',
+              crv: 'Ed25519',
+              x: Buffer.from(file.sparklePublicKey, 'base64').toString('base64url')
+            }
+          })
+          const arch = file.url.endsWith('-arm64.zip') ? 'arm64' : 'x64'
+          const descriptor = JSON.stringify([
+            patch.from,
+            version,
+            arch,
+            patch.sourceBuild,
+            patch.targetBuild,
+            file.sha512,
+            patch.sha512
+          ])
+          if (
+            !verify(
+              null,
+              Buffer.from(descriptor),
+              key,
+              Buffer.from(patch.pairSignature, 'base64')
+            ) ||
+            !verify(
+              null,
+              readFileSync(join(dir, file.url)),
+              key,
+              Buffer.from(patch.zipSignature, 'base64')
+            )
+          )
+            throw new Error('Sparkle version pair or ZIP signature mismatch')
+          const bytes = readFileSync(path)
+          if (
+            createHash('sha512').update(bytes).digest('base64') !== patch.sha512 ||
+            !verify(null, bytes, key, Buffer.from(patch.signature, 'base64'))
+          )
+            throw new Error('Sparkle patch checksum or signature mismatch')
+        }
+      }
     }
   }
   if (feed.path !== undefined || feed.sha512 !== undefined) {

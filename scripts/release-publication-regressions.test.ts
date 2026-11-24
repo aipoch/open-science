@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
   copyFileSync,
@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gunzipSync, gzipSync } from 'node:zlib'
 
-import { load } from 'js-yaml'
+import { dump, load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
 
 import { buildManifest } from './generate-version-manifest.mjs'
@@ -119,6 +119,44 @@ const writeFeed = (dir: string, arch: string, version: string): void => {
 }
 const merge = (dir: string): ReturnType<typeof spawnSync> =>
   spawnSync(process.execPath, [join(repo, 'scripts/merge-mac-feed.mjs'), dir], { encoding: 'utf8' })
+
+it('preserves valid signed Sparkle patches and refuses altered bytes before release', () => {
+  const dir = temporaryDirectory()
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+  const bytes = Buffer.from('patch')
+  let lastPatch = ''
+  for (const arch of ['arm64', 'x64']) {
+    writeFeed(dir, arch, '0.27.0')
+    const feedPath = join(dir, arch + '-mac.yml')
+    const feed = load(readFileSync(feedPath, 'utf8')) as {
+      files: Array<Record<string, unknown> & { url: string }>
+    }
+    const file = feed.files[0]
+    file.sparklePublicKey = Buffer.from(
+      publicKey.export({ format: 'jwk' }).x!,
+      'base64url'
+    ).toString('base64')
+    const sha512 = createHash('sha512').update(bytes).digest('base64')
+    const pair = JSON.stringify(['0.26.0', '0.27.0', arch, '26', '27', file.sha512, sha512])
+    file.sparkleDelta = {
+      from: '0.26.0',
+      sourceBuild: '26',
+      targetBuild: '27',
+      zipSignature: sign(null, readFileSync(join(dir, file.url)), privateKey).toString('base64'),
+      pairSignature: sign(null, Buffer.from(pair), privateKey).toString('base64'),
+      size: bytes.length,
+      signature: sign(null, bytes, privateKey).toString('base64'),
+      sha512
+    }
+    lastPatch = join(dir, file.url + '.from-0.26.0.delta')
+    writeFileSync(lastPatch, bytes)
+    writeFileSync(join(dir, file.url + '.blockmap'), 'fixture')
+    writeFileSync(feedPath, dump(feed))
+  }
+  expect(merge(dir).status).toBe(0)
+  writeFileSync(lastPatch, 'other')
+  expect(String(merge(dir).stderr)).toContain('Sparkle patch checksum or signature mismatch')
+})
 
 it('rejects macOS feeds from different release versions', () => {
   const dir = temporaryDirectory()

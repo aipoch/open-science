@@ -117,6 +117,35 @@ if (!promote) {
       if (release === version && !macFeed.files.some((file) => file.url === path)) {
         throw new Error(`Missing macOS feed entry: ${path}`)
       }
+      const patch =
+        release === version && macFeed.files.find((file) => file.url === path)?.sparkleDelta
+      if (patch) {
+        if (patch.from !== previous)
+          throw new Error('Sparkle patch source is not the preceding stable release')
+        const patchUrl = new URL(
+          prefix + '/' + path + '.from-' + previous + '.delta',
+          process.env.CDN_BASE_URL + '/'
+        )
+        const bytes = execFileSync(
+          'curl',
+          [
+            '--fail',
+            '--silent',
+            '--show-error',
+            '--retry',
+            '2',
+            '--max-time',
+            '120',
+            patchUrl.href
+          ],
+          { maxBuffer: patch.size + 1 }
+        )
+        if (
+          bytes.length !== patch.size ||
+          createHash('sha512').update(bytes).digest('base64') !== patch.sha512
+        )
+          throw new Error('CDN Sparkle patch differs from the release asset')
+      }
       const url = new URL(`${prefix}/${path}.blockmap`, process.env.CDN_BASE_URL + '/')
       const bytes = execFileSync(
         'curl',

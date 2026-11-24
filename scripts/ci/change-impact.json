@@ -131,6 +131,7 @@
         "build/node-runtime.json",
         "build/macos-service-launcher.c",
         "build/mac-open-after-update.m",
+        "build/mac-sparkle/**",
         "build/mac-quit-handoff.cjs",
         "build/mac-update-network.c"
       ],

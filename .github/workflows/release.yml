@@ -275,7 +275,7 @@ jobs:
         working-directory: artifacts
         run: |
           shopt -s nullglob
-          files=(*.dmg *.zip *.exe *.wex *.AppImage *.deb *.rpm *.tar.gz)
+          files=(*.dmg *.zip *.exe *.wex *.delta *.AppImage *.deb *.rpm *.tar.gz)
           if [ ${#files[@]} -gt 0 ]; then
             sha256sum "${files[@]}" > SHA256SUMS.txt
             cat SHA256SUMS.txt
@@ -293,6 +293,7 @@ jobs:
             artifacts/*.dmg
             artifacts/*.zip
             artifacts/*.exe
+            artifacts/*.delta
             artifacts/*.wex
             artifacts/*.AppImage
             artifacts/*.deb
@@ -326,6 +327,7 @@ jobs:
             artifacts/*.dmg
             artifacts/*.zip
             artifacts/*.exe
+            artifacts/*.delta
             artifacts/*.wex
             artifacts/*.AppImage
             artifacts/*.deb

@@ -222,6 +222,24 @@ SHA-512 and publisher. Cancel stops reconstruction. Missing patches, unsupported
 insufficient space use the existing download path. Release owners can omit future sidecars by
 clearing the Actions variable.
 
+Stable macOS releases always publish the final stapled ZIP and its blockmap for arm64 and x64.
+The mirror reads the current and preceding stable blockmaps from the CDN before promoting the feed.
+PR Gate runs the ZIP differential smoke with a real MacUpdater on macOS.
+
+After installed-package qualification, release owners can enable standard Sparkle updates by setting
+the repository Actions variable `MAC_SPARKLE_PUBLIC_KEY` to the base64 Ed25519 public key and the
+Actions secret `MAC_SPARKLE_PRIVATE_KEY` to its Sparkle private key. The signed bridge release embeds
+the public key and framework. Subsequent releases generate a patch per eligible architecture from
+the previous stable release with the same key. Release checks the reconstructed app's signature,
+notarization ticket and code directory hash. Clearing the public variable returns future releases
+to ZIP/blockmap delivery. A key rotation uses another bridge release.
+
+The desktop caches one verified patch per installation under
+`~/Library/Caches/com.aipoch.open-science.sparkle/`. At handoff it records the attempted digest
+and removes the consumed patch. An interrupted or rejected handoff uses the ZIP path on the next
+download. Explicit restart restores the stopped service and rechecks installation admission before
+retrying with a ZIP. Ordinary quit leaves that download for the next launch.
+
 Process Lifecycle runs its fixed source process collection daily on
 macOS, Linux and Windows at **19:23 UTC** (02:23 the next day in Asia/Saigon), even when the
 default-branch SHA is unchanged. Its manual `core`, `detector` and `update-occupancy` modes are focused no-publish

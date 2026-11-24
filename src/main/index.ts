@@ -1,3 +1,4 @@
+import { netFetchStandard } from './network-fetch-electron'
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
 import { readServiceLifetime } from './local-service-lifetime'
 import { assertDesktopRuntimeRestartAllowed } from './desktop-runtime-recovery'
@@ -1914,7 +1915,16 @@ async function startDesktop(): Promise<void> {
         : linuxDownloads?.then((policy) => policy?.preference)
   const macBundle = dirname(dirname(dirname(process.execPath)))
   const macCache = join(app.getPath('home'), 'Library', 'Caches')
+  const macSparkle =
+    desktopStable && process.platform === 'darwin' && !usesSupervisedInstall('darwin', 'update.zip')
+      ? (await import('./update/mac-sparkle')).loadMacSparkle(
+          process.resourcesPath,
+          macCache,
+          netFetchStandard
+        )
+      : undefined
   const update = createUpdateStrategy(process.platform, {
+    macSparkle,
     downloadPreference: backgroundDownloads,
     translate,
     getStartupOptions: () => client!.runtimeInfo().startupOptions,
@@ -1970,7 +1980,7 @@ async function startDesktop(): Promise<void> {
           canDownload: async (bytes) => {
             if (linuxDownloads) return (await linuxDownloads)?.canDownload(bytes) ?? false
             return process.platform === 'darwin'
-              ? canDownloadMacUpdate(macBundle, macCache, bytes)
+              ? canDownloadMacUpdate(macBundle, macCache, macSparkle?.artifact?.zipSize ?? bytes)
               : process.env.LOCALAPPDATA
                 ? canDownloadWindowsUpdate(bytes, process.env.LOCALAPPDATA)
                 : false
@@ -2228,14 +2238,21 @@ async function startDesktop(): Promise<void> {
         !updateCommitted &&
         !work?.preserveService
       ) {
-        const stage = await planMacUpdateOnQuit(update, nativeUpdater, macBundle, macCache, () =>
-          inspectInstallationAvailability(
-            {
-              installationRoot: installationRootForEntry(backendPaths.entry),
-              allowedProcessIds: allowedInstallationProcessIds
-            },
-            AbortSignal.timeout(10_000)
-          )
+        const patch = macSparkle?.isReady(update.getStatus().latest)
+        const stage = await planMacUpdateOnQuit(
+          update,
+          nativeUpdater,
+          macBundle,
+          macCache,
+          () =>
+            inspectInstallationAvailability(
+              {
+                installationRoot: installationRootForEntry(backendPaths.entry),
+                allowedProcessIds: allowedInstallationProcessIds
+              },
+              AbortSignal.timeout(10_000)
+            ),
+          macSparkle
         )
         if (stage) {
           const targetVersion = update.getStatus().latest
@@ -2244,7 +2261,13 @@ async function startDesktop(): Promise<void> {
             timeoutMs: MAC_NATIVE_PREPARATION_TIMEOUT_MS + MAC_HANDOFF_ACK_TIMEOUT_MS,
             run: async () => {
               await stage()
-              if (!(await macQuitHandoff('watch', app.getVersion(), [macCache, targetVersion])))
+              if (
+                !(await macQuitHandoff('watch', app.getVersion(), [
+                  macCache,
+                  targetVersion,
+                  ...(patch ? ['sparkle'] : [])
+                ]))
+              )
                 bootstrapLog.warn('macOS update handoff observer unavailable')
             }
           }

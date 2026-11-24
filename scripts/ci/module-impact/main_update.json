@@ -2,6 +2,10 @@
   "ownerPaths": [
     "build/mac-open-after-update.m",
     "build/mac-quit-handoff.cjs",
+    "build/mac-sparkle/driver.m",
+    "build/mac-sparkle/release.mjs",
+    "build/mac-sparkle/sdk.sh",
+    "src/main/update/mac-sparkle.ts",
     "build/mac-update-network.c",
     "src/main/update/linux-background-download.test.ts",
     "src/main/update/mac-background-update.test.ts",

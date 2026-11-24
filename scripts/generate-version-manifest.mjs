@@ -46,6 +46,7 @@ const IGNORED = [
   /^version\.json$/,
   /\.ya?ml$/,
   /\.blockmap$/,
+  /-mac-(arm64|x64)\.zip\.from-\d+\.\d+\.\d+\.delta$/,
   /\.wex$/
 ]
 
