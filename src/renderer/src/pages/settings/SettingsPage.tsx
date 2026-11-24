@@ -1,10 +1,10 @@
 import { sameLocalProviderCredentialScope } from '../../../../shared/local-provider-preset'
 import {
   sameManualProviderConnection,
-  sameManualProviderCredentialScope
+  usesCloudProviderModels
 } from '../../../../shared/manual-provider'
 import { sameCloudflareGateway } from '../../../../shared/cloudflare-gateway'
-import { usesCloudProviderModels } from '../../../../shared/manual-provider'
+import { sameManualProviderCredentialScope } from '@aipoch/providers'
 import { modelCatalogErrorMessage } from './model-catalog-feedback'
 import type { RefreshProviderModelsResult } from '../../../../shared/settings'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'

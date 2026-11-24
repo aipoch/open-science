@@ -20,6 +20,16 @@ export type {
   ImageGenerationProviderDefinition
 } from './providers/types'
 export { getVendorModelReasoningCapability } from './providers/lookup'
+export {
+  CLOUDFLARE_GATEWAY_MODELS,
+  manualProviderDefaultContextWindow,
+  manualProviderDefinition,
+  manualProviderPresetModels,
+  publishedManualProviderContextWindow,
+  resolveManualProviderConnection,
+  sameManualProviderCredentialScope,
+  type ManualProviderConnection
+} from './providers/manual-connections'
 export type {
   ModelProtocol,
   ModelReasoningEffort,

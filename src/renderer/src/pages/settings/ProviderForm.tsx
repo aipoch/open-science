@@ -1,11 +1,4 @@
 import { sameLocalProviderCredentialScope } from '../../../../shared/local-provider-preset'
-import {
-  manualProviderDefinition,
-  manualProviderPresetModels,
-  publishedManualProviderContextWindow,
-  resolveManualProviderConnection,
-  sameManualProviderCredentialScope
-} from '../../../../shared/manual-provider'
 import { DEFAULT_CLOUDFLARE_GATEWAY } from '../../../../shared/cloudflare-gateway'
 import { ErrorNotice } from '@/components/error-notice'
 import {
@@ -13,6 +6,11 @@ import {
   resolveOfficialModelCatalog
 } from '../../../../shared/provider-model-catalog'
 import {
+  manualProviderDefinition,
+  manualProviderPresetModels,
+  publishedManualProviderContextWindow,
+  resolveManualProviderConnection,
+  sameManualProviderCredentialScope,
   resolveVendorModelCatalog,
   type CatalogModel,
   type CatalogSnapshot,

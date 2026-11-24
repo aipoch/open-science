@@ -1,18 +1,16 @@
 import {
-  manualProviderDefaultContextWindow,
-  manualProviderDefinition,
-  manualProviderPresetModels,
-  publishedManualProviderContextWindow,
-  resolveManualProviderConnection,
-  type ManualProviderConnection
-} from './manual-provider'
-import {
-  CLOUDFLARE_GATEWAY_MODELS,
   cloudflareGatewayBase,
   cloudflareGatewayProtocol,
   type CloudflareGateway
 } from './cloudflare-gateway'
 import {
+  CLOUDFLARE_GATEWAY_MODELS,
+  manualProviderDefaultContextWindow,
+  manualProviderDefinition,
+  manualProviderPresetModels,
+  publishedManualProviderContextWindow,
+  resolveManualProviderConnection,
+  type ManualProviderConnection,
   getOfficialVendor,
   resolveVendorBaseUrl,
   resolveVendorModelCatalog,

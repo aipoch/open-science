@@ -1,9 +1,5 @@
 import { decodeProviderModels } from '../../shared/configured-provider-model'
-import {
-  manualProviderDefinition,
-  resolveManualProviderConnection,
-  usesCloudProviderModels
-} from '../../shared/manual-provider'
+import { usesCloudProviderModels } from '../../shared/manual-provider'
 import {
   decodeLocalProviderModels,
   isLocalProviderPresetId
@@ -37,6 +33,8 @@ import type { PackageMirror } from '../../shared/mirror'
 import {
   type ModelProtocol,
   type ModelReasoningEffort,
+  manualProviderDefinition,
+  resolveManualProviderConnection,
   isOfficialVendorId
 } from '@aipoch/providers'
 import type { LabModelCapabilities } from '../../shared/lab'

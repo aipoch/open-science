@@ -1,4 +1,3 @@
-import { manualProviderDefinition } from '../../shared/manual-provider'
 import { resolveCloudflareGateway, resolveManualProviderTarget } from './manual-provider-target'
 import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
@@ -12,6 +11,7 @@ import {
   type CatalogModel,
   type OfficialVendorId,
   getOfficialVendor,
+  manualProviderDefinition,
   isVendorModelMultimodal,
   resolveVendorBaseUrl,
   resolveVendorChatCompletionsBaseUrl,

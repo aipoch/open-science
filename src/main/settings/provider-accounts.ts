@@ -3,13 +3,7 @@ import {
   isLocalProviderPresetId,
   sameLocalProviderCredentialScope
 } from '../../shared/local-provider-preset'
-import {
-  manualProviderDefinition,
-  resolveManualProviderConnection,
-  sameManualProviderConnection,
-  sameManualProviderCredentialScope,
-  usesCloudProviderModels
-} from '../../shared/manual-provider'
+import { sameManualProviderConnection, usesCloudProviderModels } from '../../shared/manual-provider'
 import { decodeProviderModels } from '../../shared/configured-provider-model'
 import { parseCloudflareGateway, sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
@@ -31,7 +25,13 @@ import { runCodeBuddyAuth } from './codebuddy-auth'
 import { isDeepStrictEqual } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
-import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
+import {
+  type ModelProtocol,
+  isOfficialVendorId,
+  manualProviderDefinition,
+  resolveManualProviderConnection,
+  sameManualProviderCredentialScope
+} from '@aipoch/providers'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
 import {
   customProviderRequiresKey,

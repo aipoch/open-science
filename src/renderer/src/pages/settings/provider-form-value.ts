@@ -9,16 +9,10 @@ import {
   type ProviderModelFormRow
 } from './provider-model-form'
 import {
-  manualProviderDefinition,
-  manualProviderPresetModels,
-  publishedManualProviderContextWindow,
-  resolveManualProviderConnection,
   supportsManualProviderContextWindow,
-  usesCloudProviderModels,
-  type ManualProviderConnection
+  usesCloudProviderModels
 } from '../../../../shared/manual-provider'
 import {
-  CLOUDFLARE_GATEWAY_MODELS,
   DEFAULT_CLOUDFLARE_GATEWAY,
   cloudflareGatewayProtocol,
   validCloudflareAccountId,
@@ -32,6 +26,12 @@ import {
   type CodeBuddySite
 } from '../../../../shared/codebuddy-subscription'
 import {
+  CLOUDFLARE_GATEWAY_MODELS,
+  manualProviderDefinition,
+  manualProviderPresetModels,
+  publishedManualProviderContextWindow,
+  resolveManualProviderConnection,
+  type ManualProviderConnection,
   type CatalogSnapshot,
   type ModelProtocol,
   OFFICIAL_VENDORS,

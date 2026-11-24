@@ -1,8 +1,11 @@
-import { manualProviderDefinition } from '../../shared/manual-provider'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { randomUUID } from 'node:crypto'
 
-import { type ModelProtocol, usesVendorMessagesApiKeyHeader } from '@aipoch/providers'
+import {
+  type ModelProtocol,
+  manualProviderDefinition,
+  usesVendorMessagesApiKeyHeader
+} from '@aipoch/providers'
 
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
 import { DEFAULT_ENDPOINT_ORDER, preferredEndpoint } from '../../shared/settings-runtime'
