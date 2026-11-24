@@ -19,6 +19,7 @@ import { PdfTranslationExport } from './PdfTranslationExport'
 import {
   renderIndexedFigureLinks,
   renderPdfNativeLinks,
+  type FigureLinkAnchor,
   type PdfLinkDestination
 } from './pdf-native-links'
 import { PdfSearchTextCache } from './pdf-search-text-cache'
@@ -154,6 +155,7 @@ import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useNearViewport } from '../useNearViewport'
 import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
+import { PdfFigurePreviewPanel } from './PdfFigurePreviewPanel'
 import { PdfFiguresView } from './PdfFiguresView'
 import { buildPdfFigureIndex } from './pdf-figure-index'
 import { createPdfPagePreviewCache, loadPdfFigurePreview } from './pdf-figure-selections'
@@ -1983,7 +1985,11 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   onSelectBookmark?: (id?: string) => void
   onTextLayerRendered?: () => void
   onPageReady: () => void
-  onNavigate: (destination: PdfLinkDestination, reference?: string) => void
+  onNavigate: (
+    destination: PdfLinkDestination,
+    reference?: string,
+    anchor?: FigureLinkAnchor
+  ) => void
   linksEnabled: boolean
   figureIndex?: ReadonlyMap<string, PdfLinkDestination>
   regionSelectionIntent?: PdfRegionIntent
@@ -2723,7 +2729,10 @@ const PdfReaderContent = ({
     reference: string
     destination: PdfLinkDestination
     figureDestination?: PdfLinkDestination
+    anchor: FigureLinkAnchor | undefined
+    session: number
   }>()
+  const figurePreviewSession = useRef(0)
   const figurePreviewRequest = useRef<AbortController | null>(null)
   const figurePreviewTrigger = useRef<HTMLElement | null>(null)
   const dismissFigurePreview = useCallback(() => {
@@ -3514,7 +3523,7 @@ const PdfReaderContent = ({
     [navigateToLink, viewPageForSource]
   )
   const previewOriginalLink = useCallback(
-    (destination: PdfLinkDestination, reference?: string): void => {
+    (destination: PdfLinkDestination, reference?: string, anchor?: FigureLinkAnchor): void => {
       figurePreviewRequest.current?.abort()
       setFigurePreview(undefined)
       if (!reference || !pagePreviewCache || presentation === 'search') {
@@ -3524,7 +3533,8 @@ const PdfReaderContent = ({
       const controller = new AbortController()
       figurePreviewRequest.current = controller
       const { signal } = controller
-      const trigger = window.document.activeElement
+      const session = ++figurePreviewSession.current
+      const trigger = anchor?.trigger ?? window.document.activeElement
       const show = (
         image: string,
         caption?: string,
@@ -3533,6 +3543,8 @@ const PdfReaderContent = ({
         if (signal.aborted) return
         figurePreviewTrigger.current = trigger instanceof HTMLElement ? trigger : null
         setFigurePreview({
+          anchor,
+          session,
           image,
           caption,
           figureDestination,
@@ -4998,11 +5010,11 @@ const PdfReaderContent = ({
                   ref={scrollRef}
                   data-pdf-cursor-mode={cursorMode}
                   onWheelCapture={() => {
-                    figurePreviewRequest.current?.abort()
+                    if (!figurePreview) figurePreviewRequest.current?.abort()
                     pendingLinkRef.current = undefined
                   }}
                   onPointerDownCapture={() => {
-                    figurePreviewRequest.current?.abort()
+                    if (!figurePreview) figurePreviewRequest.current?.abort()
                     pendingLinkRef.current = undefined
                   }}
                   onKeyDownCapture={(event) => {
@@ -5019,7 +5031,7 @@ const PdfReaderContent = ({
                         ' '
                       ].includes(event.key)
                     ) {
-                      figurePreviewRequest.current?.abort()
+                      if (!figurePreview) figurePreviewRequest.current?.abort()
                       pendingLinkRef.current = undefined
                     }
                   }}
@@ -5229,49 +5241,23 @@ const PdfReaderContent = ({
                   ) : null}
                 </div>
                 {figurePreview ? (
-                  <section
-                    role="region"
-                    aria-label={figurePreview.reference}
-                    data-pdf-figure-preview
-                    className="absolute right-3 top-3 z-30 flex max-h-[70%] w-[28rem] max-w-[calc(100%_-_1.5rem)] flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-card"
-                  >
-                    <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-                      <h3 className="min-w-0 flex-1 break-words text-sm font-medium">
-                        {figurePreview.reference}
-                      </h3>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          navigateOriginalLink(
-                            figurePreview.figureDestination ?? figurePreview.destination,
-                            !figurePreview.figureDestination
-                          )
-                        }
-                      >
-                        {t('Show in PDF')}
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={dismissFigurePreview}>
-                        {t('Close')}
-                      </Button>
-                    </header>
-                    <div className="min-h-0 overflow-auto overscroll-contain p-3">
-                      <img
-                        src={figurePreview.image}
-                        alt={
-                          figurePreview.caption
-                            ? figurePreview.reference
-                            : t('Page {{page}}', { page: figurePreview.destination.pageNumber })
-                        }
-                        className="mx-auto max-h-80 max-w-full rounded-md object-contain"
-                        onError={() => navigateOriginalLink(figurePreview.destination)}
-                      />
-                      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6">
-                        {figurePreview.caption ??
-                          t('Page {{page}}', { page: figurePreview.destination.pageNumber })}
-                      </p>
-                    </div>
-                  </section>
+                  <PdfFigurePreviewPanel
+                    key={figurePreview.session}
+                    anchor={figurePreview.anchor}
+                    reference={figurePreview.reference}
+                    page={figurePreview.destination.pageNumber}
+                    image={figurePreview.image}
+                    caption={figurePreview.caption}
+                    pageCache={pagePreviewCache}
+                    onClose={dismissFigurePreview}
+                    onNavigate={() =>
+                      navigateOriginalLink(
+                        figurePreview.figureDestination ?? figurePreview.destination,
+                        !figurePreview.figureDestination
+                      )
+                    }
+                    onImageError={() => navigateOriginalLink(figurePreview.destination)}
+                  />
                 ) : null}
                 {document && presentation !== 'search' ? (
                   <div

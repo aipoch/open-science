@@ -534,26 +534,34 @@ describe('PdfPreviewContent', () => {
       }
     )
 
-    it('shows the target page while parsing and replaces it with the extracted figure', async () => {
-      let finish!: (result: PdfStructureResult) => void
-      window.api.pdfStructure.readCached = vi.fn().mockResolvedValue(undefined)
-      window.api.pdfStructure.parse = vi.fn().mockImplementation(
-        () =>
-          new Promise<PdfStructureResult>((resolve) => {
-            finish = resolve
-          })
-      )
-      vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(thumbnail)
-      const scroll = await renderReader()
-      await act(async () => navigate('Figure 2'))
-      const preview = await screen.findByRole('region', { name: 'Figure 2' })
-      expect(within(preview).getByRole('img', { name: 'Page 2' })).toBeTruthy()
-      await act(async () => finish(figureResult))
-      expect(
-        within(preview).getByText('Figure 2. Measured response across conditions.')
-      ).toBeTruthy()
-      expect(scroll.scrollTop).toBe(275)
-    })
+    it.each([false, true])(
+      'shows the target page and preserves an inspected page when the crop arrives (zoomed=%s)',
+      async (zoomed) => {
+        let finish!: (result: PdfStructureResult) => void
+        window.api.pdfStructure.readCached = vi.fn().mockResolvedValue(undefined)
+        window.api.pdfStructure.parse = vi.fn().mockImplementation(
+          () =>
+            new Promise<PdfStructureResult>((resolve) => {
+              finish = resolve
+            })
+        )
+        vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(thumbnail)
+        const scroll = await renderReader()
+        await act(async () => navigate('Figure 2'))
+        const preview = await screen.findByRole('region', { name: 'Figure 2' })
+        expect(within(preview).getByRole('img', { name: 'Page 2' })).toBeTruthy()
+        if (zoomed) fireEvent.click(within(preview).getByRole('button', { name: 'Zoom in' }))
+        await act(async () => finish(figureResult))
+        if (zoomed) {
+          expect(within(preview).getByRole('img', { name: 'Page 2' })).toBeTruthy()
+          fireEvent.click(within(preview).getByRole('button', { name: 'View cropped figure' }))
+        }
+        expect(
+          within(preview).getByText('Figure 2. Measured response across conditions.')
+        ).toBeTruthy()
+        expect(scroll.scrollTop).toBe(275)
+      }
+    )
 
     it('restores the native link focus without scrolling when Escape dismisses the card', async () => {
       const scroll = await renderReader()

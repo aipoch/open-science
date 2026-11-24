@@ -224,3 +224,55 @@ test('indexes plain-text figure references without parsing pages until the first
   await expect(preview).toBeVisible()
   expect(await requests()).toEqual([2])
 })
+
+test('opens at the figure reference and lets the reader move and magnify the preview', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1050, height: 850 })
+  await page.goto('/uploaded-pdf.html')
+  const link = page.getByRole('link', { name: 'Figure 9', exact: true })
+  await expect(link).toBeVisible()
+  await link.scrollIntoViewIfNeeded()
+  const anchor = (await link.boundingBox())!
+  await page.mouse.click(anchor.x + anchor.width / 2, anchor.y + anchor.height / 2)
+  const card = page.getByRole('region', { name: 'Figure 9', exact: true })
+  await expect(card).toBeVisible()
+  const first = (await card.boundingBox())!
+  expect(Math.abs(first.y - anchor.y - anchor.height)).toBeLessThan(12)
+  const move = card.getByRole('button', { name: 'Move preview' })
+  const grip = (await move.boundingBox())!
+  await page.mouse.move(grip.x + 20, grip.y + 12)
+  await page.mouse.down()
+  await page.mouse.move(grip.x + 110, grip.y + 32, { steps: 5 })
+  await page.mouse.up()
+  const moved = (await card.boundingBox())!
+  expect(moved.x - first.x).toBeCloseTo(90, 0)
+  const img = card.getByRole('img')
+  const small = (await img.boundingBox())!
+  await img.dblclick({ position: { x: small.width * 0.4, y: small.height * 0.6 } })
+  await expect(card.getByText('200%')).toBeVisible()
+  await expect
+    .poll(async () => Math.round((await img.boundingBox())!.height / small.height))
+    .toBe(2)
+  const v = img.locator('../..')
+  const y = await v.evaluate((el) => el.scrollTop)
+  const box = (await v.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 40, { steps: 5 })
+  await page.mouse.up()
+  expect(await v.evaluate((el) => el.scrollTop)).toBeGreaterThan(y)
+  await page.setViewportSize({ width: 460, height: 640 })
+  await expect
+    .poll(async () => {
+      const r = (await card.boundingBox())!
+      return r.x + r.width
+    })
+    .toBeLessThanOrEqual(460)
+  await card.getByRole('button', { name: 'Reset zoom' }).click()
+  await expect(card.getByText('100%')).toBeVisible()
+  const close = card.getByRole('button', { name: 'Close', exact: true })
+  await expect(close).toHaveText('')
+  await close.click()
+  await expect(card).toBeHidden()
+})

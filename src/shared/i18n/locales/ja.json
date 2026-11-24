@@ -254,6 +254,8 @@
     "Wait for the application handoff to finish before transferring research.": "研究データを転送する前に、アプリケーションの引き継ぎが完了するまでお待ちください。"
   },
   "renderer": {
+    "Move preview": "プレビューを移動",
+    "View cropped figure": "切り抜いた図を表示",
     "The update did not finish. Reopen your file or link after updating.": "アップデートが完了しませんでした。アップデート後にファイルまたはリンクをもう一度開いてください。",
     "View updates": "アップデートを確認",
     "Could not confirm that all subagents stopped.": "すべてのサブエージェントが停止したか確認できませんでした。",

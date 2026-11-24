@@ -9,6 +9,29 @@ import {
 export type { PdfLinkDestination } from './pdf-figure-index'
 type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
 
+export type FigureLinkAnchor = {
+  trigger: HTMLAnchorElement
+  x: number
+  top: number
+  bottom: number
+  left: number
+  right: number
+  keyboard: boolean
+}
+
+function figureLinkAnchor(trigger: HTMLAnchorElement, event: MouseEvent): FigureLinkAnchor {
+  const bounds = trigger.getBoundingClientRect()
+  return {
+    trigger,
+    x: event.detail ? event.clientX : bounds.left + bounds.width / 2,
+    top: bounds.top,
+    bottom: bounds.bottom,
+    left: bounds.left,
+    right: bounds.right,
+    keyboard: event.detail === 0
+  }
+}
+
 const indexedLinkDisposers = new WeakMap<HTMLElement, () => void>()
 
 function figureReferences(text: string, precedingLine = ''): RegExpExecArray[] {
@@ -43,7 +66,7 @@ export function renderIndexedFigureLinks({
   textLayer: HTMLElement
   index: ReadonlyMap<string, PdfLinkDestination>
   pageNumber: number
-  onNavigate: (destination: PdfLinkDestination, reference: string) => void
+  onNavigate: (destination: PdfLinkDestination, reference: string, anchor: FigureLinkAnchor) => void
 }): () => void {
   indexedLinkDisposers.get(host)?.()
   host.replaceChildren()
@@ -150,7 +173,8 @@ export function renderIndexedFigureLinks({
       }
       anchor.onclick = (event) => {
         event.preventDefault()
-        if (!host.closest('[inert]')) onNavigate(destination, reference)
+        if (!host.closest('[inert]'))
+          onNavigate(destination, reference, figureLinkAnchor(anchor, event))
       }
       anchor.onauxclick = (event) => event.preventDefault()
       host.append(anchor)
@@ -179,7 +203,7 @@ export function renderIndexedFigureLinks({
     if (!link) return
     event.preventDefault()
     link.anchor.focus({ preventScroll: true })
-    onNavigate(link.destination, link.reference)
+    onNavigate(link.destination, link.reference, figureLinkAnchor(link.anchor, event))
   }
   textLayer.addEventListener('click', onClick)
   const dispose = (): void => {
@@ -403,7 +427,11 @@ export async function renderPdfNativeLinks({
   document: PDFDocumentProxy
   viewport: PageViewport
   signal: AbortSignal
-  onNavigate: (destination: PdfLinkDestination, reference?: string) => void
+  onNavigate: (
+    destination: PdfLinkDestination,
+    reference?: string,
+    anchor?: FigureLinkAnchor
+  ) => void
   label: string
 }): Promise<void> {
   const annotations = (await page.getAnnotations({ intent: 'display' })).filter((item) => {
@@ -431,7 +459,8 @@ export async function renderPdfNativeLinks({
   const linkService = new SimpleLinkService()
   linkService.externalLinkTarget = LinkTarget.BLANK
   let navigation = 0
-  let activeSource: { rect: number[]; link: HTMLAnchorElement } | undefined
+  let activeSource:
+    { rect: number[]; link: HTMLAnchorElement; anchor: FigureLinkAnchor } | undefined
   let textContent: Promise<TextContent> | undefined
   linkService.goToDestination = async (destination): Promise<void> => {
     if (signal.aborted) return
@@ -447,7 +476,7 @@ export async function renderPdfNativeLinks({
           : undefined
       ])
       if (!signal.aborted && request === navigation && target) {
-        if (reference) onNavigate(target, reference)
+        if (reference && source) onNavigate(target, reference, source.anchor)
         else onNavigate(target)
       }
     } catch {
@@ -491,7 +520,9 @@ export async function renderPdfNativeLinks({
       const annotation = sourceAnnotations.get(link.getAttribute('data-element-id') ?? '')
       const navigate = link.onclick
       link.onclick = function (event) {
-        activeSource = annotation?.rect ? { rect: annotation.rect, link } : undefined
+        activeSource = annotation?.rect
+          ? { rect: annotation.rect, link, anchor: figureLinkAnchor(link, event) }
+          : undefined
         try {
           return navigate?.call(this, event)
         } finally {

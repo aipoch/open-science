@@ -399,14 +399,14 @@ export async function loadPdfFigurePreview(
 // The document owner keeps PDF.js pages alive. This cache owns only its render tasks,
 // temporary canvases and three most recently used page images.
 export function createPdfPagePreviewCache(document: PDFDocumentProxy): {
-  load(pageNumber: number, signal: AbortSignal): Promise<string | undefined>
+  load(pageNumber: number, signal: AbortSignal, detail?: boolean): Promise<string | undefined>
   clear(): void
 } {
   const images = new Map<number, string>()
   const active = new Set<AbortController>()
 
   return {
-    async load(pageNumber, signal) {
+    async load(pageNumber, signal, detail = false) {
       if (
         signal.aborted ||
         !Number.isInteger(pageNumber) ||
@@ -414,7 +414,7 @@ export function createPdfPagePreviewCache(document: PDFDocumentProxy): {
         pageNumber > document.numPages
       )
         return undefined
-      const cached = images.get(pageNumber)
+      const cached = !detail && images.get(pageNumber)
       if (cached) {
         images.delete(pageNumber)
         images.set(pageNumber, cached)
@@ -435,7 +435,9 @@ export function createPdfPagePreviewCache(document: PDFDocumentProxy): {
         const base = page.getViewport({ scale: 1 })
         if (!Number.isFinite(base.width + base.height) || base.width <= 0 || base.height <= 0)
           return undefined
-        const viewport = page.getViewport({ scale: 1200 / Math.max(base.width, base.height) })
+        const viewport = page.getViewport({
+          scale: (detail ? 3000 : 1200) / Math.max(base.width, base.height)
+        })
         canvas = globalThis.document.createElement('canvas')
         canvas.width = Math.max(1, Math.floor(viewport.width))
         canvas.height = Math.max(1, Math.floor(viewport.height))
@@ -445,9 +447,11 @@ export function createPdfPagePreviewCache(document: PDFDocumentProxy): {
         await renderTask.promise
         if (controller.signal.aborted) return undefined
         const image = canvas.toDataURL('image/png')
-        images.delete(pageNumber)
-        images.set(pageNumber, image)
-        if (images.size > 3) images.delete(images.keys().next().value!)
+        if (!detail) {
+          images.delete(pageNumber)
+          images.set(pageNumber, image)
+          if (images.size > 3) images.delete(images.keys().next().value!)
+        }
         return image
       } catch {
         return undefined

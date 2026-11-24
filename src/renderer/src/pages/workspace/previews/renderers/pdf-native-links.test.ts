@@ -98,7 +98,11 @@ describe('indexed PDF figure links', () => {
     expect(link.style.width).toBe('42px')
     expect(link.style.pointerEvents).toBe('none')
     link.click()
-    expect(onNavigate).toHaveBeenLastCalledWith(destination, 'Fig. 3b')
+    expect(onNavigate).toHaveBeenLastCalledWith(
+      destination,
+      'Fig. 3b',
+      expect.objectContaining({ trigger: expect.any(HTMLAnchorElement) })
+    )
     click(100)
     expect(onNavigate).toHaveBeenCalledTimes(2)
     expect(document.activeElement).toBe(link)
@@ -117,7 +121,11 @@ describe('indexed PDF figure links', () => {
     expect(textLayer.childElementCount).toBe(3)
     expect(textLayer.firstElementChild?.firstChild).toBe(nodes[0])
     host.querySelector('a')!.click()
-    expect(onNavigate).toHaveBeenCalledWith(options.index.get('figure:3'), 'Fig. 3b')
+    expect(onNavigate).toHaveBeenCalledWith(
+      options.index.get('figure:3'),
+      'Fig. 3b',
+      expect.objectContaining({ trigger: expect.any(HTMLAnchorElement) })
+    )
   })
 
   it.each([
@@ -313,7 +321,11 @@ describe('native PDF links', () => {
     expect(read).not.toHaveBeenCalled()
     host.querySelector('a')!.click()
     await vi.waitFor(() =>
-      expect(onNavigate).toHaveBeenCalledWith({ pageNumber: 2, x: 0, y: 0 }, expected)
+      expect(onNavigate).toHaveBeenCalledWith(
+        { pageNumber: 2, x: 0, y: 0 },
+        expected,
+        expect.objectContaining({ trigger: expect.any(HTMLAnchorElement) })
+      )
     )
     host.querySelector('a')!.click()
     await vi.waitFor(() => expect(onNavigate).toHaveBeenCalledTimes(2))
@@ -376,7 +388,11 @@ describe('native PDF links', () => {
     await renderPdfNativeLinks(options)
     host.querySelector('a')!.click()
     await vi.waitFor(() =>
-      expect(onNavigate).toHaveBeenCalledWith({ pageNumber: 2, x: 0, y: 0 }, 'Fig. 3b')
+      expect(onNavigate).toHaveBeenCalledWith(
+        { pageNumber: 2, x: 0, y: 0 },
+        'Fig. 3b',
+        expect.objectContaining({ trigger: expect.any(HTMLAnchorElement) })
+      )
     )
   })
 
@@ -429,7 +445,13 @@ describe('native PDF links', () => {
       host.querySelector('a')!.click()
       await vi.waitFor(() => expect(onNavigate).toHaveBeenCalledTimes(1))
       expect(vi.mocked(onNavigate).mock.calls[0]).toEqual(
-        identified ? [{ pageNumber: 2, x: 0, y: 0 }, 'Fig. 3'] : [{ pageNumber: 2, x: 0, y: 0 }]
+        identified
+          ? [
+              { pageNumber: 2, x: 0, y: 0 },
+              'Fig. 3',
+              expect.objectContaining({ trigger: host.querySelector('a') })
+            ]
+          : [{ pageNumber: 2, x: 0, y: 0 }]
       )
     }
   )
@@ -463,7 +485,9 @@ describe('native PDF links', () => {
       link.click()
       await vi.waitFor(() => expect(onNavigate).toHaveBeenCalledTimes(1))
       expect(vi.mocked(onNavigate).mock.calls[0]).toEqual(
-        figureLink ? [{ pageNumber: 2, x: 0, y: 0 }, 'Fig. 3b'] : [{ pageNumber: 2, x: 0, y: 0 }]
+        figureLink
+          ? [{ pageNumber: 2, x: 0, y: 0 }, 'Fig. 3b', expect.objectContaining({ trigger: link })]
+          : [{ pageNumber: 2, x: 0, y: 0 }]
       )
     }
   )
@@ -526,7 +550,11 @@ describe('native PDF links', () => {
       lang: null
     })
     await vi.waitFor(() => expect(onNavigate).toHaveBeenCalledTimes(1))
-    expect(onNavigate).toHaveBeenCalledWith({ pageNumber: 2, x: 0, y: 0 }, 'Fig. 8a')
+    expect(onNavigate).toHaveBeenCalledWith(
+      { pageNumber: 2, x: 0, y: 0 },
+      'Fig. 8a',
+      expect.objectContaining({ trigger: expect.any(HTMLAnchorElement) })
+    )
   })
 
   it('ignores source text that finishes after the reader is disposed', async () => {

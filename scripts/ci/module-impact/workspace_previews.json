@@ -58,6 +58,7 @@
     "src/renderer/src/pages/workspace/previews/renderers/PdfNotebookView.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfOutlineSidebar.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.test.tsx",
+    "src/renderer/src/pages/workspace/previews/renderers/PdfFigurePreviewPanel.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfThumbnail.test.tsx",
     "src/renderer/src/pages/workspace/previews/renderers/PdfThumbnail.tsx",
