@@ -752,6 +752,7 @@ export class SessionPackageService {
       'open-science-package-dialog-',
       'open-science-package-inspect-',
       'open-science-package-inspection-',
+      'open-science-package-validation-',
       'open-science-use-case-'
     ]
     for (const entry of await readdir(this.packageTemporaryRoot, { withFileTypes: true })) {

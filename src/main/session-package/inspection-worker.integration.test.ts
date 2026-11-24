@@ -329,7 +329,11 @@ it('does not publish an import when worker validation cleanup remains pending', 
   const remove = fsPromises.rm
   let failed = false
   vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
-    if (!failed && String(path).includes('.inspection-')) {
+    if (
+      !failed &&
+      (String(path).includes('.inspection-') ||
+        String(path).includes('open-science-package-inspection-'))
+    ) {
       failed = true
       throw Object.assign(new Error('inspection cleanup denied'), { code: 'EACCES' })
     }
