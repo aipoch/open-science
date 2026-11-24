@@ -371,6 +371,44 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(() => restarted.beginSpawn(target)).toThrow('KERNEL_STARTUP_FENCE')
   })
 
+  it('reuses completed lane recovery until that lane publishes a new receipt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-scoped-cache-'))
+    const probe = vi.fn(async () => 'dead' as const)
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-restarted',
+      controller: {
+        probe,
+        terminate: vi.fn(async () => ({ reaped: true }))
+      }
+    })
+    const lane = 'target-lane'
+
+    await restarted.ensureReadyForLane(lane)
+    await restarted.ensureReadyForLane(lane)
+    expect(probe).not.toHaveBeenCalled()
+
+    const other = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-other'
+    })
+    const pending = restarted.beginSpawn({
+      laneKey: lane,
+      processKey: 'repl',
+      kernelEpochId: 'epoch-pending'
+    })
+    const external = other.beginSpawn({
+      laneKey: lane,
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch-external'
+    })
+    other.recordSpawned(external, { pid: 5252, posixBirthToken: 'external-birth' })
+
+    await restarted.ensureReadyForLane(lane)
+    expect(probe).toHaveBeenCalledOnce()
+    restarted.abandonSpawn(pending)
+  })
+
   it('does not cancel a pending startup while tolerant recovery scans another lane', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-pending-recovery-'))
     const owner = new KernelProcessLifecycleOwner({

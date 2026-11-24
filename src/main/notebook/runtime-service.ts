@@ -1328,7 +1328,8 @@ class NotebookRuntimeService {
       assertPrefixRecoverable: (prefix) => this.assertPrefixRecoverable(prefix),
       environmentOperations: this.environmentOperations,
       runtimeRepair: this.runtimeRepair,
-      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled,
+      invalidateDiscovery: (language) => this.runtimeBindingOwner.invalidateDiscovery(language)
     })
     this.environmentStateTracker =
       options.environmentStateTracker ??
@@ -1361,6 +1362,7 @@ class NotebookRuntimeService {
       environmentOperations: this.environmentOperations,
       recovery: this.recoveryCoordinator,
       environmentStateTracker: this.environmentStateTracker,
+      invalidateDiscovery: (language) => this.runtimeBindingOwner.invalidateDiscovery(language),
       installPackages: options.installPackagesImpl ?? installEnvironmentPackages,
       ...(options.processSandbox
         ? {
@@ -3313,6 +3315,7 @@ class NotebookRuntimeService {
         await Promise.allSettled(recoveries)
         throw error
       })
+      this.runtimeBindingOwner.invalidateDiscovery()
       if (this.options.onBackgroundRunTerminal) {
         await Promise.all(
           recoveredRuns.map(async ({ projectId, sessionId, run }) => {
