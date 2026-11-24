@@ -1076,28 +1076,6 @@ export const PreviewTextAnnotationSurface = ({
                 }
               ]
             : []),
-          ...(canTranslate
-            ? [
-                {
-                  id: 'translate',
-                  label: t('Translate selection'),
-                  icon: Languages,
-                  availableWhenAnnotationBlocked: true,
-                  onActivate: () => {
-                    if (!selection) return
-                    const native = window.getSelection()
-                    const text =
-                      native?.rangeCount &&
-                      !native.isCollapsed &&
-                      native.getRangeAt(0).toString().trim() === selection.quote
-                        ? native.toString().trim()
-                        : selection.quote
-                    setTranslationText(text || selection.quote)
-                    setOpen(true)
-                  }
-                }
-              ]
-            : []),
           ...(pdfBookmarkSource
             ? [
                 {
@@ -1115,9 +1093,32 @@ export const PreviewTextAnnotationSurface = ({
                 }
               ]
             : []),
+          ...(canTranslate
+            ? [
+                {
+                  id: 'translate',
+                  label: t('Translate selection'),
+                  icon: Languages,
+                  separatorBefore: Boolean(pdfEvidenceSource || pdfBookmarkSource),
+                  availableWhenAnnotationBlocked: true,
+                  onActivate: () => {
+                    if (!selection) return
+                    const native = window.getSelection()
+                    const text =
+                      native?.rangeCount &&
+                      !native.isCollapsed &&
+                      native.getRangeAt(0).toString().trim() === selection.quote
+                        ? native.toString().trim()
+                        : selection.quote
+                    setTranslationText(text || selection.quote)
+                    setOpen(true)
+                  }
+                }
+              ]
+            : []),
           {
             id: 'copy',
-            separatorBefore: true,
+            separatorBefore: !canTranslate,
             label: copied ? t('Copied') : t('Copy'),
             icon: copied ? Check : Copy,
             disabled: !canCopy,
