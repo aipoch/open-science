@@ -41,7 +41,8 @@ export const readRawOutcomeSession = async (
   // Read from the fixture's Node process so both legacy JSON and journal authority use the real
   // reader, including appended revisions. A primary manifest is not a Session snapshot.
   const path = join(root, 'sessions', identity.projectId, `${identity.sessionId}.json`)
-  const read = () => new SessionJournalStore({ maxBytes: 64 * 1024 * 1024 }).read(path)
+  const read = (): ReturnType<SessionJournalStore['read']> =>
+    new SessionJournalStore({ maxBytes: 64 * 1024 * 1024 }).read(path)
   const stored = await read().catch((error: unknown) => {
     // This out-of-process observer does not share the application's writer lane.
     if (
