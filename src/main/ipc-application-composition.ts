@@ -1067,6 +1067,13 @@ export const createApplicationModules = async (
     },
     taskAgent: agentWorkflows.taskAgent,
     taskControls: {
+      findArtifactSessions: (artifactId) =>
+        withDataRootWrite(() =>
+          sessionFoundation.sessionRepository.findArtifactSessions(
+            artifactId,
+            sessionProjection.ensureSessionProjection
+          )
+        ),
       specialists: {
         resolve: (reference) =>
           specialistCatalog.specialistService.resolveRunnableByReference(reference)

@@ -333,7 +333,12 @@ describe('HeadlessTaskApi adapter', () => {
     })
     const api = new HeadlessTaskApi({
       commands: { commandNames: () => [], invoke },
-      agent: createAgent()
+      agent: createAgent(),
+      controls: {
+        specialists: { resolve: async (id) => ({ id }) },
+        findArtifactSessions: async (id) =>
+          id === 'download' ? [{ projectId: target.projectId, sessionId: target.id }] : []
+      }
     })
     try {
       await expect(api.listArtifacts(target.id)).resolves.toEqual(target.artifacts)
@@ -1190,7 +1195,14 @@ describe('HeadlessTaskApi adapter', () => {
       if (channel === 'preview-resources:release') return undefined
       throw new Error(`Unexpected Task command: ${channel}`)
     })
-    const api = new HeadlessTaskApi({ commands: commandsFrom(invoke), agent: createAgent() })
+    const api = new HeadlessTaskApi({
+      commands: commandsFrom(invoke),
+      agent: createAgent(),
+      controls: {
+        specialists: { resolve: async (id) => ({ id }) },
+        findArtifactSessions: async () => [{ projectId: session.projectId, sessionId: session.id }]
+      }
+    })
 
     await expect(
       api.createProject({ name: 'Created', agentContext: 'Always cite sources.' })

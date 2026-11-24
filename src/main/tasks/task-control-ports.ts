@@ -7,6 +7,9 @@ export class TaskRunTracingError extends Error {
 }
 
 type TaskControlPorts = {
+  findArtifactSessions?(
+    artifactId: string
+  ): Promise<Array<{ projectId: string; sessionId: string }>>
   specialists: {
     resolve(reference: string): Promise<{ id: string }>
   }

@@ -123,13 +123,11 @@ class HeadlessTaskApi {
       },
       sessions: {
         findArtifact: async (artifactId) => {
-          const catalog = (await this.invoke('sessions:list')) as ListSessionSummariesResult
-          for (const summary of catalog.sessions) {
-            if (summary.artifactCount === 0) continue
-            const session = (await this.invoke('sessions:load-one', {
-              projectId: summary.projectId,
-              sessionId: summary.id
-            })) as PersistedChatSession | undefined
+          const candidates = this.ports.controls?.findArtifactSessions
+          if (!candidates) throw new Error('Task artifact lookup is unavailable.')
+          for (const candidate of await candidates(artifactId)) {
+            const session = (await this.invoke('sessions:load-one', candidate)) as
+              PersistedChatSession | undefined
             const artifact = session?.artifacts?.find((item) => item.id === artifactId)
             if (session && artifact) return { session, artifact }
           }
