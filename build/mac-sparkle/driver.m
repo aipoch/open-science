@@ -78,7 +78,8 @@ static napi_value begin(napi_env env, napi_callback_info info) {
     bool relaunch = false;
     char url[256] = {0};
     napi_get_cb_info(env, info, &count, arguments, NULL, NULL);
-    if (updater || count != 2 || napi_get_value_bool(env, arguments[1], &relaunch) != napi_ok ||
+    if (updater.sessionInProgress || completion || installReply || count != 2 ||
+        napi_get_value_bool(env, arguments[1], &relaunch) != napi_ok ||
         napi_get_value_string_utf8(env, arguments[0], url, sizeof(url), &length) != napi_ok ||
         !length || length >= sizeof(url)-1) {
         napi_throw_error(env, NULL, "Invalid Sparkle handoff");
@@ -92,13 +93,21 @@ static napi_value begin(napi_env env, napi_callback_info info) {
         return NULL;
     }
     shouldRelaunch = relaunch;
-    NSBundle *bundle = NSBundle.mainBundle;
-    driver = [Driver new];
+    abandoned = NO;
+    cancelDownload = nil;
+    if (!driver) driver = [Driver new];
     driver.url = [NSString stringWithUTF8String:url];
-    updater = [[SPUUpdater alloc] initWithHostBundle:bundle applicationBundle:bundle userDriver:driver delegate:driver];
-    NSError *error = nil;
-    if ([updater startUpdater:&error]) [updater checkForUpdates];
-    else finish(error.localizedDescription ?: @"Could not start Sparkle");
+    if (!updater) {
+        NSBundle *bundle = NSBundle.mainBundle;
+        updater = [[SPUUpdater alloc] initWithHostBundle:bundle applicationBundle:bundle userDriver:driver delegate:driver];
+        NSError *error = nil;
+        if (![updater startUpdater:&error]) {
+            updater = nil;
+            finish(error.localizedDescription ?: @"Could not start Sparkle");
+            return promise;
+        }
+    }
+    [updater checkForUpdates];
     return promise;
 }
 
@@ -114,10 +123,12 @@ static napi_value commit(napi_env env, napi_callback_info info) {
 
 static napi_value abandon(napi_env env, napi_callback_info info) {
     abandoned = YES;
-    if (installReply) installReply(SPUUserUpdateChoiceSkip);
-    else if (cancelDownload) cancelDownload();
+    void (^reply)(SPUUserUpdateChoice) = installReply;
+    void (^cancel)(void) = cancelDownload;
     installReply = nil;
     cancelDownload = nil;
+    if (reply) reply(SPUUserUpdateChoiceSkip);
+    else if (updater.sessionInProgress && cancel) cancel();
     finish(@"Sparkle preparation abandoned");
     return NULL;
 }
