@@ -211,7 +211,12 @@ describe('ElectronUpdaterStrategy', () => {
       expect(beforeInstallHandoff.mock.invocationCallOrder[0]).toBeLessThan(
         native.begin.mock.invocationCallOrder[0]
       )
-      expect(request).toHaveBeenCalledOnce()
+      expect(request).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          href: `https://statics.aipoch.com/open-science/app/stable/${file.url}.from-0.2.0.delta`
+        }),
+        expect.anything()
+      )
       if (scenario === 'success') {
         expect(native.commit).toHaveBeenCalledOnce()
         expect(updater.quitAndInstall).not.toHaveBeenCalled()
