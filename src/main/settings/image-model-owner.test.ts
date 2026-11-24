@@ -9,6 +9,7 @@ import {
 } from '../../shared/image-model-settings'
 import { ImageModelOwner } from './image-model-owner'
 import { SettingsRepository, sanitizeSettings } from './repository'
+import { netFetchWithManualRedirect } from '../network-fetch'
 
 vi.mock('./crypto', async (original) => ({
   ...(await original<typeof import('./crypto')>()),
@@ -16,6 +17,7 @@ vi.mock('./crypto', async (original) => ({
   tryDecryptKey: (ref?: string) =>
     ref?.startsWith('enc:') ? Buffer.from(ref.slice(4), 'base64').toString() : undefined
 }))
+vi.mock('../network-fetch', () => ({ netFetchWithManualRedirect: vi.fn() }))
 
 let directory: string
 let repository: SettingsRepository
@@ -43,10 +45,10 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true })
 })
 
-it('keeps old settings unconfigured and round-trips independent model presets without selecting a default', async () => {
+it('selects the first model on creation and persists the binding with independent presets', async () => {
   expect(await owner.snapshot()).toEqual({ services: [], availableProviders: [] })
   const saved = await owner.mutate({ kind: 'save', ...service })
-  expect(saved.imageModel).toBeUndefined()
+  expect(saved.imageModel).toEqual(binding)
   expect(saved.services[0]).toMatchObject({ ...service, configured: true })
   await owner.mutate({ kind: 'bind', binding })
   const restarted = new ImageModelOwner(new SettingsRepository(directory))
@@ -57,6 +59,20 @@ it('keeps old settings unconfigured and round-trips independent model presets wi
   await owner.mutate({ kind: 'bind', binding: { ...binding, modelId: 'other' } })
   await owner.mutate({ kind: 'remove', id: service.id })
   expect(await owner.snapshot()).toEqual({ services: [], availableProviders: [] })
+})
+
+it('keeps the service when changing a bound custom connection to official on the same endpoint', async () => {
+  const openai = IMAGE_VENDOR_CATALOG.find((vendor) => vendor.id === 'openai')!
+  const custom = { ...service, baseUrl: openai.regions[0].baseUrl }
+  const saved = await owner.mutate({ kind: 'save', ...custom, apiKey: 'saved-image-key' })
+  expect(saved.imageModel).toEqual(binding)
+
+  const official = { ...custom, vendorId: openai.id, models: openai.models }
+  const converted = await owner.mutate({ kind: 'save', ...official })
+  const restarted = new ImageModelOwner(new SettingsRepository(directory))
+  expect(converted.services).toMatchObject([{ ...official, configured: true }])
+  expect(converted.imageModel).toBeUndefined()
+  expect(await restarted.snapshot()).toEqual(converted)
 })
 
 it('removes duplicate services and orphaned bindings before the repository writes settings', async () => {
@@ -78,7 +94,7 @@ it('notifies only committed execution changes and unsubscribes without exposing 
     throw new Error('observer failed')
   })
   await owner.mutate({ kind: 'save', ...service })
-  expect(changed).not.toHaveBeenCalled()
+  expect(changed).toHaveBeenCalledOnce()
   await owner.mutate({ kind: 'bind', binding })
   expect(changed.mock.calls).toEqual([[]])
   expect(JSON.parse(await readFile(join(directory, 'settings.json'), 'utf8')).imageModel).toEqual(
@@ -105,6 +121,7 @@ it('notifies only committed execution changes and unsubscribes without exposing 
 it('stores encrypted custom credentials, masks snapshots, and requires a new key for a new endpoint', async () => {
   const remote = { ...service, baseUrl: 'https://images.example/v1' }
   await expect(owner.mutate({ kind: 'save', ...remote })).rejects.toThrow('API key')
+  expect((await owner.snapshot()).imageModel).toBeUndefined()
   const snapshot = await owner.mutate({
     kind: 'save',
     ...remote,
@@ -127,6 +144,64 @@ it('stores encrypted custom credentials, masks snapshots, and requires a new key
   expect((await repository.getSettings()).imageServices?.[0].baseUrl).toBe(remote.baseUrl)
   await owner.mutate({ kind: 'save', ...service })
   expect((await repository.getSettings()).imageServices?.[0].keyRef).toBeUndefined()
+})
+
+it('refreshes the linked Bailian image catalog and preserves the active model on save', async () => {
+  const key = 'synthetic-bailian-key'
+  await repository.upsertProvider({
+    id: 'bailian-account',
+    type: 'official',
+    vendorId: 'bailian',
+    region: 'china',
+    name: 'Bailian',
+    keyRef: `enc:${Buffer.from(key).toString('base64')}`,
+    catalogParameters: { workspaceId: 'image-workspace' }
+  })
+  const [account] = (await owner.snapshot()).availableProviders
+  const target = { id: service.id, adapter: account.adapter, providerId: account.id }
+  const official = { kind: 'save' as const, ...target, name: 'Images', models: account.models }
+  const saved = await owner.mutate(official)
+  const [active, visible] = account.models
+  vi.mocked(netFetchWithManualRedirect)
+    .mockReset()
+    .mockResolvedValueOnce(
+      Response.json({
+        success: true,
+        output: {
+          total: 3,
+          models: [
+            { model: active.wireModelId, inference_metadata: { response_modality: ['Text'] } },
+            { model: visible.wireModelId, inference_metadata: { response_modality: ['Image'] } },
+            { model: 'unknown-image', inference_metadata: { response_modality: ['Image'] } }
+          ]
+        }
+      })
+    )
+  await expect(owner.refreshCatalog(target)).resolves.toEqual({
+    ok: true,
+    modelIds: [visible.wireModelId],
+    fetchedAt: expect.any(Number)
+  })
+  expect(netFetchWithManualRedirect).toHaveBeenCalledExactlyOnceWith(
+    'https://image-workspace.cn-beijing.maas.aliyuncs.com/api/v1/models?page_size=20&page_no=1',
+    expect.objectContaining({
+      method: 'GET',
+      redirect: 'manual',
+      headers: expect.objectContaining({ authorization: `Bearer ${key}` })
+    })
+  )
+  expect(await owner.snapshot()).toEqual(saved)
+  await expect(
+    owner.refreshCatalog({
+      ...target,
+      vendorId: 'bailian',
+      baseUrl: 'https://test.us-east-1.maas.aliyuncs.com/compatible-mode/v1'
+    })
+  ).resolves.toEqual({ ok: false, code: 'missing-key' })
+  expect(netFetchWithManualRedirect).toHaveBeenCalledOnce()
+  const updated = await owner.mutate({ ...official, vendorId: 'bailian', models: [visible] })
+  expect(updated.imageModel).toEqual(saved.imageModel)
+  expect(updated.services[0].models).toEqual([visible, active])
 })
 
 it('links official credentials without copying them and cascades account deletion even with preserve handling', async () => {
@@ -411,4 +486,69 @@ it('keeps the legacy Bailian address and accepts official workspace URLs for bot
     ).rejects.toThrow('Invalid image')
   }
   expect((await owner.resolve())?.baseUrl).toBe(baseUrl)
+})
+
+it('preserves existing defaults and leaves historical or explicitly disabled services unselected on edit', async () => {
+  await repository.mutateImageModels(() => ({ imageServices: [service] }))
+  expect(
+    (await new ImageModelOwner(new SettingsRepository(directory)).snapshot()).imageModel
+  ).toBeUndefined()
+  expect(
+    (await owner.mutate({ kind: 'save', ...service, name: 'Edited' })).imageModel
+  ).toBeUndefined()
+  const other = { ...service, id: '22222222-2222-4222-8222-222222222222' }
+  const otherBinding = { serviceId: other.id, modelId: other.models[0].id }
+  expect((await owner.mutate({ kind: 'save', ...other })).imageModel).toEqual(otherBinding)
+  expect((await owner.mutate({ kind: 'save', ...service })).imageModel).toEqual(otherBinding)
+  const third = { ...service, id: '33333333-3333-4333-8333-333333333333' }
+  expect((await owner.mutate({ kind: 'save', ...third })).imageModel).toEqual(otherBinding)
+  await owner.mutate({ kind: 'bind' })
+  expect((await owner.mutate({ kind: 'save', ...other })).imageModel).toBeUndefined()
+})
+
+it('tests drafts without saving and only reuses credentials for the saved destination', async () => {
+  const testGeneration = vi.fn(async () => ({ ok: true as const }))
+  const testOwner = new ImageModelOwner(repository, testGeneration)
+  const remote = { ...service, baseUrl: 'https://images.example/v1' }
+  await owner.mutate({ kind: 'save', ...remote, apiKey: 'saved-key' })
+  const before = await readFile(join(directory, 'settings.json'), 'utf8')
+  const changed = vi.fn()
+  const unsubscribe = repository.subscribeImageModels(changed)
+  expect(await testOwner.test({ kind: 'save', ...remote, name: 'Unsaved edit' })).toEqual({
+    ok: true
+  })
+  expect(testGeneration).toHaveBeenLastCalledWith(
+    expect.objectContaining({ apiKey: 'saved-key', model: service.models[0] })
+  )
+  expect(
+    await testOwner.test({ kind: 'save', ...remote, baseUrl: 'https://other.example/v1' })
+  ).toMatchObject({ ok: false })
+  expect(testGeneration).toHaveBeenCalledOnce()
+  expect(await testOwner.test({ kind: 'save', ...remote, apiKey: 'draft-key' })).toEqual({
+    ok: true
+  })
+  expect(testGeneration).toHaveBeenLastCalledWith(expect.objectContaining({ apiKey: 'draft-key' }))
+  expect(await readFile(join(directory, 'settings.json'), 'utf8')).toBe(before)
+  expect(changed).not.toHaveBeenCalled()
+  unsubscribe()
+})
+
+it('bounds simultaneous tests without blocking saves', async () => {
+  let complete!: (result: { ok: true }) => void
+  const testGeneration = vi.fn(
+    () =>
+      new Promise<{ ok: true }>((resolve) => {
+        complete = resolve
+      })
+  )
+  const testOwner = new ImageModelOwner(repository, testGeneration)
+  const pending = testOwner.test({ kind: 'save', ...service })
+  await vi.waitFor(() => expect(testGeneration).toHaveBeenCalledOnce())
+  expect(await testOwner.test({ kind: 'save', ...service })).toEqual({
+    ok: false,
+    error: { code: 'RATE_LIMITED' }
+  })
+  expect((await testOwner.mutate({ kind: 'save', ...service })).imageModel).toEqual(binding)
+  complete({ ok: true })
+  expect(await pending).toEqual({ ok: true })
 })

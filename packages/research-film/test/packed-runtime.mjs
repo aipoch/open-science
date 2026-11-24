@@ -9,7 +9,8 @@ import { once } from 'node:events'
 import {
   createResearchVideoGenerator,
   createResearchFilmAuthor,
-  generateResearchFilm
+  generateResearchFilm,
+  prepareFilmSessionApp
 } from '@aipoch/research-film'
 import { researchFilmResources } from '@aipoch/research-film/resources'
 import { ResearchVideoPlaybackClock } from '@aipoch/research-film/contracts'
@@ -23,8 +24,24 @@ try {
   const resources = researchFilmResources()
   assert.match(await readFile(join(resources.replayDirectory, 'generic.js'), 'utf8'), /__seek/)
   assert.match(await readFile(join(resources.replayDirectory, 'generic.css'), 'utf8'), /1920px/)
+  assert.match(
+    await readFile(join(resources.replayDirectory, 'player.js'), 'utf8'),
+    /__replayState/
+  )
+  assert.match(
+    await readFile(join(resources.replayDirectory, 'player.css'), 'utf8'),
+    /body\.preview/
+  )
   assert.match(await readFile(join(resources.authoringDirectory, 'KIT.md'), 'utf8'), /k\.ctx/)
+  assert.match(await readFile(join(resources.authoringDirectory, 'SCRIPT.md'), 'utf8'), /Rubric/)
   assert.match(await readFile(join(resources.stageDirectory, 'index.html'), 'utf8'), /html/)
+  // An empty ZIP still loads the installed module worker and its compiler dependencies.
+  const emptyZip = new Uint8Array(22)
+  emptyZip.set([0x50, 0x4b, 0x05, 0x06])
+  assert.equal(
+    await prepareFilmSessionApp(emptyZip, 'empty.zip', AbortSignal.timeout(10_000)),
+    undefined
+  )
   const source = {
     sessionTitle: 'Evidence',
     project: 'test',
@@ -48,14 +65,39 @@ try {
           { type: 'title', text: 'Evidence' },
           { type: 'animation', script: 'anims/hook.js', size: 'band' }
         ]
+      },
+      {
+        id: 'outro',
+        role: 'outro',
+        msg: 0,
+        lines: [
+          { caption: 'The evidence remains uncertain.' },
+          {
+            caption: 'AIPOCH Open-Science — the AI research workbench for reproducible science.',
+            say: 'AIPOCH Open-Science. The AI research workbench for reproducible science.'
+          }
+        ],
+        panels: [{ type: 'end_card', at: '1' }]
       }
     ]
   }
   await writeFile(join(root, 'session.json'), JSON.stringify(source))
   const stages = []
-  const author = createResearchFilmAuthor(async (_source, _prompt, payload) =>
-    payload.path ? 'k.ctx.fillRect(0, 0, 20, 20);' : JSON.stringify(spec)
-  )
+  const author = createResearchFilmAuthor(async (_source, _prompt, payload) => {
+    if (payload.narration)
+      return JSON.stringify({
+        spine: null,
+        catch: null,
+        thread: null,
+        audioOnly: null,
+        numbers: null,
+        plainWords: null,
+        lineCraft: null,
+        clean: null,
+        true: null
+      })
+    return payload.path ? 'k.ctx.fillRect(0, 0, 20, 20);' : JSON.stringify(spec)
+  })
   // Exercise the real packaged generation worker and resource loader with deterministic speech.
   // Native model/download behavior is separately checked by the host and native acceptance run.
   const result = await generateResearchFilm({
@@ -92,6 +134,7 @@ try {
     }
   })
   assert.equal(result.title, 'Evidence')
+  assert.equal(result.scriptScore, 9)
   assert.ok(result.duration > 0)
   assert.ok((await readFile(result.sourcePath)).length > 1000)
   assert.match(await readFile(result.playerPath, 'utf8'), /open-science-research-video/)

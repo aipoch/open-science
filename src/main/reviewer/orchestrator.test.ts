@@ -325,17 +325,13 @@ describe('reviewer orchestrator', () => {
       true
     )
 
-    // _meta includes a systemPrompt with append (rubric).
+    // The built-in reviewer receives its rubric in an ephemeral session with tools disabled.
     const meta = newSessions[0]?._meta as Record<string, unknown> | undefined
-    expect(meta?.disableBuiltInTools).toBe(true)
-    expect(
-      (meta?.claudeCode as { options?: { tools?: unknown[] } } | undefined)?.options?.tools ?? null
-    ).toEqual([])
-    const systemPrompt = meta?.systemPrompt as Record<string, unknown> | undefined
-    expect(systemPrompt?.type).toBe('preset')
-    expect(systemPrompt?.preset).toBe('claude_code')
-    expect(typeof systemPrompt?.append).toBe('string')
-    expect((systemPrompt?.append as string).length).toBeGreaterThan(0)
+    expect(meta).toMatchObject({
+      disableBuiltInTools: true,
+      'open-science-agent/ephemeral-session': true,
+      'open-science-agent/instructions': expect.stringMatching(/\S/)
+    })
 
     // Review was persisted.
     expect(review.sessionId).toBe('session-1')

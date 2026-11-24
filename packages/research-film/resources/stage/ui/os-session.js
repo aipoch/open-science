@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Standalone browser JavaScript. */
-// FlyCube session rendered with the native Open-Science UI kit (os-kit.js).
+// Session background using the Open-Science 1.2.1 UI kit.
 // Drop-in replacement for style 01's old hand-made js/session.js: same API — window.Session.build(root, data, compact) / window.Session.mark(...).
 ;(() => {
   const K = window.OSKit
@@ -18,6 +18,8 @@
       i: m.i ?? index,
       role: m.role,
       md: m.md,
+      sent: m.sent,
+      generated: m.generated,
       steps: m.steps
         ? {
             title: m.steps.title,
@@ -26,7 +28,7 @@
             rows: m.steps.rows.map(rowOf)
           }
         : null,
-      completed: m.status ? m.status.replace(' · ', ' ') : null
+      completed: m.footer || (m.status ? m.status.replace(' · ', ' ') : null)
     }))
   }
 
@@ -38,6 +40,7 @@
       compact,
       project: s.project,
       title: s.sessionTitle,
+      sessionNumber: s.number,
       sections: [
         {
           label: 'Active',

@@ -515,23 +515,18 @@ class NotebookRunTerminalizationOwner {
     terminalRun: NotebookRunRecord,
     durable = false
   ): Promise<NotebookRunRecord> {
-    const document = durable
-      ? (
-          await this.options.repository.commitTerminalRun({
-            projectId: session.projectId,
-            sessionId: session.sessionId,
-            lane: session.lane,
-            expectedStatus: 'running',
-            run: terminalRun
-          })
-        ).document
-      : await this.options.repository.updateRun({
-          projectId: session.projectId,
-          sessionId: session.sessionId,
-          lane: session.lane,
-          run: terminalRun
-        })
-    const run = document.runs.find((candidate) => candidate.runId === terminalRun.runId)
+    const request = {
+      projectId: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      run: terminalRun
+    }
+    const run = durable
+      ? (await this.options.repository.commitTerminalRun({ ...request, expectedStatus: 'running' }))
+          .run
+      : (await this.options.repository.updateRun(request)).runs.find(
+          (candidate) => candidate.runId === terminalRun.runId
+        )
 
     if (!run) {
       throw new Error(`Notebook run not found after update: ${terminalRun.runId}`)

@@ -18,6 +18,7 @@ import { LocationStep, type LocationDraft } from './LocationStep'
 import { NotebookStep } from './NotebookStep'
 import { onboardingErrorMessage } from './onboarding-error'
 import { ProviderStep } from './ProviderStep'
+import { useProviderStepOperation } from './use-provider-step-operation'
 
 type WizardStep = 'environment' | 'agent' | 'provider' | 'notebook' | 'location'
 type OnboardingWizardProps = {
@@ -182,6 +183,7 @@ const OnboardingWizard = ({
   const envInit = useNotebookEnvStore((s) => s.init)
 
   const [step, setStep] = useState<WizardStep>('environment')
+  const providerOperation = useProviderStepOperation()
   const stepCard = useRef<HTMLDivElement>(null)
   const previousStep = useRef(step)
   useEffect(() => {
@@ -413,6 +415,7 @@ const OnboardingWizard = ({
               />
             ) : step === 'provider' ? (
               <ProviderStep
+                operation={providerOperation}
                 formValue={providerDraft.value}
                 setFormValue={setFormValue}
                 providerId={providerDraft.providerId}

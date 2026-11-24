@@ -1,3 +1,4 @@
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   loadSessionHistoryPageRequestSchema,
   type LoadSessionHistoryPageRequest,
@@ -1014,7 +1015,7 @@ class SessionRepository {
     }
   }
 
-  private async listProjectionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
+  async listProjectionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
     const queuedAt = performance.now()
     return this.operationScheduler.runGlobal(async () => {
       // A caller cancelled while queued behind global work: skip the read instead of running it.
@@ -1036,6 +1037,23 @@ class SessionRepository {
     })
   }
 
+  async findArtifactSessions(
+    artifactId: string,
+    ensureProjection: () => Promise<{ result?: LoadAllSessionsResult }>
+  ): Promise<Array<{ projectId: string; sessionId: string }>> {
+    const { result } = await ensureProjection()
+    if (result) {
+      // Recovery may return readable authority while the index is incomplete. Reuse the
+      // sessions it already loaded, including legacy attachments keyed by Version id.
+      return result.sessions
+        .filter((session) => session.artifacts?.some((artifact) => artifact.id === artifactId))
+        .map(({ id: sessionId, projectId }) => ({ projectId, sessionId }))
+    }
+    return this.operationScheduler.runGlobal(() =>
+      this.projection!.findArtifactSessions(artifactId)
+    )
+  }
+
   async loadSessionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
     if (!this.projection || !(await this.projection.isReady())) {
       throw new Error('Session projection is not ready.')
@@ -1055,20 +1073,36 @@ class SessionRepository {
   // than retaining the snapshot that existed when the initial review started.
   async loadSession(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    reportReadFailure = false
   ): Promise<PersistedChatSession | undefined> {
     const safeProjectId = assertSafeSegment(projectId)
     if ((await this.inspectActiveProjectBoundary(safeProjectId)) !== 'valid') return undefined
-    return (
-      await this.readSessionFile(
-        this.sessionFilePath(safeProjectId, assertSafeSegment(sessionId)),
-        safeProjectId
+    const safeSessionId = assertSafeSegment(sessionId)
+    const read = await this.readSessionFile(
+      this.sessionFilePath(safeProjectId, safeSessionId),
+      safeProjectId
+    )
+    if (read.session || !reportReadFailure) return read.session
+    if (read.warning && 'projectId' in read.warning)
+      throw new ApplicationCommandError(
+        `session-file-${read.warning.kind}`,
+        'Could not read the conversation file.'
       )
-    ).session
+    if (!read.isComplete) return undefined
+    const files = await this.listSessionFileNames(this.projectDir(safeProjectId), {
+      missingIsIncomplete: true
+    })
+    const fileName = `${safeSessionId}.json`
+    if (!files.isComplete || files.names.includes(fileName)) return undefined
+    if (files.quarantinedPrimaryFileNames.includes(fileName))
+      throw new ApplicationCommandError('session-file-corrupt', 'Conversation data is damaged.')
+    throw new ApplicationCommandError('session-file-missing', 'Conversation file not found.')
   }
 
   async loadSessionHistoryPage(
-    request: LoadSessionHistoryPageRequest
+    request: LoadSessionHistoryPageRequest,
+    reportReadFailure = false
   ): Promise<SessionHistoryPage | undefined> {
     const input = loadSessionHistoryPageRequestSchema.parse(request)
     const projectId = assertSafeSegment(input.projectId)
@@ -1091,7 +1125,7 @@ class SessionRepository {
       ) {
         // Old JSON already stores the full conversation. Keep its original read path without
         // creating a display index or rewriting the file just to open it.
-        const session = await this.loadSession(projectId, sessionId)
+        const session = await this.loadSession(projectId, sessionId, reportReadFailure)
         return session ? completePage(session) : undefined
       }
       if (!this.projection) return undefined
@@ -1107,7 +1141,7 @@ class SessionRepository {
         return page
       // Missing/stale JSONL indexes are admitted once through the existing full decoder.
       // Subsequent display pages query only their indexed rows.
-      const session = await this.loadSession(projectId, sessionId)
+      const session = await this.loadSession(projectId, sessionId, reportReadFailure)
       if (!session) return undefined
       const currentFingerprint = await this.historySourceFingerprint(projectId, sessionId)
       if (!currentFingerprint || currentFingerprint !== fingerprint)
@@ -1141,6 +1175,18 @@ class SessionRepository {
 
   hasLiveRuntimeSession(projectId: string, sessionId: string): boolean {
     return this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
+  }
+
+  hasActiveRuntimePrompt(projectId: string, sessionId: string): boolean {
+    return this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
+  }
+
+  shouldPreserveRuntimeState(projectId: string, sessionId: string): boolean {
+    return (
+      this.hasActiveRuntimePrompt(projectId, sessionId) ||
+      this.hasLiveRuntimeSession(projectId, sessionId) ||
+      this.retainedRuntimeState.has(JSON.stringify([projectId, sessionId]))
+    )
   }
 
   // Decode-only preservation for Main's live release after exhausted writes. This is not evidence
@@ -1836,6 +1882,10 @@ class SessionRepository {
   }
 
   // Removes a single session file.
+  async deletedSessionScopes(): Promise<Map<string, boolean>> {
+    return this.projection?.deletedSessionScopes() ?? new Map()
+  }
+
   async deleteSession(projectId: string, sessionId: string): Promise<void> {
     return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.deleteSessionNow(projectId, sessionId)
@@ -3038,10 +3088,7 @@ class SessionRepository {
       preserveRuntimeState:
         preserveRuntimeState !== undefined
           ? preserveRuntimeState
-          : (sessionId) =>
-              this.dependencies.hasActiveRuntimePrompt(projectId, sessionId) ||
-              this.dependencies.hasLiveRuntimeSession(projectId, sessionId) ||
-              this.retainedRuntimeState.has(JSON.stringify([projectId, sessionId]))
+          : (sessionId) => this.shouldPreserveRuntimeState(projectId, sessionId)
     })
     if (decoded.status === 'unsupported-version') throw new UnsupportedSessionFileError()
     if (decoded.status === 'invalid') throw new Error('Invalid Session file')

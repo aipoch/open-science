@@ -13,9 +13,11 @@ import { join } from 'node:path'
 import { defaultFileDurability } from '@aipoch/durable-files'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  SessionJournalCorruptionError,
   SessionJournalStore,
   SessionJournalRevisionError,
   SessionJournalSizeError,
+  SessionJournalVersionError,
   sessionJournalPath,
   sessionLegacyBackupPath,
   type SessionJournalDependencies
@@ -185,10 +187,100 @@ describe('simple Session JSONL persistence', () => {
       .split('\n')
       .map((line) => JSON.parse(line))
     expect(lines).toHaveLength(140)
-    for (const line of lines.slice(1))
-      expect(Object.keys(line)).toEqual(['type', 'revision', 'records'])
+    expect(Object.keys(lines[0])).toEqual(['type', 'journalVersion', 'document'])
+    expect(lines[0].journalVersion).toBe(1)
+    for (const line of lines.slice(1)) {
+      expect(Object.keys(line)).toEqual(['type', 'journalVersion', 'revision', 'records'])
+      expect(line.journalVersion).toBe(1)
+    }
     expect((await fresh().read(path))?.document).toEqual(doc(140, 'next 140'))
     expect((await fresh().read(sessionJournalPath(path)))?.document).toEqual(doc(140, 'next 140'))
+  })
+  it('reads unversioned v1 journals and writes the current envelope version', async () => {
+    const { path, store } = await fixture()
+    const target = sessionJournalPath(path)
+    await writeFile(
+      target,
+      JSON.stringify({ type: 'session_snapshot', document: doc(1) }) +
+        '\n' +
+        JSON.stringify({
+          type: 'session_update',
+          revision: 2,
+          records: [{ type: 'snapshot', document: doc(2, 'continued') }]
+        }) +
+        '\n'
+    )
+    expect((await fresh().read(path))?.document).toEqual(doc(2, 'continued'))
+
+    await write(store, path, 3, 'written')
+    const lines = (await readFile(target, 'utf8'))
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(lines[2]).toMatchObject({
+      type: 'session_update',
+      journalVersion: 1,
+      revision: 3
+    })
+  })
+  it('refuses a newer journal version before parsing its records', async () => {
+    const { path, store } = await fixture()
+    await write(store, path, 1)
+    const target = sessionJournalPath(path)
+    await appendFile(
+      target,
+      JSON.stringify({
+        type: 'session_update',
+        journalVersion: 2,
+        revision: 2,
+        records: 'not parsed'
+      }) + '\n'
+    )
+    const updateEvidence = await readFile(target, 'utf8')
+    await expect(fresh().read(path)).rejects.toBeInstanceOf(SessionJournalVersionError)
+    expect(await readFile(target, 'utf8')).toBe(updateEvidence)
+
+    await writeFile(
+      target,
+      JSON.stringify({
+        type: 'session_snapshot',
+        journalVersion: 2,
+        document: doc(1),
+        records: 'not parsed'
+      }) + '\n'
+    )
+    await expect(fresh().read(path)).rejects.toBeInstanceOf(SessionJournalVersionError)
+  })
+  it.each([0, -1, 1.5, '1', true, null, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects invalid journal version %j as corruption',
+    async (journalVersion) => {
+      const { path, store } = await fixture()
+      await write(store, path, 1)
+      await appendFile(
+        sessionJournalPath(path),
+        JSON.stringify({
+          type: 'session_update',
+          journalVersion,
+          revision: 2,
+          records: []
+        }) + '\n'
+      )
+      await expect(fresh().read(path)).rejects.toBeInstanceOf(SessionJournalCorruptionError)
+    }
+  )
+  it('keeps unknown record types as corruption at the current journal version', async () => {
+    const { path, store } = await fixture()
+    await write(store, path, 1)
+    await appendFile(
+      sessionJournalPath(path),
+      JSON.stringify({
+        type: 'session_update',
+        journalVersion: 1,
+        revision: 2,
+        records: [{ type: 'unknown' }]
+      }) + '\n'
+    )
+    await expect(fresh().read(path)).rejects.toBeInstanceOf(SessionJournalCorruptionError)
   })
   it('retains complete saves, ignores a half line on reads and truncates only that tail on the next write', async () => {
     const { path, store } = await fixture()

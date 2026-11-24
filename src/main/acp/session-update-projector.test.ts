@@ -44,7 +44,8 @@ const createProjector = (
     context: Readonly<{ sessionId: string }>,
     providerToolCallId: string
   ) => string = (_notification, _context, providerToolCallId) => providerToolCallId,
-  separateProviderNotices?: boolean
+  separateProviderNotices?: boolean,
+  webToolOperationFor?: (sessionId: string, identity: string) => 'search' | 'fetch' | undefined
 ): TestProjector => {
   let routing: TestRouting = {
     eventId: 'event-route',
@@ -59,6 +60,7 @@ const createProjector = (
   }
   const owner = new AcpSessionUpdateProjector({
     separateProviderNotices,
+    webToolOperationFor,
     registry: {
       lookup: (sessionId) =>
         ({
@@ -137,6 +139,71 @@ const createProjector = (
 }
 
 describe('AcpSessionUpdateProjector', () => {
+  it('marks Web details as owned only after host route verification', () => {
+    const authorize = vi.fn((sessionId: string, identity: string) =>
+      sessionId === 'session' && identity === 'open-science-web/web_fetch'
+        ? ('fetch' as const)
+        : undefined
+    )
+    const projector = createProjector(undefined, true, undefined, undefined, authorize)
+    const notification: SessionNotification = {
+      sessionId: 'session',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'invocation',
+        title: 'mcp__open_science_web__web_fetch',
+        kind: 'fetch',
+        status: 'pending',
+        _meta: { toolName: 'mcp__open_science_web__web_fetch' },
+        rawInput: { url: 'https://example.org' }
+      }
+    }
+    const routing: TestRouting = {
+      framework: 'open-science-agent',
+      eventId: 'web',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: ['open-science-web']
+    }
+    expect(projector.route(notification, routing)).toContainEqual(
+      expect.objectContaining({
+        kind: 'visible-event',
+        event: expect.objectContaining({ appOwned: true, executionInvocationId: 'invocation' })
+      })
+    )
+    const cancelled: SessionNotification = {
+      sessionId: 'session',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'invocation',
+        status: 'failed',
+        _meta: { toolName: 'mcp__open_science_web__web_fetch', 'open-science/web-cancelled': true }
+      }
+    }
+    expect(projector.route(cancelled, routing)).toContainEqual(
+      expect.objectContaining({
+        kind: 'visible-event',
+        event: expect.objectContaining({ appOwned: true, toolDisposition: 'cancelled' })
+      })
+    )
+    expect(
+      projector
+        .route(cancelled, { ...routing, framework: 'claude-code' })
+        .find((effect) => effect.kind === 'visible-event')?.event
+    ).not.toHaveProperty('toolDisposition')
+    for (const framework of ['claude-code', 'opencode'] as const) {
+      const effects = projector.route(notification, { ...routing, framework })
+      expect(effects.find((effect) => effect.kind === 'visible-event')?.event).not.toHaveProperty(
+        'appOwned'
+      )
+    }
+    const effects = projector.route({ ...notification, sessionId: 'other' }, routing)
+    expect(effects.find((effect) => effect.kind === 'visible-event')?.event).not.toHaveProperty(
+      'appOwned'
+    )
+    projector.dispose()
+  })
+
   it.each([undefined, false])(
     'keeps normal chat hook notices visible before and after terminal flushing (opt-in: %s)',
     (separateProviderNotices) => {

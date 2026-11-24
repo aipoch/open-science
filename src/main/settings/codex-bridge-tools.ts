@@ -32,11 +32,11 @@ import {
   LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
   LITERATURE_LIBRARY_SCOPES,
   LITERATURE_LIBRARY_READ_SCOPES
-} from '../literature/library-mcp-server'
+} from '../literature/library-mcp-contract'
 import {
   LITERATURE_MCP_SERVER_NAME,
   LITERATURE_READ_DOCUMENT_TOOL_NAME
-} from '../literature/mcp-server'
+} from '../literature/mcp-contract'
 import {
   REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
   REQUEST_SKILL_IMPORT_TOOL_NAME,

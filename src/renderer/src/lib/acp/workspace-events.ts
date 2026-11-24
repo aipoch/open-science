@@ -1,3 +1,4 @@
+import { classifyFailure } from '../../../../shared/failure/classify'
 import {
   ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
   ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
@@ -800,6 +801,30 @@ const applyWorkspaceRuntimeEvent = async (
 
   // Tool calls become visible activity rows, including web-search query/result payloads.
   if (event.kind === 'tool' && event.sessionId && event.toolCallId) {
+    const sessionBeforeToolEvent = store.sessions.find((session) => session.id === event.sessionId)
+    if (event.appOwned && event.webInvocation) {
+      const graph = sessionBeforeToolEvent?.conversationGraph
+      const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+      // Main's separate Web observations include their owning scope. A cancellation can still
+      // settle on the original branch in durable history after the selection has changed.
+      if (
+        frame &&
+        ((event.agentFrameId && event.agentFrameId !== frame.id) ||
+          (event.messageBranchId && event.messageBranchId !== frame.activeBranchId))
+      )
+        return true
+      // The terminal tool event owns the final attempt metadata even if live progress arrives late.
+      const invocationId = event.executionInvocationId ?? event.toolCallId
+      if (
+        event.status === 'in_progress' &&
+        sessionBeforeToolEvent?.activities?.some(
+          ({ id, executionInvocationId, status }) =>
+            (executionInvocationId ?? id) === invocationId &&
+            (status === 'completed' || status === 'failed')
+        )
+      )
+        return true
+    }
     if (!isActivityGroupControlEvent(event)) {
       recordToolEventApplied(event.toolCallId, event.title)
     }
@@ -811,7 +836,6 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
 
-    const sessionBeforeToolEvent = store.sessions.find((session) => session.id === event.sessionId)
     store.upsertToolActivity({
       sessionId: event.sessionId,
       toolCallId: event.toolCallId,
@@ -823,6 +847,7 @@ const applyWorkspaceRuntimeEvent = async (
       status: event.status,
       toolDisposition: event.toolDisposition,
       executionInvocationId: event.executionInvocationId,
+      webInvocation: event.webInvocation,
       appOwned: event.appOwned,
       providerToolName: event.providerToolName,
       toolKind: event.toolKind,
@@ -1124,16 +1149,20 @@ const applyWorkspaceRuntimeEvent = async (
         !event.terminalCommitFailure
       ) {
         const error = getEventErrorText(event)
-        reportWorkspaceOperationError(event.sessionId, error)
         const question = failedQuestion ? failedQuestion.elicitation : undefined
         if (
           question?.durable &&
           question.continuationPending &&
-          !question.continuationRecovery &&
           (question.state === 'answered' || question.state === 'declined')
         ) {
           reportWorkspaceElicitationFailure(event.sessionId, question.durable.requestId, error)
-        }
+          // Credential recovery belongs to Settings even while the question owns the failure.
+          if (
+            classifyFailure({ origin: 'operation', text: error }).reason ===
+            'configuration/auth-failed'
+          )
+            reportWorkspaceOperationError(event.sessionId, error)
+        } else reportWorkspaceOperationError(event.sessionId, error)
       }
       return true
     }

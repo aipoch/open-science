@@ -1232,7 +1232,13 @@ it('distinguishes validation, probe and selection calls without logging private 
     )
   )
   await owner.selectSkills(request())
-  fetchMock.mockRejectedValueOnce(new Error('private-network-message /private/SKILL.md'))
+  fetchMock.mockRejectedValueOnce(
+    new TypeError('fetch failed', {
+      cause: Object.assign(new Error('private-network-message /private/SKILL.md'), {
+        code: 'ECONNRESET'
+      })
+    })
+  )
   await owner.selectSkills(request())
   const records = await diagnosticRecords()
   const started = records.filter(({ msg }) => msg === 'classification request started')
@@ -1269,6 +1275,16 @@ it('distinguishes validation, probe and selection calls without logging private 
     expect.objectContaining({
       msg: 'classification request failed',
       data: expect.objectContaining({ status: 401, reason: 'auth' })
+    })
+  )
+  expect(records).toContainEqual(
+    expect.objectContaining({
+      msg: 'classification request failed',
+      data: expect.objectContaining({
+        phase: 'fetch',
+        errorCode: 'ECONNRESET',
+        reason: 'request-error'
+      })
     })
   )
   const serialized = JSON.stringify(records)

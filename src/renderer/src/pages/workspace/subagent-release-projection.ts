@@ -20,6 +20,7 @@ import type {
 type SubagentRawStatus = PersistedAgentFrame['status'] | 'awaiting_user'
 
 type SessionSubagentChild = Readonly<{
+  attemptId?: string
   frameId: string
   title: string
   agentLabel: string
@@ -99,6 +100,7 @@ const projectSessionSubagents = (
       )
     return {
       frameId: frame.id,
+      ...(attempt ? { attemptId: attempt.id } : {}),
       title: titleForFrame(frame),
       agentLabel: agentLabelForFrame(session, frame),
       status: awaitingUser ? 'awaiting_user' : frame.status,

@@ -22,13 +22,20 @@ import { runInNewContext } from 'node:vm'
 
 import { describe, expect, it } from 'vitest'
 import { load } from 'js-yaml'
+import type { Configuration } from 'electron-builder'
+import { doMergeConfigs } from 'app-builder-lib/out/util/config/config'
+import { FileMatcher, getFileMatchers } from 'app-builder-lib/out/fileMatcher'
+import { platformBackendOnlyElectronDependencies } from '../scripts/electron-host-dependencies.mjs'
 
 const repoRoot = join(__dirname, '..')
 // Exercise the same packaging dependencies as the installed electron-builder.
 const require = createRequire(import.meta.url)
 
 describe('desktop packaging preparation', () => {
-  function preparation(platform: string): {
+  function preparation(
+    platform: string,
+    arch = 'x64'
+  ): {
     run: (context: unknown) => Promise<void>
     calls: string[]
   } {
@@ -40,6 +47,17 @@ describe('desktop packaging preparation', () => {
     const module = { exports: undefined as unknown as (context: unknown) => Promise<void> }
     const dependencies = Object.assign(
       (name: string): unknown => {
+        if (name === 'node:child_process')
+          return {
+            execFileSync(command: string, args: string[]) {
+              expect(command).toBe('python')
+              expect(args).toEqual([
+                join(repoRoot, 'build/windows-delta/build.py'),
+                join(repoRoot, 'out/windows-delta/x64')
+              ])
+              calls.push('build-delta')
+            }
+          }
         if (name === './stage-desktop-runtime.cjs')
           return async () => {
             calls.push('stage')
@@ -51,21 +69,49 @@ describe('desktop packaging preparation', () => {
     runInNewContext(readFileSync(join(repoRoot, config.beforePack), 'utf8'), {
       module,
       require: dependencies,
-      process: { platform, arch: 'x64', execPath: process.execPath }
+      process: { platform, arch, execPath: process.execPath }
     })
     return { run: module.exports, calls }
   }
 
-  it.each(['win32', 'darwin', 'linux'])(
-    'prepares application resources before staging on %s',
-    async (platform) => {
-      const { run, calls } = preparation(platform)
+  it.each([
+    ['win32', 'x64', 'win', true],
+    ['win32', 'arm64', 'win', false],
+    ['darwin', 'x64', 'mac', true],
+    ['darwin', 'arm64', 'mac', true],
+    ['linux', 'x64', 'linux', false]
+  ] as const)(
+    'prepares application resources before staging on %s/%s',
+    async (platform, arch, configKey, pruned) => {
+      const { run, calls } = preparation(platform, arch)
+      const config = doMergeConfigs([
+        load(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')) as Configuration
+      ])
       await run({
         electronPlatformName: platform,
-        arch: require('builder-util').Arch.x64,
-        packager: { projectDir: repoRoot }
+        arch: require('builder-util').Arch[arch],
+        packager: { projectDir: repoRoot, config }
       })
-      expect(calls).toEqual(['stage'])
+      const matchers = getFileMatchers(config, 'files', repoRoot, {
+        defaultSrc: repoRoot,
+        globalOutDir: join(repoRoot, 'dist'),
+        customBuildOptions: config[configKey]!,
+        macroExpander: (pattern) => pattern
+      })!
+      expect(matchers).toHaveLength(1)
+      // The pinned builder prepends **/* to its separate node_modules matcher.
+      const filter = new FileMatcher(repoRoot, repoRoot, (pattern) => pattern, [
+        '**/*',
+        ...matchers[0].patterns
+      ]).createFilter()
+      const stat = { isDirectory: () => false } as ReturnType<typeof statSync>
+      for (const name of platformBackendOnlyElectronDependencies('darwin', 'x64'))
+        expect(filter(join(repoRoot, 'node_modules', name, 'package.json'), stat)).toBe(!pruned)
+      expect(filter(join(repoRoot, 'node_modules/@babel/runtime/package.json'), stat)).toBe(true)
+      expect(filter(join(repoRoot, 'docs/internal/local-plan.md'), stat)).toBe(false)
+      expect(calls).toEqual(
+        platform === 'win32' && arch === 'x64' ? ['build-delta', 'stage'] : ['stage']
+      )
     }
   )
 
@@ -962,7 +1008,7 @@ describe('packaging config', () => {
             : name === 'LICENSE'
               ? 'LICENSE.electron.txt'
               : name
-        if (name === 'version') continue
+        if (name === 'version' || name === 'debug.log') continue
         expect(cleanup, installed).toContain(installed)
       }
       expect(cleanup).not.toMatch(/^\s*RMDir \/r/m)
@@ -1061,6 +1107,31 @@ process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tikto
         await createPackageWithOptions(source, join(resources, 'app.asar'), {
           unpackDir: 'resources'
         })
+        if (process.platform === 'win32') {
+          // The Windows worker acquires its request-scoped directory lease before dispatching
+          // an operation, so the packaged fixture must contain the same native publisher that an
+          // installed application places beside its unpacked resources.
+          const nativeDirectory = join(
+            resources,
+            'app.asar.unpacked',
+            'node_modules',
+            '@aipoch',
+            'safe-file-publisher-native',
+            'build',
+            'Release'
+          )
+          mkdirSync(nativeDirectory, { recursive: true })
+          copyFileSync(
+            require.resolve('@aipoch/safe-file-publisher-native/build/Release/safe_file_publisher_native.node'),
+            join(nativeDirectory, 'safe_file_publisher_native.node')
+          )
+        } else if (process.platform === 'darwin') {
+          cpSync(
+            dirname(require.resolve('@aipoch/process-tree-native')),
+            join(resources, 'app.asar.unpacked', 'node_modules', '@aipoch', 'process-tree-native'),
+            { recursive: true }
+          )
+        }
         const notebook = join(resources, 'app.asar.unpacked', 'resources', 'notebook')
         const run = (script: string, args: string[] = [], input = ''): SpawnSyncReturns<string> =>
           spawnSync(process.execPath, [join(notebook, script), ...args], {

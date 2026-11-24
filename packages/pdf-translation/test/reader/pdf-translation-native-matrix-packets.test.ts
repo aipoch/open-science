@@ -15,7 +15,8 @@ import { getPdfTranslationTextContent } from '../../src/reader/text-content.js'
 
 async function documentWithMatrix(
   fault = '',
-  changed = false
+  changed = false,
+  atomShift = 0
 ): Promise<Awaited<ReturnType<typeof getDocument>['promise']>> {
   const pdf = await PDFDocument.create()
   pdf.registerFontkit(fontkit)
@@ -42,7 +43,7 @@ async function documentWithMatrix(
           text(fault === 'round' ? '(' : '[', 100, 300, 26),
           fault === 'spacing'
             ? `BT ${fontKey} 10 Tf 120 310 Td [${font.encodeText('1')} -25 ${font.encodeText('2')} 25 ${font.encodeText('3')}] TJ ET`
-            : text(fault === 'digits' ? '123' : changed ? 'X' : 'I', 120, 310),
+            : text(fault === 'digits' ? '123' : changed ? 'X' : 'I', 120 + atomShift, 310),
           text('B', 155, 310),
           text(fault === 'prose' ? 'Other words' : 'C', 120, 298),
           text('D', 180, 298),
@@ -201,3 +202,21 @@ it('retains a matrix when an interior glyph moves without changing the native te
     await target.destroy()
   }
 })
+
+it.each([
+  [0.008, true],
+  [0.025, false]
+])(
+  'checks the native matrix body with a %s point placement difference',
+  async (shift, verified) => {
+    const source = await documentWithMatrix(),
+      target = await documentWithMatrix('', false, shift)
+    try {
+      const options = { nativeDocumentFactory: getDocument, signal: new AbortController().signal }
+      expect(await sameNativeMatrixBody(source, target, 1, options)).toBe(verified)
+    } finally {
+      await source.destroy()
+      await target.destroy()
+    }
+  }
+)

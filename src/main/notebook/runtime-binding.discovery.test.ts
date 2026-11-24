@@ -98,6 +98,17 @@ describe.each(['python', 'r'] as const)('%s binding decision target validation',
     discover: Mock<() => Promise<DiscoveredInterpreter[]>>
     write: Mock<NotebookRunRepository['setRuntimeBindings']>
     setBinding: ReturnType<typeof vi.fn>
+    settings: Mock<
+      () => Promise<{
+        language: typeof language
+        manualInterpreters: string[]
+        packageMirror: object
+        runtimeEnablement: {
+          enabled: Record<string, boolean>
+          installAuthorized: Record<string, boolean>
+        }
+      }>
+    >
     session: Pick<
       NotebookSessionAggregate,
       'projectId' | 'sessionId' | 'lane' | 'runtimeBinding' | 'setRuntimeBinding'
@@ -117,6 +128,12 @@ describe.each(['python', 'r'] as const)('%s binding decision target validation',
     }
     const discover = vi.fn(async () => [runtime])
     const write = vi.fn<NotebookRunRepository['setRuntimeBindings']>()
+    const settings = vi.fn(async () => ({
+      language,
+      manualInterpreters: [],
+      packageMirror: {},
+      runtimeEnablement: { enabled: {}, installAuthorized: {} }
+    }))
     let current: NotebookSessionRuntimeBinding | undefined
     const setBinding = vi.fn((_language, binding) => {
       current = binding
@@ -133,18 +150,13 @@ describe.each(['python', 'r'] as const)('%s binding decision target validation',
       discoverRuntimes: discover,
       repository: { setRuntimeBindings: write, findExisting: vi.fn() },
       runtimeSettings: {
-        getSnapshot: async () => ({
-          language,
-          manualInterpreters: [],
-          packageMirror: {},
-          runtimeEnablement: { enabled: {}, installAuthorized: {} }
-        })
+        getSnapshot: settings
       },
       repairPolicy: {
         bindingRequirement: () => ({ required: false, keys: [], protectedIdentity: false })
       }
     })
-    return { runtime, discover, write, setBinding, session, owner }
+    return { runtime, discover, write, setBinding, settings, session, owner }
   }
 
   it('recognizes a discovered canonical default and refuses missing logical default identity', async () => {
@@ -161,6 +173,68 @@ describe.each(['python', 'r'] as const)('%s binding decision target validation',
     expect(await h.owner.resolveBindingTarget(language, h.runtime.envId)).toMatchObject({
       readyDefault: false
     })
+  })
+
+  it('coalesces unchanged discovery and separates a changed settings key', async () => {
+    const h = fixture()
+    await Promise.all([
+      h.owner.list(h.session, language),
+      h.owner.list(h.session, language),
+      h.owner.list(h.session, language)
+    ])
+    expect(h.discover).toHaveBeenCalledOnce()
+
+    const manual = ['/new/interpreter']
+    h.settings.mockResolvedValue({
+      language,
+      manualInterpreters: manual,
+      packageMirror: {},
+      runtimeEnablement: { enabled: {}, installAuthorized: {} }
+    })
+    await h.owner.list(h.session, language)
+    expect(h.discover).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retain a failed discovery result', async () => {
+    const h = fixture()
+    h.discover.mockRejectedValueOnce(new Error('probe failed'))
+    await expect(h.owner.list(h.session, language)).resolves.toMatchObject({ runtimes: [] })
+    await expect(h.owner.list(h.session, language)).resolves.toMatchObject({
+      runtimes: [{ runtimeId: h.runtime.envId }]
+    })
+    expect(h.discover).toHaveBeenCalledTimes(2)
+  })
+
+  it('invalidates cached discovery after an environment mutation', async () => {
+    const h = fixture()
+    await h.owner.list(h.session, language)
+    h.owner.invalidateDiscovery(language)
+    await h.owner.list(h.session, language)
+    expect(h.discover).toHaveBeenCalledTimes(2)
+  })
+
+  it('separates discovery before and after default runtime provisioning', async () => {
+    const h = fixture()
+    const ready = vi
+      .spyOn(discovery, language === 'r' ? 'rReady' : 'pythonReady')
+      .mockReturnValue(false)
+    await h.owner.list(h.session, language)
+    ready.mockReturnValue(true)
+    await h.owner.list(h.session, language)
+    expect(h.discover).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes external discovery after the bounded cache lifetime', async () => {
+    vi.useFakeTimers()
+    try {
+      const h = fixture()
+      await h.owner.list(h.session, language)
+      vi.advanceTimersByTime(5_000)
+      await h.owner.list(h.session, language)
+      expect(h.discover).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('checks cancellation after final discovery and before durable commit', async () => {

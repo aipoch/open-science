@@ -6,6 +6,7 @@ import type {
   ImageTaskStartResult
 } from '../image-task'
 import type {
+  ResearchVideoActiveSession,
   ResearchVideoPresentationRequest,
   ResearchVideoStartRequest,
   ResearchVideoStatusRequest,
@@ -13,7 +14,8 @@ import type {
 } from '../research-video-presentation'
 import type {
   ResearchVideoProgress,
-  ResearchVideoExportResult
+  ResearchVideoExportResult,
+  ResearchVideoResolution
 } from '@aipoch/research-film/contracts'
 import type { PdfReconcileRequest, PdfSharingPreview } from '../pdf-annotations'
 // Ordered fragments keep the public registration order when capabilities interleave.
@@ -195,8 +197,15 @@ export const previewDeleteContracts = {
     (request: ReadManagedPreviewRangeRequest) => Promise<ManagedPreviewRangeResult>
   >()('preview-resources', ['preview-resources:read-range']),
   'previewResources.exportResearchVideo': callable<
-    (request: { resourceId: string }) => Promise<ResearchVideoExportResult>
+    (request: {
+      resourceId: string
+      resolution?: ResearchVideoResolution
+    }) => Promise<ResearchVideoExportResult>
   >()('preview-resources', ['preview-resources:export-research-video', ELECTRON]),
+  'researchVideo.activeSessions': callable<() => Promise<readonly ResearchVideoActiveSession[]>>()(
+    'preview-resources',
+    ['research-video:active-sessions', ELECTRON]
+  ),
   'researchVideo.start': callable<
     (request: ResearchVideoStartRequest) => Promise<ResearchVideoPresentationStatus>
   >()('preview-resources', ['research-video:start', ELECTRON]),
@@ -210,6 +219,9 @@ export const previewDeleteContracts = {
     'preview-resources',
     ['research-video:cancel', ELECTRON]
   ),
+  'researchVideo.onActivityChanged': callable<
+    (listener: (sessions: readonly ResearchVideoActiveSession[]) => void) => RemoveListener
+  >()('preview-resources', ['research-video:activity-changed', ELECTRON_EVENT]),
   'previewResources.researchVideoExportProgress': callable<
     (request: { resourceId: string }) => Promise<ResearchVideoProgress | null>
   >()('preview-resources', ['preview-resources:research-video-progress', ELECTRON]),

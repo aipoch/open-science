@@ -1,5 +1,50 @@
 import { expect, test } from '@playwright/test'
 
+test('offers Windows Task Manager for known installation blockers', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1000, height: 720 })
+  await page.goto('/update-dialog.html?short&platform=win32')
+  await page.evaluate(() => {
+    const fixture = (
+      window as unknown as {
+        updateFixture: { setStatus: (next: Record<string, unknown>) => void }
+      }
+    ).updateFixture
+    fixture.setStatus({
+      state: 'ready',
+      reason: 'installation-busy',
+      recovery: {
+        phase: 'preparing',
+        runtime: 'running',
+        installation: 'unchanged',
+        canCancel: true,
+        canRetryInstall: false,
+        canRecover: false,
+        blockingProcesses: [{ pid: 33996, name: 'node.exe' }, { pid: 34001 }]
+      }
+    })
+  })
+  const dialog = page.getByRole('dialog')
+  const processManager = dialog
+    .getByRole('button', { name: /Open Task Manager to find PID/ })
+    .first()
+  await expect(dialog.getByRole('button', { name: /Open Task Manager to find PID/ })).toHaveCount(2)
+  await expect(processManager).toBeVisible()
+  await expect(dialog).toContainText('node.exe')
+  await expect(dialog).toContainText('PID 33996')
+  await expect(dialog).toContainText('PID 34001')
+  await processManager.click()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { updateFixture: { actions: { openProcessManager: number } } })
+            .updateFixture.actions.openProcessManager
+      )
+    )
+    .toBe(1)
+  await page.screenshot({ path: testInfo.outputPath('update-blocking-process-manager.png') })
+})
+
 test('recovers historical records only after confirmation in the update dialog', async ({
   page
 }, testInfo) => {
@@ -343,7 +388,15 @@ test('switches instructions in the same dialog and returns focus with the latest
         (window as unknown as { updateFixture: { actions: Record<string, number> } }).updateFixture
           .actions
     )
-  ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 0 })
+  ).toEqual({
+    download: 0,
+    apply: 0,
+    cancel: 0,
+    recover: 0,
+    check: 0,
+    reveal: 0,
+    openProcessManager: 0
+  })
 })
 
 test('keeps manual instructions and package reveal available during restricted installation recovery', async ({
@@ -369,7 +422,15 @@ test('keeps manual instructions and package reveal available during restricted i
         (window as unknown as { updateFixture: { actions: Record<string, number> } }).updateFixture
           .actions
     )
-  ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 1 })
+  ).toEqual({
+    download: 0,
+    apply: 0,
+    cancel: 0,
+    recover: 0,
+    check: 0,
+    reveal: 1,
+    openProcessManager: 0
+  })
 })
 
 test('offers external manual installation guidance in About', async ({ page }) => {
@@ -403,6 +464,52 @@ test('offers manual links in check failure prose and preserves retry without rel
   await expect(dialog.getByRole('button', { name: 'Retry', exact: true })).toBeVisible()
   await expect(dialog.getByRole('region', { name: "What's new" })).toHaveCount(0)
   await expect(dialog.getByTestId('manual-update-links')).toBeVisible()
+})
+
+test('shows blocking process names and PIDs in the update notice', async ({ page }, testInfo) => {
+  await page.goto('/update-dialog.html?continuous&short')
+  await page.evaluate(() => {
+    const fixture = (
+      window as unknown as {
+        updateFixture: {
+          setStatus(status: {
+            state: 'ready'
+            reason: 'installation-busy'
+            recovery: {
+              phase: 'preparing'
+              runtime: 'running'
+              installation: 'unchanged'
+              canCancel: true
+              canRetryInstall: false
+              canRecover: false
+              detail: 'foreign-process'
+              blockingProcesses: { pid: number; name?: string }[]
+            }
+          }): void
+        }
+      }
+    ).updateFixture
+    fixture.setStatus({
+      state: 'ready',
+      reason: 'installation-busy',
+      recovery: {
+        phase: 'preparing',
+        runtime: 'running',
+        installation: 'unchanged',
+        canCancel: true,
+        canRetryInstall: false,
+        canRecover: false,
+        detail: 'foreign-process',
+        blockingProcesses: [{ pid: 33996, name: 'node.exe' }, { pid: 34001 }]
+      }
+    })
+  })
+  const dialog = page.getByRole('dialog')
+  const processes = dialog.getByTestId('runtime-blocking-processes')
+  await expect(processes).toContainText('node.exe')
+  await expect(processes).toContainText('PID 33996')
+  await expect(processes).toContainText('PID 34001')
+  await page.screenshot({ path: testInfo.outputPath('update-blocking-processes.png') })
 })
 
 for (const query of ['continuous&stage=downloading', 'short']) {
@@ -444,7 +551,15 @@ for (const query of ['continuous&stage=downloading', 'short']) {
           (window as unknown as { updateFixture: { actions: Record<string, number> } })
             .updateFixture.actions
       )
-    ).toEqual({ download: 0, apply: 0, cancel: 0, recover: 0, check: 0, reveal: 0 })
+    ).toEqual({
+      download: 0,
+      apply: 0,
+      cancel: 0,
+      recover: 0,
+      check: 0,
+      reveal: 0,
+      openProcessManager: 0
+    })
   })
 }
 

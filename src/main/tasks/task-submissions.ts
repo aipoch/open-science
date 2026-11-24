@@ -7,7 +7,7 @@ import {
   readDurableJsonFile,
   writeDurableJsonFile
 } from '@aipoch/durable-files'
-import type { StartTaskRunRequest, TaskRun, TaskSubmission } from '../../shared/task-api'
+import type { SubmitTaskRunRequest, TaskRun, TaskSubmission } from '../../shared/task-api'
 import type { TaskRunJournalEntry } from './task-run-journal'
 import { TaskRunnerError } from './task-runner'
 
@@ -65,7 +65,7 @@ export class TaskSubmissions {
     configRoot: string,
     private readonly dependencies: {
       loadRuns(): Promise<TaskRunJournalEntry[]>
-      startRun(request: StartTaskRunRequest, requestId: string): Promise<TaskRun>
+      startRun(request: SubmitTaskRunRequest, requestId: string): Promise<TaskRun>
       now?: () => number
       capacity?: number
     }
@@ -141,7 +141,7 @@ export class TaskSubmissions {
     return next
   }
 
-  async submit(requestId: string, request: StartTaskRunRequest): Promise<TaskSubmission> {
+  async submit(requestId: string, request: SubmitTaskRunRequest): Promise<TaskSubmission> {
     if (!requestIdSchema.safeParse(requestId).success)
       throw new TaskRunnerError(
         'invalid_request',
@@ -184,7 +184,7 @@ export class TaskSubmissions {
     })
   }
 
-  private async prepare(entry: Receipt, request: StartTaskRunRequest): Promise<void> {
+  private async prepare(entry: Receipt, request: SubmitTaskRunRequest): Promise<void> {
     let run: TaskRun | undefined
     let failure: unknown
     try {

@@ -831,6 +831,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       runJsonPath: notebookReference.runJsonPath,
       cells: [],
       runCount: 101,
+      agentSummaries: [],
       latestRunEnvironments: {},
       runs,
       recentRuns: runs,
@@ -861,15 +862,20 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     )
 
     root = createRoot(container)
-    await act(async () => {
-      root.render(
-        <WorkspaceMessageScroller
-          activeSession={createSession({ status: 'idle', activities })}
-          notebookReference={notebookReference}
-          onSendEditedMessage={vi.fn()}
-        />
-      )
-    })
+    const renderSession = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={session}
+            notebookReference={notebookReference}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      })
+    }
+    await renderSession(createSession({ status: 'idle', activities: [] }))
+    expect(loadNotebookState).not.toHaveBeenCalled()
+    await renderSession(createSession({ status: 'idle', activities }))
 
     for (const header of container.querySelectorAll<HTMLButtonElement>(
       '[data-testid="tool-group-header"][aria-expanded="false"]'

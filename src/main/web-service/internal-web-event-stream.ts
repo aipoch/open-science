@@ -1,6 +1,7 @@
 import { projectSessionEventPayload } from '../session-event-payload'
 import { randomUUID } from 'node:crypto'
 
+import { RUNTIME_PAYLOAD_INLINE_BYTES } from '../../shared/runtime-payload-transfer'
 import { WEB_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/web-rpc-contract'
 
 const DEFAULT_MAX_FRAMES = 2_048
@@ -58,15 +59,28 @@ class InternalWebEventStream {
 
   publish(event: InternalWebEvent): string {
     const sequence = ++this.#latestSequence
-    const serialized = JSON.stringify({
+    const frame = {
       kind: 'event',
       protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION,
       streamId: this.#streamId,
       sequence,
       channel: event.channel,
-      payload: projectSessionEventPayload(event) ?? null
-    })
-    const bytes = Buffer.byteLength(serialized)
+      payload: event.payload ?? null
+    }
+    let serialized = JSON.stringify(frame)
+    let bytes = Buffer.byteLength(serialized)
+    if (
+      bytes > RUNTIME_PAYLOAD_INLINE_BYTES &&
+      (frame.channel === 'session:created' || frame.channel === 'session:updated')
+    ) {
+      // Subtract the UTF-8 envelope size, excluding its four-byte placeholder.
+      const envelopeBytes = Buffer.byteLength(JSON.stringify({ ...frame, payload: null })) - 4
+      const payload = projectSessionEventPayload(frame, bytes - envelopeBytes)
+      if (payload !== frame.payload) {
+        serialized = JSON.stringify({ ...frame, payload })
+        bytes = Buffer.byteLength(serialized)
+      }
+    }
 
     if (bytes > this.#maxBytes || this.#maxFrames === 0) {
       this.#frames.splice(0)

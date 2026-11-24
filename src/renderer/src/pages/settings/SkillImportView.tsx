@@ -4,11 +4,14 @@ import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, LoaderCircle, ScrollText, SearchX, Star } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import type { ScannedSkillView, SkillView } from '../../../../shared/settings'
 import type { GitHubRepositorySearchView } from '@aipoch/skills/document'
 import { GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE } from '@aipoch/skills/document'
+import { isDesktopRuntimeConnectionError } from '../../../../shared/desktop-runtime-recovery'
+import { unwrapIpcErrorDetail } from '../../../../shared/failure/messages'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatDisplayNumber } from '@/lib/locale-format'
@@ -23,6 +26,51 @@ type SkillImportViewProps = {
 
 type BusyOperation =
   { kind: 'find' } | { kind: 'scan'; repositoryName: string } | { kind: 'import' }
+
+function gitHubSkillError(error: unknown, t: TFunction, importing = false): string {
+  const detail = unwrapIpcErrorDetail(error instanceof Error ? error.message : String(error ?? ''))
+  if (
+    isDesktopRuntimeConnectionError(error) ||
+    /^DesktopRuntime(?:Disconnected|WriteNotSubmitted)Error:/.test(detail)
+  ) {
+    const notSubmitted = isDesktopRuntimeConnectionError(error)
+      ? error.code === 'desktop-runtime-not-submitted'
+      : detail.startsWith('DesktopRuntimeWriteNotSubmittedError:')
+    return importing && !notSubmitted
+      ? t('Reconnect and check your installed Skills before importing again.')
+      : t('Local service connection lost')
+  }
+  const message = detail.replace(/^ApplicationCommandError:\s*/, '')
+  const wait = /^GitHub rate limit reached\. Retry after (\d+) seconds\.$/.exec(message)
+  if (wait) return t('GitHub rate limit reached. Retry in {{seconds}} s.', { seconds: wait[1] })
+  switch (message) {
+    case 'GitHub request failed during DNS lookup.':
+      return t('DNS lookup failed while connecting to GitHub. Check your DNS and network settings.')
+    case 'GitHub proxy connection failed.':
+      return t('Could not connect through the proxy. Check your proxy settings.')
+    case 'GitHub proxy authentication required.':
+      return t('The proxy requires authentication. Check your proxy credentials.')
+    case 'Could not reach GitHub.':
+      return t('Could not reach GitHub. Check your network or proxy and try again.')
+    case 'GitHub request timed out.':
+      return t('The GitHub request timed out. Try again.')
+    case 'GitHub rejected the credentials.':
+      return t('GitHub rejected your credentials. Update your GitHub token.')
+    case 'GitHub denied access.':
+      return t('GitHub denied access. Check your repository access and GitHub token permissions.')
+    case 'GitHub repository or path not found.':
+      return t('Check the repository link and path. For private repositories, check your access.')
+    case 'GitHub rate limit reached.':
+      return t('GitHub rate limit reached. Try again later.')
+    case 'No SKILL.md found at the linked location.':
+      return t('Choose a directory containing SKILL.md.')
+    case '':
+    case 'fetch failed':
+      return t('GitHub request failed.')
+    default:
+      return message
+  }
+}
 
 // Full-page GitHub import. Keywords discover repositories; direct references and chosen search
 // results reuse the commit-pinned scan and batch-import flow.
@@ -44,7 +92,7 @@ const SkillImportView = ({
   const [scanned, setScanned] = useState<ScannedSkillView[] | null>(null)
   const [scannedRepo, setScannedRepo] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const candidatePreview = useSkillImportCandidatePreview()
+  const candidatePreview = useSkillImportCandidatePreview((error) => gitHubSkillError(error, t))
   const busy = operation !== null
 
   const imported = skills.filter((skill: SkillView) => skill.source === 'imported')
@@ -101,8 +149,7 @@ const SkillImportView = ({
       if (inputRef.current !== visibleInputAtStart) return
       setMessage({
         kind: 'error',
-        // Main-process failures arrive already worded; only the fallback is ours to translate.
-        text: error instanceof Error ? error.message : t('GitHub request failed.')
+        text: gitHubSkillError(error, t)
       })
     } finally {
       setOperation(null)
@@ -145,10 +192,9 @@ const SkillImportView = ({
     } catch (error) {
       setMessage({
         kind: 'error',
-        text:
-          error instanceof Error
-            ? error.message
-            : t('Imported {{count}}, then failed.', { count: done })
+        text: error
+          ? gitHubSkillError(error, t, true)
+          : t('Imported {{count}}, then failed.', { count: done })
       })
     } finally {
       setOperation(null)

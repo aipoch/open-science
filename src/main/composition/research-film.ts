@@ -9,16 +9,19 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { setTimeout as delay } from 'node:timers/promises'
 import {
   createResearchFilmAuthor,
   createResearchVideoGenerator,
   createVideoExportTools,
   researchFilmResources,
   ResearchFilmOutputLimitError,
+  ResearchFilmDraftError,
   ResearchFilmIncompleteError,
   type ResearchVideoSessionSource,
   RESEARCH_NARRATION_MODELS,
   RESEARCH_VIDEO_SCREENPLAY_PROMPT,
+  FILM_SCRIPT_REVIEW_PROMPT,
   RESEARCH_VIDEO_ANIMATION_PROMPT,
   REPLAY_AUTHORING_PROMPT,
   VIDEO_EXPORT_REVISIONS
@@ -29,6 +32,7 @@ import {
   extractRestrictedInferenceUsage
 } from '../acp/restricted-inference-runner'
 import type { ApplicationModuleBuilder } from '../application-runtime'
+import type { ApplicationEvents } from '../application-events'
 import { createLocalModelOwner } from '../local-models/owner'
 import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
 import {
@@ -45,6 +49,38 @@ import type { SettingsService } from '../settings/service'
 import { resolveDataRoot } from '../storage-root'
 import type { ManagedPreviewResources } from '../managed-preview-resources'
 import { NotebookRunRepository } from '../notebook/repository'
+import {
+  runTaskNotificationInBackground,
+  type TaskNotificationService
+} from '../notifications/task-notifications'
+import {
+  RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE,
+  RESEARCH_FILM_MODEL_TIMEOUT_MINUTES
+} from '../../shared/research-video-presentation'
+import { desktopFileInteraction } from '../desktop-interaction'
+import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
+
+// ACP adapters do not expose a common HTTP retry contract. Retry only concrete transient
+// network failures; unsupported transports, configuration errors and unknown failures stay terminal.
+const isTransientFilmNetworkError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false
+  const codes = new Set([
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'EAI_AGAIN',
+    'UND_ERR_SOCKET',
+    'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_HEADERS_TIMEOUT',
+    'UND_ERR_BODY_TIMEOUT'
+  ])
+  return [error, error.cause].some(
+    (value) =>
+      value instanceof Error &&
+      'code' in value &&
+      typeof value.code === 'string' &&
+      codes.has(value.code)
+  )
+}
 
 /** Button-owned generation: no conversation tools, Artifact publication or Notebook transport. */
 export async function composeResearchFilm({
@@ -56,9 +92,13 @@ export async function composeResearchFilm({
   researchFilmLifecycle,
   previewResources,
   recordAuxiliaryUsage,
+  translate = englishNativeTranslator,
+  applicationEvents,
+  taskNotifications,
   modules
 }: {
   configRoot: string
+  translate?: NativeTranslator
   settingsService: SettingsService
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
   sessionPersistenceCoordinator: Pick<SessionPersistenceCommands, 'runSessionMutation'>
@@ -69,6 +109,8 @@ export async function composeResearchFilm({
   researchFilmLifecycle: ResearchFilmLifecycle
   previewResources: Pick<ManagedPreviewResources, 'withUnusedFiles'>
   recordAuxiliaryUsage(record: SessionAuxiliaryTurnUsageRecord): Promise<void>
+  applicationEvents: Pick<ApplicationEvents, 'publish'>
+  taskNotifications: Pick<TaskNotificationService, 'handleResearchFilmOutcome'>
   modules: ApplicationModuleBuilder
 }): Promise<{
   researchNarrationModels: ReturnType<typeof createLocalModelOwner>
@@ -98,6 +140,7 @@ export async function composeResearchFilm({
   const videoExportTools = createVideoExportTools(videoExportModels)
   const resources = researchFilmResources()
   const researchVideoEngineDirectory = resources.stageDirectory
+  const scriptStandard = await readFile(join(resources.authoringDirectory, 'SCRIPT.md'), 'utf8')
   const animationInstructions =
     RESEARCH_VIDEO_ANIMATION_PROMPT +
     '\n\n' +
@@ -107,7 +150,9 @@ export async function composeResearchFilm({
     appVersion: runtimeMetadata().version,
     configRoot,
     profileNamespace: 'research-video',
+    requireConfirmedCleanup: true,
     allowNativeCodexSubscription: true,
+    allowCodeBuddySubscription: true,
     resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
   })
   // One frozen source belongs to one job. Corrections and parallel scene calls share its target.
@@ -136,6 +181,13 @@ export async function composeResearchFilm({
   }
   const filmLog = createLogger('research-video')
   const targets = new WeakMap<ResearchVideoSessionSource, ReturnType<typeof capture>>()
+  const targetFor = (
+    source: ResearchVideoSessionSource,
+    signal: AbortSignal
+  ): ReturnType<typeof capture> => {
+    if (!targets.has(source)) targets.set(source, capture(signal))
+    return targets.get(source)!
+  }
   const recordUsage = async (
     record: SessionAuxiliaryTurnUsageRecord,
     signal: AbortSignal
@@ -159,6 +211,9 @@ export async function composeResearchFilm({
       filmLog.info('film model usage still pending', { requestId: record.eventId })
     }
   }
+  // Every authoring/review call retains the same frozen source, including parallel scenes.
+  // Count additional physical calls across correction passes without persisting retry state.
+  const automaticRetries = new WeakMap<ResearchVideoSessionSource, number>()
   const inferResearchVideo = async (
     source: ResearchVideoSessionSource,
     systemPrompt: string,
@@ -169,8 +224,7 @@ export async function composeResearchFilm({
     const targetDeadline = AbortSignal.timeout(30_000)
     const setupSignal = AbortSignal.any([signal, targetDeadline])
     const { target, budget, count } = await waitForFilmStep(setupSignal, () => {
-      if (!targets.has(source)) targets.set(source, capture(setupSignal))
-      return targets.get(source)!
+      return targetFor(source, setupSignal)
     }).catch((error) => {
       signal.throwIfAborted()
       const failure =
@@ -186,112 +240,167 @@ export async function composeResearchFilm({
       throw failure
     })
     signal.throwIfAborted()
-    const requestId = randomUUID()
-    const started = performance.now()
-    const correction =
-      payload && typeof payload === 'object' && 'correction' in payload ? payload.correction : null
-    const fields = {
-      ...currentFilmAttempt(),
-      requestId,
-      sessionId: source.provenance.sessionId,
-      activeBranchId: source.provenance.branchId,
-      phase:
-        systemPrompt === REPLAY_AUTHORING_PROMPT
-          ? 'replay'
-          : systemPrompt === RESEARCH_VIDEO_SCREENPLAY_PROMPT
-            ? 'screenplay'
-            : 'animation',
-      purpose: correction ? 'correction' : undefined,
-      frameworkId: target.frameworkId,
-      providerId: target.providerId
-    }
-    filmLog.info('film model request', fields)
-    const response = await Promise.resolve()
-      .then(() =>
-        researchVideoInference.run({
-          target,
-          prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
-          systemPrompt,
-          agentName:
-            source.provenance.mode === 'operation-replay'
-              ? 'Operation replay'
-              : 'Research explanation',
-          description: 'Generate a research film from a frozen session',
-          signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
-        })
-      )
-      .catch(async (error: unknown) => {
-        const usage = extractRestrictedInferenceUsage(error)
-        filmLog.info('film model failure', {
+    for (let attempt = 0; ; attempt++) {
+      signal.throwIfAborted()
+      let retryable = false
+      const requestId = randomUUID()
+      const started = performance.now()
+      const correction =
+        payload && typeof payload === 'object' && 'correction' in payload
+          ? payload.correction
+          : null
+      const fields = {
+        ...currentFilmAttempt(),
+        requestId,
+        sessionId: source.provenance.sessionId,
+        activeBranchId: source.provenance.branchId,
+        phase:
+          systemPrompt === REPLAY_AUTHORING_PROMPT
+            ? 'replay'
+            : systemPrompt.startsWith(RESEARCH_VIDEO_SCREENPLAY_PROMPT)
+              ? 'screenplay'
+              : systemPrompt.startsWith(FILM_SCRIPT_REVIEW_PROMPT)
+                ? 'script-review'
+                : 'animation',
+        purpose: correction ? 'correction' : undefined,
+        frameworkId: target.frameworkId,
+        providerId: target.providerId
+      }
+      try {
+        filmLog.info('film model request', fields)
+        const modelDeadline = AbortSignal.timeout(RESEARCH_FILM_MODEL_TIMEOUT_MINUTES * 60_000)
+        const inferenceSignal = AbortSignal.any([signal, modelDeadline])
+        const response = await Promise.resolve()
+          .then(() =>
+            researchVideoInference.run({
+              target,
+              prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
+              systemPrompt,
+              agentName:
+                source.provenance.mode === 'operation-replay'
+                  ? 'Operation replay'
+                  : 'Research explanation',
+              description: 'Generate a research film from a frozen session',
+              signal: inferenceSignal
+            })
+          )
+          .catch(async (error: unknown) => {
+            // The runner reports all aborts as cancellation. Only our own deadline proves a timeout.
+            const timedOut =
+              modelDeadline.aborted &&
+              inferenceSignal.reason === modelDeadline.reason &&
+              (error === modelDeadline.reason ||
+                (error instanceof RestrictedInferenceError && error.code === 'cancelled'))
+            retryable =
+              timedOut ||
+              (error instanceof RestrictedInferenceError
+                ? error.code === 'cancelled'
+                : isTransientFilmNetworkError(error))
+            const usage = extractRestrictedInferenceUsage(error)
+            filmLog.info('film model failure', {
+              ...fields,
+              durationMs: Math.round(performance.now() - started),
+              errorCategory: timedOut
+                ? 'timeout'
+                : error instanceof RestrictedInferenceError
+                  ? error.code
+                  : 'inference',
+              outputTokens: usage?.outputTokens
+            })
+            if (usage)
+              await recordUsage(
+                {
+                  projectId: source.provenance.projectId,
+                  sessionId: source.provenance.sessionId,
+                  eventId: requestId,
+                  source: 'host-llm',
+                  frameworkId: target.frameworkId,
+                  providerId: target.providerId,
+                  model: target.model.kind === 'required' ? target.model.id : undefined,
+                  completedAtMs: Date.now(),
+                  usage
+                },
+                signal
+              )
+            signal.throwIfAborted()
+            if (timedOut)
+              throw new ResearchFilmDraftError(RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE, {
+                cause: error
+              })
+            throw error
+          })
+        filmLog.info('film model response', {
           ...fields,
-          durationMs: Math.round(performance.now() - started),
-          errorCategory: error instanceof RestrictedInferenceError ? error.code : 'inference',
-          outputTokens: usage?.outputTokens
+          model: response.model,
+          reason: response.stopReason,
+          outputBytes: Buffer.byteLength(response.text),
+          outputTokens: response.usage?.outputTokens,
+          inputTokens: response.usage?.inputTokens,
+          durationMs: Math.round(performance.now() - started)
         })
-        if (usage)
+        if (response.usage)
           await recordUsage(
             {
               projectId: source.provenance.projectId,
               sessionId: source.provenance.sessionId,
               eventId: requestId,
               source: 'host-llm',
-              frameworkId: target.frameworkId,
+              frameworkId: response.frameworkId,
               providerId: target.providerId,
-              model: target.model.kind === 'required' ? target.model.id : undefined,
+              model: response.model,
               completedAtMs: Date.now(),
-              usage
+              usage: response.usage
             },
             signal
           )
         signal.throwIfAborted()
-        throw error
-      })
-    filmLog.info('film model response', {
-      ...fields,
-      model: response.model,
-      reason: response.stopReason,
-      outputBytes: Buffer.byteLength(response.text),
-      outputTokens: response.usage?.outputTokens,
-      inputTokens: response.usage?.inputTokens,
-      durationMs: Math.round(performance.now() - started)
-    })
-    if (response.usage)
-      await recordUsage(
-        {
-          projectId: source.provenance.projectId,
-          sessionId: source.provenance.sessionId,
-          eventId: requestId,
-          source: 'host-llm',
-          frameworkId: response.frameworkId,
-          providerId: target.providerId,
-          model: response.model,
-          completedAtMs: Date.now(),
-          usage: response.usage
-        },
-        signal
-      )
-    signal.throwIfAborted()
-    if (response.stopReason === 'max_tokens')
-      throw new ResearchFilmOutputLimitError(
-        'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
-      )
-    if (response.stopReason === 'max_turn_requests')
-      throw new ResearchFilmIncompleteError(
-        'Research film generation stopped before completing (max_turn_requests). Try again or select another model.'
-      )
-    if (response.stopReason !== 'end_turn')
-      throw new Error(
-        `Research film generation stopped before completing (${response.stopReason}). Try again or select another model.`
-      )
-    if (!response.text.trim())
-      throw new ResearchFilmIncompleteError(
-        'The model returned no research film content. Try again or select another model.'
-      )
-    return response.text
+        if (fields.phase === 'script-review' && response.stopReason === 'refusal') return ''
+        if (response.stopReason === 'max_tokens')
+          throw new ResearchFilmOutputLimitError(
+            'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
+          )
+        if (response.stopReason === 'max_turn_requests')
+          throw new ResearchFilmIncompleteError(
+            'Research film generation stopped before completing (max_turn_requests). Try again or select another model.'
+          )
+        if (response.stopReason === 'cancelled') retryable = true
+        if (response.stopReason !== 'end_turn')
+          throw new Error(
+            `Research film generation stopped before completing (${response.stopReason}). Try again or select another model.`
+          )
+        if (!response.text.trim())
+          throw new ResearchFilmIncompleteError(
+            'The model returned no research film content. Try again or select another model.'
+          )
+        return response.text
+      } catch (error) {
+        signal.throwIfAborted()
+        if (fields.phase === 'script-review' && error instanceof ResearchFilmDraftError) return ''
+        const used = automaticRetries.get(source) ?? 0
+        if (!retryable || attempt >= 1 || used >= 2) throw error
+        // Reserve synchronously: parallel animation lanes share one allowance.
+        automaticRetries.set(source, used + 1)
+        const delayMs = 10_000 + Math.floor(Math.random() * 2_001)
+        filmLog.info('film model retry scheduled', {
+          ...fields,
+          retry: used + 1,
+          delayMs
+        })
+        // Film requires confirmed runtime cleanup; unconfirmed exits are not retryable.
+        await delay(delayMs, undefined, { signal })
+      }
+    }
   }
   let replayNotebook: NotebookRunRepository | undefined
   let replayNotebookRoot: string | undefined
   const researchVideoPresentation = createResearchVideoPresentationOwner({
+    onActivityChanged: (sessions) =>
+      applicationEvents.publish('research-video:activity-changed', sessions),
+    onOutcome: (outcome) =>
+      runTaskNotificationInBackground(
+        () => taskNotifications.handleResearchFilmOutcome(outcome),
+        (error) => filmLog.warn('film notification failed', diagnosticErrorFields(error))
+      ),
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
     lifecycle: researchFilmLifecycle,
@@ -367,7 +476,7 @@ export async function composeResearchFilm({
       if (
         budget <
         Math.max(
-          count(RESEARCH_VIDEO_SCREENPLAY_PROMPT),
+          count(RESEARCH_VIDEO_SCREENPLAY_PROMPT + '\n\n' + scriptStandard),
           count(animationInstructions),
           count(REPLAY_AUTHORING_PROMPT)
         ) +
@@ -385,6 +494,32 @@ export async function composeResearchFilm({
       return result.status === 'found' ? result.session : undefined
     },
     generate: researchVideoGenerate,
+    confirmSessionApp: async (app, signal) => {
+      const result = await desktopFileInteraction().confirm(
+        {
+          type: 'question',
+          message: translate('Use {{name}} as a live illustration?', { name: app.name }),
+          detail: translate(
+            'The film can run {{modules}} local JavaScript modules from this session in its offline player. You can use a drawn illustration instead.',
+            { modules: app.modules }
+          ),
+          buttons: [translate('Use a drawing'), translate('Allow this app')],
+          defaultId: 0,
+          cancelId: 0
+        },
+        undefined,
+        signal
+      )
+      return result.response === 1
+    },
+    reviewPlayer: async (_source, htmlPath, _spec, signal) => {
+      const check = desktopFileInteraction().checkResearchVideoHtml
+      if (!check) throw new Error('The desktop HTML film checker is unavailable.')
+      const { issues } = await check({ htmlPath, includeFrames: false }, signal)
+      signal.throwIfAborted()
+      filmLog.info('film HTML checked', { ...currentFilmAttempt(), issues: issues.length })
+      return issues
+    },
     checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,
     ...createResearchFilmAuthor(inferResearchVideo)

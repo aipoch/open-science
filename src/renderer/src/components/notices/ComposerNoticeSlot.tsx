@@ -1,3 +1,4 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -95,32 +96,34 @@ const ComposerFailureNoticeSlot = ({
       ? notices.find(({ id }) => id === selected?.id)
       : undefined) ?? notices[0]
   if (!current) return null
-  const presentation = noticePresentation(current.failure)
-  const title =
-    current.summary?.title ??
-    (current.failure.responseMessage ? t('Model provider error') : t(presentation.titleKey))
+  const presentation = noticePresentation(current.failure, current.operation)
+  const providerMessage = current.failure.diagnostics.protocol
+    ? undefined
+    : current.failure.responseMessage
+  const excerpt =
+    current.failure.reason === 'input/context-overflow'
+      ? providerErrorExcerpt(current.failure.diagnostics.raw)
+      : undefined
+  const title = current.summary?.title ?? t(presentation.titleKey)
   const description = current.summary
     ? (current.summary.description ?? '')
-    : current.failure.responseMessage
-      ? current.failure.responseMessage.startsWith('{') ||
-        current.failure.responseMessage.startsWith('[')
-        ? ''
-        : current.failure.responseMessage
-      : t(presentation.descriptionKey)
-  const diagnosticText = formatNoticeDiagnostics(current, title, description)
+    : excerpt
+      ? `${t(presentation.descriptionKey)} ${excerpt}`
+      : current.source === 'session' && current.failure.diagnostics.protocol
+        ? t('This turn was interrupted. Resume to continue.')
+        : t(presentation.descriptionKey)
+  const diagnostics = formatNoticeDiagnostics(current, title, description)
   const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
     ([key, value]) =>
       value !== undefined &&
-      (current.failure.responseMessage
+      (providerMessage || current.failure.diagnostics.protocol
         ? ['status', 'provider', 'model'].includes(key)
-        : key !== 'raw')
+        : key !== 'raw' && key !== 'adapterCode')
   )
-  const showDiagnostics =
-    !current.summary ||
-    Object.entries(current.failure.diagnostics).some(
-      ([key, value]) =>
-        value !== undefined && (key !== 'raw' || (value !== title && value !== description))
-    )
+  const canCopyError = !current.summary || Boolean(diagnostics.details)
+  const details = [diagnostics.details, actionFailure?.id === current.id && actionFailure.message]
+    .filter(Boolean)
+    .join('\n')
   const labels: Record<NoticeActionId, string> = {
     'export-diagnostics': t('Export diagnostics…'),
     'open-agent-settings': t('Agent settings'),
@@ -145,7 +148,7 @@ const ComposerFailureNoticeSlot = ({
     setCopiedId(undefined)
     try {
       if (action === 'copy-error') {
-        await navigator.clipboard.writeText(diagnosticText)
+        await navigator.clipboard.writeText(diagnostics.fullText)
         setCopiedId(notice.id)
       } else await handlers[action]?.run(notice)
     } catch (error) {
@@ -159,14 +162,19 @@ const ComposerFailureNoticeSlot = ({
     }
   }
   const available = (action: NoticeActionId, notice = current): boolean =>
-    (showDiagnostics && action === 'copy-error') ||
+    (canCopyError && action === 'copy-error') ||
     Boolean(handlers[action] && (handlers[action]?.available?.(notice) ?? true))
-  const primary =
-    presentation.primaryAction && available(presentation.primaryAction)
-      ? presentation.primaryAction
-      : presentation.primaryAction === 'open-environment' && available('retry')
-        ? 'retry'
-        : undefined
+  const primaryAction = (notice: ComposerNotice): NoticeActionId | undefined => {
+    const action = noticePresentation(notice.failure, notice.operation).primaryAction
+    return notice.source === 'session' && available('resume', notice)
+      ? 'resume'
+      : action && available(action, notice)
+        ? action
+        : action === 'open-environment' && available('retry', notice)
+          ? 'retry'
+          : undefined
+  }
+  const primary = primaryAction(current)
   const actionButton = (
     action: NoticeActionId,
     notice: ComposerNotice,
@@ -218,28 +226,23 @@ const ComposerFailureNoticeSlot = ({
   // Known Main diagnostics are stored in English; localize them for display only.
   const sessionRecoveryMessage = (notice: ComposerNotice, fallback: string): string => {
     const raw = notice.failure.diagnostics.raw?.trim()
-    if (raw) {
-      switch (raw) {
-        case 'This turn was interrupted. Resume to continue.':
-          return t('This turn was interrupted. Resume to continue.')
-        case 'ACP connection closed':
-        case 'Connection lost — Resume to reconnect and continue.':
-          return t('Connection lost — Resume to reconnect and continue.')
-        case 'Session was interrupted before the app closed.':
-          return t('Session was interrupted before the app closed.')
-        default:
-          return raw
-      }
-    }
-    switch (notice.recoveryCause) {
-      case 'cancelled':
-        return t('This turn was interrupted. Resume to continue.')
-      case 'connection-lost':
+    if (!raw || raw === 'This turn was interrupted. Resume to continue.') {
+      if (notice.recoveryCause === 'connection-lost')
         return t('Connection lost — Resume to reconnect and continue.')
-      case 'app-restart':
+      if (notice.recoveryCause === 'app-restart')
+        return t('Session was interrupted before the app closed.')
+      return raw || notice.recoveryCause === 'cancelled'
+        ? t('This turn was interrupted. Resume to continue.')
+        : fallback
+    }
+    switch (raw) {
+      case 'ACP connection closed':
+      case 'Connection lost — Resume to reconnect and continue.':
+        return t('Connection lost — Resume to reconnect and continue.')
+      case 'Session was interrupted before the app closed.':
         return t('Session was interrupted before the app closed.')
       default:
-        return fallback
+        return raw
     }
   }
 
@@ -265,7 +268,7 @@ const ComposerFailureNoticeSlot = ({
             {notices
               .filter(({ id }) => id !== current.id)
               .map((notice) => {
-                const item = noticePresentation(notice.failure)
+                const item = noticePresentation(notice.failure, notice.operation)
                 const Icon =
                   notice.failure.category === 'session'
                     ? PauseCircle
@@ -298,16 +301,9 @@ const ComposerFailureNoticeSlot = ({
                         setExpanded(false)
                       }}
                     >
-                      <TruncatedText
-                        text={
-                          notice.summary?.title ??
-                          (notice.failure.responseMessage
-                            ? t('Model provider error')
-                            : t(item.titleKey))
-                        }
-                      />
+                      <TruncatedText text={notice.summary?.title ?? t(item.titleKey)} />
                     </button>
-                    {item.primaryAction ? actionButton(item.primaryAction, notice) : null}
+                    {primaryAction(notice) ? actionButton(primaryAction(notice)!, notice) : null}
                   </li>
                 )
               })}
@@ -338,7 +334,9 @@ const ComposerFailureNoticeSlot = ({
           </div>
           {actionFailure?.id === current.id ? (
             <p role="alert" className="pt-1 text-sm text-destructive">
-              {t('The action could not be completed. See details and try again.')}
+              {primary === 'resume'
+                ? t('Could not resume the session.')
+                : t('The action could not be completed. See details and try again.')}
             </p>
           ) : null}
           {moreNotices}
@@ -348,7 +346,7 @@ const ComposerFailureNoticeSlot = ({
   }
 
   const showFooter =
-    showDiagnostics ||
+    canCopyError ||
     primary ||
     presentation.secondaryActions.some((action) => available(action)) ||
     (presentation.feedback === 'link' && handlers.report)
@@ -415,10 +413,10 @@ const ComposerFailureNoticeSlot = ({
                 )
               ) : null}
             </div>
-            {showDiagnostics || actionFailure?.id === current.id ? (
+            {details ? (
               <NoticeDiagnostics
                 key={current.id}
-                errorCode={`${diagnosticText}${actionFailure?.id === current.id ? `\n${actionFailure.message}` : ''}`}
+                errorCode={details}
                 diagnosticsLabel={t('Details')}
                 summaryContent={
                   diagnosticFields.length > 0 ? (
@@ -447,7 +445,7 @@ const ComposerFailureNoticeSlot = ({
           </>
         }
         dismissButton={
-          onDismiss
+          onDismiss && current.source !== 'session'
             ? {
                 label: t('Dismiss error'),
                 onClick: () => {

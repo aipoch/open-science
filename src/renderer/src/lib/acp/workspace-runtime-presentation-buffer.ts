@@ -29,11 +29,14 @@ const graphemeSegmenter =
     ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
     : undefined
 
-const countEventGraphemes = (event: AcpRuntimeEvent): number => {
+const countEventGraphemes = (event: AcpRuntimeEvent, budget: number): number => {
   const text = getAcpRuntimeEventText(event) ?? ''
-  return graphemeSegmenter
-    ? Array.from(graphemeSegmenter.segment(text)).length
-    : Array.from(text).length
+  // Each printable ASCII character, tab and LF is one grapheme. Leave CRLF to the segmenter.
+  if (!/[^\t\n -~]/u.test(text)) return text.length
+  const iterator = (graphemeSegmenter?.segment(text) ?? text)[Symbol.iterator]()
+  let count = 0
+  while (count <= budget && !iterator.next().done) count++
+  return count
 }
 
 const isImmediatePresentationBoundary = (event: AcpRuntimeEvent): boolean =>
@@ -169,22 +172,28 @@ const createWorkspaceRuntimePresentationBuffer = (
     // each time. Consecutive non-text events stay ordered and still apply sequentially.
     if (!isBufferableAssistantTextEvent(first)) return consecutiveNonTextPrefix(pending)
 
-    const textRun = pending.slice(
-      0,
-      pending.findIndex((event) => !isBufferableAssistantTextEvent(event)) === -1
-        ? pending.length
-        : pending.findIndex((event) => !isBufferableAssistantTextEvent(event))
-    )
+    const boundaryIndex = pending.findIndex((event) => !isBufferableAssistantTextEvent(event))
+    const textRun = pending.slice(0, boundaryIndex < 0 ? pending.length : boundaryIndex)
     const boundary = pending[textRun.length]
-    const totalGraphemes = textRun.reduce((total, event) => total + countEventGraphemes(event), 0)
     if (
+      textRun.length === 1 ||
       lane.force ||
       !presentation.shouldAnimate() ||
-      (boundary && isImmediatePresentationBoundary(boundary)) ||
-      totalGraphemes > MAX_BUFFERED_GRAPHEMES
+      (boundary && isImmediatePresentationBoundary(boundary))
     ) {
       lane.toolCatchUpFramesRemaining = undefined
       return textRun
+    }
+
+    const cumulativeCounts: number[] = []
+    let totalGraphemes = 0
+    for (const event of textRun) {
+      totalGraphemes += countEventGraphemes(event, MAX_BUFFERED_GRAPHEMES - totalGraphemes)
+      if (totalGraphemes > MAX_BUFFERED_GRAPHEMES) {
+        lane.toolCatchUpFramesRemaining = undefined
+        return textRun
+      }
+      cumulativeCounts.push(totalGraphemes)
     }
 
     const remaining =
@@ -198,15 +207,12 @@ const createWorkspaceRuntimePresentationBuffer = (
     lane.toolCatchUpFramesRemaining =
       boundary?.kind === 'tool' ? Math.max(1, remaining - 1) : undefined
 
-    const selected: AcpRuntimeEvent[] = []
-    let selectedGraphemes = 0
-    for (const event of textRun) {
-      selected.push(event)
-      selectedGraphemes += countEventGraphemes(event)
-      if (selectedGraphemes >= targetGraphemes) break
+    const end = cumulativeCounts.findIndex((count) => count >= targetGraphemes)
+    if (end < 0 || end === textRun.length - 1) {
+      lane.toolCatchUpFramesRemaining = undefined
+      return textRun
     }
-    if (selected.length === textRun.length) lane.toolCatchUpFramesRemaining = undefined
-    return selected
+    return textRun.slice(0, end + 1)
   }
 
   return {

@@ -767,3 +767,88 @@ it.each([
     }
   }
 )
+
+it.each([
+  ['CMMI10', '\u033a (V)', true],
+  ['CMMI10', '\u033a (W)', false],
+  ['CMMI10', '\u033a (V) 和 \u033a (V)', false],
+  ['CMMI10', 'V', false],
+  ['Helvetica', '\u033a (V)', false]
+] as const)(
+  'keeps a legacy rho glyph only with its original function argument (%s / %s)',
+  async (fontName, target, placed) => {
+    const pdf = await PDFDocument.create(),
+      prose = await pdf.embedFont(StandardFonts.TimesRoman),
+      math = await pdf.embedFont(StandardFonts.TimesRomanItalic),
+      page = pdf.addPage([320, 200]),
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'native-rho' }),
+      writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
+    page.drawText('The sample uses ', { font: prose, x: 40, y: 150, size: 10 })
+    page.drawText('%', { font: math, x: 110, y: 150, size: 10 })
+    page.drawText(' (V) for calibration.', { font: prose, x: 120, y: 150, size: 10 })
+    page.drawText('Unrelated neighbor.', { font: prose, x: 40, y: 110, size: 10 })
+    await pdf.flush()
+    const font = pdf.context.lookup(math.ref, PDFDict)
+    font.set(PDFName.of('BaseFont'), PDFName.of(fontName))
+    font.set(
+      PDFName.of('ToUnicode'),
+      pdf.context.register(
+        pdf.context.stream(
+          '/CIDInit /ProcSet findresource begin 12 dict begin begincmap ' +
+            '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def ' +
+            '/CMapName /NativeRho def /CMapType 2 def ' +
+            '1 begincodespacerange <00> <FF> endcodespacerange ' +
+            '1 beginbfchar <25> <033A> endbfchar ' +
+            'endcmap CMapName currentdict /CMap defineresource pop end end'
+        )
+      )
+    )
+    let result: ReturnType<typeof getDocument> | undefined
+    try {
+      const data = await pdf.save(),
+        source = 'The sample uses \u033a (V) for calibration.',
+        translation = `以 ${target} 校准样品。`,
+        output = await writer.generateDetailed(
+          {
+            id: 'native-rho',
+            data,
+            pages: [{ width: 320, height: 200 }],
+            preserveUnsupported: true,
+            preserveUnmatched: true,
+            units: [
+              {
+                source,
+                translation,
+                fragments: [
+                  {
+                    pageNumber: 1,
+                    rect: { x: 39 / 320, y: 37 / 200, width: 250 / 320, height: 22 / 200 }
+                  }
+                ]
+              }
+            ]
+          },
+          caller.lease
+        )
+      expect(output!.layoutFailures).toHaveLength(placed ? 0 : 1)
+      result = getDocument({ data: output!.data.slice(), useSystemFonts: true })
+      const text = (await (await (await result.promise).getPage(1)).getTextContent()).items.filter(
+        (item) => 'str' in item
+      )
+      expect(
+        text
+          .map((item) => item.str)
+          .join('')
+          .replace(/\s/gu, '')
+      ).toBe(((placed ? translation : source) + 'Unrelated neighbor.').replace(/\s/gu, ''))
+      expect(text.find((item) => item.str === 'Unrelated neighbor.')?.transform.slice(4)).toEqual([
+        40, 110
+      ])
+    } finally {
+      await result?.destroy()
+      caller.release()
+      registry.dispose()
+    }
+  }
+)

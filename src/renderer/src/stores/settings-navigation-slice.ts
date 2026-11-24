@@ -23,6 +23,7 @@ export type SettingsNavigationState = {
 
 export type SettingsNavigationActions = {
   openSettings: () => void
+  resumeSettingsRoute: (route: SettingsRoute) => void
   openSettingsToPanel: (panel: SettingsPanelId) => void
   openSettingsToProvider: (providerId: string, model?: string) => void
   openSettingsToConnector: (id: string) => void
@@ -80,6 +81,8 @@ export const createSettingsNavigationSlice = ({
       rememberSettingsReturnFocusTarget(getState().isSettingsOpen)
       setState({ isSettingsOpen: true })
     },
+
+    resumeSettingsRoute: openTo,
 
     openSettingsToPanel: (panel) => {
       if (panel === 'skills' || panel === 'specialists' || panel === 'connectors') {

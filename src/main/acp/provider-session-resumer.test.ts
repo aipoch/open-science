@@ -7,7 +7,12 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
-import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  codexFramework,
+  getAgentFramework,
+  opencodeFramework
+} from '../agent-framework'
 import { createPiFramework } from '../agent-framework/pi'
 import {
   shellRuntimeAgentContract,
@@ -25,6 +30,9 @@ import {
   type SessionCapabilityPolicy
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
+
+import { taskRunTracing } from './task-run-tracing'
+import { HARNESS_TRACE_READINESS_METHOD } from '../harness-acp/config'
 
 const diagnosticLogs = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
@@ -141,6 +149,7 @@ type ResumerHarness = {
   request: ReturnType<typeof vi.fn>
   releaseForTransfer: () => Promise<string | undefined>
   reconfigure: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
+  refreshNotebookConnection: AcpProviderSessionResumer['refreshNotebookConnection']
   resume: (
     request?: Partial<AcpResumeSessionRequest>,
     writerTransfer?: AcpSessionWriterTransfer
@@ -427,6 +436,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     request,
     releaseForTransfer: () => resumer.releaseForTransfer('stable-app-session'),
     reconfigure,
+    refreshNotebookConnection: (request) => resumer.refreshNotebookConnection(request),
     resume,
     sessionSetupAppends,
     setTimer,
@@ -435,6 +445,105 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it.each([true, false])(
+    'refuses an unconfigured exporter before attaching or refreshing the Session (attached=%s)',
+    async (attached) => {
+      const harness = createHarness({
+        attached,
+        initialBackend: { ...backend, framework: getAgentFramework('open-science-agent') }
+      })
+      harness.request.mockResolvedValueOnce({ ready: false })
+      const traced = { cwd: '/workspace', [taskRunTracing]: true }
+      await expect(harness.resume(traced)).rejects.toThrow('OTLP_TRACES_ENDPOINT')
+      expect(harness.request).toHaveBeenCalledOnce()
+      expect(harness.request.mock.calls[0][0]).toBe(HARNESS_TRACE_READINESS_METHOD)
+      expect(harness.configurePermissionProfile).not.toHaveBeenCalled()
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.adopt).not.toHaveBeenCalled()
+    }
+  )
+
+  it('preserves the selected CodeBuddy subscription site when refreshing Notebook credentials', async () => {
+    const beforePromptDispatch = vi.fn().mockResolvedValue(undefined)
+    const harness = createHarness({
+      attached: true,
+      initialBackend: {
+        ...backend,
+        backendId: 'codebuddy',
+        modelRoute: 'codebuddy-subscription',
+        framework: { ...backend.framework, id: 'codebuddy', beforePromptDispatch },
+        adapter: { ...backend.adapter, codeBuddySharedSite: 'internal' }
+      }
+    })
+    await harness.refreshNotebookConnection({
+      sessionId: 'stable-app-session',
+      cwd: '/workspace',
+      mcpServers: [],
+      assertCurrent: () => undefined
+    })
+    expect(beforePromptDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ codeBuddySharedSite: 'internal' })
+    )
+  })
+
+  it.each([
+    codexResponsesBackend,
+    {
+      ...backend,
+      backendId: 'open-science-agent',
+      framework: getAgentFramework('open-science-agent')
+    }
+  ])(
+    'refreshes the $backendId writer with new Notebook credentials without replacing history',
+    async (initialBackend) => {
+      const harness = createHarness({ attached: true, initialBackend })
+      const attachment = harness.registry.lookup('stable-app-session')?.attachment
+      await harness.refreshNotebookConnection({
+        sessionId: 'stable-app-session',
+        cwd: '/workspace',
+        mcpServers: [
+          {
+            name: 'open-science-notebook',
+            command: '/node',
+            args: [],
+            env: [{ name: 'TOKEN', value: 'fresh' }]
+          }
+        ],
+        assertCurrent: () => undefined
+      })
+      expect(harness.request.mock.calls.map(([method]) => method)).toEqual([
+        acp.methods.agent.session.close,
+        acp.methods.agent.session.resume
+      ])
+      expect(harness.registry.lookup('stable-app-session')?.attachment).toBe(attachment)
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.adopt).not.toHaveBeenCalled()
+      expect(harness.providerSession.dispose).not.toHaveBeenCalled()
+    }
+  )
+  it('detaches a closed writer when Notebook resume fails so retry can recover it', async () => {
+    const harness = createHarness({
+      attached: true,
+      initialBackend: {
+        ...backend,
+        backendId: 'open-science-agent',
+        framework: getAgentFramework('open-science-agent')
+      }
+    })
+    harness.request
+      .mockResolvedValueOnce({ sessionId: harness.providerSession.sessionId })
+      .mockRejectedValueOnce(new Error('resume failed'))
+    await expect(
+      harness.refreshNotebookConnection({
+        sessionId: 'stable-app-session',
+        cwd: '/workspace',
+        mcpServers: [],
+        assertCurrent: () => undefined
+      })
+    ).rejects.toThrow('resume failed')
+    expect(harness.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+    expect(harness.providerSession.dispose).toHaveBeenCalledOnce()
+  })
   it.each([undefined, 'native-missing'])(
     'adopts Pi history after missing native session (persisted id: %s)',
     async (providerSessionId) => {

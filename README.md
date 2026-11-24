@@ -51,18 +51,17 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-### 💡 AIPOCH Open-Science v1.2.2 updates
+### 💡 AIPOCH Open-Science v1.3.4 updates
 
-_November 18, 2026_
+_November 22, 2026_
 
-- **Strict network mode**: Opt in to a Strict whitelist for Notebook networking — requests must match your rules by protocol, host, and port; unmatched requests are blocked without an authorization prompt.
-- **Films resume**: Interrupted research-film generation continues from validated checkpoints with a five-step progress view; completed scenes and narration are reused.
-- **PDF fidelity**: External PDFs keep native figures, tables, captions, and reading order; translations preserve structure and layout, retaining original content when placement cannot be verified.
-- **Safer Windows grants**: Folder grants in protected mode are checked before saving, and update, uninstall, and handoff flows recover more reliably with diagnostics preserved.
-- **Provider updates**: Qwen4 Max Preview (1M context) joins Bailian Token Plans in Beijing and Singapore, and default models for official connections are refreshed.
-- **Reliability fixes**: Session imports report their outcome, service recovery blocks the workspace until the connection returns, and dark-mode contrast is preserved across surfaces.
+- **See inside the built-in Agent**: Projects can opt in to Agent tracing, exporting correlated spans for turns, model requests, and tool executions to an OTLP/HTTP receiver you host, with capture detail you control.
+- **Windows updates, unblocked**: An in-app update no longer stalls when the built-in Agent is running, and stable Windows updates apply as compact installer deltas again.
+- **Long Notebook histories stay fast**: Starting and finishing Runs, selecting results, and opening previews no longer re-read the whole history.
+- **Memory readings you can trust**: The Compute summary now matches Activity Monitor on macOS and shows committed memory against its limit on Windows.
+- **CodeBuddy reasoning efforts**: The effort picker now offers only the levels the selected CodeBuddy model actually supports.
 
-[View the full v1.2.2 release notes](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
+[View the full v1.3.4 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 
@@ -87,6 +86,14 @@ Open the [official download page](https://aipoch.com/open-science/download) and 
 | Linux ARM64                             | The Linux ARM64 AppImage or Debian package |
 
 See [download verification](SECURITY.md#verifying-your-download) for checks before installation.
+
+On Windows 10/11 x64, you can install the desktop app from the [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) or use WinGet in PowerShell.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+Available versions may differ by channel. See the [installation and updates guide](https://aipoch.com/docs/guides/installation/) for details.
 
 On macOS, you can also install with [Homebrew](https://brew.sh):
 
@@ -145,6 +152,69 @@ The former Model settings tab is now **Local capabilities**, covering PDF extrac
 
 > Screenshots in this README illustrate the workflow. Labels, catalogs, and other interface details may differ from the version you install.
 
+### Connect your own agent through MCP
+
+If your agent can configure local MCP servers, copy this prompt into its chat:
+
+> Follow https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp to connect this client to Open-Science and list my projects. Ask me to sign in only when an operation I request needs it.
+
+Choose your agent to see its setup options. For clients with local command access, the Open-Science CLI is also available.
+
+<p>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/workbuddy.svg" width="144" height="34" alt="WorkBuddy" /></a>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/codex.svg" width="144" height="34" alt="Codex CLI" /></a>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/claude-code.svg" width="144" height="34" alt="Claude Code" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/opencode.svg" width="144" height="34" alt="OpenCode" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/hermes.svg" width="144" height="34" alt="Hermes" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/antigravity.svg" width="144" height="34" alt="Antigravity" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/gemini.svg" width="144" height="34" alt="Gemini CLI" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/grok-build.svg" width="144" height="34" alt="Grok Build" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/kimi.svg" width="144" height="34" alt="Kimi CLI" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/cursor.svg" width="144" height="34" alt="Cursor Agent" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/qwen.svg" width="144" height="34" alt="Qwen Code" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/qoder.svg" width="144" height="34" alt="Qoder CLI" /></a>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/copilot.svg" width="144" height="34" alt="GitHub Copilot" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/pi.svg" width="144" height="34" alt="Pi" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/kiro.svg" width="144" height="34" alt="Kiro CLI" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/kilo.svg" width="144" height="34" alt="Kilo" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/vibe.svg" width="144" height="34" alt="Mistral Vibe" /></a>
+  <a href="packages/open-science/CLI.md#choose-your-agent"><img src="docs/images/readme/agent-harnesses/deepseek.svg" width="144" height="34" alt="DeepSeek TUI / Harness" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/reasonix.svg" width="144" height="34" alt="Reasonix" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/aider.svg" width="144" height="34" alt="Aider" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/devin.svg" width="144" height="34" alt="Devin" /></a>
+  <a href="packages/open-science/CLI.md#other-local-clients"><img src="docs/images/readme/agent-harnesses/trae.svg" width="144" height="34" alt="Trae CLI" /></a>
+</p>
+
+Also listed in the [local client guide](packages/open-science/CLI.md#other-local-clients): Amp, AtomCode, Claude Desktop, Cline, CodeBuddy, MiMo, OpenClaw, Raven and Vela.
+
+Connecting starts the standalone Open-Science service or reuses the one already running for
+your profile. You can open the desktop app later. The published 1.3.0 CLI requires an existing
+service; with that version, open Open-Science or run `npx --yes @aipoch/open-science@1.3.0 start --no-open` first.
+
+In your agent client's custom MCP settings, add a local **stdio** server. For clients that
+accept `mcpServers` JSON, use the following macOS/Linux configuration with Node.js 22.13.0
+or later and npm on the client's PATH:
+
+```json
+{
+  "mcpServers": {
+    "open-science": {
+      "command": "npx",
+      "args": ["--yes", "@aipoch/open-science@latest", "mcp"]
+    }
+  }
+}
+```
+
+On Windows, set `"command": "cmd.exe"` and use
+`"args": ["/d", "/c", "npx", "--yes", "@aipoch/open-science@latest", "mcp"]`
+so the client can launch npm's command shim.
+
+Ask your agent to **list my Open-Science projects**. A successful `list_projects` call
+confirms it can reach your profile, even if the list is empty. You can then submit a research
+task and check its results from the agent or Open-Science. See the [MCP guide](packages/open-science/CLI.md#external-agents-through-mcp)
+for custom profiles, available tools and permissions.
+
 <a id="core-capabilities"></a>
 
 ## What can you do with AIPOCH Open-Science?
@@ -170,6 +240,7 @@ AIPOCH evaluated Open-Science on research tasks ranging from literature search t
 | Answer a question from the literature | LitQA2-FullText, Test                     | **70/75** correct answers (93.33% accuracy).                                            |
 | Write a cited answer                  | ScholarQA-CS2, 100 validation questions   | **0.9289/1** composite quality score. Official test references use different questions. |
 | Carry out a workflow                  | ASI-Bench, local runs with the same model | **59.46** on B4 (Codex 55.45) and **56.11** on B2 (Codex 56.09).                        |
+| Reproduce ML/NLP experiments          | AstaBench SUPER-Expert test, 45 tasks     | **46.30%** output_match/mean in a local run with DeepSeek Flash/Max.                    |
 | Execute scientific workflows          | TB-Science 0.1 (70 tasks)                 | **69.05%** (145/210 local runs; GPT-6 Astra/max); no official rank or public run logs.  |
 | Reproduce published results           | CORE-Bench-Hard                           | **36/37** tasks correct (97.30%, including retests).                                    |
 | Analyze biomedical data               | BiomniBench-DA, Public 50                 | **79.05** mean judge score (81.04 and 77.06, weighted equally).                         |
@@ -180,7 +251,7 @@ AIPOCH evaluated Open-Science on research tasks ranging from literature search t
 
 These local runs used different metrics, models, and task sets from August to November 2026. The scores describe those runs. They were not rerun for this release.
 
-[Evaluation overview](https://aipoch.com/benchmark/open-science) · [CORE-Bench-Hard report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard) · [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da) · [TB-Science 0.1 local result](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)
+[Evaluation overview](https://aipoch.com/benchmark/open-science) · [CORE-Bench-Hard report](https://aipoch.com/blog/aipoch-open-science-core-bench-hard) · [BiomniBench-DA report](https://aipoch.com/blog/open-science-biomnibench-da) · [TB-Science 0.1 local result](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result) · [SUPER-Expert local result](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)
 
 </details>
 

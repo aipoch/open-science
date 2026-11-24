@@ -1,3 +1,4 @@
+import { requiresTaskRunTracing, requireTracingFramework } from './task-run-tracing'
 import { SessionPromptAdmissionError } from './runtime-activity-port'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
@@ -10,7 +11,6 @@ import { randomUUID } from 'node:crypto'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import type {
-  AcpCancelPromptRequest,
   AcpCompactSessionRequest,
   AcpConnectRequest,
   AcpCreateSessionRequest,
@@ -52,7 +52,7 @@ import {
   waitForSessionCreationCleanup
 } from './session-creation-cleanup'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
-import type { AcpRuntimeCallbacks } from './runtime-contract'
+import type { AcpRuntimeCallbacks, RuntimeCancelPromptRequest } from './runtime-contract'
 import { projectPermissionRequest } from './runtime-publication-owner'
 
 const log = createLogger('acp')
@@ -569,13 +569,24 @@ class AcpRuntimeCoordinator {
     for (const sessionId of durableWaitSessionIds) {
       this.durableQuitDetachedSessionIds.add(sessionId)
     }
+    // A durable question can outlive its provider turn: the live interaction is already gone while
+    // the snapshot still lists the session as prompt-in-flight. Cancel-prompting such a session
+    // would destroy the question that restart recovery is supposed to restore.
+    const durableQuestionSessionIds = new Set(
+      (this.getSnapshot().pendingElicitations ?? [])
+        .filter((request) => request.durable)
+        .map((request) => request.sessionId)
+    )
     const sessionIds = Array.from(
       new Set([
         ...this.activePromptRequests.keys(),
         ...this.pendingPromptStarts.keys(),
         ...this.getSnapshot().promptInFlightSessionIds
       ])
-    ).filter((sessionId) => !durableWaitSessionIds.has(sessionId))
+    ).filter(
+      (sessionId) =>
+        !durableWaitSessionIds.has(sessionId) && !durableQuestionSessionIds.has(sessionId)
+    )
     if (sessionIds.length === 0 && !this.delegatedWork) return 'completed'
 
     const cancelAndDrain = async (): Promise<void> => {
@@ -821,6 +832,7 @@ class AcpRuntimeCoordinator {
       request.specialistBindingPending === true &&
       request.specialistId === pendingReconciliation.specialistId
     ) {
+      if (requiresTaskRunTracing(request)) await owner.assertAttachedTracingReady(request.sessionId)
       await this.sessionResumeObserver?.(request, pendingReconciliation.response)
       if (this.pendingResumeReconciliations.get(request.sessionId) === pendingReconciliation) {
         this.pendingResumeReconciliations.delete(request.sessionId)
@@ -830,6 +842,7 @@ class AcpRuntimeCoordinator {
     }
     if (pendingReconciliation) this.pendingResumeReconciliations.delete(request.sessionId)
     const target = request.agentTarget
+    if (target && requiresTaskRunTracing(request)) requireTracingFramework(target.frameworkId)
     const ownerTarget = owner && this.runtimeTargets.get(owner)
     const reuseCodexSession = Boolean(
       owner &&
@@ -954,7 +967,7 @@ class AcpRuntimeCoordinator {
       const retrySkills =
         remainingSkillReloads > 0 &&
         !pinnedRuntime &&
-        !admissionCurrent &&
+        (!admissionCurrent || admissionCurrent()) &&
         resumeGeneration === this.initializationGeneration &&
         configurationGeneration === this.configurationGeneration &&
         skillsGeneration !== this.skillsReloadGeneration &&
@@ -983,7 +996,12 @@ class AcpRuntimeCoordinator {
             this.sessionResumeOperations.get(request.sessionId)?.invalidated
           )
             throw new Error('ACP session resume was superseded.')
-          return this.performSessionResume(request, undefined, undefined, remainingSkillReloads - 1)
+          return this.performSessionResume(
+            request,
+            undefined,
+            admissionCurrent,
+            remainingSkillReloads - 1
+          )
         }
       } else if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
         this.pendingSessionAdoptions.delete(request.sessionId)
@@ -1284,6 +1302,14 @@ class AcpRuntimeCoordinator {
 
   sendPrompt(request: AcpPromptRequest): ReturnType<AcpRuntime['sendPrompt']> {
     return this.sendObservedPrompt(request)
+  }
+
+  async assertAttachedTracingReady(sessionId: string): Promise<void> {
+    await this.runtimeForSession(sessionId).assertAttachedTracingReady(sessionId)
+  }
+
+  captureNotebookTaskIntent(request: AcpPromptRequest): AcpPromptRequest {
+    return this.runtimeForSession(request.sessionId).captureNotebookTaskIntent(request)
   }
 
   // Interactive prompt dispatch is an admission RPC, while the authoritative turn lifecycle is
@@ -1986,7 +2012,7 @@ class AcpRuntimeCoordinator {
       : dispatch()
   }
 
-  async cancelPrompt(request: AcpCancelPromptRequest): Promise<AcpRuntimeState> {
+  async cancelPrompt(request: RuntimeCancelPromptRequest): Promise<AcpRuntimeState> {
     if (request.scope === 'subagents') {
       await this.delegatedWork?.stopActiveBranch?.(request.sessionId)
       return this.getState()

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { classifyFailure } from './classify'
-import type { FailureCategory, FailureFacts } from './contract'
+import type { FailureCategory, FailureFacts, FailureReason } from './contract'
 import { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../claude-runtime'
 import {
   buildUnsupportedCodexAcpVersionMessage,
@@ -10,7 +10,7 @@ import {
 const cases: [FailureCategory, FailureFacts][] = [
   ['configuration', { origin: 'provider', status: 401 }],
   ['configuration', { origin: 'provider', status: 403 }],
-  ['configuration', { origin: 'provider', status: 404 }],
+  ['service', { origin: 'provider', status: 404 }],
   ['configuration', { origin: 'provider', code: 'invalid_api_key' }],
   ['configuration', { origin: 'provider', code: 'insufficient_quota' }],
   ['configuration', { origin: 'provider', text: 'API key missing' }],
@@ -55,6 +55,83 @@ const cases: [FailureCategory, FailureFacts][] = [
 ]
 
 describe('classifyFailure', () => {
+  it.each<[FailureFacts, FailureReason]>([
+    [
+      {
+        origin: 'provider',
+        status: 400,
+        responseMessage: "Model v4.1 isn't included in this plan."
+      },
+      'configuration/model-unavailable'
+    ],
+    [
+      { origin: 'provider', status: 400, code: 'model_unavailable' },
+      'configuration/model-unavailable'
+    ],
+    [
+      { origin: 'provider', status: 404, responseMessage: 'Model old has been retired' },
+      'configuration/model-unavailable'
+    ],
+    [
+      { origin: 'provider', status: 404, responseMessage: 'Endpoint /v1/wrong not found' },
+      'configuration/endpoint-invalid'
+    ],
+    [
+      { origin: 'provider', status: 404, responseMessage: 'Resource not found' },
+      'service/provider-error'
+    ],
+    [
+      { origin: 'provider', status: 422, responseMessage: 'Invalid temperature' },
+      'configuration/request-invalid'
+    ],
+    [
+      { origin: 'provider', status: 400, code: 'context_window_exceeded' },
+      'input/context-overflow'
+    ],
+    [{ origin: 'provider', status: 429, code: 'insufficient_quota' }, 'configuration/billing'],
+    [
+      { origin: 'provider', status: 402, responseMessage: 'Insufficient Balance' },
+      'configuration/billing'
+    ],
+    [{ origin: 'provider', protocol: 'chat-completions', status: 402 }, 'configuration/billing'],
+    [
+      { origin: 'provider', protocol: 'chat-completions', status: 400, code: 'model_not_found' },
+      'configuration/model-unavailable'
+    ],
+    [{ origin: 'provider', responseMessage: 'Insufficient Balance' }, 'configuration/billing'],
+    [{ origin: 'provider', code: 'overloaded_error' }, 'service/unavailable'],
+    [
+      {
+        origin: 'provider',
+        status: 400,
+        responseMessage: 'Authentication Fails, Your api key: ****e52d is invalid'
+      },
+      'configuration/auth-failed'
+    ],
+    [
+      { origin: 'provider', responseMessage: 'Python environment missing' },
+      'service/provider-error'
+    ],
+    [{ origin: 'provider', responseMessage: 'Session not found' }, 'service/provider-error'],
+    [
+      { origin: 'provider', adapterCode: 'network', phase: 'response' },
+      'service/connection-failed'
+    ],
+    [
+      { origin: 'provider', adapterCode: 'network', phase: 'stream' },
+      'service/response-interrupted'
+    ],
+    [
+      { origin: 'provider', adapterCode: 'protocol', phase: 'missing-done' },
+      'service/response-invalid'
+    ],
+    [
+      { origin: 'provider', adapterCode: 'protocol', phase: 'provider', code: 'new_error' },
+      'service/provider-error'
+    ]
+  ])('classifies structured provider facts %j as %s', (facts, reason) => {
+    expect(classifyFailure(facts).reason).toBe(reason)
+  })
   it.each(cases)('recognizes %s from %j', (category, facts) => {
     expect(classifyFailure(facts).category).toBe(category)
   })
@@ -71,7 +148,8 @@ describe('classifyFailure', () => {
     'Failed to parse rate limit configuration',
     'Record 503 could not be decoded',
     'Billing planner initialization failed',
-    'Scheduler crashed while overloaded with tasks'
+    'Scheduler crashed while overloaded with tasks',
+    'Model is unavailable'
   ])('keeps unrelated app failures internal: %s', (text) => {
     expect(classifyFailure({ origin: 'operation', text }).category).toBe('internal')
   })
@@ -101,6 +179,7 @@ describe('classifyFailure', () => {
   it('defaults opaque provider failures to service and other failures to internal', () => {
     expect(classifyFailure({ origin: 'provider' })).toEqual({
       category: 'service',
+      reason: 'service/provider-error',
       diagnostics: {}
     })
     expect(classifyFailure({ origin: 'operation' })).toEqual({

@@ -53,18 +53,17 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-### 💡 AIPOCH Open-Science v1.2.2 — Novedades
+### 💡 AIPOCH Open-Science v1.3.4 — Novedades
 
-_18 de noviembre de 2026_
+_22 de noviembre de 2026_
 
-- **Modo de red estricto**: Active un modo Strict con lista blanca para la red de Notebook — las solicitudes deben coincidir con sus reglas por protocolo, host y puerto; las solicitudes sin coincidencia se bloquean sin solicitud de autorización.
-- **Reanudación de películas**: La generación interrumpida de una película de investigación continúa desde puntos de control validados con una vista de progreso de cinco pasos; las escenas completadas y la narración se reutilizan.
-- **Fidelidad de PDF**: Los PDF externos conservan figuras, tablas, pies de figura y orden de lectura nativos; la traducción preserva la estructura y el diseño, manteniendo el contenido original si no se puede verificar su colocación.
-- **Concesiones más seguras en Windows**: Las concesiones de carpetas en modo protegido se comprueban antes de guardar, y los flujos de actualización, desinstalación y entrega se recuperan con más fiabilidad conservando los diagnósticos.
-- **Actualizaciones de proveedores**: Qwen4 Max Preview (contexto de 1M) se suma a Bailian Token Plans en Pekín y Singapur, y los modelos predeterminados de las conexiones oficiales se actualizan.
-- **Correcciones de fiabilidad**: Las importaciones de sesiones informan de su resultado, la recuperación del servicio bloquea el espacio de trabajo hasta que la conexión vuelve y el contraste del modo oscuro se conserva en todas las superficies.
+- **Vea dentro del Agente integrado**: Los proyectos pueden activar el rastreo del Agente, que exporta trazas correlacionadas de turnos, solicitudes de modelo y ejecuciones de herramientas a un receptor OTLP/HTTP alojado por usted, con el nivel de detalle de captura que usted elija.
+- **Actualizaciones de Windows, sin bloqueos**: Una actualización dentro de la aplicación ya no se detiene cuando el Agente integrado está en ejecución, y las actualizaciones estables de Windows se aplican de nuevo como deltas compactos del instalador.
+- **Los historiales largos de Notebook siguen siendo rápidos**: Iniciar y finalizar ejecuciones, seleccionar resultados y abrir vistas previas ya no releen todo el historial.
+- **Lecturas de memoria en las que puede confiar**: El resumen de Compute ahora coincide con Monitor de Actividad en macOS y muestra la memoria confirmada respecto a su límite en Windows.
+- **Esfuerzos de razonamiento de CodeBuddy**: El selector de esfuerzo ahora solo ofrece los niveles que el modelo CodeBuddy seleccionado realmente admite.
 
-[Notas completas v1.2.2](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
+[Notas completas v1.3.4](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +88,14 @@ Abra la [página oficial de descargas](https://aipoch.com/open-science/download)
 | Linux ARM64                               | AppImage o paquete Debian de Linux ARM64           |
 
 Consulte la [verificación de descargas](../../SECURITY.md#verifying-your-download) para realizar comprobaciones antes de instalar.
+
+En Windows 10/11 x64, puede instalar la aplicación de escritorio desde [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) o usar WinGet en PowerShell.
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+La versión disponible puede variar según el canal de distribución. Consulte la [guía de instalación y actualizaciones](https://aipoch.com/docs/guides/installation/) para obtener más información.
 
 Los archivos de la CLI independiente para macOS, Linux y Windows incluyen Node.js y se pueden usar sin Homebrew ni npm.
 
@@ -172,6 +179,7 @@ AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo,
 | Responder a partir de la literatura  | LitQA2-FullText        | En una ejecución independiente de LitQA2-FullText, Open-Science respondió correctamente **70 de 75 preguntas** (**93.33% de exactitud**, deepseek-flash con razonamiento Max).                             |
 | Elaborar una síntesis con citas      | ScholarQA-CS2          | En 100 preguntas de validación de ScholarQA-CS2, Open-Science obtuvo una **puntuación compuesta de calidad de 0.9289/1** con deepseek-v4-flash. Las referencias de la prueba oficial usan otras preguntas. |
 | Ejecutar flujos de investigación     | ASI-Bench              | En ejecuciones locales de ASI-Bench con el mismo modelo, Open-Science obtuvo **59.46** en B4 y Codex **55.45**. En B2 las puntuaciones fueron casi idénticas (**56.11** y **56.09**).                      |
+| Reproducir experimentos de ML/PLN    | AstaBench SUPER-Expert | **46.30%** en output_match/mean en una prueba local de 45 tareas con DeepSeek Flash/Max.                                                                                                                   |
 | Ejecutar tareas científicas          | TB-Science 0.1         | En 70 tareas, **145 de 210** ejecuciones locales superadas (**69.05%**) con GPT-6 Astra/max. No es una posición oficial; no hay registros individuales públicos.                                           |
 | Analizar datos biomédicos            | BiomniBench-DA         | En BiomniBench-DA Public 50, dos modelos jueces puntuaron los resultados con **81.04** y **77.06**. Su media con igual ponderación fue **79.05**.                                                          |
 | Reproducir resultados publicados     | CORE-Bench-Hard        | CORE-Bench-Hard — 36 de 37 tareas de prueba correctas (97,30 %) en la evaluación local. El recuento incluye repeticiones.                                                                                  |
@@ -182,7 +190,7 @@ AIPOCH evaluó AIPOCH Open-Science en tareas que abarcan encontrar un artículo,
 
 **Alcance de la evaluación:** estos informes cubren ejecuciones locales o internas de agosto a noviembre de 2026 con los modelos y particiones indicados; no se repitieron para la versión actual. Las referencias son instantáneas históricas, no clasificaciones en tiempo real. Las puntuaciones de distintas familias de benchmarks no son directamente comparables y las diferencias numéricas no establecen significación estadística.
 
-Consulte el [informe de AstaBench y ASI-Bench](https://aipoch.com/benchmark/open-science) y el [informe de BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) para conocer los detalles. Véase también el [resultado local de TB-Science 0.1](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result).
+Consulte el [informe de AstaBench y ASI-Bench](https://aipoch.com/benchmark/open-science) y el [informe de BiomniBench-DA](https://aipoch.com/blog/open-science-biomnibench-da) para conocer los detalles. Véase también el [resultado local de TB-Science 0.1](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result). Véase también el [resultado local de SUPER-Expert](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result).
 
 [CORE-Bench-Hard · Informe de reproducibilidad](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

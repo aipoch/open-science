@@ -330,6 +330,49 @@ const createService = (overrides: {
 }
 
 describe('TaskNotificationService', () => {
+  it('records film outcomes and sends localized system notifications only in the background', async () => {
+    const inbox = {
+      record: vi.fn(async () => undefined),
+      settleAction: vi.fn(async () => undefined),
+      settleAuthorization: vi.fn(async () => undefined)
+    }
+    let focused = false
+    const { service, shown } = createService({
+      inbox,
+      isAppFocused: () => focused,
+      translate: (key, options) => translateNativeMessage('zh-Hans', key, options)
+    })
+    const target = { projectId: 'project-1', sessionId: 'session-1' }
+    await service.handleResearchFilmOutcome({
+      ...target,
+      invocationId: 'run-1',
+      outcome: 'completed'
+    })
+    focused = true
+    await service.handleResearchFilmOutcome({ ...target, invocationId: 'run-2', outcome: 'failed' })
+
+    expect(shown).toHaveLength(1)
+    expect(shown[0]).toMatchObject({ title: '研究短片已就绪', body: '打开应用查看详细信息。' })
+    expect(inbox.record).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        ...target,
+        title: 'Research film ready',
+        dedupeKey: 'research-film:run-1',
+        kind: 'task.completed'
+      })
+    )
+    expect(inbox.record).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        ...target,
+        title: 'Research film generation failed',
+        dedupeKey: 'research-film:run-2',
+        kind: 'task.failed'
+      })
+    )
+  })
+
   it('localizes system delivery while keeping the inbox title as a stable English key', async () => {
     const inbox = {
       record: vi.fn(async () => undefined),

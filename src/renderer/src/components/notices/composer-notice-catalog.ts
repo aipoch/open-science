@@ -1,3 +1,5 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import type {
   ClassifiedFailure,
   FailureCategory,
@@ -82,6 +84,88 @@ export const noticeCatalog = {
 
 // Unknown reasons retain category copy.
 export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> = {
+  'configuration/model-unavailable': {
+    level: 'warning',
+    titleKey: 'Model configuration needs attention',
+    descriptionKey: 'The selected model is unavailable. Select another model in Settings.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry'],
+    feedback: 'link'
+  },
+  'service/unavailable': noticeCatalog.service,
+  'configuration/endpoint-invalid': {
+    ...noticeCatalog.configuration,
+    titleKey: 'The model service address is invalid',
+    descriptionKey: 'Check the model provider base URL and endpoint path, then retry.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry']
+  },
+  'configuration/auth-failed': {
+    ...noticeCatalog.configuration,
+    titleKey: 'Model provider credentials need attention',
+    descriptionKey: 'Check the model provider API key or credentials, then retry.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry']
+  },
+  'configuration/billing': {
+    ...noticeCatalog.configuration,
+    titleKey: 'Model provider quota needs attention',
+    descriptionKey: 'Check the model provider plan, quota or account balance, then retry.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry']
+  },
+  'configuration/request-invalid': {
+    ...noticeCatalog.configuration,
+    titleKey: 'Request parameters need attention',
+    descriptionKey:
+      'The model provider rejected this request. Check the model and provider settings.',
+    primaryAction: 'open-provider-settings',
+    secondaryActions: ['retry']
+  },
+  'service/rate-limited': {
+    ...noticeCatalog.service,
+    titleKey: 'Request limited',
+    descriptionKey: 'The model provider is limiting requests. Wait a moment, then retry.',
+    primaryAction: 'retry',
+    secondaryActions: []
+  },
+  'service/connection-failed': {
+    ...noticeCatalog.service,
+    titleKey: 'Unable to connect to the model service',
+    descriptionKey: 'Check the network connection and model service address, then retry.',
+    primaryAction: 'retry',
+    secondaryActions: ['open-provider-settings']
+  },
+  'service/response-interrupted': {
+    ...noticeCatalog.service,
+    titleKey: 'The model response was interrupted',
+    descriptionKey: 'The connection closed before the model finished replying. Retry the request.',
+    primaryAction: 'retry',
+    secondaryActions: []
+  },
+  'service/response-invalid': {
+    ...noticeCatalog.service,
+    titleKey: 'The model response could not be parsed',
+    descriptionKey:
+      'The model provider returned an invalid response. Check the protocol settings or retry.',
+    primaryAction: 'retry',
+    secondaryActions: ['open-provider-settings']
+  },
+  'service/provider-error': {
+    ...noticeCatalog.service,
+    titleKey: 'Model request failed',
+    descriptionKey:
+      'The model provider could not complete the request. Retry or check the model provider settings.',
+    primaryAction: 'retry',
+    secondaryActions: ['open-provider-settings']
+  },
+  'input/context-overflow': {
+    ...noticeCatalog.input,
+    titleKey: 'The input is too long',
+    descriptionKey: 'Shorten the conversation or remove some attachments, then retry.',
+    primaryAction: 'compact',
+    secondaryActions: ['remove-attachments']
+  },
   'configuration/vision-model': {
     level: 'warning',
     titleKey: 'Image support is not configured',
@@ -137,15 +221,60 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     ...noticeCatalog.configuration,
     primaryAction: 'open-agent-settings'
   },
+  'internal/model-request-stack-overflow': {
+    ...noticeCatalog.internal,
+    titleKey: 'Call stack limit reached during a model request',
+    descriptionKey:
+      'This turn stopped. Export diagnostics to help identify where the call stack limit was reached.'
+  },
   'internal/reconfigure': {
     ...noticeCatalog.internal,
     secondaryActions: ['retry', 'choose-specialist', 'use-main-agent']
   }
 }
-export const noticePresentation = (failure: ClassifiedFailure): NoticePresentation => {
+// This is the SDK's display prefix, outside the returned body. Its presence alone
+// does not identify which service failed. Keep the body opaque, including JSON.
+const rpcInternalPrefix = /^\s*(?:RequestError:\s*)?internal error(?:\s*:\s*|\.?\s*$)/i
+
+const isUnattributedRequest = ({ category, reason, diagnostics }: ClassifiedFailure): boolean =>
+  category === 'internal' &&
+  !reason &&
+  (diagnostics.status !== undefined ||
+    diagnostics.code === '-32603' ||
+    rpcInternalPrefix.test(diagnostics.raw ?? ''))
+
+export const noticePresentation = (
+  failure: ClassifiedFailure,
+  operation?: string
+): NoticePresentation => {
+  // Attachment recovery belongs to the transfer row or the editable draft.
+  if (operation === 'attachment' || operation === 'stop')
+    return {
+      ...noticeCatalog.internal,
+      level: 'warning',
+      primaryAction: undefined,
+      secondaryActions: [],
+      feedback: 'none'
+    }
+  if (isUnattributedRequest(failure))
+    return {
+      ...noticeCatalog.internal,
+      titleKey: 'Request failed',
+      descriptionKey: 'The action could not be completed. See details and try again.'
+    }
   const presentation =
     (failure.reason && reasonCatalog[failure.reason]) || noticeCatalog[failure.category]
-  return failure.responseMessage ? { ...presentation, feedback: 'none' } : presentation
+  if (!failure.responseMessage) return presentation
+  return {
+    ...presentation,
+    titleKey:
+      failure.diagnostics.protocol ||
+      (failure.reason === 'configuration/billing' && failure.diagnostics.status === 402) ||
+      providerErrorExcerpt(failure.responseMessage)
+        ? presentation.titleKey
+        : 'Model provider error',
+    feedback: 'none'
+  }
 }
 
 export type ComposerNotice = Readonly<{
@@ -183,14 +312,36 @@ export const formatNoticeDiagnostics = (
   notice: ComposerNotice,
   title: string,
   description: string
-): string =>
-  [
-    title,
-    ...(description ? [description] : []),
-    ...Object.entries(notice.failure.diagnostics)
-      .filter(
-        ([key, value]) =>
-          value !== undefined && (key !== 'raw' || (value !== title && value !== description))
-      )
-      .map(([key, value]) => (key === 'raw' ? String(value) : `${key}: ${value}`))
-  ].join('\n')
+): { details: string; fullText: string } => {
+  const { raw, providerExcerpt, ...fields } = notice.failure.diagnostics
+  const reportedResponse = fields.protocol ? providerExcerpt : notice.failure.responseMessage
+  const response = reportedResponse && redactSensitiveText(reportedResponse)
+  const showResponseInfo = Boolean(
+    response ||
+    fields.protocol ||
+    fields.status !== undefined ||
+    notice.failure.category === 'service' ||
+    (notice.failure.category !== 'internal' && rpcInternalPrefix.test(raw ?? '')) ||
+    isUnattributedRequest(notice.failure)
+  )
+  const diagnostic =
+    raw && redactSensitiveText(showResponseInfo ? raw.replace(rpcInternalPrefix, '') : raw)
+  const detail = [
+    diagnostic !== title && diagnostic !== description ? diagnostic : undefined,
+    response !== title && response !== description && response && !diagnostic?.includes(response)
+      ? response
+      : undefined
+  ]
+    .filter(Boolean)
+    .join('\n')
+  const responseDetail = detail && showResponseInfo ? `Info: ${detail}` : undefined
+  const metadata = Object.entries(fields)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}: ${value}`)
+  const diagnosticText = [...metadata, responseDetail ?? detail].filter(Boolean).join('\n')
+  const fullText = [title, description, diagnosticText].filter(Boolean).join('\n')
+  // Local operations may use their recovery instructions as the entire diagnostic.
+  const localInstructions =
+    notice.source === 'operation' && !notice.summary && diagnostic === description
+  return { details: localInstructions ? fullText : diagnosticText, fullText }
+}

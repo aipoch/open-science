@@ -10,6 +10,10 @@ name: Package Smoke
 on:
   workflow_call:
     inputs:
+      conversation_only:
+        description: Diagnostic default Agent conversation only; requires an existing artifact run and never certifies publication
+        type: boolean
+        default: false
       artifact_run_id:
         description: Reuse a same-repository build run for a diagnostic smoke; emit no release certification
         type: string
@@ -37,6 +41,10 @@ on:
     inputs:
       require_windows_signing:
         description: Verify Authenticode signatures and update recovery UI for a signed Windows artifact
+        type: boolean
+        default: false
+      conversation_only:
+        description: Diagnostic default Agent conversation only; requires an existing artifact run and never certifies publication
         type: boolean
         default: false
       artifact_run_id:
@@ -84,6 +92,18 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate conversation diagnostic inputs
+        env:
+          CONVERSATION_ONLY: ${{ inputs.conversation_only }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+          INSTALL_ONLY: ${{ inputs.install_only }}
+          SETUP_ONLY: ${{ inputs.setup_only }}
+        run: |
+          if [ "$CONVERSATION_ONLY" = true ]; then
+            [[ "$ARTIFACT_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$INSTALL_ONLY" != true && "$SETUP_ONLY" != true ]]
+          fi
+
       - id: set
         name: Resolve platform include list
         shell: bash
@@ -97,9 +117,12 @@ jobs:
     if: ${{ needs.setup.result == 'success' && !inputs.setup_only }}
     runs-on: ${{ matrix.os }}
     environment: ${{ inputs.require_windows_signing && matrix.platform == 'win' && 'windows-signing' || '' }}
+    env:
+      # Linux sessions in this job reopen the same on-disk test keyring.
+      PACKAGE_SMOKE_KEYRING_PASSWORD: package-smoke-ci-vault
     # Windows certification can use a 30-minute hosted-runner ACL budget after dependency setup,
     # artifact download, installer smoke, and post-job evidence collection.
-    timeout-minutes: ${{ matrix.platform == 'win' && 60 || 25 }}
+    timeout-minutes: ${{ matrix.platform == 'win' && 90 || 50 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
@@ -128,12 +151,29 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Smoke test macOS packages
-        if: ${{ !inputs.install_only && matrix.platform == 'mac' }}
+        if: ${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'mac' }}
         timeout-minutes: 10
         run: node scripts/macos-package-smoke.mjs --artifact-dir dist
 
+      - name: Certify macOS update occupancy
+        if: ${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'mac' }}
+        timeout-minutes: 8
+        env:
+          OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT: '1'
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/update-occupancy/e2e.json
+        run: |
+          set -euo pipefail
+          zip=$(find dist -maxdepth 1 -type f -name '*-mac-*.zip' -print -quit)
+          test -n "$zip"
+          extracted="$RUNNER_TEMP/update-occupancy-package"
+          mkdir -p "$extracted"
+          ditto -x -k "$zip" "$extracted"
+          export OPEN_SCIENCE_E2E_EXECUTABLE="$extracted/Open-Science.app/Contents/MacOS/Open-Science"
+          bash scripts/ci/run-macos-packaged-e2e.sh npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/electron
+          node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/e2e.json
+
       - name: Smoke test Windows installer
-        if: ${{ !inputs.install_only && matrix.platform == 'win' }}
+        if: ${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' }}
         timeout-minutes: 20
         run: node scripts/windows-installer-smoke.mjs --installer-dir dist
 
@@ -154,10 +194,22 @@ jobs:
           "OPEN_SCIENCE_E2E_EXECUTABLE=$executable" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "OPEN_SCIENCE_CERT_INSTALL_ROOT=$env:OPEN_SCIENCE_CERT_INSTALL_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Certify Windows update occupancy
+        if: ${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' }}
+        timeout-minutes: 8
+        shell: pwsh
+        env:
+          OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT: '1'
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/update-occupancy/e2e.json
+        run: |
+          npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/electron
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/e2e.json
+
       # The repository fixture calls the production MCP boundary and verifies native cleanup.
       # Hosted Windows runners are elevated; missing runtime/setup prerequisites fail this gate.
       - name: Run packaged Windows AppContainer REPL certification gate
-        if: ${{ !inputs.install_only && matrix.platform == 'win' }}
+        if: ${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' }}
         # The certification runs the full REPL lifecycle twice; hosted-runner ACL latency can push
         # total wall time past 15 minutes even when every step succeeds.
         timeout-minutes: 30
@@ -170,7 +222,7 @@ jobs:
       # which are not echoed to the console. Retain them for every outcome so a failure is
       # diagnosable without re-running the certification.
       - name: Upload AppContainer certification evidence
-        if: ${{ always() && !inputs.install_only && matrix.platform == 'win' }}
+        if: ${{ always() && !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-appcontainer-cert-evidence
@@ -181,19 +233,19 @@ jobs:
           if-no-files-found: ignore
 
       - name: Verify Windows Authenticode signature
-        if: ${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}
+        if: ${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' && inputs.require_windows_signing }}
         shell: pwsh
         env:
           AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
         run: ./scripts/ci/verify-windows-signature.ps1 -InstallerDir dist
 
       - name: Verify signed Windows update recovery UI
-        if: ${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}
+        if: ${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' && inputs.require_windows_signing }}
         timeout-minutes: 8
         run: npx playwright test e2e/runtime-update-ui-acceptance.spec.ts --retries=0
 
       - name: Upload signed Windows update recovery evidence
-        if: ${{ always() && !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}
+        if: ${{ always() && !inputs.install_only && !inputs.conversation_only && matrix.platform == 'win' && inputs.require_windows_signing }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-update-recovery-ui-evidence
@@ -204,19 +256,117 @@ jobs:
           if-no-files-found: ignore
 
       - name: Smoke test Linux packages
-        if: ${{ !inputs.install_only && matrix.platform == 'linux' }}
-        timeout-minutes: 10
+        if: ${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'linux' }}
+        timeout-minutes: 15
         shell: bash
         run: |
-          npx vitest run scripts/deb-cli-launcher.test.ts
+          npx vitest run scripts/deb-cli-launcher.test.ts src/main/update/linux-background-download.test.ts \
+            src/main/update/electron-updater-provider-regressions.test.ts src/main/update/scheduler.test.ts
           trap 'sudo apt-get remove --yes open-science || true' EXIT
           sudo "$(command -v node)" scripts/deb-package-lifecycle-smoke.mjs ./dist/*.deb
           sudo apt-get update
-          sudo apt-get install --yes ./dist/*.deb
+          sudo apt-get install --yes gnome-keyring dbus-user-session libfuse2t64 zlib1g-dev ./dist/*.deb
+          grep -Fx deb /opt/Open-Science/resources/package-type
           xvfb-run -a node scripts/linux-package-smoke.mjs \
             --artifact-dir dist \
             --installed-executable "/opt/Open-Science/open-science" \
             --installed-cli /usr/bin/open-science
+          export OPEN_SCIENCE_E2E_EXECUTABLE=/opt/Open-Science/open-science
+          export OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT=1
+          export PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/update-occupancy/e2e.json
+          xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
+            printf "%s\n" "$PACKAGE_SMOKE_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
+            npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/electron
+          '
+          node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/e2e.json
+
+      - name: Certify mounted AppImage update occupancy
+        if: ${{ !inputs.install_only && !inputs.conversation_only && matrix.platform == 'linux' }}
+        timeout-minutes: 8
+        shell: bash
+        run: |
+          images=("$PWD"/dist/*.AppImage)
+          test "${#images[@]}" = 1
+          test -x "${images[0]}"
+          export OPEN_SCIENCE_E2E_EXECUTABLE="${images[0]}"
+          export OPEN_SCIENCE_UPDATE_OCCUPANCY_CERT=1
+          export PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/update-occupancy/appimage.json
+          xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
+            printf "%s\n" "$PACKAGE_SMOKE_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
+            npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/appimage
+          '
+          node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/appimage.json
+
+      - name: Upload update occupancy evidence
+        if: ${{ always() && !inputs.install_only && !inputs.conversation_only }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: update-occupancy-${{ matrix.name }}
+          retention-days: 7
+          path: test-results/update-occupancy/
+          if-no-files-found: error
+
+      - name: Resolve conversation package provenance
+        if: ${{ !inputs.install_only }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id || github.run_id }}
+        run: |
+          [[ "$ARTIFACT_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARTIFACT_RUN_ID" > "$RUNNER_TEMP/conversation-source.json"
+          sha=$(jq -er --arg repo "$GITHUB_REPOSITORY" '
+            select(.repository.full_name == $repo and .head_repository.full_name == $repo) |
+            .head_sha | select(test("^[a-f0-9]{40}$"))' "$RUNNER_TEMP/conversation-source.json")
+          echo "DEFAULT_AGENT_SOURCE_SHA=$sha" >> "$GITHUB_ENV"
+
+      - name: Prepare macOS conversation executable
+        if: ${{ !inputs.install_only && matrix.platform == 'mac' }}
+        shell: bash
+        run: |
+          zip=$(find dist -maxdepth 1 -type f -name '*-mac-*.zip' -print -quit)
+          test -n "$zip"
+          extracted="$RUNNER_TEMP/default-agent-package"
+          mkdir -p "$extracted"
+          ditto -x -k "$zip" "$extracted"
+          echo "OPEN_SCIENCE_E2E_EXECUTABLE=$extracted/Open-Science.app/Contents/MacOS/Open-Science" >> "$GITHUB_ENV"
+
+      - name: Prepare Linux conversation executable
+        if: ${{ !inputs.install_only && matrix.platform == 'linux' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gnome-keyring dbus-user-session libfuse2t64 zlib1g-dev ./dist/*.deb
+          echo "OPEN_SCIENCE_E2E_EXECUTABLE=/opt/Open-Science/open-science" >> "$GITHUB_ENV"
+
+      - name: Certify default Agent conversations
+        if: ${{ !inputs.install_only }}
+        timeout-minutes: 22
+        shell: bash
+        env:
+          DEFAULT_AGENT_PLATFORM: ${{ matrix.name }}
+          OPEN_SCIENCE_DEFAULT_AGENT_CERT: '1'
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = macOS ]; then
+            bash scripts/ci/run-macos-packaged-e2e.sh node scripts/ci/run-default-agent-conversation.mjs
+          elif [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
+              printf "%s\n" "$PACKAGE_SMOKE_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
+              node scripts/ci/run-default-agent-conversation.mjs
+            '
+          else
+            node scripts/ci/run-default-agent-conversation.mjs
+          fi
+
+      - name: Upload default Agent conversation diagnostics
+        if: ${{ always() && !inputs.install_only }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: default-agent-conversation-${{ matrix.name }}
+          retention-days: 7
+          path: test-results/default-agent-conversation/
+          if-no-files-found: error
 
       - name: Record platform certification evidence
         if: ${{ !inputs.install_only && !inputs.artifact_run_id }}
@@ -238,6 +388,7 @@ jobs:
             --electron-p0 not-applicable \
             --visual-regression not-applicable \
             --package-smoke passed \
+            --default-agent-conversation test-results/default-agent-conversation/certification.json \
             --database-migration-certification "$database_certification" \
             --authenticode "$authenticode"
 

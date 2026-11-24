@@ -464,7 +464,7 @@ export function ComputeProcessMonitor({
                     {host?.cpuPercent === undefined ? '—' : `${host.cpuPercent.toFixed(1)}%`}
                   </strong>
                 </span>
-                <span className="whitespace-nowrap" title={t('System memory, including caches')}>
+                <span className="whitespace-nowrap" title={t('System memory, excluding caches')}>
                   {t('Memory usage')}{' '}
                   <strong className="ml-1 font-medium tabular-nums text-foreground">
                     {host
@@ -472,6 +472,15 @@ export function ComputeProcessMonitor({
                       : '—'}
                   </strong>
                 </span>
+                {host?.memoryCommittedBytes !== undefined &&
+                host.memoryCommitLimitBytes !== undefined ? (
+                  <span className="whitespace-nowrap" title={t('Committed / limit')}>
+                    {t('Committed / limit')}{' '}
+                    <strong className="ml-1 font-medium tabular-nums text-foreground">
+                      {bytes(host.memoryCommittedBytes)} / {bytes(host.memoryCommitLimitBytes)}
+                    </strong>
+                  </span>
+                ) : null}
               </span>
             </summary>
             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">

@@ -308,5 +308,6 @@
   },
   "consumerModules": [],
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The provider icon map loads the new Kilo asset beyond its reviewed resource imports. Retain full validation for provider rendering and packaging."
 }

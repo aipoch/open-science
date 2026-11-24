@@ -313,6 +313,23 @@ it('keeps the Linux test desktop session while isolating home and provider crede
   expect(environment.OPENAI_API_KEY).toBeUndefined()
 })
 
+it('preserves mixed-case proxy transport inputs without exposing provider credentials', () => {
+  const proxy = {
+    hTtP_pRoXy: 'http://proxy.test:8080',
+    HTTPS_PROXY: 'http://proxy.test:8443',
+    all_proxy: 'socks5://proxy.test:1080',
+    No_PrOxY: 'localhost,127.0.0.1'
+  }
+  const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+    ...proxy,
+    OPENAI_API_KEY: 'operator-openai-secret',
+    ANTHROPIC_API_KEY: 'operator-anthropic-secret'
+  })
+  expect(environment).toMatchObject(proxy)
+  expect(environment.OPENAI_API_KEY).toBeUndefined()
+  expect(environment.ANTHROPIC_API_KEY).toBeUndefined()
+})
+
 it('isolates credentials, preload options, home and installation state by default', () => {
   const storageRoot = resolve('fixture/storage')
   const environment = launchEnvironment(storageRoot, undefined, {

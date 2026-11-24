@@ -84,6 +84,7 @@ export function composeSessionProjection({
   pendingSpecialistBindings: PendingSessionSpecialistBindings
   loadAllSessions: () => Promise<LoadAllSessionsResult>
   loadStartupSessions: () => Promise<PersistedChatSession[]>
+  beginStartupProjection: () => Promise<unknown>
   createDeferredRecovery: (
     recoverDetails: (session: PersistedChatSession) => Promise<void>,
     complete?: (
@@ -91,12 +92,12 @@ export function composeSessionProjection({
       cancelled: () => boolean
     ) => Promise<void>
   ) => DeferredSessionRecovery
-  startupSessionDetails: { current: LoadAllSessionsResult['sessions'] | undefined }
   ensureSessionProjection: () => Promise<{
     result?: LoadAllSessionsResult
     recoveredSessions?: PersistedChatSession[]
     sessions: SessionSummary[]
   }>
+  findSessionAfterCatalogHydration: (sessionId: string) => Promise<SessionSummary | undefined>
   sessionPersistenceBackend: ReturnType<typeof coordinateSessionPersistenceWithProjectDeletions>
 } {
   const log = createLogger('session-network-approval')
@@ -174,11 +175,11 @@ export function composeSessionProjection({
     sessionProjectionDiagnostics.resolve(result.diagnostics)
     return result
   }
-  // Consume only during composition, before client adapters are installed. Keep just details
-  // recovery candidates, not a long-lived cache of every historical transcript.
-  const startupSessionDetails: { current: LoadAllSessionsResult['sessions'] | undefined } = {
-    current: undefined
-  }
+  type SessionProjectionLoad = Awaited<ReturnType<typeof sessionRepository.ensureSessionProjection>>
+  let startupProjection: Promise<SessionProjectionLoad> | undefined
+  let startupProjectionSettled = false
+  let metadataCompleteGeneration: number | undefined
+  let metadataWriteTail = Promise.resolve()
   let wslSetupSessionsReconciliation: Promise<void> | undefined
   const reconcileWslSetupSessions = async (sessions: readonly SessionSummary[]): Promise<void> => {
     wslSetupSessionsReconciliation ??= wslSetupSessions.reconcileBoundSessions(
@@ -204,27 +205,90 @@ export function composeSessionProjection({
     if (!recovery.isComplete) {
       const result = recovery.result
       const sessions = await sessionRepository.summarizeReadOnlyAuthority(result)
-      await sessionPersistenceCoordinator.replaceSessionMetadata(
-        sessions,
-        false,
-        metadataGeneration
-      )
+      await replaceSessionMetadata(sessions, false, metadataGeneration)
       return { result, sessions: await wslSetupSessions.projectSessionSummaries(sessions) }
     }
     const projection = await sessionRepository.ensureSessionProjection(loadAllSessions)
     const result = projection.result
     const catalogComplete = result ? canReconcileSessionAbsences(result) : true
-    await sessionPersistenceCoordinator.replaceSessionMetadata(
-      projection.sessions,
-      catalogComplete,
-      metadataGeneration
-    )
+    await replaceSessionMetadata(projection.sessions, catalogComplete, metadataGeneration)
     if (catalogComplete) await reconcileWslSetupSessions(projection.sessions)
     return {
       ...projection,
       result,
       sessions: await wslSetupSessions.projectSessionSummaries(projection.sessions)
     }
+  }
+  const replaceSessionMetadata = (
+    sessions: readonly SessionSummary[],
+    isComplete: boolean,
+    expectedGeneration: number
+  ): Promise<void> => {
+    const write = metadataWriteTail.then(async () => {
+      if (!isComplete && metadataCompleteGeneration === expectedGeneration) return
+      const generationMatches =
+        sessionPersistenceCoordinator.recoveryCatalogGeneration() === expectedGeneration
+      await sessionPersistenceCoordinator.replaceSessionMetadata(
+        sessions,
+        isComplete,
+        expectedGeneration
+      )
+      if (
+        isComplete &&
+        generationMatches &&
+        sessionPersistenceCoordinator.recoveryCatalogGeneration() === expectedGeneration
+      )
+        metadataCompleteGeneration = expectedGeneration
+    })
+    metadataWriteTail = write.catch(() => undefined)
+    return write
+  }
+  const beginStartupProjection = (): Promise<SessionProjectionLoad> => {
+    if (startupProjection) return startupProjection
+    startupProjectionSettled = false
+    startupProjection = ensureSessionProjection()
+    void startupProjection.then(
+      () => {
+        startupProjectionSettled = true
+        broadcastToRenderers('sessions:catalog-changed', undefined)
+      },
+      () => {
+        startupProjectionSettled = true
+        broadcastToRenderers('sessions:catalog-changed', undefined)
+      }
+    )
+    return startupProjection
+  }
+  const findSessionAfterCatalogHydration = async (
+    sessionId: string
+  ): Promise<SessionSummary | undefined> => {
+    // Share the initial build if it is still running. If it settled after a partial read,
+    // consult the current authority rather than relying on the retained startup snapshot.
+    const catalog = await (startupProjectionSettled
+      ? ensureSessionProjection()
+      : beginStartupProjection())
+    return catalog.sessions.find((session) => session.id === sessionId)
+  }
+  const listSessionProjection = async (): Promise<{
+    projection: SessionProjectionLoad
+    catalogHydrationPending: boolean
+  }> => {
+    const startup = startupProjection ?? beginStartupProjection()
+    if (startupProjectionSettled) {
+      const projection = await ensureSessionProjection()
+      return { projection, catalogHydrationPending: false }
+    }
+    const sessions = await sessionRepository.listProjectionSummaries()
+    if (startup !== startupProjection || startupProjectionSettled) {
+      const projection = await ensureSessionProjection()
+      return { projection, catalogHydrationPending: false }
+    }
+    await replaceSessionMetadata(
+      sessions,
+      false,
+      sessionPersistenceCoordinator.recoveryCatalogGeneration()
+    )
+    return { projection: { sessions }, catalogHydrationPending: true }
   }
   const uncoordinatedSessionPersistenceBackend: SessionPersistenceBackend = {
     listRuntimeTerminalFailures: () => sessionPersistenceCoordinator.listRuntimeTerminalFailures(),
@@ -240,13 +304,16 @@ export function composeSessionProjection({
       }
     },
     list: async () => {
-      const projection = await ensureSessionProjection()
+      const { projection, catalogHydrationPending } = await listSessionProjection()
+      const diagnostics = sessionProjectionDiagnostics.resolve(projection.result?.diagnostics)
       return {
         sessions: await sessionPersistenceCoordinator.projectRuntimeSessionSummaries(
           projection.sessions
         ),
         manifest: projection.result?.manifest ?? (await sessionRepository.loadManifest()),
-        diagnostics: sessionProjectionDiagnostics.resolve(projection.result?.diagnostics)
+        diagnostics: catalogHydrationPending
+          ? { ...diagnostics, catalogHydrationPending: true }
+          : diagnostics
       }
     },
     loadUsage: async () => {
@@ -255,7 +322,7 @@ export function composeSessionProjection({
       await settingsService.classification.flushUsage()
       return sessionRepository.loadSessionUsageProjection()
     },
-    loadOne: async ({ projectId, sessionId }) => {
+    loadOne: async ({ projectId, sessionId, reportReadFailure }) => {
       const recovery = await recoverProjectDeletionsForSessionRead(
         projectDeletionCoordinator,
         sessionPersistenceCoordinator
@@ -266,7 +333,7 @@ export function composeSessionProjection({
         )
         return session && sessionPersistenceCoordinator.projectRuntimeSession(session)
       }
-      const session = await sessionRepository.loadSession(projectId, sessionId)
+      const session = await sessionRepository.loadSession(projectId, sessionId, reportReadFailure)
       const reconciled =
         session && sessionEnabledComputeHostsOwnerRef.current
           ? await sessionEnabledComputeHostsOwnerRef.current.reconcileSession(session)
@@ -284,7 +351,7 @@ export function composeSessionProjection({
         sessionPersistenceCoordinator
       )
       if (!recovery.isComplete) return undefined
-      return sessionRepository.loadSessionHistoryPage(request)
+      return sessionRepository.loadSessionHistoryPage(request, true)
     },
     saveSession: async (session, options, authority) => {
       const created =
@@ -331,9 +398,11 @@ export function composeSessionProjection({
       return sessionPersistenceCoordinator.saveManifest(request)
     }
   }
+  // Retained for recovery integration tests and explicit maintenance flows. Production startup
+  // does not call this path because Session Details recovery is local to an opened Session.
   const loadStartupSessions = async (): Promise<PersistedChatSession[]> => {
     const startedAt = performance.now()
-    const projection = await ensureSessionProjection()
+    const projection = await beginStartupProjection()
     // An exceptional complete rebuild has already performed recovery. Never reinterpret a
     // failed/incomplete catalog as a complete candidate set for mutating details recovery.
     if (projection.result && !canReconcileSessionAbsences(projection.result)) return []
@@ -444,6 +513,7 @@ export function composeSessionProjection({
       guard,
       cancelled
     )
+    if (reconciled && !cancelled()) broadcastToRenderers('sessions:catalog-changed', undefined)
     if (!reconciled && !cancelled()) skipped('catalog-changed')
     if (failures.length)
       throw new AggregateError(failures, 'Deferred Session source cleanup is incomplete.')
@@ -484,9 +554,10 @@ export function composeSessionProjection({
     pendingSpecialistBindings,
     loadAllSessions,
     loadStartupSessions,
+    beginStartupProjection,
     createDeferredRecovery,
-    startupSessionDetails,
     ensureSessionProjection,
+    findSessionAfterCatalogHydration,
     sessionPersistenceBackend
   }
 }

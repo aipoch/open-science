@@ -285,6 +285,7 @@ const runtimeHarness = (
     respondToPermission: vi.fn(async () => undefined),
     shutdownForQuit: vi.fn(async () => {
       await resolvedBackend?.responsesTransportLease?.release()
+      return { reaped: true }
     })
   } as unknown as RestrictedInferenceRuntime
 }
@@ -302,7 +303,8 @@ const makeRunner = async (
   resolved: ResolvedAgentBackend,
   runtime: RuntimeHarnessOptions = {},
   taskOnly = false,
-  preserveModelRoute = false
+  preserveModelRoute = false,
+  allowCodeBuddySubscription = false
 ): Promise<{
   runner: RestrictedInferenceRunner
   resolveTarget: ReturnType<typeof vi.fn>
@@ -317,6 +319,7 @@ const makeRunner = async (
     profileNamespace: 'test-inference',
     taskOnly,
     preserveModelRoute,
+    allowCodeBuddySubscription,
     resolveTarget,
     allowNativeCodexSubscription: true,
     createRuntime: (options) => {
@@ -341,6 +344,53 @@ const runInput = (
 })
 
 describe('RestrictedInferenceRunner', () => {
+  it.each(['confirmed', 'unconfirmed', 'unconfirmed-success', 'rejected', 'default'] as const)(
+    'gates Film cleanup before retry admission: %s',
+    async (cleanup) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'restricted-cleanup-'))
+      const usage = { inputTokens: 10, outputTokens: 20, cacheTokens: 0 }
+      const original = new Error('Request interrupted')
+      const runner = new RestrictedInferenceRunner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        profileNamespace: 'test',
+        requireConfirmedCleanup: cleanup !== 'default',
+        resolveTarget: async () => backend(claudeCodeFramework),
+        createRuntime: (options) => ({
+          ...runtimeHarness(options, {
+            events: [event({ kind: 'stop', turnUsage: usage })],
+            onPrompt: async () => {
+              if (cleanup !== 'unconfirmed-success') throw original
+            }
+          }),
+          shutdownForQuit: async () => {
+            if (cleanup === 'rejected') throw new Error('Cleanup failed')
+            return { reaped: cleanup === 'confirmed' }
+          }
+        })
+      })
+      const result = await runner.run(runInput()).catch((error: unknown) => error)
+      if (
+        cleanup === 'unconfirmed' ||
+        cleanup === 'unconfirmed-success' ||
+        cleanup === 'rejected'
+      ) {
+        expect(result).toMatchObject({
+          code: 'transport-unavailable',
+          usage,
+          cause: cleanup === 'unconfirmed-success' ? undefined : original
+        })
+        // Retain a profile whose files may still belong to a live runtime.
+        expect(await readdir(join(temporaryRoot, 'runtime-support', 'test'))).toHaveLength(1)
+      } else {
+        expect(result).toBe(original)
+        expect(await readdir(join(temporaryRoot, 'runtime-support', 'test'))).toEqual([])
+      }
+      // Even a failed cleanup must release shutdown waiters.
+      await runner.shutdown()
+    }
+  )
+
   it.each(['codex-responses', 'codex-responses-compatibility', 'codex-bridge'] as const)(
     'preserves the actual %s route for validation',
     async (modelRoute) => {
@@ -503,7 +553,7 @@ describe('RestrictedInferenceRunner', () => {
               expect(prepared.args?.[1]).toContain(temporaryRoot!)
           }
         },
-        true
+        framework.id !== 'open-science-agent'
       )
       if (framework.id === 'pi') {
         await writeFile(join(temporaryRoot!, 'models.json'), '{}')
@@ -662,6 +712,40 @@ describe('RestrictedInferenceRunner', () => {
     expect(JSON.stringify(claudeOptions)).not.toContain(projectionRoot)
     expect(JSON.stringify(claudeOptions)).not.toContain(LOAD_SKILL_TOOL_CALLABLE_NAME)
   })
+
+  it.each([false, true])(
+    'gates CodeBuddy subscription profiles on task opt-in (%s)',
+    async (allowed) => {
+      const resolved = backend(codeBuddyFramework, { modelRoute: 'codebuddy-subscription' })
+      const { runner } = await makeRunner(
+        resolved,
+        {
+          events: [event({ role: 'assistant', text: 'OK' })],
+          onCreateSession: async (prepared) => {
+            expect(prepared.env.HOME).toBe(resolved.env.HOME)
+            expect(prepared.env.CODEBUDDY_CONFIG_DIR).not.toBe(resolved.env.CODEBUDDY_CONFIG_DIR)
+            expect(await readdir(prepared.env.CODEBUDDY_CONFIG_DIR!)).toEqual(['settings.json'])
+            expect(prepared.args).toEqual(['--tools', ''])
+          }
+        },
+        false,
+        false,
+        allowed
+      )
+      const account = join(temporaryRoot!, 'account')
+      await mkdir(account)
+      await writeFile(join(account, 'settings.json'), '{}')
+      resolved.env = {
+        CODEBUDDY_INTERNET_ENVIRONMENT: 'external',
+        CODEBUDDY_CONFIG_DIR: account,
+        HOME: account
+      }
+      const result = runner.run(runInput({ target: target('codebuddy') }))
+      if (allowed) await expect(result).resolves.toMatchObject({ text: 'OK' })
+      else
+        await expect(result).rejects.toThrow('This task does not support CodeBuddy subscriptions.')
+    }
+  )
 
   it('isolates CodeBuddy configuration and removes native tools from restricted inference', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-codebuddy-'))

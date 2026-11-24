@@ -28,7 +28,9 @@ const isPromiseLike = (
 
 // Owns the async candidate lifecycle for all source adapters. A close or a newer row click
 // invalidates an in-flight result, so late IPC/network responses cannot reopen or replace the dialog.
-const useSkillImportCandidatePreview = (): SkillImportCandidatePreviewController => {
+const useSkillImportCandidatePreview = (
+  formatError = previewErrorMessage
+): SkillImportCandidatePreviewController => {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -83,7 +85,7 @@ const useSkillImportCandidatePreview = (): SkillImportCandidatePreviewController
             if (generation.current === request) setContent(nextContent)
           })
           .catch((reason) => {
-            if (generation.current === request) setError(previewErrorMessage(reason))
+            if (generation.current === request) setError(formatError(reason))
           })
           .finally(() => {
             if (generation.current === request) setLoading(false)
@@ -91,11 +93,11 @@ const useSkillImportCandidatePreview = (): SkillImportCandidatePreviewController
       } catch (reason) {
         setContent(null)
         setLoading(false)
-        setError(previewErrorMessage(reason))
+        setError(formatError(reason))
         setOpen(true)
       }
     },
-    []
+    [formatError]
   )
 
   return {

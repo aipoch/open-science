@@ -5,7 +5,9 @@ test('completed turn can expand and collapse with keyboard while retaining the f
 }) => {
   await page.goto('/turn-process.html')
   const toggle = page.getByRole('button', { name: '2 previous messages', exact: true })
+  const tools = page.locator('[data-message-id^="activity-group-tool-"]')
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(tools).toHaveCount(0)
   await expect(
     page.getByText('I’ll check the data structure and missing values first.')
   ).toHaveCount(0)
@@ -13,11 +15,16 @@ test('completed turn can expand and collapse with keyboard while retaining the f
   await toggle.focus()
   await page.keyboard.press('Enter')
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(tools).toHaveCount(2)
+  await expect(tools.nth(0)).toBeVisible()
+  await expect(tools.nth(1)).toBeVisible()
   await expect(
     page.getByText('I’ll check the data structure and missing values first.')
   ).toBeVisible()
   await page.keyboard.press('Space')
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(tools).toHaveCount(0)
+  await expect(page.getByText('Data checks are complete.', { exact: true })).toBeVisible()
 })
 
 test('failed turn retains the error and last partial output outside its disclosure', async ({

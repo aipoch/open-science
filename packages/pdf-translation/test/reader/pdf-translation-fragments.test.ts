@@ -377,3 +377,41 @@ it.each(['native caption', 'foreign formula', 'not a caption', 'nonadjacent part
     expect(JSON.stringify(source)).toBe(original)
   }
 )
+
+it.each([false, true])(
+  'merges adjacent rows only when the union misses an earlier fragment of the same unit: %s',
+  (blocksUnion) => {
+    const fragment = (
+      x: number,
+      y: number,
+      width: number,
+      index: number,
+      text: string
+    ): PdfTranslationFragment => ({
+      pageNumber: 1,
+      rect: { x: x / 600, y: y / 800, width: width / 600, height: 10 / 800 },
+      items: [{ index, text }]
+    })
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'same-unit-rows',
+      fingerprint: 'same-unit-rows',
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          id: 'body',
+          source: 'x belongs to a class. Its representative is unique.',
+          fragments: [
+            fragment(blocksUnion ? 60 : 40, 80, 15, 0, 'x'),
+            fragment(80, 80, 180, 1, 'belongs to a class.'),
+            fragment(60, 91, 200, 2, 'Its representative is unique.')
+          ]
+        }
+      ]
+    })
+    const unit = source.units[0]
+    const prepared = pdfTranslationLayoutFragments(unit, source)
+    expect(prepared.flatMap((row) => row.items.map((item) => item.index))).toEqual([0, 1, 2])
+    if (blocksUnion) expect(prepared).toEqual(unit.fragments)
+    else expect(prepared).toHaveLength(2)
+  }
+)

@@ -153,6 +153,15 @@ const sleepWithSignal = async (sleep, milliseconds, signal) => {
   })
 }
 
+function assertRunTracingSupported(bootstrap) {
+  if (!bootstrap.taskCapabilities?.includes('run-otel-traces')) {
+    throw new OpenScienceApiError(
+      'This server does not support per-Run OpenTelemetry tracing. Update the server before submitting.',
+      { code: 'unsupported_capability' }
+    )
+  }
+}
+
 // Read-only Literature commands use Web RPC; map a missing channel on older services.
 const callLiteratureRpc = async (client, channel, args, options) => {
   try {
@@ -456,6 +465,7 @@ export class OpenScienceClient {
         { code: 'unsupported_capability' }
       )
     }
+    if (request.otelTraces !== undefined) assertRunTracingSupported(bootstrap)
     try {
       return await this.request(`/api/v1/run-submissions/${encodeURIComponent(requestId)}`, {
         ...beforeDeadline(options, deadline),
@@ -511,6 +521,14 @@ export class OpenScienceClient {
 
   async startRun(request, options) {
     const deadline = Date.now() + resolveRequestTimeout(this.requestTimeoutMs, options?.timeoutMs)
+    if (request.otelTraces !== undefined && !options?.requestId) {
+      throw new OpenScienceApiError(
+        'Per-Run tracing requires a local durable submission with a requestId.',
+        {
+          code: 'invalid_request'
+        }
+      )
+    }
     if (request.permissionPrompts === 'none') {
       const bootstrap = await this.health(beforeDeadline(options, deadline))
       if (!bootstrap.taskCapabilities?.includes('permission-prompts-none')) {
@@ -525,7 +543,8 @@ export class OpenScienceClient {
         await this.submitRun(options.requestId, request, beforeDeadline(options, deadline))
         return await this.waitForSubmission(options.requestId, beforeDeadline(options, deadline))
       } catch (error) {
-        if (error && typeof error === 'object') error.requestId = options.requestId
+        if (error && typeof error === 'object' && error.code !== 'unsupported_capability')
+          error.requestId = options.requestId
         throw error
       }
     }
@@ -1067,8 +1086,10 @@ export const connectToOpenScience = async ({
   env,
   fetch,
   requestTimeoutMs,
-  signal
+  signal,
+  requireRunTracing = false
 } = {}) => {
+  let bootstrap
   let client
   let lastError
   await findServiceState({
@@ -1083,7 +1104,7 @@ export const connectToOpenScience = async ({
           fetch,
           requestTimeoutMs
         })
-        await candidate.health({ signal })
+        bootstrap = await candidate.health({ signal })
         client = candidate
         return true
       } catch (error) {
@@ -1104,5 +1125,6 @@ export const connectToOpenScience = async ({
       }
     )
   }
+  if (requireRunTracing) assertRunTracingSupported(bootstrap)
   return client
 }

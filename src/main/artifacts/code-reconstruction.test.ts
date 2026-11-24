@@ -178,6 +178,7 @@ const provenance = (): ArtifactVersionReconstructionProvenance => ({
         startedAt: '2026-08-06T00:00:00.000Z',
         completedAt: '2026-08-06T00:00:01.000Z',
         outputs: [{ type: 'text', text: 'saved cos.png' }],
+        hasOmittedFiles: true,
         inputFileVersionKeys: [
           { sourceKind: 'upload-version', inputFileVersionId: 'upload-version-1' }
         ]
@@ -476,6 +477,7 @@ describe('ArtifactCodeReconstructionService', () => {
         frameworkId: 'codex',
         model: 'model-a',
         language: 'python',
+        sourceTruncated: false,
         generatedAt: '2026-08-06T01:00:00.000Z'
       }
     })

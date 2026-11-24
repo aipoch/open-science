@@ -1,6 +1,10 @@
 import type { TFunction } from 'i18next'
 
-import type { NotebookRunHistorySummary, NotebookRunRecord } from '../../../../shared/notebook'
+import type {
+  NotebookAgentSummary,
+  NotebookRunHistorySummary,
+  NotebookRunRecord
+} from '../../../../shared/notebook'
 import type { ChatSession, ToolActivity } from '@/stores/session-store-contract'
 import { resolveActiveConversationMessages } from '../../../../shared/conversation-graph'
 import {
@@ -58,40 +62,101 @@ const projectNotebookRunsForFrame = (
 const notebookFrameFilterForExport = (filter: NotebookFrameFilterValue): string =>
   filter.slice('frame:'.length)
 
-// Pending Sessions keep their provisional Conversation Graph IDs when the provider later binds the
-// final Session ID. Renderer-originated terminal runs use the final Session's canonical root ID, so
-// fold that alias back into the graph root before building or applying the Agent filter.
+// Notebook reads already carry root provenance. Display-only conversation pages deliberately omit
+// the graph, so reopening a Notebook must not require hydrating the transcript first.
+const notebookRootFrameId = (
+  session: Pick<ChatSession, 'id' | 'conversationGraph'>,
+  runs: readonly NotebookRunRecord[]
+): string => {
+  const canonicalRootFrameId = `root-frame-${session.id}`
+  return (
+    session.conversationGraph?.rootFrameId ??
+    runs.find((run) => run.rootFrameId && run.rootFrameId !== canonicalRootFrameId)?.rootFrameId ??
+    canonicalRootFrameId
+  )
+}
+
+// Root provenance can outlive Session rebinding. Project provisional and canonical root Runs onto
+// the current presentation root before filtering, while retaining every child Frame identity.
 const normalizeNotebookRootFrameRuns = (
   runs: readonly NotebookRunRecord[],
-  session: ChatSession
+  session: Pick<ChatSession, 'id' | 'conversationGraph'>
 ): NotebookRunRecord[] => {
-  const rootFrameId = session.conversationGraph?.rootFrameId
+  const rootFrameId = notebookRootFrameId(session, runs)
   const canonicalRootFrameId = `root-frame-${session.id}`
-  if (!rootFrameId || rootFrameId === canonicalRootFrameId) return [...runs]
-
   return runs.map((run) =>
-    run.agentFrameId === canonicalRootFrameId ? { ...run, agentFrameId: rootFrameId } : run
+    run.agentFrameId !== rootFrameId &&
+    (run.agentFrameId === canonicalRootFrameId ||
+      (run.agentFrameId !== undefined && run.agentFrameId === run.rootFrameId))
+      ? { ...run, agentFrameId: rootFrameId }
+      : run
   )
 }
 
 // Takes `t` because the root frame's label is catalog copy while every delegate label is the user's
 // own name for its Subagent, which interpolates unchanged.
-const notebookFrameLabels = (session: ChatSession, t: TFunction): Record<string, string> => {
+const notebookFrameLabels = (
+  session: Pick<ChatSession, 'id' | 'conversationGraph'>,
+  t: TFunction,
+  runs: readonly NotebookRunRecord[] = [],
+  agentSummaries: readonly NotebookAgentSummary[] = []
+): Record<string, string> => {
   const graph = session.conversationGraph
-  if (!graph) return {}
-  return Object.fromEntries(
-    graph.frames.flatMap((frame) => {
-      if (frame.id === graph.rootFrameId) return [[frame.id, t('Main Agent')]]
-      if (frame.kind !== 'delegate' || !frame.delegateName) return []
-      return [[frame.id, frame.delegateName]]
+  const rootFrameId = notebookRootFrameId(session, runs)
+  const labels: Record<string, string> = { [rootFrameId]: t('Main Agent') }
+  let ordinal = 0
+  for (const agent of agentSummaries) {
+    if (agent.isRoot) continue
+    ordinal += 1
+    const frame = graph?.frames.find((candidate) => candidate.id === agent.agentFrameId)
+    if (frame && frame.kind !== 'delegate') continue
+    labels[agent.agentFrameId] =
+      frame?.delegateName ?? t('Subagent {{number}}', { number: ordinal })
+  }
+  for (const frame of graph?.frames ?? []) {
+    if (frame.kind === 'delegate' && frame.delegateName) labels[frame.id] = frame.delegateName
+  }
+  return labels
+}
+
+const notebookAgentSummariesForSession = (
+  session: Pick<ChatSession, 'id' | 'conversationGraph'>,
+  runs: readonly NotebookRunRecord[],
+  agents: readonly NotebookAgentSummary[]
+): NotebookAgentSummary[] => {
+  const rootFrameId = notebookRootFrameId(session, runs)
+  return agents.map((agent) => (agent.isRoot ? { ...agent, agentFrameId: rootFrameId } : agent))
+}
+
+const notebookHistorySummaries = (
+  agents: readonly NotebookAgentSummary[]
+): ReadonlyMap<string, NotebookRunHistorySummary> =>
+  new Map(
+    agents.map((agent) => {
+      const summary: NotebookRunHistorySummary = {
+        agentFrameId: agent.agentFrameId,
+        runCount: agent.runCount,
+        kernelCounts: { python: 0, r: 0, repl: 0, bash: 0 }
+      }
+      for (const view of agent.views) {
+        summary.kernelCounts[view.kernelKind] += view.runCount
+        if (
+          !summary.latestDataKernel &&
+          (view.kernelKind === 'python' || view.kernelKind === 'r')
+        ) {
+          summary.latestDataKernel = view.kernelKind
+        }
+      }
+      return [agent.agentFrameId, summary]
     })
   )
-}
 
 export {
   createNotebookFrameFilterOptions,
   notebookFrameFilterForExport,
   notebookFrameLabels,
+  notebookAgentSummariesForSession,
+  notebookHistorySummaries,
   normalizeNotebookRootFrameRuns,
   projectNotebookRunsForFrame
 }

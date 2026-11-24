@@ -5,6 +5,7 @@ import {
 } from '../../stores/desktop-runtime-recovery-store'
 import type {
   AcpContinueInterruptedTurnRequest,
+  AcpContinueNotebookExecutionRequest,
   AcpCreateSessionResponse,
   AcpSessionAgentTarget,
   ElicitationResponse,
@@ -108,6 +109,9 @@ const useAcpRuntime = (): {
     agentTarget?: AcpSessionAgentTarget,
     memoryEnabled?: boolean
   ) => Promise<AcpCreateSessionResponse>
+  continueNotebookExecution?: (
+    request: AcpContinueNotebookExecutionRequest
+  ) => Promise<AcpRuntimeState>
   continueInterruptedTurn: (request: AcpContinueInterruptedTurnRequest) => Promise<AcpRuntimeState>
   resetSessionContext: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -493,6 +497,12 @@ const useAcpRuntime = (): {
     [runPromptAction]
   )
 
+  const continueNotebookExecution = useCallback(
+    (request: AcpContinueNotebookExecutionRequest) =>
+      runPromptAction(() => window.api.acp.continueNotebookExecution(request)),
+    [runPromptAction]
+  )
+
   // Drops the agent-side context for a session whose accumulated history outgrew the request limit,
   // adopting a fresh agent session so the next prompt can replay a bounded text transcript.
   const resetSessionContext = useCallback(
@@ -533,8 +543,8 @@ const useAcpRuntime = (): {
 
   // Requests cancellation for one session without assuming the stop has arrived.
   const cancel = useCallback(
-    (sessionId: string) => runSnapshotAction(undefined, () => window.api.acp.cancel({ sessionId })),
-    [runSnapshotAction]
+    (sessionId: string) => runPromptAction(() => window.api.acp.cancel({ sessionId })),
+    [runPromptAction]
   )
 
   const steerFollowUp = useCallback(
@@ -670,6 +680,7 @@ const useAcpRuntime = (): {
     createSession,
     resumeSession,
     continueInterruptedTurn,
+    continueNotebookExecution,
     resetSessionContext,
     compactSession,
     deleteSession,

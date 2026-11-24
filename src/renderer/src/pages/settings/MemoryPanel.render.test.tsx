@@ -119,6 +119,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.unstubAllGlobals()
 })
 
 describe('MemoryPanel', () => {
@@ -734,16 +735,17 @@ describe('MemoryPanel', () => {
     expect(deleteEntry).not.toHaveBeenCalled()
   })
 
-  it('renders category confirmation above the parent settings dialog layer', async () => {
-    useMemoryStore.setState({
-      categories: [
-        useMemoryStore.getState().categories[0]!,
-        customCategory({
-          guidance: 'Save reusable category A findings'
-        })
-      ],
-      selectedCategoryId: 'category-a'
+  it('requires fresh confirmation when a note arrives while the category dialog is open', async () => {
+    const category = customCategory({
+      entries: ['a', 'b'].map((id) => memoryEntry({ id, categoryId: 'category-a' }))
     })
+    const snapshot = { enabled: true, revision: 1, projects: [], categories: [category] }
+    const deleteCategory = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Memory category changed. Refresh and try again.'))
+      .mockResolvedValueOnce({ ...snapshot, revision: 3, categories: [] })
+    vi.stubGlobal('api', { memory: { snapshot: async () => snapshot, deleteCategory } })
+    useMemoryStore.setState({ ...snapshot, selectedCategoryId: category.id })
     await renderMemoryPanel()
 
     fireEvent.pointerDown(container.querySelector('button[aria-label="Category actions"]')!, {
@@ -759,6 +761,33 @@ describe('MemoryPanel', () => {
     const dialog = document.body.querySelector('[data-slot="memory-confirm-dialog"]')
     expect(dialog?.getAttribute('class')).toContain('z-[70]!')
     expect(dialog?.textContent).toContain('Delete category?')
+    expect(dialog?.textContent).toContain('2 notes')
+
+    snapshot.categories = [
+      {
+        ...category,
+        entries: [...category.entries, memoryEntry({ id: 'c', categoryId: category.id })]
+      }
+    ]
+    snapshot.revision++
+    const confirm = Array.from(dialog!.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Delete category'
+    )!
+    await act(async () => fireEvent.click(confirm))
+    expect(deleteCategory).toHaveBeenNthCalledWith(1, {
+      id: category.id,
+      expectedRevision: 1,
+      expectedEntryIds: ['a', 'b']
+    })
+    expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain('3 notes')
+    expect(useMemoryStore.getState().categories).toEqual(snapshot.categories)
+    await act(async () => fireEvent.click(confirm))
+    expect(deleteCategory).toHaveBeenNthCalledWith(2, {
+      id: category.id,
+      expectedRevision: 1,
+      expectedEntryIds: ['a', 'b', 'c']
+    })
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull()
   })
 
   it('keeps the memory layout and note list within their own scroll region', async () => {

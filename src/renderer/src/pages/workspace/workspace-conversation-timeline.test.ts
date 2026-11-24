@@ -59,6 +59,79 @@ const timelineIds = (
 ): string[] => createWorkspaceConversationTimeline(input, handoffEvents).map(({ id }) => id)
 
 describe('workspace conversation timeline', () => {
+  it.each(['completed', 'cancelled'] as const)(
+    'shows one denial notice for a %s turn without a final reply, even after a later turn',
+    (kind) => {
+      const input = session({
+        messages: [
+          message({
+            turnOutcome:
+              kind === 'completed'
+                ? { kind, settledAt: 400 }
+                : { kind, settledAt: 400, recovery: 'resume' }
+          }),
+          message({
+            id: 'preamble',
+            role: 'agent',
+            content: 'I will try to save this.',
+            responseToMessageId: 'prompt-1',
+            createdAt: 200
+          }),
+          message({ id: 'prompt-2', content: 'Hello', createdAt: 500 }),
+          message({ id: 'reply-2', role: 'agent', responseToMessageId: 'prompt-2', createdAt: 600 })
+        ],
+        activities: [
+          activity({ toolDisposition: 'declined' }),
+          activity({ id: 'tool-2', toolDisposition: 'declined', createdAt: 310 })
+        ]
+      })
+
+      expect(timelineIds(input)).toEqual([
+        'prompt-1',
+        'preamble',
+        'activity-group-tool-1',
+        'permission-denial-prompt-1',
+        'prompt-2',
+        'reply-2'
+      ])
+    }
+  )
+
+  it.each([
+    { title: 'a final reply', reply: { content: 'The operation was not performed.' } },
+    { title: 'a delivered file', reply: { content: '', artifactIds: ['artifact-1'] } },
+    { title: 'a running turn', running: true },
+    { title: 'a closed approval', disposition: 'permission-closed' as const },
+    { title: 'an unscoped denial', unscoped: true }
+  ])('omits the denial notice for $title', ({ reply, running, disposition, unscoped }) => {
+    const input = session({
+      status: running ? 'running' : 'idle',
+      agentPromptInFlight: running,
+      messages: [
+        message({ turnOutcome: { kind: 'completed', settledAt: 500 } }),
+        ...(reply
+          ? [
+              message({
+                id: 'reply-1',
+                role: 'agent',
+                responseToMessageId: 'prompt-1',
+                createdAt: 400,
+                ...reply
+              })
+            ]
+          : [])
+      ],
+      activities: [
+        activity({
+          promptMessageId: unscoped ? undefined : 'prompt-1',
+          toolDisposition: disposition ?? 'declined'
+        })
+      ]
+    })
+
+    expect(timelineIds(input)).not.toContain('permission-denial-prompt-1')
+  })
+
   it('avoids a full prompt-array scan for every completed turn', () => {
     const turnCount = 250
     const messages = Array.from({ length: turnCount }, (_, index) => [
@@ -971,6 +1044,16 @@ describe('imported turn outcomes', () => {
     manifestChecksum: 'a'.repeat(64)
   }
 
+  it('keeps declined tool activity without a denial notice in imported history', () => {
+    const input = session({
+      packageOrigin,
+      messages: [message({ turnOutcome: { kind: 'completed', settledAt: 500 } })],
+      activities: [activity({ toolDisposition: 'declined' })]
+    })
+
+    expect(timelineIds(input)).toEqual(['prompt-1', 'activity-group-tool-1'])
+  })
+
   it.each(['legacy', 'turn'] as const)(
     'keeps an imported %s failure as history without changing its data',
     (surface) => {
@@ -1048,6 +1131,33 @@ describe('fork inherited turn outcomes', () => {
       ],
       forkHeadMessageId: 'inherited-answer'
     })
+
+  it('shows a denial notice only for the turn run in the fork', () => {
+    const input = forkOf(interrupted, [
+      message({
+        id: 'new-prompt',
+        sortIndex: 4,
+        createdAt: 400,
+        turnOutcome: { kind: 'completed', settledAt: 600 }
+      })
+    ])
+    input.activities = [
+      activity({ promptMessageId: 'inherited-prompt', toolDisposition: 'declined' }),
+      activity({
+        id: 'new-tool',
+        promptMessageId: 'new-prompt',
+        toolDisposition: 'declined',
+        sortIndex: 5,
+        createdAt: 500
+      })
+    ]
+
+    const ids = timelineIds(input)
+    expect(ids).toContain('activity-group-tool-1')
+    expect(ids.filter((id) => id.startsWith('permission-denial-'))).toEqual([
+      'permission-denial-new-prompt'
+    ])
+  })
 
   it('presents an inherited failed latest turn only as a historical marker', () => {
     const input = forkOf(failed)
@@ -1214,6 +1324,18 @@ describe('settled turn process disclosure', () => {
       message({ id: 'progress-2', role: 'agent', responseToMessageId: 'prompt-1', sortIndex: 3.5 })
     )
     expect(groups(input).get('progress')?.messageCount).toBe(2)
+  })
+
+  it('keeps a group with a declined tool visible beside a collapsed turn process', () => {
+    const input = fixture()
+    input.activities = [
+      activity({ id: 'read', sortIndex: 2 }),
+      activity({ id: 'save', sortIndex: 3, toolDisposition: 'declined' })
+    ]
+
+    const result = groups(input)
+    expect(result.get('progress')?.itemIds).toEqual(['progress'])
+    expect(result.has('activity-group-read')).toBe(false)
   })
 
   it.each(['completed', 'failed'] as const)(

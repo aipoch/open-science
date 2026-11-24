@@ -1,5 +1,5 @@
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
-import type { ActiveSession, PromptResponse } from '@agentclientprotocol/sdk'
+import type { ActiveSession, ClientConnection, PromptResponse } from '@agentclientprotocol/sdk'
 import { rmSync } from 'node:fs'
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,8 +8,9 @@ import { pathToFileURL } from 'node:url'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { AcpPromptRequest } from '../../shared/acp'
+import { NotebookExecutionIntent, withNotebookExecutionIntent } from '../notebook/execution-intent'
 import type { ActivePlanProjection } from '../../shared/session-plan/contract'
-import { opencodeFramework } from '../agent-framework'
+import { getAgentFramework, opencodeFramework } from '../agent-framework'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
@@ -21,6 +22,8 @@ import { AcpProviderPromptSerializationOwner } from './provider-prompt-serializa
 import { AcpSessionAggregate } from './session-aggregate'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
 import type { TurnSkillHandle } from './turn-skill-owner'
+
+import { taskRunTracing } from './task-run-tracing'
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void }
 type Harness = {
@@ -51,6 +54,7 @@ type Harness = {
   }
   finalizer: Mock<AcpPromptOutcomeFinalizer['finalize']>
   interactions: {
+    isCancellationAccepted: Mock<AcpSessionInteractionOwner['isCancellationAccepted']>
     current: Mock<AcpSessionInteractionOwner['current']>
     reservePrompt: Mock<AcpSessionInteractionOwner['reservePrompt']>
     activatePrompt: Mock<AcpSessionInteractionOwner['activatePrompt']>
@@ -137,6 +141,8 @@ const planProjection = (): ActivePlanProjection => ({
 
 const createHarness = (
   input: {
+    connection?: () => ClientConnection
+    resolveProjectTracing?: (projectId: string) => Promise<boolean>
     authorizedDirectories?: AcpPromptTurnWorkflowOptions['environment']['authorizedDirectories']
     serialization?: AcpPromptTurnWorkflowOptions['serialization']
     planPause?: Partial<AcpPromptTurnWorkflowOptions['plan']>
@@ -193,6 +199,7 @@ const createHarness = (
     }
   }))
   const interactions: Harness['interactions'] = {
+    isCancellationAccepted: vi.fn(owner.isCancellationAccepted.bind(owner)),
     current: vi.fn((sessionId: string) => owner.current(sessionId)),
     reservePrompt: vi.fn((request: Parameters<typeof owner.reservePrompt>[0]) => {
       journal.push('reserve')
@@ -336,6 +343,7 @@ const createHarness = (
     contextUsage,
     providerReconnectPending: input.providerReconnectPending ?? (() => false),
     environment: {
+      connection: input.connection,
       authorizedDirectories: input.authorizedDirectories,
       backend: () => runtimeBackend,
       tooling: () => ({ artifacts: true, notebook: true, skillImport: true }),
@@ -360,6 +368,7 @@ const createHarness = (
     permission,
     finalization,
     currentCwd: () => '/default',
+    resolveProjectTracing: input.resolveProjectTracing,
     resolveProjectId: () => 'project-1',
     prepareContinuationReplay: vi.fn<AcpPromptTurnWorkflowOptions['prepareContinuationReplay']>(
       async () => ({ historyPreamble: 'durable history' })
@@ -410,6 +419,75 @@ const request = (sessionId = 's1'): AcpPromptRequest => ({
   text: 'analyze',
   forcedSkillIds: ['research'],
   provenanceContext: { promptMessageId: 'message-1' }
+})
+
+describe('Task Run tracing authority', () => {
+  it('uses only the Task-owned turn marker and consults Project settings on the next turn', async () => {
+    const query = vi.fn(async () => ({ ready: true }))
+    const resolveProjectTracing = vi.fn(async () => false)
+    const harness = createHarness({
+      backend: { ...backend, framework: getAgentFramework('open-science-agent') },
+      connection: () => ({ agent: { request: query } }) as unknown as ClientConnection,
+      resolveProjectTracing,
+      finalize: (handles, outcome) => new AcpPromptOutcomeFinalizer().finalize(handles, outcome)
+    })
+    const traced = { ...request(), [taskRunTracing]: true }
+    const task = { kind: 'user', runtimeReviewOwner: 'task' } as const
+    await harness.workflow.run(traced, task)
+    expect(harness.executor.mock.calls[0][0].authorizeHarnessTracing).toBe(true)
+    await harness.workflow.run({ ...request(), ...{ otelTraces: true } }, task)
+    await harness.workflow.run(traced, { kind: 'user', runtimeReviewOwner: 'renderer' })
+    for (const [input] of harness.executor.mock.calls.slice(1)) {
+      const authorize = input.authorizeHarnessTracing
+      expect(typeof authorize === 'function' && (await authorize())).toBe(false)
+    }
+    expect(query).toHaveBeenCalledOnce()
+    expect(resolveProjectTracing).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['superseded', 'cancelled'])(
+    'rejects admission when tracing readiness is pending and the turn is %s',
+    async (ending) => {
+      const ready = deferred<{ ready: boolean }>()
+      const query = vi.fn(() => ready.promise)
+      const harness = createHarness({
+        backend: { ...backend, framework: getAgentFramework('open-science-agent') },
+        connection: () => ({ agent: { request: query } }) as unknown as ClientConnection,
+        cancellationCheckpoint: async () => (ending === 'cancelled' ? 'cancelled' : 'active')
+      })
+      const admit = vi.fn()
+      const traced = { ...request(), [taskRunTracing]: true }
+      const running = harness.workflow.run(
+        traced,
+        { kind: 'user', runtimeReviewOwner: 'task' },
+        admit
+      )
+      await vi.waitFor(() => expect(query).toHaveBeenCalledOnce())
+      if (ending === 'superseded') harness.setSession({ sessionId: 'replacement' } as ActiveSession)
+      ready.resolve({ ready: true })
+      if (ending === 'superseded') await expect(running).rejects.toThrow('no longer active')
+      else await expect(running).resolves.toEqual({ stopReason: 'cancelled' })
+      expect(admit).not.toHaveBeenCalled()
+      expect(harness.interactions.current(traced.sessionId)).toBeUndefined()
+    }
+  )
+
+  it('rejects a replaced helper with no exporter before admitting its prompt', async () => {
+    const harness = createHarness({
+      backend: { ...backend, framework: getAgentFramework('open-science-agent') },
+      connection: () =>
+        ({ agent: { request: async () => ({ ready: false }) } }) as unknown as ClientConnection,
+      authorize: () => skillHandle('reload')
+    })
+    const admit = vi.fn()
+    const traced = { ...request(), [taskRunTracing]: true }
+    await expect(
+      harness.workflow.run(traced, { kind: 'user', runtimeReviewOwner: 'task' }, admit)
+    ).rejects.toThrow('OTLP_TRACES_ENDPOINT')
+    expect(harness.resumeAfterReload).toHaveBeenCalledOnce()
+    expect(admit).not.toHaveBeenCalled()
+    expect(harness.executor).not.toHaveBeenCalled()
+  })
 })
 
 describe('Skill scope preparation', () => {
@@ -824,7 +902,10 @@ describe('AcpPromptTurnWorkflow', () => {
       framework,
       providerSessionId: 'provider-1',
       cwd: '/session',
-      skillRuntimeAllowlist: ['mcp-pubmed']
+      skillRuntimeAllowlist: ['mcp-pubmed'],
+      request: expect.objectContaining({ sessionId: 's1' }),
+      signal: expect.any(AbortSignal),
+      assertCurrent: expect.any(Function)
     })
     expect(frameworkBeforePromptDispatch).toHaveBeenCalledWith({
       connection: {},
@@ -1193,6 +1274,36 @@ describe('AcpPromptTurnWorkflow', () => {
     await handles.disposeArtifact()
     expect(harness.artifacts.dispose).toHaveBeenCalledWith(expect.any(Object))
   })
+
+  it.each(
+    (['admission-error', 'preparation-cancelled'] as const).flatMap((phase) =>
+      [true, false].map((freshUserIntent) => ({ phase, freshUserIntent }))
+    )
+  )(
+    'retains authority only for an inherited context after $phase (fresh: $freshUserIntent)',
+    async ({ phase, freshUserIntent }) => {
+      const intent = new NotebookExecutionIntent({ projectId: 'project-1', sessionId: 's1' })
+      if (freshUserIntent) intent.prepareUserExecution()
+      const harness = createHarness(
+        phase === 'admission-error'
+          ? {
+              beginRuntimeSessionTurn: async () => {
+                throw new Error('durable admission failed')
+              }
+            }
+          : { cancellationCheckpoint: async () => 'cancelled' }
+      )
+      const run = harness.workflow.run(withNotebookExecutionIntent(request(), intent), {
+        kind: 'user'
+      })
+      if (phase === 'admission-error') await expect(run).rejects.toThrow('durable admission failed')
+      else await expect(run).resolves.toEqual({ stopReason: 'cancelled' })
+      expect(harness.executor).not.toHaveBeenCalled()
+      if (freshUserIntent)
+        expect(() => intent.assertExecutable()).toThrow('Execution was not started')
+      else expect(() => intent.assertExecutable()).not.toThrow()
+    }
+  )
 
   it('turns execution failure into one finalization outcome with pending Skill state', async () => {
     const failure = new Error('provider failed')

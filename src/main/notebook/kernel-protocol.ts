@@ -210,12 +210,14 @@ export function framePythonRequest(
   controlInvocationId?: string,
   protectedDirs?: readonly string[],
   pythonRandomState?: import('@aipoch/reproducibility/execution-context').NotebookExecutionContext['before']['pythonRandomState'],
-  replPublisher?: string
+  replPublisher?: string,
+  controlInvocationNonce?: string
 ): string {
   return `${JSON.stringify({
     req_id: reqId,
     code,
     ...(controlInvocationId ? { control_invocation_id: controlInvocationId } : {}),
+    ...(controlInvocationNonce ? { control_invocation_nonce: controlInvocationNonce } : {}),
     ...(protectedDirs?.length ? { protected_dirs: protectedDirs } : {}),
     ...(pythonRandomState ? { python_random_state: pythonRandomState } : {}),
     ...(replPublisher ? { repl_publisher: replPublisher } : {})

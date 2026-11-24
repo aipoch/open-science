@@ -372,7 +372,10 @@ export async function composeSettingsBootstrap({
           await mkdir(resolveDataRoot(), { recursive: true })
       },
       resolveCodexProxyEnvironment: () =>
-        Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment())
+        Promise.resolve(networkProxyRuntime.getChildProcessProxyEnvironment()),
+      onLabStateChanged: async () => {
+        await settingsSnapshotCommits.projectAfter(Promise.resolve())
+      }
     })
     return {
       name: 'settings-service',
@@ -387,6 +390,9 @@ export async function composeSettingsBootstrap({
     settingsService,
     applicationEvents
   )
+  // Lab restore is fire-and-forget: a locked keychain or an offline Lab server must never delay
+  // application startup. The owner publishes its own status through onLabStateChanged when done.
+  void settingsService.initializeLab()
   const resolveSessionAgentTarget: SessionAgentTargetResolver = async (source) =>
     resolveValidatedSessionAgentTarget(source, await settingsService.getSettingsView())
   const resolveDefaultSessionAgentTarget = async (): Promise<AcpSessionAgentTarget> => {

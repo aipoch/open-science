@@ -1,15 +1,23 @@
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { TestSpecification, Vitest } from 'vitest/node'
 import WindowsTestSequencer, {
   WINDOWS_TEST_MODULE_GROUPS,
   WINDOWS_TEST_SHARD_COUNT,
+  WINDOWS_TEST_EXACT_SHARDS,
   windowsTestShard
 } from './windows-test-sequencer'
 
 describe('Windows module-based test sharding', () => {
   it.each([
-    ['src/main/session-package/service.test.ts', 1],
+    ['src/main/session-package/content-verification.test.ts', 1],
+    ['src/main/session-package/service.test.ts', 5],
+    ['src/main/session-package/deletion.test.ts', 7],
+    ['src/main/session-package/literature.test.ts', 6],
+    ['src/main/schedules/dispatcher.test.ts', 5],
+    ['scripts/ci/module-graph/retirement.test.ts', 6],
+    ['src/main/pdf-annotations/sharing.integration.test.ts', 2],
     ['packages/pdf-structure/test/native-complete-records.test.ts', 1],
     ['packages/pdf-translation/test/writer.test.ts', 1],
     ['src/main/database/migration-service.test.ts', 5],
@@ -48,6 +56,15 @@ describe('Windows module-based test sharding', () => {
         const earlier = WINDOWS_TEST_MODULE_GROUPS.slice(0, index).flat()
         expect(earlier.some((other) => prefix.startsWith(other))).toBe(false)
       }
+    }
+  })
+
+  it('keeps every measured exact override inside the shard range', () => {
+    for (const [path, shard] of Object.entries(WINDOWS_TEST_EXACT_SHARDS)) {
+      expect(existsSync(path), `Missing exact shard test ${path}`).toBe(true)
+      expect(shard).toBeGreaterThanOrEqual(1)
+      expect(shard).toBeLessThanOrEqual(WINDOWS_TEST_SHARD_COUNT)
+      expect(windowsTestShard(path.replaceAll('/', '\\'))).toBe(shard)
     }
   })
 

@@ -2,7 +2,7 @@ import type { ImageModelSettingsSnapshot } from '../../../../../shared/image-mod
 import { useImageModelSettingsStore } from '@/stores/image-model-settings-store'
 import { useSettingsStore } from '@/stores/settings-store'
 // @vitest-environment jsdom
-import { act, useEffect } from 'react'
+import { act, useEffect, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ImageEditingProvider } from './ImageEditingProvider'
@@ -86,6 +86,7 @@ const startTask = vi.fn(
 )
 const cancelTask = vi.fn(async () => undefined)
 let owner: ReturnType<typeof useImageEditing>
+const reportVersion = vi.fn<(item: PreviewFileItem | undefined) => void>()
 function Capture(): null {
   const value = useImageEditing()
   useEffect(() => {
@@ -100,13 +101,49 @@ async function render(expanded = false, preview: PreviewFileItem | null = item):
         <Capture />
         <div key={expanded ? 'modal' : 'panel'}>
           {preview ? (
-            <ImageEditorBoundary item={preview}>
-              <img alt="source" />
-            </ImageEditorBoundary>
+            <EditActionBoundary item={preview}>
+              {({ editAction, editDisabledReason }) =>
+                editAction ? (
+                  <button
+                    aria-label="Edit image"
+                    disabled={Boolean(editDisabledReason)}
+                    onClick={editAction.execute}
+                  >
+                    <img alt="source" />
+                  </button>
+                ) : (
+                  <img alt="source" />
+                )
+              }
+            </EditActionBoundary>
           ) : null}
         </div>
       </ImageEditingProvider>
     )
+  )
+}
+
+function EditActionBoundary({
+  item,
+  children
+}: {
+  item: PreviewFileItem
+  children: (args: {
+    editAction: { execute: () => void; disabled?: boolean } | undefined
+    editDisabledReason?: string
+  }) => ReactNode
+}): React.JSX.Element {
+  const [editAction, setEditAction] = useState<
+    { execute: () => void; disabled?: boolean } | undefined
+  >()
+  return (
+    <ImageEditorBoundary
+      item={item}
+      onEditActionChange={setEditAction}
+      onVersionChange={reportVersion}
+    >
+      {({ editDisabledReason }) => children({ editAction, editDisabledReason })}
+    </ImageEditorBoundary>
   )
 }
 const button = (name: string): HTMLButtonElement => {
@@ -130,6 +167,11 @@ async function click(name: string): Promise<void> {
   await act(async () => button(name).click())
 }
 async function fill(label: string, value: string): Promise<void> {
+  if (
+    label === 'Image editing instruction' &&
+    !document.querySelector('textarea[aria-label="Image editing instruction"]')
+  )
+    await click('Continue editing')
   const node = document.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${label}"]`)!
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(node, value)
@@ -139,6 +181,7 @@ async function fill(label: string, value: string): Promise<void> {
 beforeEach(() => {
   useImageModelSettingsStore.setState({ snapshot: undefined, loadFailed: false })
   vi.clearAllMocks()
+  HTMLImageElement.prototype.decode = vi.fn(async () => undefined)
   readImage.mockImplementation((source: PreviewFileItem) => ({
     status: 'ready',
     url: `blob:${source.selectedVersionId}`,
@@ -251,6 +294,25 @@ it('reads the original generated image prompt without an editing task', async ()
   await click('Output settings')
   expect(document.body.textContent).toContain('16:9')
   expect(document.body.textContent).not.toContain('response_format')
+})
+
+it('shows only the Notebook and kernel for a Notebook-generated image', async () => {
+  vi.mocked(window.api.artifacts.getVersionProvenance).mockResolvedValue({
+    evidence: { producer: { state: 'available', kernel_kind: 'python' } }
+  } as never)
+  await render()
+  await click('Edit image')
+  await click('Image generation details')
+  expect(document.querySelector('[role="dialog"]')?.textContent).toBe('Notebook · Python')
+})
+
+it('keeps the generation session scope when loading the selected image', async () => {
+  await render()
+  await click('Edit image')
+
+  expect(readImage).toHaveBeenCalledWith(
+    expect.objectContaining({ selectedVersionId: 'v1', imageGenerationSessionId: 's' })
+  )
 })
 
 it.each(['toolbar', 'thumbnail'])(
@@ -702,6 +764,12 @@ it('releases deleted Session drafts but preserves ordinary navigation and conten
 
 it('keeps Notebook data links out and only shows completed task candidates from the source chain', () => {
   expect(imageEditorSource({ ...item, fromNotebookDataLink: true })).toBeUndefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/png' })).toBeDefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/jpeg' })).toBeDefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/webp' })).toBeDefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/gif' })).toBeUndefined()
+  expect(imageEditorSource({ ...item, mimeType: 'image/tiff' })).toBeUndefined()
+  expect(imageEditorSource({ ...item, source: 'local' })).toBeUndefined()
   const task: ImageTask = {
     id: crypto.randomUUID(),
     projectId: 'p',
@@ -1235,7 +1303,8 @@ it('opens the completed revision and does not restore its sent draft when return
     prompt: '',
     submission: undefined
   })
-  expect(container.querySelector<HTMLTextAreaElement>('textarea')?.disabled).toBe(false)
+  expect(container.querySelector('textarea')).toBeNull()
+  await click('Continue editing')
   await act(async () => {
     owner!.update(key, (draft) => draft && switchImageEditorSource(draft, historical))
   })
@@ -1254,11 +1323,14 @@ it('keeps cancellation in the canvas until the task settles and restores the dra
   const running = { ...request, state: 'running', createdAt: 1, updatedAt: 1 } as const
   get.mockResolvedValue(running)
   const instruction = '[aria-label="Image editing instruction"]'
-  expect(container.querySelector(instruction)).toBeNull()
+  expect(container.querySelector<HTMLTextAreaElement>(instruction)?.value).toBe('Make it yellow')
+  expect(container.querySelector<HTMLTextAreaElement>(instruction)?.disabled).toBe(true)
   expect(button('Stop image editing').textContent).toBe('Cancel')
   cancelTask.mockRejectedValueOnce(new Error('Cancellation connection lost'))
   await click('Stop image editing')
-  expect(container.querySelector('[role="status"]')?.textContent).toBe('Processing')
+  expect(container.querySelector('[data-testid="image-task-status"]')?.textContent).toBe(
+    'Processing'
+  )
   expect(container.textContent).toContain('Could not cancel. Try again.')
   expect(container.textContent).not.toContain('Image editing failed.')
   expect(button('Stop image editing').disabled).toBe(false)
@@ -1270,7 +1342,9 @@ it('keeps cancellation in the canvas until the task settles and restores the dra
     sessionId: 's',
     id: request.id
   })
-  expect(container.querySelector('[role="status"]')?.textContent).toBe('Cancelling…')
+  expect(container.querySelector('[data-testid="image-task-status"]')?.textContent).toBe(
+    'Cancelling…'
+  )
   expect(button('Stop image editing').disabled).toBe(true)
   get.mockResolvedValue({ ...running, state: 'cancelled', updatedAt: 2 })
   expect(container.textContent).toContain('Image results could not be verified.')
@@ -1321,7 +1395,10 @@ it('recovers a lost admission reply using the same ID and shows reconnecting wit
   get.mockRejectedValueOnce(new TypeError('Failed to fetch'))
   await click('Send image edit')
   expect(container.textContent).toContain('Reconnecting to image task…')
-  expect(document.querySelector('[aria-label="Image editing instruction"]')).toBeNull()
+  expect(
+    document.querySelector<HTMLTextAreaElement>('[aria-label="Image editing instruction"]')
+      ?.disabled
+  ).toBe(true)
   const input = startTask.mock.calls[0][0]
   get.mockResolvedValue({ ...input, state: 'running', createdAt: 1, updatedAt: 1 })
   await act(async () => {
@@ -1873,4 +1950,291 @@ it('sends with Enter, leaves Shift+Enter for newlines, and never sends during co
   expect(startTask.mock.calls[0][0].prompt).toBe('Change the fill.\nKeep the outline.')
   await press()
   expect(startTask).toHaveBeenCalledTimes(1)
+})
+
+async function finishEdit(versionId = 'v2'): Promise<void> {
+  const task = owner!.tasks.find((entry) => entry.state === 'running')!
+  vi.mocked(window.api.imageTasks.list).mockResolvedValue([
+    {
+      ...task,
+      state: 'succeeded',
+      updatedAt: task.updatedAt + 1,
+      result: {
+        artifactId: 'source',
+        versionId,
+        versionNumber: 2,
+        name: 'edited.png',
+        mimeType: 'image/png',
+        size: 1,
+        checksum: 'a'.repeat(64)
+      }
+    }
+  ])
+  await act(async () => {
+    await owner!.reloadTasks({ projectId: 'p', sessionId: 's' })
+  })
+}
+
+it('keeps the source visible until the new result has decoded', async () => {
+  const decoded = Promise.withResolvers<void>()
+  vi.mocked(HTMLImageElement.prototype.decode).mockReturnValueOnce(decoded.promise)
+  await render()
+  await click('Edit image')
+  await fill('Image editing instruction', 'Make it yellow')
+  await click('Send image edit')
+  const input = container.querySelector<HTMLTextAreaElement>('textarea')!
+  expect(input.value).toBe('Make it yellow')
+  expect(input.disabled).toBe(true)
+  await finishEdit()
+  expect([...owner!.drafts.values()][0].source.selectedVersionId).toBe('v1')
+  expect(container.textContent).toContain('Loading image…')
+  expect(
+    container.querySelector('[aria-label="Image editing canvas"] img')?.getAttribute('src')
+  ).toBe('blob:v1')
+  await act(async () => decoded.resolve())
+  expect([...owner!.drafts.values()][0].source.selectedVersionId).toBe('v2')
+  expect(
+    container.querySelector('[aria-label="Image editing canvas"] img')?.getAttribute('src')
+  ).toBe('blob:v2')
+  expect(input.isConnected).toBe(false)
+  expect(button('Continue editing')).toBeDefined()
+})
+
+it('does not steal the viewed source when a result arrives, and can revise the submitted edit', async () => {
+  await render()
+  await click('Edit image')
+  await fill('Image editing instruction', 'Make it yellow')
+  await click('Send image edit')
+  await click('source.png')
+  await finishEdit()
+  expect([...owner!.drafts.values()][0].source.selectedVersionId).toBe('v1')
+  expect(container.textContent).toContain('New image ready')
+  await click('View image')
+  expect([...owner!.drafts.values()][0].source.selectedVersionId).toBe('v2')
+  await click('Revise last edit')
+  expect([...owner!.drafts.values()][0].source.selectedVersionId).toBe('v1')
+  expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Make it yellow')
+  await fill('Image editing instruction', 'Make it orange instead')
+  await click('Send image edit')
+  expect(startTask.mock.calls[1][0].edit.source.sourceVersionId).toBe('v1')
+})
+
+it.each(['cancelled', 'failed'] as const)(
+  'keeps the browsed version and its input when a task is %s',
+  async (state) => {
+    await render()
+    await click('Edit image')
+    await fill('Image editing instruction', 'Create a second version')
+    await click('Send image edit')
+    await finishEdit()
+    await click('source.png')
+    await fill('Image editing instruction', 'Retry this edit later')
+    await click('Send image edit')
+    await click('Result 1')
+    const canvas = (): string | null | undefined =>
+      container.querySelector('[aria-label="Image editing canvas"] img')?.getAttribute('src')
+    expect(canvas()).toBe('blob:v2')
+
+    vi.mocked(window.api.imageTasks.list).mockResolvedValue(
+      owner!.tasks.map((task) =>
+        task.state === 'running' ? { ...task, state, updatedAt: task.updatedAt + 1 } : task
+      )
+    )
+    await act(async () => {
+      await owner!.reloadTasks({ projectId: 'p', sessionId: 's' })
+    })
+    expect(canvas()).toBe('blob:v2')
+    expect([...owner!.drafts.values()][0]).toMatchObject({
+      source: { selectedVersionId: 'v2' },
+      inputSource: { sourceVersionId: 'v1' }
+    })
+    await click('source.png')
+    expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+      'Retry this edit later'
+    )
+  }
+)
+
+it('clears the reported version when a retained draft is removed in preview', async () => {
+  await render()
+  await click('Edit image')
+  await click('Back to image preview')
+  expect(reportVersion).toHaveBeenLastCalledWith(
+    expect.objectContaining({ selectedVersionId: 'v1' })
+  )
+
+  const [key] = owner!.drafts.keys()
+  await act(async () => owner!.update(key, () => undefined))
+  expect(reportVersion).toHaveBeenLastCalledWith(undefined)
+})
+
+it('retains the submitted draft when leaving, and resumes the same task on return', async () => {
+  await render()
+  await click('Edit image')
+  await fill('Image editing instruction', 'Make it yellow')
+  await click('Send image edit')
+  const id = [...owner!.drafts.values()][0].submission!.id
+  await click('Back to image preview')
+  expect(container.querySelector('[data-testid="image-editor"]')).toBeNull()
+  expect(cancelTask).not.toHaveBeenCalled()
+  await finishEdit()
+  await click('Edit image')
+  expect([...owner!.drafts.values()][0].source.selectedVersionId).toBe('v2')
+  expect(owner!.tasks[0].id).toBe(id)
+  expect(startTask).toHaveBeenCalledTimes(1)
+})
+
+it('keeps the original image and offers the saved result when decoding fails', async () => {
+  vi.mocked(HTMLImageElement.prototype.decode).mockRejectedValueOnce(new Error('decode failed'))
+  await render()
+  await click('Edit image')
+  await fill('Image editing instruction', 'Make it yellow')
+  await click('Send image edit')
+  await finishEdit()
+  expect([...owner!.drafts.values()][0].source.selectedVersionId).toBe('v1')
+  expect(container.textContent).toContain('Image could not be loaded.')
+  expect(container.textContent).not.toContain('New image ready')
+  await click('Revise last edit')
+  expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Make it yellow')
+})
+
+it('bases a second edit on the new image and keeps history available during generation', async () => {
+  await render()
+  await click('Edit image')
+  await fill('Image editing instruction', 'Make it yellow')
+  await click('Send image edit')
+  expect(button('Image history').disabled).toBe(false)
+  await click('Image history')
+  await click('Close')
+  await finishEdit()
+  await fill('Image editing instruction', 'Add a border')
+  await click('Send image edit')
+  expect(startTask.mock.calls[1][0].edit.source.sourceVersionId).toBe('v2')
+})
+
+it('preserves an unsent draft on return and discards it only after confirmation', async () => {
+  await render()
+  await click('Edit image')
+  await fill('Image editing instruction', 'Keep this idea')
+  await click('Back to image preview')
+  await click('Edit image')
+  expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep this idea')
+  await click('Discard changes')
+  await click('Cancel')
+  expect(owner!.drafts.size).toBe(1)
+  await click('Discard changes')
+  await act(async () => {
+    const dialog = document.querySelector('[role="alertdialog"]')!
+    const confirm = [...dialog.querySelectorAll('button')].find(
+      (node) => node.textContent === 'Discard changes'
+    )!
+    confirm.click()
+  })
+  expect(owner!.drafts.size).toBe(0)
+  expect(button('Edit image')).toBeDefined()
+})
+
+it('collapses only the composer on success and reopens all editing controls', async () => {
+  await render()
+  await click('Edit image')
+  await fill('Image editing instruction', 'Translate the labels')
+  await click('Expand instructions')
+  expect([...owner!.drafts.values()][0].composerExpanded).toBe(true)
+  await click('Send image edit')
+  expect(container.querySelector('[data-testid="image-edit-pending"]')).not.toBeNull()
+  await finishEdit()
+  expect(container.querySelector('[data-testid="image-edit-pending"]')).toBeNull()
+  expect(container.querySelector('[aria-label="Image editing instruction"]')).toBeNull()
+  expect(document.activeElement).toBe(button('Continue editing'))
+  expect(button('Image history').disabled).toBe(false)
+  expect(button('Compare with input image').disabled).toBe(false)
+  expect(button('Lasso selection').disabled).toBe(false)
+  await click('Continue editing')
+  expect(document.activeElement).toBe(
+    container.querySelector('[aria-label="Image editing instruction"]')
+  )
+  expect(button('Image model').disabled).toBe(false)
+  expect([...owner!.drafts.values()][0].composerExpanded).toBe(false)
+  await click('Revise last edit')
+  expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+    'Translate the labels'
+  )
+})
+
+it('preserves an expanded unsent draft when the floating composer is hidden and reopened', async () => {
+  await render()
+  await click('Edit image')
+  await fill('Image editing instruction', 'Keep this long instruction')
+  await click('Expand instructions')
+  await click('Hide instructions')
+  expect(container.querySelector('textarea')).toBeNull()
+  await click('Continue editing')
+  expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+    'Keep this long instruction'
+  )
+  expect(button('Collapse instructions').getAttribute('aria-expanded')).toBe('true')
+  await click('Back to image preview')
+  await click('Edit image')
+  expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+    'Keep this long instruction'
+  )
+  expect(button('Collapse instructions').getAttribute('aria-expanded')).toBe('true')
+})
+
+it('loads paged history authority before creating the image draft and allows retry after a load error', async () => {
+  const authority = base()
+  useSessionStore.setState({
+    sessions: [
+      {
+        ...authority,
+        contentLoaded: false,
+        conversationGraph: undefined,
+        historyPage: { revision: 1, hasMore: true, totalItems: 150 }
+      }
+    ]
+  })
+  const loadOne = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(authority)
+  window.api.sessions = { loadOne } as unknown as typeof window.api.sessions
+  await render()
+  await click('Edit image')
+  expect(document.body.textContent).toContain('Saved conversations could not be loaded')
+  expect(owner?.drafts.size).toBe(0)
+  expect(button('Edit image').disabled).toBe(false)
+  await click('Edit image')
+  const frame = authority.conversationGraph!.frames[0]
+  expect([...owner!.drafts.values()][0].owner).toEqual({
+    sessionId: 's',
+    frameId: frame.id,
+    branchId: frame.activeBranchId
+  })
+  expect(loadOne).toHaveBeenCalledTimes(2)
+})
+
+it('does not enter image editing when leaving the session during history loading', async () => {
+  const authority = base()
+  useSessionStore.setState({
+    sessions: [
+      {
+        ...authority,
+        contentLoaded: false,
+        conversationGraph: undefined,
+        historyPage: { revision: 1, hasMore: true, totalItems: 150 }
+      }
+    ]
+  })
+  let resolve!: (session: ChatSession) => void
+  window.api.sessions = {
+    loadOne: vi.fn(
+      () =>
+        new Promise<ChatSession>((done) => {
+          resolve = done
+        })
+    )
+  } as unknown as typeof window.api.sessions
+  await render()
+  await click('Edit image')
+  expect(button('Edit image').disabled).toBe(true)
+  await act(async () => useSessionStore.setState({ selectedSessionId: undefined }))
+  await act(async () => resolve(authority))
+  expect(owner?.drafts.size).toBe(0)
 })

@@ -1,8 +1,19 @@
+import {
+  providerCatalogState,
+  type ProviderCatalogState
+} from '../../shared/provider-model-catalog-codec'
+import {
+  isCatalogModelAvailable,
+  KILO_FREE_MODEL_ID,
+  resolveOfficialModelCatalog
+} from '../../shared/provider-model-catalog'
+import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
+import { getOfficialVendor } from '@aipoch/providers'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
@@ -51,8 +62,8 @@ import {
 import { sanitizeSettings } from './document-codec'
 import { SettingsDocumentStore } from './document-store'
 import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
-import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { buildProviderValidationPatch } from './provider-validation-state'
+import { assertProviderCapacity, PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import { buildProviderValidationPatch, reconcileCatalogHealth } from './provider-validation-state'
 import { imageProviderConfiguration } from '../../shared/image-model-service-policy'
 import { sanitizeImageSettings, sanitizePackageMirror } from './record-codec'
 import {
@@ -86,6 +97,7 @@ type LocalShellRuntimeWrite = Readonly<{
 }>
 
 type ProviderValidationHistory = {
+  firstCompatibleRevision: number
   configRevision: number
   keyRef?: string
   latestAt: number
@@ -114,6 +126,28 @@ const imageExecutionConfiguration = (settings: StoredSettings): unknown => {
     presetId: model.presetId
   }
 }
+
+const kiloVendor = getOfficialVendor('kilo')!
+const isKiloProvider = (provider: StoredProvider): boolean =>
+  provider.type === 'official' && provider.vendorId === kiloVendor.id
+
+const createDefaultKiloProvider = (settings: StoredSettings): StoredProvider => {
+  assertProviderCapacity(settings.providers.length, false)
+  return {
+    id: randomUUID(),
+    type: 'official',
+    vendorId: kiloVendor.id,
+    name: kiloVendor.label,
+    configRevision: 1
+  }
+}
+
+const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean =>
+  left.type === right.type &&
+  left.vendorId === right.vendorId &&
+  left.region === right.region &&
+  left.keyRef === right.keyRef &&
+  isDeepStrictEqual(left.catalogParameters ?? {}, right.catalogParameters ?? {})
 
 // Stable mutation facade; the document store owns atomic IO, and secrets stay above this layer.
 class SettingsRepository {
@@ -153,6 +187,72 @@ class SettingsRepository {
     return this.store.read()
   }
 
+  /** Record desktop initialization and add Kilo to existing profiles while preserving their model selection. */
+  async initializeDesktopKiloDefaults(upgrading: boolean): Promise<boolean> {
+    const current = await this.getSettings()
+    if (current.kiloDefaultInitialized) return false
+    const logCapacitySkip = (providerCount: number): void => {
+      createLogger('settings:repository').warn(
+        'Skipped adding Kilo Gateway on desktop upgrade because the provider limit was reached.',
+        { providerCount, providerLimit: PROVIDER_RESOURCE_LIMITS.providers }
+      )
+    }
+    if (
+      upgrading &&
+      current.providers.length >= PROVIDER_RESOURCE_LIMITS.providers &&
+      !current.providers.some(isKiloProvider)
+    ) {
+      logCapacitySkip(current.providers.length)
+      return false
+    }
+    let added = false
+    await this.mutate(
+      (settings) => {
+        if (settings.kiloDefaultInitialized) return settings
+        if (!upgrading || settings.providers.some(isKiloProvider)) {
+          return { ...settings, kiloDefaultInitialized: true }
+        }
+        if (settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers) {
+          logCapacitySkip(settings.providers.length)
+          return settings
+        }
+        const provider = createDefaultKiloProvider(settings)
+        added = true
+        return {
+          ...settings,
+          kiloDefaultInitialized: true,
+          providers: [...settings.providers, provider]
+        }
+      },
+      upgrading ? ['providers', 'kiloDefaultInitialized'] : undefined
+    )
+    return added
+  }
+
+  /** Provision Kilo and select its free route when users skip onboarding. */
+  async addOnboardingKiloProvider(): Promise<void> {
+    await this.mutate((settings) => {
+      if (settings.onboardingCompletedAt !== undefined) return settings
+      const existing = settings.providers.find(isKiloProvider)
+      if (!existing && settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers)
+        return settings
+      const provider = existing ?? createDefaultKiloProvider(settings)
+      if (
+        !resolveOfficialModelCatalog({ ...provider, hasKey: false }).some(
+          (model) => model.id === KILO_FREE_MODEL_ID && isCatalogModelAvailable(model)
+        )
+      )
+        return settings
+      return {
+        ...settings,
+        kiloDefaultInitialized: true,
+        providers: existing ? settings.providers : [...settings.providers, provider],
+        activeProviderId: provider.id,
+        activeModel: KILO_FREE_MODEL_ID
+      }
+    })
+  }
+
   async selectBootstrapCodex(): Promise<void> {
     await this.mutate((settings) => {
       if (settings.agentFrameworkId && settings.agentFrameworkId !== 'codex')
@@ -172,7 +272,7 @@ class SettingsRepository {
   ): Promise<void> {
     await this.mutate((settings) => {
       if (
-        settings.agentFrameworkId !== 'codex' ||
+        settings.agentFrameworkId !== expected.agentFrameworkId ||
         !isDeepStrictEqual(settings.providers, expected.providers) ||
         settings.activeProviderId !== expected.activeProviderId ||
         settings.activeModel !== expected.activeModel ||
@@ -225,17 +325,30 @@ class SettingsRepository {
     existingId?: string,
     configEdit?: {
       expectedConfigRevision?: number
+      catalogBaseline?: ProviderCatalogState
+      validationMatches?: (merged: StoredProvider) => boolean
       expectedValidationState?: Pick<
         StoredProvider,
         'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'
       >
-    }
+    },
+    guard?: { expectedLabCatalogToken?: string; isCurrent?: () => boolean }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      if (guard?.isCurrent && !guard.isCurrent()) {
+        throw new Error('Lab catalog changed. The stale catalog was not written.')
+      }
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
       const source = settings.providers.find(({ id }) => id === (existingId ?? provider.id))
+      if (
+        guard &&
+        Object.hasOwn(guard, 'expectedLabCatalogToken') &&
+        source?.labCatalogToken !== guard.expectedLabCatalogToken
+      ) {
+        throw new Error('Lab catalog changed. The stale catalog was not written.')
+      }
       if (
         configEdit?.expectedConfigRevision !== undefined &&
         (!source || (source.configRevision ?? 0) !== configEdit.expectedConfigRevision)
@@ -273,14 +386,22 @@ class SettingsRepository {
       const providers = [...settings.providers]
       if (index >= 0) {
         const existing = providers[index]
-        if (
-          existing.type === provider.type &&
-          existing.vendorId === provider.vendorId &&
-          existing.region === provider.region &&
-          existing.keyRef === provider.keyRef &&
-          existing.fetchedModels
-        )
-          provider = { ...provider, fetchedModels: existing.fetchedModels }
+        const catalog = providerCatalogState(existing)
+        // A same-target preview may replace only the catalog it was based on.
+        const keepCatalog = configEdit?.catalogBaseline
+          ? !isDeepStrictEqual(catalog, configEdit.catalogBaseline)
+          : sameCatalogTarget(existing, provider) &&
+            (existing.fetchedModels || existing.modelCatalog || existing.modelCatalogStatus)
+        // The Lab and CodeBuddy account owners supply their current model lists.
+        if (provider.type !== 'codebuddy-subscription' && provider.type !== 'lab' && keepCatalog) {
+          provider = reconcileCatalogHealth(provider, { ...provider, ...catalog })
+          // A concurrent refresh can move the model while its old route is being tested.
+          if (configEdit?.validationMatches && !configEdit.validationMatches(provider)) {
+            provider.lastValidatedAt = existing.lastValidatedAt
+            provider.lastValidatedTarget = existing.lastValidatedTarget
+            provider.lastValidationFailure = existing.lastValidationFailure
+          }
+        }
         // Full-provider saves can be based on a snapshot read before the runtime learned its Auto
         // fallback. Keep that main-owned state across Auto-to-Auto replacement; explicit transport
         // changes still clear it because either side of this guard is no longer Auto.
@@ -314,7 +435,8 @@ class SettingsRepository {
   // are preserved, and a deleted provider can never be recreated by a stale completion.
   async updateProviderModelCatalogIfTargetMatches(
     expectedProvider: StoredProvider,
-    fetchedModels: string[]
+    fetchedModels: string[] | undefined,
+    catalogPatch: Pick<StoredProvider, 'modelCatalog' | 'modelCatalogStatus'> = {}
   ): Promise<boolean> {
     let applied = false
 
@@ -324,16 +446,18 @@ class SettingsRepository {
 
       const currentProvider = settings.providers[index]
       if (
-        currentProvider.type !== expectedProvider.type ||
-        currentProvider.vendorId !== expectedProvider.vendorId ||
-        currentProvider.region !== expectedProvider.region ||
-        currentProvider.keyRef !== expectedProvider.keyRef
+        !sameCatalogTarget(currentProvider, expectedProvider) ||
+        (currentProvider.configRevision ?? 0) !== (expectedProvider.configRevision ?? 0)
       ) {
         return settings
       }
 
       const providers = [...settings.providers]
-      providers[index] = { ...currentProvider, fetchedModels }
+      providers[index] = reconcileCatalogHealth(currentProvider, {
+        ...currentProvider,
+        ...(fetchedModels ? { fetchedModels } : {}),
+        ...catalogPatch
+      })
       applied = true
       return { ...settings, providers }
     })
@@ -344,7 +468,11 @@ class SettingsRepository {
   // Check the live target and generation in the same serialized mutation as the field-only patch.
   async updateProviderValidationIfTargetMatches(
     id: string,
-    matches: (provider: StoredProvider, settings: StoredSettings) => boolean,
+    matches: (
+      provider: StoredProvider,
+      settings: StoredSettings,
+      firstCompatibleRevision: number
+    ) => boolean,
     result: ValidateProviderResult,
     target: ProviderValidationTarget | undefined,
     observationStartedAt?: number
@@ -353,8 +481,9 @@ class SettingsRepository {
     await this.mutate((settings) => {
       const index = settings.providers.findIndex((provider) => provider.id === id)
       const current = settings.providers[index]
-      if (!current || !matches(current, settings)) return settings
-      const history = this.rememberProviderRecovery(current, settings)
+      if (!current) return settings
+      const history = this.rememberProviderRecovery(current)
+      if (!matches(current, settings, history.firstCompatibleRevision)) return settings
       if (observationStartedAt !== undefined) {
         const recoveredAt = target
           ? Math.max(history.unscopedAt, history.scopes.get(validationScopeKey(target)) ?? 0)
@@ -369,14 +498,7 @@ class SettingsRepository {
     return applied
   }
 
-  private rememberProviderRecovery(
-    provider: StoredProvider,
-    settings: StoredSettings
-  ): ProviderValidationHistory {
-    for (const id of this.providerValidationHistory.keys()) {
-      if (!settings.providers.some((current) => current.id === id))
-        this.providerValidationHistory.delete(id)
-    }
+  private rememberProviderRecovery(provider: StoredProvider): ProviderValidationHistory {
     let history = this.providerValidationHistory.get(provider.id)
     if (
       !history ||
@@ -384,6 +506,7 @@ class SettingsRepository {
       history.keyRef !== provider.keyRef
     ) {
       history = {
+        firstCompatibleRevision: provider.configRevision ?? 0,
         configRevision: provider.configRevision ?? 0,
         keyRef: provider.keyRef,
         latestAt: 0,
@@ -641,10 +764,26 @@ class SettingsRepository {
   // the whole subscription group atomically, including its persisted display preference.
   async deleteProvider(
     id: string,
-    scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve'
+    scenarioModelHandling: ProviderDeletionScenarioModelHandling = 'preserve',
+    guard?: {
+      expectedLabCatalogToken?: string
+      isCurrent?: () => boolean
+      // Restore the active pointer atomically only when this mutation is the one that removed the
+      // still-selected provider. A user selection written before/after this transaction wins.
+      restoreActive?: { providerId: string; model?: string }
+    }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      if (guard?.isCurrent && !guard.isCurrent()) return settings
       const deletingClaudeSubscription = isClaudeSubscriptionProviderId(id)
+      if (
+        guard &&
+        Object.hasOwn(guard, 'expectedLabCatalogToken') &&
+        settings.providers.find((provider) => provider.id === id)?.labCatalogToken !==
+          guard.expectedLabCatalogToken
+      ) {
+        return settings
+      }
       const removedIds = new Set(
         deletingClaudeSubscription ? [CLAUDE_SHARED_PROVIDER_ID, CLAUDE_ISOLATED_PROVIDER_ID] : [id]
       )
@@ -660,6 +799,11 @@ class SettingsRepository {
         activeProviderId,
         activeModel,
         ...(deletingClaudeSubscription ? { claudeSubscriptionProviderId: undefined } : {})
+      }
+
+      if (clearedActive && guard?.restoreActive) {
+        next.activeProviderId = guard.restoreActive.providerId
+        next.activeModel = guard.restoreActive.model
       }
 
       delete next.imageServices
@@ -814,8 +958,15 @@ class SettingsRepository {
     return restored
   }
 
-  async setAgentFramework(id: AgentFrameworkId): Promise<StoredSettings> {
-    return this.mutate((settings) => ({ ...settings, agentFrameworkId: id }))
+  async setAgentFramework(
+    id: AgentFrameworkId,
+    expectedPrevious?: AgentFrameworkId
+  ): Promise<StoredSettings> {
+    return this.mutate((settings) =>
+      expectedPrevious && settings.agentFrameworkId !== expectedPrevious
+        ? settings
+        : { ...settings, agentFrameworkId: id }
+    )
   }
 
   async setAgentRouting(
@@ -1185,12 +1336,6 @@ class SettingsRepository {
 
   // Sets or clears the OpenAlex API-key reference. Plaintext is encrypted by the Connector settings
   // owner before this repository boundary.
-  async setSemanticScholarCredential(apiKeyRef: string | undefined): Promise<StoredSettings> {
-    return this.mutateConnectors((connectors) => {
-      connectors.semanticScholarApiKeyRef = apiKeyRef || undefined
-    })
-  }
-
   async setOpenAlexCredential(apiKeyRef: string | undefined): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
       connectors.openAlexApiKeyRef = apiKeyRef || undefined
@@ -1368,42 +1513,59 @@ class SettingsRepository {
   }
 
   // Serializes a read-modify-write cycle so concurrent callers cannot clobber each other.
-  private mutate(update: (settings: StoredSettings) => StoredSettings): Promise<StoredSettings> {
+  private mutate(
+    update: (settings: StoredSettings) => StoredSettings,
+    preserveDocumentExcept?: readonly (keyof StoredSettings)[]
+  ): Promise<StoredSettings> {
     let previous: StoredProvider[] = []
     let previousImageConfiguration: unknown
-    return this.store
-      .mutate((settings) => {
-        previous = structuredClone(settings.providers)
-        previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
-        return update(settings)
-      })
-      .then((settings) => {
-        if (!isDeepStrictEqual(previousImageConfiguration, imageExecutionConfiguration(settings))) {
-          for (const listener of this.imageModelListeners) {
-            try {
-              listener()
-            } catch {
-              createLogger('settings:repository').error('Image model change listener failed')
-            }
+    const capture = (settings: StoredSettings): StoredSettings => {
+      previous = structuredClone(settings.providers)
+      previousImageConfiguration = structuredClone(imageExecutionConfiguration(settings))
+      return update(settings)
+    }
+    const committed = preserveDocumentExcept
+      ? this.store.mutate(capture, undefined, preserveDocumentExcept)
+      : this.store.mutate(capture)
+    return committed.then((settings) => {
+      if (!isDeepStrictEqual(previousImageConfiguration, imageExecutionConfiguration(settings))) {
+        for (const listener of this.imageModelListeners) {
+          try {
+            listener()
+          } catch {
+            createLogger('settings:repository').error('Image model change listener failed')
           }
         }
-        const before = new Map(previous.map((provider) => [provider.id, provider]))
-        const after = new Map(settings.providers.map((provider) => [provider.id, provider]))
-        const changes = [...new Set([...before.keys(), ...after.keys()])]
-          .filter((id) => !isDeepStrictEqual(before.get(id), after.get(id)))
-          .map((id) => ({ id, current: after.get(id) }))
-        if (changes.length) {
-          for (const listener of this.providerListeners) {
-            try {
-              listener(structuredClone(changes))
-            } catch {
-              // The write has committed; observer failure cannot turn it into a failed save.
-              createLogger('settings:repository').error('Provider change listener failed')
-            }
+      }
+      const before = new Map(previous.map((provider) => [provider.id, provider]))
+      const after = new Map(settings.providers.map((provider) => [provider.id, provider]))
+      const changes = [...new Set([...before.keys(), ...after.keys()])]
+        .filter((id) => !isDeepStrictEqual(before.get(id), after.get(id)))
+        .map((id) => ({ id, current: after.get(id) }))
+      for (const { id, current } of changes) {
+        const prior = before.get(id)
+        if (!current) this.providerValidationHistory.delete(id)
+        // A display edit keeps existing official connections and their recovery watermarks valid.
+        else if (
+          prior?.type === 'official' &&
+          current.configRevision !== prior.configRevision &&
+          sameCatalogTarget(prior, current)
+        ) {
+          this.rememberProviderRecovery(prior).configRevision = current.configRevision ?? 0
+        }
+      }
+      if (changes.length) {
+        for (const listener of this.providerListeners) {
+          try {
+            listener(structuredClone(changes))
+          } catch {
+            // The write has committed; observer failure cannot turn it into a failed save.
+            createLogger('settings:repository').error('Provider change listener failed')
           }
         }
-        return settings
-      })
+      }
+      return settings
+    })
   }
 }
 

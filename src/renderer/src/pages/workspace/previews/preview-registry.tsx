@@ -50,8 +50,10 @@ const NotebookFilePreview = lazy(() =>
 export const renderPreviewFile = ({
   item,
   docxVersionNavigation,
+  imageEditPresentation,
   onPinImageSource,
   onImageEditorVersionChange,
+  onImageEditActionChange,
   presentation,
   readOnly,
   annotationVersionId,
@@ -99,8 +101,10 @@ export const renderPreviewFile = ({
       return (
         <ImagePreviewRenderer
           {...props}
+          imageEditPresentation={imageEditPresentation}
           onPinImageSource={onPinImageSource}
           onImageEditorVersionChange={onImageEditorVersionChange}
+          onImageEditActionChange={onImageEditActionChange}
         />
       )
     case 'json':
@@ -130,11 +134,7 @@ export const renderPreviewFile = ({
       return <PptxAnnotatedPreviewRenderer {...props} />
     case 'word':
       return (
-        <OfficePreviewRenderer
-          item={item}
-          docxVersionNavigation={docxVersionNavigation}
-          {...props}
-        />
+        <OfficePreviewRenderer docxVersionNavigation={docxVersionNavigation} {...props} />
       )
     case 'spreadsheet':
       return <OfficePreviewRenderer item={item} />

@@ -1,3 +1,4 @@
+import { notebookExecutionIntent, markNotebookExecutionIntent } from '../notebook/execution-intent'
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
@@ -589,27 +590,33 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
 
     const promptRequest = (
       text: string
-    ): Parameters<AcpDelegateRuntime['sendAppContinuation']>[0] => ({
-      sessionId: providerSessionId!,
-      text,
-      suppressUserMessage: true,
-      ...(scope?.permissionPrompts ? { permissionPrompts: scope.permissionPrompts } : {}),
-      ...((activeTurn?.promptMessageId ?? scope?.provenance.promptMessageId)
-        ? {
-            provenanceContext: {
-              promptMessageId: activeTurn?.promptMessageId ?? scope!.provenance.promptMessageId!,
-              agentFrameId: scope!.provenance.agentFrameId,
-              ...((activeTurn?.messageBranchId ?? scope!.provenance.messageBranchId)
-                ? {
-                    messageBranchId:
-                      activeTurn?.messageBranchId ?? scope!.provenance.messageBranchId
-                  }
-                : {}),
-              runtimeSegmentId: activeTurn?.runtimeSegmentId ?? scope!.provenance.runtimeSegmentId
+    ): Parameters<AcpDelegateRuntime['sendAppContinuation']>[0] => {
+      const request: Parameters<AcpDelegateRuntime['sendAppContinuation']>[0] = {
+        sessionId: providerSessionId!,
+        text,
+        suppressUserMessage: true,
+        ...(scope?.permissionPrompts ? { permissionPrompts: scope.permissionPrompts } : {}),
+        ...((activeTurn?.promptMessageId ?? scope?.provenance.promptMessageId)
+          ? {
+              provenanceContext: {
+                promptMessageId: activeTurn?.promptMessageId ?? scope!.provenance.promptMessageId!,
+                agentFrameId: scope!.provenance.agentFrameId,
+                ...((activeTurn?.messageBranchId ?? scope!.provenance.messageBranchId)
+                  ? {
+                      messageBranchId:
+                        activeTurn?.messageBranchId ?? scope!.provenance.messageBranchId
+                    }
+                  : {}),
+                runtimeSegmentId: activeTurn?.runtimeSegmentId ?? scope!.provenance.runtimeSegmentId
+              }
             }
-          }
-        : {})
-    })
+          : {})
+      }
+      const intent =
+        (activeTurn && notebookExecutionIntent(activeTurn)) ?? notebookExecutionIntent(input)
+      if (intent) markNotebookExecutionIntent(request, intent)
+      return request
+    }
 
     const work = (async (): Promise<void> => {
       try {

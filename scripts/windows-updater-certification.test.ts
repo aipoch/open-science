@@ -10,7 +10,9 @@ import {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   classifyUpdaterDownloadStatus,
+  applyWithOccupancyRecheck,
   certifyForeignProcessRecovery,
+  certifyShortcutVersion,
   invokeWebRpc,
   inspectUpdaterSuccessor,
   parseArguments,
@@ -24,6 +26,51 @@ import {
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
+  it('requires the target on the next shortcut launch after a different blocker exits', async () => {
+    const deferred = {
+      current: '1.3.3',
+      scans: [{ t: '2026-11-22T00:19:50.413Z' }],
+      decisions: [
+        {
+          msg: 'Prepared update deferred at startup',
+          data: {
+            reason: 'installation-busy',
+            detail: 'foreign-process',
+            blockers: [{ pid: 3200 }]
+          }
+        }
+      ]
+    }
+    const launch = vi
+      .fn()
+      .mockResolvedValueOnce(deferred)
+      .mockResolvedValueOnce({
+        current: '1.3.4',
+        scans: ['target scan'],
+        decisions: []
+      })
+    const waitForRecheck = vi.fn()
+    const released = { previousVersion: '1.3.3', holderPid: 3576, waitForRecheck }
+    expect(await certifyShortcutVersion(launch, '1.3.4', released)).toEqual(['target scan'])
+    expect(waitForRecheck).toHaveBeenCalledExactlyOnceWith([3200])
+    expect(waitForRecheck.mock.invocationCallOrder[0]).toBeLessThan(
+      launch.mock.invocationCallOrder[1]
+    )
+
+    launch.mockReset().mockResolvedValue(deferred)
+    await expect(certifyShortcutVersion(launch, '1.3.4', released)).rejects.toThrow(
+      'Shortcut opened'
+    )
+    expect(launch).toHaveBeenCalledTimes(2)
+    for (const observation of [deferred, { ...deferred, decisions: [] }]) {
+      launch.mockReset().mockResolvedValue(observation)
+      await expect(
+        certifyShortcutVersion(launch, '1.3.4', { ...released, holderPid: 3200 })
+      ).rejects.toThrow('Shortcut opened')
+      expect(launch).toHaveBeenCalledTimes(1)
+    }
+  })
+
   it('requires the matching update operation and real successor readiness before cleanup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'updater-ready-'))
     const operationId = '00000000-0000-4000-8000-000000000001'
@@ -128,6 +175,39 @@ describe('Windows updater certification', () => {
       'recheck'
     ])
     expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('retries apply once after an external holder releases the installation', async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        state: 'ready',
+        reason: 'installation-busy',
+        recovery: { detail: 'foreign-process' }
+      })
+      .mockResolvedValueOnce({ state: 'ready', recovery: { canRetryInstall: true } })
+      .mockResolvedValueOnce({ state: 'applying' })
+    await applyWithOccupancyRecheck(invoke)
+    expect(invoke.mock.calls).toEqual([['apply'], ['recheck'], ['apply']])
+  })
+
+  it('waits through a transient runtime disconnect before retrying apply', async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        state: 'ready',
+        reason: 'installation-busy',
+        recovery: { detail: 'foreign-process' }
+      })
+      .mockResolvedValueOnce({
+        state: 'ready',
+        reason: 'runtime-not-controlled',
+        error: 'Desktop runtime is disconnected.'
+      })
+      .mockResolvedValueOnce({ state: 'ready', recovery: { canRetryInstall: true } })
+      .mockResolvedValueOnce({ state: 'applying' })
+    await applyWithOccupancyRecheck(invoke)
+    expect(invoke.mock.calls).toEqual([['apply'], ['recheck'], ['recheck'], ['apply']])
   })
 
   it('releases its owned handle even if the application fails to identify the blocker', async () => {

@@ -13,6 +13,7 @@ import {
   sendPrompt
 } from './certification/helpers'
 import { test } from './fixtures/electron-app'
+import { readRawOutcomeSession } from './fixtures/session-outcome-fault'
 import { retrySessionRevisionConflict } from './fixtures/session-revision-retry'
 
 const ROOT_PROMPT = 'Coordinate the release-gate delegates.'
@@ -1334,14 +1335,14 @@ test('recovers a post-fence receipt persistence failure as uncertain after proce
     )
     await expect
       .poll(async () => {
-        const directory = join(storageRoot, 'sessions', projectId)
-        const files = await readdir(directory)
-        const file = files.find((name) => name.endsWith('.json'))
-        if (!file) return undefined
-        const { session } = JSON.parse(await readFile(join(directory, file), 'utf8')) as {
-          session: PersistedChatSession
-        }
-        sessionId = session.id
+        sessionId ??= await page.evaluate(
+          async (projectId) =>
+            (await window.api.sessions.list()).sessions.find((row) => row.projectId === projectId)
+              ?.id,
+          projectId
+        )
+        if (!sessionId) return undefined
+        const session = await readRawOutcomeSession(app, { projectId, sessionId })
         const command = session.runtimeContext?.delegatedWork?.messageCommands?.find(
           ({ requestId }) => requestId === 'e2e-child-post-fence'
         )
@@ -1363,7 +1364,13 @@ test('recovers a post-fence receipt persistence failure as uncertain after proce
     // The runtime may terminate the provider on persistence failure; restoration belongs to the test.
     const sessionsRoot = join(storageRoot, 'sessions')
     for (const entry of await readdir(sessionsRoot, { withFileTypes: true })) {
-      if (entry.isDirectory()) await chmod(join(sessionsRoot, entry.name), 0o700)
+      if (!entry.isDirectory()) continue
+      const directory = join(sessionsRoot, entry.name)
+      await chmod(directory, 0o700)
+      for (const file of await readdir(directory, { withFileTypes: true })) {
+        if (file.isFile() && file.name.endsWith('.jsonl'))
+          await chmod(join(directory, file.name), 0o600)
+      }
     }
   }
   page = await app.restartAfterCrash()
@@ -1499,8 +1506,12 @@ test('stops only the active branch and exposes a retryable partial failure', asy
   await expectDurableChildStatus(page, BRANCH_B_CHILD, 'cancelled')
   await expectDurableChildStatus(page, BRANCH_B_CHILD_TWO, 'running')
   await expect(
-    page.getByRole('alert', { name: /One or more Subagent Attempts could not be stopped/ })
-  ).toContainText('One or more Subagent Attempts could not be stopped.')
+    page.getByRole('status').filter({
+      has: page.getByRole('heading', {
+        name: 'Could not confirm that all subagents stopped.'
+      })
+    })
+  ).toContainText('Could not confirm that all subagents stopped.')
   await page.getByRole('textbox', { name: 'Ask anything' }).fill('Send gate restored after Stop.')
   await expect(page.getByRole('button', { name: 'Send message' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Stop subagents' })).toBeEnabled()

@@ -15,6 +15,7 @@
     "src/renderer/src/assets/provider-icons/codebuddy.svg",
     "src/renderer/src/assets/provider-icons/deepseek.svg",
     "src/renderer/src/assets/provider-icons/grok.svg",
+    "src/renderer/src/assets/provider-icons/kilo.svg",
     "src/renderer/src/assets/provider-icons/kimi.svg",
     "src/renderer/src/assets/provider-icons/minimax.svg",
     "src/renderer/src/assets/provider-icons/openai.svg",
@@ -112,5 +113,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The bundled Kilo provider icon expands the reviewed renderer asset boundary. Retain full validation for asset resolution and packaging."
 }

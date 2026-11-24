@@ -92,6 +92,29 @@ it.each([
   if (accepted) expect(result[0]).toMatchObject({ indices: [1, 2], label: 'Fˆ' })
 })
 
+it.each([false, true])(
+  'proves a native dot above one Greek math letter (detached=%s)',
+  (detached) => {
+    const base: NativeMathObject = {
+      i: 2,
+      text: 'θ',
+      fontName: 'CMMI10',
+      size: 10,
+      bounds: [0, 0, 5.6, 6.4]
+    }
+    const mark: NativeMathObject = {
+      i: 1,
+      text: '˙',
+      fontName: 'CMR10',
+      size: 10,
+      bounds: detached ? [7, 7.6, 8.1, 8.7] : [2.5, 7.6, 3.6, 8.7]
+    }
+    expect(resolveNativeMathAccents([mark, base])).toMatchObject(
+      detached ? [] : [{ indices: [1, 2], labels: ['θ˙', '˙θ'] }]
+    )
+  }
+)
+
 it.each(
   ['native-math-accent-geometry.jsonl', 'native-short-macron.jsonl'].flatMap((file) =>
     readPdfTranslationCases<{

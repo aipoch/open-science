@@ -8,8 +8,10 @@ import type { PreviewFileRendererProps } from './preview-types'
 export const PreviewFileContent = ({
   item,
   docxVersionNavigation,
+  imageEditPresentation,
   onPinImageSource,
   onImageEditorVersionChange,
+  onImageEditActionChange,
   presentation,
   readOnly,
   downloadVersionContext,
@@ -36,8 +38,10 @@ export const PreviewFileContent = ({
   const content = renderPreviewFile({
     item,
     docxVersionNavigation,
+    imageEditPresentation,
     onPinImageSource,
     onImageEditorVersionChange,
+    onImageEditActionChange,
     presentation,
     readOnly: item.source === 'compute-output' || readOnly,
     annotationVersionId,

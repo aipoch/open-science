@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 import { type ModelProtocol, usesVendorMessagesApiKeyHeader } from '@aipoch/providers'
 
+import { upstreamHttpErrorPrefix } from '../../shared/failure/messages'
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
 import { DEFAULT_ENDPOINT_ORDER, preferredEndpoint } from '../../shared/settings-runtime'
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
@@ -553,6 +554,13 @@ const validateProviderThroughLocalResponsesAdapter = async (
       body: JSON.stringify(adapter.body),
       signal: controller.signal
     })
+    if (
+      response.status === 502 &&
+      response.headers.get('x-open-science-provider-failure') === 'connection'
+    ) {
+      await response.body?.cancel()
+      return toResult('network')
+    }
     const upstreamStatus = Number(response.headers.get('x-open-science-upstream-status'))
     const status =
       Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599
@@ -617,7 +625,7 @@ const validateProviderThroughResponsesToChatCompletionsBridge = async (
     { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
     fetchImpl
   )
-  return validateProviderThroughLocalResponsesAdapter(
+  const result = await validateProviderThroughLocalResponsesAdapter(
     {
       start: () => bridge.start(),
       close: () => bridge.close(),
@@ -629,6 +637,12 @@ const validateProviderThroughResponsesToChatCompletionsBridge = async (
     timeoutMs,
     provider.key
   )
+  if (result.status && result.status >= 500 && result.message) {
+    const prefix = upstreamHttpErrorPrefix(result.status)
+    if (result.message.startsWith(prefix))
+      return { ...result, message: result.message.slice(prefix.length) }
+  }
+  return result
 }
 
 const validateProviderThroughNativeResponsesCompatibility = async (

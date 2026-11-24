@@ -14,6 +14,7 @@ import type {
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
 import { initializeWsl2BashPreview } from '../wsl/wsl2-preview-gate'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { NotebookRuntimeService } from './runtime-service'
 import { getNotebookDataRoot, getNotebookRunJsonPath } from './repository'
 
@@ -75,6 +76,7 @@ describe.runIf(enabled)('WSL2 real Notebook scheduling', () => {
     >[0]['onBackgroundRunTerminal']
   ): NotebookRuntimeService => {
     service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'wsl-scheduling',

@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
+import type { SessionPermissionRuntimeContext } from '../src/shared/session-runtime-context'
 import type { NotebookRunRecord } from '../src/shared/notebook'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
@@ -361,10 +362,41 @@ for (const secondDecision of ['allow', 'deny'] as const) {
       await expect(approval).toHaveText('Allow')
       await approval.click()
     }
-    await allowOnce()
+    const readRuns = async (): Promise<NotebookRunRecord[]> =>
+      page.evaluate(async (session) => {
+        const state = await window.api.notebook.state({
+          projectId: session.projectId,
+          sessionId: session.id,
+          workspaceCwd: session.cwd
+        })
+        return state.runs.filter((run) => run.script.includes('permission-handoff-'))
+      }, initial)
+    const continueParkedCall = async (
+      parked: SessionPermissionRuntimeContext,
+      completed: NotebookRunRecord[]
+    ): Promise<string> => {
+      // A restored provider decision settles its parked request. It cannot revive the old
+      // Notebook execution context. Compute supplies the separate, user-owned continuation.
+      await allowOnce()
+      await page.getByRole('button', { name: 'Compute', exact: true }).click()
+      const resume = page.getByRole('button', { name: 'Continue Notebook work', exact: true })
+      await expect(resume).toBeVisible()
+      // The refusal becomes visible while the previous provider turn is still settling.
+      await expect.poll(async () => (await readSession()).activeRun).toBeUndefined()
+      expect(await readRuns()).toEqual(completed)
+      await resume.click()
+      await expect(page.getByTestId('permission-card')).toBeVisible()
+      const renewed = (await readSession()).runtimeContext!.permission!
+      expect(renewed.request.rawInput).toEqual(parked.request.rawInput)
+      expect(renewed.request.requestId).not.toBe(parked.request.requestId)
+      expect(renewed.originatingPromptMessageId).not.toBe(parked.originatingPromptMessageId)
+      expect(await readRuns()).toEqual(completed)
+      await allowOnce()
+      return renewed.originatingPromptMessageId
+    }
+    const resumedPrompt = await continueParkedCall(initial.runtimeContext!.permission!, [])
 
-    // Reproduce the production failure: the restored exact call succeeds, then a different
-    // provider-owned MCP call asks within the same continuation instead of silently being cancelled.
+    // The next provider-owned MCP call asks separately within the new human turn.
     await expect
       .poll(async () => (await readSession()).runtimeContext?.permission?.request.rawInput, {
         timeout: 40_000
@@ -375,18 +407,7 @@ for (const secondDecision of ['allow', 'deny'] as const) {
     const secondPermission = next.runtimeContext!.permission!
     expect(secondPermission.state).toBe('pending')
     expect(secondPermission.request.requestId).not.toBe(firstRequestId)
-    expect(secondPermission.originatingPromptMessageId).toBe(
-      initial.runtimeContext!.permission!.originatingPromptMessageId
-    )
-    const readRuns = async (): Promise<NotebookRunRecord[]> =>
-      page.evaluate(async (session) => {
-        const state = await window.api.notebook.state({
-          projectId: session.projectId,
-          sessionId: session.id,
-          workspaceCwd: session.cwd
-        })
-        return state.runs.filter((run) => run.script.includes('permission-handoff-'))
-      }, initial)
+    expect(secondPermission.originatingPromptMessageId).toBe(resumedPrompt)
     const beforeSecondDecision = await readRuns()
     expect(beforeSecondDecision).toHaveLength(1)
     expect(beforeSecondDecision[0]).toMatchObject({
@@ -408,10 +429,10 @@ for (const secondDecision of ['allow', 'deny'] as const) {
     const restored = await readSession()
     expect(restored.id).toBe(initial.id)
     expect(restored.runtimeContext?.permission).toEqual(secondPermission)
-    expect(restored.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+    expect(restored.messages.filter((message) => message.role === 'user')).toHaveLength(2)
     expect(await readRuns()).toEqual(beforeSecondDecision)
     await page.screenshot({ path: testInfo.outputPath('second-permission-restored.png') })
-    if (secondDecision === 'allow') await allowOnce()
+    if (secondDecision === 'allow') await continueParkedCall(secondPermission, beforeSecondDecision)
     else await page.getByTestId('permission-actions').getByTestId('deny-button').click()
     const answer =
       secondDecision === 'allow'
@@ -421,7 +442,9 @@ for (const secondDecision of ['allow', 'deny'] as const) {
     await expect.poll(async () => (await readSession()).status).toBe('idle')
     const final = await readSession()
     expect(final.runtimeContext?.permission).toBeUndefined()
-    expect(final.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+    expect(final.messages.filter((message) => message.role === 'user')).toHaveLength(
+      secondDecision === 'allow' ? 3 : 2
+    )
     const runs = await readRuns()
     expect(runs.filter((run) => run.script.includes('permission-handoff-first'))).toHaveLength(1)
     expect(runs.filter((run) => run.script.includes('permission-handoff-second'))).toHaveLength(
@@ -434,8 +457,10 @@ for (const secondDecision of ['allow', 'deny'] as const) {
       contentType: 'application/json'
     })
     // Session-title generation may use a separate provider Session. Count only this task's
-    // original prompt and its two hidden permission continuations, not auxiliary model work.
-    expect(providerPrompts.filter((entry) => entry.sessionId === initial.id)).toHaveLength(3)
+    // original prompt, its two restored decisions and explicit Notebook continuations.
+    expect(providerPrompts.filter((entry) => entry.sessionId === initial.id)).toHaveLength(
+      secondDecision === 'allow' ? 5 : 4
+    )
     await page.screenshot({ path: testInfo.outputPath('permission-handoff-finished.png') })
   })
 }

@@ -1,3 +1,4 @@
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { resolveProviderEffectiveModel } from '../../../../shared/provider-reasoning-effort'
 import { ErrorNotice } from '@/components/error-notice'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
@@ -32,7 +33,8 @@ import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
   isClaudeSubscriptionProvider,
-  isCodexSubscriptionProvider
+  isCodexSubscriptionProvider,
+  isLabProvider
 } from '../../../../shared/settings-runtime'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { errorDetail } from '@/lib/error-detail'
@@ -227,7 +229,12 @@ const ProvidersPanel = ({
   }, [cancelXaiOAuthLogin])
 
   // Subscription accounts stay visible for the frameworks that own their authentication transport.
+  const showCodeBuddyAccounts = agentFrameworkId === 'codebuddy' && isDesktopRenderer()
   const visibleProviders = providers.filter((provider) => {
+    // Lab is a separate enterprise surface with its own Settings panel; it is never an editable
+    // personal provider and must not offer Add/Edit/Delete/Test controls here.
+    if (isLabProvider(provider.type)) return false
+    if (provider.type === 'codebuddy-subscription') return showCodeBuddyAccounts
     if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
       return agentFrameworkId === 'claude-code'
     if (isCodexSubscriptionProvider(provider.type))
@@ -514,7 +521,9 @@ const ProvidersPanel = ({
     })
   }
 
-  const recoveryProvider = providers.find(({ id }) => id === recoveryProviderId)
+  const recoveryProvider = providers.find(
+    (provider) => provider.id === recoveryProviderId && !isLabProvider(provider.type)
+  )
   const [recoveryBaseline, setRecoveryBaseline] = useState({
     id: recoveryProviderId,
     model: recoveryModel,
@@ -633,10 +642,12 @@ const ProvidersPanel = ({
         aria-label={t('Providers')}
         actionClassName="ml-auto"
         action={
-          <Button type="button" variant="outline" size="sm" onClick={onCreateProvider}>
-            <Plus aria-hidden="true" />
-            {t('Add provider')}
-          </Button>
+          !showCodeBuddyAccounts && (
+            <Button type="button" variant="outline" size="sm" onClick={onCreateProvider}>
+              <Plus aria-hidden="true" />
+              {t('Add provider')}
+            </Button>
+          )
         }
       >
         <ProviderList

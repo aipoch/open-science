@@ -4,7 +4,7 @@ name: Runtime Resource Soak
 # Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
-    - cron: '23 19 * * *' # UTC; overnight in Asia/Singapore
+    - cron: '53 16 * * *' # UTC; 00:53 Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:

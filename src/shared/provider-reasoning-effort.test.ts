@@ -69,6 +69,27 @@ describe('resolveProviderReasoningEffortProfile', () => {
     ]
   >([
     [
+      'descending discovery with more effort values than preference slots',
+      {
+        type: 'official',
+        vendorId: 'opencode',
+        modelCatalog: {
+          fetchedAt: 1,
+          models: [
+            {
+              id: 'live',
+              reasoningEffort: {
+                supported: true,
+                values: ['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none']
+              }
+            }
+          ]
+        }
+      },
+      'live',
+      { supported: true, slots: ['low', 'medium', 'high', 'xhigh', 'max'] }
+    ],
+    [
       'empty settings default',
       undefined,
       undefined,
@@ -94,6 +115,46 @@ describe('resolveProviderReasoningEffortProfile', () => {
       { supported: false }
     ],
     ['unpinned Claude subscription', { type: 'claude-shared' }, undefined, { supported: false }],
+    [
+      'CodeBuddy model catalog capability',
+      {
+        type: 'codebuddy-subscription',
+        modelReasoningEfforts: { 'hy4-preview': ['high'] }
+      },
+      'hy4-preview',
+      { supported: true, slots: ['high', 'high', 'high', 'high', 'high'] }
+    ],
+    [
+      'CodeBuddy model without catalog capability',
+      { type: 'codebuddy-subscription', modelReasoningEfforts: { other: ['low', 'high'] } },
+      'hy4-preview',
+      { supported: false }
+    ],
+    [
+      'Lab model with explicit effort values',
+      {
+        type: 'lab',
+        modelCapabilities: {
+          'lab:deepseek-v4.1-flash': {
+            reasoning_options: [{ type: 'effort', values: ['low', 'high', 'max'] }]
+          }
+        }
+      },
+      'lab:deepseek-v4.1-flash',
+      { supported: true, slots: ['low', 'high', 'max', 'max', 'max'] }
+    ],
+    [
+      'Lab toggle-only model',
+      {
+        type: 'lab',
+        modelCapabilities: {
+          'lab:longcat-2.5-free': { reasoning_options: [{ type: 'toggle' }] }
+        }
+      },
+      'lab:longcat-2.5-free',
+      { supported: true, slots: ['none', 'high', 'high', 'high', 'high'] }
+    ],
+    ['Lab model without capabilities', { type: 'lab' }, 'lab:unknown', { supported: false }],
     [
       'custom model preset',
       { type: 'custom', reasoningEffortPreset: 'none-high' },

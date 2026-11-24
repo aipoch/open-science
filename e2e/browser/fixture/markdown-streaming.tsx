@@ -108,9 +108,9 @@ const imageScenario = new URLSearchParams(location.search).has('image-scroll')
 if (imageScenario) {
   window.api = {
     previewResources: {
-      acquire: async () => ({
-        id: 'stream-resource',
-        url: '/delayed-stream-image.png',
+      acquire: async ({ imagePreview }: { imagePreview?: boolean | 'thumbnail' }) => ({
+        id: imagePreview === 'thumbnail' ? 'stream-thumbnail' : 'stream-resource',
+        url: imagePreview === 'thumbnail' ? '/stream-thumbnail.png' : '/delayed-stream-image.png',
         size: 1024,
         mimeType: 'image/png',
         version: 1,

@@ -10,6 +10,23 @@ export const AGENT_FRAMEWORK_ID_VALUES = Object.freeze([
 
 export type AgentFrameworkId = (typeof AGENT_FRAMEWORK_ID_VALUES)[number]
 
+// Every ACP runtime currently drives its model over a streaming request. Keep this capability in
+// one place so model selection, preflight and runtime admission agree when a future adapter can
+// actually consume a non-streaming response.
+const STREAMING_AGENT_FRAMEWORKS = new Set<AgentFrameworkId>([
+  'claude-code',
+  'opencode',
+  'codex',
+  'codebuddy',
+  'pi',
+  'open-science-agent'
+])
+
+export const isModelStreamingCompatible = (
+  frameworkId: AgentFrameworkId,
+  streaming?: boolean
+): boolean => streaming !== false || !STREAMING_AGENT_FRAMEWORKS.has(frameworkId)
+
 export const DEFAULT_AGENT_FRAMEWORK_ID: AgentFrameworkId = 'open-science-agent'
 
 export const isAgentFrameworkId = (value: unknown): value is AgentFrameworkId =>
@@ -30,6 +47,7 @@ export const AGENT_MODEL_ROUTE_VALUES = [
   'opencode-anthropic',
   'opencode-openai',
   'codebuddy-openai',
+  'codebuddy-subscription',
   'pi',
   'open-science-agent',
   'codex-responses',

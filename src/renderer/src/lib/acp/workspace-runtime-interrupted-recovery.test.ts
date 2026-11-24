@@ -590,6 +590,54 @@ describe('interrupted workspace recovery across renderer and Main authority', ()
     }
   )
 
+  it('resumes after a terminal projection opened a renderer-only Runtime Segment', async () => {
+    const h = harness(true)
+    const session = h.durable()
+    session.agentModel = 'deepseek-v4-flash'
+    session.pendingHistoryReplay = { kind: 'all' }
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...useSessionStore.getState().sessions[0],
+          agentModel: session.agentModel,
+          pendingHistoryReplay: session.pendingHistoryReplay,
+          status: 'running',
+          activeRun: { promptMessageId: 'prompt-1', startedAt: 1 }
+        }
+      ]
+    })
+    useSessionStore.getState().interruptRun('session-1', 'app-restart', 'Interrupted', 'prompt-1')
+    const localSegment = useSessionStore
+      .getState()
+      .sessions[0].conversationGraph!.runtimeSegments.at(-1)!.id
+    expect(session.conversationGraph!.runtimeSegments.some(({ id }) => id === localSegment)).toBe(
+      false
+    )
+    await h.resume()
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toBeUndefined()
+    const admittedSegment =
+      h.providerDispatch.mock.calls[0]?.[0].provenanceContext?.runtimeSegmentId
+    expect(admittedSegment).not.toBe(localSegment)
+    expect(
+      h.durable().conversationGraph!.runtimeSegments.some(({ id }) => id === admittedSegment)
+    ).toBe(true)
+    expect(h.providerDispatch).toHaveBeenCalledOnce()
+  })
+
+  it('releases the rejected run segment and reuses its durable segment on retry', async () => {
+    const h = harness(true)
+    h.continuation.mockRejectedValueOnce(new Error('Continuation rejected'))
+    await h.resume()
+    expect(useWorkspaceOperationErrors.getState().errors['session-1']).toContain(
+      'Continuation rejected'
+    )
+    expect(useSessionStore.getState().sessions[0].activeRunRuntimeSegmentId).toBeUndefined()
+    const segmentId = h.continuation.mock.calls[0][0].contextReset!.runtimeSegmentId
+    await h.resume()
+    expect(h.providerDispatch).toHaveBeenCalledOnce()
+    expect(h.providerDispatch.mock.calls[0][0].provenanceContext?.runtimeSegmentId).toBe(segmentId)
+  })
+
   it('keeps failed persistence retryable and never dispatches before admission commits', async () => {
     const h = harness(true)
     h.saveSession.mockRejectedValueOnce(new Error('disk full'))

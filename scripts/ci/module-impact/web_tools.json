@@ -1,0 +1,69 @@
+{
+  "ownerPaths": [
+    "src/main/web/continuation.test.ts",
+    "src/main/web/errors.ts",
+    "src/main/web/extraction.ts",
+    "src/main/web/limits.test.ts",
+    "src/main/web/limits.ts",
+    "src/main/web/mcp-server.ts",
+    "src/main/web/service.test.ts",
+    "src/main/web/service.ts",
+    "src/main/web/snapshot-store.ts",
+    "src/main/web/transport.test.ts",
+    "src/main/web/transport.ts",
+    "src/main/web/search-provider.ts",
+    "src/main/web/search-provider.test.ts",
+    "src/main/web/search-service.ts",
+    "src/main/web/search-service.test.ts",
+    "src/main/web/runtime-evidence.ts",
+    "src/main/web/runtime-evidence.test.ts",
+    "src/main/web/evidence-lifecycle.ts",
+    "src/main/web/evidence-lifecycle.test.ts",
+    "src/main/web/invocation-owner.ts",
+    "src/main/web/invocation-owner.test.ts",
+    "src/main/web/invocation-store.ts",
+    "src/main/web/invocation-store.test.ts",
+    "src/main/web/fork-evidence.ts",
+    "src/main/web/fork-evidence.test.ts",
+    "src/main/web/transport.proxy.integration.test.ts"
+  ],
+  "interfacePaths": [
+    "src/main/web/mcp-server.ts",
+    "src/main/web/service.ts",
+    "src/main/web/snapshot-store.ts",
+    "src/main/web/search-provider.ts",
+    "src/main/web/search-service.ts",
+    "src/main/web/runtime-evidence.ts",
+    "src/main/web/evidence-lifecycle.ts",
+    "src/main/web/invocation-owner.ts",
+    "src/main/web/invocation-store.ts",
+    "src/main/web/fork-evidence.ts"
+  ],
+  "consumerModules": ["acp_runtime", "session_persistence", "desktop_composition"],
+  "testFiles": {
+    "owner": [
+      "src/main/web/continuation.test.ts",
+      "src/main/web/limits.test.ts",
+      "src/main/web/service.test.ts",
+      "src/main/web/transport.test.ts",
+      "src/main/web/search-provider.test.ts",
+      "src/main/web/search-service.test.ts",
+      "src/main/web/runtime-evidence.test.ts",
+      "src/main/web/evidence-lifecycle.test.ts",
+      "src/main/web/invocation-owner.test.ts",
+      "src/main/web/invocation-store.test.ts",
+      "src/main/web/fork-evidence.test.ts",
+      "src/main/web/transport.proxy.integration.test.ts"
+    ],
+    "contract": [
+      "src/main/acp/mcp-http-host.test.ts",
+      "src/main/acp/runtime-web-search.integration.test.ts",
+      "src/main/harness-acp/agent.integration.test.ts",
+      "src/main/acp/application-commands.test.ts",
+      "src/main/acp/ipc.test.ts"
+    ],
+    "consumer": []
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

@@ -1,4 +1,11 @@
 import {
+  codeBuddyAccounts,
+  codeBuddySiteForId,
+  type CodeBuddyAuthMode,
+  type CodeBuddySite
+} from '../../../../shared/codebuddy-subscription'
+import {
+  type CatalogSnapshot,
   type ModelProtocol,
   OFFICIAL_VENDORS,
   getOfficialVendor,
@@ -11,7 +18,7 @@ import {
   getOfficialVendorModelIds
 } from '../../../../shared/provider-model-policy'
 import {
-  customProviderRequiresKey,
+  providerAllowsAnonymousAccess,
   getCustomProviderBaseUrlError,
   type CustomProviderBaseUrlError
 } from '../../../../shared/provider-url-policy'
@@ -32,7 +39,10 @@ import {
 // Editable value for the provider form, kept in its own module so the component file only exports a
 // component (satisfying react-refresh) while the wizard and settings page share this shape/factory.
 export type ProviderFormValue = {
+  catalogParameters?: Record<string, string>
   type: ProviderType
+  codeBuddySite?: CodeBuddySite
+  codeBuddyAuthMode?: CodeBuddyAuthMode
   codexTransport: CodexSubscriptionTransport
   name: string
   baseUrl: string
@@ -248,7 +258,7 @@ const positiveWholeNumberError = (value: string): boolean => {
 // requirement, so the user can leave the key blank to keep it.
 export const getProviderFormErrors = (
   value: ProviderFormValue,
-  options: { hasStoredKey?: boolean } = {}
+  options: { hasStoredKey?: boolean; modelCatalog?: CatalogSnapshot } = {}
 ): ProviderFormErrors => {
   const errors: ProviderFormErrors = {}
 
@@ -268,18 +278,14 @@ export const getProviderFormErrors = (
     if (positiveWholeNumberError(value.maxOutputTokens)) {
       errors.maxOutputTokens = 'Maximum output tokens must be a positive whole number of tokens.'
     }
-    // Local loopback gateways (Ollama, LM Studio, llama.cpp, vLLM) serve without a key; only a
-    // remote gateway requires one.
-    if (!value.key.trim() && !options.hasStoredKey && customProviderRequiresKey(value.baseUrl)) {
-      errors.key = 'API key is required.'
-    }
-  } else if (value.type === 'official') {
-    // No model is chosen at add time: the vendor catalog + the global model selection cover that.
-    if (!value.key.trim() && !options.hasStoredKey) errors.key = 'API key is required.'
-  } else if (value.type === 'claude-isolated') {
-    // claude-isolated has no add-time fields: the type alone provisions the provider card, and the
-    // token paste lives in a separate sign-in modal (loginIsolatedClaude). Rejecting here would
-    // block the renderer from even creating the record, which contradicts the UX.
+  }
+  if (
+    (value.type === 'custom' || value.type === 'official') &&
+    !value.key.trim() &&
+    !options.hasStoredKey &&
+    !providerAllowsAnonymousAccess({ ...value, modelCatalog: options.modelCatalog })
+  ) {
+    errors.key = 'API key is required.'
   }
 
   return errors
@@ -305,6 +311,7 @@ export type ProviderKindDescriptionKey =
   | 'Use an existing Claude profile or sign in with a separate Open-Science profile.'
   | 'Sign in to your xAI subscription with a browser device code.'
   | 'API key — models provided'
+  | 'Free models work without an API key.'
   | 'Base URL, key, and model for a Messages or Chat Completions endpoint'
 
 // Group headers shown in the provider-type picker and dropdown, in display order. The two
@@ -326,11 +333,22 @@ export const PROVIDER_KIND_GROUPS: {
 // has to handle both and neither can be silently forgotten.
 export type ProviderKind = {
   key: string
-  descriptionKey: ProviderKindDescriptionKey
+  descriptionKey?: ProviderKindDescriptionKey
   group: ProviderKindGroup
-} & ({ label: string; labelKey?: never } | { labelKey: 'Custom Gateway'; label?: never })
+} & (
+  | { label: string; labelKey?: never }
+  | {
+      labelKey: 'Custom Gateway' | (typeof codeBuddyAccounts)[CodeBuddySite]['name']
+      label?: never
+    }
+)
 
 export const PROVIDER_KINDS: ProviderKind[] = [
+  ...Object.values(codeBuddyAccounts).map(({ id, name }): ProviderKind => ({
+    key: id,
+    labelKey: name,
+    group: 'subscription'
+  })),
   {
     key: 'xai-subscription',
     label: xaiSubscriptionProviderIdentity().name,
@@ -357,7 +375,9 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
     label: vendor.label,
-    descriptionKey: 'API key — models provided',
+    descriptionKey: vendor.supportsAnonymousAccess
+      ? 'Free models work without an API key.'
+      : 'API key — models provided',
     group: 'api'
   })),
   {
@@ -368,6 +388,37 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   }
 ]
 
+export type ProviderKindAvailability = {
+  // Desktop CodeBuddy accounts; undefined hides them. Listed ids are already added and stay disabled.
+  codeBuddyProviders?: readonly string[]
+  showCodexSubscriptions?: boolean
+  showClaudeIsolated?: boolean
+}
+
+// Whether a provider kind is offered for the active framework. The type dropdown and the Add provider
+// picker share this so both surfaces list the same kinds.
+export const isProviderKindAvailable = (
+  kind: ProviderKind,
+  { codeBuddyProviders, showCodexSubscriptions, showClaudeIsolated }: ProviderKindAvailability
+): boolean => {
+  if (codeBuddySiteForId(kind.key) && !codeBuddyProviders) return false
+  // Codex and the built-in Agent share the app-owned subscription sign-in.
+  if (kind.group === 'codex' && !showCodexSubscriptions) return false
+  // The Claude subscription section mirrors it: gate on Claude Code being active, the only
+  // framework that speaks the app-owned bearer token.
+  if (kind.group === 'claude' && !showClaudeIsolated) return false
+  return true
+}
+
+// Local model presets are offered as their own provider kinds in the Add provider picker. Each one
+// opens a custom gateway seeded with that preset.
+export const LOCAL_MODEL_KIND_PREFIX = 'local:'
+
+export const localModelPresetForKindKey = (key: string): LocalModelPreset | undefined =>
+  key.startsWith(LOCAL_MODEL_KIND_PREFIX)
+    ? LOCAL_MODEL_PRESETS.find((preset) => preset.id === key.slice(LOCAL_MODEL_KIND_PREFIX.length))
+    : undefined
+
 // The patch applied to the form value when a provider-kind is picked. Switching to an official vendor
 // seeds its default region + model; switching to custom clears vendor-only fields and applies the
 // active framework's preferred endpoint.
@@ -375,77 +426,11 @@ export const providerKindPatch = (
   key: string,
   customApiEndpoint: ModelProtocol = 'messages'
 ): Partial<ProviderFormValue> => {
-  if (key === 'codex-subscription') {
-    const identity = codexSubscriptionProviderIdentity()
-    return {
-      type: 'codex-shared',
-      name: identity.name,
-      apiEndpoint: 'responses',
-      baseUrl: '',
-      model: '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: '',
-      key: '',
-      vendorId: undefined,
-      region: undefined
-    }
-  }
-
-  if (key === 'claude-subscription') {
-    const identity = claudeIsolatedProviderIdentity()
-    return {
-      type: 'claude-shared',
-      name: identity.name,
-      apiEndpoint: 'messages',
-      baseUrl: '',
-      model: '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: '',
-      key: '',
-      vendorId: undefined,
-      region: undefined
-    }
-  }
-
-  if (key === 'xai-subscription') {
-    const identity = xaiSubscriptionProviderIdentity()
-    return {
-      type: 'xai-subscription',
-      name: identity.name,
-      apiEndpoint: 'responses',
-      baseUrl: '',
-      model: defaultVendorModel('xai') ?? '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: '',
-      key: '',
-      vendorId: undefined,
-      region: undefined
-    }
-  }
-
-  if (key.startsWith('official:')) {
-    const vendorId = key.slice('official:'.length) as OfficialVendorId
-    const vendor = getOfficialVendor(vendorId)
-
-    // No per-provider model: the vendor catalog is fixed and the chosen model is the global selection.
-    return {
-      type: 'official',
-      name: vendor?.label,
-      vendorId,
-      region: vendor?.regions?.[0]?.id,
-      model: '',
-      contextWindow: '',
-      maxInputTokens: '',
-      maxOutputTokens: ''
-    }
-  }
-
-  return {
-    type: 'custom',
-    apiEndpoint: customApiEndpoint,
+  const reset = {
+    codeBuddySite: undefined,
+    codeBuddyAuthMode: undefined,
+    key: '',
+    catalogParameters: undefined,
     vendorId: undefined,
     region: undefined,
     model: '',
@@ -453,10 +438,83 @@ export const providerKindPatch = (
     maxInputTokens: '',
     maxOutputTokens: ''
   }
+  const site = codeBuddySiteForId(key)
+  if (site)
+    return createEmptyProviderFormValue({
+      ...reset,
+      type: 'codebuddy-subscription',
+      codeBuddySite: site,
+      name: codeBuddyAccounts[site].name
+    })
+  if (key === 'codex-subscription') {
+    const identity = codexSubscriptionProviderIdentity()
+    return {
+      ...reset,
+      type: 'codex-shared',
+      name: identity.name,
+      apiEndpoint: 'responses',
+      baseUrl: ''
+    }
+  }
+
+  if (key === 'claude-subscription') {
+    const identity = claudeIsolatedProviderIdentity()
+    return {
+      ...reset,
+      type: 'claude-shared',
+      name: identity.name,
+      apiEndpoint: 'messages',
+      baseUrl: ''
+    }
+  }
+
+  if (key === 'xai-subscription') {
+    const identity = xaiSubscriptionProviderIdentity()
+    return {
+      ...reset,
+      type: 'xai-subscription',
+      name: identity.name,
+      apiEndpoint: 'responses',
+      baseUrl: '',
+      model: defaultVendorModel('xai') ?? ''
+    }
+  }
+
+  if (key.startsWith('official:')) {
+    const vendorId = key.slice('official:'.length) as OfficialVendorId
+    const vendor = getOfficialVendor(vendorId)
+
+    return {
+      ...reset,
+      type: 'official',
+      name: vendor?.label,
+      vendorId,
+      region: vendor?.regions?.[0]?.id
+    }
+  }
+
+  const localPreset = localModelPresetForKindKey(key)
+  if (localPreset) {
+    return {
+      ...reset,
+      type: 'custom',
+      name: localPreset.label,
+      baseUrl: localPreset.baseUrl,
+      apiEndpoint: 'chat-completions'
+    }
+  }
+
+  return {
+    ...reset,
+    type: 'custom',
+    apiEndpoint: customApiEndpoint
+  }
 }
 
 // Maps the current form value back to its provider-kind key (the dropdown's selected value).
 export const selectedKindKey = (value: ProviderFormValue): string => {
+  if (value.type === 'codebuddy-subscription' && value.codeBuddySite)
+    return codeBuddyAccounts[value.codeBuddySite].id
   if (value.type === 'custom') {
     return 'custom'
   }

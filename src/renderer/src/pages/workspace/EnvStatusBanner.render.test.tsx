@@ -228,7 +228,7 @@ describe('EnvStatusBanner', () => {
     expect(container.querySelector('[data-testid="env-status-banner"]')).not.toBeNull()
   })
 
-  it('bounds a long error reason in a scrollable box and uses the dialog card chrome, keeping the full text readable', () => {
+  it('bounds a long error reason in a scrollable box and uses the notice card chrome, keeping the full text readable', () => {
     // A provisioner failure can carry a long reason. This banner is the ONLY error surface outside the
     // notebook pane (Home has no overlay), so the reason must stay fully readable: bound it to a
     // scrollable box (max-h + overflow) rather than clamping lines, which could hide the actionable tail.
@@ -243,7 +243,7 @@ describe('EnvStatusBanner', () => {
     // Shared notice chrome: rounded card, card surface, floating shadow.
     expect(banner.className).toContain('rounded-2xl')
     expect(banner.className).toContain('bg-card')
-    expect(banner.className).toContain('shadow-dialog')
+    expect(banner.className).toContain('shadow-notice')
     // The reason is bounded (max-h) and scrollable (overflow-y-auto) rather than line-clamped, so the
     // banner cannot fill the screen yet the full excerpt remains reachable — no line-clamp truncation.
     const details = banner.querySelector('details')!

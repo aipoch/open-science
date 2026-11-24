@@ -122,6 +122,31 @@ npm run dev
 The switch is off by default and applies only to the development server. Packaged builds ignore it
 and continue to require the certified, version-matched WSL2 assets.
 
+### Open-Science Agent traces
+
+1. Set `OPEN_SCIENCE_AGENT_OTLP_TRACES_ENDPOINT` to a full OTLP/HTTP JSON traces URL such as
+   `http://127.0.0.1:4318/v1/traces`. Use the repository's `.env` in development or the active
+   config root's `.env` for installed runtimes (usually `~/.open-science/.env`).
+2. Restart the backend. Open **Project Settings → Advanced agent options**, enable **Agent
+   tracing**, and save. Tracing starts off for each project and the saved setting applies on
+   the next send. For a single CLI Run, use `open-science run --otel-traces` to authorize that
+   turn independently of the Project setting.
+3. Send a message with Open-Science Agent and look for spans under the `open-science-agent` service.
+
+These switches default to `1`. Set any to `0` in the same configuration source as the endpoint.
+
+| Variable                                         | What it controls                              |
+| ------------------------------------------------ | --------------------------------------------- |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_CONTENT`        | User prompt and final visible reply excerpts  |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_API_REQUEST`    | Model request JSON before the provider bridge |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_ARGUMENTS` | MCP tool input previews                       |
+| `OPEN_SCIENCE_AGENT_OTLP_CAPTURE_TOOL_RESULTS`   | MCP tool output previews                      |
+| `OPEN_SCIENCE_AGENT_OTLP_DIAGNOSTICS`            | Local `.env.otel-status.json` status file     |
+
+For metadata-only traces, set all four `CAPTURE_*` switches to `0`. Model request bodies can
+include instructions, conversation history, tool data, and attachments. Authentication examples
+are in [`.env.example`](../.env.example).
+
 ## Coding-agent navigation
 
 Run installation, development, and validation commands from the repository root:
@@ -159,6 +184,9 @@ Read the existing owner document before changing one of these areas, then run it
 | Notebook | [Current architecture](PRD.md#8-current-architecture-what-is-actually-implemented) | `npm run typecheck:node`; targeted tests under `src/main/notebook/`                                   |
 | Settings | [Settings design](design.md#settings)                                              | `npm run typecheck`; targeted tests under `src/main/settings/` and `src/renderer/src/pages/settings/` |
 | ACP      | [Current architecture](PRD.md#8-current-architecture-what-is-actually-implemented) | `npm run typecheck:node`; targeted tests under `src/main/acp/`                                        |
+
+Notebook memory thresholds and the optional local policy file are documented in
+[Notebook memory policy](notebook-memory-policy.md).
 
 ## Project Structure
 

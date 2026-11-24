@@ -1,6 +1,7 @@
 import { isCurrentInFlight } from '../../../../shared/in-flight-promise'
 import type {
   NotebookRunCursor,
+  NotebookAgentSummary,
   NotebookRunPage,
   NotebookRunRecord,
   NotebookSessionReference,
@@ -16,6 +17,7 @@ type SessionNotebookData = {
   runs: NotebookRunRecord[]
   runCount: number
   historyPage?: NotebookRunPage
+  agentSummaries: NotebookAgentSummary[]
 }
 
 type CachedSessionNotebook = {
@@ -132,7 +134,7 @@ const loadSessionNotebookData = async (
 
   const pending = (async (): Promise<SessionNotebookData> => {
     const reference = await api.getReference(request)
-    if (!reference) return { runs: [], runCount: 0 }
+    if (!reference) return { runs: [], runCount: 0, agentSummaries: [] }
     const state = await api.state({
       ...request,
       ...(historyBefore ? { historyBefore } : {})
@@ -140,6 +142,7 @@ const loadSessionNotebookData = async (
     const data = {
       runs: state.runs,
       runCount: state.runCount,
+      agentSummaries: state.agentSummaries,
       ...(state.historyPage ? { historyPage: state.historyPage } : {})
     }
     if ((cacheGenerations.get(key) ?? 0) === generation) retainPage(request, historyBefore, data)

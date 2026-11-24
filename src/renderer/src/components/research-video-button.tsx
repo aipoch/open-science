@@ -1,3 +1,4 @@
+import { RESEARCH_VIDEO_PLAYER_SIZE_ERROR } from '@aipoch/research-film/contracts'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,6 +9,7 @@ import {
   RESEARCH_VIDEO_STATUS_TIMEOUT_MS,
   RESEARCH_VIDEO_STATUS_TIMEOUT_MESSAGE,
   RESEARCH_FILM_BUSY_MESSAGE,
+  RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE,
   researchVideoFilename
 } from '../../../shared/research-video-presentation'
 import { dialogBodyClassName, dialogFooterClassName } from './ui/dialog-chrome'
@@ -41,6 +43,7 @@ import type {
   ResearchFilmMode
 } from '../../../shared/research-video-presentation'
 import { isDesktopRenderer } from '@/lib/interface-scale'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
@@ -52,6 +55,12 @@ const missingRuntime =
 
 const narrationReady = (model: LocalModelSnapshot | undefined): boolean =>
   model?.availability === 'ready' && !model.updateAvailable
+
+const filmInProgress = (status: ResearchVideoPresentationStatus | undefined): boolean =>
+  !!(
+    status?.narrationDownload ||
+    (status?.progress && !['completed', 'failed', 'cancelled'].includes(status.progress.phase))
+  )
 
 // Keep the settled deadline until the actual desktop request settles, including across remounts.
 const filmStatusReads = new Map<
@@ -219,14 +228,21 @@ function ResearchVideoModeButton({
     Partial<Record<ResearchFilmMode, ResearchVideoPresentationStatus>>
   >({})
   const [selectedMode, setMode] = useState<ResearchFilmMode>()
+  const [viewedFilm, setViewedFilm] = useState<ResearchVideoPresentationRequest>()
+  const viewedBranchId = viewedFilm ? viewedFilm.branchId : branchId
+  const preferredMode = selectedMode ?? initialMode
+  const runningMode = filmInProgress(statuses[preferredMode])
+    ? preferredMode
+    : filmModes.find((candidate) => filmInProgress(statuses[candidate]))
   const mode =
+    runningMode ??
     selectedMode ??
     (preferSavedFilm && !statuses[initialMode]?.result
       ? (filmModes.find((candidate) => statuses[candidate]?.result) ?? initialMode)
       : initialMode)
 
   const [open, setOpen] = useState(Boolean(onDismiss))
-  const request = filmRequest(projectId, sessionId, branchId, mode)
+  const request = filmRequest(projectId, sessionId, viewedBranchId, mode)
   const deletionScope = mode
   const [deletionTarget, setDeletionTarget] = useState<string>()
   const confirmDeletion = deletionTarget === deletionScope
@@ -250,7 +266,6 @@ function ResearchVideoModeButton({
   const installing = Boolean(status.narrationDownload)
   const [errors, setErrors] = useState<Partial<Record<ResearchFilmMode, string>>>({})
   const [readErrors, setReadErrors] = useState<Partial<Record<ResearchFilmMode, string>>>({})
-  const error = errors[mode] ?? readErrors[mode]
   const setError = (next: string | undefined): void =>
     setErrors((current) => ({ ...current, [mode]: next }))
   const triggerRef = useRef<HTMLSpanElement>(null)
@@ -268,6 +283,13 @@ function ResearchVideoModeButton({
     'operation-replay': 0
   })
   const live = useRef(true)
+  const resetFilmScope = (): void => {
+    for (const candidate of filmModes) statusVersion.current[candidate]++
+    setStatuses({})
+    setErrors({})
+    setReadErrors({})
+    setModel(undefined)
+  }
   const setStatus = (next: ResearchVideoPresentationStatus): void => {
     statusVersion.current[mode]++
     setReadErrors((current) =>
@@ -309,6 +331,29 @@ function ResearchVideoModeButton({
     )
   }
   const filmErrors: Record<string, string> = {
+    [RESEARCH_FILM_MODEL_TIMEOUT_MESSAGE]: t('Model request timed out. Try again.'),
+    'Research film readiness check timed out. Try again.': t(
+      'Generation preparation timed out. Try again.'
+    ),
+    'Research film model setup timed out. Try again.': t('Model setup timed out. Try again.'),
+    'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.':
+      t('The model reached its output limit. Increase the limit or select another model.'),
+    'Research film generation stopped before completing (cancelled). Try again or select another model.':
+      t('The model stopped before completing this step. Try again.'),
+    'Restricted inference was cancelled.': t(
+      'The model stopped before completing this step. Try again.'
+    ),
+    'Research film generation stopped before completing (refusal). Try again or select another model.':
+      t('The model declined to generate this content.'),
+    'Film is still waiting for the disk. Try again after the disk responds.': t(
+      'Waiting for storage. Try again after it responds.'
+    ),
+    [RESEARCH_VIDEO_PLAYER_SIZE_ERROR]: t(
+      'The film exceeds 200 MiB. Shorten it or use smaller media.'
+    ),
+    'Shorten the film to fit the narration audio limit.': t(
+      'Shorten the film to fit the narration audio limit.'
+    ),
     'The model returned no research film content. Try again or select another model.': t(
       'The model returned no film content.'
     ),
@@ -318,21 +363,31 @@ function ResearchVideoModeButton({
       'Narration installation did not finish. Retry to continue.'
     )
   }
-  const failure = error || status.error
+  const failure = errors[mode] || status.error
+  const statusReadFailure = !failure && readErrors[mode]
   const preflight = status.preflightError
   const knownPreflight = preflight && Object.hasOwn(preflightMessages, preflight)
+  const ownRunningFilm =
+    status.blockingSession?.projectId === projectId &&
+    status.blockingSession.sessionId === sessionId
   const blocked = status.generationBlock
     ? blockMessages[status.generationBlock]
-    : preflight && (knownPreflight ? preflightMessages[preflight] : t('Research video failed'))
+    : ownRunningFilm
+      ? t('Research film in progress')
+      : preflight && (knownPreflight ? preflightMessages[preflight] : t('Research video failed'))
   const diagnostic = blocked
     ? !busy && !status.generationBlock && !knownPreflight && preflight
-    : failure
+    : failure || statusReadFailure
   const modelSettingsAvailable =
     !status.generationBlock &&
     status.preflightError &&
     status.preflightError !== missingRuntime &&
     status.preflightError !== RESEARCH_FILM_BUSY_MESSAGE &&
     knownPreflight
+  const blockingSession =
+    !status.generationBlock && !ownRunningFilm && preflight === RESEARCH_FILM_BUSY_MESSAGE
+      ? status.blockingSession
+      : undefined
   const loadingTrigger =
     !statusLoaded ||
     (preferSavedFilm &&
@@ -363,19 +418,19 @@ function ResearchVideoModeButton({
   )
   const desktop = isDesktopRenderer()
   const wasInstalling = useEffectEvent((target: ResearchFilmMode) => mode === target && installing)
-  const watching = Object.values(statuses).some(
-    (next) =>
-      next.narrationDownload ||
-      (next.progress && !['completed', 'failed', 'cancelled'].includes(next.progress.phase))
-  )
+  const watching = Object.values(statuses).some(filmInProgress)
   const pollingDelay = useEffectEvent((next: ResearchVideoPresentationStatus): number =>
-    next.narrationDownload ||
-    (next.progress && !['completed', 'failed', 'cancelled'].includes(next.progress.phase))
-      ? 750
-      : open
-        ? 5_000
-        : 30_000
+    filmInProgress(next) ? 750 : open ? 5_000 : 30_000
   )
+  const followRunningFilm = useEffectEvent((next: ResearchVideoPresentationStatus): boolean => {
+    const target = next.blockingSession
+    if (!open || target?.projectId !== projectId || target.sessionId !== sessionId) return false
+    setMode(target.mode ?? 'research-explanation')
+    if (target.branchId === viewedBranchId) return false
+    resetFilmScope()
+    setViewedFilm(target)
+    return true
+  })
   useEffect(() => {
     if (!desktop) return
     live.current = true
@@ -384,7 +439,7 @@ function ResearchVideoModeButton({
     const stopPolling = filmModes.map((target) => {
       let timer: ReturnType<typeof setTimeout>
       let failures = 0
-      const targetRequest = filmRequest(projectId, sessionId, branchId, target)
+      const targetRequest = filmRequest(projectId, sessionId, viewedBranchId, target)
       const poll = async (): Promise<void> => {
         const version = statusVersion.current[target]
         let delay = 750
@@ -396,7 +451,7 @@ function ResearchVideoModeButton({
             subscribed && wasInstalling(target) && !next.narrationDownload
               ? await window.api.localModels.getSnapshot('research-narration')
               : undefined
-          if (subscribed && version === statusVersion.current[target]) {
+          if (subscribed && version === statusVersion.current[target] && !followRunningFilm(next)) {
             setReadErrors((current) =>
               current[target] === undefined ? current : { ...current, [target]: undefined }
             )
@@ -425,13 +480,13 @@ function ResearchVideoModeButton({
       subscribed = false
       stopPolling.forEach((stop) => stop())
     }
-  }, [projectId, sessionId, branchId, desktop, open, watching])
+  }, [projectId, sessionId, viewedBranchId, desktop, open, watching])
   const checkSelectedReadiness = useEffectEvent(() => {
     let current = true
     const version = ++statusVersion.current[mode]
     void readFilmStatus(request, true)
       .then((next) => {
-        if (current && version === statusVersion.current[mode]) {
+        if (current && version === statusVersion.current[mode] && !followRunningFilm(next)) {
           setStatus(next)
           setError(undefined)
         }
@@ -450,7 +505,7 @@ function ResearchVideoModeButton({
   useEffect(() => {
     if (open && desktop) return checkSelectedReadiness()
     return undefined
-  }, [open, desktop])
+  }, [open, desktop, viewedBranchId])
   const selectMode = (next: ResearchFilmMode): void => {
     if (next === mode) return
     wasDeleting.current = false
@@ -469,8 +524,15 @@ function ResearchVideoModeButton({
     setPending(true)
     setError(undefined)
     try {
-      const current = await readFilmStatus(request, !resume)
-      if (!live.current) return
+      const current = await readFilmStatus(request, !resume).catch((caught: unknown) => {
+        if (live.current)
+          setReadErrors((previous) => ({
+            ...previous,
+            [mode]: caught instanceof Error ? caught.message : String(caught)
+          }))
+        return undefined
+      })
+      if (!live.current || !current) return
       setStatus(current)
       if (
         current.narrationDownload ||
@@ -607,6 +669,10 @@ function ResearchVideoModeButton({
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
+            if (viewedFilm) {
+              resetFilmScope()
+              setViewedFilm(undefined)
+            }
             triggerRef.current?.querySelector('button')?.focus()
             onDismiss?.()
             if (settingsAfterClose.current) {
@@ -732,7 +798,11 @@ function ResearchVideoModeButton({
                         )}
                         {status.canResume || status.result
                           ? t('Generate again')
-                          : t('Start generation')}
+                          : failure ||
+                              status.progress?.phase === 'failed' ||
+                              status.progress?.phase === 'cancelled'
+                            ? t('Retry', { context: 'step' })
+                            : t('Start generation')}
                       </Button>
                     )}
                     {status.canResume && (
@@ -741,7 +811,7 @@ function ResearchVideoModeButton({
                         disabled={pending || Boolean(status.generationBlock)}
                         onClick={() => void generate(false, true)}
                       >
-                        {t('Continue generation')}
+                        {t('Retry', { context: 'step' })}
                       </Button>
                     )}
                     {status.result && (
@@ -826,6 +896,21 @@ function ResearchVideoModeButton({
                 <ErrorNotice
                   inline
                   level="warning"
+                  primaryButton={
+                    blockingSession && {
+                      label: t('Go to conversation'),
+                      onClick: () => {
+                        useNavigationStore
+                          .getState()
+                          .openSession(
+                            blockingSession.projectId,
+                            blockingSession.sessionId,
+                            'user',
+                            () => setOpen(false)
+                          )
+                      }
+                    }
+                  }
                   content={
                     modelSettingsAvailable && status.preflightError === missingModel ? (
                       <Trans
@@ -845,9 +930,11 @@ function ResearchVideoModeButton({
                   key={diagnostic}
                   detail={diagnostic}
                   summary={
-                    Object.hasOwn(filmErrors, diagnostic)
-                      ? filmErrors[diagnostic]
-                      : t('Research video failed')
+                    statusReadFailure && diagnostic === statusReadFailure
+                      ? t('Could not retrieve generation status.')
+                      : Object.hasOwn(filmErrors, diagnostic)
+                        ? filmErrors[diagnostic]
+                        : t('Research video failed')
                   }
                 />
               )}
@@ -866,7 +953,19 @@ function ResearchVideoModeButton({
                         <AudioLines className="size-3.5" aria-hidden="true" />
                         {t('English narration')}
                       </span>
+                      {playableResult.scriptScore !== undefined && (
+                        <span>
+                          {t('Narration rubric {{score}}/9', { score: playableResult.scriptScore })}
+                        </span>
+                      )}
                     </div>
+                    {playableResult.sessionAppMode && (
+                      <p className="text-xs text-muted-foreground">
+                        {playableResult.sessionAppMode === 'live'
+                          ? t('Includes the session app in motion.')
+                          : t('Uses a drawn illustration of the session app.')}
+                      </p>
+                    )}
                   </div>
                   <Button
                     className="min-h-10 w-full whitespace-normal"

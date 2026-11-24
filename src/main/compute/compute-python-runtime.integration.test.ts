@@ -20,6 +20,7 @@ import {
   pythonBin,
   writeReadyMarker
 } from '@aipoch/environment'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { getRuntimeRoot, NotebookRunRepository } from '../notebook/repository'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
@@ -52,6 +53,7 @@ it('shares managed SDK leases with package mutation, drains migration, and enfor
   let disabled = false
   const installer = vi.fn(async () => ({ ok: true, needsRestart: false, log: '' }))
   const service = new NotebookRuntimeService({
+    memoryPolicy: healthyNotebookMemoryPolicy(),
     projectId: 'test-project',
     dataRoot: root,
     configRoot: root,
@@ -129,6 +131,7 @@ it.each(['selected path', 'canonical identity'] as const)(
     const identity = keyKind === 'selected path' ? selected : realpathSync(selected)
     let disabled = true
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       projectId: 'test-project',
       dataRoot: root,
       configRoot: root,
@@ -168,6 +171,7 @@ it.skipIf(process.env.OPEN_SCIENCE_MODAL_INSTALL_SMOKE !== '1')(
     })
     writeReadyMarker(runtimeRoot, DEFAULT_ENV_VERSION, new Date().toISOString())
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       projectId: 'test-project',
       dataRoot: root,
       configRoot: root,
@@ -381,6 +385,7 @@ it.skipIf(process.env.OPEN_SCIENCE_HF_INSTALL_SMOKE !== '1')(
     })
     writeReadyMarker(runtimeRoot, DEFAULT_ENV_VERSION, new Date().toISOString())
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       projectId: 'hf-smoke',
       dataRoot: root,
       configRoot: root,

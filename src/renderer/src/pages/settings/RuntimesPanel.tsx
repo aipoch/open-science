@@ -132,6 +132,7 @@ type ManagedOperationView = {
 }
 
 type RuntimesPanelProps = {
+  showLocalShell?: boolean
   headingAs?: 'h2' | 'h3'
   title: string
   description: React.ReactNode
@@ -139,6 +140,7 @@ type RuntimesPanelProps = {
 }
 
 const RuntimesPanel = ({
+  showLocalShell = true,
   title,
   headingAs,
   description,
@@ -236,7 +238,7 @@ const RuntimesPanel = ({
 
   useEffect(() => {
     let cancelled = false
-    if (window.api.platform !== 'win32') return () => undefined
+    if (!showLocalShell || window.api.platform !== 'win32') return
     void Promise.all([
       window.api.settings
         .getWsl2BashPreviewStatus()
@@ -255,7 +257,7 @@ const RuntimesPanel = ({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [showLocalShell])
   const [packagesFilter, setPackagesFilter] = useState('')
   const packagesFilterRef = useRef<HTMLInputElement>(null)
   useSettingsSearchShortcut(packagesFilterRef, packagesEnv !== null)
@@ -1239,7 +1241,7 @@ const RuntimesPanel = ({
           })
         )}
       </SettingsSection>
-      {wsl2Preview?.available || wsl2Preview?.needsPowerShellRecovery ? (
+      {showLocalShell && (wsl2Preview?.available || wsl2Preview?.needsPowerShellRecovery) ? (
         <WslLocalShellSection
           previewAvailable={wsl2Preview.available}
           developmentPreview={wsl2Preview.development}

@@ -1,11 +1,18 @@
+import {
+  catalogModelApiEndpoints,
+  isCatalogModelAvailable,
+  resolveOfficialModelCatalog
+} from './provider-model-catalog'
+import type { CatalogModel } from '@aipoch/providers'
 import { providerValidationRoute } from './settings'
 import {
   type ModelProtocol,
   type OfficialVendorId,
-  isVendorModelMultimodal,
-  resolveVendorModelApiEndpoints
+  isVendorModelMultimodal
 } from '@aipoch/providers'
+import { isModelStreamingCompatible } from './agent-framework-id'
 import { isModelBridgeSupported } from './provider-bridge-policy'
+import { labModelLabel, readLabModelCapabilities } from './lab'
 
 import {
   isClaudeSubscriptionProvider,
@@ -32,9 +39,13 @@ export type ConfiguredModelCatalogEntry = Readonly<{
   vendorId?: OfficialVendorId
   model: string
   label: string
+  metadata?: CatalogModel
   selectable: boolean
   supportsImageInput: boolean
-  unavailableReason?: 'framework-incompatible' | 'model-bridge-unsupported'
+  // Only an explicit false rules out streaming.
+  streaming?: boolean
+  unavailableReason?:
+    'framework-incompatible' | 'model-bridge-unsupported' | 'streaming-unsupported'
 }>
 
 export type ConfiguredModelInventoryEntry = Readonly<
@@ -60,12 +71,11 @@ export const parseConfiguredModelKey = (
 }
 
 export const configuredModelApiEndpoints = (
-  provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints'>,
-  model: string
+  provider: Pick<ProviderView, 'type' | 'apiEndpoints' | 'modelProtocols'>,
+  metadata: CatalogModel | undefined,
+  model?: string
 ): readonly ModelProtocol[] =>
-  provider.type === 'official' && provider.vendorId
-    ? resolveVendorModelApiEndpoints(provider.vendorId, model)
-    : providerEndpoints(provider)
+  metadata ? catalogModelApiEndpoints(metadata) : providerEndpoints(provider, model)
 
 export const buildConfiguredModelInventory = (
   input: Readonly<{
@@ -81,13 +91,24 @@ export const buildConfiguredModelInventory = (
     input.claudeSubscriptionProviderId
   )
 
-  const supportsImageInput = (provider: ProviderView, model: string): boolean => {
+  const supportsImageInput = (
+    provider: ProviderView,
+    model: string,
+    metadata?: CatalogModel
+  ): boolean => {
     if (isClaudeSubscriptionProvider(provider.type) || isCodexSubscriptionProvider(provider.type)) {
       return true
     }
     if (isXaiSubscriptionProvider(provider.type)) return isVendorModelMultimodal('xai', model)
+    if (provider.type === 'lab') {
+      return (
+        readLabModelCapabilities(provider.modelCapabilities?.[model])?.inputModalities.includes(
+          'image'
+        ) ?? false
+      )
+    }
     if (provider.type === 'custom') return provider.supportsImageInput === true
-    return provider.vendorId ? isVendorModelMultimodal(provider.vendorId, model) : false
+    return metadata?.supportsImageInput === true
   }
 
   return input.providers
@@ -99,21 +120,33 @@ export const buildConfiguredModelInventory = (
         (!providerValidationFailed(provider) ||
           provider.lastValidationFailure?.target !== undefined)
     )
-    .flatMap((provider) =>
-      (provider.models.length > 0 ? provider.models : provider.model ? [provider.model] : ['']).map(
-        (model) =>
-          Object.freeze({
-            key: configuredModelKey(provider.id, model),
-            providerId: provider.id,
-            providerName: provider.name,
-            providerType: provider.type,
-            ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
-            model,
-            label: model || provider.name,
-            supportsImageInput: supportsImageInput(provider, model)
-          })
-      )
-    )
+    .flatMap((provider) => {
+      const entry = (model: string, metadata?: CatalogModel): ConfiguredModelInventoryEntry =>
+        Object.freeze({
+          key: configuredModelKey(provider.id, model),
+          providerId: provider.id,
+          providerName: provider.name,
+          providerType: provider.type,
+          ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
+          model,
+          label: provider.type === 'lab' ? labModelLabel(model) : model || provider.name,
+          metadata,
+          supportsImageInput: supportsImageInput(provider, model, metadata),
+          ...(provider.modelStreaming?.[model] === false ? { streaming: false } : {})
+        })
+
+      if (provider.type === 'official' && provider.vendorId) {
+        return resolveOfficialModelCatalog(provider)
+          .filter(isCatalogModelAvailable)
+          .map((metadata) => entry(metadata.id, metadata))
+      }
+      // An empty Lab catalog means the organization has no available models.
+      const models =
+        provider.type === 'lab' || provider.models.length > 0
+          ? provider.models
+          : [provider.model ?? '']
+      return models.map((model) => entry(model))
+    })
 }
 
 export const buildConfiguredModelCatalog = (
@@ -129,7 +162,7 @@ export const buildConfiguredModelCatalog = (
   return buildConfiguredModelInventory(input).flatMap((entry) => {
     const provider = input.providers.find((candidate) => candidate.id === entry.providerId)!
     const model = entry.model
-    const apiEndpoints = configuredModelApiEndpoints(provider, model)
+    const apiEndpoints = configuredModelApiEndpoints(provider, entry.metadata, model)
     const usesCompatibilityTransport = requiresChatCompletionsBridge(
       { apiEndpoints },
       { id: input.frameworkId, supportedApiTypes: input.frameworkEndpoints }
@@ -158,15 +191,18 @@ export const buildConfiguredModelCatalog = (
     )
       return []
     const bridgeSupported = input.frameworkId !== 'codex' || isModelBridgeSupported(provider, model)
+    const streamingSupported = isModelStreamingCompatible(input.frameworkId, entry.streaming)
     return [
       Object.freeze({
         ...entry,
-        selectable: frameworkCompatible && bridgeSupported,
+        selectable: frameworkCompatible && bridgeSupported && streamingSupported,
         ...(!frameworkCompatible
           ? { unavailableReason: 'framework-incompatible' as const }
           : !bridgeSupported
             ? { unavailableReason: 'model-bridge-unsupported' as const }
-            : {})
+            : !streamingSupported
+              ? { unavailableReason: 'streaming-unsupported' as const }
+              : {})
       })
     ]
   })

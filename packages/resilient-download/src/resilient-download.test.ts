@@ -734,7 +734,15 @@ describe('resilientDownload', () => {
     expect(created?.destroyed).toBe(true) // cleanup path destroyed the failed stream
   })
 
-  it('destroys the still-open write stream in the catch path when the body errors mid-stream', async () => {
+  it.each([
+    { reason: 'a reset', error: new Error('ECONNRESET socket hang up') },
+    {
+      reason: 'a premature close',
+      error: new TypeError('terminated', {
+        cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' })
+      })
+    }
+  ])('destroys the still-open write stream before retrying after $reason', async ({ error }) => {
     // The response body delivers a few bytes then THROWS mid-stream (a dropped socket) — so the file
     // is still open when the error propagates, unlike a clean short read that ends() first. This is
     // the path where the retry catch must proactively destroy() the open handle. Assert the first
@@ -757,20 +765,19 @@ describe('resilientDownload', () => {
       pt.on('close', () => events.push(`destroy:${id}`))
       return pt as unknown as import('node:fs').WriteStream
     }
-    // First response: a body stream that yields the first 8 bytes, then errors (socket drop) while the
-    // write stream is still open. Content-length announces the full size so it is not a clean short read.
-    const firstFetch = vi.fn(async () => {
-      const gen = (async function* () {
-        yield body.subarray(0, 8)
-        throw new Error('ECONNRESET socket hang up')
-      })()
-      return {
-        ok: true,
-        status: 200,
-        headers: { get: (h: string) => (h.toLowerCase() === 'content-length' ? '26' : null) },
-        body: Readable.toWeb(Readable.from(gen))
-      } as unknown as Response
-    })
+    let firstBody!: ReadableStreamDefaultController<Uint8Array>
+    const firstFetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              firstBody = controller
+              controller.enqueue(body.subarray(0, 8))
+            }
+          }),
+          { headers: { 'Content-Length': String(body.length), ETag: '"file-v1"' } }
+        )
+    )
     const rest = fakeFetch(body) // resumes from the persisted 8 bytes via Range
     let call = 0
     const fetchImpl = vi.fn((input: string | URL | Request, init?: RequestInit) => {
@@ -779,7 +786,10 @@ describe('resilientDownload', () => {
     })
     const out = await resilientDownload('https://cdn/file', OUT_PATH, {
       expectedSha256: sha(body),
-      stallTimeoutMs: 50,
+      onProgress: ({ attempt, transferred }) => {
+        // Wait for the write callback before disconnecting so the retry has bytes to resume.
+        if (attempt === 0 && transferred === 8) firstBody.error(error)
+      },
       deps: {
         fetchImpl: fetchImpl as unknown as typeof fetch,
         ...fs,
@@ -791,8 +801,12 @@ describe('resilientDownload', () => {
     expect(out).toBe(OUT_PATH)
     expect(fs.files.get(OUT_PATH)?.toString()).toBe(body.toString())
     expect(call).toBe(2) // it did retry after the mid-stream error
+    expect(rest).toHaveBeenCalledExactlyOnceWith(
+      'https://cdn/file',
+      expect.objectContaining({ headers: { Range: 'bytes=8-', 'If-Range': '"file-v1"' } })
+    )
     // The open handle from attempt 1 was destroyed (in the catch) before attempt 2 opened its stream.
-    expect(events.indexOf('destroy:0')).toBeLessThan(events.indexOf('create:1'))
+    expect(events.slice(0, 3)).toEqual(['create:0', 'destroy:0', 'create:1'])
   })
 
   it('does not retry when the final rename fails (terminal)', async () => {

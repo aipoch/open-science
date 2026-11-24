@@ -149,6 +149,32 @@ describe('useProjectFormDialog', () => {
     hook.unmount()
   })
 
+  it('saves the tracing switch on the project being edited', async () => {
+    const project = createProject({ sessionDefaults: { memoryEnabled: false } })
+    const sameName = createProject({
+      id: 'another-project',
+      name: project.name,
+      sessionDefaults: { agentTracingEnabled: true }
+    })
+    const update = vi.fn().mockResolvedValue(project)
+    setProjectsApi({ update })
+    const hook = renderHook()
+    act(() => hook.current().openEditDialog(sameName))
+    expect(hook.current().dialogProps.agentTracingDraft).toBe(true)
+    act(() => hook.current().openEditDialog(project))
+    expect(hook.current().dialogProps.agentTracingDraft).toBe(false)
+    act(() => hook.current().dialogProps.onAgentTracingChange?.(true))
+    await act(async () => submitForm(hook.current()))
+    expect(update).toHaveBeenCalledOnce()
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: project.id,
+        agentTracingEnabled: true
+      })
+    )
+    hook.unmount()
+  })
+
   it('opens the create dialog with empty drafts and create labels', () => {
     const hook = renderHook()
 

@@ -104,6 +104,7 @@ export type SessionLoadFailure = 'startup-reconciliation-failed'
 
 export type SessionLoadDiagnostics = {
   isComplete: boolean
+  catalogHydrationPending?: true
   warnings: SessionLoadWarning[]
   failure?: SessionLoadFailure
   // The outer startup boundary stamps this after replaying pending Project deletions. Session and
@@ -127,6 +128,10 @@ export type ListSessionSummariesResult = {
 export type LoadSessionRequest = {
   projectId: string
   sessionId: string
+  /** Request local Session Details recovery after the Session is opened. */
+  recoverSessionDetails?: boolean
+  /** Preserve the reason a selected conversation could not be opened. */
+  reportReadFailure?: true
 }
 
 export const retryRuntimeTerminalCommitRequestSchema = z

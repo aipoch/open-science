@@ -1,14 +1,78 @@
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createServer, request as httpRequest, type ServerResponse } from 'node:http'
 import { createConnection, type AddressInfo } from 'node:net'
 
 import { Agent, fetch as nodeFetch } from 'undici'
 import { describe, expect, it, vi } from 'vitest'
 
+import { projectDiagnosticLog } from '../session-diagnostics/projection'
 import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 import { codexBridgeStaticMcpTools, createCodexBridgeMcpTools } from './codex-bridge-tools'
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
+  it('returns a retryable gateway error when the upstream fetch fails before headers', async () => {
+    const upstream = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(
+        new TypeError('fetch failed', {
+          cause: Object.assign(new Error('private network detail'), { code: 'ECONNRESET' })
+        })
+      )
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: 'ok' } }] }))
+    const bridge = new ResponsesToChatCompletionsBridge(
+      { baseUrl: 'https://upstream.test' },
+      upstream
+    )
+    try {
+      const connection = await bridge.start()
+      const send = (): Promise<Response> =>
+        fetch(connection.baseUrl + '/responses', {
+          method: 'POST',
+          headers: { authorization: 'Bearer ' + connection.token },
+          body: JSON.stringify({ input: 'retry fixture', stream: false })
+        })
+      const first = await send()
+      expect(first.status).toBe(502)
+      expect(await first.json()).toEqual({
+        error: {
+          type: 'upstream_error',
+          message: 'Could not connect to the model provider'
+        }
+      })
+      expect(upstream).toHaveBeenCalledTimes(1)
+      expect((await send()).status).toBe(200)
+      expect(upstream).toHaveBeenCalledTimes(2)
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('keeps an upstream 502 distinguishable when its message matches a local disconnect', async () => {
+    const message = 'Could not connect to the model provider'
+    const bridge = new ResponsesToChatCompletionsBridge(
+      { baseUrl: 'https://upstream.test' },
+      async () => Response.json({ error: { message } }, { status: 502 })
+    )
+    try {
+      const connection = await bridge.start()
+      const response = await fetch(connection.baseUrl + '/responses', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + connection.token },
+        body: JSON.stringify({ input: 'hello', stream: true })
+      })
+      expect(response.status).toBe(502)
+      expect(await response.json()).toMatchObject({
+        error: { status: 502, message: 'Upstream HTTP 502: ' + message }
+      })
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it.each([undefined, '', ' ', 'a,b', 'bad\nsession'])(
     'rejects missing or ambiguous Go identity %s before forwarding',
     async (session) => {
@@ -1719,6 +1783,49 @@ describe('Responses-compatible bridge conversion', () => {
     }
   })
 
+  it.each([
+    [
+      'explicit service error',
+      JSON.stringify({ error: { message: 'Model is overloaded' } }),
+      'upstream_error',
+      'Model is overloaded'
+    ],
+    [
+      'HTML from a gateway',
+      '<html>private gateway details</html>',
+      'invalid_upstream_response',
+      'The model service returned invalid JSON.'
+    ],
+    [
+      'missing completion message',
+      JSON.stringify({ choices: [] }),
+      'invalid_upstream_response',
+      'The model service returned no Chat Completions message.'
+    ]
+  ])(
+    'identifies %s from a successful HTTP response as an upstream failure',
+    async (_label, body, type, message) => {
+      const bridge = new ResponsesToChatCompletionsBridge(
+        { baseUrl: 'https://upstream.test' },
+        async () => new Response(body)
+      )
+      try {
+        const connection = await bridge.start()
+        const response = await fetch(connection.baseUrl + '/responses', {
+          method: 'POST',
+          headers: { authorization: 'Bearer ' + connection.token },
+          body: JSON.stringify({ input: 'hello', stream: false })
+        })
+        expect({ status: response.status, body: await response.json() }).toEqual({
+          status: 502,
+          body: { error: { type, message } }
+        })
+      } finally {
+        await bridge.close()
+      }
+    }
+  )
+
   it('returns a clear error for non-streaming upstream image output', async () => {
     const upstreamFetch = vi.fn(async () =>
       Response.json({
@@ -2458,6 +2565,46 @@ describe('Responses bridge Skill selector', () => {
     }
   )
 
+  it('omits reasoning controls for Kilo models without reasoning support', async () => {
+    let upstreamBody: Record<string, unknown> = {}
+    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return Response.json({
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                {
+                  function: {
+                    name: 'select_skills',
+                    arguments: JSON.stringify({ skill_names: ['literature-review'] })
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    })
+    const bridge = new ResponsesToChatCompletionsBridge(
+      {
+        baseUrl: 'https://ai-gateway.kilo.ai/api/v1',
+        model: 'baidu/ernie-5.5-flash-preview:free',
+        vendorId: 'kilo',
+        reasoningSupported: false
+      },
+      upstreamFetch,
+      { skillSelectorFailureMode: 'throw' }
+    )
+
+    await expect(bridge.selectSkills('Prepare a literature review.', catalog)).resolves.toEqual([
+      { name: 'literature-review', path: '/private/review/SKILL.md' }
+    ])
+    expect(upstreamBody).not.toHaveProperty('reasoning_effort')
+    expect(upstreamBody).not.toHaveProperty('reasoning')
+    expect(upstreamBody).not.toHaveProperty('thinking')
+  })
+
   it.each([
     ['Codex', undefined],
     ['CodeBuddy', { skillSelectorFailureMode: 'throw' as const }]
@@ -2703,4 +2850,144 @@ describe('Responses bridge Skill selector', () => {
 
     await expect(selecting).resolves.toEqual([])
   })
+})
+
+it('exports the original local stack when the Responses bridge returns a stack overflow', async () => {
+  const logDir = await mkdtemp(join(tmpdir(), 'responses-stack-'))
+  initLogger({ logDir, mirrorToConsole: false })
+  const message = 'Maximum call stack size exceeded'
+  const bridge = new ResponsesToChatCompletionsBridge(
+    { baseUrl: 'https://upstream.test' },
+    async function failingTransport(_url, init) {
+      const input = JSON.parse(String(init?.body)).messages[0].content
+      if (input === 'invalid')
+        return new Response('<html>private gateway details</html>', {
+          headers: { 'x-request-id': 'gateway-200' }
+        })
+      if (input === 'remote') {
+        return Response.json(
+          { error: { type: 'invalid_request_error', message } },
+          {
+            status: 400,
+            headers: { 'x-request-id': 'fixture-123' }
+          }
+        )
+      }
+      throw new RangeError(message)
+    }
+  )
+  try {
+    const connection = await bridge.start()
+    const response = await fetch(connection.baseUrl + '/responses', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + connection.token },
+      body: JSON.stringify({ input: 'private prompt' })
+    })
+    expect(await response.json()).toEqual({ error: { type: 'invalid_request_error', message } })
+    const remote = await fetch(connection.baseUrl + '/responses', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + connection.token },
+      body: JSON.stringify({ input: 'remote', model: 'fixture-model' })
+    })
+    expect(await remote.json()).toMatchObject({ error: { type: 'upstream_error', status: 400 } })
+    const invalid = await fetch(connection.baseUrl + '/responses', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + connection.token },
+      body: JSON.stringify({ input: 'invalid', model: 'fixture-model', stream: false })
+    })
+    expect(invalid.status).toBe(502)
+    await invalid.json()
+    await flushLogs()
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => projectDiagnosticLog(JSON.parse(line)))
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        scope: 'acp-bridge',
+        event: 'Responses bridge stack overflow',
+        diagnostics: {
+          error: { name: 'RangeError', message, stack: expect.stringContaining('failingTransport') }
+        }
+      })
+    )
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: 'bridge upstream error',
+        diagnostics: {
+          model: 'fixture-model',
+          requestId: 'fixture-123',
+          error: { message },
+          phase: 'upstream-http',
+          status: 400
+        }
+      })
+    )
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: 'bridge upstream error',
+        diagnostics: {
+          model: 'fixture-model',
+          status: 200,
+          requestId: 'gateway-200',
+          phase: 'response',
+          reason: 'invalid_upstream_response'
+        }
+      })
+    )
+    expect(JSON.stringify(records)).not.toContain('private gateway details')
+    expect(JSON.stringify(records)).not.toContain('private prompt')
+  } finally {
+    await bridge.close()
+    await flushLogs()
+    await rm(logDir, { recursive: true, force: true })
+  }
+})
+
+it('exports and returns the same safe provider explanation for HTTP, JSON and stream errors', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'responses-provider-detail-'))
+  initLogger({ logDir: dir, mirrorToConsole: false })
+  const safe = "Unsupported parameter: 'temperature'"
+  const privateTail = 'private@example.test sent PRIVATE_PROMPT using opaque-fixture-key'
+  const payload = { error: { message: safe + '. ' + privateTail, extra: privateTail } }
+  const bridge = new ResponsesToChatCompletionsBridge(
+    { baseUrl: 'https://upstream.test', key: 'opaque-fixture-key' },
+    async (_url, init) => {
+      const request = JSON.parse(String(init?.body))
+      if (request.stream)
+        return new Response('data: ' + JSON.stringify(payload) + '\n\ndata: [DONE]\n\n')
+      return Response.json(payload, { status: request.messages[0].content === 'http' ? 400 : 200 })
+    }
+  )
+  try {
+    const connection = await bridge.start()
+    for (const input of ['http', 'json', 'stream']) {
+      const response = await fetch(connection.baseUrl + '/responses', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + connection.token },
+        body: JSON.stringify({ input, stream: input === 'stream' })
+      })
+      const body = await response.text()
+      expect(body).toContain(safe)
+      expect(body).not.toMatch(/private@example|PRIVATE_PROMPT|opaque-fixture-key/)
+    }
+    await flushLogs()
+    const raw = await readFile(join(dir, 'main.log'), 'utf8')
+    expect(raw).not.toMatch(/private@example|PRIVATE_PROMPT|opaque-fixture-key/)
+    const projected = raw
+      .trim()
+      .split('\n')
+      .map((line) => projectDiagnosticLog(JSON.parse(line)))
+    for (const phase of ['upstream-http', 'response', 'stream']) {
+      expect(projected).toContainEqual(
+        expect.objectContaining({
+          diagnostics: expect.objectContaining({ phase, error: { message: safe } })
+        })
+      )
+    }
+  } finally {
+    await bridge.close()
+    await flushLogs()
+    await rm(dir, { recursive: true, force: true })
+  }
 })

@@ -1,3 +1,8 @@
+import { modelCatalogErrorMessage } from './model-catalog-feedback'
+import type { RefreshProviderModelsResult } from '../../../../shared/settings'
+import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
+import { isDesktopRenderer } from '@/lib/interface-scale'
+import { CodeBuddySignIn } from './CodeBuddySubscriptionRow'
 import { type SettingsEditorLeaveState, SettingsFormFooter } from './SettingsLayout'
 import { dismissSettingsManualUpdateGuide } from './settings-manual-update-guide'
 import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
@@ -13,12 +18,16 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  ArrowUpRight,
+  ScrollText,
+  Users,
   Bell,
   Bot,
   Brain,
   BrainCircuit,
   ChartNoAxesCombined,
   Cloud,
+  FlaskConical,
   Globe,
   KeyRound,
   LockKeyhole,
@@ -66,7 +75,8 @@ import { cn } from '@/lib/utils'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { preloadComputeHosts, useComputeStore } from '@/stores/compute-store'
 import { useMemoryStore } from '@/stores/memory-store'
-import { useNavigationStore } from '@/stores/navigation-store'
+import { ConnectorsNavIcon } from './connector-icons'
+import { useNavigationStore, type ResourceCenterIntent } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import {
@@ -93,8 +103,8 @@ import type { ArchivedView } from '@/lib/settings-navigation'
 import type { MemoryView } from '@/lib/settings-navigation'
 import type { TagsView } from '@/lib/settings-navigation'
 import type { CredentialsView } from '@/lib/settings-navigation'
-import { resolveVendorModelsUrl } from '@aipoch/providers'
 import { ProviderForm } from './ProviderForm'
+import { ProviderKindPicker } from './ProviderKindPicker'
 import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
@@ -200,6 +210,7 @@ const ArchivedPanel = lazy(async () => ({
 const TokenUsagePanel = lazy(async () => ({
   default: (await import('./TokenUsagePanel')).TokenUsagePanel
 }))
+const LabPanel = lazy(async () => ({ default: (await import('./LabPanel')).LabPanel }))
 
 type SettingsPageProps = {
   open: boolean
@@ -218,6 +229,9 @@ type SettingsPageHandle = {
   closeActivePane: () => boolean
 }
 
+const catalogParameterKey = (parameters?: Record<string, string>): string =>
+  JSON.stringify(Object.entries(parameters ?? {}).sort())
+
 // Builds a form value from an existing provider (never carrying the plaintext key).
 const toFormValue = (provider: ProviderView): ProviderFormValue =>
   createEmptyProviderFormValue({
@@ -225,6 +239,9 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
       provider.type === 'codex-shared' || provider.type === 'codex-isolated'
         ? resolveCodexSubscriptionType(provider)
         : provider.type,
+    codeBuddyAuthMode: provider.codeBuddyAuthMode,
+    codeBuddySite:
+      provider.type === 'codebuddy-subscription' ? codeBuddySiteForId(provider.id) : undefined,
     codexTransport: provider.codexTransport ?? 'auto',
     name: provider.name,
     baseUrl: provider.baseUrl ?? '',
@@ -237,7 +254,8 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     reasoningEffortPreset: provider.reasoningEffortPreset ?? 'standard-5',
     reasoningEffortTransport: provider.reasoningEffortTransport ?? 'reasoning-effort',
     vendorId: provider.vendorId,
-    region: provider.region
+    region: provider.region,
+    catalogParameters: provider.catalogParameters
   })
 
 const toUpsertRequest = (
@@ -257,6 +275,7 @@ const toUpsertRequest = (
   reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,
   vendorId: value.vendorId,
   region: value.region,
+  catalogParameters: value.catalogParameters,
   key: value.key || undefined
 })
 
@@ -308,14 +327,18 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
     panels: [
       { id: 'model', labelKey: 'Model', Icon: Brain },
       { id: 'agent', labelKey: 'Agent', Icon: Bot },
+      { id: 'skills', labelKey: 'Skills', Icon: ScrollText },
+      { id: 'specialists', labelKey: 'Specialists', Icon: Users },
       { id: 'memory', labelKey: 'Memory', Icon: BrainCircuit }
     ]
   },
   {
     labelKey: 'Connections',
     panels: [
+      { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'network', labelKey: 'Network', Icon: Globe },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
+      { id: 'lab', labelKey: 'Lab', Icon: FlaskConical },
       { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound },
       { id: 'compute', labelKey: 'Compute', Icon: Zap }
     ]
@@ -526,36 +549,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       setPendingSkillLeave(() => leave)
     } else leave()
   }, [])
-  const openResourceCenterSkill = useCallback(
-    (skillId: string): void => {
+  const currentRoute = history[historyIndex]
+  const openResourceFromSettings = useCallback(
+    (intent: ResourceCenterIntent, onNavigated?: () => void): void => {
       requestLeave(() => {
-        useNavigationStore.getState().openResourceCenter(
+        const navigation = useNavigationStore.getState()
+        navigation.openResourceCenter(
           'user',
-          {
-            resource: 'skills',
-            skillId
-          },
-          onClose
+          { ...intent, settingsOrigin: { view: navigation.view, route: currentRoute } },
+          () => {
+            onClose()
+            onNavigated?.()
+          }
         )
       })
     },
-    [onClose, requestLeave]
-  )
-  const openResourceCenterSpecialist = useCallback(
-    (specialistId: string, kind: 'builtin' | 'edit' = 'edit'): void => {
-      requestLeave(() => {
-        useNavigationStore.getState().openResourceCenter(
-          'user',
-          {
-            resource: 'specialists',
-            specialistId,
-            specialistKind: kind
-          },
-          onClose
-        )
-      })
-    },
-    [onClose, requestLeave]
+    [currentRoute, onClose, requestLeave]
   )
   const requestClose = (): void => requestLeave(onClose)
   const returnFocusRef = useRef<HTMLElement | null>(null)
@@ -593,6 +602,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [providerBase, setProviderBase] = useState<ProviderView>()
   const [isSaving, setIsSaving] = useState(false)
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
+  const [catalogPreview, setCatalogPreview] = useState<{
+    signature: string
+    result: RefreshProviderModelsResult & { refreshFailed?: boolean }
+  }>()
   const [statusMessage, setStatusMessage] = useState<string | undefined>(undefined)
   const [statusOk, setStatusOk] = useState(false)
   const [busyProviderId, setBusyProviderId] = useState<string | undefined>(undefined)
@@ -611,6 +624,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [savedProviderWarning, setSavedProviderWarning] = useState<'reconnect' | 'refresh'>()
   const [connectionResult, setConnectionResult] = useState<ValidateProviderResult>()
   const formOperationGeneration = useRef(0)
+  const catalogOperationGeneration = useRef(0)
   const savingOperation = useRef(false)
 
   // Refresh settings whenever the dialog opens so external changes are reflected.
@@ -656,40 +670,42 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     if (!pendingSettingsIntent || pendingSettingsIntent.requestId === seededIntentId.current) return
     seededIntentId.current = pendingSettingsIntent.requestId
     consumePendingSettingsIntent(pendingSettingsIntent.requestId)
+    const route = pendingSettingsIntent.route
+    if (route.panel === 'skills' || route.panel === 'connectors' || route.panel === 'specialists') {
+      openResourceFromSettings(
+        route.panel === 'connectors'
+          ? { resource: 'connectors', view: route.view }
+          : route.panel === 'skills'
+            ? {
+                resource: 'skills',
+                skillId: route.view.kind === 'detail' ? route.view.id : undefined
+              }
+            : {
+                resource: 'specialists',
+                specialistId: route.view.kind === 'edit' ? route.view.id : undefined
+              }
+      )
+      return
+    }
+    // Returning to the still-mounted route preserves its Back/Forward history.
+    if (route === currentRoute) return
     requestLeave(() => {
-      const route = pendingSettingsIntent.route
-      if (
-        route.panel === 'skills' ||
-        route.panel === 'connectors' ||
-        route.panel === 'specialists'
-      ) {
-        useNavigationStore.getState().openResourceCenter(
-          'user',
-          route.panel === 'connectors'
-            ? { resource: 'connectors', view: route.view }
-            : route.panel === 'skills'
-              ? {
-                  resource: 'skills',
-                  skillId: route.view.kind === 'detail' ? route.view.id : undefined
-                }
-              : {
-                  resource: 'specialists',
-                  specialistId: route.view.kind === 'edit' ? route.view.id : undefined
-                },
-          onClose
-        )
-        return
-      }
       setHistory([route])
       setHistoryIndex(0)
     })
-  }, [consumePendingSettingsIntent, onClose, open, pendingSettingsIntent, requestLeave])
+  }, [
+    consumePendingSettingsIntent,
+    currentRoute,
+    open,
+    openResourceFromSettings,
+    pendingSettingsIntent,
+    requestLeave
+  ])
 
   useEffect(() => {
     if (!open) setPendingSkillLeave(null)
   }, [open])
 
-  const currentRoute = history[historyIndex]
   const activePanel = currentRoute.panel
 
   useEffect(() => {
@@ -797,20 +813,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // navigation values, so comparing the whole route automatically covers fields added later.
   const navigate = (route: SettingsRoute, onNavigated?: () => void): void => {
     if (route.panel === 'skills' || route.panel === 'connectors' || route.panel === 'specialists') {
-      requestLeave(() => {
-        useNavigationStore
-          .getState()
-          .openResourceCenter(
-            'user',
-            route.panel === 'connectors'
-              ? { resource: 'connectors', view: route.view }
-              : { resource: route.panel },
-            () => {
-              onClose()
-              onNavigated?.()
-            }
-          )
-      })
+      openResourceFromSettings(
+        route.panel === 'connectors'
+          ? { resource: 'connectors', view: route.view }
+          : { resource: route.panel },
+        onNavigated
+      )
       return
     }
     if (JSON.stringify(route) === JSON.stringify(currentRoute)) {
@@ -988,13 +996,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   ? t('Ray Jobs')
                   : credentialsView.serviceId === 'github'
                     ? t('GitHub')
-                    : credentialsView.serviceId === 'semantic-scholar'
-                      ? t('Semantic Scholar')
-                      : credentialsView.serviceId === 'openalex'
-                        ? t('OpenAlex')
-                        : credentialsView.serviceId === 'unpaywall'
-                          ? t('Unpaywall')
-                          : t('Literature access')
+                    : credentialsView.serviceId === 'openalex'
+                      ? t('OpenAlex')
+                      : credentialsView.serviceId === 'unpaywall'
+                        ? t('Unpaywall')
+                        : t('Literature access')
       return {
         rootLabelKey: 'Credentials',
         rootTo: { panel: 'credentials', view: { kind: 'list' } },
@@ -1061,9 +1067,23 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
   }))
 
-  // Only create/edit locations open a provider form.
+  // Add provider first shows the kind picker; the form opens once a kind is chosen, or for an edit.
+  const isProviderPickerOpen =
+    activePanel === 'model' && modelView.kind === 'create' && !modelView.providerKindKey
   const isProviderFormOpen =
-    activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')
+    activePanel === 'model' &&
+    ((modelView.kind === 'create' && Boolean(modelView.providerKindKey)) ||
+      modelView.kind === 'edit')
+  // Kinds offered when adding a provider; the picker and the form's type dropdown share them.
+  const createKindAvailability = {
+    codeBuddyProviders:
+      agentFrameworkId === 'codebuddy' && isDesktopRenderer()
+        ? providers.map((provider) => provider.id)
+        : undefined,
+    showCodexSubscriptions:
+      agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent',
+    showClaudeIsolated: agentFrameworkId === 'claude-code'
+  }
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
   // reflected in the form; undefined until the provider is found (or when creating).
   const editingProvider =
@@ -1072,32 +1092,64 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       : undefined
   const providerEditTargetMissing = modelView.kind === 'edit' && editingProvider === undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
-  const formErrors = getProviderFormErrors(formValue, { hasStoredKey: editingProvider?.hasKey })
+  const credentialSource =
+    editingProvider?.type === formValue.type && editingProvider.vendorId === formValue.vendorId
+      ? editingProvider
+      : undefined
+  const regionalCredential =
+    credentialSource?.region === formValue.region ? credentialSource : undefined
+  const parameters = catalogParameterKey(formValue.catalogParameters)
+  const catalogSource =
+    !formValue.key && parameters === catalogParameterKey(regionalCredential?.catalogParameters)
+      ? regionalCredential
+      : undefined
   const providerConflict =
     editingProvider &&
     providerBase &&
     (editingProvider.configRevision ?? 0) !== (providerBase.configRevision ?? 0)
-  const canSave =
+  const canRunProviderOperation =
     !isSaving &&
     !isTestingConnection &&
+    !isRefreshingModels &&
     !providerEditTargetMissing &&
-    !providerConflict &&
-    !hasProviderFormErrors(formErrors)
+    !providerConflict
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
-  // loads). A create pre-selects the official vendor matching the active agent framework. Also
-  // clears any stale status message on entry.
-  const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
+  // loads). A create is seeded from the kind chosen in the picker. Also clears any stale status
+  // message on entry.
+  const modelViewKey =
+    modelView.kind === 'edit'
+      ? `edit:${modelView.providerId}`
+      : modelView.kind === 'create'
+        ? `create:${modelView.providerKindKey ?? ''}`
+        : modelView.kind
+  const catalogSignature = JSON.stringify([
+    modelViewKey,
+    editingProvider && (editingProvider.configRevision ?? 0),
+    formValue.type,
+    formValue.vendorId,
+    formValue.region,
+    parameters,
+    formValue.key
+  ])
+  const visibleCatalogPreview =
+    catalogPreview?.signature === catalogSignature ? catalogPreview.result : undefined
+  const formErrors = getProviderFormErrors(formValue, {
+    hasStoredKey: credentialSource?.hasKey,
+    modelCatalog: visibleCatalogPreview?.catalog ?? catalogSource?.modelCatalog
+  })
+  const canSave = canRunProviderOperation && !hasProviderFormErrors(formErrors)
   const [seededModelView, setSeededModelView] = useState<string | undefined>(modelViewKey)
   if (open && modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
-    if (modelView.kind === 'create') {
+    if (modelView.kind === 'create' && modelView.providerKindKey) {
       const initial = createEmptyProviderFormValue(
-        providerKindPatch(defaultProviderKindKey(agentFrameworkId))
+        providerKindPatch(modelView.providerKindKey, customApiEndpoint)
       )
       setFormValue(initial)
       setProviderDraftBaseline(initial)
+      setProviderBase(undefined)
     } else if (modelView.kind === 'edit') {
       const provider = providers.find((entry) => entry.id === modelView.providerId)
       if (provider) {
@@ -1110,11 +1162,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setStatusMessage(undefined)
   }
 
-  const providerFormDirty = Object.entries({ ...providerDraftBaseline, ...formValue }).some(
-    ([key, value]) =>
-      key !== 'providerFormTouched' &&
-      value !== providerDraftBaseline[key as keyof ProviderFormValue]
-  )
+  const catalogNeedsSave = Boolean(visibleCatalogPreview?.draftToken)
+  const providerFormDirty =
+    catalogNeedsSave ||
+    Object.entries({ ...providerDraftBaseline, ...formValue }).some(
+      ([key, value]) =>
+        key !== 'providerFormTouched' &&
+        (key === 'catalogParameters'
+          ? parameters !== catalogParameterKey(providerDraftBaseline.catalogParameters)
+          : value !== providerDraftBaseline[key as keyof ProviderFormValue])
+    )
   useEffect(() => {
     // This draft shares Settings' existing leave decision; the baseline contains no secret input.
     providerEditorLeaveState.current =
@@ -1130,6 +1187,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setIsSaving(false)
     savingOperation.current = false
   }, [open, historyIndex, formValue])
+
+  // Renaming the provider or editing model settings preserves pending and completed catalog refreshes.
+  useEffect(() => {
+    catalogOperationGeneration.current += 1
+    setIsRefreshingModels(false)
+    setCatalogPreview(undefined)
+  }, [open, historyIndex, catalogSignature])
 
   useEffect(() => {
     // A save can publish its own committed revision before the command returns.
@@ -1148,6 +1212,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     navigate({ panel: 'model', view: { kind: 'create' } })
   }
 
+  const selectProviderKind = (providerKindKey: string): void =>
+    navigate({ panel: 'model', view: { kind: 'create', providerKindKey } })
+
+  // Return to the picker the user came from, keeping history linear; otherwise open a fresh one.
+  const navigateModel = (view: ModelView): void => {
+    const route: SettingsRoute = { panel: 'model', view }
+    const returningToPicker =
+      view.kind === modelView.kind &&
+      ((view.kind === 'create' && !view.providerKindKey) ||
+        (view.kind === 'image-service-create' && !view.vendorId))
+    if (returningToPicker && JSON.stringify(history[historyIndex - 1]) === JSON.stringify(route))
+      goBack()
+    else navigate(route)
+  }
+
   const openEdit = (provider: ProviderView): void => {
     postSaveValidationGeneration.current += 1
     postSaveValidationProviderId.current = undefined
@@ -1157,9 +1236,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   }
 
   const closeForm = (): void => navigate({ panel: 'model', view: { kind: 'list' } })
+  const finishProviderForm = (): void => {
+    // The completed write has settled this draft. It must not prompt or honor an older leave request.
+    providerEditorLeaveState.current = null
+    skillLeaveReturnFocus.current = null
+    setPendingSkillLeave(null)
+    closeForm()
+  }
   const canTestConnection = formValue.type === 'custom' || formValue.type === 'official'
   const prospectiveRequest = (): UpsertProviderRequest => ({
     ...toUpsertRequest(formValue, editingProvider?.id),
+    catalogDraftToken: visibleCatalogPreview?.draftToken,
     ...(modelView.kind === 'edit'
       ? { requireExisting: true, expectedConfigRevision: providerBase?.configRevision ?? 0 }
       : {})
@@ -1236,11 +1323,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             })
         }
       }
-      // The completed write has settled this draft. It must not prompt or honor an older leave request.
-      providerEditorLeaveState.current = null
-      skillLeaveReturnFocus.current = null
-      setPendingSkillLeave(null)
-      closeForm()
+      finishProviderForm()
     } catch (error) {
       if (generation !== formOperationGeneration.current) return
       setStatusOk(false)
@@ -1257,33 +1340,60 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
   }
 
-  // Pulls the vendor's live model list for the provider being edited; on success the form's tags and
-  // the model selectors reflect it. On failure the bundled catalog stays in place.
-  const handleRefreshModels = async (providerId: string): Promise<void> => {
+  // Refresh a saved provider in place when the form is unchanged. Unsaved edits still use a draft
+  // snapshot so a failed or cancelled refresh cannot write over the provider being edited.
+  const handleRefreshModels = async (): Promise<void> => {
+    if (!canRunProviderOperation) return
+    const generation = ++catalogOperationGeneration.current
     setIsRefreshingModels(true)
-    setStatusMessage(undefined)
-
+    const refreshSavedProvider =
+      modelView.kind === 'edit' && Boolean(editingProvider?.id) && !providerFormDirty
     try {
-      const result = await refreshProviderModels(providerId)
-
-      setStatusOk(result.ok)
-      setStatusMessage(
-        result.ok
-          ? t('Loaded {{count}} models from the vendor.', {
-              defaultValue_one: 'Loaded {{count}} model from the vendor.',
-              count: result.models?.length ?? 0
-            })
-          : t("Couldn't fetch models: {{reason}}. Using the bundled list.", {
-              reason: result.message
-                ? localizeProviderResourceMessage(result.message, t)
-                : t('request failed')
-            })
+      const savedTarget = editingProvider
+        ? {
+            providerId: editingProvider.id,
+            expectedConfigRevision: providerBase?.configRevision ?? 0
+          }
+        : {}
+      const result = await refreshProviderModels(
+        refreshSavedProvider
+          ? savedTarget
+          : {
+              ...savedTarget,
+              draft: {
+                ...toUpsertRequest(formValue, editingProvider?.id),
+                catalogDraftToken: visibleCatalogPreview?.draftToken
+              }
+            }
       )
+      if (generation !== catalogOperationGeneration.current) return
+      if (refreshSavedProvider && result.ok && !result.refreshFailed) {
+        setCatalogPreview(undefined)
+      } else {
+        setCatalogPreview({
+          signature: catalogSignature,
+          result: result.ok
+            ? result
+            : {
+                ...result,
+                catalog: result.catalog ?? visibleCatalogPreview?.catalog,
+                draftToken: result.draftToken ?? visibleCatalogPreview?.draftToken
+              }
+        })
+      }
     } catch {
-      setStatusOk(false)
-      setStatusMessage(t('Could not refresh models from the vendor.'))
+      if (generation === catalogOperationGeneration.current)
+        setCatalogPreview({
+          signature: catalogSignature,
+          result: {
+            ok: false,
+            category: 'unknown',
+            catalog: visibleCatalogPreview?.catalog,
+            draftToken: visibleCatalogPreview?.draftToken
+          }
+        })
     } finally {
-      setIsRefreshingModels(false)
+      if (generation === catalogOperationGeneration.current) setIsRefreshingModels(false)
     }
   }
 
@@ -1465,6 +1575,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                                     aria-hidden="true"
                                   />
                                   <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
+                                  {(id === 'skills' ||
+                                    id === 'specialists' ||
+                                    id === 'connectors') && (
+                                    <ArrowUpRight
+                                      className="size-3.5 shrink-0"
+                                      aria-hidden="true"
+                                    />
+                                  )}
                                 </button>
                               </li>
                             )
@@ -1728,7 +1846,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           onSelectedTagChange={recordSelectedTag}
                           onOpenResource={(reference) => {
                             if (reference.resourceType === 'catalog.skill') {
-                              openResourceCenterSkill(reference.resourceId)
+                              openResourceFromSettings({
+                                resource: 'skills',
+                                skillId: reference.resourceId
+                              })
                               return
                             }
                             if (reference.resourceType === 'catalog.connector') {
@@ -1756,10 +1877,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             const specialist = specialistItems.find(
                               (item) => item.id === reference.resourceId
                             )
-                            openResourceCenterSpecialist(
-                              reference.resourceId,
-                              specialist?.kind === 'builtin' ? 'builtin' : 'edit'
-                            )
+                            openResourceFromSettings({
+                              resource: 'specialists',
+                              specialistId: reference.resourceId,
+                              specialistKind: specialist?.kind === 'builtin' ? 'builtin' : 'edit'
+                            })
                           }}
                         />
                       </>
@@ -1873,6 +1995,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       <NotificationsPanel />
                     ) : activePanel === 'remote-control' ? (
                       <RemoteControlPanel />
+                    ) : activePanel === 'lab' ? (
+                      <LabPanel />
                     ) : activePanel === 'agent' ? (
                       <AgentPanel
                         title={t('Agent framework')}
@@ -1884,7 +2008,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       // Add/edit provider is a secondary page reached via the shared back/forward arrows.
                       <div className="p-5">
                         {/* Secret writes fail closed when the OS keychain is unavailable. */}
-                        {!encryptionAvailable ? (
+                        {!encryptionAvailable && formValue.type !== 'codebuddy-subscription' ? (
                           <ErrorNotice
                             inline
                             role="alert"
@@ -1974,50 +2098,80 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             </Button>
                           </ErrorNotice>
                         ) : null}
+                        {visibleCatalogPreview?.refreshFailed ? (
+                          <ErrorNotice
+                            inline
+                            role="alert"
+                            tone="amber"
+                            description={t(
+                              'Model list saved. The latest settings could not be loaded.'
+                            )}
+                            primaryButton={{
+                              label: t('Retry'),
+                              onClick: async () => {
+                                const generation = catalogOperationGeneration.current
+                                if (
+                                  (await load()) &&
+                                  generation === catalogOperationGeneration.current
+                                )
+                                  setCatalogPreview(undefined)
+                              }
+                            }}
+                          />
+                        ) : null}
                         <ProviderForm
                           key={`${modelViewKey}:${providerBase?.configRevision ?? 'draft'}`}
                           value={formValue}
                           onChange={(patch) =>
                             setFormValue((current) => ({ ...current, ...patch }))
                           }
-                          hasStoredKey={editingProvider?.hasKey}
-                          maskedKey={editingProvider?.maskedKey}
-                          needsKey={editingProvider?.needsKey}
+                          hasStoredKey={credentialSource?.hasKey}
+                          catalogHasStoredKey={Boolean(regionalCredential?.hasKey)}
+                          maskedKey={credentialSource?.maskedKey}
+                          needsKey={credentialSource?.needsKey && !formValue.key.trim()}
                           errors={formErrors}
-                          supportedModels={
-                            editingProvider?.type === formValue.type &&
-                            editingProvider?.vendorId === formValue.vendorId &&
-                            editingProvider?.region === formValue.region
-                              ? editingProvider?.models
-                              : undefined
-                          }
+                          supportedModels={catalogSource?.models}
                           onRefreshModels={
-                            editingProvider?.type === 'official' &&
-                            editingProvider.hasKey &&
-                            editingProvider.vendorId &&
-                            resolveVendorModelsUrl(editingProvider.vendorId, editingProvider.region)
-                              ? () => void handleRefreshModels(editingProvider.id)
+                            canRunProviderOperation ? handleRefreshModels : undefined
+                          }
+                          modelCatalog={
+                            visibleCatalogPreview?.catalog ?? catalogSource?.modelCatalog
+                          }
+                          modelCatalogStatus={
+                            visibleCatalogPreview?.catalogStatus ??
+                            catalogSource?.modelCatalogStatus
+                          }
+                          catalogNeedsSave={catalogNeedsSave}
+                          catalogError={
+                            visibleCatalogPreview && !visibleCatalogPreview.ok
+                              ? modelCatalogErrorMessage(visibleCatalogPreview.code, t)
                               : undefined
                           }
                           isRefreshingModels={isRefreshingModels}
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
-                          showCodexSubscriptions={
-                            (agentFrameworkId === 'codex' ||
-                              agentFrameworkId === 'open-science-agent') &&
+                          {...(modelView.kind === 'create' ? createKindAvailability : {})}
+                          onChangeProviderKind={
                             modelView.kind === 'create'
-                          }
-                          showClaudeIsolated={
-                            agentFrameworkId === 'claude-code' && modelView.kind === 'create'
+                              ? () => navigateModel({ kind: 'create' })
+                              : undefined
                           }
                           defaultCustomApiEndpoint={customApiEndpoint}
                           framework={activeFramework}
                         />
                       </div>
+                    ) : isProviderPickerOpen ? (
+                      <div className="p-5">
+                        <ProviderKindPicker
+                          {...createKindAvailability}
+                          recommendedKey={defaultProviderKindKey(agentFrameworkId)}
+                          onSelect={selectProviderKind}
+                        />
+                      </div>
                     ) : (
                       <ModelPanel
                         view={modelView}
-                        navigate={(view) => navigate({ panel: 'model', view })}
+                        navigate={navigateModel}
                         local={modelView.kind === 'local-models'}
                         onChange={(local) =>
                           navigate({
@@ -2090,34 +2244,49 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       description={statusMessage}
                     />
                   ) : null}
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      {canTestConnection ? (
+                  {formValue.type === 'codebuddy-subscription' && formValue.codeBuddySite ? (
+                    <CodeBuddySignIn
+                      key={formValue.codeBuddySite + (formValue.codeBuddyAuthMode ?? 'isolated')}
+                      mode={formValue.codeBuddyAuthMode ?? 'isolated'}
+                      site={formValue.codeBuddySite}
+                      onAdded={finishProviderForm}
+                      onCancel={closeForm}
+                    />
+                  ) : (
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        {canTestConnection ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={!canSave}
+                            onClick={() => void handleTestConnection()}
+                          >
+                            {isTestingConnection ? (
+                              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                            ) : null}
+                            {isTestingConnection ? t('Testing…') : t('Test connection')}
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div className="flex gap-2">
                         <Button
                           type="button"
-                          variant="outline"
-                          disabled={!canSave}
-                          onClick={() => void handleTestConnection()}
+                          variant="ghost"
+                          onClick={closeForm}
+                          disabled={isSaving}
                         >
-                          {isTestingConnection ? (
+                          {t('Cancel')}
+                        </Button>
+                        <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
+                          {isSaving ? (
                             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                           ) : null}
-                          {isTestingConnection ? t('Testing…') : t('Test connection')}
+                          {isSaving ? t('Saving…') : t('Save')}
                         </Button>
-                      ) : null}
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button type="button" variant="ghost" onClick={closeForm} disabled={isSaving}>
-                        {t('Cancel')}
-                      </Button>
-                      <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-                        {isSaving ? (
-                          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                        ) : null}
-                        {isSaving ? t('Saving…') : t('Save')}
-                      </Button>
-                    </div>
-                  </div>
+                  )}
                 </SettingsFormFooter>
               ) : null}
             </div>

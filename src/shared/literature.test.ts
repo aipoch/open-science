@@ -20,6 +20,107 @@ import {
 } from './literature-attachment-reference'
 import { literatureApplicationCommandContracts } from './literature'
 
+describe('Temporary citation exploration command contract', () => {
+  it.each(['skg-if', 'index'] as const)(
+    'preserves an explicit OpenCitations %s session mode',
+    (opencitationsMode) => {
+      const request = {
+        itemId: 'saved-root',
+        expectedMetadataRevision: 7,
+        direction: 'citations',
+        provider: 'opencitations',
+        opencitationsMode,
+        resolutionToken: '00000000-0000-4000-8000-000000000001',
+        seedPaperId: 'opencitations:br/062203052290',
+        offset: 20
+      }
+      expect(literatureApplicationCommandContracts.related.args.parse([request])).toEqual([request])
+      for (const provider of [undefined, 'auto', 'unknown-source', 'europe-pmc']) {
+        expect(() =>
+          literatureApplicationCommandContracts.related.args.parse([{ ...request, provider }])
+        ).toThrow()
+      }
+      expect(() =>
+        literatureApplicationCommandContracts.related.args.parse([
+          { ...request, opencitationsMode: 'other' }
+        ])
+      ).toThrow()
+    }
+  )
+  it.each([
+    ['europe-pmc', 'europe-pmc:MED:10647931'],
+    ['europe-pmc', 'europe-pmc:PMC:PMC3690193'],
+    ['opencitations', 'opencitations:br/06180349574']
+  ] as const)(
+    'preserves the explicit %s provider and its temporary identity',
+    (provider, seedPaperId) => {
+      const request = {
+        itemId: 'saved-root',
+        expectedMetadataRevision: 7,
+        direction: 'citations',
+        provider,
+        resolutionToken: '00000000-0000-4000-8000-000000000001',
+        seedPaperId,
+        offset: 20
+      }
+      expect(literatureApplicationCommandContracts.related.args.parse([request])).toEqual([request])
+      expect(() =>
+        literatureApplicationCommandContracts.related.args.parse([
+          { ...request, provider: 'unknown-source' }
+        ])
+      ).toThrow()
+      expect(() =>
+        literatureApplicationCommandContracts.related.args.parse([
+          { ...request, seedPaperId: 'europe-pmc:MED:../paper' }
+        ])
+      ).toThrow()
+      for (const seedPaperId of [
+        'opencitations:br/../1',
+        'opencitations:ra/123',
+        'opencitations:br/123?x=1'
+      ])
+        expect(() =>
+          literatureApplicationCommandContracts.related.args.parse([{ ...request, seedPaperId }])
+        ).toThrow()
+    }
+  )
+  it.each([
+    { provider: 'unknown-source' },
+    { provider: 'europe-pmc', seedPaperId: 'b'.repeat(40) }
+  ])('rejects unsupported citation source identities: %j', (removed) => {
+    expect(() =>
+      literatureApplicationCommandContracts.related.args.parse([
+        {
+          itemId: 'saved-root',
+          expectedMetadataRevision: 7,
+          direction: 'references',
+          offset: 0,
+          ...removed
+        }
+      ])
+    ).toThrow()
+  })
+  it('retains the saved root and resolution token when selecting an unsaved center', () => {
+    const request = {
+      itemId: 'saved-root',
+      expectedMetadataRevision: 7,
+      direction: 'citations',
+      resolutionToken: '00000000-0000-4000-8000-000000000001',
+      seedPaperId: 'europe-pmc:MED:31020319',
+      offset: 0
+    }
+    expect(literatureApplicationCommandContracts.related.args.parse([request])).toEqual([request])
+    expect(() =>
+      literatureApplicationCommandContracts.related.args.parse([
+        { ...request, seedPaperId: '../paper' }
+      ])
+    ).toThrow()
+    expect(() =>
+      literatureApplicationCommandContracts.related.args.parse([{ ...request, itemId: '' }])
+    ).toThrow()
+  })
+})
+
 describe('Literature identifier draft lookup contract', () => {
   it('accepts a DOI and rejects URLs, malformed identifiers, and oversized arguments', () => {
     const { args } = literatureApplicationCommandContracts.lookupMetadata

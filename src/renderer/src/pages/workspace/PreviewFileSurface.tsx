@@ -101,7 +101,11 @@ import {
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import { getFileExtension } from './preview-support'
 import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
-import type { ActivePdfTranslation, PreviewInteractionPort } from './previews/preview-types'
+import type {
+  ActivePdfTranslation,
+  PreviewImageEditAction,
+  PreviewInteractionPort
+} from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 import { ManagedVersionDiffError } from './ManagedVersionDiffError'
 import { PreviewProvenanceSplit } from './PreviewProvenanceSplit'
@@ -292,7 +296,8 @@ const PreviewFileHeader = ({
   pdfContextAction,
   saveAsArtifactState,
   managedDownload,
-  imageEditorVersionId
+  imageEditorVersionId,
+  imageEditAction
 }: Pick<
   PreviewFileSurfaceProps,
   | 'item'
@@ -313,6 +318,7 @@ const PreviewFileHeader = ({
   saveAsArtifactState: SaveAsArtifactState
   managedDownload: ManagedFileDownloadController
   imageEditorVersionId?: string
+  imageEditAction?: PreviewImageEditAction
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const previewActions = usePreviewActions()
@@ -527,6 +533,30 @@ const PreviewFileHeader = ({
                     <TooltipContent className={tooltipClassName}>
                       {t('Open in browser')}
                     </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
+              {imageEditAction ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        data-testid="preview-edit-image"
+                        className={`${previewHeaderActionClassName} motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:duration-200 motion-reduce:animate-none`}
+                        disabled={imageEditAction.disabled}
+                        aria-label={t('Edit image')}
+                        onFocus={(event) => {
+                          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                        }}
+                        onClick={imageEditAction.execute}
+                      >
+                        <Pencil aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className={tooltipClassName}>{t('Edit image')}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               ) : null}
@@ -779,6 +809,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       leaveGuardScope,
       workbenchConnected = false,
       retryResolutionEnabled = true,
+      imageEditPresentation,
       onItemChange,
       activeAnnotations,
       onAddAnnotation,
@@ -966,6 +997,13 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     )
     const imageEditorItem =
       imageEditorSelection?.key === previewContentKey ? imageEditorSelection.item : undefined
+    const [imageEditAction, setImageEditAction] = useState<PreviewImageEditAction>()
+    const reportImageEditAction = useCallback(
+      (action: PreviewImageEditAction | undefined): void => {
+        setImageEditAction(action)
+      },
+      []
+    )
     const canShowProvenance = Boolean(
       (imageEditorItem ?? previewItem).source !== 'upload' &&
       (imageEditorItem ?? previewItem).artifactId &&
@@ -1590,6 +1628,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
     }
 
     const selectProvenanceVersion = (nextItem: PreviewFileItem): boolean => {
+      if (imageEditorItem) return true
       return applyVersionItem(nextItem, false, () => finishVersionSelection(false))
     }
 
@@ -2288,6 +2327,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                 saveAsArtifactState={saveAsArtifactState}
                 managedDownload={managedDownload}
                 imageEditorVersionId={imageEditorItem?.selectedVersionId}
+                imageEditAction={
+                  mode === 'view' && !provenanceFocused ? imageEditAction : undefined
+                }
                 provenanceEntry={provenanceEntry}
                 onOpenProvenance={openProvenance}
                 onViewInContext={canViewInContext ? viewInContext : undefined}
@@ -2602,8 +2644,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                             ? (provenanceTab) => updateFileView({ provenanceTab })
                             : undefined
                         }
-                        lockVersion={Boolean(imageEditorItem)}
                         onVersionChange={selectProvenanceVersion}
+                        preserveVersionSelection={Boolean(imageEditorItem)}
                         tooltipClassName={tooltipClassName}
                         initialTab={
                           provenanceTarget?.surfaceKey === surfaceKey
@@ -2751,6 +2793,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                     managedWorkflow.isSelectedSourceText ? (
                       renderContent ? (
                         <PreviewFileContent
+                          imageEditPresentation={imageEditPresentation}
+                          onImageEditActionChange={reportImageEditAction}
                           key={previewContentKey}
                           item={contentItem}
                           downloadVersionContext={managedWorkflow.downloadVersionContext}
@@ -2814,6 +2858,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                       onReject={() => void pptxDraft.reject()}
                     >
                       <PreviewFileContent
+                        imageEditPresentation={imageEditPresentation}
+                        onImageEditActionChange={reportImageEditAction}
                         key={previewContentKey}
                         item={contentItem}
                         docxVersionNavigation={docxVersionNavigation}

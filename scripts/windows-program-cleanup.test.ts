@@ -1,9 +1,18 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  truncateSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { SETTINGS_RESOURCE_LIMITS } from '../src/main/settings/settings-resource-limits'
 
 const powershell = join(
   process.env.SystemRoot || 'C:\\Windows',
@@ -52,6 +61,10 @@ function cleanupCommand(
   return `& ${quote(executable)} program-cleanup --staging-path ${quote(stage)} --report ${quote(report)}${upgrade ? ' --upgrade' : ''}; exit $LASTEXITCODE`
 }
 
+function diagnosticsCommand(action: 'record' | 'finalize', options: string): string {
+  return `& ${quote(helper)} diagnostics --action ${action} ${options}`
+}
+
 function compileInjectedHelper(fixture: string, source: string): string {
   const injectedSource = join(fixture, 'injected.cs')
   writeFileSync(injectedSource, source)
@@ -63,6 +76,40 @@ function compileInjectedHelper(fixture: string, source: string): string {
 }
 
 describe.skipIf(process.platform !== 'win32')('Windows program cleanup diagnostics', () => {
+  it('protects the configured data root in large settings and rejects oversized documents', () => {
+    const install = join(root, 'open-science')
+    const dataRoot = join(install, 'resources', 'research')
+    mkdirSync(dataRoot, { recursive: true })
+    const settings = join(root, 'settings.json')
+    const output = join(root, 'protected-paths.txt')
+    const resolvePaths = (): SpawnSyncReturns<string> =>
+      spawnSync(
+        helper,
+        [
+          'program-data-paths',
+          '--install-path',
+          install,
+          '--output',
+          output,
+          '--max-line-length',
+          '8192'
+        ],
+        { env: { ...process.env, OPEN_SCIENCE_E2E_STORAGE_ROOT: root }, encoding: 'utf8' }
+      )
+    writeFileSync(
+      settings,
+      JSON.stringify({ version: 2, providers: [], dataRoot }).padEnd(2 ** 21 + 1)
+    )
+    const resolved = resolvePaths()
+    expect(resolved.status, resolved.stderr).toBe(0)
+    expect(readFileSync(output, 'utf16le').split('\r\n')).toEqual(['', '', dataRoot, dataRoot, ''])
+
+    truncateSync(settings, SETTINGS_RESOURCE_LIMITS.documentBytes + 1)
+    const oversized = resolvePaths()
+    expect(oversized.status, oversized.stderr).toBe(2)
+    expect(oversized.stderr).toContain(String(SETTINGS_RESOURCE_LIMITS.documentBytes))
+  })
+
   it('continues an upgrade after a controlled lock is released during the first retry wait', () => {
     const stage = join(root, 'transient-stage')
     mkdirSync(stage)
@@ -311,7 +358,10 @@ exit $code`)
       ])
     )
     const finalized = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(report)} -LogDirectory ${quote(join(root, 'unreadable-logs'))} -ExitCode 2`
+      diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --log-directory ${quote(join(root, 'unreadable-logs'))} --exit-code 2`
+      )
     )
     expect(finalized.status, String(finalized.stderr)).toBe(0)
     const message = finalized.stdout.toString('utf16le')
@@ -321,7 +371,10 @@ exit $code`)
     expect(message).toContain('contact support before removing them')
     expect(message).not.toContain('An application file is in use.')
     const restored = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action record -ReportPath ${quote(report)} -MoveBack succeeded; & ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(report)} -LogDirectory ${quote(join(root, 'unreadable-logs'))} -ExitCode 2`
+      `${diagnosticsCommand('record', `--report-path ${quote(report)} --move-back succeeded`)}; ${diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --log-directory ${quote(join(root, 'unreadable-logs'))} --exit-code 2`
+      )}`
     )
     expect(restored.status, String(restored.stderr)).toBe(0)
     const restoredMessage = restored.stdout.toString('utf16le')
@@ -396,10 +449,12 @@ exit $code`)
         ]
       })
     )
-    const diagnostics = resolve('build/windows-install-diagnostics.ps1')
     const saved = join(root, 'saved-logs')
     const result = run(
-      `& ${quote(diagnostics)} -Action record -ReportPath ${quote(report)} -MoveBack succeeded; & ${quote(diagnostics)} -Action finalize -ReportPath ${quote(report)} -ReportsDirectory ${quote(reports)} -LogDirectory ${quote(saved)} -ExitCode 2 -AppVersion 1.2.0 -Language 1033`
+      `${diagnosticsCommand('record', `--report-path ${quote(report)} --move-back succeeded`)}; ${diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --reports-directory ${quote(reports)} --log-directory ${quote(saved)} --exit-code 2 --app-version 1.2.0 --language 1033`
+      )}`
     )
     expect(result.status, String(result.stderr)).toBe(0)
     const message = result.stdout.toString('utf16le')
@@ -433,7 +488,10 @@ exit $code`)
     const blockedLogDirectory = join(root, 'not-a-directory')
     writeFileSync(blockedLogDirectory, 'preserve')
     const result = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(report)} -LogDirectory ${quote(blockedLogDirectory)} -ExitCode 2`
+      diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(report)} --log-directory ${quote(blockedLogDirectory)} --exit-code 2`
+      )
     )
     expect(result.status, String(result.stderr)).toBe(0)
     const message = result.stdout.toString('utf16le')
@@ -494,7 +552,10 @@ exit $code`)
 
   it('uses the selected installer language and Pro branding for a missing final report', () => {
     const result = run(
-      `& ${quote(resolve('build/windows-install-diagnostics.ps1'))} -Action finalize -ReportPath ${quote(join(root, 'missing.json'))} -LogDirectory ${quote(join(root, 'localized-log'))} -Language 2052 -ProductName 'Open-Science Pro' -ExitCode 2`
+      diagnosticsCommand(
+        'finalize',
+        `--report-path ${quote(join(root, 'missing.json'))} --log-directory ${quote(join(root, 'localized-log'))} --language 2052 --product-name ${quote('Open-Science Pro')} --exit-code 2`
+      )
     )
     expect(result.status, String(result.stderr)).toBe(0)
     const message = result.stdout.toString('utf16le')
@@ -592,7 +653,7 @@ SectionEnd`
         const parent = compile(
           'parent',
           `
-!include "${resolve('build/windows-install-diagnostics.nsh')}"
+!include "${resolve('build/windows-program-cleanup.nsh')}"
 ${outcome === 'visible-failed' ? 'SilentInstall normal' : ''}
 Function .onInit
 InitPluginsDir
@@ -611,9 +672,11 @@ FileOpen $8 "${resultFile}" w
 FileWrite $8 "$R0"
 FileClose $8
 ${!recovered ? "System::Call 'kernel32::CloseHandle(p R6)'" : ''}
-\${if} $R0 != 0
+${outcome === 'missing-child-report' ? 'StrCpy $R0 "launch-failed"' : ''}
+${outcome === 'missing-child-report' ? '${if} $R0 == "launch-failed"' : '${if} $R0 != 0'}
 Call showCleanupFailure
-CopyFiles /SILENT "$installDiagnosticMessagePath" "${join(fixture, 'notice.txt')}"
+CopyFiles /SILENT "$installDiagnosticMessagePath" "${fixture}"
+Rename "${join(fixture, 'cleanup-notice.txt')}" "${join(fixture, 'notice.txt')}"
 SetErrorLevel 2
 Quit
 \${endif}
@@ -724,6 +787,9 @@ $start=[Diagnostics.ProcessStartInfo]::new(${quote(parent)}); $start.UseShellExe
         if (recovered) {
           expect(readdirSync(fixture)).not.toContain('logs')
         } else {
+          const notice = readFileSync(join(fixture, 'notice.txt'), 'utf16le')
+          expect(notice).toContain('Diagnostic:')
+          expect(notice).not.toContain('The diagnostic could not be saved.')
           const logs = readdirSync(logDirectory)
           expect(logs).toHaveLength(1)
           const diagnostic = readFileSync(join(logDirectory, logs[0]), 'utf8')

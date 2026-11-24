@@ -5,7 +5,7 @@ import {
   type ConfiguredModelCatalogEntry,
   type ConfiguredModelInventoryEntry
 } from './configured-model-catalog'
-import { customProviderRequiresKey } from './provider-url-policy'
+import { providerAllowsAnonymousAccess } from './provider-url-policy'
 import {
   isCodexSubscriptionProviderId,
   providerValidationFailed,
@@ -24,7 +24,7 @@ export function pdfTranslationAgentModels(
       provider.needsKey ||
       ((provider.type === 'custom' || provider.type === 'official') &&
         !provider.hasKey &&
-        (provider.type === 'official' || customProviderRequiresKey(provider.baseUrl)))
+        !providerAllowsAnonymousAccess(provider))
     const subscriptionUnsupported =
       input.frameworkId === 'codex' && isCodexSubscriptionProviderId(entry.providerId)
     return {
@@ -62,13 +62,12 @@ export function pdfTranslationApiModels(
     (provider) =>
       isPdfTranslationApiProvider(provider) &&
       !provider.needsKey &&
-      (provider.hasKey ||
-        (provider.type === 'custom' && !customProviderRequiresKey(provider.baseUrl))) &&
+      (provider.hasKey || providerAllowsAnonymousAccess(provider)) &&
       (provider.type === 'official' || Boolean(provider.baseUrl?.trim()))
   )
   return buildConfiguredModelInventory({ providers: eligible }).filter((entry) => {
     const provider = eligible.find((value) => value.id === entry.providerId)!
-    const endpoints = configuredModelApiEndpoints(provider, entry.model)
+    const endpoints = configuredModelApiEndpoints(provider, entry.metadata)
     const endpoint = endpoints.includes('chat-completions')
       ? 'chat-completions'
       : endpoints.includes('messages')

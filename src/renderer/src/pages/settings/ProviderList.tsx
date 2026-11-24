@@ -1,3 +1,6 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../../shared/agent-framework-id'
+import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
+import { CodeBuddySubscriptionRow } from './CodeBuddySubscriptionRow'
 import type { TFunction } from 'i18next'
 import {
   CircleCheck,
@@ -45,7 +48,7 @@ import {
 import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
 import { providerKindKey } from './provider-form-value'
 import { ProviderKindIcon } from './provider-icons'
-import { SettingsIconAction } from './SettingsLayout'
+import { SettingsIconAction, SettingsListCard } from './SettingsLayout'
 import { localizeProviderResourceMessage } from './validation-message'
 
 type ProviderListProps = {
@@ -151,7 +154,7 @@ const ProviderList = ({
   providers,
   activeProviderId,
   activeModel,
-  agentFrameworkId = 'claude-code',
+  agentFrameworkId = DEFAULT_AGENT_FRAMEWORK_ID,
   frameworkEndpoints = DEFAULT_FRAMEWORK_ENDPOINTS,
   frameworkName,
   claudeSubscriptionProviderId,
@@ -220,6 +223,17 @@ const ProviderList = ({
     <TooltipProvider delayDuration={200}>
       <ul className="space-y-2">
         {displayedProviders.map((provider) => {
+          if (provider.type === 'codebuddy-subscription') {
+            const site = codeBuddySiteForId(provider.id)
+            return site ? (
+              <CodeBuddySubscriptionRow
+                key={provider.id}
+                site={site}
+                provider={provider}
+                onDelete={() => onDelete(provider)}
+              />
+            ) : null
+          }
           const isActiveSource = provider.id === activeProviderId
           const isBusy = provider.id === busyProviderId
           const validationScope = providerValidationRoute(provider, agentFrameworkId)
@@ -285,171 +299,166 @@ const ProviderList = ({
             : undefined
 
           return (
-            <li
+            <SettingsListCard
               key={provider.id}
-              data-slot="settings-list-row"
-              className="rounded-lg border border-border bg-card p-3"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {provider.name}
+              name={provider.name}
+              badge={
+                <>
+                  <ProviderKindIcon
+                    kindKey={providerKindKey(provider.type, provider.vendorId)}
+                    className="size-3"
+                  />
+                  {describeType(provider, t)}
+                </>
+              }
+              indicators={
+                <>
+                  {!isCodexSubscription ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                          aria-label={t('Speaks the {{protocol}}', { protocol: endpoint.full })}
+                        >
+                          <Route className="size-3" strokeWidth={2} aria-hidden="true" />
+                          {endpoint.path}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {t('Speaks the {{protocol}}', { protocol: endpoint.full })}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
+                  {frameworkIncompatible ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                          aria-label={incompatibilityMessage}
+                        >
+                          <TriangleAlert className="size-3" strokeWidth={2} aria-hidden="true" />
+                          {t('Not usable with {{framework}}', { framework: frameworkLabel })}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{incompatibilityMessage}</TooltipContent>
+                    </Tooltip>
+                  ) : null}
+                  {isBusy ? (
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {t('Testing…')}
                     </span>
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      <ProviderKindIcon
-                        kindKey={providerKindKey(provider.type, provider.vendorId)}
-                        className="size-3"
-                      />
-                      {describeType(provider, t)}
-                    </span>
-                    {!isCodexSubscription ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                            aria-label={t('Speaks the {{protocol}}', { protocol: endpoint.full })}
-                          >
-                            <Route className="size-3" strokeWidth={2} aria-hidden="true" />
-                            {endpoint.path}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          {t('Speaks the {{protocol}}', { protocol: endpoint.full })}
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : null}
-                    {frameworkIncompatible ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground"
-                            aria-label={incompatibilityMessage}
-                          >
-                            <TriangleAlert className="size-3" strokeWidth={2} aria-hidden="true" />
-                            {t('Not usable with {{framework}}', { framework: frameworkLabel })}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>{incompatibilityMessage}</TooltipContent>
-                      </Tooltip>
-                    ) : null}
-                    {isBusy ? (
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {t('Testing…')}
-                      </span>
-                    ) : failure ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            className="inline-flex shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
-                            aria-label={describeValidationFailure(failure, t)}
-                          >
-                            <TriangleAlert
-                              className="size-3.5"
-                              strokeWidth={2}
-                              aria-hidden="true"
-                            />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>{describeValidationFailure(failure, t)}</TooltipContent>
-                      </Tooltip>
-                    ) : isVerified ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            className="inline-flex shrink-0 text-emerald-500"
-                            aria-label={t('Connection verified')}
-                          >
-                            <CircleCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>{t('Connection verified')}</TooltipContent>
-                      </Tooltip>
-                    ) : null}
-                  </div>
-                  <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                    {codexSubscriptionType === 'codex-shared' ? (
-                      <div>{t('Authentication imported into Open-Science')}</div>
-                    ) : codexSubscriptionType === 'codex-isolated' ? (
-                      <div>{t('Codex login stored separately by Open-Science')}</div>
-                    ) : provider.type === 'claude-isolated' && isClaudeIsolatedLoginPending ? (
-                      // Browser sign-in in flight. `claude setup-token` opens the browser itself and
-                      // waits on a localhost callback; when the browser fails to open it stays silent
-                      // (no fallback URL), so tell the user the escape hatch up front: cancel and paste
-                      // a setup token instead. Without this line a stuck login looks like a hang.
-                      <div>
-                        {t(
-                          "Opening your browser to sign in… Didn't open? Cancel and use a setup token."
-                        )}
-                      </div>
-                    ) : provider.type === 'claude-isolated' ? (
-                      // The Claude subscription card carries an OAuth token, so we surface the masked
-                      // hint the same way custom/official providers do (no Keychain leak). The
-                      // signed in / signed out framing belongs to the card icon, not this line. The
-                      // "Expires" line is the issue #347 requirement to make the one-year
-                      // setup-token lifetime visible on the card.
-                      provider.maskedKey ? (
-                        <>
-                          <div className="font-mono">
-                            {t('Token: {{masked}}', { masked: provider.maskedKey })}
-                          </div>
-                          {provider.expiresAt !== undefined ? (
-                            <div>
-                              {t('Expires')}{' '}
-                              <time dateTime={new Date(provider.expiresAt).toISOString()}>
-                                {formatDate(provider.expiresAt, 'date')}
-                              </time>
-                            </div>
-                          ) : null}
-                        </>
-                      ) : (
-                        <div>{t('Not signed in')}</div>
-                      )
-                    ) : isXaiSubscription ? (
+                  ) : failure ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                          aria-label={describeValidationFailure(failure, t)}
+                        >
+                          <TriangleAlert className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{describeValidationFailure(failure, t)}</TooltipContent>
+                    </Tooltip>
+                  ) : isVerified ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex shrink-0 text-emerald-500"
+                          aria-label={t('Connection verified')}
+                        >
+                          <CircleCheck className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('Connection verified')}</TooltipContent>
+                    </Tooltip>
+                  ) : null}
+                </>
+              }
+              detail={
+                <>
+                  {codexSubscriptionType === 'codex-shared' ? (
+                    <div>{t('Authentication imported into Open-Science')}</div>
+                  ) : codexSubscriptionType === 'codex-isolated' ? (
+                    <div>{t('Codex login stored separately by Open-Science')}</div>
+                  ) : provider.type === 'claude-isolated' && isClaudeIsolatedLoginPending ? (
+                    // Browser sign-in in flight. `claude setup-token` opens the browser itself and
+                    // waits on a localhost callback; when the browser fails to open it stays silent
+                    // (no fallback URL), so tell the user the escape hatch up front: cancel and paste
+                    // a setup token instead. Without this line a stuck login looks like a hang.
+                    <div>
+                      {t(
+                        "Opening your browser to sign in… Didn't open? Cancel and use a setup token."
+                      )}
+                    </div>
+                  ) : provider.type === 'claude-isolated' ? (
+                    // The Claude subscription card carries an OAuth token, so we surface the masked
+                    // hint the same way custom/official providers do (no Keychain leak). The
+                    // signed in / signed out framing belongs to the card icon, not this line. The
+                    // "Expires" line is the issue #347 requirement to make the one-year
+                    // setup-token lifetime visible on the card.
+                    provider.maskedKey ? (
                       <>
-                        <div>{provider.accountEmail ?? t('Not signed in')}</div>
-                        <div>
+                        <div className="font-mono">
+                          {t('Token: {{masked}}', { masked: provider.maskedKey })}
+                        </div>
+                        {provider.expiresAt !== undefined ? (
+                          <div>
+                            {t('Expires')}{' '}
+                            <time dateTime={new Date(provider.expiresAt).toISOString()}>
+                              {formatDate(provider.expiresAt, 'date')}
+                            </time>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <div>{t('Not signed in')}</div>
+                    )
+                  ) : isXaiSubscription ? (
+                    <>
+                      <div>{provider.accountEmail ?? t('Not signed in')}</div>
+                      <div>
+                        {t('{{count}} models', {
+                          defaultValue_one: '{{count}} model',
+                          count: provider.models.length
+                        })}
+                      </div>
+                    </>
+                  ) : (
+                    // custom + official both authenticate with a key; official's models come from its
+                    // catalog (shown as a count) rather than a single stored model.
+                    <>
+                      {provider.type === 'custom' && provider.model ? (
+                        <div className="truncate">
+                          {t('Model: {{name}}', { name: provider.model })}
+                        </div>
+                      ) : null}
+                      {provider.type === 'official' && provider.models.length > 0 ? (
+                        <div className="truncate">
                           {t('{{count}} models', {
                             defaultValue_one: '{{count}} model',
                             count: provider.models.length
                           })}
                         </div>
-                      </>
-                    ) : (
-                      // custom + official both authenticate with a key; official's models come from its
-                      // catalog (shown as a count) rather than a single stored model.
-                      <>
-                        {provider.type === 'custom' && provider.model ? (
-                          <div className="truncate">
-                            {t('Model: {{name}}', { name: provider.model })}
-                          </div>
-                        ) : null}
-                        {provider.type === 'official' && provider.models.length > 0 ? (
-                          <div className="truncate">
-                            {t('{{count}} models', {
-                              defaultValue_one: '{{count}} model',
-                              count: provider.models.length
-                            })}
-                          </div>
-                        ) : null}
-                        {provider.maskedKey ? (
-                          <div className="font-mono">
-                            {t('Key: {{masked}}', { masked: provider.maskedKey })}
-                          </div>
-                        ) : null}
-                        {provider.needsKey ? (
-                          <div className="text-destructive">{t('Key needs re-entry')}</div>
-                        ) : null}
-                      </>
-                    )}
-                    {failure ? (
-                      <div className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                        {describeValidationFailure(failure, t)}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
+                      ) : null}
+                      {provider.maskedKey ? (
+                        <div className="font-mono">
+                          {t('Key: {{masked}}', { masked: provider.maskedKey })}
+                        </div>
+                      ) : null}
+                      {provider.needsKey ? (
+                        <div className="text-destructive">{t('Key needs re-entry')}</div>
+                      ) : null}
+                    </>
+                  )}
+                  {failure ? (
+                    <div className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                      {describeValidationFailure(failure, t)}
+                    </div>
+                  ) : null}
+                </>
+              }
+              actions={
+                <>
                   {isXaiSubscription && isXaiLoginPending ? (
                     <SettingsIconAction
                       label={t('Cancel sign-in')}
@@ -603,9 +612,9 @@ const ProviderList = ({
                     className="border border-border"
                     danger
                   />
-                </div>
-              </div>
-            </li>
+                </>
+              }
+            />
           )
         })}
       </ul>

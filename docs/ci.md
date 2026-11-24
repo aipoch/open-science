@@ -6,6 +6,65 @@ meet the [PR requirements](../CONTRIBUTING.md#pull-requests) and follow the
 
 ## PR, merge queue and scheduled coverage
 
+### PR automation events
+
+`PR Automation Signal` runs a permissionless, checkout-free `pull_request` job.
+Default-branch `workflow_run` listeners resolve its run through the GitHub API,
+validate the workflow path, attempt, repository and current PR head, and then run
+CI Integrity, PR labeling and AI review independently. Fork runs without an attached
+PR are matched by source repository ID, branch and head SHA; ambiguous matches are
+ignored. Signal titles are routing hints, never authorization. No signal artifacts,
+caches or contributor scripts are consumed by privileged listeners.
+
+| Activity                             | Behavior                                                                                                                            |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Open, reopen or push commits         | Integrity, classification/stale-label cleanup and eligible AI review                                                                |
+| Edit PR metadata                     | Integrity and classification; no AI review or review-outcome reset                                                                  |
+| Mark ready                           | Integrity and eligible AI review                                                                                                    |
+| Convert to draft                     | Integrity runs; AI workflow cancels its previous automatic run for the same head and skips review; publication rechecks draft state |
+| Submit approval or changes requested | Separate PR Review Signal and trusted PR Review Status listener refresh handoff labels                                              |
+| Enter merge queue                    | Existing `merge_group: checks_requested` validation remains independent of the PR signal                                            |
+
+The listeners start after the lightweight signal completes, without waiting for PR
+Gate's tests. This adds a workflow scheduling hop. Unlike `pull_request_target`,
+`pull_request` does not run while a PR has merge conflicts, and fork runs may wait
+for maintainer approval. Labels and automatic AI review can therefore be delayed.
+Resolving a conflict and pushing starts a fresh signal. Skipped, failed or stale
+signals do not publish a successful required check. The existing PR Gate test
+selection, platform coverage and merge-queue policy are unchanged.
+
+`workflow_run` job checks belong to the default branch. The integrity listener
+therefore creates an in-progress **CI Integrity** check on the resolved PR head
+and completes it only after trusted validation. Failed validation or a changed
+head/title cannot publish success. A runner failure can leave this check pending;
+rerun the signal to retry. Both required check names and their GitHub Actions
+integration remain unchanged. Editing these workflows in a PR does not activate
+their automatic listeners; they must first land on the default branch.
+
+Manual previews reuse the production paths without writes:
+
+- **PR automation preview** accepts a successful PR Automation Signal run ID and
+  calls the real CI Integrity workflow without creating or completing a required
+  check. Its native jobs carry the `Preview /` prefix, so a preview cannot satisfy
+  the dispatch revision's required `CI Integrity` check.
+- **PR Labels** accepts the same run ID and logs proposed classification changes
+  without resetting, creating, adding or removing labels.
+- **AI PR Review (Single)** accepts a PR number and `dry_run: true` to resolve
+  metadata and review policy without invoking the model or publishing feedback.
+
+For the staged migration, land the trigger-policy transition and signal/resolver
+first, then the consumer migration. Keep the old trigger until its trusted-base
+replacement policy is on main. Rerun a successful signal for open PRs after rollout
+when current-head automation needs refreshing; there is no bulk history replay.
+No application data migration or new application states are involved. GitHub check
+runs and labels retain their existing roles, and no Actions event allowance is
+needed once all target triggers have been removed.
+
+See GitHub's [event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
+and [pull request security guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
+Changing the trigger does not make execution of untrusted PR code with secrets safe;
+the AI review sandbox and credential isolation remain required.
+
 ### Pull requests
 
 The independent **Impact registration** job runs a
@@ -49,9 +108,21 @@ set and deferred groups appear in preflight reason chains. Checks retain complet
 each selected group, so this is group selection rather than individual-test pruning. Native supervisor
 consumers keep their Rust source/build prerequisites, and selected-but-skipped steps fail the gate. Complete Windows business/browser variants run
 in the independent Windows E2E Regression workflow.
-PR Gate does not allocate Mac runners, including for platform-sensitive changes;
-its Mac validation happens in merge queue. The separate Process Lifecycle workflow runs
-three native platforms for its declared lifecycle owner and harness paths, as described below.
+PR Gate selects a short native update-occupancy check on macOS, Linux and Windows for runtime/CLI
+lanes and full fallback plans. It reuses the read-only Update Occupancy workflow and rejects a
+selected job that fails, is cancelled, or is skipped. The desktop/CLI fixture also checks that a
+backend self-restart uses the production restart path to transfer the same reader to the new runtime
+generation. A controlled delayed EOF verifies that handoff joins reader exit after stopping the
+backend; the production wait is bounded to five seconds and retains the final occupancy check with
+its independent platform budget. Preparing checks allow up to 60 seconds for transient external holders,
+while pinning the backend and reader birth identities so their exit cannot produce a false pass.
+The same source gate also exercises a live registration from another profile and an unreadable live
+registration, preserving the conservative `other-runtime` and recovery-blocking decisions in PRs.
+Changes to the installation occupancy/protection implementation and its startup helper, or to the
+Update Occupancy workflow, select a dedicated `update_occupancy_source` lane so the source gate cannot
+be silently skipped by change classification. Unrelated updater changes stay on their normal lanes.
+Other Mac validation runs in merge queue.
+The separate Process Lifecycle workflow also covers its declared lifecycle owners and harness paths.
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
@@ -106,10 +177,60 @@ diagnosis. Classification and gate validation continue to use trusted base code.
 
 ### Scheduled regression and publication
 
+Package Smoke runs `e2e/certification/update-occupancy.spec.ts` against the exact candidate package
+on all five platform/architecture rows. In-place candidates' real `update.recheck()` must admit their
+own runtime, reject a foreign bundled-Node process, recover after that process exits, and pass again
+after restart. Ad-hoc macOS nightlies intentionally use the manual installer strategy, which has no
+update admission API: those candidates instead verify the actual packaged reader's owner identity,
+held SQLite lease and native occupancy, distinguish an unregistered foreign Node, and repeat after
+restart. Reports identify this narrower coverage explicitly; a stable macOS candidate selecting the
+manual fallback fails. Signed stable macOS packages must pass the real updater path. IPC and OS
+occupancy are not mocked. Positive readiness checks wait at most 60 seconds for real admission
+(e.g. a hosted Windows provisioning agent releasing a freshly installed executable); they never
+exempt that agent, and the controlled foreign Node must still block by exact PID. Missing packaged identity or prerequisites fail
+the job. Nightly and Release already require Package Smoke before publication, so this is a blocking
+pre-publication check. The existing post-release Windows Upgrade Smoke still covers actual binary
+replacement from older versions; its failure is advisory and cannot retroactively stop a release.
+A fixed target cannot repair the updater already running in an older source version. Clients with
+the unregistered reader may need a complete service shutdown and manual package installation for
+that first upgrade. Use Package Smoke's `artifact_run_id` dispatch to replay a candidate without
+rebuilding or publishing; diagnostic replays never emit release certification.
+
+Windows Upgrade Smoke also runs daily at 19:23 UTC. It rebuilds the latest stable source
+and the candidate with a runner-local test certificate, applies a differential update, then
+reinstalls the original version on the same profile. When the migration ledger grows, the old
+version must report `database_newer_than_app` on that launch. Otherwise it must reopen the
+preserved profile. Changes to the updater or installer since the last successful scheduled run
+also exercise a second update from the candidate. Scheduled failures share a tracking issue
+until a scheduled certification succeeds.
+
+Before publishing a stable release, Release runs the same upgrade and rollback against the
+already signed Windows build artifact and the previous stable installer. To exercise either
+path on a branch, dispatch Windows Upgrade Smoke with `candidate_dry_run=true` for temporary
+signing, or with `signed_run_id` set to a Release run for its existing signed bytes.
+
+Stable Windows x64 installers include `resources/windows-delta/windows-delta.exe`. Packaging
+builds the helper from pinned HDiffPatch, Zstandard and 7-Zip sources using Python 3, CMake and
+the Visual Studio C++ toolchain. Azure signing covers the helper with the other packaged PE files.
+
+After validating a signed upgrade, Release publishes a patch from the previous stable installer.
+Release generates the patch after signing and verifies that applying it reproduces the exact target
+bytes. The mirror validates the patch before promoting the feed. To replay the release transform
+without publishing, point `node build/windows-delta/publish.mjs OLD NEW WORKER HDIFFZ [7Z]` at
+two local release directories containing their installers and original `latest.yml`. Use a copy
+for `NEW` because the transform writes the verified sidecar and updates the feed there.
+
+Clients first acquire the capable updater via the existing blockmap. Subsequent eligible updates
+reuse the cached old installer, reconstruct the new installer in the pending cache and verify its
+SHA-512 and publisher. Cancel stops reconstruction. Missing patches, unsupported pairs or
+insufficient space use the existing download path.
+
 Process Lifecycle runs its fixed source process collection daily on
 macOS, Linux and Windows at **19:23 UTC** (02:23 the next day in Asia/Saigon), even when the
-default-branch SHA is unchanged. Its manual `core` and `detector` modes are focused no-publish
-dry-runs. It does not add PR required checks or replace resource/packaged-runtime certification.
+default-branch SHA is unchanged. Its manual `core`, `detector` and `update-occupancy` modes are focused no-publish
+dry-runs. Daily `core` additionally checks real desktop/CLI launch readers, reattachment, rejection
+of a real foreign installation occupant, and complete installation release on shutdown. PR Gate
+calls only the short occupancy mode; its existing required check aggregates the result.
 Its runner selects the independent `scripts/ci/process-lifecycle/vitest.config.ts`; ordinary
 module tests do not collect its native suite or count it as portable consumer evidence.
 PRs changing its harness, explicit lifecycle owners, process identity/stop helpers, dynamic
@@ -136,7 +257,7 @@ checkpoint inventory. Failure is recorded before emergency cleanup and cannot be
 These fixtures do not certify installed upgrades, OS reboot, real provider protocols or Electron
 quit/persistence UI; those retain their existing dedicated validation paths.
 
-Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
+Complete Mac Source Regression runs twice daily on `main`, at **10:37 and 22:37 Singapore time**
 (Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into twelve isolated Mac test jobs:
 functional, two workspace shards, presentation (browser/visual/accessibility), delegation, six ordinary
 supplemental regression shards, and capacity. Electron retains one worker per runner; matrix
@@ -152,14 +273,14 @@ and `delegation` select the same production jobs. In `regressions` mode, `shard`
 `2`, `3`, `4`, `5`, `6`, or `all`; `full` always runs all six shards regardless of that diagnostic input.
 Existing focused diagnostic modes remain available and never publish or change scheduled issues.
 PR Gate retains its existing groups and non-capacity selection.
-Windows E2E Regression runs daily at **02:17 Singapore time**
+Windows E2E Regression runs daily at **23:17 Singapore time**
 (Asia/Singapore, UTC+8), with the complete functional/workspace/browser suites on six Windows
 test runners and `--fail-on-flaky-tests`. It has its own failure-tracking issue and does not run
 Windows Full Test or Notebook mutation checks. PR Gate manual `windows-e2e-mainline`, `windows-e2e` and the Windows part of `e2e` run all
 mainline groups. The independent regression workflow is the manual entry point for complete
 Windows E2E. PR Gate never expands Windows E2E to the full suites. The existing WSL development-preview journey remains
 opt-in with its dedicated build and is not claimed as ordinary PR/scheduled coverage. Nightly packaging, Windows Full Test and Runtime Resource
-Soak retain their daily 23:17, 00:47 and 03:23 Singapore schedules and, like Windows E2E Regression,
+Soak now run daily at 20:17, 21:47 and 00:53 Singapore time and, like Windows E2E Regression,
 skip a head that the last successful scheduled run already covered (shared `skip-unchanged-scheduled` action); Nightly additionally requires that head to
 be published under the rolling `nightly` tag, and manual runs never count as coverage because
 the runs API cannot report which dispatch mode they selected. Manual runs always execute.
@@ -272,7 +393,7 @@ directly: it lacks the generated platform dependency manifest.
 
 ## Supplemental desktop coverage
 
-Complete Mac regression and Delegation suites run in Source Regression at 01:37 and 13:37
+Complete Mac regression and Delegation suites run in Source Regression at 10:37 and 22:37
 Asia/Singapore, as well as focused manual validation. Its manual `presentation` mode runs the real
 Mac browser, visual and accessibility steps without functional, workspace, capacity or Delegation
 suites. Browser and visual outcomes are both collected, and any failure remains blocking.
@@ -280,6 +401,32 @@ Automatic PRs use the affected Windows mainline groups;
 queue uses short Mac core plus focused native checks for sensitive changes. Full Mac presentation,
 regression and Delegation matrices are not repeated in the queue. Capacity profiling remains in
 Source Regression; manual callers without an explicit capacity input retain complete coverage.
+
+## Default Agent conversation release certification
+
+Every normal Release and publishable Nightly runs eleven mandatory default-Agent conversation
+journeys inside Package Smoke, against each downloaded native candidate: macOS arm64/x64,
+Windows x64, and Linux x64/arm64. The real packaged UI, backend, built-in Agent and Notebook
+permission boundary run with a deterministic localhost model fixture. First/second turns and
+provider failure recovery cover Chat Completions, Responses and Messages; shared lifecycle cases
+cover approval, denial/cancel, user questions, plan approval, normal restart and crash recovery
+without repeated tool effects. Other frameworks retain their existing validation; this gate does
+not certify all live vendors, subscriptions or models.
+
+The gate requires exactly the eleven selected cases, one worker and zero retries. Missing,
+skipped, failed, cancelled, interrupted or retried execution cannot generate certification.
+Platform evidence binds the passing inventory and report digest to the package source, platform
+and certifying workflow attempt. Release aggregation and both Nightly publication paths reject
+missing conversation evidence, including older otherwise-successful source runs. Existing updater,
+database, signing and other publication requirements remain mandatory.
+
+For a nonpublishing focused dry-run, dispatch Package Smoke with `conversation_only=true`,
+`install_only=false`, `artifact_run_id=<same-repository build run>`, and a native platform or `all`.
+Release exposes the same path using `package_smoke_run_id` plus `conversation_only=true`.
+This reuses the production installer preparation, test runner and report verifier, skips unrelated
+smoke scenarios, and emits diagnostic artifacts only. It cannot certify different-source packages
+for publication. Reuse immutable packages after diagnosis; do not enable Playwright retries to
+turn a failed case into passing release evidence.
 
 ## Focused macOS release diagnostics
 
@@ -656,6 +803,20 @@ required checks. It runs for both PR admission and merge-group validation. Passi
 and owner approval precede normal merge-queue admission. Never remove the Integrity `merge_group`
 trigger while its check is required; the `required-check-triggers` rule rejects a PR Gate or CI
 Integrity revision that drops its `merge_group` or pull request trigger.
+
+CI Integrity may replace `pull_request_target` with the default-branch
+`workflow_run` completion listener for **PR Automation Signal**. The listener must
+not filter source branches: those are contributor branches, including forks.
+The policy accepting this successor must land before the workflow migration.
+The successor must validate GitHub run/PR metadata, inspect candidate Git objects
+using trusted code, and publish **CI Integrity** on the inspected PR head. Retain
+`merge_group: checks_requested` and the existing required-check names throughout
+the rollout; policy approval alone does not activate or verify the successor.
+Integrity also validates the candidate signal and resolver even when those files
+are unchanged in the diff. Removing or disabling the signal, narrowing its PR
+activities, or disconnecting the reusable resolver blocks the migration and later
+changes. Runtime check-publication behavior still requires workflow tests and
+CI-owner review.
 
 Trusted policy may retire a historical cross-package contract test registration only when
 its existing package selector already excludes that test package for every owner path. Both Git

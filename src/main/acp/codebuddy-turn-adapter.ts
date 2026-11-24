@@ -64,6 +64,18 @@ const sumModelSteps = (
 }
 
 export const codeBuddyTurnAdapter: AcpProviderTurnAdapter = {
+  getPromptError: (response) => {
+    const detail = response._meta?.['codebuddy.ai/errorMessage']
+    if (response.stopReason !== 'refusal' || typeof detail !== 'string' || !detail.trim())
+      return undefined
+    // Vendor details can include request URLs and account information. Retain only the status.
+    const match = detail.match(/(?:^|\b(?:error|status(?: code)?|http)[:=]?\s+)([45]\d{2})\b/i)
+    return match
+      ? Object.assign(new Error(`CodeBuddy request failed (HTTP ${match[1]}).`), {
+          status: Number(match[1])
+        })
+      : new Error('CodeBuddy could not complete the request.')
+  },
   begin: ({ providerSessionId }) => {
     // CodeBuddy omits PromptResponse.usage. Its per-model-call usage snapshots arrive as ACP
     // updates instead, so keep one latest snapshot per message for turn totals and context.

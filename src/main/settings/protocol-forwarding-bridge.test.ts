@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bufferChatCompletionsToolNames } from '@aipoch/providers/protocol'
 
 import { adaptCodeBuddyChatCompletionsRequest } from './codebuddy-chat-request-adapter'
+import { LabApiError } from './lab-api'
 import {
   ProtocolForwardingBridge,
   type ProtocolForwardingBridgeTarget
@@ -295,7 +296,10 @@ describe('ProtocolForwardingBridge', () => {
         onProviderFailure
       }
       const bridge = new ProtocolForwardingBridge([target], target.id, async () =>
-        Response.json(body, { status })
+        Response.json(body, {
+          status,
+          headers: { 'x-open-science-upstream-status': 'vendor-metadata' }
+        })
       )
       bridges.push(bridge)
       const connection = await bridge.start()
@@ -308,6 +312,9 @@ describe('ProtocolForwardingBridge', () => {
         body: JSON.stringify({ input: 'hello' })
       })
       expect(response.status).toBe(status >= 429 ? status : 400)
+      expect(response.headers.get('x-open-science-upstream-status')).toBe(
+        status >= 429 ? null : String(status)
+      )
       if (category)
         expect(onProviderFailure).toHaveBeenCalledExactlyOnceWith({
           startedAt: expect.any(Number),
@@ -470,6 +477,191 @@ describe('ProtocolForwardingBridge', () => {
       status: 401,
       model: 'model-a',
       endpoint: 'responses'
+    })
+  })
+
+  it('turns a declared terminal Lab upstream status into a local 400', async () => {
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'builtin-lab',
+      wire: 'chat-completions',
+      endpoint: 'https://lab.example.test/v1/chat/completions',
+      model: 'lab:research-default',
+      resolveConnection: async () => ({
+        endpoint: 'https://lab.example.test/v1/chat/completions',
+        key: 'lab-access-token'
+      }),
+      terminalUpstreamStatuses: [502, 503],
+      mapUpstreamError: () => ({
+        code: 'UPSTREAM_ERROR',
+        message: 'The Lab server could not reach the model provider.'
+      })
+    }
+    const bridge = new ProtocolForwardingBridge(
+      [target],
+      target.id,
+      vi.fn(async () => Response.json({ error: { code: 'UPSTREAM_ERROR' } }, { status: 503 }))
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(400)
+    expect(response.headers.get('x-open-science-upstream-status')).toBe('503')
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'UPSTREAM_ERROR',
+        message: 'The Lab server could not reach the model provider.'
+      }
+    })
+  })
+
+  it('leaves an undeclared upstream status unchanged for other providers', async () => {
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'custom-provider',
+      wire: 'chat-completions',
+      endpoint: 'https://provider.example.test/v1/chat/completions',
+      model: 'model-a',
+      resolveConnection: async () => ({
+        endpoint: 'https://provider.example.test/v1/chat/completions',
+        key: 'provider-access-token'
+      })
+    }
+    const bridge = new ProtocolForwardingBridge(
+      [target],
+      target.id,
+      vi.fn(async () =>
+        Response.json({ error: { message: 'temporary upstream failure' } }, { status: 503 })
+      )
+    )
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(503)
+    expect(response.headers.get('x-open-science-upstream-status')).toBe('503')
+  })
+
+  it('still refreshes a host-owned credential after one upstream 401', async () => {
+    const resolveConnection = vi
+      .fn()
+      .mockResolvedValueOnce({
+        endpoint: 'https://provider.example.test/v1/chat/completions',
+        key: 'first-token'
+      })
+      .mockResolvedValueOnce({
+        endpoint: 'https://provider.example.test/v1/chat/completions',
+        key: 'refreshed-token'
+      })
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ error: { message: 'expired' } }, { status: 401 }))
+      .mockResolvedValueOnce(Response.json({ ok: true }, { status: 200 }))
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'lab',
+      wire: 'chat-completions',
+      endpoint: 'https://provider.example.test/v1/chat/completions',
+      model: 'model-a',
+      resolveConnection,
+      refreshOnUnauthorized: true
+    }
+    const bridge = new ProtocolForwardingBridge([target], target.id, fetchImpl)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(200)
+    expect(resolveConnection).toHaveBeenLastCalledWith(expect.any(AbortSignal), true)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('maps a Lab unauthorized connection error to a terminal local response', async () => {
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'builtin-lab',
+      wire: 'chat-completions',
+      endpoint: 'https://lab.example.test/v1/chat/completions',
+      model: 'lab:research-default',
+      resolveConnection: async () => {
+        throw new LabApiError('unauthorized', 'refresh failed')
+      },
+      mapConnectionError: (error) =>
+        error instanceof LabApiError && error.code === 'unauthorized'
+          ? {
+              status: 401,
+              code: 'unauthorized',
+              message: 'Your Lab sign-in expired. Sign in again.'
+            }
+          : undefined,
+      privateCredentialsErrorMessage: 'The Lab request failed.'
+    }
+    const bridge = new ProtocolForwardingBridge([target], target.id)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(401)
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        type: 'authentication_error',
+        code: 'unauthorized',
+        message: 'Your Lab sign-in expired. Sign in again.'
+      }
+    })
+  })
+
+  it('keeps a non-auth Lab connection failure as a stable 502 without rethrowing', async () => {
+    const target: ProtocolForwardingBridgeTarget = {
+      id: 'builtin-lab',
+      wire: 'chat-completions',
+      endpoint: 'https://lab.example.test/v1/chat/completions',
+      model: 'lab:research-default',
+      resolveConnection: async () => {
+        throw new Error('secret network diagnostic')
+      },
+      privateCredentialsErrorMessage: 'The Lab request failed.'
+    }
+    const bridge = new ProtocolForwardingBridge([target], target.id)
+    bridges.push(bridge)
+    const connection = await bridge.start()
+    const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'ignored', messages: [] })
+    })
+
+    expect(response.status).toBe(502)
+    await expect(response.json()).resolves.toEqual({
+      error: { type: 'api_error', message: 'The Lab request failed.' }
     })
   })
 

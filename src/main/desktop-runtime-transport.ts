@@ -1,3 +1,4 @@
+import { researchVideoExportTimeout } from '@aipoch/research-film/contracts'
 import { processBirthIdentity } from './process-birth-identity'
 import {
   serviceStopDeadline,
@@ -13,7 +14,10 @@ import { runtimePayloadTransfers } from './runtime-payload-transfers'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import { z } from 'zod'
-import { toApplicationCommandErrorEnvelope } from '../shared/application-command-contract'
+import {
+  isSessionReadChannel,
+  toApplicationCommandErrorEnvelope
+} from '../shared/application-command-contract'
 import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
 import type { OfficePreviewRuntimeState } from '../shared/office-preview'
 import type { MarketplaceDownloadProgress } from '../shared/specialist-marketplace'
@@ -321,20 +325,23 @@ export async function startDesktopRuntimeTransport(options: {
             const result = await new Promise<unknown>((resolve, reject) => {
               native.set(id, { clientId, resolve, reject })
               signal?.addEventListener('abort', abort, { once: true })
-              timer = setTimeout(
-                abort,
-                request.operation === 'research-video-mp4'
-                  ? 3_601_000
-                  : request.operation === 'conversation-pdf'
-                    ? request.timeoutMs + 1000
-                    : request.operation === 'reviewer-render'
-                      ? 121_000
-                      : request.operation.startsWith('notification-') ||
-                          request.operation === 'office-frame' ||
-                          request.operation === 'process-memory'
-                        ? 5_000
-                        : 300_000
-              )
+              // Film review can queue behind several exports. Its native owner times each
+              // active inspection; caller cancellation and disconnect also cancel queued work.
+              if (request.operation !== 'research-video-check')
+                timer = setTimeout(
+                  abort,
+                  request.operation === 'research-video-mp4'
+                    ? researchVideoExportTimeout(request.resolution ?? '720p', 3600) + 120_000
+                    : request.operation === 'conversation-pdf'
+                      ? request.timeoutMs + 1000
+                      : request.operation === 'reviewer-render'
+                        ? 121_000
+                        : request.operation.startsWith('notification-') ||
+                            request.operation === 'office-frame' ||
+                            request.operation === 'process-memory'
+                          ? 5_000
+                          : 300_000
+                )
               send(socket, stringifyRpcJson({ kind: 'native-request', id, clientId, request }))
             })
             signal?.throwIfAborted()
@@ -581,7 +588,10 @@ export async function startDesktopRuntimeTransport(options: {
                 protocolVersion: WEB_RPC_PROTOCOL_VERSION,
                 ok: false,
                 error: {
-                  code: 'command-failed',
+                  code:
+                    'channel' in request && isSessionReadChannel(request.channel)
+                      ? 'response-too-large'
+                      : 'command-failed',
                   message: 'Desktop runtime response exceeds the transport byte budget.'
                 }
               })

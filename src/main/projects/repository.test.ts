@@ -274,19 +274,30 @@ describe('project repository', () => {
   })
 
   it('patches only the provided fields on update', async () => {
-    const updated = createRow({ name: 'Renamed', updatedAt: new Date(1710000000200) })
+    const sessionDefaults = {
+      permissionProfile: 'auto',
+      memoryEnabled: false,
+      agentTracingEnabled: true
+    } as const
+    const updated = createRow({
+      name: 'Renamed',
+      updatedAt: new Date(1710000000200),
+      sessionDefaults: JSON.stringify(sessionDefaults)
+    })
     const { client, project } = createMockClient({
       findUnique: () => Promise.resolve(updated),
       updateMany: () => Promise.resolve({ count: 1 })
     })
     const repository = new ProjectRepository(() => Promise.resolve(client))
 
-    await repository.update({
-      id: 'project-1',
-      name: '  Renamed  ',
-      sessionDefaults: { memoryEnabled: false, permissionProfile: 'auto' },
-      expectedUpdatedAt: 1710000000100
-    })
+    await expect(
+      repository.update({
+        id: 'project-1',
+        name: '  Renamed  ',
+        sessionDefaults,
+        expectedUpdatedAt: 1710000000100
+      })
+    ).resolves.toMatchObject({ sessionDefaults })
 
     expect(project.updateMany).toHaveBeenCalledWith({
       where: {
@@ -296,7 +307,7 @@ describe('project repository', () => {
       },
       data: {
         name: 'Renamed',
-        sessionDefaults: '{"permissionProfile":"auto","memoryEnabled":false}',
+        sessionDefaults: JSON.stringify(sessionDefaults),
         updatedAt: expect.any(Date)
       }
     })
@@ -319,6 +330,41 @@ describe('project repository', () => {
 
     expect(project.findUnique).not.toHaveBeenCalled()
   })
+
+  it.each([true, false])(
+    'saves a tracing setting of %s without replacing other defaults',
+    async (enabled) => {
+      const defaults = { memoryEnabled: false, permissionProfile: 'auto' }
+      const sessionDefaults = { ...defaults, agentTracingEnabled: enabled }
+      const { client, project } = createMockClient({
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce(createRow({ sessionDefaults: JSON.stringify(defaults) }))
+          .mockResolvedValueOnce(createRow({ sessionDefaults: JSON.stringify(sessionDefaults) })),
+        updateMany: () => Promise.resolve({ count: 1 })
+      })
+      const repository = new ProjectRepository(() => Promise.resolve(client))
+
+      await expect(
+        repository.update({
+          id: 'project-1',
+          expectedUpdatedAt: 1710000000100,
+          agentTracingEnabled: enabled
+        })
+      ).resolves.toMatchObject({ sessionDefaults })
+      expect(project.updateMany).toHaveBeenCalledWith({
+        where: { id: 'project-1', deletedAt: null, updatedAt: new Date(1710000000100) },
+        data: {
+          sessionDefaults: JSON.stringify({
+            permissionProfile: 'auto',
+            memoryEnabled: false,
+            agentTracingEnabled: enabled
+          }),
+          updatedAt: expect.any(Date)
+        }
+      })
+    }
+  )
 
   it('returns an ordinary update after the write commits despite malformed Session defaults', async () => {
     const updated = createRow({

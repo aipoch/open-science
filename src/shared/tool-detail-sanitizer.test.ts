@@ -238,10 +238,16 @@ describe('bounded Notebook code review evidence', () => {
     expect(output.notebookCodeRisk).not.toHaveProperty('cwd')
     expect(sanitizeNotebookCodeReviewPayload(output)).toEqual(output)
   })
-  it('redacts credentials and rejects malformed or oversized executable evidence', () => {
-    expect(
-      JSON.stringify(sanitizeNotebookCodeReviewPayload(payload('token=secret-value')))
-    ).not.toContain('secret-value')
+  it.each([3000, 100_000])(
+    'retains redacted source within its actual JSON budget (%i lines)',
+    (lines) => {
+      const input = payload('token=x\n'.repeat(lines))
+      expect(sanitizeNotebookCodeReviewPayload(input)).toMatchObject({
+        code: `token=${redaction.REDACTED_MARKER}\n`.repeat(lines)
+      })
+    }
+  )
+  it('rejects malformed or oversized executable evidence', () => {
     for (const value of [
       payload('x'.repeat(1024 * 1024 + 1)),
       { code: 'x', notebookCodeRisk: { language: 'python', risks: [] } },

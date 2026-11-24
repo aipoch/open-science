@@ -1,6 +1,16 @@
 import { resolve } from './paths.js'
 import { createCanvas } from '@napi-rs/canvas'
-import { PDFDocument, PDFName, PDFString, StandardFonts, rgb } from 'pdf-lib'
+import {
+  PDFDocument,
+  PDFName,
+  PDFString,
+  StandardFonts,
+  rgb,
+  pushGraphicsState,
+  translate,
+  drawObject,
+  popGraphicsState
+} from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { expect, it } from 'vitest'
 import { TestCallerRegistry } from './support/callers.js'
@@ -141,6 +151,80 @@ it.each([
         }))
       expect(await links(after)).toEqual(await links(before))
     }
+  } finally {
+    await target?.destroy()
+    await original.destroy()
+    caller.release()
+  }
+})
+
+it('keeps a raster Form visible when its clip repeats corners', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica),
+    page = pdf.addPage([300, 260]),
+    red = createCanvas(2, 2),
+    paint = red.getContext('2d')
+  paint.fillStyle = '#d02040'
+  paint.fillRect(0, 0, 2, 2)
+  const raster = await pdf.embedPng(red.toBuffer('image/png')),
+    panel = pdf.context.register(
+      pdf.context.flateStream(
+        'q 10 30 m 110 30 l 110 30 l 110 100 l 110 100 l 10 100 l 10 100 l 10 30 l W n ' +
+          '100 0 0 70 10 30 cm /Raster Do Q\nBT /PanelFont 12 Tf 1 0 0 1 10 11 Tm (Signal intensity) Tj ET',
+        {
+          Type: 'XObject',
+          Subtype: 'Form',
+          BBox: [0, 0, 120, 110],
+          Resources: { Font: { PanelFont: font.ref }, XObject: { Raster: raster.ref } }
+        }
+      )
+    )
+  page.node.setXObject(PDFName.of('Panel'), panel)
+  page.pushOperators(
+    pushGraphicsState(),
+    translate(20, 100),
+    drawObject('Panel'),
+    popGraphicsState()
+  )
+  page.drawText('Figure caption', { x: 20, y: 65, size: 12, font })
+  const data = await pdf.save(),
+    original = getDocument({ data: data.slice(), useSystemFonts: true }),
+    caller = new TestCallerRegistry().acquire({ leaseId: 'raster-clip', surface: 'electron' })
+  let target: ReturnType<typeof getDocument> | undefined
+  try {
+    const { source } = await extractPdfTranslationSource({
+      document: await original.promise,
+      resourceRequestKey: 'raster-clip',
+      signal: caller.lease.signal
+    })
+    const units = [
+      ['Signal intensity', '信号强度'],
+      ['Figure caption', '图表说明']
+    ].map(([sourceText, translation]) => {
+      const unit = source.units.find(({ source }) => source === sourceText)!
+      expect(unit).toBeDefined()
+      return { ...unit, translation }
+    })
+    const output = await new PdfTranslationWriter(() => resolve('resources/worker.mjs')).generate(
+      { id: 'raster-clip', data, pages: source.pages, preserveUnsupported: true, units },
+      caller.lease
+    )
+    target = getDocument({ data: output!, useSystemFonts: true })
+    const rendered = await (await target.promise).getPage(1),
+      viewport = rendered.getViewport({ scale: 1 }),
+      canvas = createCanvas(viewport.width, viewport.height),
+      context = canvas.getContext('2d')
+    await rendered.render({
+      canvas: null,
+      canvasContext: context as unknown as CanvasRenderingContext2D,
+      viewport
+    }).promise
+    expect([...context.getImageData(75, 90, 1, 1).data]).toEqual([208, 32, 64, 255])
+    const text = (await rendered.getTextContent()).items
+      .flatMap((item) => ('str' in item ? [item.str] : []))
+      .join('')
+    expect(text).toContain('Signal intensity')
+    expect(text).toContain('图表说明')
   } finally {
     await target?.destroy()
     await original.destroy()

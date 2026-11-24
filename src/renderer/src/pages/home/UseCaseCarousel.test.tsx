@@ -746,3 +746,36 @@ it('clears a removed category after refresh without clearing search or reselecti
   )
   expect(ui.getByRole('button', { name: 'Biology' }).getAttribute('aria-pressed')).toBe('false')
 })
+
+it('shows the specific download failure reason from operation.error or preflight failure on the card', async () => {
+  await render()
+  const ui = within(container)
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      id: 'failed-download',
+      kind: 'import',
+      state: 'failed',
+      progress: { phase: 'preparing' },
+      useCaseDownload: { slug: 'case-1', completedBytes: 0 },
+      error: 'The example download timed out. Check your connection and try again.'
+    })
+  )
+  const card = ui.getByRole('article', { name: 'Case 1' })
+  expect(
+    within(card).getByText('The example download timed out. Check your connection and try again.')
+  ).toBeTruthy()
+
+  await act(async () => {
+    usePackageOperationStore.getState().receive(null)
+    usePackageOperationStore.setState({
+      useCaseFailure: 'case-1',
+      useCaseFailureMessage:
+        'Another package operation is already in progress. Wait for it to finish, then try again.'
+    })
+  })
+  expect(
+    within(card).getByText(
+      'Another package operation is already in progress. Wait for it to finish, then try again.'
+    )
+  ).toBeTruthy()
+})

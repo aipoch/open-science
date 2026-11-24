@@ -150,9 +150,7 @@ it('does not report storage exhaustion when a real directory is dropped on the c
     await vi.waitFor(() => {
       expect(screen.getByTestId('upload-transfers').textContent).not.toMatch(/queued|uploading/)
     })
-    expect(screen.getByTestId('upload-error').textContent).not.toBe(
-      'Could not attach the file. Check available storage and try again.'
-    )
+    expect(screen.getByTestId('upload-error').textContent).toBe('')
     expect(screen.getByRole('status').textContent).toBe(
       'Folders cannot be attached. Select files inside the folder instead. No files were added.'
     )

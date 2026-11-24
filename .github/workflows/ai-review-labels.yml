@@ -1,19 +1,36 @@
 name: PR Labels
 
-# Classification and stale-label operations run from the base branch with a write-capable token. Review
+# Classification and stale-label operations run from the default branch with a write-capable token. Review
 # outcome labels are applied by the final job in ai-review-single.yml from that run's published
 # output.
 on:
-  pull_request_target:
-    branches:
-      - main
-    types: [opened, synchronize, reopened, edited]
+  workflow_run:
+    workflows: [PR Automation Signal]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: PR Automation Signal run to classify without changing labels
+        required: true
+        type: string
+
+permissions: {}
 
 jobs:
+  resolve:
+    permissions:
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/resolve-pr-signal.yml
+    with:
+      run_id: ${{ inputs.run_id || format('{0}', github.event.workflow_run.id) }}
+      run_attempt: ${{ github.event_name == 'workflow_run' && format('{0}', github.event.workflow_run.run_attempt) || '' }}
+
   reset_review_labels:
     name: Reset review outcome labels
     # A title edit does not change the reviewed commit, so outcome labels survive 'edited'.
-    if: ${{ github.event_name == 'pull_request_target' && github.event.action != 'edited' }}
+    needs: resolve
+    if: ${{ github.event_name == 'workflow_run' && needs.resolve.outputs.number != '' && contains(fromJSON('["opened", "synchronize", "reopened"]'), needs.resolve.outputs.action) }}
     runs-on: ubuntu-latest
     # Label operations on a pull request require pull-requests write; the label REST endpoints
     # return 403 with only issues write (GitHub reports "issues=write; pull_requests=write").
@@ -23,9 +40,15 @@ jobs:
     steps:
       - name: Remove stale review outcome labels
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.number }}
+          PR_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
         with:
           github-token: ${{ github.token }}
           script: |
+            const number = Number(process.env.PR_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+            if (pr.state !== 'open' || pr.head.sha !== process.env.PR_HEAD_SHA) return;
             // 'ready-to-merge' goes stale once new commits arrive. 'ai-reviewed' is the retired
             // predecessor label; removing it here cleans up pull requests that still carry it.
             for (const name of ['ready-to-merge', 'ai-reviewed']) {
@@ -33,7 +56,7 @@ jobs:
                 await github.rest.issues.removeLabel({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  issue_number: context.payload.pull_request.number,
+                  issue_number: number,
                   name,
                 });
               } catch (error) {
@@ -41,17 +64,17 @@ jobs:
               }
             }
 
-  # Keep this job ID and its existing write scopes: CI Integrity rejects target-workflow
-  # permission expansion. Classification never checks out or executes contributor code.
+  # Classification never checks out or executes contributor code.
   apply_type_labels:
     name: Apply PR type and size labels
+    needs: resolve
     if: >-
-      ${{ github.event_name == 'pull_request_target' &&
-          (github.event.action != 'edited' || github.event.changes.title) }}
+      ${{ needs.resolve.outputs.number != '' &&
+          contains(fromJSON('["opened", "synchronize", "reopened", "edited"]'), needs.resolve.outputs.action) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
-      group: pr-classification-${{ github.event.pull_request.number }}
+      group: pr-classification-${{ needs.resolve.outputs.number }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'live' }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -60,21 +83,25 @@ jobs:
     steps:
       - name: Synchronize type and size labels
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.number }}
+          PR_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          LABELS_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
         with:
           github-token: ${{ github.token }}
           script: |
             const { posix } = require('node:path');
             const repo = context.repo;
-            const issue_number = context.payload.pull_request.number;
+            const issue_number = Number(process.env.PR_NUMBER);
             const target = { ...repo, issue_number };
             const dryRun = process.env.LABELS_DRY_RUN === 'true';
-            // context.sha is the trusted base revision for pull_request_target.
+            // workflow_run and workflow_dispatch read the catalog from the trusted workflow revision.
             const { data: catalogFile } = await github.rest.repos.getContent({
               ...repo, path: '.github/labels.json', ref: context.sha,
             });
             const catalog = JSON.parse(Buffer.from(catalogFile.content, 'base64').toString('utf8'));
             const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: issue_number });
-            if (pr.state !== 'open') return;
+            if (pr.state !== 'open' || pr.head.sha !== process.env.PR_HEAD_SHA) return;
             const files = await github.paginate(github.rest.pulls.listFiles, {
               ...repo, pull_number: issue_number, per_page: 100,
             });

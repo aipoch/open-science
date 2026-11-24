@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
+import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
 import { HarnessSessionOwner } from './harness-session-owner'
 import { SettingsRepository } from './repository'
 import { ProviderRuntimeHealthOwner } from './provider-runtime-health-owner'
@@ -23,7 +24,7 @@ it.each(['config-edit', 'auth-failure'] as const)(
       apiEndpoints: ['chat-completions' as const]
     }
     await repository.upsertProvider(provider)
-    const health = new ProviderRuntimeHealthOwner(repository)
+    const health = new ProviderRuntimeHealthOwner(repository, new ProviderRuntimeProjectionOwner())
     let started!: () => void
     const upstreamStarted = new Promise<void>((resolve) => {
       started = resolve

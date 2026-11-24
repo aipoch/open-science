@@ -1,3 +1,4 @@
+import { CODEBUDDY_VERSION } from './codebuddy-install'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { existsSync } from 'node:fs'
@@ -45,6 +46,12 @@ import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 // Unit service tests do not start installed coding agents; the native probe has its own coverage.
+vi.mock('../acp/agent-process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../acp/agent-process')>()),
+  isClaudeAgentAcpAvailable: () => true,
+  resolveClaudeAgentAcpEntry: () => '/fixture/claude-acp'
+}))
+
 vi.mock('./provider-acp-validation', () => ({
   ProviderAcpValidator: class {
     validate = vi.fn(async () => ({
@@ -244,6 +251,7 @@ const createService = (
     userAgentsDir: options.userAgentsDir ?? join(storageRoot, 'no-user-agents'),
     userSkills: options.userSkills,
     executeClaudeProbe: options.executeClaudeProbe,
+    installManagedClaudeAcpImpl: vi.fn(async () => undefined),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedClaudeImpl: options.installManagedClaudeImpl as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -4490,7 +4498,7 @@ describe('SettingsService: official vendors', () => {
     expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
 
-  it('refreshes DeepSeek models while retaining bundled compatibility names', async () => {
+  it('stores the returned DeepSeek IDs and exposes its two compatible aliases in the picker', async () => {
     const service = createService()
     mockedNet.fetch.mockClear()
     vi.stubGlobal(
@@ -4521,7 +4529,7 @@ describe('SettingsService: official vendors', () => {
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
     )
 
-    // Preserve the raw discovery result, but expose compatibility names in the effective catalog.
+    // The saved snapshot records the vendor response. The picker also resolves the legacy aliases.
     expect((await repository.getSettings()).providers[0].fetchedModels).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro'
@@ -4530,13 +4538,12 @@ describe('SettingsService: official vendors', () => {
     expect(view.models).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro',
-      'deepseek-flash',
       'deepseek-v4-flash',
       'deepseek-v4-flash-vision-exp'
     ])
   })
 
-  it('keeps a captured DeepSeek session model usable and passes its original id after refresh', async () => {
+  it('preserves a captured removed model id and requires reselection when it is used', async () => {
     await repository.setAgentFramework('claude-code')
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
@@ -4548,14 +4555,14 @@ describe('SettingsService: official vendors', () => {
         key: 'k'
       })
     ).providers[0]
-    await service.setActiveProvider(created.id, 'deepseek-v4-flash')
+    await service.setActiveProvider(created.id, 'deepseek-v4-pro')
     const selection = await service.captureActiveAgentBackendSelection()
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }]
+            data: [{ id: 'deepseek-flash' }]
           })
         )
       )
@@ -4563,18 +4570,15 @@ describe('SettingsService: official vendors', () => {
     expect(await service.refreshProviderModels({ providerId: created.id })).toMatchObject({
       ok: true
     })
-    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-flash')
-    const backend = await service.resolveAgentBackend(selection)
-    expect(backend.env.ANTHROPIC_MODEL).toBe('deepseek-v4-flash')
-    expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
+    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-pro')
+    await expect(service.resolveAgentBackend(selection)).rejects.toThrow(
+      'The configured model is no longer available from provider "DeepSeek": "deepseek-v4-pro". Pick another model in Settings → Model.'
+    )
   })
 
   it('reports a refresh failure without changing the bundled catalog', async () => {
     const service = createService()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({ status: 401, json: () => Promise.resolve({}) })
-    )
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
 
     const created = (
       await service.upsertProvider({
@@ -4600,7 +4604,7 @@ describe('SettingsService: official vendors', () => {
 
     const result = await service.refreshProviderModels({ providerId: created.id })
     expect(result.ok).toBe(false)
-    expect(result.message).toMatch(/no model-list endpoint/i)
+    expect(result.code).toBe('unsupported')
   })
 
   it.each(['opencode', 'claude-code'] as const)(
@@ -4861,7 +4865,7 @@ describe('SettingsService: image-input capability', () => {
       vi
         .fn()
         .mockResolvedValue(
-          new Response(JSON.stringify({ data: [{ id: 'claude-opus-5-unreleased' }] }))
+          Response.json({ data: [{ id: 'claude-opus-5-unreleased' }], has_more: false })
         )
     )
 
@@ -4874,7 +4878,7 @@ describe('SettingsService: image-input capability', () => {
       })
     ).providers[0]
 
-    await service.refreshProviderModels({ providerId: created.id })
+    expect((await service.refreshProviderModels({ providerId: created.id })).ok).toBe(true)
     // Activate the fetched model, then read the active provider's view.
     const view = (
       await service.setActiveProvider(created.id, 'claude-opus-5-unreleased')
@@ -4884,9 +4888,9 @@ describe('SettingsService: image-input capability', () => {
     expect(view?.supportsImageInput).toBe(true)
   })
 
-  it('uses the vendor default model, not the refreshed catalog head, for the capability fallback', async () => {
+  it('projects the capability of the refreshed default model when no model is selected', async () => {
     const service = createService()
-    // A refresh reorders Kimi's catalog so a text-only id leads, while the default remains multimodal.
+    // With no explicit selection, capabilities follow the refreshed default, which is text-only here.
     vi.stubGlobal(
       'fetch',
       vi
@@ -4900,12 +4904,9 @@ describe('SettingsService: image-input capability', () => {
     ).providers[0]
     await service.refreshProviderModels({ providerId: created.id })
 
-    // With no active model, the capability must match the model resolveProvider actually spawns — the
-    // bundled multimodal default — not the refreshed list head kimi-k2.7-code (text-only), or
-    // OpenCode would keep stripping images from a default that supports them.
     const view = (await service.getSettingsView()).providers.find((p) => p.id === created.id)
     expect(view?.models[0]).toBe('kimi-k2.7-code')
-    expect(view?.supportsImageInput).toBe(true)
+    expect(view?.supportsImageInput).toBe(false)
   })
 })
 
@@ -6188,7 +6189,7 @@ describe('checkEnvironment', () => {
     // but the result's runtime + gating reflect the SELECTED framework (OpenCode).
     const service = createService(undefined, {
       opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' },
-      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: '2.138.0' }
+      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: CODEBUDDY_VERSION }
     })
 
     const result = await service.checkEnvironment()
@@ -6236,7 +6237,7 @@ describe('checkEnvironment', () => {
     await repository.setAgentFramework('opencode')
     // Claude is detectable (default detectDeps); OpenCode is declared absent (no opencodeDetected).
     const service = createService(undefined, {
-      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: '2.138.0' }
+      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: CODEBUDDY_VERSION }
     })
 
     const result = await service.checkEnvironment()
@@ -6293,7 +6294,7 @@ describe('SettingsService: managed-runtime flags', () => {
 })
 
 describe('SettingsService: uninstall managed runtime', () => {
-  it('uninstalls app-managed Codex and falls back to ready Claude', async () => {
+  it('uninstalls app-managed Codex and falls back to the built-in Agent', async () => {
     const { managedCodexAdapterEntry } = await import('./managed-codex')
     const adapterPath = managedCodexAdapterEntry(storageRoot)
     await mkdir(dirname(adapterPath), { recursive: true })
@@ -6308,7 +6309,7 @@ describe('SettingsService: uninstall managed runtime', () => {
 
     await expect(readFile(adapterPath)).rejects.toThrow()
     expect(snapshot.codex).toEqual({})
-    expect(snapshot.agentFrameworkId).toBe('claude-code')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
     expect(activeBackendAffected).toBe(true)
   })
 
@@ -6324,14 +6325,14 @@ describe('SettingsService: uninstall managed runtime', () => {
     expect(activeBackendAffected).toBe(false)
   })
 
-  it('uninstallOpencode removes the managed install, clears the record, and auto-switches to Claude when it was active', async () => {
+  it('uninstallOpencode removes the managed install, clears the record, and switches to the built-in Agent when it was active', async () => {
     // A real managed opencode binary on disk, recorded and selected as the active backend.
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     await mkdir(managedOpencodeDir(storageRoot), { recursive: true })
     await writeFile(opencodeBin, '', 'utf8')
     await chmod(opencodeBin, 0o755)
     await repository.setOpencodeInfo(opencodeBin, '1.18.3')
-    // A separate Claude still present on disk, so the active framework can fall back to it.
+    // A separate Claude still present on disk, which must remain available for explicit selection.
     const claudeBin = join(storageRoot, 'fake-claude', 'claude')
     await mkdir(dirname(claudeBin), { recursive: true })
     await writeFile(claudeBin, '', 'utf8')
@@ -6346,7 +6347,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     await expect(readFile(opencodeBin)).rejects.toThrow()
     expect(snapshot.opencode).toEqual({})
     expect(snapshot.opencodeManaged).toBe(false)
-    expect(snapshot.agentFrameworkId).toBe('claude-code')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
     // OpenCode was the active backend, so the caller must reconnect.
     expect(activeBackendAffected).toBe(true)
   })
@@ -6366,7 +6367,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     expect(activeBackendAffected).toBe(false)
   })
 
-  it('does not auto-switch to the other runtime when it exists but cannot report a version (not ready)', async () => {
+  it('falls back to the built-in Agent when the other external runtime is broken', async () => {
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     await mkdir(managedOpencodeDir(storageRoot), { recursive: true })
     await writeFile(opencodeBin, '', 'utf8')
@@ -6383,10 +6384,10 @@ describe('SettingsService: uninstall managed runtime', () => {
     const { snapshot } = await service.uninstallOpencode()
 
     // A broken runtime is never auto-selected: the selection stays put and the gate will flag it.
-    expect(snapshot.agentFrameworkId).toBe('opencode')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
   })
 
-  it('falls through to ready Codex when earlier fallback runtimes are unavailable', async () => {
+  it('falls back to the built-in Agent even when Codex is ready', async () => {
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     const codexAdapter = join(storageRoot, 'fallback', 'codex-acp')
     const nativePath = join(storageRoot, 'fallback', 'codex')
@@ -6417,7 +6418,7 @@ describe('SettingsService: uninstall managed runtime', () => {
 
     const { snapshot } = await service.uninstallOpencode()
 
-    expect(snapshot.agentFrameworkId).toBe('codex')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
   })
 })
 

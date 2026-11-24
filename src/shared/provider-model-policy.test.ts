@@ -41,7 +41,7 @@ it('uses the configured size and falls back to 200k when the user leaves it blan
   expect(resolveCustomModelContextWindow(undefined)).toBe(200_000)
 })
 it.each([
-  ['openai', undefined, 'gpt-6.1-sol'],
+  ['openai', undefined, 'gpt-6.2-sol'],
   ['kimi', undefined, 'kimi-k3.1-pro'],
   ['kimiforcode', undefined, 'k3.1-pro'],
   ['anthropic', undefined, 'claude-opus-5-5'],
@@ -63,8 +63,8 @@ it.each([
   ['tencenttokenplan', undefined, 'glm-5.2'],
   ['apodex', undefined, 'apodex-1.1'],
   ['stepfun', undefined, 'step-5-preview'],
-  ['bailian', undefined, 'qwen3.8-max'],
-  ['bailianplan', undefined, 'qwen3.8-max'],
+  ['bailian', undefined, 'qwen4-max-preview'],
+  ['bailianplan', undefined, 'qwen4-max-preview'],
   ['stepplan', undefined, 'step-5-preview']
 ] as const)('preserves the initial model for %s/%s', (vendor, region, expected) => {
   expect(defaultVendorModel(vendor, region)).toBe(expected)

@@ -71,6 +71,7 @@ import {
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { HostViewImageError } from './host-view-image-service'
 import { NotebookRunRepository } from './repository'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import {
   NotebookRuntimeService,
   type NotebookExecutionRequest,
@@ -583,7 +584,7 @@ describe('notebook MCP server config', () => {
     expect(names(true)).not.toEqual(expect.arrayContaining(['wsl_setup_activate']))
   })
 
-  it('publishes remember_memory with a root object output schema', async () => {
+  it('publishes object output schemas compatible with the default MCP dialect', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
@@ -600,9 +601,11 @@ describe('notebook MCP server config', () => {
 
     try {
       const { tools } = await client.listTools()
-      const rememberTool = tools.find(({ name }) => name === 'remember_memory')
-
-      expect(rememberTool?.outputSchema).toEqual(expect.objectContaining({ type: 'object' }))
+      for (const name of ['list_authorized_directories', 'remember_memory']) {
+        const schema = tools.find((tool) => tool.name === name)?.outputSchema
+        expect(schema).toMatchObject({ type: 'object' })
+        expect(schema).not.toHaveProperty('$schema')
+      }
     } finally {
       await client.close()
       await server.close()
@@ -1123,28 +1126,35 @@ describe('notebook_execute tool', () => {
     })
     const client = new ModelContextProtocolClient({ name: 'run-failure', version: '1.0.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
-    const results = [
-      { runId: 'run-1', kernelKind: 'python', status: 'failed', text: { traceback: 'boom' } },
-      { receipt: {}, run: { runId: 'run-2', kernelKind: 'python', status: 'failed' } },
-      {
-        receipt: {},
-        run: { runId: 'run-3', kernelKind: 'bash', status: 'completed', exitCode: 2 }
-      },
-      { runId: 'run-4', kernelKind: 'python', status: 'completed' }
-    ]
-    const fetchRpc = vi
-      .spyOn(globalThis, 'fetch')
-      .mockImplementation(async () => new Response(JSON.stringify({ result: results.shift() })))
+    const query = { action: 'query', runId: 'run-1' }
+    const cases = [
+      ['notebook_execute', { code: 'raise' }, { status: 'failed' }, true],
+      ['notebook_execute', { language: 'r', code: 'x' }, { status: 'timeout' }, true],
+      ['repl_execute', { code: 'x' }, { status: 'failed' }, true],
+      ['bash_execute', { command: 'x' }, { status: 'timeout', exitCode: null }, true],
+      [
+        'bash_execute',
+        { command: 'x' },
+        { status: 'failed', exitCode: null, errorCode: 'shell-cleanup-incomplete' },
+        true
+      ],
+      ['background_run', query, { run: { status: 'failed' } }, true],
+      ['background_run', query, { run: { status: 'interrupted' } }, true],
+      ['background_run', query, { run: { status: 'timeout' } }, true],
+      ['background_run', query, { run: { status: 'completed', exitCode: 2 } }, true],
+      ['background_run', query, { run: { status: 'cancelled' } }, false],
+      ['notebook_execute', { code: 'ok' }, { status: 'completed' }, false],
+      ['repl_execute', { code: 'x', background: true }, { status: 'failed', runId: 'run-1' }, false]
+    ] as const
+    const fetchRpc = vi.spyOn(globalThis, 'fetch')
     try {
       await server.connect(serverTransport)
       await client.connect(clientTransport)
-      const call = (name: string, args: Record<string, unknown>): Promise<unknown> =>
-        client.callTool({ name, arguments: args }).then((result) => result.isError)
-
-      expect(await call('notebook_execute', { code: 'raise' })).toBe(true)
-      expect(await call('background_run', { action: 'query', runId: 'run-2' })).toBe(true)
-      expect(await call('background_run', { action: 'query', runId: 'run-3' })).toBe(true)
-      expect(await call('notebook_execute', { code: 'ok' })).not.toBe(true)
+      for (const [name, args, result, failed] of cases) {
+        fetchRpc.mockResolvedValueOnce(new Response(JSON.stringify({ result })))
+        const response = await client.callTool({ name, arguments: args })
+        expect(response.isError === true, JSON.stringify({ name, result })).toBe(failed)
+      }
     } finally {
       fetchRpc.mockRestore()
       await client.close()
@@ -1869,6 +1879,7 @@ describe('repl_execute tool', () => {
     const root = await mkdtemp(join(tmpdir(), 'image-failure-mcp-'))
     const stderr = 'existing diagnostic\n'.repeat(500)
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -1900,7 +1911,9 @@ describe('repl_execute tool', () => {
     const connection = await rpc.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     const mcp = createNotebookMcpServer({
       ...connection,
@@ -1953,6 +1966,7 @@ describe('repl_execute tool', () => {
       }
     }
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -1974,7 +1988,9 @@ describe('repl_execute tool', () => {
     const connection = await rpc.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     const mcp = createNotebookMcpServer({
       ...connection,
@@ -1994,11 +2010,12 @@ describe('repl_execute tool', () => {
       const text = (response.content as Array<{ type: string; text?: string }>).find(
         (item) => item.type === 'text'
       )!.text!
-      expect(JSON.parse(text).recovery).toMatchObject(recovery)
-      expect(JSON.parse(text).recovery.guidance).toContain('no extra restart')
-      expect(
-        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)?.recovery
-      ).toEqual(recovery)
+      const run = (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)!
+      const result = JSON.parse(text)
+      expect(response.isError).toBe(true)
+      expect(result).toMatchObject({ runId: run.runId, status: 'failed', recovery })
+      expect(result.recovery.guidance).toContain('no extra restart')
+      expect(run.recovery).toEqual(recovery)
     } finally {
       await client.close()
       await mcp.close()
@@ -2047,6 +2064,7 @@ describe('repl_execute tool', () => {
       return execution
     })
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2089,7 +2107,9 @@ describe('repl_execute tool', () => {
     const connection = await rpcServer.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     const mcpServer = createNotebookMcpServer({
       endpoint: connection.endpoint,
@@ -3151,13 +3171,19 @@ describe('manage_environments tool', () => {
 })
 
 describe('compactNotebookExecutionResult', () => {
-  it.each([false, true, undefined])(
-    'preserves dispatch evidence without inferring legacy state: %s',
-    (kernelDispatched) => {
+  it.each([
+    [false, false],
+    [true, false],
+    [true, true],
+    [undefined, undefined]
+  ])(
+    'preserves dispatch and execution evidence without inferring legacy state: %s, %s',
+    (kernelDispatched, executionStarted) => {
       const run = {
         runId: 'failed-run',
         status: 'timeout',
         kernelDispatched,
+        executionStarted,
         stderr: 'kernel stopped'
       }
       const foreground = compactNotebookExecutionResult(run)
@@ -3170,6 +3196,9 @@ describe('compactNotebookExecutionResult', () => {
         )
         if (kernelDispatched === undefined) expect(received).not.toHaveProperty('kernelDispatched')
         else expect(received.kernelDispatched).toBe(kernelDispatched)
+        if (run.executionStarted === undefined)
+          expect(received).not.toHaveProperty('executionStarted')
+        else expect(received.executionStarted).toBe(run.executionStarted)
         expect(received.runId).toBe('failed-run')
         expect(received.status).toBe('timeout')
       }
@@ -3183,7 +3212,9 @@ describe('compactNotebookExecutionResult', () => {
       status: 'failed',
       recovery,
       stdout: 'x'.repeat(100_000),
-      stderr: 'cleanup failed',
+      stderr: 'first diagnostic\n' + '\0'.repeat(12000) + '\nfinal cause',
+      errorCode: 'shell-cleanup-incomplete',
+      executionStarted: false,
       exitCode: null
     }
     const foreground = compactNotebookExecutionResult(run) as Record<string, unknown>
@@ -3193,7 +3224,14 @@ describe('compactNotebookExecutionResult', () => {
     expect(background.recovery).toEqual(foreground.recovery)
     for (const result of [foreground, background]) {
       const serialized = serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
-      expect(JSON.parse(serialized).recovery).toEqual(foreground.recovery)
+      expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+      const parsed = JSON.parse(serialized)
+      expect(parsed).toMatchObject({
+        recovery: foreground.recovery,
+        errorCode: run.errorCode,
+        executionStarted: false
+      })
+      expect(parsed.stderr).toMatch(/^first diagnostic[\s\S]*final cause$/u)
     }
     expect(foreground.truncated).toBe(true)
   })
@@ -3657,10 +3695,25 @@ describe('compactNotebookStateResult', () => {
     expect(parsed.recentRuns[1].recovery.guidance).toContain('not started')
   })
 
-  it('applies the state projection and smaller global budget to notebook_state', () => {
+  it('requests only the recent runs used by the notebook_state projection', async () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_state')
     expect(tool?.mapResult).toBe(compactNotebookStateResult)
     expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+    await callNotebookRpc(
+      {
+        endpoint: 'http://localhost',
+        token: 'token',
+        sessionId: 'session',
+        workspaceCwd: '/work',
+        projectId: 'project'
+      },
+      tool!.method,
+      {},
+      async (_endpoint, init) => {
+        expect(JSON.parse(String(init.body)).params.historyLimit).toBe(10)
+        return Response.json({ result: {} })
+      }
+    )
   })
 
   it('returns bounded recent metadata without duplicating the complete run history', () => {

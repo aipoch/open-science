@@ -8,7 +8,7 @@ import type {
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import type { ProviderTokenUsage } from '@aipoch/providers/client'
-import { customProviderRequiresKey } from '../../../shared/provider-url-policy'
+import { providerAllowsAnonymousAccess } from '../../../shared/provider-url-policy'
 
 export type ProviderTextGenerationConfiguration = Readonly<{
   type: 'custom' | 'official'
@@ -63,7 +63,7 @@ export class ProviderTextGenerationService {
     const hasModel = typeof target.model === 'string' && target.model.length > 0
     return (
       (provider.type === 'custom' || provider.type === 'official') &&
-      (hasKey || (provider.type === 'custom' && !customProviderRequiresKey(provider.baseUrl))) &&
+      (hasKey || providerAllowsAnonymousAccess(provider)) &&
       hasModel &&
       createProvider({
         id: provider.vendorId ?? 'custom',

@@ -1,3 +1,4 @@
+import type { CodeBuddyAccountRequest } from '../../../shared/codebuddy-subscription'
 import type { StoreApi } from 'zustand'
 
 import {
@@ -12,6 +13,7 @@ import type {
   ProviderDeletionScenarioModelHandling,
   ProviderView,
   RefreshProviderModelsResult,
+  RefreshProviderModelsRequest,
   SettingsSnapshot,
   SaveValidatedProviderResult,
   UpsertProviderRequest,
@@ -34,8 +36,10 @@ export type ProviderAuthActions = {
   persistProvider: (request: UpsertProviderRequest) => Promise<string>
   saveProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
   saveAndActivateProvider: (request: UpsertProviderRequest) => Promise<SaveProviderResult>
+  addOnboardingKiloProvider: () => Promise<void>
   validateProvider: (request: ValidateProviderRequest) => Promise<ValidateProviderResult>
   cancelCodexLogin: () => Promise<void>
+  codeBuddyAccount: (request: CodeBuddyAccountRequest) => Promise<ValidateProviderResult>
   loginIsolatedCodex: () => Promise<ValidateProviderResult>
   logoutIsolatedCodex: () => Promise<ValidateProviderResult>
   loginSharedClaude: () => Promise<ValidateProviderResult>
@@ -49,7 +53,9 @@ export type ProviderAuthActions = {
   waitXaiOAuthLogin: () => Promise<XaiOAuthLoginResult>
   cancelXaiOAuthLogin: () => Promise<void>
   logoutXaiOAuth: () => Promise<void>
-  refreshProviderModels: (providerId: string) => Promise<RefreshProviderModelsResult>
+  refreshProviderModels: (
+    request: string | RefreshProviderModelsRequest
+  ) => Promise<RefreshProviderModelsResult & { refreshFailed?: boolean }>
   setActiveProvider: (providerId: string, model?: string) => Promise<void>
   setAgentFramework: (id: AgentFrameworkId) => Promise<void>
   deleteProvider: (
@@ -72,8 +78,10 @@ type ProviderAuthCommands = Pick<
   | 'setAgentFramework'
   | 'validateProvider'
   | 'saveValidatedProvider'
+  | 'addOnboardingKiloProvider'
   | 'cancelCodexLogin'
   | 'cancelClaudeLogin'
+  | 'codeBuddyAccount'
   | 'loginIsolatedCodex'
   | 'logoutIsolatedCodex'
   | 'loginSharedClaude'
@@ -176,11 +184,21 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
   },
 
   saveAndActivateProvider: async (request) => {
-    const result = await get().saveProvider(request)
-    if (result.providerId) {
-      await get().setActiveProvider(result.providerId, normalizeProviderModel(request.model))
+    if (request.type !== 'official' && request.type !== 'custom') {
+      const result = await get().saveProvider(request)
+      if (result.providerId && result.validation.ok && result.validation.applied !== false)
+        await get().setActiveProvider(result.providerId, normalizeProviderModel(request.model))
+      return result
     }
-    return result
+    const { providerId = '', validation } = await get().saveValidatedProvider(request)
+    if (providerId && validation.ok && validation.applied !== false)
+      await get().setActiveProvider(providerId, normalizeProviderModel(request.model))
+    return { providerId, validation }
+  },
+
+  addOnboardingKiloProvider: async () => {
+    reconcileSnapshot(await getCommands().addOnboardingKiloProvider())
+    void refreshPreflight().catch(() => undefined)
   },
 
   validateProvider: async (request) => {
@@ -194,6 +212,16 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
   },
 
   cancelCodexLogin: () => getCommands().cancelCodexLogin(),
+
+  codeBuddyAccount: async (request) => {
+    const commands = getCommands()
+    const result = await commands.codeBuddyAccount(request)
+    if (request.action !== 'status' && request.action !== 'cancel') {
+      reconcileSnapshot(await commands.getSettings())
+      if (request.action !== 'refresh' || result.category === 'auth') await refreshPreflight()
+    }
+    return result
+  },
 
   loginIsolatedCodex: async () => {
     const commands = getCommands()
@@ -276,14 +304,15 @@ export const createProviderAuthSlice = <Store extends ProviderAuthHost>({
     await refreshPreflight()
   },
 
-  refreshProviderModels: async (providerId) => {
+  refreshProviderModels: async (request) => {
     const commands = getCommands()
-    const result = await commands.refreshProviderModels({ providerId })
+    const target = typeof request === 'string' ? { providerId: request } : request
+    const result = await commands.refreshProviderModels(target)
+    if (target.draft && result.code !== 'stale') return result
     try {
       reconcileSnapshot(await commands.getSettings())
-    } catch (error) {
-      // Keep the original refresh failure if best-effort reconciliation also fails.
-      if (result.ok) throw error
+    } catch {
+      if (result.ok) return { ...result, refreshFailed: true }
     }
     return result
   },

@@ -1,5 +1,18 @@
+import type {
+  NotebookMemoryRejectedEvent,
+  NotebookMemoryPolicyChangedEvent,
+  NotebookMemoryPolicyState,
+  NotebookMemoryPolicyStateRequest
+} from '../notebook-memory'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../artifacts'
 import type { ReplayRunIndex } from '../replay'
+import type {
+  NotebookProjectResources,
+  NotebookProjectResourcesRequest,
+  NotebookResourceRelease,
+  NotebookResourceReleaseRequest,
+  ReleaseNotebookSessionResourcesRequest
+} from '../notebook-resources'
 
 import type {
   AbortNotebookCodeCellRequest,
@@ -13,6 +26,9 @@ import type {
   FinishNotebookCodeCellRequest,
   NotebookAvailableEvent,
   NotebookBackgroundRunLookupRequest,
+  NotebookBackgroundTaskSnapshot,
+  NotebookRunEvidenceRequest,
+  NotebookRunEvidenceSnapshot,
   NotebookBackgroundRunResult,
   NotebookChangedEvent,
   NotebookNamespaceRequest,
@@ -47,6 +63,18 @@ import {
 } from './definition'
 
 export const contracts = {
+  'notebook.getProjectResources': callable<
+    (request: NotebookProjectResourcesRequest) => Promise<NotebookProjectResources>
+  >()('notebook', ['notebook:project-resources']),
+  'notebook.releaseSessionResources': callable<
+    (request: ReleaseNotebookSessionResourcesRequest) => Promise<NotebookResourceRelease>
+  >()('notebook', ['notebook:release-session-resources']),
+  'notebook.getResourceRelease': callable<
+    (request: NotebookResourceReleaseRequest) => Promise<NotebookResourceRelease>
+  >()('notebook', ['notebook:resource-release']),
+  'notebook.retryResourceRelease': callable<
+    (request: NotebookResourceReleaseRequest) => Promise<NotebookResourceRelease>
+  >()('notebook', ['notebook:retry-resource-release']),
   'notebook.getProcessMonitor': callable<
     (request?: NotebookProcessMonitorRequest) => Promise<NotebookProcessMonitorSnapshot>
   >()('notebook', ['notebook:process-monitor', LOCAL]),
@@ -72,9 +100,21 @@ export const contracts = {
   'notebook.execute': callable<
     (request: ExecuteNotebookCodeRequest) => Promise<NotebookRunSummary>
   >()('notebook', ['notebook:execute']),
+  'notebook.backgroundTasks': callable<
+    (request: NotebookSessionRequest) => Promise<NotebookBackgroundTaskSnapshot>
+  >()('notebook', ['notebook:background-tasks']),
   'notebook.getBackgroundRun': callable<
     (request: NotebookBackgroundRunLookupRequest) => Promise<NotebookBackgroundRunResult>
   >()('notebook', ['notebook:background-run']),
+  'notebook.getMemoryPolicyState': callable<
+    (request: NotebookMemoryPolicyStateRequest) => Promise<NotebookMemoryPolicyState>
+  >()('notebook', ['notebook:memory-policy-state']),
+  'notebook.onMemoryRejected': callable<
+    (listener: AcpListener<NotebookMemoryRejectedEvent>) => RemoveListener
+  >()('notebook', ['notebook:memory-rejected', EVENT]),
+  'notebook.onMemoryPolicyChanged': callable<
+    (listener: AcpListener<NotebookMemoryPolicyChangedEvent>) => RemoveListener
+  >()('notebook', ['notebook:memory-policy-changed', EVENT]),
   'notebook.getProjectActivity': callable<
     (request: NotebookProjectActivityRequest) => Promise<NotebookProjectActivity>
   >()('notebook', ['notebook:project-activity']),
@@ -129,6 +169,9 @@ export const contracts = {
   'notebook.shutdown': callable<
     (request: NotebookSessionRequest) => Promise<{ sessionId: string; status: 'shutdown' }>
   >()('notebook', ['notebook:shutdown']),
+  'notebook.runEvidence': callable<
+    (request: NotebookRunEvidenceRequest) => Promise<NotebookRunEvidenceSnapshot | null>
+  >()('notebook', ['notebook:run-evidence']),
   'notebook.runIndex': callable<(request: NotebookSessionRequest) => Promise<ReplayRunIndex[]>>()(
     'notebook',
     ['notebook:run-index']

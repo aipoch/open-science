@@ -1,9 +1,10 @@
 import { useImageModelSettingsStore } from '@/stores/image-model-settings-store'
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { ImageModelSelector, ImageServicesPanel } from './ImageModelSettings'
+import { ImageServiceTest } from './ImageServiceTest'
 import { useImageModelSettings } from './use-image-model-settings'
 import {
   IMAGE_VENDOR_CATALOG,
@@ -37,7 +38,12 @@ beforeEach(async () => {
   await i18next.changeLanguage('en')
   vi.clearAllMocks()
   vi.stubGlobal('api', {
-    settings: { getImageModels: vi.fn(async () => snapshot), updateImageModels: save }
+    settings: {
+      getImageModels: vi.fn(async () => snapshot),
+      updateImageModels: save,
+      refreshImageModelCatalog: vi.fn(),
+      testImageModel: vi.fn(async () => ({ ok: true }))
+    }
   })
 })
 afterEach(() => {
@@ -69,7 +75,10 @@ it('deletes an image service from its row only after confirmation', async () => 
 
 it('saves a keyless local service with distinct presets and navigates back only on success', async () => {
   const { rerender } = render(
-    <ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'custom' }}
+      navigate={navigate}
+    />
   )
   fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Local images' } })
   fireEvent.change(screen.getByLabelText('Base URL'), {
@@ -92,10 +101,21 @@ it('saves a keyless local service with distinct presets and navigates back only 
   expect(
     screen.getAllByLabelText('Model ID').map((input) => (input as HTMLInputElement).value)
   ).toEqual(['local/image', 'other/model'])
+  save.mockImplementationOnce(async (request) =>
+    request.kind === 'save'
+      ? {
+          ...snapshot,
+          services: [{ ...request, configured: true }],
+          imageModel: { serviceId: request.id, modelId: request.models[0].id }
+        }
+      : snapshot
+  )
   fireEvent.click(screen.getByText('Save'))
   await waitFor(() => expect(navigate).toHaveBeenCalledWith({ kind: 'image-services' }))
   rerender(<ImageServicesPanel view={{ kind: 'image-services' }} navigate={navigate} />)
-  expect(screen.getByRole('status').textContent).toBe('Saved')
+  expect(screen.getByRole('status').textContent).toBe(
+    'Saved. New image settings apply from the next turn.'
+  )
   expect(save).toHaveBeenLastCalledWith(
     expect.objectContaining({
       kind: 'save',
@@ -149,6 +169,7 @@ it('announces a committed selection, clears stale success on failure and confirm
   await screen.findByRole('alert')
   expect(screen.queryByRole('status')).toBeNull()
   expect(select.textContent).toContain('Local images')
+  expect(select.querySelector('svg.lucide-circle-plus')).not.toBeNull()
   save.mockResolvedValueOnce(configured)
   fireEvent.pointerDown(select, { button: 0, pointerType: 'mouse', ctrlKey: false })
   fireEvent.click(await screen.findByRole('option', { name: 'Not configured' }))
@@ -156,16 +177,74 @@ it('announces a committed selection, clears stale success on failure and confirm
   expect(select.textContent).toBe('Not configured')
 })
 
-it('discards typed custom credentials when switching to an official account', async () => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
-  fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Official images' } })
-  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'must-not-be-sent' } })
-  fireEvent.pointerDown(screen.getByLabelText('Provider type'), {
-    button: 0,
-    pointerType: 'mouse',
-    ctrlKey: false
+it('marks the retained default and tests a refreshed match without changing the save draft', async () => {
+  const openai = IMAGE_VENDOR_CATALOG.find((vendor) => vendor.id === 'openai')!
+  const [active, listed] = openai.models
+  const service = {
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Official images',
+    vendorId: openai.id,
+    adapter: openai.adapter,
+    baseUrl: openai.regions[0].baseUrl,
+    models: openai.models,
+    configured: true
+  }
+  vi.mocked(window.api.settings.getImageModels).mockResolvedValue({
+    ...snapshot,
+    services: [service],
+    imageModel: { serviceId: service.id, modelId: active.id }
   })
-  fireEvent.click(await screen.findByRole('option', { name: officialVendor.label }))
+  vi.mocked(window.api.settings.refreshImageModelCatalog).mockResolvedValue({
+    ok: true,
+    modelIds: [listed.wireModelId],
+    fetchedAt: Date.UTC(2026, 10, 19)
+  })
+  render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-edit', serviceId: service.id }}
+      navigate={navigate}
+    />
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Refresh model list' }))
+  await screen.findByText(`${active.label} · Current default omitted from the catalog`)
+  fireEvent.click(screen.getByRole('button', { name: 'Test generation' }))
+  const confirmation = await screen.findByRole('alertdialog', { name: 'Test image generation?' })
+  expect(confirmation.textContent).toContain(listed.label)
+  fireEvent.click(within(confirmation).getByRole('button', { name: 'Test generation' }))
+  await screen.findByText('Image generation test passed.')
+  expect(window.api.settings.testImageModel).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ models: [listed] })
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ models: [active, listed] })
+    )
+  )
+})
+
+it('discards typed custom credentials when switching to an official account', async () => {
+  const { rerender } = render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'custom' }}
+      navigate={navigate}
+    />
+  )
+  fireEvent.change(await screen.findByLabelText('API key'), {
+    target: { value: 'must-not-be-sent' }
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Change provider' }))
+  expect(navigate).toHaveBeenCalledWith({ kind: 'image-service-create' })
+  rerender(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
+  fireEvent.click(await screen.findByRole('button', { name: /MiniMax/ }))
+  expect(navigate).toHaveBeenLastCalledWith({ kind: 'image-service-create', vendorId: 'minimax' })
+  rerender(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'minimax' }}
+      navigate={navigate}
+    />
+  )
   expect((screen.getByLabelText('API key') as HTMLInputElement).value).toBe('••••1234')
   expect(screen.queryByLabelText('Base URL')).toBeNull()
   fireEvent.click(screen.getByText('Save'))
@@ -183,7 +262,25 @@ it('discards typed custom credentials when switching to an official account', as
 })
 
 it('switches provider models without carrying custom credentials and uses the account name by default', async () => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
+  vi.mocked(window.api.settings.getImageModels).mockResolvedValue({
+    ...snapshot,
+    services: [
+      {
+        id: 'custom-images',
+        name: '',
+        adapter: 'openai-images',
+        configured: false,
+        baseUrl: 'http://localhost:3000/v1',
+        models: [{ id: 'model', wireModelId: 'local/image', presetId: 'openai-images/generic' }]
+      }
+    ]
+  })
+  render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-edit', serviceId: 'custom-images' }}
+      navigate={navigate}
+    />
+  )
   const providerSelect = await screen.findByLabelText('Provider type')
   fireEvent.change(screen.getByLabelText('Base URL'), {
     target: { value: 'http://localhost:3000/v1' }
@@ -216,43 +313,43 @@ it.each([
   ['OpenAI', 'openai', 'GPT Image 2.6 Sunburst', 'openai-images'],
   ['Bailian', 'bailian', 'Qwen Image 3.0 Pro', 'qwen-images'],
   ['Volcengine Ark', 'volcengine', 'Seedream 5.5', 'seedream']
-])('configures %s without a conversation account', async (label, vendorId, model, adapter) => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
-  fireEvent.pointerDown(await screen.findByLabelText('Provider type'), {
-    button: 0,
-    pointerType: 'mouse',
-    ctrlKey: false
-  })
-  fireEvent.click(await screen.findByRole('option', { name: label }))
-  expect(screen.getByText(model)).toBeTruthy()
-  expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(true)
-  const workspaceUrl = 'https://llm-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
-  if (vendorId === 'bailian') {
-    fireEvent.change(screen.getByLabelText('Base URL'), {
-      target: { value: 'https://example.com' }
-    })
-    expect(screen.getByText('Enter a Bailian workspace URL.')).toBeTruthy()
+] as const)(
+  'configures %s without a conversation account',
+  async (_label, vendorId, model, adapter) => {
+    render(
+      <ImageServicesPanel view={{ kind: 'image-service-create', vendorId }} navigate={navigate} />
+    )
+    expect(await screen.findByText(model)).toBeTruthy()
     expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: workspaceUrl } })
+    const workspaceUrl = 'https://llm-test.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+    if (vendorId === 'bailian') {
+      fireEvent.change(screen.getByLabelText('Base URL'), {
+        target: { value: 'https://example.com' }
+      })
+      expect(screen.getByText('Enter a Bailian workspace URL.')).toBeTruthy()
+      expect((screen.getByText('Save') as HTMLButtonElement).disabled).toBe(true)
+      fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: workspaceUrl } })
+    }
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'image-only-secret' } })
+    fireEvent.click(screen.getByText('Save'))
+    await waitFor(() => expect(save).toHaveBeenCalledOnce())
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ vendorId, adapter, apiKey: 'image-only-secret' })
+    )
+    expect(save.mock.calls[0][0]).not.toHaveProperty('providerId')
+    if (vendorId === 'bailian')
+      expect(save.mock.calls[0][0]).toMatchObject({ baseUrl: workspaceUrl })
   }
-  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'image-only-secret' } })
-  fireEvent.click(screen.getByText('Save'))
-  await waitFor(() => expect(save).toHaveBeenCalledOnce())
-  expect(save).toHaveBeenCalledWith(
-    expect.objectContaining({ vendorId, adapter, apiKey: 'image-only-secret' })
-  )
-  expect(save.mock.calls[0][0]).not.toHaveProperty('providerId')
-  if (vendorId === 'bailian') expect(save.mock.calls[0][0]).toMatchObject({ baseUrl: workspaceUrl })
-})
+)
 
 it('switches a reused credential to a separate image key without modifying the account', async () => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
-  fireEvent.pointerDown(await screen.findByLabelText('Provider type'), {
-    button: 0,
-    pointerType: 'mouse',
-    ctrlKey: false
-  })
-  fireEvent.click(await screen.findByRole('option', { name: officialVendor.label }))
+  render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'minimax' }}
+      navigate={navigate}
+    />
+  )
+  expect(((await screen.findByLabelText('API key')) as HTMLInputElement).readOnly).toBe(true)
   fireEvent.pointerDown(screen.getByLabelText('Credentials'), {
     button: 0,
     pointerType: 'mouse',
@@ -268,7 +365,12 @@ it('switches a reused credential to a separate image key without modifying the a
 })
 
 it('omits the preset selector when the API format has only one contract', async () => {
-  render(<ImageServicesPanel view={{ kind: 'image-service-create' }} navigate={navigate} />)
+  render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'custom' }}
+      navigate={navigate}
+    />
+  )
   fireEvent.pointerDown(await screen.findByLabelText('API format'), {
     button: 0,
     pointerType: 'mouse',
@@ -290,4 +392,76 @@ it('omits the preset selector when the API format has only one contract', async 
       })
     )
   )
+})
+
+it('requires explicit test consent, discards stale results and does not persist the draft', async () => {
+  const request = {
+    kind: 'save' as const,
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Images',
+    adapter: 'openai-images' as const,
+    baseUrl: 'http://localhost:3000/v1',
+    models: [{ id: 'image', wireModelId: 'image', presetId: 'openai-images/generic' as const }]
+  }
+  let complete!: (value: { ok: true }) => void
+  vi.mocked(window.api.settings.testImageModel).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve
+      })
+  )
+  const { rerender } = render(<ImageServiceTest request={request} disabled={false} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Test generation' }))
+  const dialog = await screen.findByRole('alertdialog')
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() =>
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Test generation' }))
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Test generation' }))
+  const confirmedDialog = await screen.findByRole('alertdialog')
+  expect(confirmedDialog.textContent).toContain('Your provider may charge')
+  expect(window.api.settings.testImageModel).not.toHaveBeenCalled()
+  fireEvent.click(within(confirmedDialog).getByRole('button', { name: 'Test generation' }))
+  await waitFor(() =>
+    expect(window.api.settings.testImageModel).toHaveBeenCalledExactlyOnceWith(request)
+  )
+  const changed = { ...request, apiKey: 'new-key' }
+  rerender(<ImageServiceTest request={changed} disabled={false} />)
+  await act(async () => complete({ ok: true }))
+  expect(screen.queryByRole('status')).toBeNull()
+  expect(save).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Test generation' }))
+  fireEvent.click(
+    within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Test generation' })
+  )
+  await screen.findByText('Image generation test passed.')
+  rerender(<ImageServiceTest request={request} disabled={false} />)
+  expect(screen.queryByRole('status')).toBeNull()
+  rerender(<ImageServiceTest request={changed} disabled={false} />)
+  expect(screen.queryByRole('status')).toBeNull()
+})
+
+it('allows saving after an optional generation test fails', async () => {
+  vi.mocked(window.api.settings.testImageModel).mockResolvedValue({
+    ok: false,
+    error: { code: 'AUTHENTICATION_FAILED' }
+  })
+  render(
+    <ImageServicesPanel
+      view={{ kind: 'image-service-create', vendorId: 'custom' }}
+      navigate={navigate}
+    />
+  )
+  fireEvent.change(await screen.findByLabelText('Base URL'), {
+    target: { value: 'http://localhost:3000/v1' }
+  })
+  fireEvent.change(screen.getByLabelText('Model ID'), { target: { value: 'local/image' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Test generation' }))
+  fireEvent.click(
+    within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Test generation' })
+  )
+  await screen.findByText('Authentication failed. Check the API key.')
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(navigate).toHaveBeenCalledWith({ kind: 'image-services' }))
+  expect(save).toHaveBeenCalledOnce()
 })

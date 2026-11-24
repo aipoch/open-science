@@ -41,6 +41,7 @@ it('excludes only the complete clipped occurrence and accounts visible repeated 
 
 it.each([
   'clipped-font',
+  'clipped-font-rgb',
   'clipped-font-shared-outside',
   'clipped-font-with-visible-form-text',
   'clipped-font-rectangle',
@@ -69,7 +70,7 @@ it.each([
       expect(
         [...(proof?.indexes ?? [])].map((index) => (content.items[index] as { str: string }).str)
       ).toEqual(
-        ['clipped-font', 'clipped-font-rectangle'].includes(fault)
+        ['clipped-font', 'clipped-font-rgb', 'clipped-font-rectangle'].includes(fault)
           ? ['Hidden heading', 'record']
           : []
       )
@@ -95,21 +96,27 @@ it.each(['nested', 'repeated-form'])(
   }
 )
 
-it.each(['white', 'visible', 'partial', 'no-clip', 'path-clip', 'rotation', 'same-position'])(
-  'retains sources without unique whole black ink outside a Form clip: %s',
-  async (fault) => {
-    const document = await formPage(fault)
-    try {
-      const page = await document.getPage(1),
-        content = await getPdfTranslationTextContent(page)
-      expect(
-        await readNativeFormClippedText(page, content, page.getViewport({ scale: 1 }))
-      ).toBeUndefined()
-    } finally {
-      await document.destroy()
-    }
+it.each([
+  'white',
+  'visible',
+  'visible-rgb',
+  'partial',
+  'no-clip',
+  'path-clip',
+  'rotation',
+  'same-position'
+])('retains sources without unique whole ink outside a Form clip: %s', async (fault) => {
+  const document = await formPage(fault)
+  try {
+    const page = await document.getPage(1),
+      content = await getPdfTranslationTextContent(page)
+    expect(
+      await readNativeFormClippedText(page, content, page.getViewport({ scale: 1 }))
+    ).toBeUndefined()
+  } finally {
+    await document.destroy()
   }
-)
+})
 
 it.each(['source', 'advance', 'position', 'type3', 'missing-outline', 'alpha', 'optional-content'])(
   'abstains on incomplete or unproved native occurrence evidence: %s',

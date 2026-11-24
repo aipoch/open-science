@@ -1,4 +1,4 @@
-import { redactSensitiveText } from '@aipoch/diagnostics'
+export { providerErrorDetails, providerErrorExcerpt } from './transport/body'
 
 /** Portable provider failure classification and bounded redaction. */
 export type ProviderTextGenerationFailure = Readonly<{
@@ -50,26 +50,6 @@ export function providerTextGenerationFailure(
     kind: match[1] as ProviderTextGenerationFailure['kind'],
     ...(match[2] !== '0' ? { status: Number(match[2]) } : {})
   }
-}
-
-/** Keep provider/Agent wording readable without forwarding credentials or an unbounded payload. */
-export function providerErrorDetails(error: unknown, secrets: readonly string[] = []): string {
-  let text = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
-  for (const secret of secrets) {
-    if (secret) {
-      for (const value of [
-        secret,
-        JSON.stringify(secret).slice(1, -1),
-        encodeURIComponent(secret)
-      ]) {
-        text = text.replaceAll(value, '[REDACTED]')
-      }
-    }
-  }
-  const displayText = text
-    .replace(/^\[provider-text-generation:[a-z-]+\]\s*/, '')
-    .replace(/\[provider-failure:[a-z-]+:\d+\]\s*/g, '')
-  return redactSensitiveText(displayText).slice(0, 4096)
 }
 
 export class ProviderTextGenerationError extends Error {

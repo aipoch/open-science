@@ -1,4 +1,6 @@
+import { processBirthIdentity } from '../process-birth-identity'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   defaultController,
-  KernelProcessLifecycleOwner
+  KernelProcessLifecycleOwner,
+  type KernelProcessSpawnIntent
 } from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from '@aipoch/environment'
 import {
@@ -47,6 +50,7 @@ describe('KernelProcessLifecycleOwner', () => {
   afterEach(async () => {
     await Promise.all(trackedChildren.splice(0).map((child) => terminateProcessTree(child)))
     vi.restoreAllMocks()
+    windowsProcessIsAlive.mockClear()
     reapWindowsOwnedJob.mockReset()
     if (root) await rm(root, { recursive: true, force: true })
     root = undefined
@@ -179,21 +183,25 @@ describe('KernelProcessLifecycleOwner', () => {
         laneKey: '["project-1","session-1","root",null,null]',
         processKey: 'python:default-python',
         pid: 4242
-      })
+      }),
+      ...(process.platform === 'darwin' ? [expect.any(Function)] : [])
     )
     expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
   })
 
   it.each([
-    { probe: 'owned', reaped: true, foreign: false, removed: true },
-    { probe: 'dead', reaped: false, foreign: false, removed: true },
-    { probe: 'reused', reaped: false, foreign: false, removed: true },
-    { probe: 'owned', reaped: false, foreign: false, removed: false },
-    { probe: 'unknown', reaped: false, foreign: false, removed: false },
-    { probe: 'owned', reaped: true, foreign: true, removed: false }
+    { probe: 'owned', reaped: true, draft: 'matching', removed: true },
+    { probe: 'dead', reaped: false, draft: 'matching', removed: true },
+    { probe: 'reused', reaped: false, draft: 'matching', removed: true },
+    { probe: 'owned', reaped: false, draft: 'matching', removed: false },
+    { probe: 'unknown', reaped: false, draft: 'matching', removed: false },
+    { probe: 'owned', reaped: true, draft: 'foreign', removed: false },
+    { probe: 'owned', reaped: true, draft: 'empty', removed: false },
+    { probe: 'owned', reaped: true, draft: 'partial', removed: false },
+    { probe: 'unknown', reaped: false, draft: 'partial', removed: false }
   ] as const)(
-    'handles interrupted host receipt writes after recovery ($probe, reaped=$reaped, foreign=$foreign)',
-    async ({ probe, reaped, foreign, removed }) => {
+    'handles interrupted host receipt writes after recovery ($probe, reaped=$reaped, draft=$draft)',
+    async ({ probe, reaped, draft, removed }) => {
       root = await mkdtemp(join(tmpdir(), 'kernel-process-interrupted-receipt-'))
       const first = new KernelProcessLifecycleOwner({
         storageRoot: root,
@@ -208,16 +216,17 @@ describe('KernelProcessLifecycleOwner', () => {
       const receipt = first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
       const temporary = `${receipt.path}.4242.tmp`
       const contents = await readFile(receipt.path, 'utf8')
-      await writeFile(
-        temporary,
-        foreign
-          ? JSON.stringify({ ...JSON.parse(contents), ownerToken: 'different-owner' })
-          : contents
-      )
+      const draftContents = {
+        matching: contents,
+        foreign: JSON.stringify({ ...JSON.parse(contents), ownerToken: 'different-owner' }),
+        empty: '',
+        partial: contents.slice(0, contents.indexOf('ownerToken'))
+      }[draft]
+      await writeFile(temporary, draftContents)
       // The host publishes the active filename before persisting its PID in the receipt.
       await writeFile(receipt.path, JSON.stringify(intent.record))
       const terminate = vi.fn(async () => {
-        expect(await readFile(temporary, 'utf8')).toBeTruthy()
+        expect(await readFile(temporary, 'utf8')).toBe(draftContents)
         return { reaped }
       })
       const restarted = new KernelProcessLifecycleOwner({
@@ -229,12 +238,18 @@ describe('KernelProcessLifecycleOwner', () => {
         await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
       } else {
         await restarted.ensureReady()
+        const next = restarted.beginSpawn({
+          laneKey: intent.record.laneKey,
+          processKey: intent.record.processKey,
+          kernelEpochId: 'next-epoch'
+        })
+        restarted.abandonSpawn(next)
       }
       expect(terminate).toHaveBeenCalledTimes(probe === 'owned' ? 1 : 0)
       if (removed) {
         await expect(readFile(temporary, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
       } else {
-        expect(await readFile(temporary, 'utf8')).toBeTruthy()
+        expect(await readFile(temporary, 'utf8')).toBe(draftContents)
       }
     }
   )
@@ -319,6 +334,75 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(() => restarted.beginSpawn(scope)).toThrow('KERNEL_STARTUP_FENCE')
   })
 
+  it('skips probes for receipts outside the recovering lane', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-scoped-probes-'))
+    const target = {
+      laneKey: 'target-lane',
+      processKey: 'r:default-r',
+      kernelEpochId: 'epoch-target'
+    }
+    const unrelated = {
+      laneKey: 'unrelated-lane',
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch-unrelated'
+    }
+    const first = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-a'
+    })
+    await first.ensureReady()
+    first.recordSpawned(first.beginSpawn(target), { pid: 5252, posixBirthToken: 'target-birth' })
+    first.recordSpawned(first.beginSpawn(unrelated), {
+      pid: 6262,
+      posixBirthToken: 'unrelated-birth'
+    })
+
+    const probe = vi.fn(async () => 'unknown' as const)
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-b',
+      controller: { probe, terminate: vi.fn(async () => ({ reaped: false })) }
+    })
+
+    await restarted.ensureReadyForLane(target.laneKey)
+
+    expect(probe).toHaveBeenCalledOnce()
+    expect(probe).toHaveBeenCalledWith(expect.objectContaining({ laneKey: target.laneKey }))
+    expect(() => restarted.beginSpawn(target)).toThrow('KERNEL_STARTUP_FENCE')
+  })
+
+  it('reuses completed lane recovery until that lane publishes a new receipt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-scoped-cache-'))
+    const probe = vi.fn(async () => 'dead' as const)
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-restarted',
+      controller: {
+        probe,
+        terminate: vi.fn(async () => ({ reaped: true }))
+      }
+    })
+    const lane = 'target-lane'
+
+    await restarted.ensureReadyForLane(lane)
+    await restarted.ensureReadyForLane(lane)
+    expect(probe).not.toHaveBeenCalled()
+
+    const other = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-other'
+    })
+    const external = other.beginSpawn({
+      laneKey: lane,
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch-external'
+    })
+    other.recordSpawned(external, { pid: 5252, posixBirthToken: 'external-birth' })
+
+    await restarted.ensureReadyForLane(lane)
+    expect(probe).toHaveBeenCalledOnce()
+  })
+
   it('does not cancel a pending startup while tolerant recovery scans another lane', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-pending-recovery-'))
     const owner = new KernelProcessLifecycleOwner({
@@ -383,7 +467,7 @@ describe('KernelProcessLifecycleOwner', () => {
       controller: { probe, terminate: vi.fn(async () => ({ reaped: false })) }
     })
 
-    await expect(restarted.ensureReadyForLane('unrelated-lane')).resolves.toBeUndefined()
+    await expect(restarted.ensureReadyForLane('lane-a')).resolves.toBeUndefined()
     expect(probe).toHaveBeenCalledOnce()
     const unrelated = restarted.beginSpawn({
       laneKey: 'unrelated-lane',
@@ -438,49 +522,77 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
   })
 
-  it('does not probe or signal a numeric POSIX group after a proven reboot', async () => {
+  it.each(['linux', 'darwin'] as const)(
+    'does not probe or signal a numeric %s group after a proven reboot',
+    async (platform) => {
+      const kill = vi.spyOn(process, 'kill')
+      const controller = defaultController(platform, () => bootB)
+
+      await expect(
+        controller.probe({
+          version: 1,
+          receiptId: 'receipt-a',
+          ownerInstanceId: 'owner-a',
+          ownerToken: 'owner-token-a',
+          platform,
+          spawnedAt: 1,
+          laneKey: 'lane-a',
+          processKey: 'repl',
+          kernelEpochId: 'epoch-a',
+          pid: process.pid,
+          bootToken: bootA
+        })
+      ).resolves.toBe('dead')
+
+      expect(kill).not.toHaveBeenCalledWith(-process.pid, 0)
+    }
+  )
+
+  it('preserves a proofless legacy Windows receipt without signalling its recorded PID', async () => {
     const kill = vi.spyOn(process, 'kill')
-    const controller = defaultController('linux', () => bootB)
-
-    await expect(
-      controller.probe({
-        version: 1,
-        receiptId: 'receipt-a',
-        ownerInstanceId: 'owner-a',
-        ownerToken: 'owner-token-a',
-        platform: 'linux',
-        spawnedAt: 1,
-        laneKey: 'lane-a',
-        processKey: 'repl',
-        kernelEpochId: 'epoch-a',
-        pid: process.pid,
-        bootToken: bootA
-      })
-    ).resolves.toBe('dead')
-
-    expect(kill).not.toHaveBeenCalledWith(-process.pid, 0)
+    const record = {
+      version: 1 as const,
+      receiptId: 'receipt-windows-exited',
+      ownerInstanceId: 'owner-a',
+      ownerToken: 'owner-token-a',
+      platform: 'win32' as const,
+      spawnedAt: 1,
+      laneKey: 'lane-a',
+      processKey: 'repl',
+      kernelEpochId: 'epoch-a',
+      pid: 4242
+    }
+    const controller = defaultController('win32')
+    await expect(controller.probe(record)).resolves.toBe('unknown')
+    await expect(controller.terminate(record)).resolves.toEqual({ reaped: false })
+    expect(kill).not.toHaveBeenCalled()
   })
 
-  it('keeps a proofless Windows receipt fenced when only the native host process has exited', async () => {
-    windowsProcessIsAlive.mockReturnValueOnce(false)
-    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
-
-    await expect(
-      defaultController('win32').probe({
-        version: 1,
-        receiptId: 'receipt-windows-exited',
-        ownerInstanceId: 'owner-a',
-        ownerToken: 'owner-token-a',
-        platform: 'win32',
-        spawnedAt: 1,
-        laneKey: 'lane-a',
-        processKey: 'repl',
-        kernelEpochId: 'epoch-a',
-        pid: 4242
+  it('admits the original Windows kernel only after observing a later boot on the same host', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-windows-reboot-'))
+    const options = { storageRoot: root, platform: 'win32' as const }
+    const previous = new KernelProcessLifecycleOwner(options)
+    const scope = {
+      laneKey: 'old-session',
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch'
+    }
+    previous.recordSpawned(previous.beginSpawn(scope), { pid: 4242 })
+    const host = 'a'.repeat(64)
+    const recover = (hostHash?: string, boot = bootA): Promise<KernelProcessSpawnIntent> => {
+      const owner = new KernelProcessLifecycleOwner({
+        ...options,
+        readWindowsBootObservation: async () =>
+          hostHash ? { hostHash, bootIdentity: `windows-boot:${boot}` } : undefined
       })
-    ).resolves.toBe('unknown')
+      return owner.ensureReady().then(() => owner.beginSpawn(scope))
+    }
 
-    expect(kill).not.toHaveBeenCalled()
+    await expect(recover(host)).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover(host)).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover('b'.repeat(64), bootB)).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    await expect(recover(host, bootB)).resolves.toMatchObject({ record: scope })
   })
 
   it.each(['started-and-reaped', 'never-started'] as const)(
@@ -681,26 +793,183 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
   })
 
-  it('treats a missing macOS process group as dead without a boot token', async () => {
-    vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw Object.assign(new Error('missing'), { code: 'ESRCH' })
-    })
-
-    await expect(
-      defaultController('darwin').probe({
-        version: 1,
-        receiptId: 'receipt-mac',
-        ownerInstanceId: 'owner-a',
-        ownerToken: 'owner-token-a',
-        platform: 'darwin',
-        spawnedAt: 1,
-        laneKey: 'lane-a',
-        processKey: 'repl',
-        kernelEpochId: 'epoch-a',
-        pid: 4242
+  it.skipIf(process.platform !== 'darwin')(
+    'treats a missing macOS process group as dead without a boot token',
+    async () => {
+      vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('missing'), { code: 'ESRCH' })
       })
-    ).resolves.toBe('dead')
+
+      await expect(
+        defaultController('darwin').probe({
+          version: 1,
+          receiptId: 'receipt-mac',
+          ownerInstanceId: 'owner-a',
+          ownerToken: 'owner-token-a',
+          platform: 'darwin',
+          spawnedAt: 1,
+          laneKey: 'lane-a',
+          processKey: 'repl',
+          kernelEpochId: 'epoch-a',
+          pid: 4242
+        })
+      ).resolves.toBe('dead')
+    }
+  )
+
+  it.skipIf(process.platform !== 'darwin')(
+    'recovers a real macOS group after its leader exits',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'kernel-mac-leaderless-'))
+      const first = new KernelProcessLifecycleOwner({ storageRoot: root })
+      const token = first.createOwnerToken()
+      const intent = first.beginSpawn(
+        { laneKey: 'lane', processKey: 'python:default-python', kernelEpochId: 'old' },
+        token
+      )
+      const leader = spawn(
+        process.execPath,
+        [
+          '-e',
+          `
+      const { spawn } = require('node:child_process');
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      process.stdout.write(String(child.pid));
+      setInterval(() => {}, 1000);
+    `
+        ],
+        {
+          detached: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+          env: { ...process.env, ...first.environment(token) }
+        }
+      )
+      const exited = once(leader, 'exit')
+      let childPid: number | undefined
+      try {
+        childPid = Number((await once(leader.stdout!, 'data'))[0].toString())
+        first.recordSpawned(intent, {
+          pid: leader.pid!,
+          posixBirthToken: processBirthIdentity(leader.pid!)
+        })
+        leader.kill('SIGKILL')
+        await exited
+        expect(processIsAlive(childPid)).toBe(true)
+        await new KernelProcessLifecycleOwner({ storageRoot: root }).ensureReady()
+        await vi.waitFor(() => expect(processIsAlive(childPid!)).toBe(false))
+        expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+      } finally {
+        try {
+          process.kill(-leader.pid!, 'SIGKILL')
+        } catch {
+          /* already reaped */
+        }
+        await exited
+        if (childPid)
+          await vi.waitFor(() => expect(processIsAlive(childPid!)).toBe(false), { timeout: 5000 })
+      }
+    },
+    15000
+  )
+
+  it('persists Darwin recovery identities across a failed cleanup and a new owner', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-mac-checkpoint-'))
+    const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'darwin' })
+    const intent = first.beginSpawn({
+      laneKey: 'lane',
+      processKey: 'python:default-python',
+      kernelEpochId: 'old'
+    })
+    const receipt = first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
+    const identities = [{ pid: 4243, uniqueId: '123456' }]
+    const failed = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      platform: 'darwin',
+      controller: {
+        probe: async () => 'owned',
+        terminate: async (_record, checkpoint) => {
+          checkpoint!(identities)
+          return { reaped: false }
+        }
+      }
+    })
+    await expect(failed.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    expect(JSON.parse(await readFile(receipt.path, 'utf8')).darwinRecoveryProcesses).toEqual(
+      identities
+    )
+    const probe = vi.fn(async () => 'unknown' as const)
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      platform: 'darwin',
+      controller: { probe, terminate: async () => ({ reaped: false }) }
+    })
+    await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({ darwinRecoveryProcesses: identities }),
+      expect.any(Function)
+    )
   })
+
+  it.skipIf(process.platform !== 'darwin')(
+    'reaps a real child forked into a new session during TERM',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'kernel-mac-term-fork-'))
+      const childFile = join(root, 'child-pid')
+      const first = new KernelProcessLifecycleOwner({ storageRoot: root })
+      const token = first.createOwnerToken()
+      const intent = first.beginSpawn(
+        { laneKey: 'lane', processKey: 'python:default-python', kernelEpochId: 'term-fork' },
+        token
+      )
+      const leader = spawn(
+        process.execPath,
+        [
+          '-e',
+          `
+      const { spawn } = require('node:child_process');
+      process.on('SIGTERM', () => {
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+        require('node:fs').writeFileSync(${JSON.stringify(childFile)}, String(child.pid));
+        process.exit(0);
+      });
+      process.stdout.write('ready');
+      setInterval(() => {}, 1000);
+    `
+        ],
+        {
+          detached: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+          env: { ...process.env, ...first.environment(token) }
+        }
+      )
+      const exited = once(leader, 'exit')
+      try {
+        await once(leader.stdout!, 'data')
+        first.recordSpawned(intent, {
+          pid: leader.pid!,
+          posixBirthToken: processBirthIdentity(leader.pid!)
+        })
+        await new KernelProcessLifecycleOwner({ storageRoot: root }).ensureReady()
+        await exited
+        const childPid = Number(await readFile(childFile, 'utf8'))
+        expect(processIsAlive(childPid)).toBe(false)
+        expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+      } finally {
+        leader.kill('SIGKILL')
+        await exited
+        const childPid = Number(await readFile(childFile, 'utf8').catch(() => '0'))
+        if (childPid) {
+          try {
+            process.kill(childPid, 'SIGKILL')
+          } catch {
+            /* already reaped */
+          }
+          await vi.waitFor(() => expect(processIsAlive(childPid)).toBe(false), { timeout: 5000 })
+        }
+      }
+    },
+    15000
+  )
 
   it('does not claim a leaderless same-boot POSIX group by numeric id alone', async () => {
     vi.spyOn(process, 'kill').mockImplementation((pid) => {
@@ -903,12 +1172,9 @@ describe('KernelProcessLifecycleOwner', () => {
           host.stdin!.end('start')
         }
         await vi.waitFor(async () => {
-          const names = await readdir(join(root!, 'runtime', 'kernel-processes'))
-          const name = names.find((name) => name.includes(`.active.${pid}.`))
-          expect(name).toBeDefined()
-          const record = JSON.parse(
-            await readFile(join(root!, 'runtime', 'kernel-processes', name!), 'utf8')
-          )
+          // The parent can publish the birth token first. Only the host writes its identity marker.
+          const record = JSON.parse(await readFile(intent.activePath(pid), 'utf8'))
+          expect(record.commandIdentityMarker).toBe(intent.record.receiptId)
           expect(record.posixBirthToken).toEqual(expect.any(String))
         })
 

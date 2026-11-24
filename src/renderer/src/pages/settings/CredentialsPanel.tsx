@@ -73,10 +73,6 @@ export function CredentialsPanel({
     document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE) !== 'remote' &&
     typeof window.api?.compute?.listRayTokens === 'function'
   const fileCredentialNotice = useFileCredentialNotice()
-  const semanticScholar = useSettingsStore((state) => state.semanticScholar)
-  const setSemanticScholarCredential = useSettingsStore(
-    (state) => state.setSemanticScholarCredential
-  )
   const openAlex = useSettingsStore((state) => state.openAlex)
   const ncbi = useSettingsStore((state) => state.ncbi)
   const customServers = useSettingsStore((state) => state.customServers)
@@ -321,20 +317,12 @@ export function CredentialsPanel({
           />
         </div>
       )
-    const isDesktopOnlyService =
-      view.serviceId === 'github' ||
-      view.serviceId === 'openalex' ||
-      view.serviceId === 'semantic-scholar'
+    const isDesktopOnlyService = view.serviceId === 'github' || view.serviceId === 'openalex'
     if (isDesktopOnlyService && desktopCredentialAvailability === 'checking') {
       return <p className="p-5 text-sm text-muted-foreground">{t('Checking…')}</p>
     }
     if (isDesktopOnlyService && desktopCredentialAvailability === 'unavailable') {
-      const serviceLabel =
-        view.serviceId === 'github'
-          ? t('GitHub')
-          : view.serviceId === 'semantic-scholar'
-            ? t('Semantic Scholar')
-            : t('OpenAlex')
+      const serviceLabel = view.serviceId === 'github' ? t('GitHub') : t('OpenAlex')
       return (
         <div className="space-y-5 p-5">
           <div>
@@ -363,51 +351,23 @@ export function CredentialsPanel({
       )
     }
 
-    const isSemanticScholar = view.serviceId === 'semantic-scholar'
     const isOpenAlex = view.serviceId === 'openalex'
-    const isKeyService = isOpenAlex || isSemanticScholar
-    const hasKey = isSemanticScholar
-      ? semanticScholar?.hasApiKey
-      : isOpenAlex
-        ? openAlex.hasApiKey
-        : ncbi.hasApiKey
-    const saveSemanticScholar = async (value: string): Promise<void> => {
-      if (busy) return
-      setBusy(true)
-      setMessage(undefined)
-      try {
-        await setSemanticScholarCredential({ apiKey: value })
-        setApiKeyDraft({ serviceId: view.serviceId, value: '' })
-        onLeaveStateChange?.(null)
-        onNavigate({ kind: 'list' })
-      } catch {
-        setMessage(t('Could not save the Semantic Scholar API key.'))
-      } finally {
-        setBusy(false)
-      }
-    }
+    const isKeyService = isOpenAlex
+    const hasKey = isOpenAlex ? openAlex.hasApiKey : ncbi.hasApiKey
     return (
       <div className="space-y-5 p-5">
         <div>
           <h2 className="text-base font-semibold">
-            {isSemanticScholar
-              ? t('Semantic Scholar')
-              : isOpenAlex
-                ? t('OpenAlex API key')
-                : t('Literature access')}
+            {isOpenAlex ? t('OpenAlex API key') : t('Literature access')}
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {isSemanticScholar
+            {isOpenAlex
               ? t(
-                  'Optional API key for citation discovery. Requests send only the current paper identifier or title to Semantic Scholar.'
+                  'Used by OpenAlex tools in the Literature Connector. Basic queries work without a key; adding one raises your daily limit.'
                 )
-              : isOpenAlex
-                ? t(
-                    'Used by OpenAlex tools in the Literature Connector. Basic queries work without a key; adding one raises your daily limit.'
-                  )
-                : t(
-                    'Contact information and an optional NCBI API key used by research-service Connector calls.'
-                  )}
+              : t(
+                  'Contact information and an optional NCBI API key used by research-service Connector calls.'
+                )}
           </p>
         </div>
         {!isKeyService ? (
@@ -434,11 +394,9 @@ export function CredentialsPanel({
             </label>
             <ExternalTextLink
               href={
-                isSemanticScholar
-                  ? 'https://www.semanticscholar.org/product/api'
-                  : isOpenAlex
-                    ? 'https://openalex.org/settings/api'
-                    : 'https://account.ncbi.nlm.nih.gov/settings/'
+                isOpenAlex
+                  ? 'https://openalex.org/settings/api'
+                  : 'https://account.ncbi.nlm.nih.gov/settings/'
               }
               className="whitespace-nowrap text-xs"
             >
@@ -478,7 +436,7 @@ export function CredentialsPanel({
               type="button"
               variant="outline"
               disabled={busy}
-              onClick={() => void (isSemanticScholar ? saveSemanticScholar('') : clearOpenAlex())}
+              onClick={() => void clearOpenAlex()}
             >
               {t('Remove key')}
             </Button>
@@ -510,13 +468,7 @@ export function CredentialsPanel({
               (Boolean(apiKey.trim()) && !encryptionAvailable) ||
               (isKeyService && !apiKey.trim())
             }
-            onClick={() =>
-              void (isSemanticScholar
-                ? saveSemanticScholar(apiKey.trim())
-                : isOpenAlex
-                  ? saveOpenAlex()
-                  : saveLiterature())
-            }
+            onClick={() => void (isOpenAlex ? saveOpenAlex() : saveLiterature())}
           >
             {busy ? t('Saving…') : t('Save')}
           </Button>
@@ -526,14 +478,6 @@ export function CredentialsPanel({
   }
 
   const services = [
-    {
-      id: 'semantic-scholar' as const,
-      label: t('Semantic Scholar'),
-      description: t('Optional API key for citation discovery.'),
-      configured: Boolean(semanticScholar?.hasApiKey),
-      desktopOnly: true,
-      Icon: BookOpen
-    },
     {
       id: 'github' as const,
       label: t('GitHub'),

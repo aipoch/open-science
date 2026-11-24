@@ -449,6 +449,35 @@ bool OpenQueried(napi_env env, napi_callback_info info, Handle& handle, bool& mi
   if (!Exited(env, handle.value, missing)) return false;
   return !missing;
 }
+// Kill one process only after its creation FILETIME matches the caller's recorded birth, using
+// the same handle for both. A mismatched or missing process is left untouched: PID reuse must
+// never authorize a broader kill. Returns false when nothing was terminated.
+napi_value TerminateByBirth(napi_env env, napi_callback_info info) {
+  napi_value args[2]; std::wstring birth;
+  double pid = 0;
+  if (!Arguments(env, info, 2, args) || napi_get_value_double(env, args[0], &pid) != napi_ok ||
+      !(pid >= 1 && pid <= 4294967295.0) || pid != static_cast<double>(static_cast<int64_t>(pid)) ||
+      !Text(env, args[1], birth) || birth.empty()) {
+    napi_throw_type_error(env, nullptr, "Invalid process identity"); return nullptr;
+  }
+  Handle handle;
+  handle.value = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+  bool terminated = false;
+  if (!handle.value) {
+    handle.value = INVALID_HANDLE_VALUE;
+    // Missing, reused and inaccessible targets never authorize a broader kill.
+    if (GetLastError() != ERROR_INVALID_PARAMETER && GetLastError() != ERROR_ACCESS_DENIED)
+      return Fail(env, "Open process for termination");
+  } else {
+    FILETIME created, exited, kernel, user;
+    if (!GetProcessTimes(handle.value, &created, &exited, &kernel, &user))
+      return Fail(env, "Get process times");
+    const uint64_t value = (static_cast<uint64_t>(created.dwHighDateTime) << 32) | created.dwLowDateTime;
+    if (std::to_string(value) == std::string(birth.begin(), birth.end()))
+      terminated = TerminateProcess(handle.value, 1) == TRUE;
+  }
+  napi_value result; napi_get_boolean(env, terminated, &result); return result;
+}
 napi_value Null(napi_env env) { napi_value result; napi_get_null(env, &result); return result; }
 napi_value CreationTime(napi_env env, napi_callback_info info) {
   Handle handle; bool missing;
@@ -693,6 +722,7 @@ void RegisterWindowsOwnedProcess(napi_env env, napi_value exports) {
     {"windowsCurrentProcessDescendants", nullptr, Descendants, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"reapWindowsOwnedJob", nullptr, Reap, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"getWindowsProcessCreationTime", nullptr, CreationTime, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"windowsTerminateProcessByBirth", nullptr, TerminateByBirth, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"getWindowsProcessCommandLine", nullptr, CommandLine, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"getWindowsParentProcessId", nullptr, ParentProcessId, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"listWindowsInstallationOccupants", nullptr, InstallationOccupants, nullptr, nullptr, nullptr, napi_default, nullptr},

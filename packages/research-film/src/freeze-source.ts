@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { createHash } from 'node:crypto'
 import { readVideoSourceFile } from './build-player.js'
 import { buildVideoTimeline, type VideoSpec } from './timeline.js'
 
@@ -7,7 +8,8 @@ import { buildVideoTimeline, type VideoSpec } from './timeline.js'
 export async function freezeResearchVideoSource(
   specPath: string,
   destination: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  sessionAppSha256?: string
 ): Promise<string> {
   const root = dirname(specPath)
   const specBytes = await readVideoSourceFile(root, basename(specPath))
@@ -27,11 +29,27 @@ export async function freezeResearchVideoSource(
       (spec.voice.speed !== undefined && spec.voice.speed !== 1))
   )
     throw new Error('This version supports af_heart English narration at speed 1 only')
-  if (spec.libs || spec.assets || spec.subjects)
+  if (spec.assets || spec.subjects)
     throw new Error(
       'External libraries and asset bundles are not supported by this authoring surface yet'
     )
   const files = new Set<string>([spec.session])
+  let approvedApp: Buffer | undefined
+  if (spec.libs !== undefined) {
+    if (
+      !Array.isArray(spec.libs) ||
+      spec.libs.length !== 1 ||
+      spec.libs[0] !== 'libs/app.js' ||
+      typeof sessionAppSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(sessionAppSha256)
+    )
+      throw new Error('Session app approval is required for this film.')
+    signal.throwIfAborted()
+    approvedApp = await readVideoSourceFile(root, 'libs/app.js')
+    if (createHash('sha256').update(approvedApp).digest('hex') !== sessionAppSha256)
+      throw new Error('The approved session app changed.')
+    files.add('libs/app.js')
+  }
   const asset = (name: unknown): void => {
     if (typeof name !== 'string') throw new Error('Invalid source asset')
     files.add(`${spec.files ?? 'files'}/${name}`)
@@ -64,7 +82,13 @@ export async function freezeResearchVideoSource(
   let total = specBytes.length
   for (const name of files) {
     signal.throwIfAborted()
-    const bytes = name === spec.session ? sessionBytes : await readVideoSourceFile(root, name)
+    // Reuse exactly the bytes whose digest was approved, never a later source read.
+    const bytes =
+      name === spec.session
+        ? sessionBytes
+        : name === 'libs/app.js' && approvedApp
+          ? approvedApp
+          : await readVideoSourceFile(root, name)
     total += bytes.length
     if (total > 200 * 1024 * 1024) throw new Error('Video sources exceed 200 MiB')
     const path = join(destination, name)
