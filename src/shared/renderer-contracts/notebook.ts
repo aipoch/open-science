@@ -27,6 +27,7 @@ import type {
   NotebookAvailableEvent,
   NotebookBackgroundRunLookupRequest,
   NotebookBackgroundTaskSnapshot,
+  NotebookRunFigureRequest,
   NotebookRunEvidenceRequest,
   NotebookRunEvidenceSnapshot,
   NotebookBackgroundRunResult,
@@ -169,6 +170,10 @@ export const contracts = {
   'notebook.shutdown': callable<
     (request: NotebookSessionRequest) => Promise<{ sessionId: string; status: 'shutdown' }>
   >()('notebook', ['notebook:shutdown']),
+  'notebook.runFigure': callable<(request: NotebookRunFigureRequest) => Promise<string | null>>()(
+    'notebook',
+    ['notebook:run-figure']
+  ),
   'notebook.runEvidence': callable<
     (request: NotebookRunEvidenceRequest) => Promise<NotebookRunEvidenceSnapshot | null>
   >()('notebook', ['notebook:run-evidence']),

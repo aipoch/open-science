@@ -1,12 +1,14 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { Maximize2, X } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import { ErrorNotice } from '@/components/error-notice'
+import { resolveProjectId } from '../../../../shared/project-scope'
+import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
 
 import {
   formatNotebookFigureFilename,
@@ -16,10 +18,11 @@ import {
 import { useNearViewport } from './previews/useNearViewport'
 
 type NotebookToolFigureOutputsProps = {
+  reference?: NotebookSessionReference
   run: NotebookRunRecord
 }
 
-type NotebookToolFigureOutputContentProps = {
+type NotebookToolFigureOutputContentProps = NotebookToolFigureOutputsProps & {
   figures: NotebookRunFigure[]
 }
 
@@ -39,6 +42,20 @@ const NotebookToolFigureCard = ({
   // the DOM and image decoder until the individual card enters the transcript's viewport overscan.
   const [setCardElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
 
+  if (figure.payload === undefined) {
+    return (
+      <button
+        type="button"
+        data-testid="notebook-tool-figure-button"
+        aria-label={t('Preview {{name}}', { name: filename })}
+        className="flex items-center gap-2 rounded-lg border border-border-200 px-3 py-2 text-sm hover:bg-bg-100 focus-visible:ring-2"
+        onClick={(event) => onOpen(figure, event.currentTarget)}
+      >
+        <Maximize2 className="size-3.5" aria-hidden="true" />
+        {filename}
+      </button>
+    )
+  }
   return (
     <div className="rounded-2xl bg-bg-000 p-2 shadow-sm">
       <button
@@ -75,12 +92,48 @@ const NotebookToolFigureCard = ({
 }
 
 const NotebookToolFigureOutputContent = ({
-  figures
+  figures,
+  run,
+  reference
 }: NotebookToolFigureOutputContentProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [selectedFigure, setSelectedFigure] = useState<NotebookRunFigure>()
+  const [loaded, setLoaded] = useState<{ figure: NotebookRunFigure; payload: string | null }>()
+  const [attempt, setAttempt] = useState(0)
+  const sessionId = reference?.sessionId
+  const projectId = reference && resolveProjectId(reference)
+  const workspaceCwd = reference?.workspaceCwd
+  useEffect(() => {
+    if (
+      !selectedFigure ||
+      selectedFigure.payload !== undefined ||
+      !sessionId ||
+      !projectId ||
+      workspaceCwd === undefined
+    )
+      return
+    let current = true
+    const finish = (payload: string | null): void => {
+      if (current) setLoaded({ figure: selectedFigure, payload })
+    }
+    void window.api.notebook
+      .runFigure({
+        sessionId,
+        projectId,
+        workspaceCwd,
+        runId: run.runId,
+        outputIndex: selectedFigure.outputIndex,
+        mimeType: selectedFigure.mimeType
+      })
+      .then(finish, () => finish(null))
+    return () => {
+      current = false
+    }
+  }, [selectedFigure, sessionId, projectId, workspaceCwd, run.runId, attempt])
   const previewTriggerRef = useRef<HTMLButtonElement | null>(null)
   const dialogFigure = useRetainedDialogValue(selectedFigure)
+  const payload =
+    dialogFigure?.payload ?? (loaded && loaded.figure === dialogFigure ? loaded.payload : undefined)
   const selectedFilename = dialogFigure ? formatNotebookFigureFilename(dialogFigure, t) : undefined
 
   return (
@@ -136,14 +189,29 @@ const NotebookToolFigureOutputContent = ({
             </Dialog.Title>
             {dialogFigure ? (
               <figure className="min-h-0">
-                <div className="relative flex max-h-[88vh] min-h-40 items-center justify-center overflow-hidden rounded-xl bg-bg-000 shadow-dialog">
-                  <img
-                    data-testid="notebook-figure-preview-image"
-                    src={`data:${dialogFigure.mimeType};base64,${dialogFigure.payload}`}
-                    alt={selectedFilename}
-                    className="block max-h-[88vh] max-w-full object-contain"
-                    draggable={false}
-                  />
+                <div className="relative flex max-h-[88vh] min-h-40 items-center justify-center overflow-hidden rounded-xl bg-bg-000 text-text-000 shadow-dialog">
+                  {payload === null ? (
+                    <ErrorNotice
+                      description={t('Preview unavailable.')}
+                      primaryButton={{
+                        label: t('Retry'),
+                        onClick: () => {
+                          setLoaded(undefined)
+                          setAttempt((n) => n + 1)
+                        }
+                      }}
+                    />
+                  ) : payload === undefined ? (
+                    <span role="status">{t('Loading image…')}</span>
+                  ) : (
+                    <img
+                      data-testid="notebook-figure-preview-image"
+                      src={`data:${dialogFigure.mimeType};base64,${payload}`}
+                      alt={selectedFilename}
+                      className="block max-h-[88vh] max-w-full object-contain"
+                      draggable={false}
+                    />
+                  )}
                   <Dialog.Close
                     type="button"
                     aria-label={t('Close preview')}
@@ -167,15 +235,15 @@ const NotebookToolFigureOutputContent = ({
   )
 }
 
-// Transcript-only figure treatment. It deliberately sits beside the tool row rather than inside
-// that row's detail panel, so the row can collapse without hiding the result. The owning tool group
-// still controls whether this subtree exists. The stateful child mounts only when figures exist, so
-// a run changing from no figures to figures cannot alter this component's hook order.
+// Replay can supply captured figures directly. Transcript projections carry only MIME descriptors.
 const NotebookToolFigureOutputs = ({
-  run
+  run,
+  reference
 }: NotebookToolFigureOutputsProps): React.JSX.Element | null => {
-  const figures = resolveNotebookRunFigures(run)
-  return figures.length > 0 ? <NotebookToolFigureOutputContent figures={figures} /> : null
+  const figures = resolveNotebookRunFigures(run, true)
+  return figures.length > 0 ? (
+    <NotebookToolFigureOutputContent run={run} reference={reference} figures={figures} />
+  ) : null
 }
 
 export { NotebookToolFigureOutputs }

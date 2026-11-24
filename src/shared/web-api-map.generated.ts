@@ -188,6 +188,7 @@ export const WEB_INVOKE_CHANNELS = {
   'notebook.retryResourceRelease': 'notebook:retry-resource-release',
   'notebook.runCell': 'notebook:run-cell',
   'notebook.runEvidence': 'notebook:run-evidence',
+  'notebook.runFigure': 'notebook:run-figure',
   'notebook.runIndex': 'notebook:run-index',
   'notebook.shutdown': 'notebook:shutdown',
   'notebook.state': 'notebook:state',
