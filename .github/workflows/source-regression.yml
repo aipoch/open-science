@@ -218,7 +218,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace.json
-        run: npm run test:e2e:workspace -- --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests --global-timeout=1500000
+        run: npm run test:e2e:workspace -- --fully-parallel --workers=1 --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests --global-timeout=1500000
       - name: Test workspace message images
         id: workspace_images
         if: ${{ matrix.group == 'workspace-images' }}
