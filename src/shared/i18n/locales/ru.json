@@ -260,6 +260,7 @@
     "Wait for the application handoff to finish before transferring research.": "Дождитесь завершения передачи приложения перед переносом данных исследования."
   },
   "renderer": {
+    "Move preview": "Переместить предпросмотр",
     "The update did not finish. Reopen your file or link after updating.": "Обновление не завершилось. После обновления снова откройте файл или ссылку.",
     "View updates": "Посмотреть обновления",
     "Could not confirm that all subagents stopped.": "Не удалось подтвердить остановку всех субагентов.",

@@ -258,6 +258,7 @@
     "Wait for the application handoff to finish before transferring research.": "Warten Sie, bis die Anwendungsübergabe abgeschlossen ist, bevor Sie Forschungsdaten übertragen."
   },
   "renderer": {
+    "Move preview": "Vorschau verschieben",
     "The update did not finish. Reopen your file or link after updating.": "Das Update wurde nicht abgeschlossen. Öffnen Sie die Datei oder den Link nach dem Update erneut.",
     "View updates": "Updates anzeigen",
     "Could not confirm that all subagents stopped.": "Es ließ sich nicht bestätigen, dass alle Unteragenten gestoppt wurden.",

@@ -16,7 +16,12 @@ import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProv
 import { useNativePdfVisibility } from '../../pdf-annotations/use-native-pdf-visibility'
 import { usePdfExport } from '../../pdf-annotations/use-pdf-export'
 import { PdfTranslationExport } from './PdfTranslationExport'
-import { renderPdfNativeLinks, type PdfLinkDestination } from './pdf-native-links'
+import {
+  renderIndexedFigureLinks,
+  renderPdfNativeLinks,
+  type FigureLinkAnchor,
+  type PdfLinkDestination
+} from './pdf-native-links'
 import { PdfSearchTextCache } from './pdf-search-text-cache'
 import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
 import {
@@ -151,7 +156,10 @@ import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useNearViewport } from '../useNearViewport'
 import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
+import { PdfFigurePreviewPanel } from './PdfFigurePreviewPanel'
 import { PdfFiguresView } from './PdfFiguresView'
+import { buildPdfFigureIndex } from './pdf-figure-index'
+import { createPdfPagePreviewCache, loadPdfFigurePreview } from './pdf-figure-selections'
 import { PdfNotebookView } from './PdfNotebookView'
 import { PdfOutlineSidebar, type PdfOutlineItem } from './PdfOutlineSidebar'
 import {
@@ -1954,6 +1962,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   onPageReady,
   onNavigate,
   linksEnabled,
+  figureIndex,
   regionSelectionIntent,
   quickTextMark,
   onRegionSelected,
@@ -1977,8 +1986,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   onSelectBookmark?: (id?: string) => void
   onTextLayerRendered?: () => void
   onPageReady: () => void
-  onNavigate: (destination: PdfLinkDestination) => void
+  onNavigate: (
+    destination: PdfLinkDestination,
+    reference?: string,
+    anchor?: FigureLinkAnchor
+  ) => void
   linksEnabled: boolean
+  figureIndex?: ReadonlyMap<string, PdfLinkDestination>
   regionSelectionIntent?: PdfRegionIntent
   pdfProseRegionIdentityKey?: string
   quickTextMark?: PdfTextMarkStyle
@@ -1993,6 +2007,8 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   const textLayerHostRef = useRef<HTMLDivElement | null>(null)
   const textLayerRef = useRef<PdfTextLayerBuilder | undefined>(undefined)
   const linkLayerHostRef = useRef<HTMLDivElement | null>(null)
+  const indexedLinksRef = useRef<HTMLDivElement>(null)
+  const [linkEpoch, setLinkEpoch] = useState(0)
   const linkLayerId = useId()
   const pageRef = useRef<Awaited<ReturnType<PdfDocument['getPage']>> | undefined>(undefined)
   const renderTaskRef = useRef<
@@ -2207,6 +2223,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       for (const span of textLayer.div.querySelectorAll('span')) {
         if (!span.textContent?.trim()) span.classList.add('pdf-text-layer-whitespace')
       }
+      setLinkEpoch((epoch) => epoch + 1)
       retryPendingAnnotationReveal()
       onTextLayerRendered?.()
     }
@@ -2243,9 +2260,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       signal: controller.signal,
       onNavigate,
       label: t('Open link')
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) console.error('Failed to render PDF links', error)
     })
+      .then(() => {
+        if (!controller.signal.aborted) setLinkEpoch((epoch) => epoch + 1)
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) console.error('Failed to render PDF links', error)
+      })
     return () => {
       unregister()
       dispose()
@@ -2260,6 +2281,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     registerDisposer,
     t
   ])
+
+  useLayoutEffect(() => {
+    const host = indexedLinksRef.current
+    const textLayer = textLayerHostRef.current?.querySelector<HTMLElement>('.pdf-text-layer')
+    if (!host || !textLayer || !figureIndex?.size || !linksEnabled) return
+    return renderIndexedFigureLinks({ host, textLayer, index: figureIndex, pageNumber, onNavigate })
+  }, [figureIndex, linkEpoch, linksEnabled, pageNumber, onNavigate, isNearViewport, pageWidth])
 
   const displayedAspectRatio = geometry ? geometry.width / geometry.height : aspectRatio
   const displayedStatus = isNearViewport ? status : 'idle'
@@ -2286,6 +2314,14 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
             className="pointer-events-none block size-full object-contain"
           />
           {<div ref={textLayerHostRef} className="absolute inset-0" />}
+          {figureIndex?.size ? (
+            <div
+              ref={indexedLinksRef}
+              className="pointer-events-none absolute inset-0 z-[1]"
+              data-pdf-indexed-links
+              inert={!linksEnabled}
+            />
+          ) : null}
           <div
             ref={linkLayerHostRef}
             id={linkLayerId}
@@ -2632,7 +2668,13 @@ const PdfReaderContent = ({
   const generation = usePreviewResourceGeneration(retainRecoveryViewport)
   const resourceRequestKey = `${requestKey}:${generation}`
   const pendingLinkRef = useRef<
-    { destination: PdfLinkDestination; translated: boolean; sourcePageNumber?: number } | undefined
+    | {
+        destination: PdfLinkDestination
+        translated: boolean
+        sourcePageNumber?: number
+        centerAnchor?: boolean
+      }
+    | undefined
   >(undefined)
   const pendingAnnotationPageRef = useRef<number | undefined>(undefined)
   const [readingHistory, setReadingHistory] = useState<{
@@ -2687,6 +2729,28 @@ const PdfReaderContent = ({
     contentFirst?: boolean
   }>()
   const [readingMode, setReadingMode] = useState<'original' | 'figures' | 'notes'>('original')
+  const [figurePreviewState, setFigurePreview] = useState<{
+    key: string
+    source?: PdfStructureSource
+    image: string
+    caption?: string
+    reference: string
+    destination: PdfLinkDestination
+    figureDestination?: PdfLinkDestination
+    anchor: FigureLinkAnchor | undefined
+    session: number
+  }>()
+  const figurePreviewSession = useRef(0)
+  const figurePreviewRequest = useRef<AbortController | null>(null)
+  const figurePreviewTrigger = useRef<HTMLElement | null>(null)
+  const dismissFigurePreview = useCallback(() => {
+    figurePreviewRequest.current?.abort()
+    setFigurePreview(undefined)
+    if (figurePreviewTrigger.current?.isConnected)
+      figurePreviewTrigger.current.focus({ preventScroll: true })
+    else scrollRef.current?.focus({ preventScroll: true })
+    figurePreviewTrigger.current = null
+  }, [])
   const [figuresVisited, setFiguresVisited] = useState(false)
   const [figuresBusy, setFiguresBusy] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
@@ -2928,6 +2992,33 @@ const PdfReaderContent = ({
     documentState?.requestKey === resourceRequestKey ? documentState : null
   const hasError = currentDocumentState?.status === 'error'
   const document = currentDocumentState?.status === 'ready' ? currentDocumentState.document : null
+  const [paintedDocument, setPaintedDocument] = useState<PdfDocument | null>(null)
+  const handleOriginalPageReady = useCallback(() => {
+    setPaintedDocument(document)
+    handleTextLayerRendered()
+  }, [document, handleTextLayerRendered])
+  const [indexedDocument, setIndexedDocument] = useState<{
+    document: PdfDocument
+    index: ReadonlyMap<string, PdfLinkDestination>
+  }>()
+  useEffect(() => {
+    if (!document || document !== paintedDocument || presentation === 'search') return
+    const controller = new AbortController()
+    void buildPdfFigureIndex(document, controller.signal)
+      .then((index) => {
+        if (!controller.signal.aborted) setIndexedDocument({ document, index })
+      })
+      .catch(() => {
+        /* Native links remain available when text cannot be read. */
+      })
+    return () => controller.abort()
+  }, [document, paintedDocument, presentation])
+  const pagePreviewCache = useMemo(
+    () => document && createPdfPagePreviewCache(document),
+    [document]
+  )
+  useEffect(() => () => pagePreviewCache?.clear(), [pagePreviewCache])
+
   const sourceIdentity =
     currentDocumentState?.status === 'ready' ? currentDocumentState.sourceIdentity : undefined
   const nativeAnnotationRevision = useNativePdfVisibility(
@@ -3208,6 +3299,20 @@ const PdfReaderContent = ({
       translatedDocument.state.failure.code
     )
   const effectiveRendition = currentTranslation && pairedDocument ? rendition : 'original'
+  const figurePreviewKey = `${resourceRequestKey}:${readingMode}:${effectiveRendition}:${cursorMode}`
+  const figurePreview =
+    figurePreviewState?.key === figurePreviewKey && figurePreviewState.source === figuresSource
+      ? figurePreviewState
+      : undefined
+  if (figurePreviewState && !figurePreview) setFigurePreview(undefined)
+  useLayoutEffect(() => {
+    const request = figurePreviewRequest
+    request.current?.abort()
+    figurePreviewTrigger.current = null
+    return () => {
+      request.current?.abort()
+    }
+  }, [resourceRequestKey, figuresSource, readingMode, effectiveRendition, cursorMode])
   const reflowPageNumbers = pairedDocument?.sourcePageNumbers
   const reflowSourcePages = pairedDocument?.sourcePages
   const reflowPageForSource = useCallback(
@@ -3331,6 +3436,8 @@ const PdfReaderContent = ({
   }, [outlineItems])
   const resolvedPageLabels = pageLabels?.requestKey === requestKey ? pageLabels.labels : null
   const scrollToPage = useCallback((pageNumber: number): void => {
+    figurePreviewRequest.current?.abort()
+    setFigurePreview(undefined)
     outlineClickRef.current = undefined
     setSelectedOutline(undefined)
     pendingLinkRef.current = undefined
@@ -3393,7 +3500,12 @@ const PdfReaderContent = ({
     setSelectedOutline({ requestKey: resourceRequestKey, id: item.id })
   }
   const navigateToLink = useCallback(
-    (destination: PdfLinkDestination, translated: boolean, sourcePageNumber?: number): void => {
+    (
+      destination: PdfLinkDestination,
+      translated: boolean,
+      sourcePageNumber?: number,
+      centerAnchor = false
+    ): void => {
       const anchor = readViewportAnchor(scrollRef.current)
       if (anchor)
         setReadingHistory((history) => ({
@@ -3402,20 +3514,86 @@ const PdfReaderContent = ({
           forward: []
         }))
       scrollToPage(destination.pageNumber)
-      pendingLinkRef.current = { destination, translated, sourcePageNumber }
+      pendingLinkRef.current = { destination, translated, sourcePageNumber, centerAnchor }
       scrollRef.current?.focus({ preventScroll: true })
     },
     [resourceRequestKey, zoom, rendition, scrollToPage]
   )
   const navigateOriginalLink = useCallback(
-    (destination: PdfLinkDestination): void => {
+    (destination: PdfLinkDestination, centerAnchor = false): void => {
       navigateToLink(
         { ...destination, pageNumber: viewPageForSource(destination.pageNumber) },
         false,
-        destination.pageNumber
+        destination.pageNumber,
+        centerAnchor
       )
     },
     [navigateToLink, viewPageForSource]
+  )
+  const previewOriginalLink = useCallback(
+    (destination: PdfLinkDestination, reference?: string, anchor?: FigureLinkAnchor): void => {
+      figurePreviewRequest.current?.abort()
+      setFigurePreview(undefined)
+      if (!reference || !pagePreviewCache || presentation === 'search') {
+        navigateOriginalLink(destination)
+        return
+      }
+      const controller = new AbortController()
+      figurePreviewRequest.current = controller
+      const { signal } = controller
+      const session = ++figurePreviewSession.current
+      const trigger = anchor?.trigger ?? window.document.activeElement
+      const show = (
+        image: string,
+        caption?: string,
+        figureDestination?: PdfLinkDestination
+      ): void => {
+        if (signal.aborted) return
+        figurePreviewTrigger.current = trigger instanceof HTMLElement ? trigger : null
+        setFigurePreview({
+          anchor,
+          session,
+          image,
+          caption,
+          figureDestination,
+          reference,
+          destination,
+          key: figurePreviewKey,
+          source: figuresSource
+        })
+      }
+      let exact = false
+      let pagePreview: Promise<string | undefined> | undefined
+      const showPage = (): Promise<string | undefined> => {
+        pagePreview ??= pagePreviewCache
+          .load(destination.pageNumber, signal)
+          .then((image) => {
+            if (image && !exact) show(image)
+            return image
+          })
+          .catch(() => undefined)
+        return pagePreview
+      }
+      void (async () => {
+        const preview = figuresSource
+          ? await loadPdfFigurePreview(
+              figuresSource,
+              destination,
+              reference,
+              signal,
+              showPage
+            ).catch(() => undefined)
+          : undefined
+        if (signal.aborted) return
+        if (preview) {
+          exact = true
+          show(preview.image, preview.caption, preview.destination)
+        } else if (!(await showPage()) && !signal.aborted) {
+          navigateOriginalLink(destination)
+        }
+      })()
+    },
+    [figuresSource, figurePreviewKey, navigateOriginalLink, pagePreviewCache, presentation]
   )
   const navigateTranslatedLink = useCallback(
     (destination: PdfLinkDestination): void => {
@@ -3427,6 +3605,8 @@ const PdfReaderContent = ({
     const target = readingHistory[direction].at(-1)
     const anchor = readViewportAnchor(scrollRef.current)
     if (!target || !anchor) return
+    figurePreviewRequest.current?.abort()
+    setFigurePreview(undefined)
     const opposite = direction === 'back' ? 'forward' : 'back'
     pendingLinkRef.current = undefined
     viewportAnchorRef.current = target.anchor
@@ -3621,7 +3801,7 @@ const PdfReaderContent = ({
       bounds.top +
       pending.destination.y * bounds.height -
       viewport.top -
-      Math.min(72, viewport.height / 4)
+      (pending.centerAnchor ? viewport.height / 2 : Math.min(72, viewport.height / 4))
   }, [readingHistory, textLayerEpoch, currentPage, zoom, effectiveRendition])
 
   useEffect(() => {
@@ -4409,7 +4589,10 @@ const PdfReaderContent = ({
           ['area', 'area-annotation', 'text-annotation'].includes(cursorMode)
         }
         data-preview-escape-boundary={
-          floatingNavigation || floatingNotes || (source === 'literature' && selectedBookmarkId)
+          figurePreview ||
+          floatingNavigation ||
+          floatingNotes ||
+          (source === 'literature' && selectedBookmarkId)
             ? ''
             : undefined
         }
@@ -4420,6 +4603,12 @@ const PdfReaderContent = ({
           const target = event.target instanceof Element ? event.target : null
           const layer = target?.closest('[role="dialog"], [role="menu"]')
           if (layer && !layer.contains(event.currentTarget)) return
+          if (event.key === 'Escape' && !event.nativeEvent.isComposing && figurePreview) {
+            event.preventDefault()
+            event.stopPropagation()
+            dismissFigurePreview()
+            return
+          }
           if (
             event.key === 'Escape' &&
             !event.nativeEvent.isComposing &&
@@ -4829,9 +5018,11 @@ const PdfReaderContent = ({
                   ref={scrollRef}
                   data-pdf-cursor-mode={cursorMode}
                   onWheelCapture={() => {
+                    if (!figurePreview) figurePreviewRequest.current?.abort()
                     pendingLinkRef.current = undefined
                   }}
                   onPointerDownCapture={() => {
+                    if (!figurePreview) figurePreviewRequest.current?.abort()
                     pendingLinkRef.current = undefined
                   }}
                   onKeyDownCapture={(event) => {
@@ -4847,8 +5038,10 @@ const PdfReaderContent = ({
                         'End',
                         ' '
                       ].includes(event.key)
-                    )
+                    ) {
+                      if (!figurePreview) figurePreviewRequest.current?.abort()
                       pendingLinkRef.current = undefined
+                    }
                   }}
                   className={cn(
                     'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50',
@@ -4944,8 +5137,13 @@ const PdfReaderContent = ({
                               ).map((sourcePage) => (
                                 <div key={sourcePage} className="relative mb-3 last:mb-0">
                                   <PdfPageCanvas
-                                    onPageReady={handleTextLayerRendered}
-                                    onNavigate={navigateOriginalLink}
+                                    onPageReady={handleOriginalPageReady}
+                                    figureIndex={
+                                      indexedDocument?.document === document
+                                        ? indexedDocument?.index
+                                        : undefined
+                                    }
+                                    onNavigate={previewOriginalLink}
                                     linksEnabled={cursorMode === 'select'}
                                     nativeAnnotationRevision={nativeAnnotationRevision}
                                     document={document}
@@ -5050,6 +5248,25 @@ const PdfReaderContent = ({
                     </div>
                   ) : null}
                 </div>
+                {figurePreview ? (
+                  <PdfFigurePreviewPanel
+                    key={figurePreview.session}
+                    anchor={figurePreview.anchor}
+                    reference={figurePreview.reference}
+                    page={figurePreview.destination.pageNumber}
+                    image={figurePreview.image}
+                    caption={figurePreview.caption}
+                    pageCache={pagePreviewCache}
+                    onClose={dismissFigurePreview}
+                    onNavigate={() =>
+                      navigateOriginalLink(
+                        figurePreview.figureDestination ?? figurePreview.destination,
+                        !figurePreview.figureDestination
+                      )
+                    }
+                    onImageError={() => navigateOriginalLink(figurePreview.destination)}
+                  />
+                ) : null}
                 {document && presentation !== 'search' ? (
                   <div
                     className={cn(
