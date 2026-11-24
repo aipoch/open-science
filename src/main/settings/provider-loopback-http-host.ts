@@ -75,32 +75,17 @@ type ProviderLoopbackHttpRequest = Readonly<{
   readJsonObject: () => Promise<ProviderLoopbackJsonObject>
 }>
 
-type ProviderLoopbackHandler = Readonly<{
+type ProviderLoopbackHttpHostOptions<Connection extends ProviderLoopbackConnection> = Readonly<{
+  diagnosticName: string
+  diagnostics?: Pick<Logger, 'info' | 'error'>
   credentialMode: 'bearer' | 'bearer-or-api-key'
+  // Several loopback hosts can serve one agent generation under a single in-memory credential.
+  token?: string
+  createConnection: (origin: string, token: string) => Connection
   handle: (request: ProviderLoopbackHttpRequest, response: ServerResponse) => Promise<void>
   onUnauthorized: (response: ServerResponse) => void
   onError: (error: unknown, response: ServerResponse) => void
 }>
-
-type ProviderLoopbackRoute = ProviderLoopbackHandler &
-  Readonly<{ token: string; path: string; signal?: AbortSignal }>
-
-type ProviderLoopbackHostBinding = Readonly<{
-  token?: string
-  router?: ProviderLoopbackRouter
-}>
-
-type ProviderLoopbackHttpHostOptions<Connection extends ProviderLoopbackConnection> = Readonly<{
-  diagnosticName: string
-  diagnostics?: Pick<Logger, 'info' | 'error'>
-  createConnection: (origin: string, token: string) => Connection
-}> &
-  (
-    | (ProviderLoopbackHandler & ProviderLoopbackHostBinding)
-    | Readonly<{ resolveRoute: (path: string) => ProviderLoopbackRoute | undefined }>
-  )
-
-const newLoopbackToken = (): string => randomBytes(24).toString('hex')
 
 const defaultDiagnostics = createLogger('provider-loopback')
 
@@ -185,7 +170,6 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
   private closePromise: Promise<void> | undefined
   private closingStartPromise: Promise<Connection> | undefined
   private lifecycle: { expectedClose: boolean; abort: AbortController } | undefined
-  private unmount: (() => void) | undefined
 
   constructor(private readonly options: ProviderLoopbackHttpHostOptions<Connection>) {}
 
@@ -227,25 +211,7 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
   }
 
   private async startServer(): Promise<Connection> {
-    const options = this.options
-    if (!('resolveRoute' in options) && options.router) {
-      const mount = await options.router.mount(options)
-      try {
-        const connection = options.createConnection(mount.baseUrl, mount.token)
-        this.unmount = mount.close
-        this.connection = connection
-        return connection
-      } catch (error) {
-        mount.close()
-        throw error
-      }
-    }
-
-    const token = ('token' in options ? options.token : undefined) ?? newLoopbackToken()
-    const resolveRoute =
-      'resolveRoute' in options
-        ? options.resolveRoute
-        : (path: string) => ({ ...options, path, token })
+    const token = this.options.token ?? randomBytes(24).toString('hex')
     const diagnostics = this.options.diagnostics ?? defaultDiagnostics
     const bridgeId = randomUUID()
     const startedAt = Date.now()
@@ -257,8 +223,13 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
       ...(port === undefined ? {} : { port })
     })
     const server = createServer((request, response) => {
-      void this.serve(request, response, resolveRoute, lifecycle.abort.signal).catch(() => {
-        response.destroy()
+      void this.serve(request, response, token, lifecycle.abort.signal).catch((error: unknown) => {
+        if (response.destroyed || response.writableEnded) return
+        try {
+          this.options.onError(error, response)
+        } catch {
+          response.destroy()
+        }
       })
     })
     server.on('error', (error) =>
@@ -315,8 +286,6 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
     const lifecycle = this.lifecycle
     this.server = undefined
     this.connection = undefined
-    this.unmount?.()
-    this.unmount = undefined
     if (lifecycle) {
       lifecycle.expectedClose = true
       // Socket close callbacks can lag server.close; fence dispatch before releasing the listener.
@@ -334,19 +303,14 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
   private async serve(
     request: IncomingMessage,
     response: ServerResponse,
-    resolveRoute: (path: string) => ProviderLoopbackRoute | undefined,
+    token: string,
     lifecycleSignal: AbortSignal
   ): Promise<void> {
-    const route = resolveRoute(request.url ?? '/')
-    if (!route) {
-      writeProviderLoopbackJson(response, 404, { error: { message: 'Not found' } })
-      return
-    }
-    const bearerAccepted = request.headers.authorization === `Bearer ${route.token}`
+    const bearerAccepted = request.headers.authorization === `Bearer ${token}`
     const apiKeyAccepted =
-      route.credentialMode === 'bearer-or-api-key' && request.headers['x-api-key'] === route.token
+      this.options.credentialMode === 'bearer-or-api-key' && request.headers['x-api-key'] === token
     if (!bearerAccepted && !apiKeyAccepted) {
-      route.onUnauthorized(response)
+      this.options.onUnauthorized(response)
       return
     }
 
@@ -364,14 +328,10 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
 
     let body: Promise<ProviderLoopbackJsonObject> | undefined
     try {
-      const signal = AbortSignal.any(
-        route.signal
-          ? [controller.signal, lifecycleSignal, route.signal]
-          : [controller.signal, lifecycleSignal]
-      )
+      const signal = AbortSignal.any([controller.signal, lifecycleSignal])
       signal.throwIfAborted()
-      const path = route.path
-      await route.handle(
+      const path = request.url ?? '/'
+      await this.options.handle(
         Object.freeze({
           method: request.method,
           path,
@@ -382,8 +342,6 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
         }),
         response
       )
-    } catch (error) {
-      if (!response.destroyed && !response.writableEnded) route.onError(error, response)
     } finally {
       request.off('aborted', abort)
       request.off('close', abortOnRequestClose)
@@ -392,52 +350,5 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
   }
 }
 
-// Each mounted bridge retains its own handler, credential and cancellation scope.
-class ProviderLoopbackRouter {
-  private readonly routes = new Map<string, Omit<ProviderLoopbackRoute, 'path'>>()
-  private readonly host = new ProviderLoopbackHttpHost({
-    diagnosticName: 'model-catalog',
-    createConnection: (origin, token) => ({ baseUrl: origin, token }),
-    resolveRoute: (path) => {
-      const match = /^\/_models\/([a-f0-9]{32})(\/.*)$/.exec(path)
-      if (!match) return undefined
-      const route = this.routes.get(match[1])
-      return route && { ...route, path: match[2] }
-    }
-  })
-
-  async mount(
-    handler: ProviderLoopbackHandler & Pick<ProviderLoopbackHostBinding, 'token'>
-  ): Promise<ProviderLoopbackConnection & { close: () => void }> {
-    const { baseUrl } = await this.host.start()
-    const id = randomBytes(16).toString('hex')
-    const token = handler.token ?? newLoopbackToken()
-    const controller = new AbortController()
-    this.routes.set(id, { ...handler, token, signal: controller.signal })
-    return {
-      baseUrl: `${baseUrl}/_models/${id}`,
-      token,
-      close: () => {
-        this.routes.delete(id)
-        controller.abort()
-      }
-    }
-  }
-
-  close(): Promise<void> {
-    return this.host.close()
-  }
-}
-
-export {
-  ProviderLoopbackHttpHost,
-  ProviderLoopbackRequestError,
-  ProviderLoopbackRouter,
-  writeProviderLoopbackJson
-}
-export type {
-  ProviderLoopbackConnection,
-  ProviderLoopbackHostBinding,
-  ProviderLoopbackHttpRequest,
-  ProviderLoopbackJsonObject
-}
+export { ProviderLoopbackHttpHost, ProviderLoopbackRequestError, writeProviderLoopbackJson }
+export type { ProviderLoopbackConnection, ProviderLoopbackHttpRequest, ProviderLoopbackJsonObject }

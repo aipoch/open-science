@@ -194,7 +194,7 @@ it.each(['messages', 'chat-completions', 'responses'] as const)(
       vendorId: 'anthropic' as const,
       model: 'claude-haiku-4-5-20251001',
       agentProviderId: 'catalog-model',
-      baseUrl: 'http://127.0.0.1:12345/_models/fixture',
+      baseUrl: 'http://127.0.0.1:12345',
       apiEndpoints: [wire]
     }
     const config = getAgentFramework('pi').prepareModelConfig(provider, {
@@ -208,9 +208,6 @@ it.each(['messages', 'chat-completions', 'responses'] as const)(
       ]
     })
     const models = JSON.parse(config.configFiles![0].content).providers['open-science'].models
-    expect(models[0].baseUrl).toBe(
-      'http://127.0.0.1:12345/_models/fixture' + (wire === 'messages' ? '' : '/v1')
-    )
     expect(models.map((model: { maxTokens?: number }) => model.maxTokens)).toEqual([
       64_000,
       12_000,

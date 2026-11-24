@@ -13,7 +13,6 @@ import {
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
   withProviderConnectionMarker,
-  type ProviderLoopbackHostBinding,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 import {
@@ -121,7 +120,7 @@ export class ProtocolForwardingBridge {
     targets: readonly ProtocolForwardingBridgeTarget[],
     initialTargetId: string,
     fetchImpl: typeof fetch = fetch,
-    options: ProviderLoopbackHostBinding = {}
+    options: Readonly<{ token?: string }> = {}
   ) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
     const initial = this.targets.get(initialTargetId)
@@ -133,7 +132,7 @@ export class ProtocolForwardingBridge {
     this.host = new ProviderLoopbackHttpHost({
       diagnosticName: 'protocol-forwarding',
       credentialMode: 'bearer-or-api-key',
-      ...options,
+      ...(options.token ? { token: options.token } : {}),
       createConnection: (origin, token) => Object.freeze({ baseUrl: origin, token }),
       onUnauthorized: (response) =>
         json(response, 401, {

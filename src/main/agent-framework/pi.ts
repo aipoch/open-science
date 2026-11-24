@@ -65,7 +65,7 @@ const loopbackBaseUrl = (provider: ResolvedProvider): { baseUrl: string; wire: P
   if (
     url.protocol !== 'http:' ||
     !['127.0.0.1', '[::1]'].includes(url.hostname) ||
-    !/^(?:\/[a-zA-Z0-9_-]+)*\/?$/.test(url.pathname) ||
+    url.pathname !== '/' ||
     url.username ||
     url.password ||
     url.search ||
@@ -73,7 +73,7 @@ const loopbackBaseUrl = (provider: ResolvedProvider): { baseUrl: string; wire: P
   )
     throw new Error('Pi model bridge must use a credential-free loopback address.')
   return {
-    baseUrl: `${url.origin}${url.pathname.replace(/\/$/, '')}${PI_MODEL_API[wire as PiModelWire].path}`,
+    baseUrl: `${url.origin}${PI_MODEL_API[wire as PiModelWire].path}`,
     wire: wire as PiModelWire
   }
 }

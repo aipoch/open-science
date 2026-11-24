@@ -820,7 +820,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     const activeProvider = {
       type: 'custom' as const,
       agentProviderId: 'open-science-a',
-      baseUrl: 'http://127.0.0.1:41001/_models/route-a/v1',
+      baseUrl: 'http://127.0.0.1:41001/v1',
       apiEndpoints: ['chat-completions' as const],
       model: 'model-a',
       key: 'local-token-a'
@@ -828,7 +828,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
     const secondProvider = {
       type: 'custom' as const,
       agentProviderId: 'open-science-b',
-      baseUrl: 'http://127.0.0.1:41001/_models/route-b/v1',
+      baseUrl: 'http://127.0.0.1:41002/v1',
       apiEndpoints: ['chat-completions' as const],
       model: 'model-b',
       key: 'local-token-b'
@@ -848,11 +848,11 @@ describe('opencodeFramework.prepareModelConfig', () => {
     expect(fileConfig.model).toBe('open-science-a/model-a')
     expect(Object.keys(fileConfig.provider)).toEqual(['open-science-a', 'open-science-b'])
     expect(fileConfig.provider['open-science-a'].options).toEqual({
-      baseURL: 'http://127.0.0.1:41001/_models/route-a/v1',
+      baseURL: 'http://127.0.0.1:41001/v1',
       apiKey: '{env:OPENCODE_APP_API_KEY_OPEN_SCIENCE_A}'
     })
     expect(fileConfig.provider['open-science-b'].options).toEqual({
-      baseURL: 'http://127.0.0.1:41001/_models/route-b/v1',
+      baseURL: 'http://127.0.0.1:41002/v1',
       apiKey: '{env:OPENCODE_APP_API_KEY_OPEN_SCIENCE_B}'
     })
     expect(fileConfig.provider['open-science-a'].models).toEqual({ 'model-a': {} })
