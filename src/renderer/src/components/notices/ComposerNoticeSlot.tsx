@@ -1,5 +1,5 @@
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   PauseCircle,
@@ -97,9 +97,6 @@ const ComposerFailureNoticeSlot = ({
       : undefined) ?? notices[0]
   if (!current) return null
   const presentation = noticePresentation(current.failure, current.operation)
-  const providerMessage = current.failure.diagnostics.protocol
-    ? undefined
-    : current.failure.responseMessage
   const excerpt =
     current.failure.reason === 'input/context-overflow'
       ? providerErrorExcerpt(current.failure.diagnostics.raw)
@@ -113,13 +110,7 @@ const ComposerFailureNoticeSlot = ({
         ? t('This turn was interrupted. Resume to continue.')
         : t(presentation.descriptionKey)
   const diagnostics = formatNoticeDiagnostics(current, title, description)
-  const diagnosticFields = Object.entries(current.failure.diagnostics).filter(
-    ([key, value]) =>
-      value !== undefined &&
-      (providerMessage || current.failure.diagnostics.protocol
-        ? ['status', 'provider', 'model'].includes(key)
-        : key !== 'raw')
-  )
+  const model = current.failure.diagnostics.model
   const canCopyError = !current.summary || Boolean(diagnostics.details)
   const details = [diagnostics.details, actionFailure?.id === current.id && actionFailure.message]
     .filter(Boolean)
@@ -419,21 +410,7 @@ const ComposerFailureNoticeSlot = ({
                 errorCode={details}
                 diagnosticsLabel={t('Details')}
                 summaryContent={
-                  diagnosticFields.length > 0 ? (
-                    <span className="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-hidden tabular-nums border-r border-border pr-3">
-                      {diagnosticFields.map(([key, value], index) => (
-                        <Fragment key={key}>
-                          {index > 0 ? (
-                            <span aria-hidden="true" className="h-3 w-px shrink-0 bg-border" />
-                          ) : null}
-                          <TruncatedText
-                            text={`${key}: ${value}`}
-                            className={key === 'status' ? 'shrink-0' : 'flex-1'}
-                          />
-                        </Fragment>
-                      ))}
-                    </span>
-                  ) : undefined
+                  model ? <TruncatedText text={model} className="flex-1" /> : undefined
                 }
               />
             ) : null}

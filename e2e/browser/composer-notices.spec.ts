@@ -53,7 +53,7 @@ for (const width of [320, 375, 414, 768])
       ).toContain('underline')
       const detailsBox = (await slot.locator('summary').boundingBox())!
       expect(detailsBox.y).toBeLessThan((await feedback.boundingBox())!.y)
-      await expect(slot.locator('summary span[aria-hidden="true"]')).toHaveCount(3)
+      await expect(slot.locator('summary')).toHaveText('example-model-with-a-long-nameDetails')
       await slot.locator('summary').click()
       expect(
         await slot.locator('pre').evaluate((element) => element.clientHeight)
