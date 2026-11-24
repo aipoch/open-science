@@ -50,7 +50,8 @@ const ExtensionPreservingFileName = ({
         widths.set(text, result)
         return result
       }
-      const naturalWidth = measure(name)
+      // CSS layout rounds fractional canvas advances to its own subpixel grid.
+      const naturalWidth = Math.ceil(measure(name))
       if (naturalWidth <= 0) return
       const parts = getExtensionPreservingFileNameParts(name, { width, measure })
       setMeasured((previous) =>
