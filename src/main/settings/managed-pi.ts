@@ -5,10 +5,18 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 import { x as extract } from 'tar'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
 import { managedPiRoot, piBootstrapPath, resolvePiExecutable } from '../agent-framework/pi-runtime'
 import { nodeRuntimeEnvironment } from '../node-process-host'
-import { DEFAULT_REGISTRIES, defaultFetchTarball, downloadAndVerify } from './managed-claude'
+import {
+  DEFAULT_REGISTRIES,
+  defaultFetchTarball,
+  describeManagedInstallError,
+  downloadAndVerify
+} from './managed-claude'
+
+const logger = createLogger('managed-pi')
 
 const execute = promisify(execFile)
 type LockedPackage = {
@@ -126,6 +134,13 @@ export const installManagedPi = async ({
             downloadError = error
             const failure = downloadFailure(error)
             log(`${registry} attempt ${attempt} failed for ${path}: ${failure.detail}`)
+            logger.warn('managed Pi registry attempt failed', {
+              installId,
+              registry,
+              attempt,
+              packagePath: path,
+              error: describeManagedInstallError(error)
+            })
             signal.throwIfAborted()
             if (!failure.retryable || attempt === 2) break
             log(`Retrying ${path} once after a transient download failure.`)
@@ -206,7 +221,13 @@ export const installManagedPi = async ({
     log('Installed compatible Pi SDK 1.4.0 / ACP 0.1.8.')
     return { installId, ok: true }
   } catch (error) {
-    const message = downloadFailure(error).detail
+    const described = describeManagedInstallError(error)
+    const fallbackDetail = downloadFailure(error).detail
+    const message =
+      described !== (error instanceof Error ? error.message : String(error))
+        ? described
+        : fallbackDetail
+    logger.warn('managed Pi installation failed', { installId, error: message })
     log(`Pi installation failed: ${message}`)
     return { installId, ok: false, error: message }
   } finally {

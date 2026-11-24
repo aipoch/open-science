@@ -1199,3 +1199,27 @@ describe('installManagedPi', () => {
     }
   })
 })
+
+describe('describeManagedInstallError', () => {
+  it('extracts nested POSIX and undici error codes from cause chains', async () => {
+    const { describeManagedInstallError } = await import('./managed-claude')
+    const dnsError = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('dns failed'), { code: 'ENOTFOUND' })
+    })
+    const timeoutError = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect timeout'), { code: 'UND_ERR_CONNECT_TIMEOUT' })
+    })
+    const spaceError = new Error('write failed', {
+      cause: Object.assign(new Error('no space left on device'), { code: 'ENOSPC' })
+    })
+
+    expect(describeManagedInstallError(dnsError)).toContain('Network error (ENOTFOUND)')
+    expect(describeManagedInstallError(timeoutError)).toContain(
+      'Network error (UND_ERR_CONNECT_TIMEOUT)'
+    )
+    expect(describeManagedInstallError(spaceError)).toContain('Insufficient disk space (ENOSPC)')
+    expect(describeManagedInstallError(new Error('Request timed out for https://x'))).toBe(
+      'Request timed out for https://x'
+    )
+  })
+})

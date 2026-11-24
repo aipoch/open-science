@@ -9,8 +9,11 @@ import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { createGunzip } from 'node:zlib'
 
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { ClaudeInstallEvent, ClaudeInstallResult } from '../../shared/settings'
 import { netFetchWithManualRedirect } from '../network-fetch'
+
+const log = createLogger('managed-claude')
 
 // App-managed Claude installer. The `@anthropic-ai/claude-code` npm package is a thin wrapper whose
 // real payload is a per-platform native binary shipped as an optionalDependency
@@ -534,20 +537,43 @@ export type InstallManagedClaudeOptions = {
   tmpDir?: string
 }
 
+const NETWORK_ERROR_CODES = new Set([
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'ERR_PROXY_CONNECTION_FAILED',
+  'ETIMEDOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_SOCKET'
+])
+
+const extractErrorCode = (error: unknown): string => {
+  let current = error
+  for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth += 1) {
+    if ('code' in current && typeof (current as { code?: unknown }).code === 'string') {
+      return (current as { code: string }).code
+    }
+    current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined
+  }
+  return ''
+}
+
 // Keeps operational failures actionable in the existing install log instead of adding more startup
 // checks. The original message is retained so support reports still include the platform error.
 const describeManagedInstallError = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
-  const code =
-    typeof error === 'object' && error !== null && 'code' in error
-      ? String((error as { code?: unknown }).code ?? '')
-      : ''
+  const code = extractErrorCode(error)
 
   if (code === 'ENOSPC' || /no space left on device/i.test(message)) {
     return `Insufficient disk space (ENOSPC). Free some space, then install again. ${message}`
   }
 
-  if (['EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'ENOTFOUND'].includes(code)) {
+  if (NETWORK_ERROR_CODES.has(code)) {
     return `Network error (${code}). Check the network, proxy, VPN, or firewall, then install again. ${message}`
   }
 
@@ -712,6 +738,11 @@ const installManagedClaude = async ({
         }
       } catch (error) {
         lastError = describeManagedInstallError(error)
+        log.warn('managed Claude registry attempt failed', {
+          installId,
+          registry,
+          error: lastError
+        })
         onEvent({
           kind: 'log',
           installId,
@@ -876,6 +907,7 @@ export {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
   defaultFetchTarball,
+  describeManagedInstallError,
   downloadAndVerify,
   extractFileFromTgz,
   getManagedPlatform,

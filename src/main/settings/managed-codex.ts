@@ -39,6 +39,7 @@ import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
   defaultFetchTarball,
+  describeManagedInstallError,
   downloadAndVerify,
   extractFileFromTgz,
   type FetchJson,
@@ -1781,10 +1782,11 @@ const installManagedCodexFiles = async (
         codexVersion
       }
     } catch (error) {
-      lastError = toErrorMessage(error)
+      lastError = describeManagedInstallError(error)
       if (signal?.aborted) return { result: { installId, ok: false, error: lastError } }
       if (reachedLocalInstall) {
         // Local install failure — do not attribute it to the registry or try the next one.
+        log.warn('managed Codex local install failed', { installId, error: lastError })
         onEvent({
           kind: 'log',
           installId,
@@ -1793,6 +1795,11 @@ const installManagedCodexFiles = async (
         })
         return { result: { installId, ok: false, error: lastError } }
       }
+      log.warn('managed Codex registry attempt failed', {
+        installId,
+        registry,
+        error: lastError
+      })
       onEvent({
         kind: 'log',
         installId,

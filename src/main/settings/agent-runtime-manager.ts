@@ -121,6 +121,7 @@ import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 import { provisionAppClaudePrivateProfile } from './claude-config-provision'
 import { provisionClaudeRuntime, type ClaudeRuntimeAssets } from './claude-runtime-provisioner'
 import {
+  describeManagedInstallError,
   installManagedClaude,
   isManagedClaudePath,
   managedClaudeDir,
@@ -1021,17 +1022,25 @@ export class AgentRuntimeManager {
     await this.repository.selectBootstrapCodex()
   }
 
-  private resolveManagedRegistries(
+  private async resolveManagedRegistries(
     agentFrameworkId: AgentFrameworkId,
     signal: AbortSignal,
     preferredRegistry?: ManagedClaudeRegistry
   ): Promise<string[]> {
-    return resolveInstallRegistries({
+    const startedAt = Date.now()
+    const registries = await resolveInstallRegistries({
       agentFrameworkId,
       preferredRegistry,
       probeRegistry: this.probeRegistry,
       signal
     })
+    log.info('resolved managed install registries', {
+      agentFrameworkId,
+      preferredRegistry: preferredRegistry ?? null,
+      registries,
+      durationMs: Date.now() - startedAt
+    })
+    return registries
   }
 
   async installClaude(
@@ -1040,82 +1049,86 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
-      let resolvedRegistries: Promise<string[]> | undefined
-      const getRegistries = (): Promise<string[]> =>
-        (resolvedRegistries ??= this.resolveManagedRegistries(
-          'claude-code',
-          signal,
-          request.managedRegistry
-        ))
+    return this.runExclusiveInstall(
+      installId,
+      async (signal, onCleanupFailure) => {
+        let resolvedRegistries: Promise<string[]> | undefined
+        const getRegistries = (): Promise<string[]> =>
+          (resolvedRegistries ??= this.resolveManagedRegistries(
+            'claude-code',
+            signal,
+            request.managedRegistry
+          ))
 
-      const complete = async (result: ClaudeInstallResult): Promise<ClaudeInstallResult> => {
-        if (!result.ok) return result
-        try {
-          if (managedClaudeAcpEntryAt(managedClaudeAcpRoot(this.configRoot))) return result
-          await this.installManagedClaudeAcpImpl({
-            configRoot: this.configRoot,
-            installId,
-            onEvent,
-            registries: await getRegistries(),
-            signal
-          })
-          return result
-        } catch (cause) {
-          if (cause instanceof VerificationProcessUnsettledError) onCleanupFailure(cause)
-          if (signal.aborted) {
-            return { installId, ok: false, error: 'Installation cancelled.' }
-          }
-          const error = cause instanceof Error ? cause.message : String(cause)
-          onEvent({
-            kind: 'log',
-            installId,
-            stream: 'system',
-            chunk: `Claude ACP installation failed: ${error}\n`
-          })
-          return { installId, ok: false, error }
-        }
-      }
-
-      if (request.source === 'managed') {
-        const outcome = await this.installManagedClaudeImpl({
-          installId,
-          onEvent,
-          dataRoot: this.configRoot,
-          registries: await getRegistries(),
-          verifyBinary: this.detectDeps.getVersion,
-          signal
-        })
-
-        if (outcome.result.ok && outcome.resolvedPath) {
-          const installedVersion = await this.detectDeps.getVersion(outcome.resolvedPath, signal)
-          signal.throwIfAborted()
-          if (!installedVersion) {
-            const error =
-              'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
-            onEvent({ kind: 'log', installId, stream: 'system', chunk: `${error}\n` })
+        const complete = async (result: ClaudeInstallResult): Promise<ClaudeInstallResult> => {
+          if (!result.ok) return result
+          try {
+            if (managedClaudeAcpEntryAt(managedClaudeAcpRoot(this.configRoot))) return result
+            await this.installManagedClaudeAcpImpl({
+              configRoot: this.configRoot,
+              installId,
+              onEvent,
+              registries: await getRegistries(),
+              signal
+            })
+            return result
+          } catch (cause) {
+            if (cause instanceof VerificationProcessUnsettledError) onCleanupFailure(cause)
+            if (signal.aborted) {
+              return { installId, ok: false, error: 'Installation cancelled.' }
+            }
+            const error = cause instanceof Error ? cause.message : String(cause)
+            onEvent({
+              kind: 'log',
+              installId,
+              stream: 'system',
+              chunk: `Claude ACP installation failed: ${error}\n`
+            })
             return { installId, ok: false, error }
           }
-
-          await this.repository.setClaudeInfo({
-            resolvedPath: outcome.resolvedPath,
-            version: outcome.version
-          })
         }
 
-        return complete(outcome.result)
-      }
+        if (request.source === 'managed') {
+          const outcome = await this.installManagedClaudeImpl({
+            installId,
+            onEvent,
+            dataRoot: this.configRoot,
+            registries: await getRegistries(),
+            verifyBinary: this.detectDeps.getVersion,
+            signal
+          })
 
-      const result = await runInstallWithFallback({
-        source: request.source,
-        installId,
-        onEvent,
-        onCleanupFailure,
-        signal
-      })
-      if (result.ok) await this.detectClaude(signal)
-      return complete(result)
-    })
+          if (outcome.result.ok && outcome.resolvedPath) {
+            const installedVersion = await this.detectDeps.getVersion(outcome.resolvedPath, signal)
+            signal.throwIfAborted()
+            if (!installedVersion) {
+              const error =
+                'The installed Claude runtime could not report its version. It may be incompatible or incomplete. Delete it and install again.'
+              onEvent({ kind: 'log', installId, stream: 'system', chunk: `${error}\n` })
+              return { installId, ok: false, error }
+            }
+
+            await this.repository.setClaudeInfo({
+              resolvedPath: outcome.resolvedPath,
+              version: outcome.version
+            })
+          }
+
+          return complete(outcome.result)
+        }
+
+        const result = await runInstallWithFallback({
+          source: request.source,
+          installId,
+          onEvent,
+          onCleanupFailure,
+          signal
+        })
+        if (result.ok) await this.detectClaude(signal)
+        return complete(result)
+      },
+      { agentFrameworkId: 'claude-code', source: request.source }
+    )
   }
 
   async installOpencode(
@@ -1124,33 +1137,37 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-opencode-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
-      if (request.source === 'managed') {
-        const registries = await this.resolveManagedRegistries('opencode', signal)
-        const outcome = await this.installManagedOpencodeImpl({
+    return this.runExclusiveInstall(
+      installId,
+      async (signal, onCleanupFailure) => {
+        if (request.source === 'managed') {
+          const registries = await this.resolveManagedRegistries('opencode', signal)
+          const outcome = await this.installManagedOpencodeImpl({
+            installId,
+            onEvent,
+            dataRoot: this.configRoot,
+            registries,
+            signal
+          })
+          if (outcome.result.ok && outcome.resolvedPath) {
+            await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
+          }
+          return outcome.result
+        }
+
+        const result = await runInstallWithFallback({
+          source: request.source,
           installId,
           onEvent,
-          dataRoot: this.configRoot,
-          registries,
+          installTarget: OPENCODE_INSTALL_TARGET,
+          onCleanupFailure,
           signal
         })
-        if (outcome.result.ok && outcome.resolvedPath) {
-          await this.repository.setOpencodeInfo(outcome.resolvedPath, outcome.version)
-        }
-        return outcome.result
-      }
-
-      const result = await runInstallWithFallback({
-        source: request.source,
-        installId,
-        onEvent,
-        installTarget: OPENCODE_INSTALL_TARGET,
-        onCleanupFailure,
-        signal
-      })
-      if (result.ok) await this.detectOpencode(signal)
-      return result
-    })
+        if (result.ok) await this.detectOpencode(signal)
+        return result
+      },
+      { agentFrameworkId: 'opencode', source: request.source }
+    )
   }
 
   async installPi(
@@ -1158,16 +1175,20 @@ export class AgentRuntimeManager {
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
     const installId = `install-pi-${Date.now()}-${this.allocateSettingsIdSequence()}`
-    return this.runExclusiveInstall(installId, async (signal) => {
-      const registries = await this.resolveManagedRegistries('pi', signal)
-      return this.installManagedPiImpl({
-        configRoot: this.configRoot,
-        installId,
-        onEvent,
-        registries,
-        signal
-      })
-    })
+    return this.runExclusiveInstall(
+      installId,
+      async (signal) => {
+        const registries = await this.resolveManagedRegistries('pi', signal)
+        return this.installManagedPiImpl({
+          configRoot: this.configRoot,
+          installId,
+          onEvent,
+          registries,
+          signal
+        })
+      },
+      { agentFrameworkId: 'pi', source: 'managed' }
+    )
   }
 
   async uninstallPi(): Promise<RuntimeUninstallResult> {
@@ -1186,20 +1207,24 @@ export class AgentRuntimeManager {
     onEvent: (event: ClaudeInstallEvent) => void
   ): Promise<ClaudeInstallResult> {
     const installId = `install-codebuddy-${Date.now()}-${this.allocateSettingsIdSequence()}`
-    return this.runExclusiveInstall(installId, async (signal) => {
-      const registries = await this.resolveManagedRegistries('codebuddy', signal)
-      const outcome = await this.installManagedCodeBuddyImpl({
-        installId,
-        onEvent,
-        dataRoot: this.configRoot,
-        registries,
-        signal
-      })
-      if (outcome.result.ok && outcome.resolvedPath) {
-        await this.repository.setCodeBuddyInfo(outcome.resolvedPath, outcome.version)
-      }
-      return outcome.result
-    })
+    return this.runExclusiveInstall(
+      installId,
+      async (signal) => {
+        const registries = await this.resolveManagedRegistries('codebuddy', signal)
+        const outcome = await this.installManagedCodeBuddyImpl({
+          installId,
+          onEvent,
+          dataRoot: this.configRoot,
+          registries,
+          signal
+        })
+        if (outcome.result.ok && outcome.resolvedPath) {
+          await this.repository.setCodeBuddyInfo(outcome.resolvedPath, outcome.version)
+        }
+        return outcome.result
+      },
+      { agentFrameworkId: 'codebuddy', source: 'managed' }
+    )
   }
 
   async installCodex(
@@ -1208,59 +1233,63 @@ export class AgentRuntimeManager {
   ): Promise<ClaudeInstallResult> {
     const installId = `install-codex-${Date.now()}-${this.allocateSettingsIdSequence()}`
 
-    return this.runExclusiveInstall(installId, async (signal, onCleanupFailure) => {
-      if (request.source === 'managed') {
-        const settings = await this.repository.getSettings()
-        const configuredCodexPath = settings.codex?.nativePath
-        const managedCodexPath =
-          this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.configRoot)
-        const externalCodexPath =
-          configuredCodexPath && configuredCodexPath !== managedCodexPath
-            ? configuredCodexPath
-            : undefined
-        const existingCodexPath =
-          externalCodexPath &&
-          (await this.codexDetectDeps.getCodexVersion(externalCodexPath, signal))
-            ? externalCodexPath
-            : undefined
-        signal.throwIfAborted()
-        const registries = await this.resolveManagedRegistries('codex', signal)
-        const outcome = await this.installManagedCodexImpl({
+    return this.runExclusiveInstall(
+      installId,
+      async (signal, onCleanupFailure) => {
+        if (request.source === 'managed') {
+          const settings = await this.repository.getSettings()
+          const configuredCodexPath = settings.codex?.nativePath
+          const managedCodexPath =
+            this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.configRoot)
+          const externalCodexPath =
+            configuredCodexPath && configuredCodexPath !== managedCodexPath
+              ? configuredCodexPath
+              : undefined
+          const existingCodexPath =
+            externalCodexPath &&
+            (await this.codexDetectDeps.getCodexVersion(externalCodexPath, signal))
+              ? externalCodexPath
+              : undefined
+          signal.throwIfAborted()
+          const registries = await this.resolveManagedRegistries('codex', signal)
+          const outcome = await this.installManagedCodexImpl({
+            installId,
+            onEvent,
+            dataRoot: this.configRoot,
+            registries,
+            signal,
+            ...(existingCodexPath ? { existingCodexPath } : {})
+          })
+          if (
+            outcome.result.ok &&
+            outcome.adapterPath &&
+            outcome.adapterVersion &&
+            outcome.codexPath &&
+            outcome.codexVersion
+          ) {
+            await this.repository.setCodexInfo({
+              resolvedPath: outcome.adapterPath,
+              version: outcome.adapterVersion,
+              nativePath: outcome.codexPath,
+              nativeVersion: outcome.codexVersion
+            })
+          }
+          return outcome.result
+        }
+
+        const result = await runInstallWithFallback({
+          source: request.source,
           installId,
           onEvent,
-          dataRoot: this.configRoot,
-          registries,
-          signal,
-          ...(existingCodexPath ? { existingCodexPath } : {})
+          installTarget: CODEX_INSTALL_TARGET,
+          onCleanupFailure,
+          signal
         })
-        if (
-          outcome.result.ok &&
-          outcome.adapterPath &&
-          outcome.adapterVersion &&
-          outcome.codexPath &&
-          outcome.codexVersion
-        ) {
-          await this.repository.setCodexInfo({
-            resolvedPath: outcome.adapterPath,
-            version: outcome.adapterVersion,
-            nativePath: outcome.codexPath,
-            nativeVersion: outcome.codexVersion
-          })
-        }
-        return outcome.result
-      }
-
-      const result = await runInstallWithFallback({
-        source: request.source,
-        installId,
-        onEvent,
-        installTarget: CODEX_INSTALL_TARGET,
-        onCleanupFailure,
-        signal
-      })
-      if (result.ok) await this.detectCodex(signal)
-      return result
-    })
+        if (result.ok) await this.detectCodex(signal)
+        return result
+      },
+      { agentFrameworkId: 'codex', source: request.source }
+    )
   }
 
   private async runExclusiveInstall(
@@ -1268,7 +1297,8 @@ export class AgentRuntimeManager {
     install: (
       signal: AbortSignal,
       onCleanupFailure: (error: Error) => void
-    ) => Promise<ClaudeInstallResult>
+    ) => Promise<ClaudeInstallResult>,
+    target?: { agentFrameworkId: AgentFrameworkId; source: string }
   ): Promise<ClaudeInstallResult> {
     if (this.shutdownAbort.signal.aborted) {
       return { installId, ok: false, error: 'Settings service is shutting down.' }
@@ -1288,16 +1318,53 @@ export class AgentRuntimeManager {
     }
     const controller = new AbortController()
     const completion = Promise.withResolvers<Error | undefined>()
+    const startedAt = Date.now()
     let cleanupFailure: Error | undefined
     this.activeInstallAbort = controller
     this.activeInstallCompletion = completion.promise
+    if (target) {
+      log.info('starting runtime install', { installId, ...target })
+    }
     try {
-      return await install(controller.signal, (error) => {
+      const result = await install(controller.signal, (error) => {
         cleanupFailure = error
       })
+      if (target) {
+        if (result.ok) {
+          log.info('runtime install completed', {
+            installId,
+            ...target,
+            durationMs: Date.now() - startedAt
+          })
+        } else {
+          log.warn('runtime install failed', {
+            installId,
+            ...target,
+            cancelled: controller.signal.aborted,
+            error: result.error ?? 'Install failed.',
+            durationMs: Date.now() - startedAt
+          })
+        }
+      }
+      return result
     } catch (error) {
       if (controller.signal.aborted) {
+        if (target) {
+          log.warn('runtime install cancelled', {
+            installId,
+            ...target,
+            durationMs: Date.now() - startedAt
+          })
+        }
         return { installId, ok: false, error: 'Installation cancelled.' }
+      }
+      if (target) {
+        log.error('runtime install errored', {
+          installId,
+          ...target,
+          error: describeManagedInstallError(error),
+          durationMs: Date.now() - startedAt
+        })
       }
       throw error
     } finally {
