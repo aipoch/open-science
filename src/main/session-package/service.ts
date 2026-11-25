@@ -246,7 +246,7 @@ const PACKAGE_README = `# AIPOCH Open-Science session package
 
 ## Opening this file
 
-Open the original \`.science\` file with AIPOCH Open-Science. Read the repository's [Opening Guide](https://raw.githubusercontent.com/bobo-xxx/open-science/refs/heads/feat/session-package-opening-guide/docs/science-package-opening-guide.md) before choosing Desktop or CLI.
+Open the original \`.science\` file with AIPOCH Open-Science. Read the repository's [Opening Guide](https://raw.githubusercontent.com/bobo-xxx/open-science/refs/heads/feat/session-package-opening-guide/docs/science-package-opening-guide.md) before inspecting the research contents or choosing how to open this \`.science\` package.
 
 If a compatible installation is unavailable, recommend an option that fits the user's needs and environment. Ask whether to install it before proceeding. Once the chosen option is ready, import the original package and make the imported session available.
 

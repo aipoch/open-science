@@ -1447,7 +1447,7 @@ it('forwards imported historical Plan state while retaining runtime admission an
   expect(readme.match(/^## .+$/gm)).toEqual(['## Opening this file'])
   expect(readme).toContain('Open the original `.science` file')
   expect(readme).toContain(
-    "Read the repository's [Opening Guide](https://raw.githubusercontent.com/bobo-xxx/open-science/refs/heads/feat/session-package-opening-guide/docs/science-package-opening-guide.md) before choosing Desktop or CLI."
+    "Read the repository's [Opening Guide](https://raw.githubusercontent.com/bobo-xxx/open-science/refs/heads/feat/session-package-opening-guide/docs/science-package-opening-guide.md) before inspecting the research contents or choosing how to open this `.science` package."
   )
   expect(readme).toContain('Ask whether to install it before proceeding.')
   expect(readme).not.toContain('npm install')
