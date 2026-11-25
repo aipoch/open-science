@@ -187,6 +187,8 @@ describe('ProviderStep', () => {
     expect(deepseek!.value).toBe('test-deepseek-key')
     expect(minimax!.value).toBe('test-minimax-key')
     await act(async () => fireEvent.submit(deepseek!.closest('form')!))
+    expect(useSettingsStore.getState().setAgentFramework).toHaveBeenCalledWith('open-science-agent')
+    expect(useSettingsStore.getState().agentFrameworkId).toBe('open-science-agent')
     expect(saveValidatedProvider).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'official', vendorId: 'deepseek', key: 'test-deepseek-key' })
     )
@@ -396,27 +398,31 @@ describe('ProviderStep', () => {
     expect(container.querySelector('button:disabled')).toBeNull()
   })
 
-  it('can choose an OpenAI subscription after selecting Claude Code', async () => {
-    const setAgentFramework = vi.fn(async () => {
-      useSettingsStore.setState({ agentFrameworkId: 'codex' })
-    })
-    const onAdvance = vi.fn()
-    const saveProvider = vi
-      .fn()
-      .mockResolvedValue({ providerId: 'openai-account', validation: { ok: true, category: 'ok' } })
-    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
-    useSettingsStore.setState({
-      agentFrameworkId: 'claude-code',
-      setAgentFramework,
-      saveProvider,
-      setActiveProvider
-    })
-    await renderStep({ variant: 'quick', onAdvance })
-    await clickButton(/^Import existing Codex sign-in$/)
-    expect(setAgentFramework).toHaveBeenCalledWith('codex')
-    expect(saveProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'codex-shared' }))
-    expect(onAdvance).toHaveBeenCalledOnce()
-  })
+  it.each(['open-science-agent', 'claude-code'] as const)(
+    'selects Codex when importing a subscription from %s',
+    async (agentFrameworkId) => {
+      const setAgentFramework = vi.fn(async () => {
+        useSettingsStore.setState({ agentFrameworkId: 'codex' })
+      })
+      const onAdvance = vi.fn()
+      const saveProvider = vi.fn().mockResolvedValue({
+        providerId: 'openai-account',
+        validation: { ok: true, category: 'ok' }
+      })
+      const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+      useSettingsStore.setState({
+        agentFrameworkId,
+        setAgentFramework,
+        saveProvider,
+        setActiveProvider
+      })
+      await renderStep({ variant: 'quick', onAdvance })
+      await clickButton(/^Import existing Codex sign-in$/)
+      expect(setAgentFramework).toHaveBeenCalledWith('codex')
+      expect(saveProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'codex-shared' }))
+      expect(onAdvance).toHaveBeenCalledOnce()
+    }
+  )
 
   it('keeps isolated Codex sign-in on the card through preparation failure, cancellation and retry', async () => {
     const pending = Promise.withResolvers<{ ok: boolean; installId: string }>()
@@ -431,7 +437,7 @@ describe('ProviderStep', () => {
     })
     const onAdvance = vi.fn()
     useSettingsStore.setState({
-      ...codexReadyState(),
+      agentFrameworkId: 'open-science-agent',
       installCodex: prepare,
       cancelCodexLogin: cancel,
       loginIsolatedCodex: login,
@@ -471,6 +477,10 @@ describe('ProviderStep', () => {
     expect(login).not.toHaveBeenCalled()
     expect(onAdvance).not.toHaveBeenCalled()
     await clickButton(/^Sign in with Open-Science$/)
+    expect(useSettingsStore.getState().setAgentFramework).toHaveBeenCalledWith('codex', {
+      runtimeAlreadyDetected: true
+    })
+    expect(useSettingsStore.getState().agentFrameworkId).toBe('codex')
     expect(login).toHaveBeenCalledOnce()
     expect(onAdvance).toHaveBeenCalledOnce()
   })
@@ -1387,6 +1397,7 @@ describe('ProviderStep', () => {
       })
       await renderStep({ variant: 'quick', onAdvance })
       await clickButton(/Continue with xAI/)
+      expect(useSettingsStore.getState().agentFrameworkId).toBe('open-science-agent')
       expect(document.body.textContent).toContain('FIRST-CODE')
       await act(async () => first.reject(new Error(failure)))
       expect(document.body.textContent).not.toContain('FIRST-CODE')

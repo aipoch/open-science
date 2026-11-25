@@ -18,7 +18,11 @@ import type {
 } from '../../../../shared/settings'
 import { CODEX_IMPORT_FILE_MISSING_MESSAGE } from '../../../../shared/codex-runtime'
 import { unwrapIpcErrorDetail } from '../../../../shared/failure/messages'
-import { isProviderUsableByFramework } from '../../../../shared/settings-runtime'
+import {
+  DEFAULT_AGENT_FRAMEWORK_ID,
+  isCodexSubscriptionProvider,
+  isProviderUsableByFramework
+} from '../../../../shared/settings-runtime'
 import { clsx } from 'clsx'
 import {
   selectActiveAgentFramework,
@@ -487,42 +491,10 @@ const ProviderStep = ({
   ): Promise<void> => {
     if (!canContinue) return
     const value = valueOverride ?? formValue
-    // Quick subscription selection may have just switched frameworks; use the persisted snapshot.
-    const currentSettings = useSettingsStore.getState()
-    const currentFrameworkEndpoints = selectFrameworkApiEndpoints(currentSettings)
     const valueFormErrors = getProviderFormErrors(value)
     // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
     if (hasProviderFormErrors(valueFormErrors)) {
       setShowProviderErrors(true)
-      return
-    }
-
-    const providerValue =
-      value.type === 'official'
-        ? {
-            ...value,
-            model: providerFormModelForFramework(value, currentFrameworkEndpoints) ?? value.model
-          }
-        : value
-
-    // A provider that validates can still be unusable by the selected framework (e.g. Claude + an
-    // OpenAI-only gateway). Block that before it becomes the active provider, so onboarding can't
-    // finish with a pair the agent can't actually spawn.
-    if (
-      !isProviderUsableByFramework(
-        { apiEndpoints: providerFormApiEndpoints(providerValue), type: providerValue.type },
-        { id: currentSettings.agentFrameworkId, supportedApiTypes: currentFrameworkEndpoints }
-      )
-    ) {
-      const label =
-        selectActiveAgentFramework(currentSettings)?.displayName ?? t('The selected agent')
-      setValidationOk(false)
-      setValidationMessage(
-        t(
-          "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.",
-          { framework: label }
-        )
-      )
       return
     }
 
@@ -532,6 +504,52 @@ const ProviderStep = ({
     setValidationMessage(undefined)
 
     try {
+      if (variant === 'quick') {
+        // Claude prepares and selects its own runtime in connectQuickClaude.
+        const settings = useSettingsStore.getState()
+        const target = isCodexSubscriptionProvider(value.type)
+          ? 'codex'
+          : DEFAULT_AGENT_FRAMEWORK_ID
+        if (settings.agentFrameworkId !== target) {
+          if (value.type === 'codex-isolated') {
+            await settings.setAgentFramework(target, { runtimeAlreadyDetected: true })
+          } else {
+            await settings.setAgentFramework(target)
+          }
+          if (!mounted.current || signal?.aborted) return
+        }
+      }
+      const currentSettings = useSettingsStore.getState()
+      const currentFrameworkEndpoints = selectFrameworkApiEndpoints(currentSettings)
+      const providerValue =
+        value.type === 'official'
+          ? {
+              ...value,
+              model: providerFormModelForFramework(value, currentFrameworkEndpoints) ?? value.model
+            }
+          : value
+
+      // A provider that validates can still be unusable by the selected framework (e.g. Claude + an
+      // OpenAI-only gateway). Block that before it becomes the active provider, so onboarding can't
+      // finish with a pair the agent can't actually spawn.
+      if (
+        !isProviderUsableByFramework(
+          { apiEndpoints: providerFormApiEndpoints(providerValue), type: providerValue.type },
+          { id: currentSettings.agentFrameworkId, supportedApiTypes: currentFrameworkEndpoints }
+        )
+      ) {
+        const label =
+          selectActiveAgentFramework(currentSettings)?.displayName ?? t('The selected agent')
+        setValidationOk(false)
+        setValidationMessage(
+          t(
+            "This provider isn't compatible with {{framework}}. Pick a provider whose API format {{framework}} supports, or change the agent framework.",
+            { framework: label }
+          )
+        )
+        return
+      }
+
       if (value.type === 'codex-isolated') {
         // Isolated sign-in is explicit: persist the provider first, then run the browser login.
         // Persisting alone never pops a browser; a cancelled login keeps the provider saved but
@@ -910,16 +928,6 @@ const ProviderStep = ({
           t('Could not prepare Codex. Try again.')
         )
         setAuthStage('auth')
-      }
-      const targetFramework =
-        card.subscriptionKind === 'codex-subscription' &&
-        settings.agentFrameworkId !== 'open-science-agent'
-          ? 'codex'
-          : settings.agentFrameworkId
-      if (targetFramework !== settings.agentFrameworkId) {
-        if (mode === 'codex-isolated')
-          await settings.setAgentFramework(targetFramework, { runtimeAlreadyDetected: true })
-        else await settings.setAgentFramework(targetFramework)
       }
       if (mounted.current && !attempt.signal.aborted)
         await handleSaveProvider(nextValue, attempt.signal)

@@ -167,7 +167,9 @@ const resetOnboardingStores = (
     installCodeBuddy: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
     installCodex: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
     installOpencode: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
-    setAgentFramework: vi.fn().mockResolvedValue(undefined),
+    setAgentFramework: vi.fn(async (id: AgentFrameworkId) => {
+      useSettingsStore.setState({ agentFrameworkId: id })
+    }),
     completeOnboarding: vi.fn().mockResolvedValue(undefined),
     addOnboardingKiloProvider: vi.fn().mockResolvedValue(undefined),
     cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
