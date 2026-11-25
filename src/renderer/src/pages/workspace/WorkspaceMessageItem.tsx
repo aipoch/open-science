@@ -946,6 +946,11 @@ const ArtifactCard = ({
     <GeneratedFileCard
       buttonRef={setElement}
       name={artifactName}
+      versionLabel={
+        typeof artifact.versionNumber === 'number'
+          ? t('Version {{version}}', { version: artifact.versionNumber })
+          : undefined
+      }
       sizeLabel={sizeLabel}
       disabled={publicationPending}
       onClick={() => onPreviewArtifact(artifact)}

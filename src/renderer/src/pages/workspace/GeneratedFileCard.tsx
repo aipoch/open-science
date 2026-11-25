@@ -11,6 +11,7 @@ export const artifactGalleryClassName =
 // Shared presentation only; each owner supplies its live or archived preview and navigation.
 export function GeneratedFileCard({
   name,
+  versionLabel,
   sizeLabel,
   label,
   title,
@@ -20,6 +21,7 @@ export function GeneratedFileCard({
   onClick
 }: {
   name: string
+  versionLabel?: string
   sizeLabel?: string
   label: string
   title?: string
@@ -50,6 +52,9 @@ export function GeneratedFileCard({
       </div>
       <div className="flex min-w-0 flex-1 items-center px-1.5">
         <ExtensionPreservingFileName name={name} className="flex-1 text-[12px] leading-5" compact />
+        {versionLabel ? (
+          <span className="ml-1 shrink-0 text-[11px] text-text-300">{versionLabel}</span>
+        ) : null}
         {sizeLabel ? (
           <span className="ml-1 shrink-0 text-[11px] text-text-000">{sizeLabel}</span>
         ) : null}

@@ -192,6 +192,7 @@ export const createPreviewFileItemFromArtifact = (
     mtimeMs: artifact.mtimeMs,
     artifactId: artifact.artifactId,
     managedFileId: artifact.artifactId,
+    selectedVersionId: artifact.versionId,
     versionNumber: artifact.versionNumber
   })
   // A message image represents this result, not the mutable head of the Artifact.
