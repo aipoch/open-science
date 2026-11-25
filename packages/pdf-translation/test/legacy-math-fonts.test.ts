@@ -1,10 +1,153 @@
 import { expect, it } from 'vitest'
 import { resolve } from './paths.js'
-import { PDFDocument, PDFDict, PDFName, PDFString, StandardFonts } from 'pdf-lib'
+import {
+  PDFDocument,
+  PDFDict,
+  PDFHexString,
+  PDFName,
+  PDFString,
+  StandardFonts,
+  beginText,
+  endText,
+  setFontAndSize,
+  setTextMatrix,
+  showText
+} from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PdfTranslationWriter } from '../src/writer.js'
 import { TestCallerRegistry } from './support/callers.js'
 import { engine } from '../resources/pdfium.mjs'
+
+it.each([true, false])(
+  'reflows prose around an unchanged native interval power (%s)',
+  async (sameDimension) => {
+    const pdf = await PDFDocument.create(),
+      body = await pdf.embedFont(StandardFonts.TimesRoman),
+      script = await pdf.embedFont(StandardFonts.TimesRomanItalic),
+      page = pdf.addPage([330, 220]),
+      prefix = 'Sample coordinates lie in [2, ',
+      source = prefix + '5]m for the measurement.',
+      translation = `采样坐标位于 [2, 5]${sameDimension ? 'm' : 'n'} 范围内。`,
+      x = 32 + body.widthOfTextAtSize(prefix, 11),
+      right = x + body.widthOfTextAtSize('5]', 11),
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'native-interval-power', surface: 'electron' })
+    page.drawText(prefix, { font: body, size: 11, x: 32, y: 156 })
+    page.drawText('5]', { font: body, size: 11, x, y: 156 })
+    page.drawText('m', { font: script, size: 8, x: right + 0.6, y: 160 })
+    page.drawText(' for the measurement.', { font: body, size: 11, x: right + 7, y: 156 })
+    page.drawText('Neighbor', { font: body, size: 11, x: 32, y: 120 })
+    await pdf.flush()
+    pdf.context.lookup(body.ref, PDFDict).set(PDFName.of('BaseFont'), PDFName.of('CMR10'))
+    pdf.context.lookup(script.ref, PDFDict).set(PDFName.of('BaseFont'), PDFName.of('CMMI8'))
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const result = await new PdfTranslationWriter(() =>
+        resolve('resources/worker.mjs')
+      ).generateDetailed(
+        {
+          id: 'native-interval-power',
+          data: await pdf.save(),
+          pages: [{ width: 330, height: 220 }],
+          preserveUnsupported: true,
+          preserveUnmatched: true,
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 30 / 330, y: 48 / 220, width: 275 / 330, height: 24 / 220 }
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(result?.layoutFailures).toHaveLength(sameDimension ? 0 : 1)
+      task = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+      const items = (await (await (await task.promise).getPage(1)).getTextContent()).items.filter(
+        (item) => 'str' in item
+      )
+      const text = items.map(({ str }) => str).join('')
+      expect(text.replace(/\s/gu, '')).toBe(
+        (sameDimension ? translation : source).replace(/\s/gu, '') + 'Neighbor'
+      )
+      const closing = items.find(({ str }) => str.trimEnd().endsWith('5]'))!
+      const dimension = items.find(({ str }) => str.trim() === 'm')!
+      expect(dimension.height).toBeCloseTo(8, 3)
+      expect(dimension.transform[5] - closing.transform[5]).toBeCloseTo(4, 3)
+    } finally {
+      await task?.destroy()
+      caller.release()
+      registry.dispose()
+    }
+  }
+)
+
+it.each([true, false])(
+  'leaves a neighboring spacing tilde with a verified native base: %s',
+  async (nativeAccent) => {
+    const pdf = await PDFDocument.create(),
+      body = await pdf.embedFont(StandardFonts.TimesRoman),
+      accent = await pdf.embedFont(StandardFonts.TimesRomanBold),
+      base = await pdf.embedFont(StandardFonts.TimesRomanItalic),
+      page = pdf.addPage([330, 220]),
+      source = 'Measured samples agree.',
+      translation = '各样品的测量结果一致。',
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'neighboring-tilde', surface: 'electron' }),
+      writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
+    page.drawText(source, { font: body, size: 11, x: 30, y: 150 })
+    page.drawText('˜', { font: accent, size: 8, x: 52, y: 141.2 })
+    page.drawText('q', { font: base, size: 11, x: 51, y: 136 })
+    await pdf.flush()
+    pdf.context.lookup(base.ref, PDFDict).set(PDFName.of('BaseFont'), PDFName.of('CMMI10'))
+    if (nativeAccent)
+      pdf.context.lookup(accent.ref, PDFDict).set(PDFName.of('BaseFont'), PDFName.of('CMR8'))
+    let rendered: ReturnType<typeof getDocument> | undefined
+    try {
+      const result = await writer.generateDetailed(
+        {
+          id: 'neighboring-tilde',
+          data: await pdf.save(),
+          pages: [{ width: 330, height: 220 }],
+          preserveUnsupported: true,
+          preserveUnmatched: true,
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 28 / 330, y: 59 / 220, width: 160 / 330, height: 15.2 / 220 }
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(result!.layoutFailures).toHaveLength(nativeAccent ? 0 : 1)
+      rendered = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+      const items = (
+        await (await (await rendered.promise).getPage(1)).getTextContent()
+      ).items.filter((item) => 'str' in item)
+      expect(items.map(({ str }) => str).join('')).toContain(nativeAccent ? translation : source)
+      const mark = items.find(({ str }) => str.trim() === '˜')
+      expect(mark?.transform[4]).toBe(52)
+      expect(mark?.transform[5]).toBeCloseTo(141.2, 5)
+      expect(items.find(({ str }) => str.trim() === 'q')?.transform.slice(4)).toEqual([51, 136])
+    } finally {
+      await rendered?.destroy()
+      caller.release()
+      registry.dispose()
+    }
+  }
+)
 
 it.each([
   ['MSBM10', '点属于R3与R3；尺度属于R。', true],
@@ -251,10 +394,13 @@ it.each([
   ['CMSY10', '函数AF映射每个样本。', false],
   ['CMSY10', '函数Falpha映射每个样本。', false],
   ['CMEX10', '函数F映射每个样本。', false],
-  ['TeX-matha10', '函数F映射每个样本。', false]
+  ['TeX-matha10', '函数F映射每个样本。', false],
+  ['CMSY10', '数值为 |F|。', true, '|F|'],
+  ['CMSY10', '数值为 ||F||。', false, '|F|'],
+  ['CMSY10', '数值为 |G|。', false, '|F|']
 ] as const)(
   'keeps a native calligraphic variable while translating prose: %s / %s',
-  async (name, translation, replaced) => {
+  async (name, translation, replaced, variable = 'F') => {
     const pdf = await PDFDocument.create(),
       prose = await pdf.embedFont(StandardFonts.TimesRoman),
       symbol = await pdf.embedFont(StandardFonts.TimesRomanItalic),
@@ -263,13 +409,18 @@ it.each([
       caller = registry.acquire({ leaseId: 'calligraphic-math', surface: 'electron' }),
       writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
     page.drawText('The function ', { font: prose, size: 10, x: 40, y: 150 })
-    page.drawText('F', { font: symbol, size: 10, x: 95, y: 150 })
-    page.drawText(' maps each sample.', { font: prose, size: 10, x: 102, y: 150 })
+    page.drawText(variable, { font: symbol, size: 10, x: 95, y: 150 })
+    page.drawText(' maps each sample.', {
+      font: prose,
+      size: 10,
+      x: 95 + symbol.widthOfTextAtSize(variable, 10) + 1,
+      y: 150
+    })
     page.drawText('Neighbor', { font: prose, size: 10, x: 40, y: 110 })
     await pdf.flush()
     pdf.context.lookup(symbol.ref, PDFDict).set(PDFName.of('BaseFont'), PDFName.of(name))
     const data = await pdf.save(),
-      source = 'The function F maps each sample.',
+      source = `The function ${variable} maps each sample.`,
       original = getDocument({ data: data.slice(), useSystemFonts: true })
     let task: ReturnType<typeof getDocument> | undefined
     try {
@@ -311,8 +462,8 @@ it.each([
         targetItems = (await (await (await task.promise).getPage(1)).getTextContent()).items.filter(
           (item) => 'str' in item
         ),
-        originalVariable = originalItems.find((item) => item.str === 'F')!,
-        targetVariable = targetItems.find((item) => item.str === 'F')!
+        originalVariable = originalItems.find((item) => item.str === variable)!,
+        targetVariable = targetItems.find((item) => item.str === variable)!
       expect(
         targetItems
           .map((item) => item.str)
@@ -847,6 +998,178 @@ it.each([
       ])
     } finally {
       await result?.destroy()
+      caller.release()
+      registry.dispose()
+    }
+  }
+)
+
+it('reflows past a lowered index when the old fixed gaps cannot fit the translation', async () => {
+  const pdf = await PDFDocument.create(),
+    body = await pdf.embedFont(StandardFonts.TimesRoman),
+    math = await pdf.embedFont(StandardFonts.TimesRomanItalic),
+    page = pdf.addPage([380, 200]),
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'fixed-gap', surface: 'electron' }),
+    source = 'Use F when ak is constant, and compare with G.',
+    translation = '使用 F，若 aₖ 为常数则与 G 比较。'
+  let x = 40
+  for (const [text, font, size, y] of [
+    ['Use ', body, 11, 150],
+    ['F', math, 11, 150],
+    [' when a', body, 11, 150],
+    ['k', body, 8, 148.3],
+    [' is constant, and compare with ', body, 11, 150],
+    ['G', math, 11, 150],
+    ['.', body, 11, 150]
+  ] as const) {
+    page.drawText(text, { font, size, x, y })
+    x += font.widthOfTextAtSize(text, size) + 0.2
+  }
+  await pdf.flush()
+  pdf.context.lookup(math.ref, PDFDict).set(PDFName.of('BaseFont'), PDFName.of('CMSY10'))
+  let task: ReturnType<typeof getDocument> | undefined
+  try {
+    const result = await new PdfTranslationWriter(() =>
+      resolve('resources/worker.mjs')
+    ).generateDetailed(
+      {
+        id: 'fixed-gap',
+        data: await pdf.save(),
+        pages: [{ width: 380, height: 200 }],
+        preserveUnsupported: true,
+        units: [
+          {
+            source,
+            translation,
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 39 / 380, y: 35 / 200, width: 274 / 380, height: 24 / 200 }
+              }
+            ]
+          }
+        ]
+      },
+      caller.lease
+    )
+    expect(result?.layoutFailures).toEqual([])
+    task = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+    const { items } = await (await (await task.promise).getPage(1)).getTextContent()
+    expect(
+      items
+        .flatMap((item) => ('str' in item ? [item.str] : []))
+        .join('')
+        .replace(/\s/gu, '')
+    ).toBe(translation.replace(/\s/gu, ''))
+  } finally {
+    await task?.destroy()
+    caller.release()
+    registry.dispose()
+  }
+})
+
+it.each([true, false])(
+  'uses actual operator ink beside prose only with a matching native origin: %s',
+  async (matchesOrigin) => {
+    const pdf = await PDFDocument.create(),
+      body = await pdf.embedFont(StandardFonts.TimesRoman),
+      page = pdf.addPage([330, 220]),
+      context = pdf.context,
+      face = PDFName.of('CMEX10'),
+      symbol = PDFName.of('Operator'),
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'neighboring-operator' }),
+      source = 'All measurements agree.',
+      translation = '各项测量结果一致。'
+    // A synthetic Type1C glyph named n, with tall ink below its baseline.
+    const program = Buffer.from(
+      'AQAEBAABAQEHQ01FWDEwAAEBARDvHPokHAEsHACWBbIPtREAAAAAAABPAAIBAQIZDu8c+iQVixwGchwAyIuLHPmOHP84iwUO',
+      'base64'
+    )
+    const font = context.obj({
+      Type: 'Font',
+      Subtype: 'Type1',
+      BaseFont: face,
+      FirstChar: 110,
+      LastChar: 110,
+      Widths: [440],
+      Encoding: 'WinAnsiEncoding',
+      FontDescriptor: context.register(
+        context.obj({
+          Type: 'FontDescriptor',
+          FontName: face,
+          Flags: 32,
+          FontBBox: [100, -1500, 300, 150],
+          ItalicAngle: 0,
+          Ascent: 150,
+          Descent: -1500,
+          CapHeight: 150,
+          StemV: 100,
+          FontFile3: context.register(context.flateStream(program, { Subtype: 'Type1C' }))
+        })
+      )
+    })
+    page.node.setFontDictionary(symbol, context.register(font))
+    page.drawText(source, { font: body, size: 10, x: 30, y: 112 })
+    page.pushOperators(
+      beginText(),
+      setFontAndSize(symbol, 12),
+      setTextMatrix(1, 0, 0, 1, 75, 100),
+      showText(PDFHexString.of('6E')),
+      endText()
+    )
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const result = await new PdfTranslationWriter(() =>
+        resolve('resources/worker.mjs')
+      ).generateDetailed(
+        {
+          id: 'neighboring-operator',
+          data: await pdf.save(),
+          pages: [{ width: 330, height: 220 }],
+          preserveUnsupported: true,
+          preserveUnmatched: true,
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 29 / 330, y: 99 / 220, width: 150 / 330, height: 15 / 220 }
+                }
+              ]
+            },
+            {
+              source: 'n',
+              translation: 'n',
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: {
+                    x: (matchesOrigin ? 75 : 75.3) / 330,
+                    y: 109 / 220,
+                    width: 6 / 330,
+                    height: 12 / 220
+                  },
+                  items: [{ index: 7, text: 'n' }]
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(result!.layoutFailures).toHaveLength(matchesOrigin ? 0 : 1)
+      task = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+      const items = (await (await (await task.promise).getPage(1)).getTextContent()).items.filter(
+        (item) => 'str' in item
+      )
+      expect(items.map(({ str }) => str).join('')).toContain(matchesOrigin ? translation : source)
+      expect(items.find(({ str }) => str === 'n')?.transform.slice(4)).toEqual([75, 100])
+    } finally {
+      await task?.destroy()
       caller.release()
       registry.dispose()
     }

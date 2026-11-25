@@ -44,6 +44,13 @@ export function resolveExplicitTransposeIndices(
   markers: readonly ScientificScriptMarker[]
 ): number[]
 
+export function resolveExplicitScriptIndices(
+  source: string,
+  translation: string,
+  markers: readonly ScientificScriptMarker[],
+  bodySize: number
+): number[]
+
 export function resolveExplicitPowerIndices(
   source: string,
   translation: string,

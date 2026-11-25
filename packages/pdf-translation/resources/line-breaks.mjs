@@ -22,9 +22,20 @@ export function pdfTranslationLineEnds(text) {
       '(?:\\[(?:\\s*\\d{1,4}(?:\\s*[–—-]\\s*\\d{1,4})?(?:\\s*,\\s*\\d{1,4}(?:\\s*[–—-]\\s*\\d{1,4})?)*\\s*)\\]|[（(](?:\\s*\\d{1,4}(?:\\s*[–—-]\\s*\\d{1,4})?(?:\\s*,\\s*\\d{1,4}(?:\\s*[–—-]\\s*\\d{1,4})?)*\\s*)[）)])',
     numericCitationAtStart = new RegExp(`^${numericCitation}`, 'u'),
     protectedSpans = [
+      /(?:至[少多]为|不[少多]于)/gu,
+      /第[ \t]*\d{1,12}[ \t]*[号號]/gu,
       /第\s*(?:\d+|[A-Za-z][.．]\d+)(?:[.．]\d+)*\s*[节節]/gu,
       new RegExp(number, 'gu'),
       /\bexp\([−-]\d+(?:\.\d+)?[A-Za-z][2²]\)/gu,
+      // Short function calls are single inline math expressions.
+      // Preserve a short membership expression, including a literal star
+      // on the set name, when it fits as an inline term.
+      /(?<![A-Za-z\p{Script=Greek}\d_])[A-Za-z\p{Script=Greek}][ \t]*[∈∉][ \t]*[A-Z](?:[∗*])?(?![A-Za-z\p{Script=Greek}\d_^])/gu,
+      /(?<![A-Za-z\p{Script=Greek}\d_])\p{Script=Greek}\([A-Za-z]\s*,\s*[A-Za-z]\)(?![A-Za-z\p{Script=Greek}\d_])/gu,
+      /(?<![A-Za-z\d_])lim_\([A-Za-z]→(?:∞|0)\)(?![A-Za-z\d_])/gu,
+      /(?<![A-Za-z\d_])[A-Za-z]ᵢ\^(?:\(\p{Script=Greek}\)|\p{Script=Greek})(?![A-Za-z\p{Script=Greek}\d_^])/gu,
+      // The renderer may emit explicit caret notation for a proved native power.
+      /(?<![A-Za-z\p{Script=Greek}\d_])(?:[A-Za-z\p{Script=Greek}]|\d{1,4}|\((?:log ){1,2}[A-Za-z]\))\^(?:\([A-Za-z\p{Script=Greek}\d]{1,3}(?:[+−/-][A-Za-z\p{Script=Greek}\d]{1,3})?\)|\(?[oO]\(1(?:\/ ?(?:log ){1,2}[A-Za-z])?\)\)?|\p{Script=Greek})(?![A-Za-z\p{Script=Greek}\d_])/gu,
       new RegExp(`${number}[ \u00a0\u202f]+nm(?![A-Za-z0-9_])`, 'gu'),
       new RegExp(`${number}\\s*\\^\\s*(?:\\([+−-]?\\d+\\)|[+−-]?\\d+)`, 'gu'),
       new RegExp(`${number}\\s*[±∓–−-]\\s*${number}`, 'gu'),

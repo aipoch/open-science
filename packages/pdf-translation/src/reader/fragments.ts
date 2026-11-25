@@ -131,9 +131,35 @@ export function pdfTranslationLayoutFragments(
       { rect, pageNumber } = fragment,
       page = source.pages[pageNumber - 1],
       right = rect.x + rect.width
+    // A short final line of a split paragraph can use the preceding line's
+    // column width. Require adjacent prose and a shared left boundary or a
+    // modest indent, then apply the same neighbor and native-paint checks.
+    const previousUnit = source.units[source.units.indexOf(unit) - 1],
+      previousLine = previousUnit?.fragments.at(-1),
+      previousRect = previousLine?.rect,
+      gap = previousRect ? (rect.y - previousRect.y - previousRect.height) * page.height : Infinity,
+      continuation =
+        shortLine &&
+        /^[a-z]{2,} /u.test(unit.source) &&
+        previousUnit &&
+        !previousUnit.sourceOnly &&
+        !/[.!?。！？]$/u.test(previousUnit.source.trimEnd()) &&
+        (previousUnit.source.match(/\p{L}{2,}/gu)?.length ?? 0) >= 8 &&
+        previousLine?.pageNumber === pageNumber &&
+        previousRect &&
+        gap >= -2 &&
+        gap <= 2 &&
+        Math.abs(previousRect.x - rect.x) * page.width <= 48 &&
+        previousRect.width >= rect.width * 1.5
+    const localMargin = right + Math.min(24, rect.height * page.height * 2) / page.width
     let end = Math.min(
       1 - 2 / page.width,
-      right + Math.min(24, rect.height * page.height * 2) / page.width
+      continuation
+        ? Math.max(
+            localMargin,
+            Math.min(right + 96 / page.width, previousRect.x + previousRect.width)
+          )
+        : localMargin
     )
     for (const other of source.units) {
       if (other === unit) continue

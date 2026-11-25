@@ -292,6 +292,7 @@ type PageLinkVerification = Readonly<{
   text: TextContent
   hidden: { source: ReadonlySet<number>; target: ReadonlySet<number> } | undefined
   sourceAnnotations: readonly AnnotationSnapshot[]
+  sourceAnnotationIndices: readonly number[]
   targetAnnotations: readonly AnnotationSnapshot[]
   documentSource: PdfTranslationResults['source']
   units: PdfTranslationResults['source']['units']
@@ -314,6 +315,7 @@ export async function verifyPdfTranslationLinks({
   text,
   hidden,
   sourceAnnotations,
+  sourceAnnotationIndices,
   targetAnnotations,
   documentSource,
   units,
@@ -387,7 +389,8 @@ export async function verifyPdfTranslationLinks({
     )
       throw validationError('PDF annotations changed')
     if (sameCoordinates(annotation.rect, moved.rect)) continue
-    if (originalLinkOwners.get(number)?.has(index)) throw validationError('Retained PDF link moved')
+    if (originalLinkOwners.get(number)?.has(sourceAnnotationIndices[index]))
+      throw validationError('Retained PDF link moved')
     if (
       annotation.type !== 2 ||
       annotation.quadPoints?.length ||
