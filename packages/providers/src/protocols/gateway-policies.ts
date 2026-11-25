@@ -1,4 +1,14 @@
-import type { ProviderRequestPolicy } from './request'
+/** Cloneable upstream request rules. The sender supplies credentials separately. */
+export type ProviderRequestPolicy = Readonly<{
+  allowedUrls: readonly string[]
+  credentialHeader: string
+  credentialPrefix?: 'Bearer '
+  headers?: Readonly<Record<string, string>>
+  defaultHeaders?: Readonly<Record<string, string>>
+  stripHeaderPrefix?: string
+  routeIdentity?: string
+  invalidEndpointMessage: string
+}>
 
 const messagesEndpoints = (baseUrl: string): readonly string[] => {
   const messages = `${baseUrl}/v1/messages`

@@ -3,12 +3,12 @@ export {
   isSecureProviderUrl,
   isLoopbackProviderBaseUrl
 } from './transport/url-security'
+export { fetchProviderRequest, withProviderRequestPolicy } from './transport/request'
 export {
-  fetchProviderRequest,
-  withProviderRequestPolicy,
+  cloudflareGatewayRequestPolicy,
+  foundryRequestPolicy,
   type ProviderRequestPolicy
-} from './transport/request'
-export { cloudflareGatewayRequestPolicy, foundryRequestPolicy } from './transport/gateway-policies'
+} from './protocols/gateway-policies'
 export { readSseRecords } from './transport/sse'
 export {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,

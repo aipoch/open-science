@@ -1,17 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
+  isLocalProviderPresetId,
+  resolveLocalModelDiscoveryUrl,
   resolveVendorModelCatalog,
+  sameProviderCredentialScope,
   type CatalogErrorCode,
   type CatalogSnapshot,
   type CatalogStatus
 } from '@aipoch/providers'
 import { createProvider } from '@aipoch/providers/client'
-import { resolveChatCompletionsBaseUrl } from '@aipoch/providers/protocol'
-import {
-  isLocalProviderPresetId,
-  sameLocalProviderCredentialScope
-} from '../../shared/local-provider-preset'
 import {
   customProviderRequiresKey,
   getCustomProviderBaseUrlError
@@ -118,17 +116,11 @@ export class ProviderModelCatalogOwner {
     if (!baseUrl || getCustomProviderBaseUrlError(baseUrl))
       return { ok: false, category: 'bad-url', code: 'unsupported' }
 
-    const endpoint = new URL(baseUrl)
-    endpoint.pathname = endpoint.pathname.replace(/(\/v1)\/(messages|responses)\/*$/i, '$1')
-    const modelsBase = resolveChatCompletionsBaseUrl({ baseUrl: endpoint.href })
-    if (!modelsBase) return { ok: false, category: 'bad-url', code: 'unsupported' }
+    const modelsUrl = resolveLocalModelDiscoveryUrl(baseUrl)
+    if (!modelsUrl) return { ok: false, category: 'bad-url', code: 'unsupported' }
 
     const savedKey =
-      stored?.type === 'custom' &&
-      sameLocalProviderCredentialScope(stored, {
-        baseUrl,
-        localPresetId: draft.localPresetId ?? undefined
-      })
+      stored && sameProviderCredentialScope(stored, { ...draft, baseUrl })
         ? this.resolveProvider(stored).key
         : undefined
     const key = draft.key?.trim() || savedKey
@@ -139,8 +131,22 @@ export class ProviderModelCatalogOwner {
       id: 'custom',
       key,
       fetch: netFetchStandard,
-      discovery: { url: `${modelsBase}/models` }
+      discovery: { url: modelsUrl }
     }).listModels({ limits: PROVIDER_RESOURCE_LIMITS })
+    if (stored) {
+      const { providers } = await this.repository.getSettings()
+      const current = providers.find(({ id }) => id === stored.id)
+      const configRevision = stored.configRevision ?? 0
+      const currentConfigRevision = current ? (current.configRevision ?? 0) : undefined
+      if (currentConfigRevision !== configRevision) {
+        log.debug('Discarded stale local model discovery result', {
+          preset: draft.localPresetId,
+          configRevision,
+          currentConfigRevision
+        })
+        return { ok: false, category: 'unknown', code: 'stale' }
+      }
+    }
     log.info('Local model discovery completed', {
       preset: draft.localPresetId,
       ok: result.ok,

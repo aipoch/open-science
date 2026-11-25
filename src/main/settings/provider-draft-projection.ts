@@ -1,14 +1,14 @@
-import { supportsManualProviderContextWindow } from '../../shared/manual-provider'
 import { decodeProviderModels } from '../../shared/configured-provider-model'
-import {
-  decodeLocalProviderModels,
-  isLocalProviderPresetId
-} from '../../shared/local-provider-preset'
+import { decodeLocalProviderModels } from '../../shared/local-provider-preset'
 import { resolveOfficialModelCatalog } from '../../shared/provider-model-catalog'
-import { resolveCloudflareGateway, resolveManualProviderTarget } from './manual-provider-target'
+import { resolveConfiguredProviderTarget } from './manual-provider-target'
 import type { ProviderDraft } from '../../shared/settings'
 import {
+  configuredProviderConnectionKind,
+  isLocalProviderPresetId,
   isOfficialVendorId,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList,
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
   resolveVendorChatCompletionsBaseUrl,
@@ -23,16 +23,21 @@ import { resolveCustomTokenLimits } from './provider-token-limits'
 
 export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => {
   if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
-    if (supportsManualProviderContextWindow(draft.vendorId)) {
-      const target =
-        draft.vendorId === 'cloudflare-ai-gateway'
-          ? resolveCloudflareGateway(draft.cloudflare, draft.model, draft.key?.trim())
-          : resolveManualProviderTarget(
-              draft.vendorId,
-              draft.manualConnection,
-              draft.model,
-              draft.key
-            )
+    if (configuredProviderConnectionKind(draft.vendorId)) {
+      const configuredModels = supportsConfiguredProviderModelList(draft.vendorId)
+        ? draft.manualModels
+        : undefined
+      const manualModels = decodeProviderModels(configuredModels)
+      if (configuredModels !== undefined && !manualModels)
+        throw new Error('Enter a valid model list.')
+      const modelIds = manualModels?.map(({ id }) => id)
+      const target = resolveConfiguredProviderTarget(
+        draft.vendorId,
+        draft,
+        selectConfiguredModelId(draft.model, modelIds),
+        draft.key,
+        modelIds
+      )
       const { contextWindow } = resolveCustomTokenLimits({
         type: draft.type,
         contextWindow: draft.contextWindow
@@ -41,7 +46,7 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
         ...draft,
         model: target.model,
         contextWindow,
-        manualModels: decodeProviderModels(draft.manualModels)
+        manualModels
       }).find(({ id }) => id === target.model)
       return { ...target, contextWindow: model?.contextWindow }
     }
@@ -62,7 +67,11 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
     draft.type === 'custom' && isLocalProviderPresetId(draft.localPresetId)
       ? decodeLocalProviderModels(draft.localModels)
       : undefined
-  const localModel = localModels?.find(({ id }) => id === draft.model) ?? localModels?.[0]
+  const localModelId = selectConfiguredModelId(
+    draft.model,
+    localModels?.map(({ id }) => id)
+  )
+  const localModel = localModels?.find(({ id }) => id === localModelId)
   return {
     type: draft.type,
     ...(draft.codexTransport === undefined ? {} : { codexTransport: draft.codexTransport }),

@@ -1,11 +1,5 @@
-import {
-  decodeLocalProviderModels,
-  isLocalProviderPresetId,
-  sameLocalProviderCredentialScope
-} from '../../shared/local-provider-preset'
-import { sameManualProviderConnection, usesCloudProviderModels } from '../../shared/manual-provider'
+import { decodeLocalProviderModels } from '../../shared/local-provider-preset'
 import { decodeProviderModels } from '../../shared/configured-provider-model'
-import { parseCloudflareGateway, sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
   decodeCatalogParameters,
   providerCatalogState,
@@ -35,11 +29,13 @@ import {
   OFFICIAL_VENDORS,
   getOfficialVendor,
   type ModelProtocol,
-  cloudflareGatewayAcceptsModel,
+  configuredProviderConnectionKind,
+  isLocalProviderPresetId,
   isOfficialVendorId,
-  manualProviderDefinition,
-  resolveManualProviderConnection,
-  sameManualProviderCredentialScope
+  sameConfiguredProviderConnection,
+  sameProviderCredentialScope,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList
 } from '@aipoch/providers'
 import { defaultVendorModel, getOfficialVendorModelIds } from '../../shared/provider-model-policy'
 import {
@@ -96,6 +92,7 @@ import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import { ensureCodexAuthHome, type CodexAuthControllerPort } from './codex-auth'
 import { encryptKey, maskKey, tryDecryptKey } from './crypto'
+import { requireConfiguredProviderConnection } from './manual-provider-target'
 import type { DeviceCredentialStore } from './device-credentials'
 import {
   CLAUDE_SHARED_DISCONNECTED_MESSAGE,
@@ -707,18 +704,7 @@ class ProviderAccountsModule {
       if (key) {
         provider.keyRef = encryptKey(key)
         provider.keyMask = maskKey(key)
-      } else if (
-        existing?.keyRef &&
-        existing.type === provider.type &&
-        existing.vendorId === provider.vendorId &&
-        sameCloudflareGateway(existing.cloudflare, provider.cloudflare) &&
-        sameManualProviderCredentialScope(
-          provider.vendorId,
-          existing.manualConnection,
-          provider.manualConnection
-        ) &&
-        sameLocalProviderCredentialScope(existing, provider)
-      ) {
+      } else if (existing?.keyRef && sameProviderCredentialScope(existing, provider)) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
       }
@@ -772,54 +758,42 @@ class ProviderAccountsModule {
         request.region ?? (vendorId === existing?.vendorId ? existing.region : undefined)
       provider.vendorId = vendorId
       if (region) provider.region = region
-      if (usesCloudProviderModels(vendorId)) {
+      if (configuredProviderConnectionKind(vendorId)) {
+        const configuredModels = supportsConfiguredProviderModelList(vendorId)
+          ? request.manualModels
+          : undefined
         const models =
-          request.manualModels === undefined
+          configuredModels === undefined
             ? existing?.vendorId === vendorId
               ? existing.manualModels
               : undefined
-            : decodeProviderModels(request.manualModels)
-        if (request.manualModels !== undefined && !models)
-          throw new Error('Enter a valid model list.')
-        if (models) {
-          const selected = (request.model ?? existing?.model)?.trim()
-          provider.manualModels = models
-          provider.model = models.find(({ id }) => id === selected)?.id ?? models[0].id
-        }
-      }
-      const configuredModel = provider.model ?? (request.model ?? existing?.model)?.trim()
-      if (vendorId === 'cloudflare-ai-gateway') {
-        const cloudflare = parseCloudflareGateway(
-          request.cloudflare === undefined ? existing?.cloudflare : request.cloudflare
-        )
-        if (!cloudflare) throw new Error('Cloudflare Account ID and Gateway ID are required.')
-        if (!configuredModel) throw new Error('Model is required.')
-        const modelIds = provider.manualModels?.map(({ id }) => id) ?? [configuredModel]
-        if (modelIds.some((id) => !cloudflareGatewayAcceptsModel(cloudflare.mode, id)))
-          throw new Error(
-            'A model ID is incompatible with the selected Cloudflare connection mode.'
-          )
-        provider.cloudflare = cloudflare
-        provider.model = configuredModel
-      } else if (manualProviderDefinition(vendorId)) {
-        const resolved = resolveManualProviderConnection(
+            : decodeProviderModels(configuredModels)
+        if (configuredModels !== undefined && !models) throw new Error('Enter a valid model list.')
+        const modelIds = models?.map(({ id }) => id)
+        const model = selectConfiguredModelId(request.model ?? existing?.model, modelIds)
+        const connection = requireConfiguredProviderConnection(
           vendorId,
-          request.manualConnection === undefined
-            ? existing?.manualConnection
-            : request.manualConnection
+          {
+            cloudflare:
+              request.cloudflare === undefined ? existing?.cloudflare : request.cloudflare,
+            manualConnection:
+              request.manualConnection === undefined
+                ? existing?.manualConnection
+                : request.manualConnection
+          },
+          modelIds ?? [model]
         )
-        if (!resolved) throw new Error('Enter a valid provider endpoint.')
-        if (!configuredModel) throw new Error('Model is required.')
-        provider.manualConnection = resolved.connection
-        provider.model = configuredModel
+        if (connection.cloudflare) provider.cloudflare = connection.cloudflare
+        if (connection.manualConnection) provider.manualConnection = connection.manualConnection
+        if (models) provider.manualModels = models
+        provider.model = model
       }
       if ((provider.cloudflare || provider.manualConnection) && !provider.manualModels) {
         // The override belongs to the selected model and deployment, even when a key is reusable.
         const priorContextWindow =
-          vendorId === existing?.vendorId &&
+          existing &&
           provider.model === existing.model &&
-          sameCloudflareGateway(provider.cloudflare, existing.cloudflare) &&
-          sameManualProviderConnection(provider.manualConnection, existing.manualConnection)
+          sameConfiguredProviderConnection(provider, existing)
             ? existing.contextWindow
             : undefined
         Object.assign(
@@ -852,10 +826,9 @@ class ProviderAccountsModule {
       carryKey()
       credentialsChanged =
         Boolean(request.key) ||
-        provider.vendorId !== existing?.vendorId ||
-        provider.region !== existing?.region ||
-        !sameCloudflareGateway(provider.cloudflare, existing?.cloudflare) ||
-        !sameManualProviderConnection(provider.manualConnection, existing?.manualConnection) ||
+        !existing ||
+        provider.region !== existing.region ||
+        !sameConfiguredProviderConnection(provider, existing) ||
         ((provider.cloudflare !== undefined || provider.manualConnection !== undefined) &&
           provider.model !== existing?.model)
     } else if (request.type === 'custom') {
@@ -877,7 +850,10 @@ class ProviderAccountsModule {
           throw new Error('Enter a valid local model list.')
         if (models) {
           provider.localModels = models
-          model = models.find(({ id }) => id === model)?.id ?? models[0].id
+          model = selectConfiguredModelId(
+            model,
+            models.map(({ id }) => id)
+          )
         }
       }
       if (!model) throw new Error('Model is required for a custom provider.')
@@ -981,15 +957,18 @@ class ProviderAccountsModule {
       throw new BootstrapError('configuration_conflict')
     const saved = prepared.settings.providers.find(({ id }) => id === prepared.provider.id)
     if (createOnly && saved) throw new BootstrapError('configuration_conflict')
+    const requestedModel = request.model?.trim() || undefined
+    // Probe the model selected during preparation. Catalog providers can still supply one explicitly.
+    const modelOverride =
+      request.type === 'official' && prepared.provider.model === undefined
+        ? requestedModel
+        : undefined
     // Validation metadata can change without a configuration revision. A successful probe of the
     // same connection must not overwrite a newer health observation while waiting to commit.
     const tested =
       expectedFramework !== undefined && request.model
         ? this.taskModelTarget(prepared.provider, request.model, expectedFramework)
-        : this.resolveProvider(
-            prepared.provider,
-            request.type === 'official' ? request.model?.trim() || undefined : undefined
-          )
+        : this.resolveProvider(prepared.provider, modelOverride)
     const expectedValidationState =
       saved && this.sameValidationTarget(tested, this.resolveProvider(saved))
         ? {
@@ -1049,6 +1028,7 @@ class ProviderAccountsModule {
       localPresetId: provider.localPresetId,
       cloudflareMode: provider.cloudflare?.mode,
       endpoint: validation.testedTarget.endpoint,
+      modelSelectionAdjusted: requestedModel !== undefined && requestedModel !== tested.model,
       updated: prepared.requireExisting
     })
     return { validation, providerId: provider.id }
@@ -1522,12 +1502,7 @@ class ProviderAccountsModule {
     const fields = {
       vendorId: resolved.provider.vendorId,
       localPresetId: resolved.localPresetId,
-      cloudflareMode:
-        resolved.provider.vendorId === 'cloudflare-ai-gateway' && resolved.provider.requestPolicy
-          ? resolved.provider.apiEndpoints?.includes('messages')
-            ? 'anthropic'
-            : 'rest'
-          : undefined,
+      cloudflareMode: resolved.provider.cloudflareMode,
       frameworkId: framework.id,
       endpoint:
         result.testedTarget?.endpoint ??

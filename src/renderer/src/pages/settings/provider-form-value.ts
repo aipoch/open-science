@@ -1,7 +1,3 @@
-import {
-  isLocalProviderPresetId,
-  type LocalProviderPresetId
-} from '../../../../shared/local-provider-preset'
 import { PROVIDER_MODEL_LIMIT } from '../../../../shared/configured-provider-model'
 import {
   providerModelFormRow,
@@ -9,29 +5,28 @@ import {
   type ProviderModelFormRow
 } from './provider-model-form'
 import {
-  supportsManualProviderContextWindow,
-  usesCloudProviderModels
-} from '../../../../shared/manual-provider'
-import {
-  DEFAULT_CLOUDFLARE_GATEWAY,
-  cloudflareGatewayProtocol,
-  validCloudflareAccountId,
-  validCloudflareGatewayId,
-  type CloudflareGateway
-} from '../../../../shared/cloudflare-gateway'
-import {
   codeBuddyAccounts,
   codeBuddySiteForId,
   type CodeBuddyAuthMode,
   type CodeBuddySite
 } from '../../../../shared/codebuddy-subscription'
 import {
-  CLOUDFLARE_GATEWAY_MODELS,
-  cloudflareGatewayAcceptsModel,
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  LOCAL_MODEL_PRESETS,
+  configuredProviderConnectionKind,
+  configuredProviderModelError,
+  configuredProviderPresetModels,
+  configuredProviderProtocol,
   manualProviderDefinition,
-  manualProviderPresetModels,
   publishedManualProviderContextWindow,
-  resolveManualProviderConnection,
+  resolveConfiguredProviderConnection,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList,
+  validCloudflareAccountId,
+  validCloudflareGatewayId,
+  type CloudflareGateway,
+  type LocalModelPreset,
+  type LocalProviderPresetId,
   type ManualProviderConnection,
   type CatalogSnapshot,
   type ModelProtocol,
@@ -134,30 +129,6 @@ type ProviderFormTokenLimits = Pick<
   'contextWindow' | 'maxInputTokens' | 'maxOutputTokens'
 >
 
-// Quick-fill presets for local model servers. Every one serves OpenAI Chat Completions on a
-// well-known loopback port and requires no API key, so applying a preset seeds the base URL and
-// the Chat Completions API format. The model stays for the user to fill: local model ids depend
-// on what they have pulled, so guessing one would be noise. Selecting a preset never blocks
-// editing anything afterwards.
-export type LocalModelPreset = Readonly<{
-  id: string
-  label: string
-  baseUrl: string
-  endpointCandidates?: readonly string[]
-}>
-
-export const LOCAL_MODEL_PRESETS: readonly LocalModelPreset[] = [
-  { id: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434' },
-  { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://localhost:1234' },
-  {
-    id: 'llamacpp',
-    label: 'llama.cpp',
-    baseUrl: 'http://localhost:8080',
-    endpointCandidates: ['http://127.0.0.1:9931', 'http://127.0.0.1:8080']
-  },
-  { id: 'vllm', label: 'vLLM', baseUrl: 'http://localhost:8000' }
-]
-
 // The form patch a preset applies — or, when the preset is already active, reverts. Tapping the
 // active preset clears exactly what it filled: the base URL, the format it selected (back to the
 // framework's default), and the name it seeded. Fields the user typed themselves — the model
@@ -193,7 +164,7 @@ export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormT
     }
   }
   if (value.manualModels) return {}
-  return value.type === 'official' && supportsManualProviderContextWindow(value.vendorId)
+  return value.type === 'official' && configuredProviderConnectionKind(value.vendorId)
     ? {
         contextWindow:
           providerFormPublishedContextWindow(value) === undefined ? contextWindow : null
@@ -212,18 +183,18 @@ export const providerFormManualModels = (value: ProviderFormValue): ProviderDraf
 export const providerFormModel = (value: ProviderFormValue): string => {
   const rows = value.manualModels ?? (value.localPresetId ? (value.localModels ?? []) : undefined)
   if (!rows) return value.model
-  const ids = rows.map(({ id }) => id.trim())
-  return ids.includes(value.model) ? value.model : (ids[0] ?? '')
+  return (
+    selectConfiguredModelId(
+      value.model,
+      rows.map(({ id }) => id.trim())
+    ) ?? ''
+  )
 }
 
 type CloudModelRoute = Pick<ProviderFormValue, 'vendorId' | 'cloudflare' | 'manualConnection'>
 
 const cloudPresetIds = (value: CloudModelRoute): readonly string[] =>
-  value.cloudflare
-    ? CLOUDFLARE_GATEWAY_MODELS[value.cloudflare.mode]
-    : value.manualConnection
-      ? manualProviderPresetModels(value.vendorId, value.manualConnection)
-      : []
+  configuredProviderPresetModels(value.vendorId, value)
 
 export const cloudModelFormRows = (
   value: CloudModelRoute & { model?: string; contextWindow?: number }
@@ -232,7 +203,7 @@ export const cloudModelFormRows = (
   const presets = cloudPresetIds(value)
     .filter((id) => id !== model)
     .map((id) => providerModelFormRow({ id }))
-  if (model && (!value.cloudflare || cloudflareGatewayAcceptsModel(value.cloudflare.mode, model)))
+  if (model && !configuredProviderModelError(value, model))
     return [providerModelFormRow({ id: model, contextWindow: value.contextWindow }), ...presets]
   return presets.length ? presets : [providerModelFormRow()]
 }
@@ -307,12 +278,8 @@ export const defaultCustomApiEndpoint = (
 // provider kinds.
 export const providerFormApiEndpoints = (value: ProviderFormValue): ModelProtocol[] => {
   if (value.type === 'official' && value.vendorId) {
-    if (value.vendorId === 'cloudflare-ai-gateway') {
-      return [cloudflareGatewayProtocol((value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY).mode)]
-    }
-    const manualProvider = manualProviderDefinition(value.vendorId)
-    if (manualProvider)
-      return [(value.manualConnection ?? manualProvider.defaultConnection).protocol]
+    const protocol = configuredProviderProtocol(value.vendorId, value)
+    if (protocol) return [protocol]
     return resolveVendorModelApiEndpoints(
       value.vendorId,
       value.model.trim() || defaultVendorModel(value.vendorId, value.region)
@@ -323,7 +290,7 @@ export const providerFormApiEndpoints = (value: ProviderFormValue): ModelProtoco
 }
 
 export const providerFormPublishedContextWindow = (value: ProviderFormValue): number | undefined =>
-  value.type === 'official' && supportsManualProviderContextWindow(value.vendorId)
+  value.type === 'official' && configuredProviderConnectionKind(value.vendorId)
     ? publishedManualProviderContextWindow(
         value.vendorId,
         providerFormApiEndpoints(value)[0],
@@ -436,17 +403,18 @@ export const getProviderFormErrors = (
       errors.accountId = 'Enter a valid Cloudflare Account ID.'
     if (!validCloudflareGatewayId(cloudflare.gatewayId))
       errors.gatewayId = 'Enter a valid Gateway ID.'
-    if (!rows && !value.model.trim()) errors.model = 'Model is required.'
-    const ids = rows?.map(({ id }) => id.trim()) ?? [value.model.trim()]
-    if (ids.some((id) => id && !cloudflareGatewayAcceptsModel(cloudflare.mode, id))) {
+    const ids = rows?.map(({ id }) => id) ?? [value.model]
+    const problems = ids.map((id) => configuredProviderModelError({ cloudflare }, id))
+    if (problems.includes('incompatible-model'))
       errors.model = 'A model ID is incompatible with the selected Cloudflare connection mode.'
-    }
+    else if (problems.includes('model-required')) errors.model = 'Model is required.'
   }
 
   if (value.type === 'official' && value.vendorId && manualProviderDefinition(value.vendorId)) {
-    if (!resolveManualProviderConnection(value.vendorId, value.manualConnection))
+    if (!resolveConfiguredProviderConnection(value.vendorId, value))
       errors.location = 'Enter a valid provider endpoint.'
-    if (!rows && !value.model.trim()) errors.model = 'Model is required.'
+    if (!rows && configuredProviderModelError(value, value.model))
+      errors.model = 'Model is required.'
   }
 
   if (value.type === 'custom') {
@@ -474,7 +442,7 @@ export const getProviderFormErrors = (
     !rows &&
     ((value.type === 'custom' && !value.localPresetId) ||
       (value.type === 'official' &&
-        supportsManualProviderContextWindow(value.vendorId) &&
+        configuredProviderConnectionKind(value.vendorId) &&
         providerFormPublishedContextWindow(value) === undefined)) &&
     positiveWholeNumberError(value.contextWindow)
   ) {
@@ -592,9 +560,11 @@ export const PROVIDER_KINDS: ProviderKind[] = [
         : 'API key — models provided',
     group: vendor.cloudProvider ? 'cloud' : 'api'
   })),
-  ...LOCAL_MODEL_PRESETS.filter(({ id }) => isLocalProviderPresetId(id)).map(
-    ({ id, label }): ProviderKind => ({ key: `local:${id}`, label, group: 'local' })
-  ),
+  ...LOCAL_MODEL_PRESETS.map(({ id, label }): ProviderKind => ({
+    key: `local:${id}`,
+    label,
+    group: 'local'
+  })),
   {
     key: 'custom',
     labelKey: 'Custom Gateway',
@@ -705,11 +675,11 @@ export const providerKindPatch = (
   if (key.startsWith('local:')) {
     const id = key.slice('local:'.length)
     const preset = LOCAL_MODEL_PRESETS.find((item) => item.id === id)
-    if (preset && isLocalProviderPresetId(id)) {
+    if (preset) {
       return {
         ...reset,
         type: 'custom',
-        localPresetId: id,
+        localPresetId: preset.id,
         name: preset.label,
         baseUrl: preset.endpointCandidates?.[0] ?? preset.baseUrl,
         apiEndpoint: 'chat-completions'
@@ -741,7 +711,7 @@ export const providerKindPatch = (
               manualProvider.defaultConnection.protocol)
         }
       : undefined
-    const manualModels = usesCloudProviderModels(vendorId)
+    const manualModels = supportsConfiguredProviderModelList(vendorId)
       ? cloudModelFormRows({ vendorId, cloudflare, manualConnection })
       : undefined
     return {
@@ -753,7 +723,7 @@ export const providerKindPatch = (
       ...(cloudflare && { cloudflare }),
       ...(manualConnection && {
         manualConnection,
-        model: manualProviderPresetModels(vendorId, manualConnection)[0] ?? ''
+        model: configuredProviderPresetModels(vendorId, { manualConnection })[0] ?? ''
       }),
       ...(manualModels && { manualModels, model: manualModels[0].id })
     }

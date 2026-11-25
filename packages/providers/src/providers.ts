@@ -33,6 +33,22 @@ export {
 } from './protocols/gateway-endpoints'
 export {
   CLOUDFLARE_GATEWAY_MODELS,
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  configuredProviderConnectionKind,
+  configuredProviderModelError,
+  configuredProviderPresetModels,
+  configuredProviderProtocol,
+  inferManualProviderProtocol,
+  modelAfterManualProtocolChange,
+  recoverConfiguredProviderModels,
+  resolveConfiguredProviderCatalog,
+  resolveConfiguredProviderConnection,
+  sameConfiguredProviderConnection,
+  sameProviderCredentialScope,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList,
+  type ConfiguredProviderConnectionInput,
+  type ResolvedConfiguredProviderConnection,
   manualProviderDefaultContextWindow,
   manualProviderDefinition,
   manualProviderPresetModels,
@@ -41,6 +57,13 @@ export {
   sameManualProviderCredentialScope,
   type ManualProviderConnection
 } from './providers/manual-connections'
+export {
+  LOCAL_MODEL_PRESETS,
+  isLocalProviderPresetId,
+  resolveLocalModelDiscoveryUrl,
+  type LocalModelPreset,
+  type LocalProviderPresetId
+} from './providers/local-connection'
 export { resolveProviderProbePolicy } from './providers/probe-policy'
 export type {
   ModelProtocol,

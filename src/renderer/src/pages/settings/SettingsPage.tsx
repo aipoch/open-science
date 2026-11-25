@@ -1,10 +1,8 @@
-import { sameLocalProviderCredentialScope } from '../../../../shared/local-provider-preset'
 import {
-  sameManualProviderConnection,
-  usesCloudProviderModels
-} from '../../../../shared/manual-provider'
-import { sameCloudflareGateway } from '../../../../shared/cloudflare-gateway'
-import { sameManualProviderCredentialScope } from '@aipoch/providers'
+  sameConfiguredProviderConnection,
+  sameProviderCredentialScope,
+  supportsConfiguredProviderModelList
+} from '@aipoch/providers'
 import { modelCatalogErrorMessage } from './model-catalog-feedback'
 import type { RefreshProviderModelsResult } from '../../../../shared/settings'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
@@ -271,7 +269,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     manualConnection: provider.manualConnection,
     localPresetId: provider.localPresetId,
     manualModels:
-      provider.type === 'official' && usesCloudProviderModels(provider.vendorId)
+      provider.type === 'official' && supportsConfiguredProviderModelList(provider.vendorId)
         ? (provider.manualModels?.map(providerModelFormRow) ?? cloudModelFormRows(provider))
         : undefined,
     localModels: provider.localPresetId
@@ -1129,15 +1127,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const providerEditTargetMissing = modelView.kind === 'edit' && editingProvider === undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
   const credentialSource =
-    editingProvider?.type === formValue.type &&
-    editingProvider.vendorId === formValue.vendorId &&
-    sameCloudflareGateway(editingProvider.cloudflare, formValue.cloudflare) &&
-    sameManualProviderCredentialScope(
-      formValue.vendorId,
-      editingProvider.manualConnection,
-      formValue.manualConnection
-    ) &&
-    sameLocalProviderCredentialScope(editingProvider, formValue)
+    editingProvider && sameProviderCredentialScope(editingProvider, formValue)
       ? editingProvider
       : undefined
   const regionalCredential =
@@ -1215,11 +1205,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const catalogNeedsSave = Boolean(visibleCatalogPreview?.draftToken)
   const providerFormDirty =
     catalogNeedsSave ||
-    !sameCloudflareGateway(providerDraftBaseline.cloudflare, formValue.cloudflare) ||
-    !sameManualProviderConnection(
-      providerDraftBaseline.manualConnection,
-      formValue.manualConnection
-    ) ||
+    !sameConfiguredProviderConnection(providerDraftBaseline, formValue) ||
     Object.entries({ ...providerDraftBaseline, ...formValue }).some(
       ([key, value]) =>
         key !== 'providerFormTouched' &&

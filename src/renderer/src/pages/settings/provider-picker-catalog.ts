@@ -1,9 +1,8 @@
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
-import { getOfficialVendor, type OfficialVendorId } from '@aipoch/providers'
+import { LOCAL_MODEL_PRESETS, getOfficialVendor, type OfficialVendorId } from '@aipoch/providers'
 
 import {
   LOCAL_MODEL_KIND_PREFIX,
-  LOCAL_MODEL_PRESETS,
   PROVIDER_KINDS,
   isProviderKindAvailable,
   type ProviderKind,

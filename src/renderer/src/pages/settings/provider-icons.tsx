@@ -1,7 +1,4 @@
-import {
-  isLocalProviderPresetId,
-  type LocalProviderPresetId
-} from '../../../../shared/local-provider-preset'
+import { isLocalProviderPresetId, type LocalProviderPresetId } from '@aipoch/providers'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
 import { CirclePlus, FlaskConical, Server, Sparkles } from 'lucide-react'
 

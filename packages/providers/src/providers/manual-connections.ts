@@ -1,10 +1,26 @@
 import {
+  cloudflareGatewayAcceptsModel,
+  cloudflareGatewayBase,
+  cloudflareGatewayProtocol,
   foundryGatewayBase,
+  parseCloudflareGateway,
   parseFoundryLocation,
   type CloudflareGateway
 } from '../protocols/gateway-endpoints'
+import {
+  cloudflareGatewayRequestPolicy,
+  foundryRequestPolicy,
+  type ProviderRequestPolicy
+} from '../protocols/gateway-policies'
 import type { ModelProtocol } from '../protocols/types'
 import type { OfficialVendorId } from './types'
+import { sameLocalProviderCredentialScope, type LocalProviderConnection } from './local-connection'
+
+export const DEFAULT_CLOUDFLARE_GATEWAY: CloudflareGateway = {
+  accountId: '',
+  gatewayId: 'default',
+  mode: 'rest'
+}
 
 export const CLOUDFLARE_GATEWAY_MODELS: Readonly<
   Record<CloudflareGateway['mode'], readonly string[]>
@@ -27,6 +43,9 @@ type ManualProviderDefinition = Readonly<{
   protocols: readonly ModelProtocol[]
   locations?: readonly string[]
   sharedCredential?: true
+  editableModelList?: true
+  inferProtocolFromLocation?: true
+  requestPolicy?: (baseUrl: string, protocol: ModelProtocol) => ProviderRequestPolicy | undefined
   models?: Partial<Record<ModelProtocol, readonly string[]>>
   fallbackContextWindow?: number
   defaultContextWindows?: Readonly<Partial<Record<string, number>>>
@@ -132,11 +151,16 @@ const definitions: Partial<Record<OfficialVendorId, ManualProviderDefinition>> =
   'microsoft-foundry': {
     defaultConnection: { location: '', protocol: 'messages' },
     protocols: ['messages', 'chat-completions'],
+    editableModelList: true,
+    inferProtocolFromLocation: true,
+    requestPolicy: (baseUrl, protocol) =>
+      protocol === 'responses' ? undefined : foundryRequestPolicy(baseUrl, protocol),
     parseLocation: parseFoundryLocation,
     baseUrl: foundryGatewayBase
   },
   'aws-bedrock': {
     defaultConnection: { location: 'us-east-1', protocol: 'messages' },
+    editableModelList: true,
     protocols: ['messages', 'chat-completions'],
     models: {
       messages: [
@@ -156,7 +180,8 @@ const definitions: Partial<Record<OfficialVendorId, ManualProviderDefinition>> =
 
 export const manualProviderDefinition = (
   vendorId: OfficialVendorId | undefined
-): ManualProviderDefinition | undefined => (vendorId ? definitions[vendorId] : undefined)
+): ManualProviderDefinition | undefined =>
+  vendorId && Object.hasOwn(definitions, vendorId) ? definitions[vendorId] : undefined
 
 export function manualProviderDefaultContextWindow(
   vendorId: OfficialVendorId | undefined,
@@ -252,5 +277,242 @@ export function sameManualProviderCredentialScope(
   if (!leftLocation || !rightLocation) return false
   return (
     leftLocation === rightLocation || manualProviderDefinition(vendorId)?.sharedCredential === true
+  )
+}
+
+export type ConfiguredProviderConnectionInput = Readonly<{
+  cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
+}>
+
+export type ResolvedConfiguredProviderConnection = Readonly<{
+  protocol: ModelProtocol
+  baseUrl: string
+  requestPolicy?: ProviderRequestPolicy
+}> &
+  (
+    | { cloudflare: CloudflareGateway; manualConnection?: never }
+    | { cloudflare?: never; manualConnection: ManualProviderConnection }
+  )
+
+export const configuredProviderConnectionKind = (
+  vendorId: OfficialVendorId | undefined
+): 'cloudflare' | 'manual' | undefined =>
+  vendorId === 'cloudflare-ai-gateway'
+    ? 'cloudflare'
+    : manualProviderDefinition(vendorId)
+      ? 'manual'
+      : undefined
+
+export const supportsConfiguredProviderModelList = (
+  vendorId: OfficialVendorId | undefined
+): boolean =>
+  vendorId === 'cloudflare-ai-gateway' ||
+  manualProviderDefinition(vendorId)?.editableModelList === true
+
+/** Resolve the upstream URL, protocol, and request policy for a configured provider. */
+export function resolveConfiguredProviderConnection(
+  vendorId: OfficialVendorId,
+  input: { cloudflare?: unknown; manualConnection?: unknown }
+): ResolvedConfiguredProviderConnection | undefined {
+  if (vendorId === 'cloudflare-ai-gateway') {
+    const cloudflare = parseCloudflareGateway(input.cloudflare)
+    if (!cloudflare) return undefined
+    const baseUrl = cloudflareGatewayBase(cloudflare)
+    return {
+      cloudflare,
+      protocol: cloudflareGatewayProtocol(cloudflare.mode),
+      baseUrl,
+      requestPolicy: cloudflareGatewayRequestPolicy(baseUrl, cloudflare.gatewayId, cloudflare.mode)
+    }
+  }
+  const manual = resolveManualProviderConnection(vendorId, input.manualConnection)
+  if (!manual) return undefined
+  const { baseUrl, connection } = manual
+  return {
+    manualConnection: connection,
+    protocol: connection.protocol,
+    baseUrl,
+    requestPolicy: manualProviderDefinition(vendorId)?.requestPolicy?.(baseUrl, connection.protocol)
+  }
+}
+
+/** Check model compatibility while the form is still collecting connection details. */
+export function configuredProviderModelError(
+  input: Pick<ConfiguredProviderConnectionInput, 'cloudflare'>,
+  model: string | undefined
+): 'model-required' | 'incompatible-model' | undefined {
+  const id = model?.trim()
+  if (!id) return 'model-required'
+  if (input.cloudflare && !cloudflareGatewayAcceptsModel(input.cloudflare.mode, id))
+    return 'incompatible-model'
+}
+
+/** Prefer the selected model when it is in the explicit list and fall back to the first entry. */
+export function selectConfiguredModelId(
+  model?: string,
+  ids?: readonly string[]
+): string | undefined {
+  const id = model?.trim() || undefined
+  return ids ? (id && ids.includes(id) ? id : ids[0]) : id
+}
+
+export function configuredProviderPresetModels(
+  vendorId: OfficialVendorId | undefined,
+  input: ConfiguredProviderConnectionInput
+): readonly string[] {
+  if (vendorId === 'cloudflare-ai-gateway')
+    return CLOUDFLARE_GATEWAY_MODELS[(input.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY).mode]
+  return input.manualConnection ? manualProviderPresetModels(vendorId, input.manualConnection) : []
+}
+
+/** Recover legacy model selections by keeping compatible rows and falling back to a preset. */
+export function recoverConfiguredProviderModels<Model extends { readonly id: string }>(
+  vendorId: OfficialVendorId,
+  connection: ResolvedConfiguredProviderConnection,
+  model: string | undefined,
+  savedModels: readonly Model[] | undefined
+): { model: string; manualModels?: Model[] } | undefined {
+  const compatibleModels = savedModels?.filter(
+    ({ id }) => !configuredProviderModelError(connection, id)
+  )
+  const manualModels = compatibleModels?.length ? compatibleModels : undefined
+  const configured = selectConfiguredModelId(
+    model,
+    manualModels?.map(({ id }) => id)
+  )
+  if (!configured) return undefined
+
+  const selected = configuredProviderModelError(connection, configured)
+    ? configuredProviderPresetModels(vendorId, connection)[0]
+    : configured
+  return selected ? { model: selected, ...(manualModels && { manualModels }) } : undefined
+}
+
+export function configuredProviderProtocol(
+  vendorId: OfficialVendorId | undefined,
+  input: ConfiguredProviderConnectionInput
+): ModelProtocol | undefined {
+  if (vendorId === 'cloudflare-ai-gateway')
+    return cloudflareGatewayProtocol((input.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY).mode)
+  const definition = manualProviderDefinition(vendorId)
+  return definition && (input.manualConnection ?? definition.defaultConnection).protocol
+}
+
+/** Keep the current protocol unless the pasted location requires another supported protocol. */
+export function inferManualProviderProtocol(
+  vendorId: OfficialVendorId,
+  input: ManualProviderConnection
+): ModelProtocol {
+  const definition = manualProviderDefinition(vendorId)
+  if (!definition?.inferProtocolFromLocation || resolveManualProviderConnection(vendorId, input))
+    return input.protocol
+  return (
+    definition.protocols.find((protocol) =>
+      resolveManualProviderConnection(vendorId, { ...input, protocol })
+    ) ?? input.protocol
+  )
+}
+
+/** Keep presets supported by the new protocol and preserve custom model IDs. */
+export function modelAfterManualProtocolChange(
+  vendorId: OfficialVendorId,
+  previous: ManualProviderConnection,
+  next: ManualProviderConnection,
+  model: string
+): string {
+  const id = model.trim()
+  const nextModels = manualProviderPresetModels(vendorId, next)
+  if (
+    id &&
+    (nextModels.includes(id) || !manualProviderPresetModels(vendorId, previous).includes(id))
+  )
+    return id
+  return nextModels[0] ?? ''
+}
+
+type ConfiguredProviderCatalogModel = {
+  id: string
+  routes: Partial<Record<ModelProtocol, string>>
+  publishedContextWindow?: number
+  defaultContextWindow?: number
+}
+
+/** Resolve catalog routes and published limits before the host applies user overrides. */
+export function resolveConfiguredProviderCatalog(
+  vendorId: OfficialVendorId,
+  input: ConfiguredProviderConnectionInput,
+  model: string | undefined,
+  configuredIds?: readonly string[]
+): ConfiguredProviderCatalogModel[] {
+  const connection = resolveConfiguredProviderConnection(vendorId, input)
+  if (!connection || !model?.trim()) return []
+  const ids = configuredIds ?? [
+    model.trim(),
+    ...configuredProviderPresetModels(vendorId, connection)
+  ]
+  const { protocol, baseUrl } = connection
+  return [...new Set(ids)]
+    .filter((id) => !configuredProviderModelError(connection, id))
+    .map((id) => ({
+      id,
+      routes: { [protocol]: baseUrl },
+      publishedContextWindow: publishedManualProviderContextWindow(vendorId, protocol, id),
+      defaultContextWindow: manualProviderDefaultContextWindow(vendorId, id)
+    }))
+}
+
+function sameCloudflareGateway(left?: CloudflareGateway, right?: CloudflareGateway): boolean {
+  return (
+    left?.mode === right?.mode &&
+    left?.accountId.trim().toLowerCase() === right?.accountId.trim().toLowerCase() &&
+    left?.gatewayId.trim() === right?.gatewayId.trim()
+  )
+}
+
+type ConfiguredProviderIdentity = ConfiguredProviderConnectionInput & {
+  vendorId?: OfficialVendorId
+}
+
+/** Compare routes by protocol and normalized location so equivalent endpoint aliases match. */
+export function sameConfiguredProviderConnection(
+  left: ConfiguredProviderIdentity,
+  right: ConfiguredProviderIdentity
+): boolean {
+  if (left.vendorId !== right.vendorId || !sameCloudflareGateway(left.cloudflare, right.cloudflare))
+    return false
+  const a = left.manualConnection
+  const b = right.manualConnection
+  if (!a || !b) return a === b
+  if (a.protocol !== b.protocol) return false
+  if (a.location.trim().toLowerCase() === b.location.trim().toLowerCase()) return true
+  if (!left.vendorId) return false
+  const location = resolveManualProviderConnection(left.vendorId, a)?.connection.location
+  return (
+    location !== undefined &&
+    location === resolveManualProviderConnection(left.vendorId, b)?.connection.location
+  )
+}
+
+type ProviderCredentialScope = ConfiguredProviderIdentity &
+  LocalProviderConnection & {
+    type: string
+  }
+
+/** Allow shared credentials for Vectrust nodes while isolating Cloudflare modes and local origins. */
+export function sameProviderCredentialScope(
+  left: ProviderCredentialScope,
+  right: ProviderCredentialScope
+): boolean {
+  return (
+    left.type === right.type &&
+    left.vendorId === right.vendorId &&
+    sameCloudflareGateway(left.cloudflare, right.cloudflare) &&
+    sameManualProviderCredentialScope(
+      left.vendorId,
+      left.manualConnection,
+      right.manualConnection
+    ) &&
+    sameLocalProviderCredentialScope(left, right)
   )
 }

@@ -1,10 +1,5 @@
 import { decodeProviderModels } from '../../shared/configured-provider-model'
-import { usesCloudProviderModels } from '../../shared/manual-provider'
-import {
-  decodeLocalProviderModels,
-  isLocalProviderPresetId
-} from '../../shared/local-provider-preset'
-import { parseCloudflareGateway } from '../../shared/cloudflare-gateway'
+import { decodeLocalProviderModels } from '../../shared/local-provider-preset'
 import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import { z } from 'zod'
 import {
@@ -33,9 +28,13 @@ import type { PackageMirror } from '../../shared/mirror'
 import {
   type ModelProtocol,
   type ModelReasoningEffort,
-  manualProviderDefinition,
-  resolveManualProviderConnection,
-  isOfficialVendorId
+  configuredProviderConnectionKind,
+  isLocalProviderPresetId,
+  isOfficialVendorId,
+  recoverConfiguredProviderModels,
+  resolveConfiguredProviderConnection,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList
 } from '@aipoch/providers'
 import type { LabModelCapabilities } from '../../shared/lab'
 import {
@@ -234,25 +233,27 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const labServerUrl = asString(value.labServerUrl)
   const labCatalogToken = asString(value.labCatalogToken)
   const model = asString(value.model)
-  if (type === 'official' && vendorId === 'cloudflare-ai-gateway') {
-    const cloudflare = parseCloudflareGateway(value.cloudflare)
-    if (
-      !cloudflare ||
-      !model?.trim() ||
-      characterCount(model) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+  if (type === 'official' && vendorId && configuredProviderConnectionKind(vendorId)) {
+    const connection = resolveConfiguredProviderConnection(vendorId, value)
+    if (!connection) return undefined
+
+    const manualModels = supportsConfiguredProviderModelList(vendorId)
+      ? decodeProviderModels(value.manualModels)
+      : undefined
+    const modelId = model?.trim()
+    const recovered = recoverConfiguredProviderModels(
+      vendorId,
+      connection,
+      modelId && characterCount(modelId) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+        ? modelId
+        : undefined,
+      manualModels
     )
+    if (!recovered || characterCount(recovered.model) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
       return undefined
-    provider.cloudflare = cloudflare
-  }
-  if (type === 'official' && vendorId && manualProviderDefinition(vendorId)) {
-    const resolved = resolveManualProviderConnection(vendorId, value.manualConnection)
-    if (
-      !resolved ||
-      !model?.trim() ||
-      characterCount(model) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters
-    )
-      return undefined
-    provider.manualConnection = resolved.connection
+    if (connection.cloudflare) provider.cloudflare = connection.cloudflare
+    if (connection.manualConnection) provider.manualConnection = connection.manualConnection
+    Object.assign(provider, recovered)
   }
   const positiveWholeNumber = (candidate: unknown): number | undefined => {
     const number = asNumber(candidate)
@@ -414,22 +415,22 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     provider.labServerUrl = labServerUrl
   if (labCatalogToken && labCatalogToken.length <= 128 && type === 'lab')
     provider.labCatalogToken = labCatalogToken
-  if (model && characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
+  if (
+    !provider.model &&
+    model &&
+    characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+  )
     provider.model = model
-  if (type === 'official' && usesCloudProviderModels(vendorId)) {
-    const models = decodeProviderModels(value.manualModels)
-    if (models) {
-      provider.manualModels = models
-      provider.model = models.find(({ id }) => id === provider.model)?.id ?? models[0].id
-    }
-  }
   if (type === 'custom') {
     if (isLocalProviderPresetId(value.localPresetId)) {
       provider.localPresetId = value.localPresetId
       const models = decodeLocalProviderModels(value.localModels)
       if (models) {
         provider.localModels = models
-        provider.model = models.find(({ id }) => id === provider.model)?.id ?? models[0].id
+        provider.model = selectConfiguredModelId(
+          provider.model,
+          models.map(({ id }) => id)
+        )
       }
     }
     if (maxInputTokens !== undefined) provider.maxInputTokens = maxInputTokens
@@ -438,7 +439,8 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (
     contextWindow !== undefined &&
     !provider.manualModels &&
-    (type === 'custom' || provider.cloudflare || provider.manualConnection)
+    (type === 'custom' ||
+      ((provider.cloudflare || provider.manualConnection) && provider.model === model?.trim()))
   )
     provider.contextWindow = contextWindow
   if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput

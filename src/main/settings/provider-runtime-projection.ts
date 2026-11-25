@@ -1,6 +1,7 @@
-import { resolveCloudflareGateway, resolveManualProviderTarget } from './manual-provider-target'
+import { resolveConfiguredProviderTarget } from './manual-provider-target'
 import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
+  availableOfficialModelIds,
   catalogModelApiEndpoints,
   resolveOfficialModelCatalog,
   isCatalogModelAvailable,
@@ -11,7 +12,7 @@ import {
   type CatalogModel,
   type OfficialVendorId,
   getOfficialVendor,
-  manualProviderDefinition,
+  configuredProviderConnectionKind,
   isVendorModelMultimodal,
   resolveVendorBaseUrl,
   resolveVendorChatCompletionsBaseUrl,
@@ -481,17 +482,10 @@ class ProviderRuntimeProjectionOwner {
     key: string | undefined
   ): ResolvedProvider {
     // Catalog entries bind the context window to the selected model, including pinned sessions.
-    if (vendorId === 'cloudflare-ai-gateway') {
+    if (configuredProviderConnectionKind(vendorId)) {
       if (!descriptor) return { type: 'custom', vendorId, model, apiEndpoints: [] }
       return {
-        ...resolveCloudflareGateway(provider.cloudflare, model, key),
-        contextWindow: descriptor.contextWindow
-      }
-    }
-    if (manualProviderDefinition(vendorId)) {
-      if (!descriptor) return { type: 'custom', vendorId, model, apiEndpoints: [] }
-      return {
-        ...resolveManualProviderTarget(vendorId, provider.manualConnection, model, key),
+        ...resolveConfiguredProviderTarget(vendorId, provider, model, key),
         contextWindow: descriptor.contextWindow
       }
     }
@@ -575,11 +569,8 @@ class ProviderRuntimeProjectionOwner {
     }
     if (isLabProvider(provider.type))
       return provider.fetchedModels ? [...provider.fetchedModels] : []
-    if (provider.type === 'official' && provider.vendorId) {
-      return resolveOfficialModelCatalog(provider)
-        .filter(isCatalogModelAvailable)
-        .map((entry) => entry.id)
-    }
+    if (provider.type === 'official' && provider.vendorId)
+      return availableOfficialModelIds(provider)
     return provider.localModels?.map(({ id }) => id) ?? (provider.model ? [provider.model] : [])
   }
 }

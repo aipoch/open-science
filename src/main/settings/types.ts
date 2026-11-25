@@ -1,6 +1,5 @@
-import type { LocalProviderModel, LocalProviderPresetId } from '../../shared/local-provider-preset'
+import type { LocalProviderModel } from '../../shared/local-provider-preset'
 import type { ProviderModel } from '../../shared/configured-provider-model'
-import type { CloudflareGateway } from '../../shared/cloudflare-gateway'
 import type { CatalogSnapshot, CatalogStatus } from '@aipoch/providers'
 import type { CodeBuddyAuthMode } from '../../shared/codebuddy-subscription'
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
@@ -17,6 +16,8 @@ import type {
   ModelProtocol,
   ModelReasoningEffort,
   OfficialVendorId,
+  CloudflareGateway,
+  LocalProviderPresetId,
   ManualProviderConnection,
   CustomReasoningEffortTransport
 } from '@aipoch/providers'

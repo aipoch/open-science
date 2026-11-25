@@ -1,10 +1,9 @@
-import { sameManualProviderConnection } from '../../shared/manual-provider'
-import { sameCloudflareGateway } from '../../shared/cloudflare-gateway'
 import {
   providerCatalogState,
   type ProviderCatalogState
 } from '../../shared/provider-model-catalog-codec'
 import {
+  availableOfficialModelIds,
   isCatalogModelAvailable,
   KILO_FREE_MODEL_ID,
   resolveOfficialModelCatalog
@@ -15,7 +14,12 @@ import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
-import { getOfficialVendor } from '@aipoch/providers'
+import {
+  configuredProviderConnectionKind,
+  getOfficialVendor,
+  sameConfiguredProviderConnection,
+  selectConfiguredModelId
+} from '@aipoch/providers'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
@@ -148,8 +152,7 @@ const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean
   left.type === right.type &&
   left.vendorId === right.vendorId &&
   left.region === right.region &&
-  sameCloudflareGateway(left.cloudflare, right.cloudflare) &&
-  sameManualProviderConnection(left.manualConnection, right.manualConnection) &&
+  sameConfiguredProviderConnection(left, right) &&
   ((!left.cloudflare && !left.manualConnection) || left.model === right.model) &&
   left.keyRef === right.keyRef &&
   isDeepStrictEqual(left.catalogParameters ?? {}, right.catalogParameters ?? {})
@@ -441,24 +444,27 @@ class SettingsRepository {
             ? { ...provider, codexAutoUseHttps: true }
             : provider
       } else providers.push(provider)
-      const keepActiveVectrustModel =
-        provider.vendorId === 'vectrust' &&
-        settings.providers[index]?.model === provider.model &&
-        resolveOfficialModelCatalog(provider).some(({ id }) => id === settings.activeModel)
-      const keepActiveConfiguredModel = (provider.localModels ?? provider.manualModels)?.some(
-        ({ id }) => id === settings.activeModel
-      )
+      let activeModel = settings.activeModel
+      if (
+        configEdit &&
+        settings.activeProviderId === provider.id &&
+        (provider.type === 'custom' || configuredProviderConnectionKind(provider.vendorId))
+      ) {
+        const availableIds =
+          provider.type === 'custom'
+            ? (provider.localModels?.map(({ id }) => id) ??
+              (provider.model ? [provider.model] : []))
+            : availableOfficialModelIds(provider)
+        // Apply explicit single-model edits to the current selection. Sessions keep their own pins.
+        const changedSingleModel =
+          provider.type === 'official' && !provider.manualModels && source?.model !== provider.model
+        if (changedSingleModel || !activeModel || !availableIds.includes(activeModel))
+          activeModel = selectConfiguredModelId(provider.model, availableIds)
+      }
       return {
         ...settings,
         providers,
-        // Keep the active selection valid when the configured model or the route changes.
-        ...(configEdit &&
-        (provider.type === 'custom' || provider.cloudflare || provider.manualConnection) &&
-        settings.activeProviderId === provider.id &&
-        !keepActiveVectrustModel &&
-        !keepActiveConfiguredModel
-          ? { activeModel: provider.model }
-          : {}),
+        ...(activeModel !== settings.activeModel ? { activeModel } : {}),
         ...(isClaudeSubscriptionProvider(provider.type) &&
         isClaudeSubscriptionProviderId(provider.id)
           ? { claudeSubscriptionProviderId: provider.id }

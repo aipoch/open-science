@@ -55,6 +55,112 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it('tests and saves the same Foundry model when the selected deployment was removed', async () => {
+    await repository.setAgentFramework('open-science-agent')
+    const draft = {
+      type: 'official',
+      vendorId: 'microsoft-foundry',
+      manualConnection: { location: 'research', protocol: 'chat-completions' },
+      model: 'removed-deployment',
+      manualModels: [{ id: 'new-deployment' }],
+      key: 'fixture'
+    } as const
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    expect(await module.validateProvider({ draft })).toMatchObject({ ok: true })
+    expect(await module.validateProvider({ edit: draft })).toMatchObject({ ok: true })
+    expect(await module.saveValidatedProvider(draft)).toMatchObject({ validation: { ok: true } })
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).model)).toEqual([
+      'new-deployment',
+      'new-deployment',
+      'new-deployment'
+    ])
+    expect((await repository.getSettings()).providers[0].model).toBe('new-deployment')
+  })
+
+  it('updates the active model when a validated edit changes the configured model', async () => {
+    const framework = getAgentFramework('open-science-agent')
+    await repository.setAgentFramework(framework.id)
+    const original = {
+      id: 'vectrust',
+      type: 'official',
+      vendorId: 'vectrust',
+      manualConnection: { location: 'api.openai-next.com', protocol: 'chat-completions' },
+      model: 'gpt-6.2-sol',
+      key: 'fixture'
+    } as const
+    await module.upsertProvider(original)
+    await module.setActiveProvider(original.id, original.model)
+    vi.stubGlobal('fetch', async () =>
+      Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
+    )
+
+    const next = 'gpt-6.2-astra'
+    expect(
+      await module.saveValidatedProvider({
+        ...original,
+        model: next,
+        key: undefined,
+        requireExisting: true
+      })
+    ).toMatchObject({ validation: { ok: true }, providerId: original.id })
+    const {
+      providers: [stored],
+      activeModel
+    } = await repository.getSettings()
+    expect(activeModel).toBe(next)
+    expect(
+      module.resolveRuntimeTarget(
+        stored,
+        { kind: 'configured', requestedModel: activeModel },
+        framework
+      ).effectiveModel
+    ).toBe(next)
+  })
+
+  it('recovers the current Cloudflare model on load and still rejects a pinned model from the old mode', async () => {
+    const old = '@cf/openai/gpt-oss-20b'
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        version: 2,
+        activeProviderId: 'gateway',
+        activeModel: old,
+        providers: [
+          {
+            id: 'gateway',
+            type: 'official',
+            vendorId: 'cloudflare-ai-gateway',
+            name: 'Gateway',
+            cloudflare: { accountId: 'a'.repeat(32), gatewayId: 'research', mode: 'anthropic' },
+            model: old,
+            manualModels: [{ id: old }]
+          }
+        ]
+      })
+    )
+
+    const {
+      providers: [stored],
+      activeModel
+    } = await repository.getSettings()
+    const framework = getAgentFramework('claude-code')
+    expect(activeModel).toBe('claude-sonnet-5-5')
+    expect(
+      module.resolveRuntimeTarget(
+        stored,
+        { kind: 'configured', requestedModel: activeModel },
+        framework
+      ).effectiveModel
+    ).toBe(activeModel)
+    expect(() =>
+      module.resolveRuntimeTarget(stored, { kind: 'required', model: old }, framework)
+    ).toThrow(/not available/)
+  })
+
   it('reopens cloud model rows and uses the selected model’s own limits and reasoning', async () => {
     const request = {
       id: 'foundry',

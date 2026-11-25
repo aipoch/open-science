@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ChatCompletionsCompatibilityBridge } from './chat-completions-compatibility'
-import { resolveManualProviderTarget } from './manual-provider-target'
+import { resolveConfiguredProviderTarget } from './manual-provider-target'
 
 const bridges: ChatCompletionsCompatibilityBridge[] = []
 
@@ -13,9 +13,9 @@ describe('ChatCompletionsCompatibilityBridge', () => {
   it.each([true, false])(
     'sends the Foundry Messages key only to the configured resource (endpoint matches: %s)',
     async (matches) => {
-      const target = resolveManualProviderTarget(
+      const target = resolveConfiguredProviderTarget(
         'microsoft-foundry',
-        { location: 'research', protocol: 'messages' },
+        { manualConnection: { location: 'research', protocol: 'messages' } },
         'claude-deployment',
         'resource-key'
       )

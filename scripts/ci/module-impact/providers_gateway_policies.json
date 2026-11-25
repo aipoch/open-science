@@ -1,15 +1,17 @@
 {
   "ownerPaths": [
     "packages/providers/src/protocols/gateway-endpoints.ts",
+    "packages/providers/src/providers/local-connection.ts",
     "packages/providers/src/providers/manual-connections.ts",
     "packages/providers/src/providers/probe-policy.ts",
-    "packages/providers/src/transport/gateway-policies.ts"
+    "packages/providers/src/protocols/gateway-policies.ts"
   ],
   "interfacePaths": [
     "packages/providers/src/protocols/gateway-endpoints.ts",
+    "packages/providers/src/providers/local-connection.ts",
     "packages/providers/src/providers/manual-connections.ts",
     "packages/providers/src/providers/probe-policy.ts",
-    "packages/providers/src/transport/gateway-policies.ts"
+    "packages/providers/src/protocols/gateway-policies.ts"
   ],
   "testFiles": {
     "owner": [],

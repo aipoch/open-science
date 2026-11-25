@@ -1,16 +1,5 @@
+import type { ProviderRequestPolicy } from '../protocols/gateway-policies'
 import { isSecureProviderUrl, PROVIDER_TRANSPORT_ERROR } from './url-security'
-
-/** Cloneable upstream request rules. The sender supplies credentials separately. */
-export type ProviderRequestPolicy = Readonly<{
-  allowedUrls: readonly string[]
-  credentialHeader: string
-  credentialPrefix?: 'Bearer '
-  headers?: Readonly<Record<string, string>>
-  defaultHeaders?: Readonly<Record<string, string>>
-  stripHeaderPrefix?: string
-  routeIdentity?: string
-  invalidEndpointMessage: string
-}>
 
 /** Verify the upstream destination before replacing client-supplied authentication. */
 export function withProviderRequestPolicy(

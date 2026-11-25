@@ -1,16 +1,18 @@
-import { sameLocalProviderCredentialScope } from '../../../../shared/local-provider-preset'
-import { DEFAULT_CLOUDFLARE_GATEWAY } from '../../../../shared/cloudflare-gateway'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   isCatalogModelAvailable,
   resolveOfficialModelCatalog
 } from '../../../../shared/provider-model-catalog'
 import {
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  LOCAL_MODEL_PRESETS,
+  configuredProviderPresetModels,
+  inferManualProviderProtocol,
   manualProviderDefinition,
-  manualProviderPresetModels,
+  modelAfterManualProtocolChange,
   publishedManualProviderContextWindow,
-  resolveManualProviderConnection,
-  sameManualProviderCredentialScope,
+  sameProviderCredentialScope,
+  supportsConfiguredProviderModelList,
   resolveVendorModelCatalog,
   type CatalogModel,
   type CatalogSnapshot,
@@ -59,7 +61,6 @@ import { ProviderKindIcon } from './provider-icons'
 import { ProviderModelsEditor } from './ProviderModelsEditor'
 import {
   LOCAL_MODEL_KIND_PREFIX,
-  LOCAL_MODEL_PRESETS,
   PROVIDER_KIND_GROUPS,
   PROVIDER_KINDS,
   isProviderKindAvailable,
@@ -421,9 +422,10 @@ const ProviderForm = ({
       ? (value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY)
       : undefined
   const isFoundry = vendor?.id === 'microsoft-foundry'
-  const isVectrust = vendor?.id === 'vectrust'
   const modelLabel = t('Model')
   const manualProvider = manualProviderDefinition(vendor?.id)
+  const usesPresetModelPicker =
+    Boolean(manualProvider) && !supportsConfiguredProviderModelList(vendor?.id)
   const manualLocationLabel = isFoundry
     ? t('Azure resource name or endpoint')
     : manualProvider?.locations
@@ -431,7 +433,9 @@ const ProviderForm = ({
       : t('Region')
   const manualConnection = value.manualConnection ?? manualProvider?.defaultConnection
   const presetModels =
-    isVectrust && manualConnection ? manualProviderPresetModels(vendor?.id, manualConnection) : []
+    usesPresetModelPicker && manualConnection
+      ? configuredProviderPresetModels(vendor?.id, { manualConnection })
+      : []
   const configuredModel = value.model.trim()
   const visibleModelIds =
     configuredModel && !presetModels.includes(configuredModel)
@@ -517,7 +521,7 @@ const ProviderForm = ({
     if (!loopbackCustomGateway && !customProviderRequiresKey(baseUrl)) setLocalModelOpen(true)
     onChange({
       baseUrl,
-      ...(!sameLocalProviderCredentialScope(value, { ...value, baseUrl }) && { key: '' })
+      ...(!sameProviderCredentialScope(value, { ...value, baseUrl }) && { key: '' })
     })
   }
 
@@ -698,7 +702,7 @@ const ProviderForm = ({
             onValueChange={(location) =>
               onChange({
                 manualConnection: { ...manualConnection, location },
-                ...(!isVectrust && { contextWindow: '' })
+                ...(!usesPresetModelPicker && { contextWindow: '' })
               })
             }
           >
@@ -724,19 +728,11 @@ const ProviderForm = ({
             disabled={disabled}
             onChange={(event) => {
               const next = { ...manualConnection, location: event.target.value }
-              if (isFoundry && value.vendorId) {
-                const vendorId = value.vendorId
-                if (!resolveManualProviderConnection(vendorId, next)) {
-                  const protocol = manualProvider.protocols.find((protocol) =>
-                    resolveManualProviderConnection(vendorId, { ...next, protocol })
-                  )
-                  if (protocol) next.protocol = protocol
-                }
-              }
+              if (vendor) next.protocol = inferManualProviderProtocol(vendor.id, next)
               onChange({
                 manualConnection: next,
                 ...cloudModelRoutePatch(value, { manualConnection: next }),
-                ...(!sameManualProviderCredentialScope(value.vendorId, manualConnection, next) && {
+                ...(!sameProviderCredentialScope(value, { ...value, manualConnection: next }) && {
                   key: ''
                 })
               })
@@ -767,21 +763,24 @@ const ProviderForm = ({
             const protocol = manualProvider.protocols.find((option) => option === nextProtocol)
             if (!protocol) return
             const next = { ...manualConnection, protocol }
-            if (!isVectrust) {
+            if (!usesPresetModelPicker) {
               onChange({
                 manualConnection: next,
                 ...cloudModelRoutePatch(value, { manualConnection: next })
               })
               return
             }
-            const models = manualProviderPresetModels(value.vendorId, next)
-            const keepModel =
-              models.includes(configuredModel) ||
-              (configuredModel && !presetModels.includes(configuredModel))
+            if (!vendor) return
+            const model = modelAfterManualProtocolChange(
+              vendor.id,
+              manualConnection,
+              next,
+              configuredModel
+            )
             onChange({
               manualConnection: next,
-              ...(!keepModel && { contextWindow: '' }),
-              model: keepModel ? value.model : (models[0] ?? '')
+              ...(model !== configuredModel && { contextWindow: '' }),
+              model: model === configuredModel ? value.model : model
             })
           }}
         >
@@ -1531,13 +1530,16 @@ const ProviderForm = ({
                     aria-required="true"
                     aria-invalid={Boolean(error) || undefined}
                     aria-describedby={error ? `${inputId}-error` : undefined}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const next = { ...cloudflare, [field]: event.target.value }
                       onChange({
-                        cloudflare: { ...cloudflare, [field]: event.target.value },
-                        key: '',
-                        contextWindow: ''
+                        cloudflare: next,
+                        ...(!sameProviderCredentialScope(value, { ...value, cloudflare: next }) && {
+                          key: '',
+                          contextWindow: ''
+                        })
                       })
-                    }
+                    }}
                   />
                   {error ? (
                     <p id={`${inputId}-error`} className={fieldErrorClassName} role="alert">
@@ -1551,7 +1553,7 @@ const ProviderForm = ({
           {keyField}
           {cloudModelsEditor}
         </>
-      ) : isVectrust ? (
+      ) : usesPresetModelPicker ? (
         <>
           {manualFormatField}
           {manualLocationField}

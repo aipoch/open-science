@@ -1,10 +1,10 @@
+import { LOCAL_MODEL_PRESETS } from '@aipoch/providers'
 import { describe, expect, it } from 'vitest'
 import { resolveVendorModelApiEndpoints } from '@aipoch/providers'
 import { resolveOfficialModelCatalog } from '../../../../shared/provider-model-catalog'
 import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 
 import {
-  LOCAL_MODEL_PRESETS,
   PROVIDER_KINDS,
   cloudflareModePatch,
   createEmptyProviderFormValue,
@@ -44,7 +44,7 @@ it('keeps edited Cloudflare model rows on their original mode and ignores stale 
   const messages = { ...edited, ...cloudflareModePatch(edited, 'anthropic') }
   const saved = {
     vendorId: messages.vendorId,
-    cloudflare: messages.cloudflare,
+    cloudflare: { ...messages.cloudflare!, accountId: 'a'.repeat(32) },
     model: providerFormModel(messages),
     manualModels: providerFormManualModels(messages)
   }

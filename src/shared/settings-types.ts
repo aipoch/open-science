@@ -1,6 +1,5 @@
-import type { LocalProviderModel, LocalProviderPresetId } from './local-provider-preset'
+import type { LocalProviderModel } from './local-provider-preset'
 import type { ProviderModel } from './configured-provider-model'
-import type { CloudflareGateway } from './cloudflare-gateway'
 import type { CatalogSnapshot, CatalogStatus, CatalogErrorCode } from '@aipoch/providers'
 import type { CodeBuddyAuthMode } from './codebuddy-subscription'
 import type {
@@ -19,6 +18,8 @@ import {
   type ModelReasoningEffort,
   type OfficialVendorId,
   type CustomReasoningEffortTransport,
+  type CloudflareGateway,
+  type LocalProviderPresetId,
   type ManualProviderConnection
 } from '@aipoch/providers'
 import { type ReasoningEffort } from './model-preference-contract'

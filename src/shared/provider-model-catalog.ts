@@ -1,16 +1,7 @@
 import {
-  cloudflareGatewayBase,
-  cloudflareGatewayProtocol,
-  type CloudflareGateway
-} from './cloudflare-gateway'
-import {
-  CLOUDFLARE_GATEWAY_MODELS,
-  cloudflareGatewayAcceptsModel,
-  manualProviderDefaultContextWindow,
-  manualProviderDefinition,
-  manualProviderPresetModels,
-  publishedManualProviderContextWindow,
-  resolveManualProviderConnection,
+  configuredProviderConnectionKind,
+  resolveConfiguredProviderCatalog,
+  type CloudflareGateway,
   type ManualProviderConnection,
   getOfficialVendor,
   resolveVendorBaseUrl,
@@ -82,73 +73,43 @@ function resolveSnapshotRoutes(
   return routes
 }
 
-function configuredCloudModels(
-  models: readonly ProviderModel[],
-  vendorId: OfficialVendorId,
-  protocol: ModelProtocol,
-  baseUrl: string
-): CatalogModel[] {
-  return models.map((model) => {
-    const effort = resolveReasoningEffortProfile(model.reasoningEffortPreset ?? 'unsupported')
-    return {
-      id: model.id,
-      name: model.displayName,
-      contextWindow:
-        model.contextWindow ?? publishedManualProviderContextWindow(vendorId, protocol, model.id),
-      reasoningEffort: effort.supported
-        ? { supported: true, values: [...new Set(effort.slots)] }
-        : { supported: false },
-      routes: { [protocol]: baseUrl }
-    }
-  })
-}
-
 /** Membership comes from the configured list or latest complete snapshot. */
 export function resolveOfficialModelCatalog(source: OfficialCatalogSource): CatalogModel[] {
   const { vendorId, region, modelCatalog } = source
   if (!vendorId) return []
-  if (vendorId === 'cloudflare-ai-gateway') {
-    const { cloudflare, model } = source
-    if (!cloudflare || !model) return []
-    const protocol = cloudflareGatewayProtocol(cloudflare.mode)
-    if (source.manualModels)
-      return configuredCloudModels(
-        source.manualModels.filter(({ id }) => cloudflareGatewayAcceptsModel(cloudflare.mode, id)),
-        vendorId,
-        protocol,
-        cloudflareGatewayBase(cloudflare)
-      )
-    const presets = CLOUDFLARE_GATEWAY_MODELS[cloudflare.mode]
-    const ids = new Set(
-      cloudflareGatewayAcceptsModel(cloudflare.mode, model) ? [model, ...presets] : presets
-    )
-    return Array.from(ids, (id) => ({
-      id,
-      contextWindow:
-        publishedManualProviderContextWindow(vendorId, protocol, id) ??
-        (id === model ? source.contextWindow : undefined),
-      routes: { [protocol]: cloudflareGatewayBase(cloudflare) }
-    }))
-  }
-  const manualProvider = manualProviderDefinition(vendorId)
-  if (manualProvider) {
-    const resolved = resolveManualProviderConnection(vendorId, source.manualConnection)
-    if (!resolved || !source.model) return []
-
-    const { protocol } = resolved.connection
-    if (source.manualModels)
-      return configuredCloudModels(source.manualModels, vendorId, protocol, resolved.baseUrl)
-    const presetModels = manualProviderPresetModels(vendorId, resolved.connection)
-    // Keep saved model IDs available for existing configurations and pinned sessions.
-    const ids = new Set([source.model, ...presetModels])
-    return Array.from(ids, (id) => ({
-      id,
-      contextWindow:
-        publishedManualProviderContextWindow(vendorId, protocol, id) ??
-        (id === source.model ? source.contextWindow : undefined) ??
-        manualProviderDefaultContextWindow(vendorId, id),
-      routes: { [protocol]: resolved.baseUrl }
-    }))
+  if (configuredProviderConnectionKind(vendorId)) {
+    const models =
+      source.manualModels && new Map(source.manualModels.map((model) => [model.id, model]))
+    return resolveConfiguredProviderCatalog(
+      vendorId,
+      source,
+      source.model,
+      models && [...models.keys()]
+    ).map(({ id, routes, publishedContextWindow, defaultContextWindow }) => {
+      const configured = models?.get(id)
+      if (configured) {
+        const effort = resolveReasoningEffortProfile(
+          configured.reasoningEffortPreset ?? 'unsupported'
+        )
+        return {
+          id,
+          name: configured.displayName,
+          contextWindow: configured.contextWindow ?? publishedContextWindow,
+          reasoningEffort: effort.supported
+            ? { supported: true, values: [...new Set(effort.slots)] }
+            : { supported: false },
+          routes
+        }
+      }
+      return {
+        id,
+        contextWindow:
+          publishedContextWindow ??
+          (id === source.model ? source.contextWindow : undefined) ??
+          defaultContextWindow,
+        routes
+      }
+    })
   }
   const vendor = getOfficialVendor(vendorId)
   if (!vendor) return []
@@ -235,4 +196,11 @@ export function isCatalogModelAvailable(model: CatalogModel): boolean {
   return (
     !isRetired(model.lifecycle ?? '') && (!model.routes || Object.keys(model.routes).length > 0)
   )
+}
+
+/** Share catalog availability between settings recovery and runtime selection. */
+export function availableOfficialModelIds(source: OfficialCatalogSource): string[] {
+  return resolveOfficialModelCatalog(source)
+    .filter(isCatalogModelAvailable)
+    .map(({ id }) => id)
 }

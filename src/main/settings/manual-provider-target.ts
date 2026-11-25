@@ -1,63 +1,57 @@
 import {
-  cloudflareGatewayAcceptsModel,
-  cloudflareGatewayBase,
-  cloudflareGatewayProtocol,
-  parseCloudflareGateway,
-  resolveManualProviderConnection,
+  configuredProviderConnectionKind,
+  configuredProviderModelError,
+  resolveConfiguredProviderConnection,
+  type ConfiguredProviderConnectionInput,
+  type ResolvedConfiguredProviderConnection,
   type OfficialVendorId
 } from '@aipoch/providers'
-import { cloudflareGatewayRequestPolicy, foundryRequestPolicy } from '@aipoch/providers/transport'
 import type { ResolvedProvider } from './provider-env'
 
-/** Resolve a Cloudflare gateway into a runtime target. */
-export function resolveCloudflareGateway(
-  config: unknown,
-  model?: string,
-  key?: string
-): ResolvedProvider {
-  const gateway = parseCloudflareGateway(config)
-  if (!gateway) throw new Error('Cloudflare Account ID and Gateway ID are required.')
-  if (!model?.trim()) throw new Error('Model is required.')
-  if (!cloudflareGatewayAcceptsModel(gateway.mode, model.trim()))
-    throw new Error('A model ID is incompatible with the selected Cloudflare connection mode.')
-  const baseUrl = cloudflareGatewayBase(gateway)
-  return {
-    type: 'custom',
-    vendorId: 'cloudflare-ai-gateway',
-    baseUrl,
-    ...(gateway.mode === 'rest' ? { chatCompletionsBaseUrl: baseUrl } : {}),
-    model: model.trim(),
-    apiEndpoints: [cloudflareGatewayProtocol(gateway.mode)],
-    key,
-    requestPolicy: cloudflareGatewayRequestPolicy(baseUrl, gateway.gatewayId, gateway.mode)
+/** Map provider validation results to errors used by the settings service. */
+export function requireConfiguredProviderConnection(
+  vendorId: OfficialVendorId,
+  input: ConfiguredProviderConnectionInput,
+  models: readonly (string | undefined)[]
+): ResolvedConfiguredProviderConnection {
+  const connection = resolveConfiguredProviderConnection(vendorId, input)
+  if (!connection) {
+    throw new Error(
+      configuredProviderConnectionKind(vendorId) === 'cloudflare'
+        ? 'Cloudflare Account ID and Gateway ID are required.'
+        : 'Enter a valid provider endpoint.'
+    )
   }
+  for (const model of models) {
+    const problem = configuredProviderModelError(connection, model)
+    if (problem === 'model-required') throw new Error('Model is required.')
+    if (problem === 'incompatible-model')
+      throw new Error('A model ID is incompatible with the selected Cloudflare connection mode.')
+  }
+  return connection
 }
 
-/** Use the same endpoint and protocol rules for draft probes and saved models. */
-export function resolveManualProviderTarget(
+export function resolveConfiguredProviderTarget(
   vendorId: OfficialVendorId,
-  connection: unknown,
+  input: ConfiguredProviderConnectionInput,
   model?: string,
-  key?: string
+  key?: string,
+  modelIds?: readonly string[]
 ): ResolvedProvider {
-  const resolved = resolveManualProviderConnection(vendorId, connection)
-  if (!resolved) throw new Error('Enter a valid provider endpoint.')
-  if (!model?.trim()) throw new Error('Model is required.')
-  const {
-    baseUrl,
-    connection: { protocol }
-  } = resolved
+  const { protocol, baseUrl, cloudflare, requestPolicy } = requireConfiguredProviderConnection(
+    vendorId,
+    input,
+    modelIds ? [model, ...modelIds] : [model]
+  )
   return {
     type: 'custom',
     vendorId,
     baseUrl,
     ...(protocol === 'chat-completions' && { chatCompletionsBaseUrl: baseUrl }),
-    ...(vendorId === 'microsoft-foundry' &&
-      protocol !== 'responses' && {
-        requestPolicy: foundryRequestPolicy(baseUrl, protocol)
-      }),
     ...(protocol === 'responses' && { responsesBaseUrl: baseUrl }),
-    model: model.trim(),
+    ...(requestPolicy && { requestPolicy }),
+    ...(cloudflare && { cloudflareMode: cloudflare.mode }),
+    model: model?.trim(),
     apiEndpoints: [protocol],
     key: key?.trim()
   }
