@@ -26,7 +26,7 @@ import {
 } from './notebook-tool-presentation'
 import type { ToolActivity } from '@/stores/session-store-contract'
 import { memoryAgentRememberResultSchema, memoryAgentResultSchema } from '../../../../shared/memory'
-import type { NotebookRunStatus } from '../../../../shared/notebook'
+import type { NotebookRunRecord, NotebookRunStatus } from '../../../../shared/notebook'
 import {
   getNotebookMemoryToolDisplayName,
   isAuthorizedDirectoryTool,
@@ -964,7 +964,10 @@ const getNotebookRunStatusFromActivity = (
 
 // Renders a notebook run as its code plus execution output, not the raw summary JSON. Handles every
 // kernel: python/r cells, the repl control-plane (Agent SDK), and bash shell runs.
-const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
+const buildNotebookDetails = (
+  activity: ToolActivity,
+  run?: NotebookRunRecord
+): ToolActivityDetails | undefined => {
   const summary = parseNotebookRunSummary(activity)
   const language = getNotebookLanguage(activity, summary)
   const code = getNotebookCode(activity, summary)
@@ -981,7 +984,7 @@ const buildNotebookDetails = (activity: ToolActivity): ToolActivityDetails | und
       showLineNumbers: true
     })
 
-  const output = getNotebookOutput(summary)
+  const output = (run && getNotebookOutput(run)) ?? getNotebookOutput(summary)
   const outputSection = output ? createCodeSection('Output', output) : undefined
 
   // The code leads the cell; keep the output tucked behind a collapsed toggle like the sidebar.
@@ -1328,7 +1331,8 @@ const getSkillLoadDocument = (activity: ToolActivity): string | undefined => {
 // Projects one tool activity into the structured, expandable detail model, or nothing for chips.
 const buildToolActivityDetails = (
   activity: ToolActivity,
-  t: TranslateClause = identityTranslate
+  t: TranslateClause = identityTranslate,
+  run?: NotebookRunRecord
 ): ToolActivityDetails | undefined => {
   // App-owned review receipts retain their original payload and correlation id in history.
   // Provider lookalikes must keep all generic arguments visible.
@@ -1477,7 +1481,7 @@ const buildToolActivityDetails = (
   }
   // Notebook runs (python/r cells, repl, bash) show their code and output, not the run-summary JSON.
   if (isNotebookKernelRunActivity(activity)) {
-    return buildNotebookDetails(activity) ?? buildGenericDetails(activity)
+    return buildNotebookDetails(activity, run) ?? buildGenericDetails(activity)
   }
   if (activity.toolKind === 'execute') return buildExecuteDetails(activity, t)
   // Tool-discovery steps summarize the tools they found rather than repeating "ToolSearch".

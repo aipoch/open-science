@@ -6407,6 +6407,57 @@ test.each([false, true])(
 )
 
 test.each([true, false])(
+  'preserves a fixed-pitch Python listing through its page header: %s',
+  (fixedPitch) => {
+    const row = (
+      str: string,
+      y: number,
+      x = 93,
+      width = str.length * 5.23,
+      height = 10,
+      fontName = 'Code'
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      fontName,
+      dir: 'ltr',
+      hasEOL: true,
+      transform: [height, 0, 0, height, x, y],
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false
+    })
+    const description = 'This example compares independent readings.'
+    const pages = [
+      [
+        row('example.py', 114, 93, 54, 10, 'Caption'),
+        row("'''", 102),
+        row(description, 90, 93, fixedPitch ? undefined : 240),
+        row('The procedure is reproduced below.', 78)
+      ],
+      [
+        row('2', 727, 79, 4.6, 8.9, 'Header'),
+        row('MEASUREMENT RESULTS', 727, 230, 149, 8.9, 'Header'),
+        row("'''", 703),
+        row('from statistics import mean', 691),
+        row('def summarize():', 667),
+        row('print(mean([2, 4]))', 655, 112),
+        row('if __name__ == "__main__":', 631),
+        row('summarize()', 619, 112),
+        row('References', 587, 271, 69, 12, 'Heading')
+      ]
+    ].map((items, i) => ({ page: i + 1, width: 612, height: 792, rotation: 0, items }))
+    const { units } = extractDocument({ pages, pageCount: pages.length })
+    const code = units.filter((unit) => unit.sourceOnly && unit.preserve === 'code')
+    expect(code.flatMap((unit) => unit.items).sort()).toEqual(
+      fixedPitch ? ['1:1', '1:2', '1:3', '2:2', '2:3', '2:4', '2:5', '2:6', '2:7'] : []
+    )
+    expect(units.find((unit) => unit.items.includes('2:8'))?.source).toBe('References')
+  }
+)
+
+test.each([true, false])(
   'preserves an imported Python listing only with assignment evidence: %s',
   (code) => {
     const items = [
@@ -8262,6 +8313,37 @@ test('a wrapped two-letter acronym and linked citation stay inside their body pa
     result.units[0].items,
     inputs.map((_, index) => `1:${index}`)
   )
+})
+
+const nativeCitationTails = readPdfTranslationCases<{
+  name: string
+  page: PdfLayoutPage
+  joins: [string, [number, number]][]
+}>('wrapped-terminal-citation-tails.jsonl')
+
+test.each(nativeCitationTails)('$name', ({ page, joins }) => {
+  const result = extractDocument({ pages: [page] })
+  for (const [citation, [head, tail]] of joins) {
+    const owner = result.units.find((unit) => unit.items.includes(`1:${tail}`))
+    assert.ok(owner?.items.includes(`1:${head}`))
+    assert.ok(owner.source.endsWith(citation))
+    assert.equal(owner.sourceOnly, undefined)
+  }
+  const claims = result.units.flatMap((unit) => unit.items)
+  assert.equal(claims.length, page.items.length)
+  assert.equal(new Set(claims).size, page.items.length)
+})
+
+test.each(['font', 'gap'])('rejects a wrapped terminal citation with a mismatched %s', (fault) => {
+  const fixture = nativeCitationTails[0]
+  const page = structuredClone(fixture.page)
+  const [, [head, tail]] = fixture.joins[1]
+  if (fault === 'font') page.items[tail].fontName = 'separate'
+  if (fault === 'gap') page.items[tail].transform[5] -= 5
+  const result = extractDocument({ pages: [page] })
+  const owner = result.units.find((unit) => unit.items.includes(`1:${tail}`))
+  assert.ok(owner)
+  assert.ok(!owner.items.includes(`1:${head}`))
 })
 
 test.each(
@@ -22790,6 +22872,46 @@ test.each(['complete keyword', 'unwitnessed phrase', 'distant heading'])(
   }
 )
 
+test.each(['matching adjective', 'unwitnessed term', 'different rail', 'printed compound'])(
+  'joins an interrupted keyword term only with its native rail and spelling witness: %s',
+  (shape) => {
+    const page = wrappedKeywordListPage()
+    const [, witness, , label, body, tail, heading] = page.items
+    label.transform[4] = 84
+    body.transform[4] = 134
+    body.width = 386
+    body.str = 'Water: quality — Air: aerosols — Measurement techniques: Spec-'
+    tail.str = 'trometry'
+    tail.width = 37
+    tail.hasEOL = true
+    tail.transform[4] = shape === 'different rail' ? 120 : 133.3
+    heading.str = 'INTRODUCTION'
+    heading.fontName = 'Body'
+    heading.transform[4] = 130
+    witness.str =
+      shape === 'unwitnessed term'
+        ? 'We recorded a reference value for every pair of observations.'
+        : 'We recorded a spectrometric reading for every pair of observations.'
+    if (shape === 'printed compound')
+      page.items[2].str = 'The final comparison used spec-trometry across the samples.'
+
+    const { units } = extractDocument({ pages: [page] })
+    const owner = units.find((unit) => unit.items.includes('1:3'))
+    if (shape === 'matching adjective') {
+      expect(owner?.source).toBe(
+        'Keywords: Water: quality — Air: aerosols — Measurement techniques: Spectrometry'
+      )
+      expect(owner?.items).toEqual(['1:3', '1:4', '1:5'])
+      expect(owner?.originalStrings).toEqual([label.str, body.str, tail.str])
+      expect(owner?.risks).not.toContain('ambiguous-line-hyphen')
+    } else {
+      expect(owner?.source).toBe('Keywords: ' + body.str)
+      expect(owner?.items).toEqual(['1:3', '1:4'])
+      expect(units.find((unit) => unit.items.includes('1:5'))?.source).toBe(tail.str)
+    }
+  }
+)
+
 function subscriptedLogarithmPage(): PdfLayoutPage {
   const row = (
     str: string,
@@ -26514,5 +26636,37 @@ test.each(['aligned', 'shifted continuation', 'unclosed comprehension', 'adjacen
     expect(owned).toEqual(shape === 'aligned' ? listing.map((_, i) => '1:' + (i + 1)).sort() : [])
     expect(result.units.find((unit) => unit.items.includes('1:0'))?.sourceOnly).toBeUndefined()
     expect(result.units.find((unit) => unit.items.includes('1:10'))?.sourceOnly).toBeUndefined()
+  }
+)
+
+test.each(['monospace', 'serif'])(
+  'retains a complete computer algebra call between its prose lead and result (%s)',
+  (fontFamily) => {
+    const command = 'sum(1/(j+4)^2,j=2..infinity);'
+    const body = (str: string, y: number, width: number) => ({
+      ...item(str, 68, y, width, 10),
+      fontName: 'Body',
+      fontFamily: 'serif',
+      fontVertical: false
+    })
+    const code = {
+      ...item(command, 68, 476, 175, 10),
+      fontName: 'Code',
+      fontFamily,
+      fontVertical: false
+    }
+    const { units } = extractDocument(
+      document([
+        page([
+          body('We can evaluate the series in Sage:', 452, 210),
+          code,
+          body('Outputs a numerical estimate after a few seconds.', 500, 240)
+        ])
+      ])
+    )
+    const original = units.find((unit) => unit.items.includes('1:1'))
+    expect(original?.source).toBe(command)
+    expect(original?.preserve).toBe(fontFamily === 'monospace' ? 'code' : undefined)
+    expect(original?.sourceOnly).toBe(fontFamily === 'monospace' ? true : undefined)
   }
 )

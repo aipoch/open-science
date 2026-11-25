@@ -25,6 +25,7 @@ import {
 import { executionEvidenceSchema, readExecutionEvidence } from './execution-evidence'
 import * as storageUsage from '../storage/usage'
 import { sha256 } from '../artifacts/provenance-canonical'
+import { packageDiskReserveBytes } from './capacity'
 
 const directories: string[] = []
 
@@ -200,7 +201,9 @@ it('rejects cumulative expansion before creating an entry that exceeds free spac
   }
   const archive = join(directory, 'expansion.science')
   await writeFile(archive, Buffer.concat([...chunks, Buffer.alloc(1024)]))
-  const capacity = vi.spyOn(storageUsage, 'availableBytes').mockResolvedValue(2 * 1024 ** 3 + 800)
+  const capacity = vi
+    .spyOn(storageUsage, 'availableBytes')
+    .mockResolvedValue(packageDiskReserveBytes(1024) + 1024 - 1)
   const service = new SessionPackageService({
     storageRoot: directory,
     getClient: async () => {

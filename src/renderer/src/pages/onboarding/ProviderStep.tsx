@@ -87,6 +87,10 @@ const ProviderStep = ({
   const { t: tSettings } = useTranslation()
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+  const activeModel = useSettingsStore((state) => state.activeModel)
+  const existingProvider = useSettingsStore((state) =>
+    state.providers.find((provider) => provider.id === state.activeProviderId)
+  )
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
   const addOnboardingKiloProvider = useSettingsStore((state) => state.addOnboardingKiloProvider)
@@ -131,6 +135,16 @@ const ProviderStep = ({
   const [validationOk, setValidationOk] = useState(false)
   const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   const activeFramework = useSettingsStore(selectActiveAgentFramework)
+  const canReuseExistingProvider =
+    !formValue.providerFormTouched &&
+    existingProvider !== undefined &&
+    existingProvider.lastValidatedAt !== undefined &&
+    existingProvider.lastValidationFailure === undefined &&
+    !existingProvider.needsKey &&
+    isProviderUsableByFramework(
+      { apiEndpoints: existingProvider.apiEndpoints, type: existingProvider.type },
+      { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+    )
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
   // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
@@ -221,6 +235,10 @@ const ProviderStep = ({
     setIsSkipping(true)
     setValidationMessage(undefined)
     try {
+      if (canReuseExistingProvider) {
+        advanceIfMounted()
+        return
+      }
       await addOnboardingKiloProvider()
       advanceIfMounted()
     } catch (error) {
@@ -462,7 +480,12 @@ const ProviderStep = ({
           )}
         </CardDescription>
         <p className="text-xs leading-5 text-muted-foreground">
-          {t('Skip to access free Kilo models.')}
+          {canReuseExistingProvider && existingProvider
+            ? t('Already configured: {{name}} ({{model}}). You can continue with this provider.', {
+                name: existingProvider.name,
+                model: existingProvider.model ?? activeModel ?? t('default model')
+              })
+            : t('Skip to access free Kilo models.')}
         </p>
       </CardHeader>
       <Separator className="bg-border-200" />
@@ -557,7 +580,7 @@ const ProviderStep = ({
           disabled={busy}
           aria-busy={isSkipping}
         >
-          {t('Skip')}
+          {canReuseExistingProvider ? t('Use configured provider') : t('Skip')}
         </Button>
         <Button
           type="button"

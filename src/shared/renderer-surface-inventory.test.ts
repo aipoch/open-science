@@ -47,9 +47,10 @@ const INSTALLED_BUT_NOT_DELIVERED_EVENTS = {} as const satisfies Record<
   true
 >
 
-// These functions exist on the real Electron preload API but the current AST generator does not
-// recognize their implementation shape or channel constants. T1b must make each omission explicit.
+// These Electron preload functions are intentionally desktop-only or use shapes the AST generator
+// does not recognize. T1b must make each omission explicit.
 const GENERATED_SOURCE_OMISSIONS = [
+  'acp.continueNotebookExecution',
   'markdownEdits.close',
   'markdownEdits.onReplacement',
   'markdownEdits.open',

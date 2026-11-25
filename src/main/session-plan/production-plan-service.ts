@@ -98,6 +98,14 @@ const createProductionPlanService = ({
                   plan: {
                     ...input.markPlanReview!.plan,
                     reviewFeedbackMessageId: message.id,
+                    ...(input.markPlanReview!.externalResponse
+                      ? {
+                          externalResponse: {
+                            ...input.markPlanReview!.externalResponse,
+                            promptMessageId: message.id
+                          }
+                        }
+                      : {}),
                     delivery: {
                       commandId: input.markPlanReview!.commandId,
                       kind: 'review-feedback' as const,

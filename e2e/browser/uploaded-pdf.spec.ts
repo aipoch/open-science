@@ -172,3 +172,146 @@ test('keeps analysis options visible for a cached singleton figure on desktop', 
   await page.getByRole('button', { name: 'Analyze again', exact: true }).click()
   await expect(page.getByRole('table', { name: 'Candidate table' })).toBeVisible()
 })
+
+test('previews a cached figure from its native link while staying at the passage', async ({
+  page
+}) => {
+  await page.goto('/uploaded-pdf.html?figure')
+  const link = page.locator('[data-pdf-native-links] a').first()
+  const reader = page.locator('[data-pdf-cursor-mode]').first()
+  await expect(link).toBeVisible()
+  await link.scrollIntoViewIfNeeded()
+  const start = await reader.evaluate((node) => node.scrollTop)
+  await link.click()
+  const caption = page.getByText('Figure 3. Observed results.', { exact: true })
+  await expect(caption).toBeVisible()
+  expect(await reader.evaluate((node) => node.scrollTop)).toBe(start)
+  await page.keyboard.press('Escape')
+  await expect(caption).toBeHidden()
+  expect(await reader.evaluate((node) => node.scrollTop)).toBe(start)
+  await link.focus()
+  await page.keyboard.press('Enter')
+  await expect(caption).toBeVisible()
+  await page.getByRole('button', { name: 'Show in PDF', exact: true }).click()
+  await expect(caption).toBeHidden()
+  await expect.poll(() => reader.evaluate((node) => node.scrollTop)).toBeGreaterThan(start)
+})
+
+test('indexes plain-text figure references without parsing pages until the first click', async ({
+  page
+}) => {
+  await page.goto('/uploaded-pdf.html')
+  const link = page.getByRole('link', { name: 'Figure 9', exact: true })
+  await expect(link).toHaveCount(1)
+  const requests = (): Promise<number[]> =>
+    page.evaluate(() =>
+      (
+        window as unknown as { uploadedPdfAudit: { requests: { page: number }[] } }
+      ).uploadedPdfAudit.requests.map((item) => item.page)
+    )
+  expect(await requests()).toEqual([])
+  await link.focus()
+  await page.keyboard.press('Enter')
+  const preview = page.getByRole('region', { name: 'Figure 9', exact: true })
+  await expect(preview.getByRole('img', { name: 'Page 2' })).toBeVisible()
+  expect(await requests()).toEqual([2])
+  await page.keyboard.press('Escape')
+  await expect(link).toBeFocused()
+  // The hit area leaves the text layer in charge of normal pointer selection.
+  const bounds = await link.boundingBox()
+  if (!bounds) throw new Error('Missing indexed link geometry')
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  await expect(preview).toBeVisible()
+  expect(await requests()).toEqual([2])
+})
+
+test('opens at the figure reference and lets the reader move and magnify the preview', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1050, height: 850 })
+  await page.goto('/uploaded-pdf.html')
+  const link = page.getByRole('link', { name: 'Figure 9', exact: true })
+  await expect(link).toBeVisible()
+  await link.scrollIntoViewIfNeeded()
+  const anchor = (await link.boundingBox())!
+  await page.mouse.click(anchor.x + anchor.width / 2, anchor.y + anchor.height / 2)
+  const card = page.getByRole('region', { name: 'Figure 9', exact: true })
+  await expect(card).toBeVisible()
+  const first = (await card.boundingBox())!
+  expect(Math.abs(first.y - anchor.y - anchor.height)).toBeLessThan(12)
+  const move = card.getByRole('button', { name: 'Move preview' })
+  const grip = (await move.boundingBox())!
+  await page.mouse.move(grip.x + 20, grip.y + 12)
+  await page.mouse.down()
+  await page.mouse.move(grip.x + 110, grip.y + 32, { steps: 5 })
+  await page.mouse.up()
+  const moved = (await card.boundingBox())!
+  expect(moved.x - first.x).toBeCloseTo(90, 0)
+  const img = card.getByRole('img')
+  const small = (await img.boundingBox())!
+  await img.dblclick({ position: { x: small.width * 0.4, y: small.height * 0.6 } })
+  await expect(card.getByText('200%')).toBeVisible()
+  await expect
+    .poll(async () => Math.round((await img.boundingBox())!.height / small.height))
+    .toBe(2)
+  const v = img.locator('../..')
+  const y = await v.evaluate((el) => el.scrollTop)
+  const box = (await v.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 40, { steps: 5 })
+  await page.mouse.up()
+  expect(await v.evaluate((el) => el.scrollTop)).toBeGreaterThan(y)
+  await page.setViewportSize({ width: 460, height: 640 })
+  await expect
+    .poll(async () => {
+      const r = (await card.boundingBox())!
+      return r.x + r.width
+    })
+    .toBeLessThanOrEqual(460)
+  await card.getByRole('button', { name: 'Reset zoom' }).click()
+  await expect(card.getByText('100%')).toBeVisible()
+  const close = card.getByRole('button', { name: 'Close', exact: true })
+  await expect(close).toHaveText('')
+  await close.click()
+  await expect(card).toBeHidden()
+})
+
+test('opens the matching table crop from plain text and pinches only the preview', async ({
+  page,
+  context
+}) => {
+  await page.goto('/uploaded-pdf.html?figure')
+  const link = page.getByRole('link', { name: 'Tab. III', exact: true })
+  await link.focus()
+  await page.keyboard.press('Enter')
+  const card = page.getByRole('region', { name: 'Tab. III', exact: true })
+  await expect(card.getByText('Table 3. Trial outcomes.')).toBeVisible()
+  const img = card.getByRole('img')
+  const box = (await img.boundingBox())!
+  const x = box.x + box.width / 2,
+    y = box.y + box.height / 2
+  const session = await context.newCDPSession(page)
+  await session.send('Input.dispatchMouseEvent', {
+    type: 'mouseWheel',
+    x,
+    y,
+    deltaX: 0,
+    deltaY: -70,
+    modifiers: 2
+  })
+  await expect
+    .poll(() => card.locator('footer span').first().innerText().then(parseFloat))
+    .toBeGreaterThan(150)
+  await card.getByRole('button', { name: 'Reset zoom' }).click()
+  await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 })
+  const points = (spread: number): { x: number; y: number; id: number }[] => [
+    { x: x - spread, y, id: 1 },
+    { x: x + spread, y, id: 2 }
+  ]
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(25) })
+  await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(50) })
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await expect(card.getByText('200%')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.visualViewport?.scale)).toBe(1)
+})

@@ -48,7 +48,10 @@ const replaceNavigationParams = (
 
 // Opens already-hydrated targets during recovery, but retains unresolved initial parameters until a
 // complete Session scan can distinguish a missing target from one that was temporarily omitted.
-const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadiness): void => {
+const useDeepLinkNavigation = (
+  { isHydrated, isReady }: DeepLinkNavigationReadiness,
+  openRuntimeSettings: () => void
+): void => {
   const isProjectsLoaded = useProjectStore((state) => state.isLoaded)
   const projectLoadError = useProjectStore((state) => state.loadError)
   const initialParams = useRef<DeepLinkParams | undefined>(
@@ -56,6 +59,15 @@ const useDeepLinkNavigation = ({ isHydrated, isReady }: DeepLinkNavigationReadin
   )
   const initialized = useRef(!isWebLocation())
   const [isInitialized, setIsInitialized] = useState(() => !isWebLocation())
+
+  useEffect(() => {
+    if (!isWebLocation()) return
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('settings') !== 'runtimes') return
+    url.searchParams.delete('settings')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+    openRuntimeSettings()
+  }, [openRuntimeSettings])
 
   // While an initial target is deferred by partial recovery, an explicit in-app or notification
   // navigation takes control. Drop the stale target so later loading cannot override that choice.

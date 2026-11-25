@@ -20,6 +20,7 @@ import { SessionPersistenceCoordinator } from '../session-persistence/coordinato
 import type { CodexAuthStatus } from './codex-auth'
 import type { OpenScienceClient as PublicClient } from '../../../packages/open-science/index'
 import type { TaskAgentPort } from '../tasks/task-runner'
+import type { LoadSessionRequest } from '../../shared/session-persistence'
 // @ts-expect-error The JavaScript CLI command intentionally has no declaration file.
 import { codexLoginCommand } from '../../../packages/open-science/codex-login.mjs'
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
@@ -134,6 +135,11 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
             return projects.list()
           case 'sessions:load-all':
             return sessions.loadAll()
+          case 'sessions:load-one': {
+            const { projectId, sessionId } = args[0] as LoadSessionRequest
+            const owner = projectId ?? (await sessions.locateSession(sessionId))?.projectId
+            return owner ? sessions.loadSession(owner, sessionId) : undefined
+          }
           case 'sessions:save-session':
             return coordinator.saveSession(
               args[0] as Parameters<typeof coordinator.saveSession>[0],

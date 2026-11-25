@@ -114,7 +114,13 @@ class SessionPlanDeliveryOwner {
   ): Promise<boolean> {
     const nextPlan = { ...plan }
     if (delivery) nextPlan.delivery = delivery
-    else Reflect.deleteProperty(nextPlan, 'delivery')
+    else {
+      Reflect.deleteProperty(nextPlan, 'delivery')
+      const response = nextPlan.externalResponse
+      if (response && response.commandId === plan.delivery?.commandId) {
+        nextPlan.externalResponse = { ...response, handedOff: true }
+      }
+    }
     try {
       await this.sessions.patchSessionRuntimeContext({
         projectId,

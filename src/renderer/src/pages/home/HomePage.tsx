@@ -328,14 +328,50 @@ const HomePage = ({
     return startedAtBySession
   }, [computeJobsById])
 
+  const { projectSummaries, busyProjectIds, activityBySession } = useMemo(() => {
+    const byProject = new Map<string, ProjectSummary>()
+    for (const project of activeProjects) {
+      byProject.set(project.id, {
+        project,
+        sessionCount: 0,
+        runningCount: 0,
+        waitingCount: 0,
+        lastActivityAt: project.updatedAt
+      })
+    }
+    const busyProjectIds = new Set<string>()
+    const activityBySession = new Map<ChatSession, HomeSessionActivity>()
+    for (const session of sessions) {
+      const summary = byProject.get(session.projectId)
+      if (!summary) continue
+      const activity = getHomeSessionActivity(
+        session,
+        activeComputeStartedAtBySession.has(session.id),
+        pendingInteractions.get(session.id)
+      )
+      // Even a pending or archived session can block project archival while work is active.
+      if (activity) busyProjectIds.add(summary.project.id)
+      if (session.isPending || session.archivedAt !== undefined) continue
+      summary.sessionCount++
+      summary.lastActivityAt = Math.max(summary.lastActivityAt, session.updatedAt)
+      if (activity) {
+        activityBySession.set(session, activity)
+        if (activity === 'running') summary.runningCount++
+        else if (isSessionWaitReason(activity)) summary.waitingCount++
+      }
+    }
+    const projectSummaries = [...byProject.values()].sort(
+      (left, right) =>
+        Number(Boolean(right.project.pinned)) - Number(Boolean(left.project.pinned)) ||
+        right.lastActivityAt - left.lastActivityAt
+    )
+    return { projectSummaries, busyProjectIds, activityBySession }
+  }, [activeComputeStartedAtBySession, activeProjects, pendingInteractions, sessions])
+
   const sessionUpdates = useMemo<HomeSessionUpdate[]>(() => {
     const updates = persistedSessions.flatMap<HomeSessionUpdate>((session) => {
       const computeStartedAt = activeComputeStartedAtBySession.get(session.id)
-      const activity = getHomeSessionActivity(
-        session,
-        computeStartedAt !== undefined,
-        pendingInteractions.get(session.id)
-      )
+      const activity = activityBySession.get(session)
 
       if (activity) {
         return [
@@ -369,7 +405,7 @@ const HomePage = ({
     )
   }, [
     activeComputeStartedAtBySession,
-    pendingInteractions,
+    activityBySession,
     persistedSessions,
     unreadCompletedBySession
   ])
@@ -386,47 +422,6 @@ const HomePage = ({
     [activeProjects]
   )
 
-  // Per-project session and activity counts, ordered by most recent activity.
-  const projectSummaries = useMemo<ProjectSummary[]>(() => {
-    const summaries = activeProjects.map((project) => {
-      const projectSessions = persistedSessions.filter(
-        (session) => session.projectId === project.id
-      )
-      const lastActivityAt = projectSessions.reduce(
-        (latest, session) => Math.max(latest, session.updatedAt),
-        project.updatedAt
-      )
-
-      return {
-        project,
-        sessionCount: projectSessions.length,
-        runningCount: projectSessions.filter(
-          (session) =>
-            getHomeSessionActivity(
-              session,
-              activeComputeStartedAtBySession.has(session.id),
-              pendingInteractions.get(session.id)
-            ) === 'running'
-        ).length,
-        waitingCount: projectSessions.filter((session) => {
-          const activity = getHomeSessionActivity(
-            session,
-            activeComputeStartedAtBySession.has(session.id),
-            pendingInteractions.get(session.id)
-          )
-          return activity !== undefined && isSessionWaitReason(activity)
-        }).length,
-        lastActivityAt
-      }
-    })
-
-    return summaries.sort(
-      (left, right) =>
-        Number(Boolean(right.project.pinned)) - Number(Boolean(left.project.pinned)) ||
-        right.lastActivityAt - left.lastActivityAt
-    )
-  }, [activeComputeStartedAtBySession, activeProjects, pendingInteractions, persistedSessions])
-
   const recentSessions = useRecentSessions(
     persistedSessions,
     isProjectsLoaded && !loadError && hasCompleteSessionCatalog
@@ -439,7 +434,6 @@ const HomePage = ({
 
   useEffect(() => {
     let cancelled = false
-    const activeProjectIds = new Set(activeProjects.map((project) => project.id))
     const requestVersions = new Map<string, number>()
 
     if (!showArtifactCounts) return
@@ -475,7 +469,7 @@ const HomePage = ({
       cancelled = true
       removeChangedListener()
     }
-  }, [activeProjects, showArtifactCounts])
+  }, [activeProjectIds, activeProjects, showArtifactCounts])
 
   const deleteTargetSessionCount = useMemo(
     () =>
@@ -518,15 +512,7 @@ const HomePage = ({
     !isProjectArchiveBlockedByCatalogRecovery(project.id) &&
     canDeleteProjects &&
     project.archivedAt === undefined &&
-    !sessions.some(
-      (session) =>
-        session.projectId === project.id &&
-        getHomeSessionActivity(
-          session,
-          activeComputeStartedAtBySession.has(session.id),
-          pendingInteractions.get(session.id)
-        ) !== undefined
-    )
+    !busyProjectIds.has(project.id)
 
   const archiveUnavailableReason = (project: Project): string | undefined => {
     if (!canDeleteProjects) return t('Retry project recovery before archiving.')

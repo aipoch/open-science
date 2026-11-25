@@ -54,6 +54,22 @@ const goToLocationStep = async (): Promise<void> => {
 }
 
 describe('OnboardingWizard flow', () => {
+  it('opens targeted Notebook settings and returns to the same onboarding step', async () => {
+    readyBuiltInState()
+    useSettingsStore.getState().openSettingsToPanel('runtimes')
+
+    await renderWizard()
+
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(dialog?.querySelector('[data-testid="runtimes-panel"]') ?? null).not.toBeNull()
+    await act(async () => {
+      dialog?.querySelector<HTMLButtonElement>('button[aria-label="Close"]')?.click()
+    })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(currentSection('Prepare environment')).not.toBeNull()
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+  })
+
   it('uses a single-column layout before the desktop breakpoint', async () => {
     readyBuiltInState()
 

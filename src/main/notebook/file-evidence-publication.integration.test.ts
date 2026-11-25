@@ -733,6 +733,58 @@ describe.skipIf(process.platform !== 'win32')('file-evidence Windows atomic publ
     }
   })
 
+  it('uses the Windows native realpath implementation for pool-addressed lanes', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'evidence-native-realpath-'))
+    const root = join(fixture, 'execution-file-evidence', 'project-1', 'session-1')
+    const pool = join(fixture, 'execution-file-evidence', 'project-1', 'blobs')
+    await mkdir(root, { recursive: true })
+    await mkdir(pool)
+    try {
+      const metadata = await stat(root)
+      const blobMetadata = await stat(pool)
+      const result = await runChild(
+        process.execPath,
+        [workerPath],
+        root,
+        JSON.stringify({
+          operation: 'begin',
+          expectedRootIdentity: metadata,
+          blobRoot: pool,
+          expectedBlobRootIdentity: blobMetadata,
+          blobStorageKeyPrefix: 'execution-file-evidence/project-1/blobs',
+          poolAddressed: true,
+          activityId: 'native-realpath-run',
+          activityKind: 'notebook-run',
+          evidenceId: 'native-realpath-evidence',
+          receiptName: 'receipt-native-realpath-run.json',
+          stagingName: 'staging-native-realpath-run',
+          finalName: 'activity-native-realpath-run',
+          storageKeyPrefix: 'execution-file-evidence/project-1/session-1',
+          maxEvidenceBytes: 65536,
+          maxActivityBytes: 65536,
+          maxGenerationBytes: 1024,
+          availableBytes: 1048576,
+          diskReserveBytes: 0,
+          rootKinds: ['data'],
+          rootsAvailable: true,
+          reasonCodes: [],
+          readPaths: [],
+          changes: [],
+          scientificOutputs: [],
+          initialViewState: 'complete',
+          initialFiles: []
+        })
+      )
+      expect(result.code, result.stdout + result.stderr).toBe(0)
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: true,
+        capturedInitialGenerations: 0
+      })
+    } finally {
+      await rm(fixture, { recursive: true, force: true })
+    }
+  })
+
   it('publishes, settles, reconciles and cleans a long resident root with no binding between requests', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'evidence-resident-'))
     const root = join(fixture, 'long-'.repeat(30), 'lane-'.repeat(30))

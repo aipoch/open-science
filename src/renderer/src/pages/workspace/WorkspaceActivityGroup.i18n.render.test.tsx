@@ -777,7 +777,7 @@ describe('WorkspaceActivityGroup i18n', () => {
     expect(container.textContent).not.toContain('Command')
   })
 
-  it('lets the tool group collapse a figure that remains visible beside a collapsed tool row', async () => {
+  it('keeps notebook figures inside the expanded tool row', async () => {
     const activity = {
       id: 'activity-notebook-1',
       kind: 'tool' as const,
@@ -821,7 +821,7 @@ describe('WorkspaceActivityGroup i18n', () => {
           group={group}
           isExpanded={isExpanded}
           onToggleGroup={vi.fn()}
-          expansionOverrides={{}}
+          expansionOverrides={{ [activity.id]: isExpanded }}
           onToggleRow={vi.fn()}
           notebookRunsById={new Map([[run.runId, run]])}
         />
@@ -830,7 +830,7 @@ describe('WorkspaceActivityGroup i18n', () => {
 
     act(() => renderGroup(true))
 
-    expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
+    expect(container.querySelector('[data-testid="tool-details"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="notebook-tool-figure-button"]')).not.toBeNull()
     expect(container.textContent).toContain('1 figure · done')
 

@@ -921,6 +921,166 @@ async function proveNumberedStackedFractionOwners(
   return result
 }
 
+// PDF.js may expose the embedded Computer Modern root glyph as a Latin p.
+export function hasNativeEncodedRadicalMarker(content: Content): boolean {
+  return (
+    content.items.some((item) => 'str' in item && item.str === 'p') &&
+    content.items.some(
+      (item) => 'str' in item && /^\([1-9]\d{0,3}\)$/u.test(item.str) && item.hasEOL
+    )
+  )
+}
+
+async function proveNumberedEncodedRadicalOwners(
+  entries: Entry[],
+  anchors: Entry[],
+  box: (entry: Entry) => Box,
+  page: PDFPageProxy,
+  content: Content,
+  viewport: Viewport
+): Promise<Set<string>> {
+  const result = new Set<string>()
+  if (!hasNativeEncodedRadicalMarker(content)) return result
+  const inputKey = JSON.stringify(content)
+  for (const anchor of anchors) {
+    const h = anchor.item.height,
+      [, , , , x, y] = anchor.item.transform
+    if (
+      nativeDisplayNumber(anchor.item.str)?.roman ||
+      !anchor.owner.sourceOnly ||
+      anchor.owner.preserve !== 'formula' ||
+      anchor.owner.fragments[0].items.length !== 1
+    )
+      continue
+    const end = entries.indexOf(anchor)
+    let start = end
+    while (start > 0) {
+      const item = entries[start - 1].item
+      if (
+        Math.abs(item.transform[5] - y) > h ||
+        item.transform[4] + item.width > x - h ||
+        !nativeMathAtom(item, h)
+      )
+        break
+      start--
+    }
+    const math = entries.slice(start, end)
+    const rootIndex = math.findIndex(
+      ({ item }) => item.str === 'p' && item.transform[5] - y > h * 0.65
+    )
+    const root = math[rootIndex]
+    const radicand = math.slice(rootIndex + 1)
+    const equation = math
+      .map(({ item }, i) =>
+        i === rootIndex
+          ? '√'
+          : item.height < h * 0.85 && /^[a-z]+$/u.test(item.str)
+            ? '_'
+            : item.str.replaceAll(/\s/gu, '')
+      )
+      .join('')
+    if (
+      rootIndex < 2 ||
+      root.owner.preserve !== 'formula' ||
+      !root.owner.sourceOnly ||
+      !/^\p{L}_(?:[−-]_)?=√\(\p{L}_\)\d+\+\(\d+(?:\.\d+)?[·×]\p{L}_\)\d+$/u.test(equation) ||
+      math.some(({ item }, i) => {
+        const shift = item.transform[5] - y
+        const previous = math[i - 1]?.item
+        const gap = previous ? item.transform[4] - previous.transform[4] - previous.width : 0
+        return (
+          item.dir !== 'ltr' ||
+          item.width <= 0 ||
+          item.transform[0] <= 0 ||
+          item.transform[1] !== 0 ||
+          item.transform[2] !== 0 ||
+          item.transform[3] !== item.height ||
+          gap < -h * 0.02 ||
+          gap > h ||
+          (i === rootIndex
+            ? shift >= h || Math.abs(item.height - h) > h * 0.03
+            : item.height >= h * 0.85
+              ? Math.abs(shift) > h * 0.03
+              : gap > h * 0.25 ||
+                (/^\d+$/u.test(item.str)
+                  ? shift < h * 0.15 || shift > h * 0.45
+                  : shift > -h * 0.08 || shift < -h * 0.3))
+        )
+      })
+    )
+      continue
+
+    const packet = [...math, anchor],
+      indexes = new Set(packet.map(({ index }) => index))
+    const owners = [...new Set(packet.map(({ owner }) => owner))]
+    const bounds = union(packet.map(box))
+    if (
+      bounds.some((n) => !Number.isFinite(n)) ||
+      bounds[0] < 0 ||
+      bounds[1] < 0 ||
+      bounds[2] > viewport.width ||
+      bounds[3] > viewport.height ||
+      entries.some((entry) => !indexes.has(entry.index) && overlaps(box(entry), bounds)) ||
+      owners.some(
+        (owner) =>
+          owner.figure ||
+          owner.referenceBoundary ||
+          (owner.preserve && owner.preserve !== 'formula') ||
+          owner.fragments.some(
+            (f) =>
+              f.pageNumber !== anchor.owner.fragments[0].pageNumber ||
+              f.items.some((item) => !indexes.has(item.index))
+          )
+      )
+    )
+      continue
+
+    const scoped = { ...content, items: packet.map(({ item }) => item) }
+    if (!nativeReferenceFontWitnesses(page, scoped)) continue
+    const rootFont = page.commonObjs.get(root.item.fontName)
+    if (!/^(?:[A-Z]{6}\+)?CMEX10$/u.test(rootFont?.name ?? '') || rootFont.isSymbolicFont !== true)
+      continue
+    const identity = await nativeInkPageIdentity(page, scoped, viewport)
+    if (!identity) continue
+    const paints = await nativePaints(identity.operators, viewport)
+    const local = paints?.filter((paint) => overlaps(paint.bounds, bounds))
+    const roof = local?.[0]
+    const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    if (
+      !roof ||
+      local?.length !== 1 ||
+      !roof.horizontalRule ||
+      !roof.plainBlack ||
+      roof.kind !== OPS.stroke ||
+      roof.strokeWidth > h * 0.08 ||
+      Math.abs(roof.hull[0] - box(root)[2]) > h * 0.05 ||
+      Math.abs(viewport.height - roof.hull[1] - root.item.transform[5]) > h * 0.05 ||
+      Math.abs(roof.hull[2] - box(radicand.at(-1)!)[2]) > h * 0.08 ||
+      radicand.some((entry) => box(entry)[1] < roof.hull[1] - h * 0.02)
+    )
+      continue
+
+    const { fnArray, argsArray } = identity.operators
+    const glyphAt = fnArray.lastIndexOf(OPS.showText, roof.operator)
+    const fontAt = fnArray.lastIndexOf(OPS.setFont, glyphAt)
+    const glyphs = argsArray[glyphAt]?.[0]
+    if (
+      glyphAt < 0 ||
+      fontAt < 0 ||
+      argsArray[fontAt]?.[0] !== root.item.fontName ||
+      glyphs?.length !== 1 ||
+      glyphs[0]?.originalCharCode !== 112 ||
+      glyphs[0]?.unicode !== 'p' ||
+      glyphs[0]?.isInFont !== true ||
+      inputKey !== JSON.stringify(content) ||
+      identity.key !== (await nativeInkPageIdentity(page, scoped, viewport))?.key
+    )
+      continue
+    for (const owner of owners) if (!owner.sourceOnly && !owner.preserve) result.add(owner.id)
+  }
+  return result
+}
+
 /** Returns only complete existing owner IDs, never inferred text or geometry. */
 export async function nativeScopedDisplayOwners(
   units: readonly Unit[],
@@ -948,7 +1108,8 @@ export async function nativeScopedDisplayOwners(
       !(
         hasNativeDisplaySequence(content) ||
         hasNativeNestedIntegralMarker(content) ||
-        hasNativeStackedFractionMarker(content)
+        hasNativeStackedFractionMarker(content) ||
+        hasNativeEncodedRadicalMarker(content)
       )
     )
       return empty
@@ -999,6 +1160,14 @@ export async function nativeScopedDisplayOwners(
           e.owner.fragments.length === 1
       ),
       packets: { entries: Entry[]; owners: Unit[]; anchor: Entry }[] = []
+    const encodedRadicals = await proveNumberedEncodedRadicalOwners(
+      entries,
+      anchors,
+      box,
+      page,
+      content,
+      viewport
+    )
     if (
       !identity ||
       (!hasNativeDisplaySequence(content) && hasNativeStackedFractionMarker(content))
@@ -1011,6 +1180,7 @@ export async function nativeScopedDisplayOwners(
         content,
         viewport
       )
+      for (const id of encodedRadicals) scoped.add(id)
       if (hasNativeStackedFractionMarker(content))
         for (const id of await proveNumberedStackedFractionOwners(
           entries,
@@ -1029,7 +1199,13 @@ export async function nativeScopedDisplayOwners(
         ? scoped
         : empty
     }
-    if (!hasNativeDisplaySequence(content)) return empty
+    const current = (): boolean =>
+      sourceKey === JSON.stringify(inputUnits) &&
+      page.getOperatorList === operatorReader &&
+      page.commonObjs === objects &&
+      objects.get === objectReader &&
+      objects.has === objectHas
+    if (!hasNativeDisplaySequence(content)) return current() ? encodedRadicals : empty
 
     for (const anchor of anchors) {
       const h = anchor.item.height,
@@ -1087,7 +1263,7 @@ export async function nativeScopedDisplayOwners(
         continue
       packets.push({ entries: packet, owners: whole, anchor })
     }
-    if (!packets.length) return empty
+    if (!packets.length) return current() ? encodedRadicals : empty
     const selected = new Set(packets.flatMap((p) => p.entries.map((e) => e.index))),
       ink =
         (await nativeTextFreeClipInkRegions(
@@ -1118,7 +1294,7 @@ export async function nativeScopedDisplayOwners(
       objects.has !== objectHas ||
       identity.key !== (await nativeInkPageIdentity(page, inputContent, inputViewport))?.key
     )
-      return empty
+      return current() ? encodedRadicals : empty
     const inkBox = (index: number): Box => {
         const r = ink.get(index)!
         return [
@@ -1128,7 +1304,7 @@ export async function nativeScopedDisplayOwners(
           (r.y + r.height) * viewport.height
         ]
       },
-      result = new Set<string>()
+      result = encodedRadicals
     for (const packet of packets) {
       const selected = new Set(packet.entries.map((e) => e.index)),
         bounds = union(packet.entries.flatMap((e) => [box(e), inkBox(e.index)])),

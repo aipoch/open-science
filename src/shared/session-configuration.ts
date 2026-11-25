@@ -66,7 +66,10 @@ export const sessionConfigurationPatchSchema = z
   .strict()
 
 export const updateSessionConfigurationRequestSchema = sessionConfigurationPatchSchema
-  .extend({ expectedRevision: z.number().int().nonnegative() })
+  .extend({
+    expectedRevision: z.number().int().nonnegative(),
+    projectId: nonEmptyStringSchema.optional()
+  })
   .strict()
 
 export const projectSessionDefaultsPatchSchema = z

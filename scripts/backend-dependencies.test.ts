@@ -37,8 +37,10 @@ import {
 } from './backend-dependencies.mjs'
 
 it('stages dynamically loaded connector providers in the desktop backend', () => {
-  expect(desktopExternalClosure(process.cwd())).toContain('@aipoch/connector-builtins')
-  expect(desktopExternalClosure(process.cwd())).toContain('diff')
+  const external = desktopExternalClosure(process.cwd())
+  expect(external).toContain('@aipoch/connector-builtins')
+  expect(external).toContain('@modelcontextprotocol/sdk')
+  expect(external).toContain('diff')
 })
 
 it('bundles desktop JS while preserving incoming type references and ambient declarations', async () => {

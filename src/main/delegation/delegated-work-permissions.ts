@@ -6,6 +6,7 @@ import type {
   RootDelegatePermissionResponse
 } from './durable-delegated-work-contract'
 import { DurableDelegatedWorkError } from './durable-delegated-work-error'
+import type { TaskPermissionDecision } from '../acp/permission-broker'
 import type { DelegateExecutionEvent, RunningDelegateExecution } from './execution-port'
 
 type Permission = RootDelegatePermissionRequest & Readonly<{ execution: RunningDelegateExecution }>
@@ -41,6 +42,7 @@ class RootDelegatePermissionOwner {
       providerToolName: event.providerToolName,
       isMcp: event.isMcp,
       toolKind: event.toolKind,
+      taskBranchId: event.taskBranchId,
       riskScope: this.riskScope(event.options),
       options: event.options.map(({ optionId, name, kind, scope }) => ({
         optionId,
@@ -99,7 +101,8 @@ class RootDelegatePermissionOwner {
 
   async respond(
     session: DurableSnapshot['session'],
-    response: RootDelegatePermissionResponse
+    response: RootDelegatePermissionResponse,
+    decision?: TaskPermissionDecision
   ): Promise<void> {
     const snapshot = await this.records.snapshot()
     const child = sameSession(snapshot.session, session)
@@ -114,7 +117,8 @@ class RootDelegatePermissionOwner {
       !snapshot.originMessageIds.includes(child.originMessageId) ||
       !attempt ||
       attempt.id !== response.attemptId ||
-      attempt.status !== 'running'
+      attempt.status !== 'running' ||
+      (decision && (!permission.taskBranchId || child.messageBranchId !== permission.taskBranchId))
     ) {
       throw new DurableDelegatedWorkError(
         'conflict',
@@ -123,11 +127,32 @@ class RootDelegatePermissionOwner {
     }
     this.delete(key)
     try {
-      await permission.execution.respondToPermission({
+      const command = {
         requestId: response.requestId,
         ...(response.optionId ? { optionId: response.optionId } : {}),
-        ...(response.cancelled ? { cancelled: true } : {})
-      })
+        ...(response.cancelled ? { cancelled: true as const } : {})
+      }
+      if (decision) {
+        await permission.execution.respondToPermission(command, {
+          ...decision,
+          assertScope: async () => {
+            await decision.assertScope?.()
+            const latest = await this.records.snapshot()
+            const source = latest.records.find(({ frameId }) => frameId === response.frameId)
+            const current = source && currentAttempt(source)
+            if (
+              latest.rootBranchId !== snapshot.rootBranchId ||
+              source?.messageBranchId !== permission.taskBranchId ||
+              current?.id !== response.attemptId ||
+              current.status !== 'running'
+            )
+              throw new DurableDelegatedWorkError(
+                'conflict',
+                'The child permission Attempt changed.'
+              )
+          }
+        })
+      } else await permission.execution.respondToPermission(command)
     } catch (error) {
       const latest = (await this.records.snapshot()).records.find(
         (candidate) => candidate.frameId === response.frameId

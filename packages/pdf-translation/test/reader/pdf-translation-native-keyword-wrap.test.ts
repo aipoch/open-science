@@ -347,3 +347,72 @@ it.each([true, false])(
     expect(units.find(({ items }) => items.includes('1:6'))?.source).toBe('1. INTRODUCTION')
   }
 )
+
+it.each(['attested', 'unattested', 'misaligned', 'different category', 'hyphen attested'] as const)(
+  'joins a split word within hanging repeated keyword categories (%s)',
+  (evidence) => {
+    const lead = 'samples: group (AB1234) – samples: procedure — samples: early – samples: loca-'
+    const category = evidence === 'different category' ? 'records' : 'samples'
+    const tail = `tion – ${category}: distribution`
+    const witnesses: Partial<Record<typeof evidence, string>> = {
+      unattested: 'The placement of calibrated devices matches each record.',
+      'hyphen attested': 'Both location and loca-tion occur in the records.'
+    }
+    const witness = witnesses[evidence] ?? 'The location of calibrated devices matches each record.'
+    const items = [
+      item(witness, 84, 465, 405, 10, 'Body'),
+      item('Keywords:', 84, 403, 44.7, 10, 'Label', false),
+      item(' ', 128.7, 403, 3.8, 0, 'Label', false),
+      item(lead, 132.5, 403, 393, 10, 'Body'),
+      item(tail, evidence === 'misaligned' ? 139 : 132.7, 390.5, 121, 10, 'Body', false),
+      item('', 259, 362, 0, 0, 'Heading'),
+      item('1.', 259, 362, 7, 9, 'Heading', false),
+      item(' ', 266, 362, 6, 0, 'Heading', false),
+      item('INTRODUCTION', 272, 362, 81, 10, 'Body')
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }]
+    })
+    const head = units.find(({ items }) => items.includes('1:3'))
+    const end = units.find(({ items }) => items.includes('1:4'))
+    expect(head?.source).toBe(
+      'Keywords: ' + (evidence === 'attested' ? lead.slice(0, -1) + tail : lead)
+    )
+    expect(end === head).toBe(evidence === 'attested')
+    expect(head?.items).toEqual(evidence === 'attested' ? ['1:1', '1:3', '1:4'] : ['1:1', '1:3'])
+    expect(units.find(({ items }) => items.includes('1:6'))?.source).toBe('1. INTRODUCTION')
+  }
+)
+
+it.each(['hanging rail', 'different rail'] as const)(
+  'keeps a wrapped category number with its keyword phrase (%s)',
+  (rail) => {
+    const lead = 'forest surveys (281); controls (72); seasonal water samples'
+    const tail = '(123); river sampling (419); native seed banks (728)'
+    const body = 'Long records from the survey show substantial changes in these field sites.'
+    const joined = rail === 'hanging rail'
+    const items = [
+      item('Notes on Seasonal Surveys', 170, 680, 185, 14, 'Title'),
+      item('Keywords:', 90, 536, 52, 12, 'Label', false),
+      item(' ', 142, 536, 4, 0, 'Label', false),
+      item(lead, 146, 536, 376, 12, 'Body'),
+      item(tail, joined ? 147 : 151, 520, 340, 12, 'Body'),
+      item(body, 99, 470, 423, 12, 'Body')
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }],
+      pageCount: 1
+    })
+    const head = units.find((unit) => unit.items.includes('1:3'))
+    expect(head?.source).toBe(`Keywords: ${lead}${joined ? ' ' + tail : ''}`)
+    expect(units.find((unit) => unit.items.includes('1:4')) === head).toBe(joined)
+    expect(units.find((unit) => unit.items.includes('1:5'))?.source).toBe(body)
+    expect(units.flatMap((unit) => unit.items).toSorted()).toEqual([
+      '1:0',
+      '1:1',
+      '1:3',
+      '1:4',
+      '1:5'
+    ])
+  }
+)

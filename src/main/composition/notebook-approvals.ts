@@ -7,7 +7,8 @@ import type { PermissionProfileId } from '../../shared/permission-profiles'
 export function bindNotebookApprovals(
   notebook: Pick<NotebookRuntimeService, 'setExecutionApproval' | 'setRuntimeBindingApproval'>,
   runtimeForApproval: () =>
-    Pick<AcpRuntimeCoordinator, 'getState' | 'requestAppApproval'> | undefined,
+    | Pick<AcpRuntimeCoordinator, 'getState' | 'requestAppApproval' | 'pendingNotebookReviews'>
+    | undefined,
   readSessionProfile?: (
     projectId: string,
     sessionId: string
@@ -33,11 +34,14 @@ export function bindNotebookApprovals(
     // A user may attach the session and tighten its policy while disk is being read.
     return runtime().getState().permissionProfiles[request.sessionId]?.selectedProfile ?? saved
   }
-  notebook.setExecutionApproval(async (request) => {
-    if ((await profileFor(request)) === 'full') return true
-    if (request.permissionPrompts === 'none') return false
-    return runtime().requestAppApproval(request)
-  })
+  notebook.setExecutionApproval(
+    async (request) => {
+      if ((await profileFor(request)) === 'full') return true
+      if (request.permissionPrompts === 'none') return false
+      return runtime().requestAppApproval(request)
+    },
+    (sessionId) => runtimeForApproval()?.pendingNotebookReviews(sessionId) ?? []
+  )
   notebook.setRuntimeBindingApproval(async (request) => {
     const profile = await profileFor(request)
     if (profile === 'full' || (profile === 'auto' && request.defaultManagedFirstBinding))
