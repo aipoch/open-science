@@ -442,7 +442,7 @@ const mapCodexPermissionProfile = (
 ): PermissionProfileApplication => {
   const availableModeIds = modes?.availableModes.map((mode) => mode.id) ?? []
   // In ACP 2.6 'agent' selects a model-based reviewer. 'workspace-write' retains
-  // the host's interactive approvals. Older adapters only advertised 'agent'.
+  // the host's conservative review policy. Older adapters only advertised 'agent'.
   const modeId =
     profile === 'auto' && availableModeIds.includes('workspace-write')
       ? 'workspace-write'
@@ -472,7 +472,12 @@ const mapCodexPermissionProfile = (
       currentModeId: appliedModeId ?? modes?.currentModeId,
       availableModeIds,
       ...(profile === 'auto'
-        ? { autoReviewStrategy: available ? ('native' as const) : ('conservative' as const) }
+        ? {
+            autoReviewStrategy:
+              appliedModeId === CODEX_MODE_IDS.auto
+                ? ('native' as const)
+                : ('conservative' as const)
+          }
         : {}),
       fullAccessAvailable,
       ...(!available

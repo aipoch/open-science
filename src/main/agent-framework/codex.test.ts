@@ -1305,24 +1305,18 @@ describe('codexFramework', () => {
     ).toThrow(/not available: ask/i)
   })
 
-  it('uses conservative review when Codex does not advertise its native Auto mode', () => {
-    const framework = createCodexFramework()
-
-    expect(
-      framework.mapPermissionProfile('auto', {
-        currentModeId: 'agent-full-access',
-        availableModes: [
-          { id: 'read-only', name: 'Read only' },
-          { id: 'agent-full-access', name: 'Full access' }
-        ]
-      })
-    ).toMatchObject({
-      modeId: 'read-only',
-      state: {
-        effectiveProfile: 'auto',
-        currentModeId: 'read-only',
-        autoReviewStrategy: 'conservative'
-      }
+  it.each([
+    [['read-only', 'workspace-write', 'agent'], 'workspace-write', 'conservative'],
+    [['read-only', 'agent'], 'agent', 'native'],
+    [['read-only', 'agent-full-access'], 'read-only', 'conservative']
+  ] as const)('selects the Auto reviewer for advertised modes %j', (ids, modeId, strategy) => {
+    const modes = {
+      currentModeId: 'read-only',
+      availableModes: ids.map((id) => ({ id, name: id }))
+    }
+    expect(createCodexFramework().mapPermissionProfile('auto', modes)).toMatchObject({
+      modeId,
+      state: { effectiveProfile: 'auto', currentModeId: modeId, autoReviewStrategy: strategy }
     })
   })
 
