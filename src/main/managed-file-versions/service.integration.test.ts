@@ -438,6 +438,37 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     )
   })
 
+  it('quarantines blob authority when recovering an older cleaning row', async () => {
+    const fixture = await createFixture('artifact')
+    const version = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: fixture.versionIds[0] }
+    })
+    const contentBlobId = 'recovering-artifact-blob'
+    await client.contentBlob.create({
+      data: {
+        id: contentBlobId,
+        storageKey: version.contentStorageKey,
+        sizeBytes: version.sizeBytes,
+        checksum: version.checksum,
+        contentType: version.contentType,
+        state: 'available'
+      }
+    })
+    await client.artifactVersion.update({
+      where: { id: version.id },
+      data: { state: 'cleaning', contentBlobId }
+    })
+    const service = new ManagedFileVersionService({ storageRoot, getClient: async () => client })
+    const recovery = await service.recoverPendingWrites()
+    expect(recovery.failed).toBe(0)
+    expect(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: version.id } })
+    ).toMatchObject({ state: 'cleaned', contentBlobId: null })
+    expect(
+      await client.contentBlob.findUniqueOrThrow({ where: { id: contentBlobId } })
+    ).toMatchObject({ state: 'quarantined' })
+  })
+
   it('rejects cleanup while an artifact version is a provenance input', async () => {
     const fixture = await createFixture('artifact')
     await client.artifactVersionInput.create({

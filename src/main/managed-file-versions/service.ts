@@ -553,7 +553,10 @@ class ManagedFileVersionService {
   private async assertContentBlobCleanupAllowed(
     tx: Prisma.TransactionClient,
     source: ManagedFileSource,
-    version: ManagedFileVersionRecord
+    version: Pick<
+      ManagedFileVersionRecord,
+      'id' | 'contentBlobId' | 'contentStorageKey' | 'sizeBytes' | 'checksum'
+    >
   ): Promise<void> {
     const blobAtPath = await tx.contentBlob.findUnique({
       where: { storageKey: version.contentStorageKey }
@@ -596,6 +599,7 @@ class ManagedFileVersionService {
     version: Pick<
       ManagedFileVersionRecord,
       | 'id'
+      | 'contentBlobId'
       | 'contentStorageKey'
       | 'sizeBytes'
       | 'checksum'
@@ -607,6 +611,22 @@ class ManagedFileVersionService {
       | 'executionSnapshotChecksum'
     >
   ): Promise<void> {
+    const pending = await client.$transaction(async (tx) => {
+      const current =
+        source === 'artifact'
+          ? await tx.artifactVersion.findUnique({ where: { id: version.id } })
+          : await tx.uploadVersion.findUnique({ where: { id: version.id } })
+      if (!current || current.state !== 'cleaning') return false
+      // Recovery can encounter a cleaning row created before blob authority was quarantined.
+      await this.assertContentBlobCleanupAllowed(tx, source, current)
+      if (current.contentBlobId)
+        await tx.contentBlob.update({
+          where: { id: current.contentBlobId },
+          data: { state: 'quarantined' }
+        })
+      return true
+    })
+    if (!pending) return
     await this.versionFileOperator.removeImmutable(version.contentStorageKey, {
       sizeBytes: Number(version.sizeBytes),
       checksum: version.checksum
