@@ -46,15 +46,24 @@ Stage the approved `session.json` and `files/` into a fresh job directory before
 
 Passing `speech` to `generateResearchFilm` (or `ResearchVideoGenerationInput`) routes narration
 through an HTTP TTS endpoint instead of the local Kokoro model; omitting it keeps the existing
-local pipeline unchanged. Two wire shapes are supported: `audio-speech` (OpenAI-compatible
-`{ model, input, voice, response_format }` returning raw WAV bytes) and `chat-completions`
-(chat endpoint carrying the spoken text in an `assistant` message with `audio: { format, voice }`
-and base64 WAV in `choices[0].message.audio.data`, the Xiaomi MiMo TTS shape). The `voice` value
-is passed through verbatim, so provider voice IDs and base64 clone samples both work.
+local pipeline unchanged. Remote synthesis executes in the process that owns the generator —
+never in a speech worker — and every request goes through `createResearchVideoGenerator({ remoteFetch })`,
+so a host can inject its proxy-aware transport (defaulting to the platform fetch) and keep remote
+narration behind the host's network policy. Two wire shapes are supported: `audio-speech`
+(OpenAI-compatible `{ model, input, voice, response_format }` returning raw WAV bytes) and
+`chat-completions` (chat endpoint carrying the spoken text in an `assistant` message with
+`audio: { format, voice }` and base64 WAV in `choices[0].message.audio.data`, the Xiaomi MiMo TTS
+shape). The `voice` value is passed through verbatim, so provider voice IDs and base64 clone
+samples both work.
 
 ```ts
+const generate = createResearchVideoGenerator({
+  temporaryRoot,
+  remoteFetch: hostProxyAwareFetch // optional; defaults to the platform fetch
+})
 const result = await generateResearchFilm({
   /* ...same options as above... */
+  generate,
   speech: {
     kind: 'remote-http',
     style: 'chat-completions',
@@ -69,10 +78,11 @@ const result = await generateResearchFilm({
 Word-boundary alignment uses a deterministic character-proportional duration estimate that is a
 pure function of the probe text, so the shared narration probe cache stays coherent across lines
 and lanes and caption timing never triggers extra billed requests; exact prefix probing remains
-a local-engine advantage. The synthesizer identity covers the full endpoint (scheme, host, path
-and query) and hashes the voice while excluding the API key, so `timings.json` and narration
-checkpoint keys stay credential-free and never reuse retained audio across endpoint changes.
-Responses are read through a bounded stream with a hard byte cap before decoding. Endpoints
+a local-engine advantage. The synthesizer identity appends a SHA-256 fingerprint over the
+canonical tuple (style, full endpoint, model, voice), so slash-bearing values cannot collide and
+`timings.json` and narration checkpoint keys stay credential-free and never reuse retained audio
+across endpoint changes. Responses are read through a bounded stream with a hard byte cap, and
+every early rejection releases the response body, before decoding. Endpoints
 must return WAV (PCM 16/24/32-bit or IEEE float32); compressed audio is rejected with an
 actionable error. The host remains responsible for credentials, disclosure of narration text to
 the endpoint, rate limiting, and opt-in UI.

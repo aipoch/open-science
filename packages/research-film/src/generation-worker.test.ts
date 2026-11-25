@@ -4,7 +4,6 @@ const mocks = vi.hoisted(() => ({
   on: vi.fn(),
   post: vi.fn(),
   narrator: vi.fn(),
-  remote: vi.fn(),
   remoteIdentity: vi.fn(() => 'remote-http/identity'),
   workerData: {
     kind: 'speech',
@@ -21,7 +20,6 @@ vi.mock('node:worker_threads', () => ({
 }))
 vi.mock('./kokoro.js', () => ({ createKokoroNarrator: mocks.narrator }))
 vi.mock('./remote-speech.js', () => ({
-  createRemoteSpeechSynthesizer: mocks.remote,
   remoteSpeechIdentity: mocks.remoteIdentity
 }))
 vi.mock('./generation.js', () => ({ generateResearchVideoInWorker: vi.fn() }))
@@ -100,30 +98,6 @@ it('reports predictor failure to the owner instead of hanging the pending probe'
       code: 'ENOMEM'
     })
   )
-})
-
-it('creates the remote synthesizer instead of loading the local model when configured', async () => {
-  const speech = {
-    kind: 'remote-http',
-    style: 'chat-completions',
-    endpoint: 'https://api.example.com/v1/chat/completions',
-    model: 'mimo-v2.5-tts'
-  }
-  mocks.workerData = { ...mocks.workerData, speech }
-  const measureDuration = vi.fn(async () => 0.4),
-    synthesize = vi.fn()
-  mocks.remote.mockReturnValue({ measureDuration, synthesize })
-  await import('./generation-worker.js')
-  mocks.on.mock.calls[0][1]({ kind: 'measure-duration', lane: 0, text: 'Heat' })
-  await vi.waitFor(() =>
-    expect(mocks.post).toHaveBeenCalledExactlyOnceWith({
-      kind: 'speech-duration',
-      lane: 0,
-      duration: 0.4
-    })
-  )
-  expect(mocks.remote).toHaveBeenCalledExactlyOnceWith(speech)
-  expect(mocks.narrator).not.toHaveBeenCalled()
 })
 
 it('stamps the remote identity on generation-side synthesizer proxies', async () => {

@@ -164,30 +164,38 @@ const buildRequest = (
 
 /** Read a response body with a hard byte cap so a faulty endpoint cannot exhaust memory. */
 const readBounded = async (response: Response): Promise<Uint8Array> => {
+  const abandon = async (): Promise<void> => {
+    await response.body?.cancel().catch(() => undefined)
+  }
   const declared = response.headers.get('content-length')
-  if (declared !== null && Number(declared) > MAX_WAV_BYTES)
+  if (declared !== null && Number(declared) > MAX_WAV_BYTES) {
+    await abandon()
     throw new Error('Remote speech response is too large')
+  }
   const reader = response.body?.getReader()
   if (!reader) return new Uint8Array(await response.arrayBuffer())
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > MAX_WAV_BYTES) {
-      await reader.cancel().catch(() => undefined)
-      throw new Error('Remote speech response is too large')
+  try {
+    const chunks: Uint8Array[] = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > MAX_WAV_BYTES) throw new Error('Remote speech response is too large')
+      chunks.push(value)
     }
-    chunks.push(value)
+    const bytes = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    return bytes
+  } catch (error) {
+    // Release the socket on every early rejection, including mid-stream reads that fail.
+    await reader.cancel().catch(() => undefined)
+    throw error
   }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return bytes
 }
 
 /**
@@ -195,8 +203,14 @@ const readBounded = async (response: Response): Promise<Uint8Array> => {
  * estimate that is a pure function of the probe text, so the narration probe cache stays
  * coherent across lines and lanes and never issues extra billed requests; exact timing remains
  * the local engine's advantage.
+ *
+ * `deps.fetch` lets the host inject a proxy-aware transport (the default is the platform
+ * fetch), so remote requests follow the host's network policy instead of bypassing it.
  */
-export const createRemoteSpeechSynthesizer = (config: RemoteSpeechConfig): SpeechSynthesizer => {
+export const createRemoteSpeechSynthesizer = (
+  config: RemoteSpeechConfig,
+  deps?: { fetch?: typeof fetch }
+): SpeechSynthesizer => {
   // Validate eagerly so a malformed endpoint fails before any narration work starts.
   new URL(config.endpoint)
   if (
@@ -205,19 +219,21 @@ export const createRemoteSpeechSynthesizer = (config: RemoteSpeechConfig): Speec
   )
     throw new Error('Remote speech timeout must be a positive number of milliseconds')
   const identity = remoteSpeechIdentity(config)
-
   const request = async (text: string): Promise<{ samples: Float32Array; sampleRate: number }> => {
     const { url, init } = buildRequest(config, text)
     let response: Response
     try {
-      response = await fetch(url, init)
+      response = await (deps?.fetch ?? fetch)(url, init)
     } catch (error) {
       const name = (error as Error).name
       if (name === 'TimeoutError' || name === 'AbortError')
         throw new Error('Remote speech request timed out')
       throw new Error(`Remote speech request failed: ${(error as Error).message}`)
     }
-    if (!response.ok) throw new Error(`Remote speech request failed with HTTP ${response.status}`)
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined)
+      throw new Error(`Remote speech request failed with HTTP ${response.status}`)
+    }
     const bytes = await readBounded(response)
     if (config.style === 'chat-completions') {
       let payload: { choices?: { message?: { audio?: { data?: unknown } } }[] } | undefined

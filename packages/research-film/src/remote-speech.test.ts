@@ -280,6 +280,56 @@ describe('createRemoteSpeechSynthesizer', () => {
     await expect(synthesizer.synthesize('Hello')).rejects.toThrow(/too large/)
   })
 
+  it('cancels the response body on every early rejection', async () => {
+    // Wrap a Response so its stream's cancel() becomes observable from the test.
+    const observe = (response: Response): { response: Response; cancelled: () => boolean } => {
+      let cancelled = false
+      const original = response.body
+      const reader = original?.getReader()
+      const stream = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (!reader) {
+            controller.close()
+            return
+          }
+          const { done, value } = await reader.read()
+          if (done) controller.close()
+          else controller.enqueue(value)
+        },
+        cancel() {
+          cancelled = true
+        }
+      })
+      return {
+        response: new Response(stream, { status: response.status, headers: response.headers }),
+        cancelled: () => cancelled
+      }
+    }
+    const endpoint = 'https://api.example.com/v1/audio/speech'
+
+    // Oversized declared Content-Length: rejected before reading, body released.
+    const oversized = observe(
+      new Response(new Uint8Array(wav([0])), {
+        headers: { 'content-length': String(64 * 1024 * 1024 + 1) }
+      })
+    )
+    const oversizeSynth = createRemoteSpeechSynthesizer(
+      { kind: 'remote-http', style: 'audio-speech', endpoint, model: 'tts-1' },
+      { fetch: async () => oversized.response }
+    )
+    await expect(oversizeSynth.synthesize('Hello')).rejects.toThrow(/too large/)
+    expect(oversized.cancelled()).toBe(true)
+
+    // Non-OK response: rejected before reading, body released.
+    const denied = observe(new Response('forbidden', { status: 403 }))
+    const deniedSynth = createRemoteSpeechSynthesizer(
+      { kind: 'remote-http', style: 'audio-speech', endpoint, model: 'tts-1' },
+      { fetch: async () => denied.response }
+    )
+    await expect(deniedSynth.synthesize('Hello')).rejects.toThrow(/HTTP 403/)
+    expect(denied.cancelled()).toBe(true)
+  })
+
   it('rejects a streamed response that grows past the byte cap', async () => {
     const { url } = await listen((_request, response) => {
       response.writeHead(200, { 'content-type': 'audio/wav' })

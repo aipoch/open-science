@@ -9,6 +9,7 @@ import { availableParallelism, totalmem } from 'node:os'
 import type { VideoSpec } from './timeline.js'
 import type { SpeechSynthesizer } from './narration.js'
 import type { RemoteSpeechConfig } from './remote-speech.js'
+import { createRemoteSpeechSynthesizer } from './remote-speech.js'
 import {
   forkSpeechProcess,
   ownSpeechProcess,
@@ -41,8 +42,6 @@ export type ResearchVideoSpeechInput = {
   modelDirectory: string
   runtimeDirectory: string
   threads: number
-  /** When set, the speech worker calls this endpoint instead of loading the local model. */
-  speech?: RemoteSpeechConfig
 }
 export type ResearchVideoSpeechResult = {
   kind: 'speech-result'
@@ -94,6 +93,12 @@ export const createResearchVideoGenerator = (options: {
   temporaryRoot: string
   createWorker?: (options: WorkerOptions) => Worker
   createSpeechProcess?: () => ChildProcess
+  /**
+   * Transport for remote narration. Remote synthesis runs in this process (no speech worker
+   * is forked for it), so a host can inject its proxy-aware fetch here and keep outbound
+   * requests behind the host's network policy. Defaults to the platform fetch.
+   */
+  remoteFetch?: typeof fetch
 }): ResearchVideoGenerate & { assertReady: () => void } => {
   const { temporaryRoot } = options
   const createWorker =
@@ -111,6 +116,11 @@ export const createResearchVideoGenerator = (options: {
     onProgress?: (progress: ResearchVideoStep) => void
   ): Promise<ResearchVideoGenerationResult> => {
     signal.throwIfAborted()
+    // Remote synthesis runs in this (host-owned) process so the injected transport governs
+    // every request; fail fast on a malformed config before allocating scratch space.
+    const remote = input.speech
+      ? createRemoteSpeechSynthesizer(input.speech, { fetch: options.remoteFetch })
+      : undefined
     const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'research-video-'))
     let worker: Worker | undefined
     let stopping = false
@@ -221,6 +231,33 @@ export const createResearchVideoGenerator = (options: {
               )
                 throw new Error('Invalid speech worker lane')
               armIdleDeadline('narration preparation')
+              if (remote) {
+                void (async () => {
+                  if (value.kind === 'measure-duration' && remote.measureDuration) {
+                    const duration = await remote.measureDuration(value.text)
+                    if (stopping || signal.aborted) return
+                    armIdleDeadline('narration preparation')
+                    worker!.postMessage({ kind: 'speech-duration', lane: value.lane, duration })
+                    return
+                  }
+                  const audio = await remote.synthesize(value.text)
+                  if (stopping || signal.aborted) return
+                  armIdleDeadline('narration preparation')
+                  if (value.kind === 'measure-duration')
+                    worker!.postMessage({
+                      kind: 'speech-duration',
+                      lane: value.lane,
+                      duration: audio.samples.length / audio.sampleRate
+                    })
+                  else
+                    worker!.postMessage({ kind: 'speech-result', lane: value.lane, audio }, [
+                      audio.samples.buffer as ArrayBuffer
+                    ])
+                })().catch((error) => {
+                  if (!stopping) reject(new ResearchVideoWorkerError(error, 'speech', value.lane))
+                })
+                return
+              }
               speech ??= ownSpeechProcess(
                 (options.createSpeechProcess ?? forkSpeechProcess)(),
                 (reply) => {
@@ -242,8 +279,7 @@ export const createResearchVideoGenerator = (options: {
                   threads: Math.max(
                     1,
                     Math.floor(Math.min(4, availableParallelism()) / speechConcurrency)
-                  ),
-                  ...(input.speech ? { speech: input.speech } : {})
+                  )
                 }
               })
             } catch (error) {

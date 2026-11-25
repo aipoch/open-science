@@ -443,11 +443,10 @@ it('routes scalar probes without PCM and transfers owned audio buffers to the ge
   }
 })
 
-it('forwards the remote speech configuration with every speech worker request', async () => {
+it('serves remote speech in-process through the injected transport without forking a speech process', async () => {
   const root = await mkdtemp(join(tmpdir(), 'film-remote-speech-'))
   const worker = stubWorker()
-  const child = stubChild()
-  child.kill.mockImplementation(() => child.emit('exit', null, 'SIGKILL'))
+  const createSpeechProcess = vi.fn()
   const controller = new AbortController()
   const speech = {
     kind: 'remote-http' as const,
@@ -456,12 +455,26 @@ it('forwards the remote speech configuration with every speech worker request', 
     model: 'tts-1',
     apiKey: 'secret'
   }
+  // Minimal mono 16-bit 24 kHz WAV with one silent frame.
+  const wav = Buffer.alloc(46)
+  wav.write('RIFF', 0)
+  wav.writeUInt32LE(38, 4)
+  wav.write('WAVEfmt ', 8)
+  wav.writeUInt32LE(16, 16)
+  wav.writeUInt16LE(1, 20)
+  wav.writeUInt16LE(1, 22)
+  wav.writeUInt32LE(24000, 24)
+  wav.writeUInt32LE(48000, 28)
+  wav.writeUInt16LE(2, 32)
+  wav.writeUInt16LE(16, 34)
+  wav.write('data', 36)
+  wav.writeUInt32LE(2, 40)
+  const remoteFetch = vi.fn(async () => new Response(new Uint8Array(wav)))
   try {
-    const entered = Promise.withResolvers<void>()
-    child.send.mockImplementation(() => entered.resolve())
     const generate = createResearchVideoGenerator({
       temporaryRoot: root,
-      createSpeechProcess: () => child as unknown as ChildProcess,
+      createSpeechProcess,
+      remoteFetch: remoteFetch as unknown as typeof fetch,
       createWorker: () => {
         queueMicrotask(() => worker.emit('message', { kind: 'synthesize', lane: 0, text: 'one' }))
         return worker as unknown as Worker
@@ -478,16 +491,21 @@ it('forwards the remote speech configuration with every speech worker request', 
       },
       controller.signal
     ).catch((error) => error)
-    await entered.promise
-    expect(child.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'synthesize',
-        input: expect.objectContaining({ kind: 'speech', speech })
-      }),
-      expect.any(Function)
+    // The transport ran in this process: it received the endpoint and decoded WAV audio.
+    await vi.waitFor(() =>
+      expect(remoteFetch).toHaveBeenCalledWith(
+        'https://api.example.com/v1/audio/speech',
+        expect.objectContaining({ method: 'POST' })
+      )
     )
-    controller.abort(new Error('finished forwarding check'))
-    expect(await result).toMatchObject({ message: 'finished forwarding check' })
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'speech-result', lane: 0 }),
+      expect.any(Array)
+    )
+    // Remote synthesis never reaches the speech child process.
+    expect(createSpeechProcess).not.toHaveBeenCalled()
+    controller.abort(new Error('finished remote serving check'))
+    expect(await result).toMatchObject({ message: 'finished remote serving check' })
     expect(await readdir(root)).toEqual([])
   } finally {
     controller.abort()

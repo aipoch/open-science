@@ -8,7 +8,7 @@ import {
   type ResearchVideoWorkerMessage
 } from './generation.js'
 import { createKokoroNarrator } from './kokoro.js'
-import { createRemoteSpeechSynthesizer, remoteSpeechIdentity } from './remote-speech.js'
+import { remoteSpeechIdentity } from './remote-speech.js'
 import type { SpeechSynthesizer } from './narration.js'
 const send = (message: ResearchVideoWorkerMessage): void => {
   if (message.kind === 'speech-result')
@@ -41,11 +41,7 @@ const fail = (error: unknown): void => {
 }
 const input = workerData as ResearchVideoWorkerInput | ResearchVideoSpeechInput
 if ('kind' in input && input.kind === 'speech') {
-  const remote = input.speech
-  // Deferred so an invalid remote configuration reports through the normal failure reply.
-  const narrator = remote
-    ? Promise.resolve().then(() => createRemoteSpeechSynthesizer(remote))
-    : createKokoroNarrator(input.modelDirectory, input.runtimeDirectory, input.threads)
+  const narrator = createKokoroNarrator(input.modelDirectory, input.runtimeDirectory, input.threads)
   void narrator.catch(fail)
   parentPort?.on(
     'message',
