@@ -100,7 +100,7 @@ describe('incompatibilityReason', () => {
   it('localizes the frame while keeping route paths and names verbatim', () => {
     const reason = incompatibilityReason(
       { apiEndpoints: ['chat-completions'], type: 'custom', name: 'OpenAI Gateway' },
-      'Claude Code',
+      { id: 'claude-code', displayName: 'Claude Code' },
       ['messages'],
       i18next.getFixedT('zh-Hans')
     )
