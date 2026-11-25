@@ -136,11 +136,7 @@ export const ProviderKindIcon = ({
 
   if (kindKey === 'official:anthropic') {
     return (
-      <AnthropicMono
-        size={20}
-        className={cn('size-5 shrink-0 text-foreground', className)}
-        aria-hidden="true"
-      />
+      <AnthropicMono size={20} className={cn('text-foreground', iconClass)} aria-hidden="true" />
     )
   }
 
