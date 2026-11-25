@@ -258,6 +258,46 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
     ).toBe('second\n')
   })
 
+  it('rejects cleanup while an artifact version is a provenance input', async () => {
+    const fixture = await createFixture('artifact')
+    await client.artifactVersionInput.create({
+      data: {
+        id: 'input-v1',
+        artifactVersionId: fixture.versionIds[1],
+        ordinal: 0,
+        inputFileVersionId: fixture.versionIds[0],
+        sourceKind: 'artifact-version',
+        sourceFileId: fixture.fileId,
+        sourceArtifactVersionId: fixture.versionIds[0],
+        sourceVersionNumber: 1,
+        sourceProjectId: 'project-1',
+        sourceSessionId: 'session-1',
+        filename: 'README.md',
+        sizeBytes: 10,
+        checksum: 'a'.repeat(64),
+        storageKey: 'artifacts/project-1/session-1/artifact-file-1/versions/artifact-v1/content',
+        strongestAssociation: 'captured-version'
+      }
+    })
+
+    await expect(
+      new ManagedFileVersionService({
+        storageRoot,
+        getClient: async () => client,
+        versionFileOperator: new NodeVersionFileOperator({ storageRoot })
+      }).deleteVersions({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        versionIds: [fixture.versionIds[0]]
+      })
+    ).rejects.toMatchObject({ code: 'VERSION_IN_USE' })
+    expect(
+      (await client.artifactVersion.findUniqueOrThrow({ where: { id: fixture.versionIds[0] } }))
+        .state
+    ).toBe('finalized')
+  })
+
   it.each([
     ['artifact', true],
     ['upload', true],

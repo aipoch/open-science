@@ -88,6 +88,7 @@ type ManagedFileVersionErrorCode =
   | ManagedTextEditUnavailableReason
   | 'VERSION_NOT_FOUND'
   | 'VERSION_NOT_IN_FILE'
+  | 'VERSION_IN_USE'
   | 'FILE_DELETED'
   | 'FILE_NOT_FOUND'
   | 'PROJECT_NOT_WRITABLE'

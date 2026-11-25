@@ -501,6 +501,21 @@ class ManagedFileVersionService {
           (request.source === 'artifact' && !isManagedVisibleArtifactVersion(version))
         )
           operationError('VERSION_NOT_FOUND', 'Version is not available for cleanup.')
+        const inputReference = await tx.artifactVersionInput.findFirst({
+          where: {
+            sourceKind: request.source === 'artifact' ? 'artifact-version' : 'upload-version',
+            OR:
+              request.source === 'artifact'
+                ? [{ inputFileVersionId: id }, { sourceArtifactVersionId: id }]
+                : [{ inputFileVersionId: id }, { sourceUploadVersionId: id }]
+          },
+          select: { id: true }
+        })
+        if (inputReference)
+          operationError(
+            'VERSION_IN_USE',
+            'This version is still referenced by artifact provenance and cannot be cleaned up.'
+          )
         selected.push(version)
       }
       // Keep durable tombstones so version numbers and provenance references remain stable.
