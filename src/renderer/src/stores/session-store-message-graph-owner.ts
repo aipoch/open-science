@@ -76,7 +76,7 @@ export const createSessionMessageGraphOwner = <
     promptMessageId,
     update,
     contextReset,
-    preparationId
+    preparation
   ) => {
     let prepared: { runtimeSegmentId?: string } | undefined
     set((state) => {
@@ -92,9 +92,9 @@ export const createSessionMessageGraphOwner = <
           return session
         }
 
-        const previousSegment = session.conversationGraph?.runtimeSegments
-          .filter((segment) => segment.agentFrameId === session.conversationGraph?.activeFrameId)
-          .at(-1)
+        const previousSegment = session.conversationGraph?.runtimeSegments.findLast(
+          (segment) => segment.agentFrameId === session.conversationGraph?.activeFrameId
+        )
         const now = Math.max(
           Date.now(),
           (session.runtimeTranscriptLastRun?.startedAt ?? 0) + 1,
@@ -108,7 +108,17 @@ export const createSessionMessageGraphOwner = <
           providerContinuityToken:
             update === undefined ? session.providerContinuityToken : update.providerContinuityToken
         }
-        const isRetryingPreparedContext = contextReset && session.pendingHistoryReplay !== undefined
+        // A terminal projection can open a segment locally without registering it in Main.
+        // Only the preparation receipt can confirm that a pending replay may reuse that segment.
+        const durableGraph = preparation?.authority.conversationGraph
+        const durableSegment = durableGraph?.runtimeSegments.findLast(
+          (segment) => segment.agentFrameId === durableGraph.activeFrameId
+        )
+        const canReuseSegment =
+          preparation?.authority.pendingHistoryReplay !== undefined &&
+          previousSegment !== undefined &&
+          previousSegment.id === durableSegment?.id &&
+          previousSegment.agentFrameId === durableSegment.agentFrameId
         const conversationGraph = contextReset
           ? synchronizeSessionGraph(
               withProvider,
@@ -117,7 +127,7 @@ export const createSessionMessageGraphOwner = <
               withProvider.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
               withProvider.agentBackendId,
               withProvider.agentModel,
-              !isRetryingPreparedContext
+              !canReuseSegment
             )
           : withProvider.conversationGraph
         const runtimeSegmentId = conversationGraph?.runtimeSegments
@@ -150,7 +160,7 @@ export const createSessionMessageGraphOwner = <
         before,
         sessions.find((session) => session.id === sessionId),
         'resume-run',
-        preparationId
+        preparation?.id
       )
       return { sessions } as Partial<State>
     })

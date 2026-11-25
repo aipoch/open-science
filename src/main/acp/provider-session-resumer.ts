@@ -1,3 +1,4 @@
+import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { freshSessionAttachment } from './session-agent-target'
 import { HARNESS_OWNER } from '../harness-acp/config'
 import type { AcpSpecialistResolutionContext } from './runtime-contract'
@@ -181,6 +182,7 @@ export class AcpProviderSessionResumer {
             providerSessionId: attachment.providerSessionId,
             cwd: input.cwd,
             mcpServers: input.mcpServers,
+            ...(backend.session.model ? { sessionModel: backend.session.model } : {}),
             ...(input.skillRuntimeAllowlist
               ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist }
               : {})
@@ -507,6 +509,11 @@ export class AcpProviderSessionResumer {
         const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
         const projectId = request.projectId?.trim() || this.deps.defaultProjectId
         const backend = this.deps.currentBackend()
+        if (requiresTaskRunTracing(request)) {
+          await assertTaskRunTracingReady(backend.framework.id, connection)
+          cancellationSignal.throwIfAborted()
+          this.deps.assertCurrentConnection(connection)
+        }
         if (
           backend.framework.id === 'codex' &&
           backend.session.options?.openScienceSkillRuntime &&
@@ -687,6 +694,12 @@ export class AcpProviderSessionResumer {
     const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()
+    if (requiresTaskRunTracing(request)) {
+      await assertTaskRunTracingReady(backend.framework.id, connection)
+      cancellationSignal.throwIfAborted()
+      this.deps.assertCurrentConnection(connection)
+      identity.assertCurrent()
+    }
     if (request.specialistBindingPending === true || freshSessionAttachment in request) {
       if (compatibleOnly) {
         throw new Error('ACP capability reconfiguration requires a compatible provider resume.')

@@ -453,6 +453,31 @@ describe('validate: provider dispatch', () => {
     })
   })
 
+  it('distinguishes a bridge connection failure from an upstream HTTP 502', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error('net::ERR_CONNECTION_RESET'))
+      .mockResolvedValueOnce(
+        new Response('Bad Gateway', {
+          status: 502,
+          headers: { 'x-open-science-provider-failure': 'connection' }
+        })
+      )
+    const probe = (): ReturnType<typeof validateProvider> =>
+      validateProvider(
+        {
+          type: 'custom',
+          apiEndpoints: ['chat-completions'],
+          baseUrl: 'https://g/v1',
+          key: 'k',
+          model: 'm'
+        },
+        { fetchImpl, requireBridgeToolCall: true }
+      )
+    expect(await probe()).toMatchObject({ ok: false, category: 'network' })
+    expect(await probe()).toMatchObject({ ok: false, category: 'server-error', status: 502 })
+  })
+
   it('requires an actual function call from a Chat Completions bridge provider', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(chatSseResponse())
 

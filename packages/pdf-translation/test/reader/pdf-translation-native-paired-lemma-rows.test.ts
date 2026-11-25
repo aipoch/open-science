@@ -3,6 +3,7 @@ import { it } from 'vitest'
 import { groupPdfTranslationPages, type PdfLayoutTextItem } from '../../src/reader/layout.js'
 
 const styles = {
+  bold: [10.9091, 10.9091, 0.71, -0.194],
   italic: [10.9091, 10.9091, 0.694, -0.194],
   roman: [11.12728, 10.9091, 0.689, -0.194],
   operator: [10.9091, 10.9091, 0.75, -0.194],
@@ -118,4 +119,41 @@ it('retains the linked prose spanning unequal math gaps only with the paired mea
   }
   assert.equal(sourceOnly(false), true)
   assert.equal(sourceOnly(true), false)
+})
+
+it('joins a short paragraph tail before a separately styled statement and proof', () => {
+  const rows: (RowItem | null)[] = [
+    ['The boundary of', 30, 560, 75, 'body'],
+    ['𝑋', 108, 560, 7, 'operator'],
+    ['contains the marked points, since the missing vertices of', 118, 560, 245, 'body'],
+    ['𝑌', 366, 560, 7, 'operator'],
+    null,
+    ['fit in', 30, 547, 22, 'body'],
+    ['𝑋', 55, 547, 7, 'operator'],
+    ['.', 62, 547, 2.5, 'body'],
+    null,
+    ['Lemma 2.', 30, 527, 45, 'bold'],
+    ['The boundary is closed whenever the marked edges form a cycle.', 79, 527, 252, 'italic'],
+    null,
+    ['Proof.', 30, 500, 25, 'italic'],
+    ['The marked edges form a closed cycle.', 59, 500, 198, 'body'],
+    null
+  ]
+  const items = rows.map((run) => (run ? native(run) : end))
+  const { units } = groupPdfTranslationPages({
+    pageCount: 1,
+    pages: [{ page: 1, width: 396, height: 600, rotation: 0, items }]
+  })
+  assert.ok(units.every((unit) => !unit.sourceOnly))
+  assert.deepEqual(
+    units.map(({ source, items }) => [source, items]),
+    [
+      [
+        'The boundary of 𝑋 contains the marked points, since the missing vertices of 𝑌 fit in 𝑋.',
+        ['1:0', '1:1', '1:2', '1:3', '1:5', '1:6', '1:7']
+      ],
+      ['Lemma 2. The boundary is closed whenever the marked edges form a cycle.', ['1:9', '1:10']],
+      ['Proof. The marked edges form a closed cycle.', ['1:12', '1:13']]
+    ]
+  )
 })

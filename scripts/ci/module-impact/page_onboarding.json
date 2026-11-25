@@ -11,6 +11,7 @@
     "src/renderer/src/pages/onboarding/NotebookStep.tsx",
     "src/renderer/src/pages/onboarding/OnboardingEntry.render.test.tsx",
     "src/renderer/src/pages/onboarding/OnboardingEntry.tsx",
+    "src/renderer/src/pages/onboarding/OnboardingErrorNotice.tsx",
     "src/renderer/src/pages/onboarding/OnboardingWelcome.render.test.tsx",
     "src/renderer/src/pages/onboarding/OnboardingWizard.regressions.test.tsx",
     "src/renderer/src/pages/onboarding/OnboardingWizard.render.test.tsx",

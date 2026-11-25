@@ -1566,10 +1566,10 @@ describe('App startup routing', () => {
 
     await render()
 
-    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith({
-      isHydrated: false,
-      isReady: false
-    })
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(
+      { isHydrated: false, isReady: false },
+      expect.any(Function)
+    )
   })
 
   it('allows navigation and target-validated deletion after a partial session load', async () => {
@@ -1585,10 +1585,10 @@ describe('App startup routing', () => {
     expect(mocks.lifecycleSync).toHaveBeenCalledWith({
       isSessionPersistenceHydrated: true
     })
-    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith({
-      isHydrated: true,
-      isReady: false
-    })
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(
+      { isHydrated: true, isReady: false },
+      expect.any(Function)
+    )
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
     ).toBe('true')

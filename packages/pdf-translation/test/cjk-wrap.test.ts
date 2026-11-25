@@ -18,6 +18,55 @@ const existingEnds = (text: string): number[] => {
   if (!ends.includes(text.length)) ends.push(text.length)
   return ends
 }
+
+it.each([true, false])(
+  'bounds horizontal condensation of a complete prose row: %s',
+  async (fits) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.TimesRoman),
+      page = pdf.addPage([380, 200]),
+      registry = new TestCallerRegistry(),
+      caller = registry.acquire({ leaseId: 'prose-width', surface: 'electron' }),
+      writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs')),
+      source = 'Independent reviewers verified all the measurements.',
+      translation = '研究人员在实验结束后逐项记录了测量结果，并复核了各组数据的变化趋势。',
+      width = fits ? 248 : 210,
+      rect = { x: 25 / 380, y: 42 / 200, width: width / 380, height: 11 / 200 }
+    page.drawText(source, { font, size: 9, x: 25, y: 150 })
+    page.drawText('Neighbor', { font, size: 9, x: 280, y: 150 })
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const result = await writer.generateDetailed(
+        {
+          id: 'prose-width',
+          data: await pdf.save(),
+          preserveUnsupported: true,
+          pages: [{ width: 380, height: 200 }],
+          units: [{ source, translation, fragments: [{ pageNumber: 1, rect }] }]
+        },
+        caller.lease
+      )
+      expect(result?.layoutFailures.map(({ code }) => code)).toEqual(fits ? [] : ['overflow'])
+      task = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+      const items = (await (await (await task.promise).getPage(1)).getTextContent()).items.filter(
+        (item) => 'str' in item
+      )
+      const row = items.find(({ str }) => str === (fits ? translation : source))
+      expect(row).toBeDefined()
+      expect(items.find(({ str }) => str === 'Neighbor')?.transform.slice(4)).toEqual([280, 150])
+      if (fits) {
+        expect(row!.transform[0]).toBeLessThan(8)
+        expect(row!.transform[3]).toBeCloseTo(8)
+        expect(row!.transform[4] + row!.width).toBeLessThanOrEqual(25 + width + 0.01)
+      }
+    } finally {
+      await task?.destroy()
+      caller.release()
+      registry.dispose()
+    }
+  }
+)
+
 it.each(['第23节', '第23節', '第6.1节', '第E.2节', '第G．4．2節', '第 23 节'])(
   'keeps a complete CJK section marker together with independent UTF-16 offsets: %s',
   (marker) => {
@@ -648,3 +697,22 @@ it.each([0, 0.126])(
     }
   }
 )
+
+it.each([' ', ' '])('keeps a nanometre value and its unit together (%j)', (space) => {
+  const measurement = `123${space}nm`
+  const text = `读数为 ${measurement}，保留原单位。`
+  const start = text.indexOf(measurement)
+  const stop = start + measurement.length
+  const ends = pdfTranslationLineEnds(text)
+  expect(ends.filter((end) => end > start && end < stop)).toEqual([])
+  expect(ends).toContain(text.length)
+})
+
+it.each(['2', '²'])('keeps a negative quadratic exponential on one line (%s)', (power) => {
+  const term = `exp(−0.002t${power})`
+  const text = `初值为 ${term}，其余条件保持不变。`
+  const start = text.indexOf(term)
+  const ends = pdfTranslationLineEnds(text)
+  expect(ends.filter((end) => end > start && end < start + term.length)).toEqual([])
+  expect(ends).toContain(text.length)
+})

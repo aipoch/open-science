@@ -100,12 +100,15 @@ const settlementText = (items: readonly SettlementItem[], remaining: number): st
     remaining === 0
       ? 'All watched Subagent Attempts have settled.'
       : `${remaining} watched Subagent Attempt${remaining === 1 ? ' remains' : 's remain'} running.`
+  const selectors = items.map(({ frameId, attemptId }) => ({ frameId, attemptId }))
   return [
     'Delegated work settlement update (application-owned context, not a user message).',
     'The following Subagent Attempts newly settled; settled does not imply success:',
     ...lines,
     summary,
-    'Use the exact Frame/Attempt identities if you choose to collect results. Decide whether to inspect evidence, handle failures, continue waiting, or update the user.'
+    `Read the exact results without waiting in repl_execute: return await host.collect(${JSON.stringify(selectors)}, { timeoutSeconds: 0 })`,
+    'Do not use Notebook background_run or host.agents.switch for Subagent Attempts.',
+    'If collect reports awaiting_user, tell the user the existing child question needs an answer and end this turn. After an answer resumes a child, use await host.children() to find its current Attempt.'
   ].join('\n')
 }
 

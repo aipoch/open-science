@@ -53,18 +53,17 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-### 💡 AIPOCH Open-Science v1.3.3 — Novedades
+### 💡 AIPOCH Open-Science v1.3.4 — Novedades
 
-_21 de noviembre de 2026_
+_22 de noviembre de 2026_
 
-- **Actualizaciones automáticas**: En macOS, una actualización elegible puede instalarse al salir de la aplicación; en Windows y Linux, puede prepararse una actualización para el próximo inicio mientras trabaja; las descargas en segundo plano requieren una red sin restricciones y espacio de almacenamiento, y la vía manual sigue disponible.
-- **Agente integrado de forma predeterminada**: Los proyectos y sesiones nuevos comienzan con el Agente integrado de Open-Science en todas partes, incluidas las instalaciones limpias del CLI y del SDK; los entornos de ejecución de agentes externos se instalan bajo demanda solo cuando usted los elige.
-- **Una aplicación más ligera**: La versión instalada del escritorio es más pequeña en macOS y Windows, y el entorno de ejecución de npm sin conexión incluido está compilado para Node 22 en lugar de incluir más de mil archivos sueltos de paquetes.
-- **Edición de imágenes unificada**: Las instrucciones de edición viven en el compositor de la conversación, y las acciones al pasar el cursor o con el teclado permiten editar desde cualquier vista previa con navegación de versiones en todo momento.
-- **Los fallos se explican solos**: Los fallos de solicitud, carga, importación y Notebook ahora indican lo que ocurrió realmente, y las ejecuciones detenidas se distinguen del trabajo que nunca respondió.
-- **Atajos de Ajustes restaurados**: Los Skills, Specialists y Connectors vuelven a Ajustes, cada uno abre su categoría y regresa al punto donde estaba.
+- **Vea dentro del Agente integrado**: Los proyectos pueden activar el rastreo del Agente, que exporta trazas correlacionadas de turnos, solicitudes de modelo y ejecuciones de herramientas a un receptor OTLP/HTTP alojado por usted, con el nivel de detalle de captura que usted elija.
+- **Actualizaciones de Windows, sin bloqueos**: Una actualización dentro de la aplicación ya no se detiene cuando el Agente integrado está en ejecución, y las actualizaciones estables de Windows se aplican de nuevo como deltas compactos del instalador.
+- **Los historiales largos de Notebook siguen siendo rápidos**: Iniciar y finalizar ejecuciones, seleccionar resultados y abrir vistas previas ya no releen todo el historial.
+- **Lecturas de memoria en las que puede confiar**: El resumen de Compute ahora coincide con Monitor de Actividad en macOS y muestra la memoria confirmada respecto a su límite en Windows.
+- **Esfuerzos de razonamiento de CodeBuddy**: El selector de esfuerzo ahora solo ofrece los niveles que el modelo CodeBuddy seleccionado realmente admite.
 
-[Notas completas v1.3.3](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
+[Notas completas v1.3.4](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
 
 <a id="share-your-research"></a>
 

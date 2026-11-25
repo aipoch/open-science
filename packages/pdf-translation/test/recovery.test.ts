@@ -412,6 +412,8 @@ it.each([
   ['Polarisation Controller', '偏振控制器'],
   ['Polarization Controller', '偏振控制器'],
   ['Date Range', '日期范围'],
+  ['Scan Number', '扫描编号'],
+  ['Scan Count', '扫描次数'],
   ['Planet Star Mass Ratio', '行星与恒星的质量比'],
   ['Chl Range', 'Chl 范围'],
   ['COMMUTATIVE ALGEBRA', '交换代数']
@@ -425,6 +427,7 @@ it.each([
   ['Input Sequence NimbusNet', '输入序列'],
   ['Physical Validity Foundation', '物理有效性基金会'],
   ['Date Range Research', '日期范围研究'],
+  ['Scan Count Foundation', '扫描次数基金会'],
   ['Mass Ratio Research', '质量比研究所'],
   ['Polarization Controller Institute', '偏振控制器研究所']
 ])('keeps names containing ordinary label words protected: %s', (source, target) => {
@@ -453,6 +456,24 @@ it('rejects a translated standalone proper name', () => {
   expect(pdfTranslationDropsStandaloneProperName('High Risk Research', '高风险研究')).toBe(true)
   expect(pdfTranslationDropsStandaloneProperName('Open Access Institute', '开放获取研究所')).toBe(
     true
+  )
+})
+
+it('accepts a rubric criterion translation and preserves a containing organization name', () => {
+  const criterion = 'Algebraic Procedures'
+  const translation = '代数步骤'
+  expect(pdfTranslationDropsStandaloneProperName(criterion, translation)).toBe(false)
+  expect(pdfTranslationDropsStandaloneProperName(`${criterion} Institute`, '代数步骤研究所')).toBe(
+    true
+  )
+  const checkpoint = {
+    ...saved,
+    sources: [criterion],
+    translations: [translation],
+    translatedSourceIndices: [0]
+  }
+  expect(reconcilePdfTranslationCheckpoint(checkpoint, saved.fingerprint, [criterion])).toEqual(
+    checkpoint
   )
 })
 
@@ -882,6 +903,9 @@ it.each([
   ['Ethical Considerations', '伦理考量'],
   ['COMPUTATION DETAILS', '计算细节'],
   ['TARGET SIMULATIONS', '靶材模拟'],
+  ['BRIGHTNESS SIMULATION', '亮度模拟'],
+  ['SKY PREDICTIONS', '天空预测'],
+  ['FUTURE PLANS', '后续计划'],
   ['A.1 Ethics Statement', 'A.1 伦理声明'],
   ['A.2 Open Science Statement', 'A.2 开放科学声明'],
   ['3.1 Training Details', '3.1 训练细节'],
@@ -898,7 +922,8 @@ it.each([
 it.each([
   ['A.1 Ethics Statement', 'A.1 伦理 Statement'],
   ['Open Science Statement', 'Open Science 声明'],
-  ['Training Details', '训练 Details']
+  ['Training Details', '训练 Details'],
+  ['SKY PREDICTIONS', '天空 Predictions']
 ])('rejects an untranslated word within a known complete heading: %s', (source, target) => {
   expect(pdfTranslationCopiesEnglishProse(source, target, 'Chinese')).toBe(true)
 })
@@ -913,6 +938,9 @@ it.each([
   ['Funding Information Foundation', '资助信息基金会'],
   ['Ablation Study Foundation', '消融研究基金会'],
   ['Outlook Research Institute', '展望研究所'],
+  ['Future Plans Foundation', '未来规划基金会'],
+  ['Brightness Simulation Lab', '亮度模拟实验室'],
+  ['Sky Predictions Foundation', '天空预测基金会'],
   ['EthicsStatement', '伦理声明'],
   ['OpenScience', '开放科学'],
   ['ABC Ethics Statement', 'ABC 伦理声明'],

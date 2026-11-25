@@ -121,6 +121,7 @@ export function desktopBackendDependencies(dependencies, metafiles, allowed = ne
 // locates them by path for another process. Everything else is bundled. The closure is
 // computed so a package that stays on disk never depends on one that was bundled.
 const desktopExternalRoots = [
+  '@modelcontextprotocol/sdk',
   // Connector providers are resolved by subpath at runtime, so esbuild cannot record these
   // dynamic requires in its external import graph. Keep the published package staged.
   '@aipoch/connector-builtins',

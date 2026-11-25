@@ -92,16 +92,19 @@ export async function stageResearchVideoSessionImages(
       const artifact = artifacts.get(id)
       if (artifact?.name) visible.set(artifact.name, artifact)
     }
+    let rewritten = ''
+    let offset = 0
     for (const match of message.md.matchAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g)) {
       signal.throwIfAborted()
       const name = match[2].replace(/^files\//, '')
+      rewritten += message.md.slice(offset, match.index)
+      offset = match.index + match[0].length
+      if (!/\.(png|jpe?g|webp|svg)$/i.test(name)) {
+        rewritten += match[1]
+        continue
+      }
       const artifact = visible.get(name)
-      if (
-        name !== basename(name) ||
-        !/\.(png|jpe?g|webp|svg)$/i.test(name) ||
-        !artifact ||
-        artifact.kind !== 'managed-file'
-      )
+      if (name !== basename(name) || !artifact || artifact.kind !== 'managed-file')
         throw new Error(`Research image is not an available managed Artifact: ${name}`)
       let staged = copied.get(artifact.id)
       if (!staged) {
@@ -122,8 +125,9 @@ export async function stageResearchVideoSessionImages(
         }
         copied.set(artifact.id, staged)
       }
-      message.md = message.md.replaceAll(match[0], `![${match[1]}](files/${staged})`)
+      rewritten += `![${match[1]}](files/${staged})`
     }
+    message.md = rewritten + message.md.slice(offset)
   }
   return result
 }

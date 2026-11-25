@@ -149,6 +149,7 @@ const notebookLocalRpcRequestSchemas = {
     })
     .transform((request) => ({ ...request, hostname: '' })),
   state: notebookSessionRequestSchema.extend({
+    runIds: z.array(z.string().min(1).max(256)).length(1).optional(),
     historyLimit: z.number().int().min(1).max(NOTEBOOK_STATE_HISTORY_PAGE_LIMIT).optional()
   }),
   restart: z.union([

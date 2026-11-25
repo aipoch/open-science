@@ -1,13 +1,89 @@
 import { deflateSync } from 'node:zlib'
-import { PDFDocument, PDFHexString, PDFName, StandardFonts, rgb } from 'pdf-lib'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import { expect, it } from 'vitest'
+import { PDFDocument, PDFHexString, PDFName, StandardFonts, rgb, type PDFRef } from 'pdf-lib'
+import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { expect, it, onTestFinished } from 'vitest'
 import { PdfTranslationWriter } from '../src/writer.js'
 import type { PdfTranslationPdfRequest } from '../src/contracts.js'
 import { TestCallerRegistry } from './support/callers.js'
 import { resolve } from './paths.js'
 import { createCanvas } from '@napi-rs/canvas'
 import { verifyPdfPreservation } from './support/pdf-translation-preservation.js'
+
+it.each([false, true])(
+  'keeps images in a resource dictionary shared with other pages (incremental=%s)',
+  async (incremental) => {
+    const pdf = await PDFDocument.create()
+    const font = await pdf.embedFont(StandardFonts.Helvetica)
+    const image = (pixels: number[]): PDFRef =>
+      pdf.context.register(
+        pdf.context.flateStream(Uint8Array.from(pixels), {
+          Type: 'XObject',
+          Subtype: 'Image',
+          ColorSpace: 'DeviceRGB',
+          BitsPerComponent: 8,
+          Width: 1,
+          Height: 1
+        })
+      )
+    const images = pdf.context.register(
+      pdf.context.obj({ Warm: image([200, 70, 30]), Cool: image([40, 80, 180]) })
+    )
+    const fonts = pdf.context.register(pdf.context.obj({ Body: font.ref }))
+    const resources = pdf.context.register(
+      pdf.context.obj({ Font: fonts, XObject: images, ProcSet: ['PDF', 'Text', 'ImageC'] })
+    )
+    const sources = ['First paragraph.', 'Second paragraph.', 'Third paragraph.', 'Last paragraph.']
+    const translations = ['第一段。', '第二段。', '第三段。', '最后一段。']
+    for (const [index, source] of sources.entries()) {
+      const page = pdf.addPage([400, 500])
+      const raster = [null, 'Warm', 'Cool'][index]
+      const content =
+        `BT /Body 12 Tf 40 440 Td (${source}) Tj ET\n` +
+        (raster ? `q 47 0 0 29 280 340 cm /${raster} Do Q\n` : '')
+      page.node.set(PDFName.of('Contents'), pdf.context.register(pdf.context.flateStream(content)))
+      page.node.set(PDFName.of('Resources'), resources)
+    }
+    pdf.catalog.Pages().set(PDFName.of('Resources'), resources)
+    const data = await pdf.save({ useObjectStreams: false })
+    const units = sources.map((source, index) => ({
+      source,
+      translation: translations[index],
+      fragments: [{ pageNumber: index + 1, rect: { x: 0.09, y: 0.09, width: 0.82, height: 0.06 } }]
+    }))
+    const registry = new TestCallerRegistry()
+    const caller = registry.acquire({ leaseId: 'shared-raster-resources', surface: 'electron' })
+    onTestFinished(() => registry.dispose())
+    const output = await new PdfTranslationWriter(() =>
+      resolve('resources/worker.mjs')
+    ).generateDetailed(
+      {
+        id: 'shared-raster-resources',
+        data,
+        pages: sources.map(() => ({ width: 400, height: 500 })),
+        units,
+        preserveUnsupported: true,
+        ...(incremental ? { incremental: { data, pageNumbers: [1, 2, 3] } } : {})
+      },
+      caller.lease
+    )
+    expect(output?.layoutFailures).toEqual([])
+
+    const before = getDocument({ data: data.slice() })
+    const after = getDocument({ data: output!.data.slice() })
+    onTestFinished(() => before.destroy())
+    onTestFinished(() => after.destroy())
+    const [original, written] = await Promise.all([before.promise, after.promise])
+    const preservation = await verifyPdfPreservation(original, written, units, [], [2, 3])
+    expect(preservation.pages.slice(1, 3).map((page) => page.pixels?.changedPixels)).toEqual([0, 0])
+    for (const [index, translation] of translations.slice(1, 3).entries()) {
+      const page = await written.getPage(index + 2)
+      expect((await page.getOperatorList()).fnArray).toContain(OPS.paintImageXObject)
+      expect((await page.getTextContent()).items).toContainEqual(
+        expect.objectContaining({ str: translation })
+      )
+    }
+  }
+)
 
 it.each([false, true])(
   'preserves unmatched regions alongside translated paragraphs (incremental=%s)',

@@ -61,7 +61,7 @@ const bookmark: Bookmark = {
 }
 // Native boundaries only; all hit testing, controls, menus and styles are production code.
 window.api = {
-  platform: 'darwin',
+  platform: params.get('platform') ?? 'darwin',
   projectFiles: { onChanged: () => noop },
   github: { getStars: async () => 1000 },
   compute: { deletionStatus: async () => ({ blockedByJobs: false }) },
@@ -166,7 +166,23 @@ useComputeStore.setState({
 export function Fixture(): React.JSX.Element {
   const [actions, setActions] = useState<string[]>([])
   const [openSessionActionsId, setOpenSessionActionsId] = useState<string | null>(null)
+  const [showSessionShortcuts, setShowSessionShortcuts] = useState(false)
   const record = (action: string): void => setActions((current) => [...current, action])
+  useEffect(() => {
+    const modifierKey = window.api?.platform === 'darwin' ? 'Meta' : 'Control'
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === modifierKey) setShowSessionShortcuts(true)
+    }
+    const onKeyUp = (event: KeyboardEvent): void => {
+      if (event.key === modifierKey) setShowSessionShortcuts(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [])
   useEffect(() => {
     useNavigationStore.setState({
       openProject: () => {
@@ -237,6 +253,7 @@ export function Fixture(): React.JSX.Element {
             isMobileOpen
             projectName="P1"
             sessions={[session]}
+            activeFilmSessionIds={params.has('film') ? new Set([session.id]) : undefined}
             activeSessionId={undefined}
             now={now}
             canCreateConversation
@@ -248,6 +265,7 @@ export function Fixture(): React.JSX.Element {
             onNewConversation={noop}
             onOpenFiles={noop}
             onOpenSession={() => record('session')}
+            showSessionShortcuts={showSessionShortcuts}
             openSessionActionsId={openSessionActionsId}
             onSessionActionsOpenChange={(sessionId, open) => {
               setOpenSessionActionsId((current) =>

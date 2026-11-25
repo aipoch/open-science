@@ -32,6 +32,7 @@ import { createPreviewResourceKey } from '../preview-resource-key'
 import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
 import * as pdfTranslations from '@aipoch/pdf-translation/reader'
 import { PdfGenerationError } from '@aipoch/pdf-translation/contracts'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import { type PdfTranslationCheckpoint } from '../../../../../../shared/pdf-translation'
 
 import { renderPdfNativeLinks } from './pdf-native-links'
@@ -44,6 +45,11 @@ vi.mock('@aipoch/pdf-translation/reader', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@aipoch/pdf-translation/reader')>())
 }))
 
+// The browser fixture exercises real indexing. Isolate page acquisition counts in reader lifecycle tests.
+vi.mock('./pdf-figure-index', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./pdf-figure-index')>()),
+  buildPdfFigureIndex: vi.fn(async () => new Map())
+}))
 vi.mock('./pdf-native-links', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./pdf-native-links')>()),
   renderPdfNativeLinks: vi.fn(async () => {})
@@ -386,6 +392,279 @@ describe('PdfPreviewContent', () => {
       await act(async () => finish(singleDocument()))
       expect(container.querySelector('[data-single-page-pdf-preview]')).not.toBeNull()
     })
+  })
+
+  describe('native figure reference previews', () => {
+    const figureResult = {
+      schemaVersion: 1,
+      extractionId: '11111111-1111-4111-8111-111111111111',
+      engineFingerprint: 'a'.repeat(64),
+      sourceChecksum: 'b'.repeat(64),
+      sourceSizeBytes: 100,
+      pageCount: 2,
+      requestedPages: [2],
+      processedPages: [2],
+      pages: [{ page: 2, width: 600, height: 800, rotation: 0 }],
+      thumbnails: [],
+      navigation: [],
+      issues: [],
+      elements: [
+        {
+          id: 'figure-2',
+          kind: 'figure',
+          issues: [],
+          regions: [{ page: 2, x: 0.1, y: 0.2, width: 0.7, height: 0.4 }],
+          caption: {
+            text: 'Figure 2. Measured response across conditions.',
+            regions: [{ page: 2, x: 0.1, y: 0.9, width: 0.7, height: 0.05 }]
+          },
+          thumbnailId: 'figure-2'
+        },
+        {
+          id: 'figure-3',
+          kind: 'figure',
+          issues: [],
+          regions: [{ page: 2, x: 0.1, y: 0.7, width: 0.7, height: 0.2 }],
+          caption: {
+            text: 'Figure 3. Replication of the response.',
+            regions: [{ page: 2, x: 0.1, y: 0.9, width: 0.7, height: 0.05 }]
+          },
+          thumbnailId: 'figure-3'
+        }
+      ]
+    } satisfies PdfStructureResult
+    const destination = { pageNumber: 2, x: 0.2, y: 0.25 }
+    const thumbnail = 'data:image/png;base64,AQID'
+    const navigate = (reference: string, target = destination): void => {
+      vi.mocked(renderPdfNativeLinks).mock.calls.at(-1)![0].onNavigate(target, reference)
+    }
+    const renderReader = async (version = 'version-1'): Promise<HTMLElement> => {
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path={`literature-attachment-version:${version}`}
+            name="paper.pdf"
+            source="literature"
+          />
+        )
+      })
+      await waitFor(() => expect(renderPdfNativeLinks).toHaveBeenCalled())
+      const scroll = container.querySelector<HTMLElement>(
+        '[data-pdf-original-view] [role="region"]'
+      )!
+      vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 600, 600))
+      const pages = container.querySelectorAll<HTMLElement>('[data-page-number]')
+      pages.forEach((page, index) => {
+        vi.spyOn(page, 'getBoundingClientRect').mockImplementation(
+          () => new DOMRect(-scroll.scrollLeft, 16 + index * 812 - scroll.scrollTop, 600, 800)
+        )
+        vi.spyOn(
+          page.querySelector<HTMLElement>('[data-pdf-page-rotation]')!,
+          'getBoundingClientRect'
+        ).mockImplementation(() => page.getBoundingClientRect())
+      })
+      scroll.scrollTop = 275
+      scroll.scrollLeft = 35
+      return scroll
+    }
+
+    beforeEach(() => {
+      window.api.pdfStructure.readCached = vi.fn().mockResolvedValue(figureResult)
+      window.api.pdfStructure.readThumbnail = vi.fn().mockResolvedValue(thumbnail)
+    })
+
+    it('opens image and caption without moving the reader, closes in place and explicitly shows the target in PDF', async () => {
+      const scroll = await renderReader()
+      await act(async () => navigate('Fig. 2a'))
+      const preview = await screen.findByRole('region', { name: 'Fig. 2a' })
+      expect(within(preview).getByRole('img', { name: 'Fig. 2a' }).getAttribute('src')).toBe(
+        thumbnail
+      )
+      expect(within(preview).getByText(figureResult.elements[0].caption.text)).toBeTruthy()
+      expect(preview.getAttribute('aria-modal')).not.toBe('true')
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(scroll.closest('[inert]')).toBeNull()
+      expect(scroll.scrollTop).toBe(275)
+      expect(scroll.scrollLeft).toBe(35)
+      expect(screen.queryByRole('button', { name: 'Previous reading position' })).toBeNull()
+      expect(window.api.pdfStructure.readCached).toHaveBeenCalledWith({
+        attachmentVersionId: 'version-1',
+        page: 2
+      })
+      expect(window.api.pdfStructure.readThumbnail).toHaveBeenCalledWith({
+        attachmentVersionId: 'version-1',
+        page: 2,
+        extractionId: figureResult.extractionId,
+        thumbnailId: 'figure-2'
+      })
+
+      await act(async () => fireEvent.click(within(preview).getByRole('button', { name: 'Close' })))
+      expect(screen.queryByRole('region', { name: 'Fig. 2a' })).toBeNull()
+      expect(scroll.scrollTop).toBe(275)
+      expect(scroll.scrollLeft).toBe(35)
+
+      await act(async () => navigate('Fig. 2a'))
+      const reopened = await screen.findByRole('region', { name: 'Fig. 2a' })
+      await act(async () =>
+        fireEvent.click(within(reopened).getByRole('button', { name: 'Show in PDF' }))
+      )
+      expect(screen.queryByRole('region', { name: 'Fig. 2a' })).toBeNull()
+      expect(scroll.scrollTop).toBeCloseTo(16 + 812 + 160 - 72)
+      expect(scroll.scrollLeft).toBeCloseTo(60)
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Previous reading position' }))
+      )
+      expect(scroll.scrollTop).toBeCloseTo(275)
+      expect(scroll.scrollLeft).toBeCloseTo(35)
+    })
+
+    it.each(['missing', 'failed'] as const)(
+      'keeps native destination navigation when the figure lookup is %s',
+      async (outcome) => {
+        window.api.pdfStructure.parse = vi.fn().mockRejectedValue(new Error('No local model'))
+        window.api.pdfStructure.readCached =
+          outcome === 'missing'
+            ? vi.fn().mockResolvedValue(undefined)
+            : vi.fn().mockRejectedValue(new Error('Unavailable cache'))
+        const scroll = await renderReader()
+        await act(async () => navigate('Figure 2'))
+        await waitFor(() => expect(scroll.scrollTop).toBeCloseTo(16 + 812 + 200 - 72))
+        expect(container.querySelector('[data-pdf-figure-preview]')).toBeNull()
+        expect(window.api.pdfStructure.readThumbnail).not.toHaveBeenCalled()
+      }
+    )
+
+    it.each([false, true])(
+      'shows the target page and preserves an inspected page when the crop arrives (zoomed=%s)',
+      async (zoomed) => {
+        let finish!: (result: PdfStructureResult) => void
+        window.api.pdfStructure.readCached = vi.fn().mockResolvedValue(undefined)
+        window.api.pdfStructure.parse = vi.fn().mockImplementation(
+          () =>
+            new Promise<PdfStructureResult>((resolve) => {
+              finish = resolve
+            })
+        )
+        vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(thumbnail)
+        const scroll = await renderReader()
+        await act(async () => navigate('Figure 2'))
+        const preview = await screen.findByRole('region', { name: 'Figure 2' })
+        expect(within(preview).getByRole('img', { name: 'Page 2' })).toBeTruthy()
+        if (zoomed) fireEvent.click(within(preview).getByRole('button', { name: 'Zoom in' }))
+        await act(async () => finish(figureResult))
+        if (zoomed) {
+          expect(within(preview).getByRole('img', { name: 'Page 2' })).toBeTruthy()
+          fireEvent.click(within(preview).getByRole('button', { name: 'View image' }))
+        }
+        expect(
+          within(preview).getByText('Figure 2. Measured response across conditions.')
+        ).toBeTruthy()
+        expect(scroll.scrollTop).toBe(275)
+      }
+    )
+
+    it('restores the native link focus without scrolling when Escape dismisses the card', async () => {
+      const scroll = await renderReader()
+      const trigger = document.createElement('a')
+      trigger.href = '#figure-2'
+      trigger.textContent = 'Figure 2'
+      vi.mocked(renderPdfNativeLinks).mock.calls.at(-1)![0].host.appendChild(trigger)
+      trigger.focus()
+      const focus = vi.spyOn(trigger, 'focus')
+      await act(async () => navigate('Figure 2'))
+      const preview = await screen.findByRole('region', { name: 'Figure 2' })
+      within(preview).getByRole('button', { name: 'Close' }).focus()
+      await act(async () => fireEvent.keyDown(document.activeElement!, { key: 'Escape' }))
+      expect(container.querySelector('[data-pdf-figure-preview]')).toBeNull()
+      expect(document.activeElement).toBe(trigger)
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+      expect(scroll.scrollTop).toBe(275)
+      expect(scroll.scrollLeft).toBe(35)
+    })
+
+    it('falls back to the native destination if the preview image fails to load', async () => {
+      const scroll = await renderReader()
+      await act(async () => navigate('Figure 2'))
+      const preview = await screen.findByRole('region', { name: 'Figure 2' })
+      await act(async () => fireEvent.error(within(preview).getByRole('img', { name: 'Figure 2' })))
+      expect(container.querySelector('[data-pdf-figure-preview]')).toBeNull()
+      expect(scroll.scrollTop).toBeCloseTo(16 + 812 + 200 - 72)
+      expect(scroll.scrollLeft).toBeCloseTo(120)
+    })
+
+    it('ignores a pending reference after switching to Figures & Tables', async () => {
+      let finish!: (result: PdfStructureResult | undefined) => void
+      window.api.pdfStructure.readCached = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<PdfStructureResult | undefined>((resolve) => {
+              finish = resolve
+            })
+        )
+        .mockResolvedValue(undefined)
+      const scroll = await renderReader()
+      await act(async () => navigate('Figure 2'))
+      await waitFor(() => expect(window.api.pdfStructure.readCached).toHaveBeenCalledOnce())
+      await act(async () =>
+        fireEvent.mouseDown(screen.getByRole('tab', { name: 'Figures & Tables' }), { button: 0 })
+      )
+      vi.mocked(Element.prototype.scrollIntoView).mockClear()
+      await act(async () => finish(figureResult))
+      expect(container.querySelector('[data-pdf-figure-preview]')).toBeNull()
+      expect(
+        screen.getByRole('tab', { name: 'Figures & Tables' }).getAttribute('aria-selected')
+      ).toBe('true')
+      expect(scroll.scrollTop).toBe(275)
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+    })
+
+    it('ignores an older preview result after a newer reference opens', async () => {
+      let finish!: (result: PdfStructureResult | undefined) => void
+      window.api.pdfStructure.readCached = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<PdfStructureResult | undefined>((resolve) => {
+              finish = resolve
+            })
+        )
+        .mockResolvedValue(figureResult)
+      const scroll = await renderReader()
+      await act(async () => navigate('Figure 2'))
+      await waitFor(() => expect(window.api.pdfStructure.readCached).toHaveBeenCalledOnce())
+      await act(async () => navigate('Figure 3'))
+      const latest = await screen.findByRole('region', { name: 'Figure 3' })
+      await act(async () => finish(figureResult))
+      expect(within(latest).getByText(figureResult.elements[1].caption.text)).toBeTruthy()
+      expect(screen.queryByRole('region', { name: 'Figure 2' })).toBeNull()
+      expect(scroll.scrollTop).toBe(275)
+      expect(scroll.scrollLeft).toBe(35)
+    })
+
+    it.each(['preview', 'fallback'] as const)(
+      'ignores a late %s result after switching documents',
+      async (outcome) => {
+        let finish!: (result: PdfStructureResult | undefined) => void
+        window.api.pdfStructure.readCached = vi.fn(
+          () =>
+            new Promise<PdfStructureResult | undefined>((resolve) => {
+              finish = resolve
+            })
+        )
+        await renderReader()
+        await act(async () => navigate('Figure 2'))
+        await waitFor(() => expect(window.api.pdfStructure.readCached).toHaveBeenCalledOnce())
+        const newScroll = await renderReader('version-2')
+        vi.mocked(Element.prototype.scrollIntoView).mockClear()
+        await act(async () => finish(outcome === 'preview' ? figureResult : undefined))
+        expect(container.querySelector('[data-pdf-figure-preview]')).toBeNull()
+        expect(newScroll.scrollTop).toBe(275)
+        expect(newScroll.scrollLeft).toBe(35)
+        expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
+        expect(screen.queryByRole('button', { name: 'Previous reading position' })).toBeNull()
+      }
+    )
   })
 
   it('keeps reading free of manual body controls and ignores legacy region overlays', async () => {

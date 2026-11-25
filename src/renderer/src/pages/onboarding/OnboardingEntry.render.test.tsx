@@ -77,6 +77,21 @@ describe('Onboarding entry flow', () => {
     expect(container.textContent).toContain('Advanced options')
   })
 
+  it('returns to quick connect after closing targeted Notebook settings', async () => {
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await act(async () => useSettingsStore.getState().openSettingsToPanel('runtimes'))
+    const panel = document.querySelector('[data-testid="runtimes-panel"]')
+    expect(panel).not.toBeNull()
+    const close = panel!
+      .closest('[role="dialog"]')!
+      .querySelector<HTMLButtonElement>('button[aria-label="Close"]')!
+    await act(async () => close.click())
+    expect(document.querySelector('[data-testid="runtimes-panel"]')).toBeNull()
+    expect(container.querySelector('[data-onboarding-entry="connect"]')).not.toBeNull()
+  })
+
   it('embeds three compact advanced steps in the same dialog', async () => {
     await renderEntry()
     await finishWelcomeAnimation()

@@ -28,6 +28,7 @@ import {
   HARNESS_OWNER,
   HARNESS_TOOL_LESS,
   HARNESS_TRACE_ENABLED,
+  HARNESS_TRACE_READINESS_METHOD,
   HARNESS_USER_TEXT_RANGE
 } from './config'
 import { AgentMcpHttpHost } from '../acp/mcp-http-host'
@@ -470,7 +471,7 @@ function attributes(entries: Attribute[]): Record<string, string | boolean | str
   )
 }
 
-it('exports only opted-in project turns in an already attached helper shared by two projects', async () => {
+it('exports only authorized project or individual Run turns in a shared helper', async () => {
   const endpoint = 'https://trace-scope.example/v1/traces'
   const tracing = createHarnessTracing(endpoint)!
   cleanup.push(async () => tracing.dispose())
@@ -491,6 +492,10 @@ it('exports only opted-in project turns in an already attached helper shared by 
 
   const model = await modelServer()
   const f = await fixture(model.endpoint, undefined, true, 32768, undefined, undefined, tracing)
+  expect(await f.connection.agent.request(HARNESS_TRACE_READINESS_METHOD, {})).toEqual({
+    ready: true
+  })
+  expect(received).toHaveLength(0)
   const sessions = await Promise.all(
     ['selected', 'other', undefined].map((projectId) =>
       f.connection.agent
@@ -509,7 +514,7 @@ it('exports only opted-in project turns in an already attached helper shared by 
     }
   })
   let selectedEnabled = false
-  const run = async (index: number, authorize: () => Promise<boolean>): Promise<void> => {
+  const run = async (index: number, authorize: true | (() => Promise<boolean>)): Promise<void> => {
     const outcome = await executor.execute({
       session: sessions[index],
       cwd: f.directory,
@@ -529,6 +534,7 @@ it('exports only opted-in project turns in an already attached helper shared by 
   await run(0, async () => selectedEnabled)
   selectedEnabled = true
   await run(0, async () => selectedEnabled)
+  await run(1, true)
   await run(1, async () => false)
   await run(2, async () => true)
   selectedEnabled = false
@@ -537,11 +543,16 @@ it('exports only opted-in project turns in an already attached helper shared by 
     throw new Error('project settings unavailable')
   })
 
-  await vi.waitFor(() => expect(received).toHaveLength(2))
-  expect(model.requests).toHaveLength(6)
-  expect(received.map((span) => span.name).sort()).toEqual(['harness.model', 'harness.turn'])
+  await vi.waitFor(() => expect(received).toHaveLength(4))
+  expect(model.requests).toHaveLength(7)
+  expect(received.map((span) => span.name).sort()).toEqual([
+    'harness.model',
+    'harness.model',
+    'harness.turn',
+    'harness.turn'
+  ])
   expect(new Set(received.map((span) => attributes(span.attributes)['session.id']))).toEqual(
-    new Set([sessions[0].sessionId])
+    new Set([sessions[0].sessionId, sessions[1].sessionId])
   )
 })
 

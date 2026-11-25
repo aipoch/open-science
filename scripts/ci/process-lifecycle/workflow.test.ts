@@ -175,4 +175,7 @@ it('runs the helper registration guard before platform occupancy tests', () => {
   expect(guard?.run).toBe('node scripts/ci/check-installation-helper-registration.mjs')
   expect(steps.indexOf(guard!)).toBeLessThan(steps.indexOf(install!))
   expect(steps.indexOf(guard!)).toBeLessThan(steps.indexOf(occupancy!))
+  expect(occupancy?.run).toContain(
+    'coordinates cross-profile registrations and never stops them|keeps the update gate blocked by a live registration with an unreadable record'
+  )
 })

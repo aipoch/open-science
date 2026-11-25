@@ -9,14 +9,18 @@ import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 // Two pages retain the full reader; single-page PDFs intentionally use image-style previews.
 // Real PDF.js preview and production reader UI; extraction/IPC are controlled fixtures.
 const content =
-  'BT /F1 22 Tf 50 740 Td (Uploaded PDF) Tj /F1 12 Tf 0 -40 Td (Sample    Value) Tj 0 -20 Td (A             42) Tj ET'
+  'BT /F1 22 Tf 50 740 Td (Uploaded PDF) Tj /F1 12 Tf 0 -40 Td (Sample    Value) Tj 0 -20 Td (A             42) Tj 0 -30 Td (Fig. 3) Tj 0 -30 Td (See Figure 9 for the trend.) Tj 0 -30 Td (See Tab. III for comparison.) Tj ET'
+const secondPage =
+  'BT /F1 14 Tf 50 540 Td (Figure 9. The trend over time.) Tj 0 -40 Td (Table 3. Trial outcomes.) Tj ET'
 const objects = [
   '<< /Type /Catalog /Pages 2 0 R >>',
   '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
-  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /Annots [7 0 R] >>',
   `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
   '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>'
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 8 0 R >>',
+  '<< /Type /Annot /Subtype /Link /Rect [50 647 80 662] /Dest [6 0 R /Fit] >>',
+  `<< /Length ${secondPage.length} >>\nstream\n${secondPage}\nendstream`
 ]
 let pdf = '%PDF-1.4\n'
 const offsets = objects.map((object, index) => {
@@ -70,6 +74,33 @@ const result: PdfStructureResult = {
 const audit = { requests: [] as ParsePdfStructureRequest[] }
 Object.assign(window, { uploadedPdfAudit: audit })
 const cached = new Map<number, PdfStructureResult>()
+if (new URLSearchParams(location.search).has('figure')) {
+  const region = { page: 2, x: 0.1, y: 0.2, width: 0.7, height: 0.3 }
+  cached.set(2, {
+    ...result,
+    requestedPages: [2],
+    processedPages: [2],
+    pages: [{ page: 2, width: 612, height: 792, rotation: 0 }],
+    elements: [
+      {
+        kind: 'figure',
+        id: 'figure-3',
+        thumbnailId: 'crop-3',
+        regions: [region],
+        caption: { text: 'Figure 3. Observed results.', regions: [region] },
+        issues: []
+      },
+      {
+        ...result.elements[0],
+        kind: 'table',
+        id: 'table-3',
+        regions: [region],
+        thumbnailId: 'crop-table-3',
+        caption: { text: 'Table 3. Trial outcomes.', regions: [region] }
+      }
+    ]
+  })
+}
 window.api = {
   previewResources: {
     acquire: async () => ({
@@ -96,6 +127,10 @@ window.api = {
   },
   pdfStructure: {
     readCached: async ({ page }: { page: number }) => cached.get(page),
+    readThumbnail: async () => {
+      const canvas = document.createElement('canvas')
+      return canvas.toDataURL('image/png')
+    },
     parse: async (request: ParsePdfStructureRequest) => {
       if (!('source' in request) || request.source.sourceKind !== 'upload-version')
         throw new Error('Expected an uploaded version')

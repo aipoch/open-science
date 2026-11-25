@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 
 import type { ArtifactFile } from '../../shared/artifacts'
+import type { TaskPermissionInteraction } from '../../shared/task-interaction'
 import {
   generatePlanContentSchema,
   type ActivePlanProjection
@@ -24,8 +25,17 @@ const TASK_RUN_JOURNAL_VERSION = 1 as const
 
 export type TaskRunJournalEntry = TaskRun & {
   promptMessageId?: string
+  /** Notebook continuations own a fresh prompt; tracked app continuations bind exact interactions. */
+  continuationKind?: 'notebook' | 'app'
   sessionCommitStatus?: Exclude<TaskRunStatus, 'running'>
+  permissionPrompts?: 'none'
+  permissionInteractions?: TaskRunPermissionRecord[]
 }
+
+export type TaskRunPermissionRecord = Pick<
+  TaskPermissionInteraction,
+  'id' | 'revision' | 'branchId' | 'delegated' | 'notebookReview' | 'response'
+>
 
 type TaskRunJournalDocument = {
   version: typeof TASK_RUN_JOURNAL_VERSION
@@ -135,6 +145,43 @@ const reviewSchema = z.object({
 const nestedRunSchema = z.object({
   artifacts: z.array(artifactSchema),
   attention: z.object({ kind: z.literal('plan-approval'), plan: planSchema }).optional(),
+  interactionPolicy: z.object({ mode: z.enum(['relay', 'delegate']), revision: count }).optional(),
+  permissionPrompts: z.literal('none').optional(),
+  continuationKind: z.enum(['notebook', 'app']).optional(),
+  permissionInteractions: z
+    .array(
+      z.object({
+        id: identity,
+        revision: count,
+        branchId: identity.optional(),
+        delegated: z
+          .object({
+            frameId: identity,
+            attemptId: identity,
+            branchId: identity,
+            attemptStatus: z.enum(['running', 'completed', 'cancelled', 'error'])
+          })
+          .optional(),
+        notebookReview: z
+          .object({
+            kind: z.enum(['runtime', 'code']),
+            language: z.enum(['python', 'r', 'repl', 'bash'])
+          })
+          .optional(),
+        response: z
+          .object({
+            source: z.enum(['user_relay', 'delegated_agent']),
+            optionId: identity,
+            status: z.enum(['released', 'unconfirmed']),
+            continuation: z
+              .object({ id: identity, taskRunStatus: z.literal('unconfirmed') })
+              .optional()
+          })
+          .optional()
+      })
+    )
+    .max(32)
+    .optional(),
   review: reviewSchema.optional()
 })
 
@@ -147,6 +194,9 @@ const decodeRun = (value: unknown): TaskRunJournalEntry => {
   if (
     !identity.safeParse(value.id).success ||
     (value.requestId !== undefined && !identity.safeParse(value.requestId).success) ||
+    (value.continuedFromRunId !== undefined &&
+      !identity.safeParse(value.continuedFromRunId).success) ||
+    (value.continuationKind !== undefined && value.continuedFromRunId === undefined) ||
     !identity.safeParse(value.sessionId).success ||
     !identity.safeParse(value.projectId).success ||
     typeof value.cwd !== 'string' ||

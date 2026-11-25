@@ -334,6 +334,78 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(() => restarted.beginSpawn(scope)).toThrow('KERNEL_STARTUP_FENCE')
   })
 
+  it('skips probes for receipts outside the recovering lane', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-scoped-probes-'))
+    const target = {
+      laneKey: 'target-lane',
+      processKey: 'r:default-r',
+      kernelEpochId: 'epoch-target'
+    }
+    const unrelated = {
+      laneKey: 'unrelated-lane',
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch-unrelated'
+    }
+    const first = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-a'
+    })
+    await first.ensureReady()
+    first.recordSpawned(first.beginSpawn(target), { pid: 5252, posixBirthToken: 'target-birth' })
+    first.recordSpawned(first.beginSpawn(unrelated), {
+      pid: 6262,
+      posixBirthToken: 'unrelated-birth'
+    })
+
+    const probe = vi.fn(async () => 'unknown' as const)
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-b',
+      controller: { probe, terminate: vi.fn(async () => ({ reaped: false })) }
+    })
+
+    await restarted.ensureReadyForLane(target.laneKey)
+
+    expect(probe).toHaveBeenCalledOnce()
+    expect(probe).toHaveBeenCalledWith(
+      expect.objectContaining({ laneKey: target.laneKey }),
+      ...(process.platform === 'darwin' ? [expect.any(Function)] : [])
+    )
+    expect(() => restarted.beginSpawn(target)).toThrow('KERNEL_STARTUP_FENCE')
+  })
+
+  it('reuses completed lane recovery until that lane publishes a new receipt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-scoped-cache-'))
+    const probe = vi.fn(async () => 'dead' as const)
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-restarted',
+      controller: {
+        probe,
+        terminate: vi.fn(async () => ({ reaped: true }))
+      }
+    })
+    const lane = 'target-lane'
+
+    await restarted.ensureReadyForLane(lane)
+    await restarted.ensureReadyForLane(lane)
+    expect(probe).not.toHaveBeenCalled()
+
+    const other = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-other'
+    })
+    const external = other.beginSpawn({
+      laneKey: lane,
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch-external'
+    })
+    other.recordSpawned(external, { pid: 5252, posixBirthToken: 'external-birth' })
+
+    await restarted.ensureReadyForLane(lane)
+    expect(probe).toHaveBeenCalledOnce()
+  })
+
   it('does not cancel a pending startup while tolerant recovery scans another lane', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-pending-recovery-'))
     const owner = new KernelProcessLifecycleOwner({
@@ -398,7 +470,7 @@ describe('KernelProcessLifecycleOwner', () => {
       controller: { probe, terminate: vi.fn(async () => ({ reaped: false })) }
     })
 
-    await expect(restarted.ensureReadyForLane('unrelated-lane')).resolves.toBeUndefined()
+    await expect(restarted.ensureReadyForLane('lane-a')).resolves.toBeUndefined()
     expect(probe).toHaveBeenCalledOnce()
     const unrelated = restarted.beginSpawn({
       laneKey: 'unrelated-lane',

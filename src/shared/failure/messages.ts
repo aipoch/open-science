@@ -70,6 +70,9 @@ export const PROVIDER_RESOURCE_NOT_FOUND_PREFIX =
 
 export const PROVIDER_CONNECTION_FAILED_PREFIX = 'Could not connect to the model provider'
 
+// Codex retains only the message of a retried bridge 5xx. Tag completed upstream HTTP responses.
+export const upstreamHttpErrorPrefix = (status: number): string => `Upstream HTTP ${status}: `
+
 export const unwrapIpcErrorDetail = (message: string): string =>
   message
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')

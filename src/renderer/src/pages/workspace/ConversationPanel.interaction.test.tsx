@@ -10435,7 +10435,7 @@ it.each(['legacy', 'turn'] as const)(
 it('offers Fork to continue while leaving the imported conversation read-only', async () => {
   forkSessionMock.mockClear()
   const activeSession: ChatSession = {
-    id: 'imported-session',
+    id: 'import-session',
     projectId: 'project-a',
     title: 'Imported research',
     cwd: '',
@@ -10451,6 +10451,13 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
       manifestChecksum: 'a'.repeat(64)
     }
   }
+  renderPanel({
+    view: { activeSession: { ...activeSession, contentLoaded: false, packageOrigin: undefined } }
+  })
+  expect(container.querySelector('[data-testid="session-switch-skeleton"]')).not.toBeNull()
+  expect(
+    container.querySelector('[data-testid="conversation-composer-dock"]')?.childElementCount
+  ).toBe(0)
   renderPanel({ view: { activeSession } })
   const button = [...container.querySelectorAll('button')].find((button) =>
     button.textContent?.includes('Fork to continue')

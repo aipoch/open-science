@@ -32,6 +32,7 @@ type ChatSkillSelectorTarget = {
   model?: string
   vendorId?: OfficialVendorId
   reasoningEffortTransport?: CustomReasoningEffortTransport
+  reasoningSupported?: boolean
 }
 
 const log = createLogger('acp-bridge')
@@ -75,12 +76,15 @@ export async function selectChatSkills(input: {
   }, input.timeoutMs)
   timer.unref?.()
   try {
-    const reasoningTransport = resolveChatReasoningTransport(
-      target.vendorId,
-      target.model,
-      'none',
-      target.reasoningEffortTransport
-    )
+    const reasoningTransport =
+      target.reasoningSupported === false
+        ? {}
+        : resolveChatReasoningTransport(
+            target.vendorId,
+            target.model,
+            'none',
+            target.reasoningEffortTransport
+          )
     // Each classifier invocation is an independent, stateless auxiliary conversation.
     // Its function-call attempt and JSON fallback must use the same routing identity.
     const goSession =

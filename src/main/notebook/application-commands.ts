@@ -30,6 +30,12 @@ const assertLocalCaller = (callerContext: CallerContext, commandName: string): v
   }
 }
 
+const notebookRunFigureCommand = defineApplicationCommand<
+  'notebook:run-figure',
+  WorkflowArgs<'runFigure'>,
+  WorkflowResult<'runFigure'>
+>('notebook:run-figure')
+
 const notebookRunEvidenceCommand = defineApplicationCommand<
   'notebook:run-evidence',
   WorkflowArgs<'runEvidence'>,
@@ -181,6 +187,7 @@ const notebookReadInputPreviewCommand = defineApplicationCommand<
 >('notebook:read-input-preview')
 
 const notebookApplicationCommands = defineApplicationCommandGroup('notebook', [
+  notebookRunFigureCommand,
   notebookRunEvidenceCommand,
   notebookRunIndexCommand,
   notebookBackgroundTasksCommand,
@@ -243,6 +250,7 @@ const installNotebookApplicationCommands = (
         dependencies.workflows.retryResourceRelease(invocation.args[0], currentHuman(invocation)),
       'notebook:background-tasks': (invocation) =>
         dependencies.workflows.backgroundTasks(invocation.args[0]),
+      'notebook:run-figure': (invocation) => dependencies.workflows.runFigure(invocation.args[0]),
       'notebook:run-evidence': (invocation) =>
         dependencies.workflows.runEvidence(invocation.args[0]),
       'notebook:run-index': (invocation) => dependencies.workflows.runIndex(invocation.args[0]),

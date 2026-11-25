@@ -493,6 +493,8 @@ const definitions: readonly OfficialVendor[] = [
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
+      // Pre-register the Coding Plan model ID for the standard API rollout.
+      { id: 'glm-5.4', contextWindow: 1_000_000 },
       {
         id: 'glm-5.3',
         contextWindow: 1_000_000,
@@ -512,10 +514,10 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'glm-4.5-air', contextWindow: 128_000, maxOutputTokens: 98_304 }
     ],
     // GLM usually marks vision variants with a `v` after the major version (e.g. glm-5v-turbo), but
-    // GLM-5.3-Flash is also natively multimodal without that marker.
+    // GLM-5.3-Flash and GLM-5.4 support image input without that marker.
     multimodal: {
       multimodalModelPattern: /glm-\d+v/i,
-      multimodalModels: ['glm-5.3-flash']
+      multimodalModels: ['glm-5.3-flash', 'glm-5.4']
     }
   },
   {
@@ -543,7 +545,6 @@ const definitions: readonly OfficialVendor[] = [
         apiKeyUrl: 'https://bigmodel.cn/glm-coding'
       }
     ],
-    // The coding plan omits glm-5v-turbo, but serves the natively multimodal GLM-5.3-Flash.
     models: [
       {
         id: 'glm-5.3-flash',
@@ -551,6 +552,7 @@ const definitions: readonly OfficialVendor[] = [
         maxOutputTokens: 131_072,
         reasoningEffort: { supported: true, values: ['low', 'high', 'max'] }
       },
+      { id: 'glm-5.4', contextWindow: 1_000_000 },
       {
         id: 'glm-5.3',
         contextWindow: 1_000_000,
@@ -567,7 +569,7 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'glm-5', contextWindow: 200_000 },
       { id: 'glm-5-turbo', contextWindow: 200_000, maxOutputTokens: 131_072 }
     ],
-    multimodal: { multimodalModels: ['glm-5.3-flash'] }
+    multimodal: { multimodalModels: ['glm-5.3-flash', 'glm-5.4'] }
   },
   {
     id: 'kimi',

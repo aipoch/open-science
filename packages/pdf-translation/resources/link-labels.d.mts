@@ -4,7 +4,8 @@ export function translatedPdfLinkLabel(
   source: string,
   translation: string,
   label: string,
-  offset: number
+  offset: number,
+  uri?: string
 ): { start: number; text: string } | null
 
 export function pdfLinkLabelMatches(text: string, label: string): RegExpMatchArray[]

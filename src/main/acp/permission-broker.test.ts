@@ -66,6 +66,122 @@ const createPermissionRequest = (sessionId = 'session-1'): RequestPermissionRequ
   ]
 })
 
+it('allows a Task to decide only the Notebook review for its live prompt and branch', async () => {
+  const broker = new AcpPermissionBroker(vi.fn())
+  const sessionId = 'session-1'
+  const promptMessageId = 'prompt-1'
+  const scope = { projectId: 'project-1', messageBranchId: 'branch-1' }
+  const hidden = broker.requestAppApproval({
+    sessionId,
+    title: 'Delete a Skill',
+    rawInput: { skillApproval: { kind: 'delete' } }
+  })
+  const pending = broker.requestAppApproval({
+    sessionId,
+    title: 'Confirm R runtime',
+    rawInput: {
+      notebookRuntimeSelection: {
+        ...scope,
+        promptMessageId,
+        language: 'r',
+        runtimeId: 'runtime-r'
+      }
+    }
+  })
+  const appRequests = broker.getPendingRequests()
+  expect(broker.getTaskPermissions(sessionId, promptMessageId)).toEqual([])
+  expect(
+    broker.getTaskPermissions(sessionId, promptMessageId, {
+      ...scope,
+      messageBranchId: 'other-branch'
+    })
+  ).toEqual([])
+  const reviews = broker.getTaskPermissions(sessionId, promptMessageId, scope)
+  expect(reviews).toEqual([appRequests[1]])
+  const record = vi.fn(async () => {})
+  const decision = {
+    source: 'user_relay' as const,
+    assertCurrent: () => {},
+    commit: async (release: () => Promise<boolean>) => release(),
+    record
+  }
+  expect(
+    await broker.respondTaskPermission(
+      sessionId,
+      promptMessageId,
+      appRequests[0].requestId,
+      appRequests[0].options[0].optionId,
+      decision,
+      scope
+    )
+  ).toBe(false)
+  expect(
+    await broker.respondTaskPermission(
+      sessionId,
+      promptMessageId,
+      reviews[0].requestId,
+      reviews[0].options[0].optionId,
+      decision,
+      scope
+    )
+  ).toBe(true)
+  await expect(pending).resolves.toBe(true)
+  expect(record.mock.calls).toEqual([['unconfirmed'], ['released']])
+  expect(broker.getPendingRequests()).toEqual([appRequests[0]])
+  await broker.respond({ requestId: appRequests[0].requestId, cancelled: true })
+  await expect(hidden).resolves.toBe(false)
+})
+
+it('keeps the original permission pending when task delegation is withdrawn before commit', async () => {
+  const broker = new AcpPermissionBroker(vi.fn())
+  const request = createPermissionRequest()
+  const waiting = broker.requestPermission(request, { profile: 'ask', promptMessageId: 'prompt-1' })
+  const [pending] = broker.getTaskPermissions(request.sessionId, 'prompt-1')
+  const record = vi.fn<(status: 'unconfirmed' | 'released') => Promise<void>>(async () => {})
+  const withdrawn = new Error('Task delegation was withdrawn.')
+
+  await expect(
+    broker.respondTaskPermission(request.sessionId, 'prompt-1', pending.requestId, 'stale-option', {
+      source: 'delegated_agent',
+      assertCurrent: () => {},
+      commit: async (release) => release(),
+      record
+    })
+  ).resolves.toBe(false)
+  await expect(
+    broker.respondTaskPermission(request.sessionId, 'prompt-1', pending.requestId, 'allow-once', {
+      source: 'delegated_agent',
+      assertCurrent: () => {},
+      commit: async () => {
+        throw withdrawn
+      },
+      record
+    })
+  ).rejects.toThrow(withdrawn.message)
+  expect(broker.getTaskPermissions(request.sessionId, 'prompt-1')).toEqual([pending])
+  expect(record).not.toHaveBeenCalled()
+
+  expect(
+    await broker.respondTaskPermission(
+      request.sessionId,
+      'prompt-1',
+      pending.requestId,
+      'allow-once',
+      {
+        source: 'user_relay',
+        assertCurrent: () => {},
+        commit: async (release) => release(),
+        record
+      }
+    )
+  ).toBe(true)
+  await expect(waiting).resolves.toEqual({
+    outcome: { outcome: 'selected', optionId: 'allow-once' }
+  })
+  expect(record.mock.calls).toEqual([['unconfirmed'], ['released']])
+  expect(broker.listGrants(request.sessionId)).toEqual([])
+})
+
 it.each(['generate_image', 'edit_image'])('asks once per %s call in Ask mode', async (tool) => {
   const emit = vi.fn()
   const grants = new ConversationPermissionGrantStore()

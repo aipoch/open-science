@@ -137,6 +137,33 @@ export const resolveInlineFractions = (items, bodyBaseline, bodyFont) => {
         items.some((part) => part.i > numerator.i && part.i < denominator[0].i && part.text.trim()))
     )
       continue
+    // A mathematical capital may own a lowered index and parenthesized raised order.
+    // Reader geometry ties both tiers to this base, rather than printing a fraction.
+    const [lower] = denominator
+    if (denominator.length === 1 && /^\d{1,3}$/u.test(lower.text.trim())) {
+      const base = items.find((part) => part.i === lower.i - 1)
+      const open = items.find((part) => part.i === numerator.i - 1)
+      const close = items.find((part) => part.i === numerator.i + 1)
+      if (
+        /^[\u{1D434}-\u{1D44D}]$/u.test(base?.text ?? '') &&
+        open?.text === '(' &&
+        close?.text === ')' &&
+        open.i > lower.i &&
+        !items.some((part) => part.i > lower.i && part.i < open.i && part.text.trim()) &&
+        Math.abs(base.baseline - bodyBaseline) < bodyFont * 0.05 &&
+        Math.abs(base.fontSize - bodyFont) < bodyFont * 0.05 &&
+        Math.abs(lower.bounds[0] - base.bounds[2]) < bodyFont * 0.1 &&
+        Math.abs(open.bounds[0] - lower.bounds[0]) < bodyFont * 0.25 &&
+        open.bounds[2] <= numerator.bounds[0] + bodyFont * 0.05 &&
+        close.bounds[0] >= numerator.bounds[2] - bodyFont * 0.05 &&
+        [open, close].every(
+          (part) =>
+            Math.abs(part.baseline - numerator.baseline) < bodyFont * 0.02 &&
+            Math.abs(part.fontSize - numerator.fontSize) < bodyFont * 0.02
+        )
+      )
+        continue
+    }
     if (members.some((item) => used.has(item.i))) continue
     for (const item of members) used.add(item.i)
     const denominatorText = denominator

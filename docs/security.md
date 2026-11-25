@@ -137,6 +137,13 @@ published version, while the managed Codex and CodeBuddy installers use pinned v
 installer installs its checked-in lockfile dependencies; pinned and lockfile-managed runtimes
 update only with an app release. The built-in Agent performs no such download.
 
+Enabling Agent tracing for a project exports trace spans for the built-in Agent's turns, model
+requests, and tool executions to an OTLP/HTTP receiver configured in the app's launch settings or
+environment file — the app provides no receiver of its own. Generic collectors and Langfuse
+authentication are supported. The receiver sees whatever the enabled capture switches include, up to
+full request bodies and tool previews, so point tracing only at a receiver you control and review
+the switches before enabling it on shared machines.
+
 Custom remote model endpoints require HTTPS. HTTP is supported for `localhost`, IPv4 loopback, and
 IPv6 loopback; private-network addresses alone do not establish an encrypted connection. Existing
 remote HTTP configurations remain editable but cannot supply a running model until corrected.

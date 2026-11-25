@@ -14,6 +14,65 @@ import { codexBridgeStaticMcpTools, createCodexBridgeMcpTools } from './codex-br
 import { selectExplicitConnectorSkills } from './skill-selector-routing'
 
 describe('Responses-compatible bridge conversion', () => {
+  it('returns a retryable gateway error when the upstream fetch fails before headers', async () => {
+    const upstream = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(
+        new TypeError('fetch failed', {
+          cause: Object.assign(new Error('private network detail'), { code: 'ECONNRESET' })
+        })
+      )
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: 'ok' } }] }))
+    const bridge = new ResponsesToChatCompletionsBridge(
+      { baseUrl: 'https://upstream.test' },
+      upstream
+    )
+    try {
+      const connection = await bridge.start()
+      const send = (): Promise<Response> =>
+        fetch(connection.baseUrl + '/responses', {
+          method: 'POST',
+          headers: { authorization: 'Bearer ' + connection.token },
+          body: JSON.stringify({ input: 'retry fixture', stream: false })
+        })
+      const first = await send()
+      expect(first.status).toBe(502)
+      expect(await first.json()).toEqual({
+        error: {
+          type: 'upstream_error',
+          message: 'Could not connect to the model provider'
+        }
+      })
+      expect(upstream).toHaveBeenCalledTimes(1)
+      expect((await send()).status).toBe(200)
+      expect(upstream).toHaveBeenCalledTimes(2)
+    } finally {
+      await bridge.close()
+    }
+  })
+
+  it('keeps an upstream 502 distinguishable when its message matches a local disconnect', async () => {
+    const message = 'Could not connect to the model provider'
+    const bridge = new ResponsesToChatCompletionsBridge(
+      { baseUrl: 'https://upstream.test' },
+      async () => Response.json({ error: { message } }, { status: 502 })
+    )
+    try {
+      const connection = await bridge.start()
+      const response = await fetch(connection.baseUrl + '/responses', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + connection.token },
+        body: JSON.stringify({ input: 'hello', stream: true })
+      })
+      expect(response.status).toBe(502)
+      expect(await response.json()).toMatchObject({
+        error: { status: 502, message: 'Upstream HTTP 502: ' + message }
+      })
+    } finally {
+      await bridge.close()
+    }
+  })
+
   it.each([undefined, '', ' ', 'a,b', 'bad\nsession'])(
     'rejects missing or ambiguous Go identity %s before forwarding',
     async (session) => {
@@ -2505,6 +2564,46 @@ describe('Responses bridge Skill selector', () => {
       expect(upstreamBody.reasoning_effort).toBe(effort)
     }
   )
+
+  it('omits reasoning controls for Kilo models without reasoning support', async () => {
+    let upstreamBody: Record<string, unknown> = {}
+    const upstreamFetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      upstreamBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return Response.json({
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                {
+                  function: {
+                    name: 'select_skills',
+                    arguments: JSON.stringify({ skill_names: ['literature-review'] })
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    })
+    const bridge = new ResponsesToChatCompletionsBridge(
+      {
+        baseUrl: 'https://ai-gateway.kilo.ai/api/v1',
+        model: 'baidu/ernie-5.5-flash-preview:free',
+        vendorId: 'kilo',
+        reasoningSupported: false
+      },
+      upstreamFetch,
+      { skillSelectorFailureMode: 'throw' }
+    )
+
+    await expect(bridge.selectSkills('Prepare a literature review.', catalog)).resolves.toEqual([
+      { name: 'literature-review', path: '/private/review/SKILL.md' }
+    ])
+    expect(upstreamBody).not.toHaveProperty('reasoning_effort')
+    expect(upstreamBody).not.toHaveProperty('reasoning')
+    expect(upstreamBody).not.toHaveProperty('thinking')
+  })
 
   it.each([
     ['Codex', undefined],

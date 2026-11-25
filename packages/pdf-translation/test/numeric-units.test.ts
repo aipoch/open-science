@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { pdfTranslationMissingNumericUnits as missing } from '../src/numeric-units.js'
+import {
+  pdfTranslationMissingNumericUnits as missing,
+  pdfTranslationNumericUnitLiterals as literals
+} from '../src/numeric-units.js'
 
 describe('numeric unit bindings', () => {
   it.each([
@@ -232,4 +235,12 @@ describe('numeric unit bindings', () => {
 it('scans long digit runs without retrying scientific-power prefixes', () => {
   const text = '0'.repeat(40_000) + ' x'
   expect(missing(text, text)).toEqual([])
+})
+
+it('distinguishes a capital variable from the metre symbol', () => {
+  const source = 'The inequality is 3 M > M. The guide is 4 m long.'
+  expect(literals(source)).toEqual(['4 m'])
+  expect(missing(source, '不等式为 3 M > M，导轨长度为 4 米。')).toEqual([])
+  expect(missing(source, '不等式为 3 M > M，导轨长度为 4 M。')).toEqual(['4 m'])
+  expect(missing('The area is 5 m².', '面积是 5 M²。')).toEqual(['5 m2'])
 })

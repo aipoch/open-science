@@ -17,6 +17,10 @@ export const updateApplyContracts = {
   ),
   'update.recheck': callable<() => Promise<UpdateStatus>>()('update', ['update:recheck', LOCAL]),
   'update.recover': callable<() => Promise<UpdateStatus>>()('update', ['update:recover', LOCAL]),
+  'update.openProcessManager': callable<() => Promise<boolean>>()('update', [
+    'update:open-process-manager',
+    ELECTRON
+  ]),
   'update.apply': callable<(options?: UpdateApplyOptions) => Promise<UpdateStatus>>()('update', [
     'update:apply',
     LOCAL

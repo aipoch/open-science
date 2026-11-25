@@ -153,6 +153,9 @@ class ProviderRuntimeProjectionOwner {
       ...(provider.modelProtocols ? { modelProtocols: provider.modelProtocols } : {}),
       ...(provider.labServerUrl ? { labServerUrl: provider.labServerUrl } : {}),
       ...(provider.modelCapabilities ? { modelCapabilities: provider.modelCapabilities } : {}),
+      ...(provider.modelReasoningEfforts
+        ? { modelReasoningEfforts: provider.modelReasoningEfforts }
+        : {}),
       ...(provider.modelStreaming ? { modelStreaming: provider.modelStreaming } : {}),
       maskedKey: hardenKeyMask(provider.keyMask),
       accountEmail: provider.accountEmail,

@@ -1431,7 +1431,8 @@ describe('ProviderAccountsModule', () => {
     const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth').mockResolvedValue({
       authenticated: true,
       model: 'model',
-      models: ['model']
+      models: ['model'],
+      modelReasoningEfforts: { model: ['high'] }
     })
     const login = { site: 'internal', action: 'login', mode: 'shared' } as const
     const id = codeBuddyAccounts.internal.id
@@ -1449,12 +1450,14 @@ describe('ProviderAccountsModule', () => {
       )
       expect(await stored()).toMatchObject({
         codeBuddyAuthMode: 'shared',
-        fetchedModels: ['model']
+        fetchedModels: ['model'],
+        modelReasoningEfforts: { model: ['high'] }
       })
       auth.mockClear()
       await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
       expect((await stored())?.disconnectedAt).toEqual(expect.any(Number))
       expect((await stored())?.fetchedModels).toBeUndefined()
+      expect((await stored())?.modelReasoningEfforts).toBeUndefined()
       expect(await module.codeBuddyAccount({ site: 'internal', action: 'status' })).toMatchObject({
         ok: false
       })
@@ -1473,10 +1476,20 @@ describe('ProviderAccountsModule', () => {
   it('replaces only the refreshed CodeBuddy catalog, keeps it on failure, and clears it on logout', async () => {
     const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth')
     try {
-      auth.mockResolvedValue({ authenticated: true, model: 'old', models: ['old'] })
+      auth.mockResolvedValue({
+        authenticated: true,
+        model: 'old',
+        models: ['old'],
+        modelReasoningEfforts: { old: ['low', 'high'] }
+      })
       await module.codeBuddyAccount({ site: 'internal', action: 'login' })
       await module.codeBuddyAccount({ site: 'external', action: 'login' })
-      auth.mockResolvedValue({ authenticated: true, model: 'new', models: ['new'] })
+      auth.mockResolvedValue({
+        authenticated: true,
+        model: 'new',
+        models: ['new'],
+        modelReasoningEfforts: { new: ['high'] }
+      })
       await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })
       auth.mockResolvedValue({ authenticated: true })
       expect(await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })).toMatchObject({
@@ -1487,6 +1500,9 @@ describe('ProviderAccountsModule', () => {
       expect(
         (await records()).find((p) => p.id === codeBuddyAccounts.internal.id)?.fetchedModels
       ).toEqual(['new'])
+      expect(
+        (await records()).find((p) => p.id === codeBuddyAccounts.internal.id)?.modelReasoningEfforts
+      ).toEqual({ new: ['high'] })
       auth.mockResolvedValue({ authenticated: false })
       await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
       const providers = await records()
@@ -1494,6 +1510,7 @@ describe('ProviderAccountsModule', () => {
       expect(china).toBeDefined()
       expect(china?.model).toBeUndefined()
       expect(china?.fetchedModels).toBeUndefined()
+      expect(china?.modelReasoningEfforts).toBeUndefined()
       expect(providers.find((p) => p.id === codeBuddyAccounts.external.id)?.fetchedModels).toEqual([
         'old'
       ])

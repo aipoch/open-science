@@ -169,11 +169,58 @@ describe('OpenScienceClient', () => {
     }
   )
 
+  it('requires a durable request ID when SDK callers enable per-Run tracing', async () => {
+    const fetch = vi.fn()
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'test',
+      fetch
+    })
+    // @ts-expect-error Per-Run tracing is only valid with a durable requestId.
+    await expect(
+      client.startRun({ project: 'project-1', prompt: 'Trace', otelTraces: true })
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining('durable submission')
+    })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([undefined, 'existing-runtime-request'])(
+    'never submits an exact Notebook target to an older server (requestId=%s)',
+    async (requestId) => {
+      const fetch = vi.fn(async () => response(200, { taskCapabilities: ['durable-submissions'] }))
+      const client = new OpenScienceClient({
+        baseUrl: 'http://127.0.0.1:44100',
+        token: 'test',
+        fetch
+      })
+      await expect(
+        client.startRun(
+          {
+            project: 'project-1',
+            prompt: 'Research',
+            notebookRuntime: { language: 'r', runtimeId: '/existing/bin/R' }
+          },
+          { requestId }
+        )
+      ).rejects.toMatchObject({ code: 'unsupported_capability' })
+      expect(fetch).toHaveBeenCalledTimes(1)
+    }
+  )
+
   it('pins the SDK method inventory including Connector management', () => {
     expect(Object.getOwnPropertyNames(OpenScienceClient.prototype).sort()).toEqual(
       [
         'constructor',
         'doctor',
+        'prepareNotebookEnvironment',
+        'listNotebookRuntimes',
+        'registerNotebookInterpreter',
+        'enableNotebookRuntime',
+        'startNotebookEnvironmentOperation',
+        'getNotebookEnvironmentOperation',
+        'cancelNotebookEnvironmentOperation',
         'bootstrap',
         'installCli',
         'health',
@@ -199,13 +246,24 @@ describe('OpenScienceClient', () => {
         'updateSessionConfiguration',
         'callRpc',
         'exportSessionPackage',
+        'startAgentPackageExport',
+        'startAgentPackageFork',
+        'startAgentPackageImport',
+        'getPackageOperation',
+        'respondExportReview',
         'importSessionPackage',
         'getAgentRouting',
         'updateAgentRouting',
         'getSessionPlan',
+        'listInteractions',
+        'getInteraction',
+        'setRunInteractionMode',
+        'respondPermission',
+        'answerQuestion',
         'respondSessionPlan',
         'submitRun',
         'getSubmission',
+        'continueNotebook',
         'waitForSubmission',
         'forkSession',
         'startRun',
@@ -279,6 +337,24 @@ describe('OpenScienceClient', () => {
       'GET',
       'PATCH'
     ])
+  })
+
+  it('checks the returned Session association even if the service ignores the Project query', async () => {
+    const data = { id: 'session/1', projectId: 'project/1' }
+    const fetch = vi.fn().mockImplementation(async () => response(200, { data }))
+    const client = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 'secret-token',
+      fetch
+    })
+
+    await expect(client.getSession(data.id, { projectId: data.projectId })).resolves.toEqual(data)
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      'http://127.0.0.1:44100/api/v1/sessions/session%2F1?project=project%2F1'
+    )
+    await expect(
+      client.getSessionConfiguration(data.id, { projectId: 'another-project' })
+    ).rejects.toMatchObject({ code: 'session_project_mismatch', status: 409 })
   })
 
   it('starts and waits for a run through the authenticated versioned API', async () => {
@@ -886,6 +962,9 @@ describe('OpenScienceClient', () => {
   it('covers project, session, artifact, and authenticated download operations', async () => {
     const fetch = vi.fn(async (input: string, init?: RequestInit) => {
       const path = new URL(input).pathname
+      if (path === '/api/bootstrap') {
+        return response(200, { taskCapabilities: ['task-interactions'] })
+      }
       if (path === '/api/v1/projects' && init?.method === 'POST') {
         return response(201, { data: { id: 'project-1', name: 'Created' } })
       }
@@ -931,7 +1010,9 @@ describe('OpenScienceClient', () => {
     await client.respondSessionPlan('session/1', {
       decision: 'approved',
       artifactVersionId: 'plan-version',
-      expectedRevision: 2
+      expectedRevision: 2,
+      expectedBranchId: 'branch-1',
+      source: 'user_relay'
     })
     await client.listArtifacts('session/1')
     expect(await (await client.downloadArtifact('artifact/1')).text()).toBe('file bytes')
@@ -954,6 +1035,7 @@ describe('OpenScienceClient', () => {
       '/api/v1/sessions?project=project-1',
       '/api/v1/sessions/session%2F1',
       '/api/v1/sessions/session%2F1/plan',
+      '/api/bootstrap',
       '/api/v1/sessions/session%2F1/plan/respond',
       '/api/v1/sessions/session%2F1/artifacts',
       '/api/v1/artifacts/artifact%2F1/content'

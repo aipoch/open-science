@@ -58,6 +58,22 @@ it('pins same-name images to the Version owned by each message without mutating 
   expect(await readFile(join(root, paths[1]), 'utf8')).toBe('v2')
   expect(source).toEqual(original)
 })
+it('keeps the literal alt text of non-image targets alongside managed images', async () => {
+  const { root, session, source } = await fixture()
+  const md = 'Before ![Cost $&](/dev/null)![](notes.txt) ![Plot](plot.png) after.'
+  source.messages[0].md = md
+  const staged = await stageResearchVideoSessionImages(
+    source,
+    session,
+    root,
+    join(root, 'files'),
+    new AbortController().signal
+  )
+  expect(staged.messages[0].md).toMatch(
+    /^Before Cost \$& !\[Plot\]\(files\/[a-f0-9]{64}\.png\) after\.$/
+  )
+  expect(source.messages[0].md).toBe(md)
+})
 it('does not select images from another branch or trust a cross-Project file path', async () => {
   const { root, session, source } = await fixture()
   source.messages[0].artifactIds = []

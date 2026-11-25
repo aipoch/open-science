@@ -24,6 +24,12 @@ type ToolExecutionPhase =
 const isNotebookExecutionActivity = (activity: ToolActivity): boolean =>
   isNotebookExecuteToolName(activity.providerToolName) || isNotebookExecuteToolName(activity.title)
 
+// A terminal receipt can identify and label the run without reading its outputs.
+const hasTerminalNotebookReceipt = (activity: ToolActivity): boolean => {
+  const status = getNotebookRunStatusFromActivity(activity)
+  return status !== undefined && status !== 'queued' && status !== 'running'
+}
+
 const isNotebookCodeReviewActivity = (activity: ToolActivity): boolean =>
   activity.appOwned === true &&
   activity.id.startsWith('app-approval:') &&
@@ -113,6 +119,7 @@ const getToolExecutionPhase = (
 }
 
 export {
+  hasTerminalNotebookReceipt,
   getCorrelatedNotebookRun,
   getToolExecutionPhase,
   isNotebookExecutionActivity,

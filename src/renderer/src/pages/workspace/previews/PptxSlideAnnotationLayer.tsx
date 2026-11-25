@@ -127,10 +127,10 @@ const PptxSlideAnnotationLayer = ({
               key={marker.id}
               data-annotation-marker={marker.id}
               data-revealed={marker.id === revealedId ? '' : undefined}
-              className={`pointer-events-none absolute rounded-sm border-2 border-accent-main-100 ${marker.id === revealedId ? 'bg-accent-main-100/15 ring-2 ring-accent-main-100/40' : ''}`}
+              className={`pointer-events-none absolute rounded-sm border-2 border-primary outline outline-1 outline-primary-foreground ${marker.id === revealedId ? 'bg-primary/15 ring-2 ring-primary/40' : ''}`}
               style={rect}
             >
-              <span className="absolute -top-2 -left-2 flex size-4 items-center justify-center rounded-full bg-accent-main-100 text-[10px] font-medium text-white">
+              <span className="absolute -top-2 -left-2 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-medium text-primary-foreground">
                 {marker.number}
               </span>
             </div>
@@ -138,7 +138,7 @@ const PptxSlideAnnotationLayer = ({
         })}
         {dragRect ? (
           <div
-            className="pointer-events-none absolute border border-dashed border-accent-main-100 bg-accent-main-100/10"
+            className="pointer-events-none absolute border border-dashed border-primary bg-primary/10"
             style={normalizedToScreen(dragRect, box)}
           />
         ) : null}

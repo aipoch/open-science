@@ -155,10 +155,11 @@ const SEVERITY_ICON = {
 } as const
 
 const SEVERITY_CLASSES = {
-  error: 'border-red-200 bg-red-50 text-red-800',
+  error:
+    'border-red-200 bg-red-50 text-red-800 dark:border-status-failure-dark-border dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground',
   warning:
     'border-status-warning-foreground/30 dark:border-status-warning-dark-foreground/30 bg-status-warning-surface dark:bg-status-warning-dark-surface text-status-warning-foreground dark:text-status-warning-dark-foreground',
-  info: 'border-blue-200 bg-blue-50 text-blue-800'
+  info: 'border-blue-200 bg-blue-50 text-blue-800 dark:border-status-info-dark-foreground/30 dark:bg-status-info-dark-surface dark:text-status-info-dark-foreground'
 } as const
 
 type SpecialistsPanelProps = {
@@ -1694,9 +1695,9 @@ const SpecialistsPanel = ({
                                 />
                                 <div className="min-w-0">
                                   <strong className="block">{t(copy.title)}</strong>
-                                  <span className="block opacity-80">{t(copy.body)}</span>
+                                  <span className="block">{t(copy.body)}</span>
                                   {diagnostic.path || diagnostic.relatedId ? (
-                                    <span className="mt-0.5 block font-mono text-[10px] opacity-60">
+                                    <span className="mt-0.5 block font-mono text-[10px]">
                                       {diagnostic.path}
                                       {diagnostic.path && diagnostic.relatedId ? ' / ' : ''}
                                       {diagnostic.relatedId
@@ -1716,7 +1717,7 @@ const SpecialistsPanel = ({
               ) : (
                 <div
                   role="status"
-                  className="mt-3 flex gap-2 rounded-md border border-green-200 bg-green-50 p-2 text-xs text-green-800"
+                  className="mt-3 flex gap-2 rounded-md border border-green-200 bg-green-50 p-2 text-xs text-green-800 dark:border-status-success-dark-foreground/30 dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground"
                 >
                   <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                   <div>

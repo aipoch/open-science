@@ -135,6 +135,14 @@ class SessionDelegatedQuestionPersistenceOwner {
           previous.id !== input.previousAttemptId ||
           previous.status === 'running' ||
           !frame ||
+          (input.taskResponse &&
+            (previous.id !== request.sourceAttemptId ||
+              frame.parentFrameId !== graph.rootFrameId ||
+              frame.originBindingState !== 'validated' ||
+              frame.activeBranchId !== request.sourceMessageBranchId ||
+              (previous.status !== 'completed' &&
+                previous.cancellationReason !== 'runtime_interrupted') ||
+              !previous.runtimeSegmentIds.includes(request.sourceRuntimeSegmentId))) ||
           rootFrame?.activeBranchId !== request.rootBranchId ||
           !rootPath.some((message) => message.id === request.rootOriginMessageId) ||
           input.initiatingTurnMessageId !== request.rootOriginMessageId
@@ -151,6 +159,7 @@ class SessionDelegatedQuestionPersistenceOwner {
         }
         const branch = graph.branches.find((candidate) => candidate.id === frame.activeBranchId)
         if (!branch) throw new Error(`Delegate Branch not found: ${frame.activeBranchId}`)
+        input.assertTaskCurrent?.()
         graph.messages.push({
           id: input.messageId,
           role: 'user',
@@ -183,10 +192,12 @@ class SessionDelegatedQuestionPersistenceOwner {
           draftAnswers: structuredClone(input.answers),
           answers: structuredClone(input.answers),
           respondedAt: input.startedAt,
-          continuationAttemptId: input.attemptId
+          continuationAttemptId: input.attemptId,
+          ...(input.taskResponse ? { taskResponse: input.taskResponse } : {})
         }
         return { frameId: input.frameId, attemptId: input.attemptId, status: 'running' }
-      }
+      },
+      { rejectNewQuestionQuarantine: true }
     )
   }
 

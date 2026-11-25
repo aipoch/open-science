@@ -8,7 +8,11 @@ import {
   resolveMessageBranchPath,
   type PersistedConversationGraph
 } from '../../shared/conversation-graph'
-import type { ElicitationAnswer, PendingElicitationRequest } from '../../shared/elicitation'
+import type {
+  ElicitationAnswer,
+  PendingElicitationRequest,
+  TaskQuestionReceipt
+} from '../../shared/elicitation'
 import type { HistoryReplayDescriptor } from '../../shared/history-replay-contract'
 import {
   buildSessionHistoryReplay,
@@ -136,6 +140,10 @@ class AcpDurableContinuationContextOwner {
     recovery?: { error: string }
     replay?: DurableContinuationReplay
     replayIfContextReset?: boolean
+    taskResponse?: {
+      receipt: TaskQuestionReceipt
+      assertCurrent: (session: PersistedChatSession, request?: PendingElicitationRequest) => void
+    }
   }): Promise<DurableElicitationContinuationPreparation> {
     let replay = input.replay
     if (
@@ -164,7 +172,20 @@ class AcpDurableContinuationContextOwner {
     }
     const saved = input.retryContinuation || input.continuePrepared
     if (saved) this.assertRetry(session, input)
-    const authority = this.resolvePendingElicitation(session, input, saved)
+    const readAuthority = (
+      candidate: PersistedChatSession
+    ): ReturnType<AcpDurableContinuationContextOwner['resolvePendingElicitation']> => {
+      let current
+      try {
+        current = this.resolvePendingElicitation(candidate, input, saved)
+      } catch (error) {
+        input.taskResponse?.assertCurrent(candidate)
+        throw error
+      }
+      input.taskResponse?.assertCurrent(candidate, this.canonicalRequest(candidate.id, current))
+      return current
+    }
+    const authority = readAuthority(session)
     const continuation = this.prepareFromSession(session, authority.promptMessageId, replay)
     const request = this.canonicalRequest(session.id, authority)
     // Commit the decision and adopt legacy transcript ownership in the same Main mutation.
@@ -180,7 +201,7 @@ class AcpDurableContinuationContextOwner {
     }
     const commit = this.sessions.mutateRuntimeSession(input, (latest) => {
       if (saved) this.assertRetry(latest, input)
-      const current = this.resolvePendingElicitation(latest, input, saved)
+      const current = readAuthority(latest)
       if (!isDeepStrictEqual(current, authority)) {
         throw new Error('Durable elicitation changed before its answer was committed.')
       }
@@ -193,6 +214,7 @@ class AcpDurableContinuationContextOwner {
         state: input.action === 'accept' ? ('answered' as const) : ('declined' as const),
         ...(answers ? { answers } : {}),
         respondedAt: saved ? previous.respondedAt : Date.now(),
+        ...(input.taskResponse ? { taskResponse: input.taskResponse.receipt } : {}),
         continuationPending: true as const
       }
       return {

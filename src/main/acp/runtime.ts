@@ -1,4 +1,6 @@
+import { assertTaskRunTracingReady } from './task-run-tracing'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
+import { withTaskPromptOwner } from '../../shared/task-continuation'
 import {
   registerResourceObservation,
   recordResourceEvent,
@@ -87,6 +89,7 @@ import type {
 import type { AcpConnectionTransitionOwner } from './connection-transition-owner'
 import type { AcpContextCompactionWorkflow } from './context-compaction-workflow'
 import type { AcpElicitationOwner } from './elicitation-owner'
+import type { TaskQuestionOwnerResponse } from './question-continuation-workflow'
 import type { AcpGenerationActivityOwner } from './generation-activity-owner'
 import type { AcpHandoffContinuityOwner } from './handoff-continuity-owner'
 import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
@@ -348,22 +351,69 @@ class AcpRuntime {
     this.permissionWaitOwner = session.permissionWaitOwner
     const continuations = composeAcpRuntimeContinuations(options, base, session, {
       schedule: (sessionId) => this.schedulePendingAppContinuation(sessionId),
-      sendPermission: (request, permission, onProviderDispatched) =>
-        this.sendDurableAppContinuation(request, {
-          permissionContinuation: permission,
-          onProviderDispatched
-        })
+      sendPermission: (request, permission, onProviderDispatched) => {
+        if (!permission.taskResponse) {
+          return this.sendDurableAppContinuation(request, {
+            permissionContinuation: permission,
+            onProviderDispatched
+          })
+        }
+        if (!options.trackTaskContinuation)
+          throw new Error('Task continuation tracking is unavailable.')
+        return options.trackTaskContinuation(
+          {
+            kind: 'permission',
+            projectId: permission.projectId,
+            sessionId: permission.sessionId,
+            attemptId: permission.requestId,
+            originalPromptMessageId: permission.promptMessageId,
+            promptMessageId: permission.promptMessageId
+          },
+          (onTrackedDispatch, taskRunId) =>
+            this.sendDurableAppContinuation(withTaskPromptOwner(request, taskRunId), {
+              permissionContinuation: permission,
+              promptAttemptId: permission.requestId,
+              onProviderDispatched: () => {
+                onTrackedDispatch()
+                onProviderDispatched()
+              }
+            })
+        )
+      }
     })
     this.permissionContinuations = continuations.permissions
     this.questionContinuations = continuations.questions
     const planContinuations = composeAcpRuntimePlanContinuations(options, session, {
       scheduleContinuation: (sessionId) => this.schedulePendingAppContinuation(sessionId),
-      send: (request, delivery, onProviderDispatched) =>
-        this.sendDurableAppContinuation(request, {
-          promptAttemptId: delivery?.commandId,
-          planDelivery: delivery,
-          onProviderDispatched
-        }),
+      send: (request, delivery, onProviderDispatched) => {
+        const send = (
+          onTrackedDispatch?: () => void,
+          taskRunId?: string
+        ): Promise<PromptResponse> =>
+          this.sendDurableAppContinuation(withTaskPromptOwner(request, taskRunId), {
+            promptAttemptId: delivery?.commandId,
+            planDelivery: delivery,
+            onProviderDispatched: () => {
+              onTrackedDispatch?.()
+              onProviderDispatched()
+            }
+          })
+        const promptMessageId = request.provenanceContext?.promptMessageId
+        if (!delivery?.externalOriginPromptId || !promptMessageId || !options.trackTaskContinuation)
+          return send()
+        return options.trackTaskContinuation(
+          {
+            kind: 'plan',
+            projectId: delivery.projectId,
+            sessionId: request.sessionId,
+            attemptId: delivery.commandId,
+            promptMessageId,
+            originalPromptMessageId: delivery.externalOriginPromptId,
+            originalRunId: delivery.externalOriginRunId
+          },
+          send
+        )
+      },
       projection: (projectId, sessionId) =>
         this.sessionPlanWorkflow.projection(projectId, sessionId)
     })
@@ -663,6 +713,12 @@ class AcpRuntime {
     return this.publication.getState()
   }
 
+  pendingNotebookReviews(
+    sessionId: string
+  ): ReturnType<AcpPermissionContext['pendingNotebookReviews']> {
+    return this.permissionContext.pendingNotebookReviews(sessionId)
+  }
+
   captureBackend(): AcpBackendGenerationView {
     return this.backend
   }
@@ -717,8 +773,11 @@ class AcpRuntime {
     return this.sessionPlanWorkflow.discardUnavailable(input)
   }
 
-  async respondSessionPlan(input: PlanResponseCommand): Promise<PlanResponseResult> {
-    const result = await this.sessionPlanWorkflow.respond(input)
+  async respondSessionPlan(
+    input: PlanResponseCommand,
+    isAuthorizationCurrent?: () => boolean
+  ): Promise<PlanResponseResult> {
+    const result = await this.sessionPlanWorkflow.respond(input, isAuthorizationCurrent)
     if (result.deliveryCommandId) this.planContinuations.schedule(input.projectId, input.sessionId)
     const response = { ...result }
     Reflect.deleteProperty(response, 'deliveryCommandId')
@@ -930,6 +989,16 @@ class AcpRuntime {
     beforePublish?: () => void
   ): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(() => this.providerSessionCreator.create(request, beforePublish))
+  }
+
+  async assertAttachedTracingReady(sessionId: string): Promise<void> {
+    const connection = this.connection
+    const session = this.activeSessionFor(sessionId)
+    if (!session || !connection) throw new Error('ACP session is no longer attached.')
+    await assertTaskRunTracingReady(this.backend.framework.id, connection)
+    this.assertCurrentConnectedConnection(connection)
+    if (this.activeSessionFor(sessionId) !== session)
+      throw new Error('ACP session startup was superseded.')
   }
 
   getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {
@@ -1970,6 +2039,86 @@ class AcpRuntime {
     }
   }
 
+  getTaskPermissions(
+    sessionId: string,
+    promptMessageId: string
+  ): ReturnType<AcpPermissionContext['getTaskPermissions']> {
+    const scope = this.sessionInteractions.current(sessionId)
+    if (
+      scope?.kind !== 'prompt' ||
+      scope.promptMessageId !== promptMessageId ||
+      this.sessionInteractions.isCancellationAccepted(scope)
+    )
+      return []
+    const messageBranchId = scope.provenanceContext?.messageBranchId
+    return this.permissionContext.getTaskPermissions(
+      sessionId,
+      promptMessageId,
+      messageBranchId
+        ? { projectId: this.sessionEnvironment.projectId(sessionId), messageBranchId }
+        : undefined
+    )
+  }
+
+  respondTaskPermission(
+    sessionId: string,
+    promptMessageId: string,
+    requestId: string,
+    optionId: string,
+    decision: import('./permission-broker').TaskPermissionDecision
+  ): Promise<boolean> {
+    const scope = this.sessionInteractions.current(sessionId)
+    if (
+      scope?.kind !== 'prompt' ||
+      scope.promptMessageId !== promptMessageId ||
+      this.sessionInteractions.isCancellationAccepted(scope)
+    )
+      return Promise.resolve(false)
+    const messageBranchId = scope.provenanceContext?.messageBranchId
+    return this.permissionContext.respondTaskPermission(
+      sessionId,
+      promptMessageId,
+      requestId,
+      optionId,
+      {
+        ...decision,
+        assertCurrent: () => {
+          if (
+            this.sessionInteractions.current(sessionId) !== scope ||
+            scope.provenanceContext?.messageBranchId !== messageBranchId ||
+            this.sessionInteractions.isCancellationAccepted(scope)
+          )
+            throw new Error('The original prompt is no longer awaiting a decision.')
+          decision.assertCurrent()
+        }
+      },
+      messageBranchId
+        ? { projectId: this.sessionEnvironment.projectId(sessionId), messageBranchId }
+        : undefined
+    )
+  }
+
+  async restoreTaskPermission(
+    {
+      projectId,
+      sessionId,
+      requestId,
+      optionId
+    }: { projectId: string; sessionId: string; requestId: string; optionId: string },
+    decision: import('./permission-continuation-workflow').TaskRestoredPermissionDecision
+  ): Promise<boolean> {
+    if (
+      this.sessionInteractions.current(sessionId) ||
+      this.permissionContext.getPendingRequests().some((request) => request.sessionId === sessionId)
+    )
+      return false
+    await this.permissionContinuations.respond(
+      { requestId, optionId, restored: { projectId, sessionId } },
+      decision
+    )
+    return true
+  }
+
   // Resolves or cancels one pending permission request from the renderer.
   async respondToPermission(response: AcpPermissionResponse): Promise<AcpStateSnapshot> {
     const permissionRequest = this.permissionContext
@@ -2065,6 +2214,22 @@ class AcpRuntime {
     continuePrepared = false
   ): Promise<AcpStateSnapshot> {
     return this.questionContinuations.respond(response, continuePrepared)
+  }
+
+  listTaskQuestions(sessionId: string): ReturnType<AcpElicitationOwner['listTaskQuestions']> {
+    return this.elicitationOwner.listTaskQuestions(sessionId)
+  }
+
+  respondToTaskQuestion(input: TaskQuestionOwnerResponse): Promise<void> {
+    return this.questionContinuations.respondToTask(
+      input,
+      (request, promptAttemptId, onProviderDispatched) =>
+        this.sendDurableAppContinuation(request, {
+          promptAttemptId,
+          onProviderDispatched
+        }),
+      this.options.trackTaskContinuation
+    )
   }
 
   requestUserInput(input: AgentUserChoiceRequest): Promise<AgentUserChoiceResult> {
