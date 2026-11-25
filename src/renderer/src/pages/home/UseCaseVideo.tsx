@@ -6,6 +6,11 @@ import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../shared/web-event-connec
 import { SOURCE_PREVIEW_PARTITION } from '../../../../shared/source-preview'
 
 const playerOrigin = 'https://www.youtube-nocookie.com'
+const desktopPlayerAttributes = {
+  partition: SOURCE_PREVIEW_PARTITION,
+  // YouTube requires an application referrer when the desktop renderer runs from file:.
+  httpreferrer: 'https://com.aipoch.open-science/'
+} satisfies React.WebViewHTMLAttributes<WebviewTag>
 
 export function VideoPlayIndicator(): React.JSX.Element {
   return (
@@ -133,11 +138,9 @@ export function UseCaseVideo({
         className={`absolute inset-0 ${hidden ? 'pointer-events-none' : ''} ${status === 'playing' ? 'opacity-100' : 'opacity-0'}`}
       >
         {native ? (
-          // YouTube requires an application referrer when the desktop renderer runs from file:.
           <webview
             ref={guest}
-            partition={SOURCE_PREVIEW_PARTITION}
-            httpreferrer="https://com.aipoch.open-science/"
+            {...desktopPlayerAttributes}
             src={src}
             title={video.title || title}
             tabIndex={hidden ? -1 : 0}

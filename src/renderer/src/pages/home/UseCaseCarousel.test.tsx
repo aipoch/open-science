@@ -801,7 +801,7 @@ it('keeps desktop video previews inert and hands playback to the detail guest', 
   })
   await render()
   const card = within(container).getByRole('article')
-  const open = within(card).getByRole('button', { name: 'Case 1', exact: true })
+  const open = within(card).getByRole('button', { name: 'Case 1' })
   await act(async () => fireEvent.mouseOver(card))
   const preview = card.querySelector('webview')!
   expect(preview.getAttribute('httpreferrer')).toBe('https://com.aipoch.open-science/')
