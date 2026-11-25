@@ -39,12 +39,20 @@ const inlineFormula =
 export function pdfTranslationProtectInlineFormulas(
   source: string
 ): { source: string; onlyFormulas: boolean; restore: (text: string) => string } | undefined {
-  const prefix = '⟦PDFMATH'
-  if (source.includes(prefix)) return
   const formulas = [...source.matchAll(inlineFormula)]
   if (!formulas.length) return
-  const marker = (index: number): string =>
-    prefix + String(index).replace(/\d/gu, (digit) => 'ABCDEFGHIJ'[Number(digit)]) + '⟧'
+  const stem = '⟦PDFMATH'
+  const letters = (index: number): string =>
+    String(index).replace(/\d/gu, (digit) => 'ABCDEFGHIJ'[Number(digit)])
+  let prefix = stem
+  if (source.includes(stem)) {
+    const occupied = new Set(source.match(/⟦PDFMATHZ[A-J]+Z/gu))
+    let namespace = 0
+    do {
+      prefix = stem + 'Z' + letters(namespace++) + 'Z'
+    } while (occupied.has(prefix))
+  }
+  const marker = (index: number): string => prefix + letters(index) + '⟧'
   let index = 0
   const masked = source.replace(inlineFormula, () => marker(index++))
   return {
