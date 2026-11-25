@@ -12,3 +12,5 @@
 {"name":"power-of-ten-rejects-flattened-target","base":"10","sourceDigit":"6","sourceRise":3,"targetRise":0,"digit":"6","accepted":false}
 {"name":"power-of-ten-rejects-changed-base","base":"10","targetBase":"20","sourceDigit":"6","sourceRise":3,"targetRise":3,"digit":"6","accepted":false}
 {"name":"power-of-ten-rejects-changed-exponent","base":"10","sourceDigit":"6","sourceRise":3,"targetRise":3,"digit":"7","accepted":false}
+{"name":"retained exponent after a closing brace keeps its Unicode identity","base":"{Q}","sourceRise":4,"targetRise":4,"digit":"2","accepted":true}
+{"name":"flat digit after a closing brace is not a retained exponent","base":"{Q}","sourceRise":4,"targetRise":0,"digit":"2","accepted":false}
