@@ -75,9 +75,6 @@ docs/superpowers/
 local/
 .dev-isolate/
 
-# Original onboarding animation artwork kept locally
-/src/renderer/src/assets/onboarding/welcome.json
-
 # Agent and AI assistant local state
 .hallmark/
 .codegraph/
