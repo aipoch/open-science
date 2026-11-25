@@ -66,10 +66,13 @@ const result = await generateResearchFilm({
 })
 ```
 
-Word-boundary alignment uses a character-proportional duration estimate calibrated from each
-line's own synthesis, so caption timing never triggers extra billed requests; exact prefix
-probing remains a local-engine advantage. The synthesizer identity hashes the voice and excludes
-the API key, so `timings.json` and narration checkpoint keys stay credential-free. Endpoints
+Word-boundary alignment uses a deterministic character-proportional duration estimate that is a
+pure function of the probe text, so the shared narration probe cache stays coherent across lines
+and lanes and caption timing never triggers extra billed requests; exact prefix probing remains
+a local-engine advantage. The synthesizer identity covers the full endpoint (scheme, host, path
+and query) and hashes the voice while excluding the API key, so `timings.json` and narration
+checkpoint keys stay credential-free and never reuse retained audio across endpoint changes.
+Responses are read through a bounded stream with a hard byte cap before decoding. Endpoints
 must return WAV (PCM 16/24/32-bit or IEEE float32); compressed audio is rejected with an
 actionable error. The host remains responsible for credentials, disclosure of narration text to
 the endpoint, rate limiting, and opt-in UI.

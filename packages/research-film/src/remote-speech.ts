@@ -30,18 +30,26 @@ export type RemoteSpeechConfig = {
 
 const DEFAULT_TIMEOUT_MS = 60_000
 const MAX_WAV_BYTES = 64 * 1024 * 1024
+/**
+ * Speaking-rate assumption for word-boundary probes. Estimates are a pure function of the
+ * probe text, so narration's shared probe cache stays coherent across lines and lanes; the
+ * real line duration anchors the computed boundaries.
+ */
+const ESTIMATED_CHARS_PER_SECOND = 15
 
 /**
- * Stable cache and checkpoint identity for a remote backend. Excludes the API key and
- * hashes the voice so a base64 reference sample never reaches `timings.json` or the
- * narration cache key.
+ * Stable cache and checkpoint identity for a remote backend. Covers the full endpoint
+ * (scheme, host, path and query) so a different backend or parameters never reuse retained
+ * narration; excludes the API key, and hashes the voice so a base64 reference sample never
+ * reaches `timings.json` or the narration cache key.
  */
 export const remoteSpeechIdentity = (config: RemoteSpeechConfig): string => {
   const url = new URL(config.endpoint)
   const voice = config.voice
     ? createHash('sha256').update(config.voice).digest('hex').slice(0, 12)
     : 'default'
-  return `remote-http/${config.style}/${url.host}${url.pathname}/${config.model}/${voice}`
+  const endpoint = `${url.origin}${url.pathname}${url.search}`
+  return `remote-http/${config.style}/${endpoint}/${config.model}/${voice}`
 }
 
 const readTag = (view: DataView, offset: number): string =>
@@ -149,10 +157,39 @@ const buildRequest = (
   }
 }
 
+/** Read a response body with a hard byte cap so a faulty endpoint cannot exhaust memory. */
+const readBounded = async (response: Response): Promise<Uint8Array> => {
+  const declared = response.headers.get('content-length')
+  if (declared !== null && Number(declared) > MAX_WAV_BYTES)
+    throw new Error('Remote speech response is too large')
+  const reader = response.body?.getReader()
+  if (!reader) return new Uint8Array(await response.arrayBuffer())
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > MAX_WAV_BYTES) {
+      await reader.cancel().catch(() => undefined)
+      throw new Error('Remote speech response is too large')
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
 /**
  * `SpeechSynthesizer` over an HTTP TTS endpoint. Word boundaries use a character-proportional
- * estimate calibrated from the most recent full synthesis, so alignment never issues extra
- * billed requests; exact timing remains the local engine's advantage.
+ * estimate that is a pure function of the probe text, so the narration probe cache stays
+ * coherent across lines and lanes and never issues extra billed requests; exact timing remains
+ * the local engine's advantage.
  */
 export const createRemoteSpeechSynthesizer = (config: RemoteSpeechConfig): SpeechSynthesizer => {
   // Validate eagerly so a malformed endpoint fails before any narration work starts.
@@ -163,7 +200,6 @@ export const createRemoteSpeechSynthesizer = (config: RemoteSpeechConfig): Speec
   )
     throw new Error('Remote speech timeout must be a positive number of milliseconds')
   const identity = remoteSpeechIdentity(config)
-  let reference: { text: string; duration: number } | undefined
 
   const request = async (text: string): Promise<{ samples: Float32Array; sampleRate: number }> => {
     const { url, init } = buildRequest(config, text)
@@ -177,32 +213,27 @@ export const createRemoteSpeechSynthesizer = (config: RemoteSpeechConfig): Speec
       throw new Error(`Remote speech request failed: ${(error as Error).message}`)
     }
     if (!response.ok) throw new Error(`Remote speech request failed with HTTP ${response.status}`)
+    const bytes = await readBounded(response)
     if (config.style === 'chat-completions') {
-      const payload = (await response.json().catch(() => undefined)) as
-        { choices?: { message?: { audio?: { data?: unknown } } }[] } | undefined
+      let payload: { choices?: { message?: { audio?: { data?: unknown } } }[] } | undefined
+      try {
+        payload = JSON.parse(new TextDecoder().decode(bytes))
+      } catch {
+        payload = undefined
+      }
       const data = payload?.choices?.[0]?.message?.audio?.data
       if (typeof data !== 'string' || data.length < 1)
         throw new Error('Remote speech response is missing synthesized audio')
       return decodeWav(Buffer.from(data, 'base64'))
     }
-    return decodeWav(new Uint8Array(await response.arrayBuffer()))
+    return decodeWav(bytes)
   }
 
   return {
     identity,
-    async synthesize(text) {
-      const audio = await request(text)
-      reference = { text, duration: audio.samples.length / audio.sampleRate }
-      return audio
-    },
+    synthesize: request,
     async measureDuration(text) {
-      if (!reference) {
-        // The narration pipeline always synthesizes a line before probing its boundaries;
-        // this fallback only keeps the contract honest if that ordering ever changes.
-        const audio = await request(text)
-        return audio.samples.length / audio.sampleRate
-      }
-      const estimate = reference.duration * (text.length / Math.max(1, reference.text.length))
+      const estimate = text.length / ESTIMATED_CHARS_PER_SECOND
       if (!Number.isFinite(estimate) || estimate <= 0 || estimate > 300)
         throw new Error('Remote speech duration estimate is out of range')
       return estimate

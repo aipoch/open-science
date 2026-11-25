@@ -105,10 +105,16 @@ describe('remoteSpeechIdentity', () => {
     expect(withVoice).toContain('chat-completions')
   })
 
-  it('distinguishes model, endpoint and voice changes', () => {
+  it('distinguishes scheme, query, model, endpoint and voice changes', () => {
     const identity = remoteSpeechIdentity(base)
     expect(remoteSpeechIdentity({ ...base, model: 'tts-2' })).not.toBe(identity)
     expect(remoteSpeechIdentity({ ...base, endpoint: 'https://other.example.com/v1' })).not.toBe(
+      identity
+    )
+    expect(
+      remoteSpeechIdentity({ ...base, endpoint: 'http://api.example.com/v1/chat/completions' })
+    ).not.toBe(identity)
+    expect(remoteSpeechIdentity({ ...base, endpoint: `${base.endpoint}?region=us` })).not.toBe(
       identity
     )
     expect(remoteSpeechIdentity({ ...base, voice: 'alloy' })).not.toBe(identity)
@@ -196,7 +202,7 @@ describe('createRemoteSpeechSynthesizer', () => {
     expect(body.audio).toEqual({ format: 'wav', voice: '冰糖' })
   })
 
-  it('estimates probe durations proportionally without extra requests', async () => {
+  it('estimates probe durations as a pure function of the probe text', async () => {
     const payload = wav(new Array(48000).fill(0)) // two seconds at 24 kHz
     const { url, requests } = await listen((_request, response) => {
       response.writeHead(200, { 'content-type': 'audio/wav' })
@@ -210,16 +216,19 @@ describe('createRemoteSpeechSynthesizer', () => {
     })
     const audio = await synthesizer.synthesize('abcdefghij')
     expect(audio.samples).toHaveLength(48000)
-    const measured = await synthesizer.measureDuration?.('abcde')
-    expect(measured).toBeCloseTo(1, 2)
+    // Deterministic regardless of prior synthesis, so the shared probe cache stays coherent.
+    const first = await synthesizer.measureDuration?.('abcde')
+    const second = await synthesizer.measureDuration?.('completely different probe text')
+    expect(first).toBeCloseTo(5 / 15, 6)
+    expect(second).toBeCloseTo('completely different probe text'.length / 15, 6)
     expect(requests).toHaveLength(1)
+    expect(await synthesizer.measureDuration?.('abcde')).toBe(first)
   })
 
-  it('measures by synthesizing once when no reference exists yet', async () => {
-    const payload = wav(new Array(24000).fill(0))
+  it('answers duration probes without any HTTP request', async () => {
     const { url, requests } = await listen((_request, response) => {
       response.writeHead(200, { 'content-type': 'audio/wav' })
-      response.end(payload)
+      response.end(wav([0]))
     })
     const synthesizer = createRemoteSpeechSynthesizer({
       kind: 'remote-http',
@@ -227,9 +236,46 @@ describe('createRemoteSpeechSynthesizer', () => {
       endpoint: url,
       model: 'tts-1'
     })
-    const measured = await synthesizer.measureDuration?.('cold probe')
-    expect(measured).toBeCloseTo(1, 2)
-    expect(requests).toHaveLength(1)
+    expect(await synthesizer.measureDuration?.('cold probe')).toBeCloseTo(
+      'cold probe'.length / 15,
+      6
+    )
+    expect(requests).toHaveLength(0)
+  })
+
+  it('rejects an oversized response before buffering it', async () => {
+    const { url } = await listen((_request, response) => {
+      response.writeHead(200, {
+        'content-type': 'audio/wav',
+        'content-length': String(64 * 1024 * 1024 + 1)
+      })
+      response.end()
+    })
+    const synthesizer = createRemoteSpeechSynthesizer({
+      kind: 'remote-http',
+      style: 'audio-speech',
+      endpoint: url,
+      model: 'tts-1'
+    })
+    await expect(synthesizer.synthesize('Hello')).rejects.toThrow(/too large/)
+  })
+
+  it('rejects a streamed response that grows past the byte cap', async () => {
+    const { url } = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'audio/wav' })
+      // No content-length: force chunked streaming past the cap.
+      const chunk = Buffer.alloc(1024 * 1024)
+      const timer = setInterval(() => response.write(chunk), 1)
+      response.on('close', () => clearInterval(timer))
+    })
+    const synthesizer = createRemoteSpeechSynthesizer({
+      kind: 'remote-http',
+      style: 'audio-speech',
+      endpoint: url,
+      model: 'tts-1',
+      timeoutMs: 15_000
+    })
+    await expect(synthesizer.synthesize('Hello')).rejects.toThrow(/too large/)
   })
 
   it('reports HTTP failures without echoing credentials', async () => {
