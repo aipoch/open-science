@@ -195,6 +195,7 @@ it('shows every blocking process with its PID when installation occupancy is rep
       current: '1.3.2',
       latest: '1.3.3',
       reason: 'installation-busy',
+      error: 'Another process is using installation files.',
       recovery: r({
         detail: 'foreign-process',
         blockingProcesses: [{ pid: 33996, name: 'node.exe' }, { pid: 34001 }]
@@ -208,6 +209,11 @@ it('shows every blocking process with its PID when installation occupancy is rep
   expect(processes?.textContent).toContain('PID 34001')
   expect(document.body.textContent).toContain('Application files are in use')
   expect(document.body.textContent).toContain('Close the process listed below, then check again.')
+  expect(document.body.textContent).not.toContain('The operation could not be completed.')
+  expect(document.body.textContent).toContain('installation instructions')
+  expect(document.querySelector('pre')?.textContent).toContain(
+    'Another process is using installation files.'
+  )
 })
 
 it('shows authoritative task titles and uses guarded workspace navigation', async () => {
