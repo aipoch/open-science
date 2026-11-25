@@ -6,6 +6,7 @@ import { ScheduleCardsProvider } from './schedules/ScheduleMessageCard'
 import { ResearchVideoButton } from '../../components/research-video-button'
 import type { TFunction } from 'i18next'
 import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
+import { NotebookMemoryContinuationNotice } from './NotebookMemoryNoticeBridge'
 import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
 import {
@@ -2107,6 +2108,7 @@ const ConversationPanel = ({
                 />
               )}
               <div className="px-1 md:px-3">
+                <NotebookMemoryContinuationNotice session={activeSession} />
                 <ComposerNoticeSlot
                   draftConflict={
                     composerError === DISCUSSION_DRAFT_CONFLICT

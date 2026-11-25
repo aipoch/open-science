@@ -1658,42 +1658,22 @@ const WorkspacePage = ({
         <NotebookMemoryNoticeBridge
           projectId={activeProjectId}
           canManage={isSessionPersistenceReady && canOpenProjectCompute}
-          onContinue={async (event) => {
-            if (event.source === 'reproduction') {
-              const session = useSessionStore
-                .getState()
-                .sessions.find(
-                  ({ id, projectId }) => id === event.sessionId && projectId === event.projectId
-                )
-              if (!session)
-                throw new Error(
-                  t('Open the affected project to retry or manage its Notebook resources.')
-                )
-              setCheckSession(session)
-              return
-            }
-            if (!event.refusalId) return
-            if (typeof window.api.acp?.continueNotebookExecution !== 'function') {
+          sendMessage={
+            typeof window.api.acp?.continueNotebookExecution === 'function'
+              ? runtime.sendMessage
+              : undefined
+          }
+          onContinue={(event) => {
+            const session = useSessionStore
+              .getState()
+              .sessions.find(
+                ({ id, projectId }) => id === event.sessionId && projectId === event.projectId
+              )
+            if (!session)
               throw new Error(
-                t('Notebook continuation is unavailable. Update the application before retrying.')
+                t('Open the affected project to retry or manage its Notebook resources.')
               )
-            }
-            const result = await conversation.actions.submit.notebookContinuation({
-              projectId: event.projectId,
-              sessionId: event.sessionId,
-              cwd: event.workspaceCwd,
-              refusalId: event.refusalId,
-              messageBranchId: event.messageBranchId,
-              text: t(
-                'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
-              )
-            })
-            if (!result)
-              throw new Error(
-                t(
-                  'Notebook continuation could not be started. The previous request remains stopped.'
-                )
-              )
+            setCheckSession(session)
           }}
         />
         {projectSessionCleanups.map((cleanup) => (

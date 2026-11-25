@@ -107,6 +107,7 @@ type Request = {
   signal?: AbortSignal
   executionScope?: string
   force?: boolean
+  freshAfterPending?: boolean
   maxAgeMs?: number
 }
 
@@ -166,12 +167,18 @@ export class MemoryPolicyService {
     const state = this.domain(key)
     if (this.closed) return Promise.resolve(this.unavailableState(key, 'disposed'))
     const current = this.currentState(request)
-    if (!request.force && current.reason.code !== 'sample-expired' && state.sample) {
+    const force = request.force || request.freshAfterPending
+    if (!force && current.reason.code !== 'sample-expired' && state.sample) {
       return Promise.resolve(current)
     }
-    if (state.pending) return this.waitFor(state.pending, request)
+    if (state.pending) {
+      const pending = this.waitFor(state.pending, request)
+      return request.freshAfterPending
+        ? pending.then(() => this.getState({ ...request, force: true, freshAfterPending: false }))
+        : pending
+    }
     // A forced user check bypasses only the error backoff. It never overlaps a timed-out read.
-    if (state.settling || (!request.force && this.now() < state.nextSampleAt)) {
+    if (state.settling || (!force && this.now() < state.nextSampleAt)) {
       const next = state.observation ?? this.unavailableState(key, 'sample-pending')
       return Promise.resolve({
         ...next,

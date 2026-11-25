@@ -181,6 +181,7 @@ const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 
 const sessionRoutes = new Map()
 const sessionCancellationResolvers = new Map()
+const notebookMemoryContinuationGates = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
@@ -3210,6 +3211,73 @@ if (process.argv.includes('--version')) {
           reply = await verifyComputeMonitor(context.params.sessionId)
         } else if (prompt.includes('Read Compute stop feedback.')) {
           reply = await verifyComputeMonitor(context.params.sessionId, true)
+        } else if (prompt.includes('Continue the blocked Notebook work. Keep completed results')) {
+          const sessionId = context.params.sessionId
+          const gate = notebookMemoryContinuationGates.get(sessionId)
+          if (!gate) {
+            await delay(8000)
+            reply = 'The Notebook continuation reached the original session.'
+          } else {
+            await waitForReleaseFile(gate.proceed, 120_000)
+            reply = await withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+              if (gate.outcome === 'reply') {
+                toolResult(
+                  'notebook_state',
+                  await client.callTool({ name: 'notebook_state', arguments: {} })
+                )
+                return 'Notebook status checked. Which dataset should I use?'
+              }
+              const result = await client.callTool(
+                {
+                  name: 'repl_execute',
+                  arguments: { code: 'return { marker: "memory-continuation-new-cell" }' }
+                },
+                undefined,
+                { timeout: 120_000 }
+              )
+              if (gate.outcome === 'pressured') {
+                if (
+                  !result.isError ||
+                  !JSON.stringify(result.content).includes('NOTEBOOK_MEMORY_PRESSURE')
+                )
+                  throw new Error(
+                    `Expected a fresh Notebook memory refusal: ${JSON.stringify(result)}`
+                  )
+                return 'Memory pressure prevented the continuation cell from running.'
+              }
+              const value = controlResultValue(toolResult('repl_execute', result))
+              if (value.marker !== 'memory-continuation-new-cell')
+                throw new Error('The new Notebook continuation cell did not run.')
+              return 'The new Notebook continuation cell ran.'
+            })
+            if (gate.outcome === 'execute') await waitForReleaseFile(gate.finish, 120_000)
+          }
+        } else if (prompt.includes('Verify Notebook history before a memory continuation.')) {
+          const run = await executeControlCode(
+            context.params.sessionId,
+            'return { marker: "memory-continuation-history" }'
+          )
+          if (controlResultValue(run).marker !== 'memory-continuation-history')
+            throw new Error('The historical Notebook cell did not run.')
+          reply = 'The historical Notebook cell ran.'
+        } else if (prompt.includes('Verify a Notebook memory refusal.')) {
+          if (prompt.includes('Continuation fixture: '))
+            notebookMemoryContinuationGates.set(
+              context.params.sessionId,
+              releaseGateFromPrompt(prompt, 'Continuation fixture: ')
+            )
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const refused = await client.callTool({
+              name: 'repl_execute',
+              arguments: { code: 'return { marker: "memory-refusal-must-not-run" }' }
+            })
+            if (
+              !refused.isError ||
+              !JSON.stringify(refused.content).includes('NOTEBOOK_MEMORY_PRESSURE')
+            )
+              throw new Error(`Expected a real Notebook memory refusal: ${JSON.stringify(refused)}`)
+          })
+          reply = 'The original Notebook request was refused.'
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {

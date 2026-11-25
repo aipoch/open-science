@@ -46,6 +46,7 @@ import {
 } from '../delegation/execution-port'
 import type { RootDelegatedWorkControl } from '../delegation/production-composition'
 import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
+import { notebookUserOperation, withNotebookUserOperation } from '../notebook/execution-intent'
 import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
 import { AcpRuntime } from './runtime'
 import {
@@ -100,6 +101,7 @@ type PendingPromptStart = {
   cancelled: boolean
   globalCancellationGeneration: number
   startAdmission?: PromptAcceptance
+  notebookAdmission?: AbortController
 }
 
 type ActivePromptRequest = {
@@ -222,6 +224,7 @@ class AcpRuntimeCoordinator {
   private delegatedWorkRevision = 0
   private promptAttemptSequence = 0
   private readonly pendingPromptStarts = new Map<string, PendingPromptStart[]>()
+  private readonly startingNotebookContinuations = new Set<string>()
   private readonly activePromptRequests = new Map<string, ActivePromptRequest>()
   private readonly activePromptCounts = new Map<string, number>()
   private readonly interactionReleaseWaiters = new Map<string, Set<() => void>>()
@@ -1338,6 +1341,13 @@ class AcpRuntimeCoordinator {
   // matching prompt start after its durable Session turn is admitted. Provider output and later
   // human approval waits must not retain a Web request until their own lifecycle completes.
   startPrompt(request: AcpPromptRequest): Promise<void> {
+    const operation = notebookUserOperation(request)
+    const refusalId = operation?.desktopContinuation ? operation.refusalId : undefined
+    if (refusalId) {
+      if (this.startingNotebookContinuations.has(refusalId))
+        return Promise.reject(new Error('This Notebook continuation is already in progress.'))
+      this.startingNotebookContinuations.add(refusalId)
+    }
     let resolve!: () => void
     let reject!: (error: unknown) => void
     const accepted = new Promise<void>((promiseResolve, promiseReject) => {
@@ -1374,7 +1384,9 @@ class AcpRuntimeCoordinator {
         ),
       admission.reject
     )
-    return accepted
+    return refusalId
+      ? accepted.finally(() => this.startingNotebookContinuations.delete(refusalId))
+      : accepted
   }
 
   sendApplicationPrompt(
@@ -1869,12 +1881,17 @@ class AcpRuntimeCoordinator {
 
     const runtime = this.claimRuntimeAdmission(owner ?? this.getActiveRuntime())
     const admission = this.runtimeAdmissions.get(runtime)
+    const notebookOperation = notebookUserOperation(request)
+    const notebookAdmission = notebookOperation?.desktopContinuation
+      ? new AbortController()
+      : undefined
     const attempt: PendingPromptStart = {
       id: `prompt-attempt-${++this.promptAttemptSequence}`,
       runtime,
       cancelled: false,
       globalCancellationGeneration: this.globalCancellationGeneration,
-      startAdmission
+      startAdmission,
+      notebookAdmission
     }
     const pending = this.pendingPromptStarts.get(request.sessionId) ?? []
     pending.push(attempt)
@@ -1882,12 +1899,17 @@ class AcpRuntimeCoordinator {
     // Legacy callers may omit graph provenance. Give the originating task one stable identity before
     // its first runtime run so an app-owned continuation reuses that identity instead of receiving a
     // second per-run fallback from AcpRuntime.activateArtifactRun().
-    const taskRequest: AcpPromptRequest = request.provenanceContext
+    let taskRequest: AcpPromptRequest = request.provenanceContext
       ? request
       : {
           ...request,
           provenanceContext: { promptMessageId: `prompt-${randomUUID()}` }
         }
+    if (notebookOperation && notebookAdmission)
+      taskRequest = withNotebookUserOperation(taskRequest, {
+        ...notebookOperation,
+        admissionSignal: notebookAdmission.signal
+      })
     const activePrompt: ActivePromptRequest = {
       request: taskRequest,
       runtime,
@@ -2617,6 +2639,7 @@ class AcpRuntimeCoordinator {
     }
     for (const attempt of this.pendingPromptStarts.get(sessionId) ?? []) {
       attempt.cancelled = true
+      attempt.notebookAdmission?.abort()
       attempt.startAdmission?.reject(
         new DelegateMessagePreAcceptanceError(
           'ACP prompt start was cancelled before runtime turn admission'
@@ -2636,6 +2659,7 @@ class AcpRuntimeCoordinator {
     this.globalCancellationGeneration += 1
     for (const attempts of this.pendingPromptStarts.values()) {
       for (const attempt of attempts) {
+        attempt.notebookAdmission?.abort()
         attempt.startAdmission?.reject(
           new DelegateMessagePreAcceptanceError(
             'ACP prompt start was superseded before runtime turn admission'

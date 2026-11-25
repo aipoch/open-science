@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { NotebookExecutionAdmissionError } from './execution-admission'
+import { NotebookExecutionAdmissionError, type NotebookMemoryRecheck } from './execution-admission'
 import type { notebookExecutionIntentReference } from './execution-model-contract'
 
 export const ABANDONED_NOTEBOOK_PREPARATION = 'user-execution-preparation-not-committed'
@@ -13,7 +13,7 @@ export type NotebookExecutionIntentScope = Readonly<{
   continuedFromRefusalId?: string
 }>
 export type NotebookExecutionContinuation = NotebookExecutionIntentScope &
-  Readonly<{ refusalId: string }>
+  Readonly<{ refusalId: string; kind?: 'memory' }>
 export type NotebookExecutionIntentDeletion =
   { projectId: string } | { sessionIds: readonly string[] }
 
@@ -21,7 +21,12 @@ export type NotebookExecutionIntentDeletion =
 // Concrete transports and derived Attempts retain the same immutable reference.
 export class NotebookExecutionIntent {
   declare readonly [notebookExecutionIntentReference]: true
-  private refusal?: Readonly<{ id: string; reason: string; blockedAt: number }>
+  private refusal?: Readonly<{
+    id: string
+    reason: string
+    blockedAt: number
+    recheckMemory?: NotebookMemoryRecheck
+  }>
   private continuationClaimed = false
   private userPreparationPending = false
   private userMemoryRecheck?: () => void
@@ -42,6 +47,10 @@ export class NotebookExecutionIntent {
 
   get refusalReason(): string | undefined {
     return this.refusal?.reason
+  }
+
+  get recheckMemory(): NotebookMemoryRecheck | undefined {
+    return this.refusal?.recheckMemory
   }
 
   get hasClaimedContinuation(): boolean {
@@ -69,8 +78,13 @@ export class NotebookExecutionIntent {
     return stopped
   }
 
-  block(reason: string): string {
-    this.refusal ??= Object.freeze({ id: randomUUID(), reason, blockedAt: Date.now() })
+  block(reason: string, recheckMemory?: NotebookMemoryRecheck): string {
+    this.refusal ??= Object.freeze({
+      id: randomUUID(),
+      reason,
+      blockedAt: Date.now(),
+      recheckMemory
+    })
     return this.refusal.id
   }
 
@@ -187,6 +201,8 @@ export type NotebookTaskContinuationOperation = Readonly<{
 type NotebookUserOperation = Readonly<{
   refusalId?: string
   projectId?: string
+  desktopContinuation?: true
+  admissionSignal?: AbortSignal
   task?: NotebookTaskContinuationOperation['task']
   assertCurrent(): void
 }>
@@ -274,7 +290,8 @@ export class NotebookExecutionIntentOwner {
               projectId,
               sessionId,
               refusalId: intent.refusalId,
-              messageBranchId: intent.scope.messageBranchId
+              messageBranchId: intent.scope.messageBranchId,
+              ...(intent.recheckMemory ? { kind: 'memory' as const } : {})
             }
           ]
         : []
@@ -343,7 +360,8 @@ export class NotebookExecutionIntentOwner {
           projectId,
           sessionId,
           refusalId: intent.refusalId,
-          messageBranchId: intent.scope.messageBranchId
+          messageBranchId: intent.scope.messageBranchId,
+          ...(intent.recheckMemory ? { kind: 'memory' as const } : {})
         }
       ]
     })

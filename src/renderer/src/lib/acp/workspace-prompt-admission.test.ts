@@ -587,6 +587,35 @@ describe('Stop before an existing Session prompt reaches Main', () => {
     expect(continueNotebookExecution).not.toHaveBeenCalled()
   })
 
+  it('waits for Main to acknowledge the memory continuation before returning the prompt identity', async () => {
+    const { agent } = await existing()
+    const acknowledged = gate()
+    const continueNotebookExecution = vi.fn(async () => {
+      await acknowledged.promise
+      return snapshot
+    })
+    const accepted = vi.fn()
+    const sent = sendWorkspaceMessage(
+      { ...agent, continueNotebookExecution },
+      {
+        ...input,
+        requireExistingSession: true,
+        notebookContinuation: { refusalId: 'refusal-1', kind: 'memory' }
+      },
+      { flushPersistence: saveCurrent }
+    ).then((result) => {
+      accepted(result)
+      return result
+    })
+    await vi.waitFor(() => expect(continueNotebookExecution).toHaveBeenCalledOnce())
+    expect(accepted).not.toHaveBeenCalled()
+    acknowledged.resolve()
+    await expect(sent).resolves.toMatchObject({
+      sessionId: 'bound-session',
+      messageId: expect.any(String)
+    })
+  })
+
   it.each(['prepare', 'flush'] as const)(
     'rolls back an exact unsent preparation after Stop during %s',
     async (phase) => {

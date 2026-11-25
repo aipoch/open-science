@@ -27,6 +27,7 @@ import {
 import { imageEditorScope } from './image-edit/image-editor-state'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
+import { fireEvent, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { forkSessionMock, scrollerProps } = vi.hoisted(() => ({
@@ -39,6 +40,10 @@ vi.mock('@/lib/session-fork', () => ({
 }))
 
 import { ConversationPanel } from './ConversationPanel'
+import { NotebookMemoryNoticeBridge } from './NotebookMemoryNoticeBridge'
+import type { NotebookMemoryRejectedEvent } from '../../../../shared/notebook-memory'
+import type { NotebookChangedEvent } from '../../../../shared/notebook'
+import type { ReplayRunIndex } from '../../../../shared/replay'
 import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
 import { AcpDurableContinuationContextOwner } from '../../../../main/acp/durable-continuation-context-owner'
@@ -751,8 +756,7 @@ const createPanelDefaults = (): PanelProps => ({
     actions: {
       submit: {
         draft: vi.fn(),
-        restoredPlan: vi.fn().mockResolvedValue(undefined),
-        notebookContinuation: vi.fn()
+        restoredPlan: vi.fn().mockResolvedValue(undefined)
       },
       revise: vi.fn(),
       branch: vi.fn(),
@@ -2021,6 +2025,212 @@ afterEach(() => {
   vi.unstubAllGlobals()
   container.remove()
 })
+
+const notebookContinuationScenarios = [
+  'reply only',
+  'background run',
+  'completed without code-start evidence',
+  'missing run detail',
+  'settled without admission',
+  'successful Shell exit'
+] as const
+
+it.each(notebookContinuationScenarios)(
+  'shows the admitted Notebook continuation outcome for %s',
+  async (scenario) => {
+    const session: ChatSession = {
+      id: `memory-continuation-${scenario}`,
+      projectId: 'project-a',
+      title: 'Notebook continuation',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'refused-prompt',
+          role: 'user',
+          content: 'Run the Notebook.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+          turnOutcome: { kind: 'completed', settledAt: 2 }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const prompt: ChatSession['messages'][number] = {
+      id: 'continuation-prompt',
+      role: 'user',
+      content: 'Continue.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const branchId = `message-branch-${session.id}`
+    const admission = {
+      executionId: 'continuation-execution',
+      promptMessageId: prompt.id,
+      rootFrameId: `root-frame-${session.id}`,
+      agentFrameId: `root-frame-${session.id}`,
+      messageBranchId: branchId,
+      promptRuntimeSegmentId: `runtime-segment-${session.id}`,
+      runtimeSegmentId: `runtime-segment-${session.id}`
+    }
+    const run: ReplayRunIndex = {
+      ...admission,
+      runId: 'background',
+      cellId: 'cell',
+      status: 'queued',
+      startedAt: 3,
+      kernelKind: 'repl',
+      source: 'agent'
+    }
+    const unrelated: ReplayRunIndex[] = [
+      { ...run, runId: 'old', status: 'completed', promptMessageId: 'refused-prompt' },
+      { ...run, runId: 'other-branch', status: 'completed', messageBranchId: 'other-branch' }
+    ]
+    let currentRun: ReplayRunIndex & {
+      executionStarted?: boolean
+      kernelDispatched?: boolean
+      exitCode?: number
+    } =
+      scenario === 'completed without code-start evidence'
+        ? { ...run, status: 'completed', kernelDispatched: true }
+        : run
+    const publish = (next: ChatSession): void => {
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...next,
+            conversationGraph: createLinearConversationGraph({ ...next, sessionId: next.id })
+          }
+        ]
+      })
+    }
+    const MemoryConversation = (): React.JSX.Element => {
+      const activeSession = useSessionStore((state) => state.sessions[0])
+      const defaults = createPanelDefaults()
+      return <PanelHarness {...defaults} view={{ ...defaults.view, activeSession }} />
+    }
+    let rejectMemory!: (event: NotebookMemoryRejectedEvent) => void
+    window.api.notebook.onMemoryRejected = (listener) => {
+      rejectMemory = listener
+      return () => undefined
+    }
+    const notebookListeners = new Set<(event: NotebookChangedEvent) => void>()
+    window.api.notebook.onChanged = (listener) => {
+      notebookListeners.add(listener)
+      return () => notebookListeners.delete(listener)
+    }
+    const notifyNotebookChanged = (): void => {
+      for (const listener of notebookListeners)
+        listener({
+          projectId: session.projectId,
+          sessionId: session.id,
+          workspaceCwd: session.cwd,
+          dataRoot: '/data',
+          runtimeRoot: '/workspace/runtime',
+          notebookSessionRoot: '/workspace/notebook',
+          runJsonPath: '/workspace/runs.json'
+        })
+    }
+    window.api.notebook.runIndex = async () =>
+      scenario === 'reply only' ? unrelated : [...unrelated, currentRun]
+    window.api.notebook.state = vi.fn(async () => ({
+      runs: [
+        ...unrelated.map((row) => ({ ...row, executionStarted: true })),
+        ...(scenario === 'missing run detail' ? [] : [currentRun])
+      ]
+    })) as unknown as typeof window.api.notebook.state
+    const sendMessage = vi.fn(async () => {
+      publish({ ...session, messages: [...session.messages, prompt] })
+      return { sessionId: session.id, messageId: prompt.id }
+    })
+    publish(session)
+    await act(async () =>
+      root.render(
+        <>
+          <NotebookMemoryNoticeBridge projectId={session.projectId} sendMessage={sendMessage} />
+          <MemoryConversation />
+        </>
+      )
+    )
+    await act(async () =>
+      rejectMemory({
+        projectId: session.projectId,
+        sessionId: session.id,
+        messageBranchId: branchId,
+        source: 'agent',
+        refusalId: `continuation-outcome-${scenario}`,
+        memory: {
+          status: 'pressured',
+          reason: 'windows-physical-low',
+          source: 'windows-performance-info',
+          executionScope: 'windows:host',
+          checkedAt: 1
+        }
+      })
+    )
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Check and continue' }))
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText('Continuing Notebook work…')).toBeTruthy()
+
+    const admitted: ChatSession = {
+      ...session,
+      messages: [...session.messages, prompt],
+      runtimeSessionAdmissions: scenario === 'settled without admission' ? [] : [admission]
+    }
+    await act(async () => publish(admitted))
+    expect(screen.getByText('Continuing Notebook work…')).toBeTruthy()
+    expect(screen.queryByText('Notebook execution started')).toBeNull()
+
+    const settled: ChatSession = {
+      ...admitted,
+      messages: [
+        ...session.messages,
+        { ...prompt, turnOutcome: { kind: 'completed', settledAt: 4 } }
+      ]
+    }
+    await act(async () => publish(settled))
+    const unconfirmed = 'Memory check passed. Notebook execution could not be confirmed.'
+    if (scenario === 'background run' || scenario === 'successful Shell exit') {
+      expect(screen.getByText('Continuing Notebook work…')).toBeTruthy()
+      expect(screen.queryByText('Notebook execution started')).toBeNull()
+      await act(async () => {
+        currentRun = { ...run, status: 'running' }
+        notifyNotebookChanged()
+      })
+      expect(screen.getByText('Continuing Notebook work…')).toBeTruthy()
+      expect(screen.queryByText('Notebook execution started')).toBeNull()
+      await act(async () => {
+        currentRun =
+          scenario === 'background run'
+            ? { ...run, status: 'completed', executionStarted: true }
+            : { ...run, status: 'completed', kernelKind: 'bash', exitCode: 0 }
+        notifyNotebookChanged()
+      })
+      expect(screen.getByText('Notebook execution started')).toBeTruthy()
+      await act(async () =>
+        publish({
+          ...settled,
+          runtimeSessionAdmissions: [admission, { ...admission, executionId: 'replacement' }]
+        })
+      )
+      expect(screen.queryByText('Notebook execution started')).toBeNull()
+      expect(screen.getByText(unconfirmed)).toBeTruthy()
+    } else if (scenario === 'reply only') {
+      expect(screen.getByText('Memory check passed. Notebook did not run this turn.')).toBeTruthy()
+    } else {
+      expect(screen.getByText(unconfirmed)).toBeTruthy()
+    }
+    expect(screen.queryByText('Continuing Notebook work…')).toBeNull()
+    expect(sendMessage).toHaveBeenCalledOnce()
+  }
+)
 
 describe('ConversationPanel context reset notice', () => {
   const session: ChatSession = {

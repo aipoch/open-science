@@ -31,7 +31,11 @@ import { bindResumeRequestToProject } from './session-project-binding'
 import { installAgentShutdownGuard } from './shutdown-guard'
 import { withAgentAuthenticationRecovery } from './prompt-error'
 import { withNotebookUserOperation } from '../notebook/execution-intent'
-import { callerContextForEvent, canSatisfyHumanApproval } from '../caller-context'
+import {
+  callerContextForEvent,
+  canSatisfyHumanApproval,
+  requireDesktopCaller
+} from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
 
 type AcpIpcSessionAdmission = {
@@ -149,6 +153,7 @@ const registerAcpIpcHandlerSet = (
           event.sender.isDestroyed()
         )
           throw new Error('Only a current human caller can continue Notebook execution.')
+        requireDesktopCaller(caller)
       }
       assertCurrent()
       const { projectId, refusalId, ...request } = input
@@ -172,7 +177,7 @@ const registerAcpIpcHandlerSet = (
               continuation: undefined,
               suppressUserMessage: undefined
             },
-            { projectId, refusalId, assertCurrent }
+            { projectId, refusalId, desktopContinuation: true, assertCurrent }
           )
         )
       )

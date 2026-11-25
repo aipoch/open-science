@@ -38,6 +38,7 @@ export const createNotebookMemoryPolicy = async (
 }
 
 export type NotebookExecutionBoundary = 'submit' | 'create' | 'dispatch' | 'restart'
+export type NotebookMemoryRecheck = (signal: AbortSignal) => Promise<void>
 
 export type NotebookExecutionAdmission = {
   prepare(boundary: NotebookExecutionBoundary): Promise<void>
@@ -111,13 +112,26 @@ export class NotebookExecutionAdmissionError extends Error {
 export const createNotebookExecutionAdmission = (options: {
   policy: () => Promise<NotebookMemoryPolicyPort>
   executionScope?: string
+  expectedScope?: string
   force?: boolean
+  freshAfterPending?: boolean
   signal?: AbortSignal
   assertHostCurrent?: (boundary: NotebookExecutionBoundary) => void
-  onRejected?: (state: MemoryPolicyObservation) => void
+  onRejected?: (state: MemoryPolicyObservation, recheck: NotebookMemoryRecheck) => void
 }): NotebookExecutionAdmission => {
   let policy: NotebookMemoryPolicyPort | undefined
   const assertMemory = (state: MemoryPolicyObservation): void => {
+    if (options.freshAfterPending && state.reason.code === 'disposed')
+      throw new NotebookExecutionAdmissionError(
+        'NOTEBOOK_MEMORY_UNAVAILABLE',
+        'The original Notebook execution domain is no longer available. Execution was not started.',
+        state
+      )
+    if (options.expectedScope !== undefined && state.executionScope !== options.expectedScope)
+      throw new NotebookExecutionAdmissionError(
+        'NOTEBOOK_MEMORY_UNAVAILABLE',
+        'The memory check no longer matches the refused execution domain.'
+      )
     if (state.status === 'healthy') return
     // Pressure observations also drive idle reclamation. A fresh macOS warning or
     // normal recovery sample is advisory for new work; critical pressure still blocks.
@@ -129,7 +143,19 @@ export const createNotebookExecutionAdmission = (options: {
         (state.facts?.pressureLevel === 'normal' && state.reason.code === 'mac-memory-recovering'))
     )
       return
-    options.onRejected?.(state)
+    const rejectedPolicy = policy
+    options.onRejected?.(state, async (signal) => {
+      const retry = createNotebookExecutionAdmission({
+        policy: rejectedPolicy ? async () => rejectedPolicy : options.policy,
+        executionScope: options.executionScope,
+        expectedScope: state.executionScope,
+        force: true,
+        freshAfterPending: true,
+        signal
+      })
+      await retry.prepare('submit')
+      retry.assertCurrent('submit')
+    })
     throw new NotebookExecutionAdmissionError(
       state.status === 'pressured' ? 'NOTEBOOK_MEMORY_PRESSURE' : 'NOTEBOOK_MEMORY_UNAVAILABLE',
       state.status === 'pressured'
@@ -166,7 +192,8 @@ export const createNotebookExecutionAdmission = (options: {
         state = await policy.getState({
           signal: options.signal,
           executionScope: options.executionScope,
-          force: options.force === true
+          force: options.force === true,
+          ...(options.freshAfterPending ? { freshAfterPending: true } : {})
         })
       } catch (error) {
         options.signal?.throwIfAborted()
