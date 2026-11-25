@@ -24,6 +24,7 @@ export type ManagedFileVersionRecord = {
   storedFilename: string | null
   writeOperationId: string | null
   contentStorageKey: string
+  contentBlobId?: string | null
   filename: string
   originalFilename: string | null
   contentType: string | null

@@ -27,6 +27,8 @@ import {
 } from './service'
 import { NodeVersionFileOperator, VersionFileOperatorError } from './version-file-operator'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { ContentRepository } from '../storage/content-repository'
+import { persistentContentReferences } from '../storage/prisma-content-references'
 
 const checksum = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 type SourceFixture = {
@@ -256,6 +258,184 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         })
       ).text
     ).toBe('second\n')
+  })
+
+  it('retries sidecar cleanup after content and an earlier sidecar were scrubbed', async () => {
+    const fixture = await createFixture('artifact')
+    const version = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: fixture.versionIds[0] }
+    })
+    const evidence = Buffer.from('{"evidence":true}')
+    const execution = Buffer.from('{"execution":true}')
+    const evidenceStorageKey = `${version.contentStorageKey}.evidence`
+    const executionSnapshotStorageKey = `${version.contentStorageKey}.execution`
+    for (const [storageKey, content] of [
+      [evidenceStorageKey, evidence],
+      [executionSnapshotStorageKey, execution]
+    ] as const) {
+      const path = join(storageRoot, ...storageKey.split('/'))
+      await writeFile(path, content)
+    }
+    await client.artifactVersion.update({
+      where: { id: version.id },
+      data: {
+        evidenceStorageKey,
+        evidenceJson: evidence.toString('utf8'),
+        evidenceChecksum: checksum(evidence),
+        executionSnapshotStorageKey,
+        executionSnapshotJson: execution.toString('utf8'),
+        executionSnapshotChecksum: checksum(execution),
+        executionSnapshotSchemaVersion: 1
+      }
+    })
+    const operator = new NodeVersionFileOperator({ storageRoot })
+    const originalRemove = operator.removeImmutable.bind(operator)
+    let failOnce = true
+    vi.spyOn(operator, 'removeImmutable').mockImplementation(async (storageKey, integrity) => {
+      if (storageKey === executionSnapshotStorageKey && failOnce) {
+        failOnce = false
+        throw new Error('sidecar temporarily unavailable')
+      }
+      return originalRemove(storageKey, integrity)
+    })
+    const service = new ManagedFileVersionService({
+      storageRoot,
+      getClient: async () => client,
+      versionFileOperator: operator
+    })
+    await expect(
+      service.deleteVersions({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        versionIds: [version.id]
+      })
+    ).rejects.toThrow('sidecar temporarily unavailable')
+    expect(
+      (await client.artifactVersion.findUniqueOrThrow({ where: { id: version.id } })).state
+    ).toBe('cleaning')
+    expect(await readFile(join(storageRoot, ...version.contentStorageKey.split('/')))).toHaveLength(
+      0
+    )
+    const recovery = await service.recoverPendingWrites()
+    expect(recovery.failed).toBe(0)
+    expect(
+      (await client.artifactVersion.findUniqueOrThrow({ where: { id: version.id } })).state
+    ).toBe('cleaned')
+    for (const storageKey of [evidenceStorageKey, executionSnapshotStorageKey])
+      expect(await readFile(join(storageRoot, ...storageKey.split('/')))).toHaveLength(0)
+  })
+
+  it.each(['artifact', 'upload'] as const)(
+    'releases %s content authority after cleanup so the sweeper can reclaim it',
+    async (source) => {
+      const fixture = await createFixture(source)
+      const version =
+        source === 'artifact'
+          ? await client.artifactVersion.findUniqueOrThrow({ where: { id: fixture.versionIds[0] } })
+          : await client.uploadVersion.findUniqueOrThrow({ where: { id: fixture.versionIds[0] } })
+      const contentBlobId = `${source}-blob-v1`
+      await client.contentBlob.create({
+        data: {
+          id: contentBlobId,
+          storageKey: version.contentStorageKey,
+          sizeBytes: version.sizeBytes,
+          checksum: version.checksum,
+          contentType: version.contentType,
+          state: 'available'
+        }
+      })
+      if (source === 'artifact')
+        await client.artifactVersion.update({
+          where: { id: version.id },
+          data: { contentBlobId }
+        })
+      else await client.uploadVersion.update({ where: { id: version.id }, data: { contentBlobId } })
+      const service = new ManagedFileVersionService({ storageRoot, getClient: async () => client })
+      await service.deleteVersions({
+        source,
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        versionIds: [version.id]
+      })
+      const cleaned =
+        source === 'artifact'
+          ? await client.artifactVersion.findUniqueOrThrow({ where: { id: version.id } })
+          : await client.uploadVersion.findUniqueOrThrow({ where: { id: version.id } })
+      expect(cleaned).toMatchObject({ state: 'cleaned', contentBlobId: null })
+      expect(
+        await client.contentBlob.findUniqueOrThrow({ where: { id: contentBlobId } })
+      ).toMatchObject({ state: 'quarantined' })
+      const content = new ContentRepository({
+        storageRoot,
+        getClient: async () => client,
+        references: persistentContentReferences
+      })
+      await expect(
+        content.sweep({ contentIds: [contentBlobId], createdBefore: new Date(Date.now() + 1000) })
+      ).resolves.toMatchObject({ removedIds: [contentBlobId], failedIds: [] })
+      expect(await client.contentBlob.findUnique({ where: { id: contentBlobId } })).toBeNull()
+    }
+  )
+
+  it('keeps shared blob bytes and authority when another owner references them', async () => {
+    const fixture = await createFixture('artifact')
+    const version = await client.artifactVersion.findUniqueOrThrow({
+      where: { id: fixture.versionIds[0] }
+    })
+    const contentBlobId = 'shared-artifact-blob'
+    await client.contentBlob.create({
+      data: {
+        id: contentBlobId,
+        storageKey: version.contentStorageKey,
+        sizeBytes: version.sizeBytes,
+        checksum: version.checksum,
+        contentType: version.contentType,
+        state: 'available'
+      }
+    })
+    await client.artifactVersion.update({
+      where: { id: version.id },
+      data: { contentBlobId }
+    })
+    await client.literatureItem.create({
+      data: {
+        itemType: 'journalArticle',
+        title: 'Shared content',
+        attachments: {
+          create: {
+            versions: {
+              create: {
+                contentBlobId,
+                versionNumber: 1,
+                filename: 'README.md',
+                contentType: 'text/markdown',
+                sizeBytes: version.sizeBytes,
+                checksum: version.checksum
+              }
+            }
+          }
+        }
+      }
+    })
+    const service = new ManagedFileVersionService({ storageRoot, getClient: async () => client })
+    await expect(
+      service.deleteVersions({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: fixture.fileId,
+        versionIds: [version.id]
+      })
+    ).rejects.toMatchObject({ code: 'VERSION_IN_USE' })
+    expect(
+      await client.artifactVersion.findUniqueOrThrow({ where: { id: version.id } })
+    ).toMatchObject({ state: 'finalized', contentBlobId })
+    expect(
+      await client.contentBlob.findUniqueOrThrow({ where: { id: contentBlobId } })
+    ).toMatchObject({ state: 'available' })
+    expect(await readFile(join(storageRoot, ...version.contentStorageKey.split('/')))).toHaveLength(
+      Number(version.sizeBytes)
+    )
   })
 
   it('rejects cleanup while an artifact version is a provenance input', async () => {
