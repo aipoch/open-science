@@ -5,13 +5,15 @@ import type { AcpPromptRequest } from '../../shared/acp'
 import {
   getActiveConversationContext,
   resolveActiveConversationActivities,
+  resolveActiveConversationMessages,
   resolveMessageBranchPath,
   type PersistedConversationGraph
 } from '../../shared/conversation-graph'
-import type {
-  ElicitationAnswer,
-  PendingElicitationRequest,
-  TaskQuestionReceipt
+import {
+  matchesElicitationPrompt,
+  type ElicitationAnswer,
+  type PendingElicitationRequest,
+  type TaskQuestionReceipt
 } from '../../shared/elicitation'
 import type { HistoryReplayDescriptor } from '../../shared/history-replay-contract'
 import {
@@ -19,6 +21,7 @@ import {
   type SessionHistoryReplay
 } from '../../shared/session-history-replay'
 import {
+  latestTurnPromptIds,
   rearmUnacceptedElicitationContinuations,
   sanitizeSessionReferences,
   type PersistedChatSession
@@ -362,8 +365,16 @@ class AcpDurableContinuationContextOwner {
         activities: latest.conversationGraph!.activities.map(settle)
       }
       const activities = resolveActiveConversationActivities(graph).activities
-      const stillWaiting = activities.some(
-        ({ elicitation }) => elicitation?.state === 'pending' || elicitation?.continuationRecovery
+      const currentPromptIds = latestTurnPromptIds(resolveActiveConversationMessages(graph))
+      const activeBranchId = graph.frames.find(
+        ({ id }) => id === graph.activeFrameId
+      )?.activeBranchId
+      const stillWaiting = graph.activities.some(
+        (activity) =>
+          activity.messageBranchId === activeBranchId &&
+          (activity.elicitation?.state === 'pending' ||
+            activity.elicitation?.continuationRecovery) &&
+          matchesElicitationPrompt(activity, currentPromptIds)
       )
       return {
         ...latest,
