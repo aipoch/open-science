@@ -211,7 +211,7 @@ it('serializes fresh sources without proof and restores historical snapshots unc
   })
   rememberPdfTranslationExtraction(extraction)
   const snapshot = getPdfTranslationLayoutSnapshot(extraction.source)!
-  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-316')
+  expect(snapshot.parserVersion).toBe('pdfjs-paragraph-layout-319')
   const saved = JSON.parse(JSON.stringify(snapshot))
   expect(Object.keys(saved).sort()).toEqual(
     ['version', 'parserVersion', 'fingerprint', 'pages', 'units', 'coverage'].sort()
@@ -362,6 +362,45 @@ it.each(['separate sizes', 'same size'] as const)(
       expect(units[0].fragments[0].rect.bottom).toBeLessThan(units[1].fragments[0].rect.y)
     }
     expect(units.flatMap((unit) => unit.items)).toEqual(items.map((_, i) => `1:${i}`))
+  }
+)
+
+it.each(['Figure', 'Table'])(
+  'joins a %s caption when its label and body share a font face',
+  (kind) => {
+    const run = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      size: number,
+      hasEOL: boolean
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height: size,
+      dir: 'ltr',
+      fontName: 'Text',
+      fontVertical: false,
+      hasEOL,
+      transform: [size, 0, 0, size, x, y]
+    })
+    const items = [
+      run(`${kind} 1:`, 18, 430, 36, 10, false),
+      run(' ', 54, 430, 6, 0, false),
+      run('Comparison of the response patterns observed in', 60, 430, 168, 8, false),
+      run(' the initial measurements', 228, 430, 94, 8, true),
+      run('under two different test conditions.', 18, 420.5, 133, 8, true),
+      run('The next paragraph begins after a gap.', 18, 399, 190, 10, true)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 400, height: 620, rotation: 0, items }]
+    })
+    expect(units.map((unit) => unit.source)).toEqual([
+      `${kind} 1: Comparison of the response patterns observed in the initial measurements under two different test conditions.`,
+      'The next paragraph begins after a gap.'
+    ])
+    expect(units[0].items).toEqual(['1:0', '1:2', '1:3', '1:4'])
   }
 )
 

@@ -101,14 +101,19 @@ describe('provider registry', () => {
     }
   )
 
-  it('defines exactly one of baseUrl or regions per vendor, with a non-empty catalog', () => {
+  it('defines a static endpoint and catalog unless the connection supplies both', () => {
     for (const vendor of OFFICIAL_VENDORS) {
       const hasBaseUrl = Boolean(vendor.baseUrl)
       const hasRegions = (vendor.regions?.length ?? 0) > 0
 
+      expect(vendor.reasoningEffort).toBeDefined()
+      if (vendor.requiresConnectionConfiguration) {
+        expect(hasBaseUrl || hasRegions).toBe(false)
+        expect(vendor.models).toHaveLength(0)
+        continue
+      }
       expect(hasBaseUrl).not.toBe(hasRegions) // exactly one is set
       expect(vendor.models.length).toBeGreaterThan(0)
-      expect(vendor.reasoningEffort).toBeDefined()
       for (const region of vendor.regions ?? []) {
         if (!region.modelIds) continue
         expect(region.modelIds.length).toBeGreaterThan(0)
@@ -786,7 +791,9 @@ describe('provider registry', () => {
   it('routes Requesty through both APIs after OpenRouter with a curated catalog', () => {
     const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
 
-    expect(OFFICIAL_VENDORS[openRouterIndex + 1]?.id).toBe('requesty')
+    expect(
+      OFFICIAL_VENDORS.slice(openRouterIndex + 1, openRouterIndex + 3).map(({ id }) => id)
+    ).toEqual(['vectrust', 'requesty'])
     expect(resolveVendorApiEndpoints('requesty')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('requesty')).toBe('https://router.requesty.ai')
     expect(resolveVendorChatCompletionsBaseUrl('requesty')).toBe('https://router.requesty.ai/v1')

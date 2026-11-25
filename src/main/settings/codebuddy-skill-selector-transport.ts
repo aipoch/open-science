@@ -48,6 +48,7 @@ export function createCodeBuddySkillSelectorTransport(input: {
       baseUrl,
       model,
       ...(provider.key ? { key: provider.key } : {}),
+      ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
       ...(provider.vendorId ? { vendorId: provider.vendorId } : {}),
       ...(provider.reasoningEffortTransport
         ? { reasoningEffortTransport: provider.reasoningEffortTransport }

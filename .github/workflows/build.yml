@@ -603,6 +603,7 @@ jobs:
         env:
           # Stable macOS jobs consume the explicitly prepared keychain without exposing CSC_LINK to
           # electron-builder. Azure's PowerShell module uses the preceding Azure CLI OIDC login.
+          STABLE_SPARKLE_KEY: ${{ vars.MAC_SPARKLE_PUBLIC_KEY }}
           CSC_KEYCHAIN: ${{ steps.mac_signing.outputs.keychain }}
           AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
           AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
@@ -645,6 +646,11 @@ jobs:
             )
           fi
           if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then
+            export MAC_SPARKLE_PUBLIC_KEY="$STABLE_SPARKLE_KEY"
+            if [ -n "$MAC_SPARKLE_PUBLIC_KEY" ]; then
+              export MAC_SPARKLE_SDK="$RUNNER_TEMP/sparkle-sdk"
+              bash build/mac-sparkle/sdk.sh "$MAC_SPARKLE_SDK"
+            fi
             # Stable build with a Developer ID cert -> SIGN ONLY (notarize:false). Notarization +
             # stapling happens later in notarize-mac.yml, so this job never waits on Apple.
             #

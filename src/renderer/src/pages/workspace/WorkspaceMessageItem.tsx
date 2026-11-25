@@ -245,7 +245,9 @@ const TurnTokenUsage = ({
   const frameworkName = framework?.displayName
   const providerId = resolveSessionProviderId(runtimeIdentity?.backendId)
   const provider = providers?.find((candidate) => candidate.id === providerId)
-  const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
+  const kindKey = provider
+    ? providerKindKey(provider.type, provider.vendorId, provider.localPresetId)
+    : undefined
   const model = runtimeIdentity?.model?.trim()
   const accessibleLabel = usage
     ? t('Token usage for this response')

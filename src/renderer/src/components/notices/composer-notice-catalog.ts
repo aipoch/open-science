@@ -172,7 +172,7 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     titleKey: 'The input is too long',
     descriptionKey: 'Shorten the conversation or remove some attachments, then retry.',
     primaryAction: 'compact',
-    secondaryActions: ['remove-attachments']
+    secondaryActions: ['remove-attachments', 'open-provider-settings']
   },
   'configuration/vision-model': {
     level: 'warning',

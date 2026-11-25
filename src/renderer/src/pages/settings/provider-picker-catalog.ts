@@ -1,9 +1,8 @@
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
-import { getOfficialVendor, type OfficialVendorId } from '@aipoch/providers'
+import { LOCAL_MODEL_PRESETS, getOfficialVendor, type OfficialVendorId } from '@aipoch/providers'
 
 import {
   LOCAL_MODEL_KIND_PREFIX,
-  LOCAL_MODEL_PRESETS,
   PROVIDER_KINDS,
   isProviderKindAvailable,
   type ProviderKind,
@@ -50,10 +49,14 @@ const VENDOR_CATEGORY: Record<
   volcengine: 'cloud',
   tencent: 'cloud',
   nvidia: 'cloud',
+  'cloudflare-ai-gateway': 'cloud',
+  'aws-bedrock': 'cloud',
+  'microsoft-foundry': 'cloud',
   opencode: 'gateway',
   openrouter: 'gateway',
   requesty: 'gateway',
-  kilo: 'gateway'
+  kilo: 'gateway',
+  vectrust: 'gateway'
 }
 
 // Unlisted sign-ins keep their relative order before xAI. The picker pins Custom separately.
@@ -149,7 +152,7 @@ export const providerPickerEntries = (
   const entries: ProviderPickerEntry[] = []
 
   for (const kind of pickerKinds) {
-    if (!isProviderKindAvailable(kind, availability)) continue
+    if (kind.group === 'local' || !isProviderKindAvailable(kind, availability)) continue
     if (kind.key.startsWith('official:')) {
       entries.push(vendorEntry(kind, kind.key.slice('official:'.length) as OfficialVendorId))
       continue

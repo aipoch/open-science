@@ -276,6 +276,16 @@ jobs:
           export PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/update-occupancy/e2e.json
           xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
             printf "%s\n" "$PACKAGE_SMOKE_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
+            for attempt in {1..50}; do
+              if gdbus introspect --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets >/dev/null 2>&1; then
+                break
+              fi
+              if [ "$attempt" = 50 ]; then
+                echo "Secret Service did not become available after unlocking the test keyring." >&2
+                exit 1
+              fi
+              sleep 0.1
+            done
             npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/electron
           '
           node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/e2e.json
@@ -293,6 +303,16 @@ jobs:
           export PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/update-occupancy/appimage.json
           xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
             printf "%s\n" "$PACKAGE_SMOKE_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
+            for attempt in {1..50}; do
+              if gdbus introspect --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets >/dev/null 2>&1; then
+                break
+              fi
+              if [ "$attempt" = 50 ]; then
+                echo "Secret Service did not become available after unlocking the test keyring." >&2
+                exit 1
+              fi
+              sleep 0.1
+            done
             npx playwright test e2e/certification/update-occupancy.spec.ts --retries=0 --output=test-results/update-occupancy/appimage
           '
           node scripts/ci/verify-update-occupancy.mjs packaged test-results/update-occupancy/appimage.json
@@ -353,6 +373,16 @@ jobs:
           elif [ "$RUNNER_OS" = Linux ]; then
             xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
               printf "%s\n" "$PACKAGE_SMOKE_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
+              for attempt in {1..50}; do
+                if gdbus introspect --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets >/dev/null 2>&1; then
+                  break
+                fi
+                if [ "$attempt" = 50 ]; then
+                  echo "Secret Service did not become available after unlocking the test keyring." >&2
+                  exit 1
+                fi
+                sleep 0.1
+              done
               node scripts/ci/run-default-agent-conversation.mjs
             '
           else

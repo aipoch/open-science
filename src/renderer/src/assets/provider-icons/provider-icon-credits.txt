@@ -1,0 +1,21 @@
+Provider icon sources
+
+Cloudflare, AWS, Azure and Ollama
+    LobeHub assets distributed by CC Switch at fca6b1bbeea790387379e970d5f25a2fe027ff85.
+    https://github.com/farion1231/cc-switch/tree/fca6b1bbeea790387379e970d5f25a2fe027ff85/src/icons/extracted
+    See LobeHub-icons-LICENSE. The AWS asset uses the color specified by CC Switch.
+
+llama.cpp
+    ggml-org/llama-brand, logo/svg/app/web/favicon.svg, at 9e91eb167731ae69a3f2108b3b577b6baf32dede.
+    https://github.com/ggml-org/llama-brand
+    https://github.com/ggml-org/llama-brand/blob/9e91eb167731ae69a3f2108b3b577b6baf32dede/BRAND-USAGE.md
+    CC BY-NC 4.0 and the repository's permission to identify llama.cpp in software distributions.
+
+LM Studio
+    LM Studio's official color app icon. https://lmstudio.ai/brand
+
+vLLM
+    vLLM-Logo.svg from the vLLM media kit. https://github.com/vllm-project/media-kit
+
+Vectrust
+    Vectrust's official website mark. https://openai-next.com/brand/vectrust-logo-192.png

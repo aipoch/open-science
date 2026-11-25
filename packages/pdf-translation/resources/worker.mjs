@@ -49,12 +49,14 @@ import {
   resolveScientificScriptSpans,
   resolveNestedScriptGroups,
   resolveExplicitTransposeIndices,
+  resolveExplicitScriptIndices,
   resolveExplicitPowerIndices,
   resolveOrdinalSuffixIndices
 } from './scientific-scripts.mjs'
 
 // Structured worker diagnostics contain only fixed reason codes, locations and measurements.
 const retainedUnits = new Map()
+const omittedLinks = []
 const retainedUnitObjects = new WeakMap()
 const timings = { generationMs: 0, pdfiumSaveMs: 0, formLabelsMs: 0, mergeMs: 0, mergeSaveMs: 0 }
 const diagnoseRetention = (unit, code, phase) => {
@@ -110,6 +112,22 @@ const sourceMatches = (expected, actual, verifiedHyphens = false) => {
   }
   return index === left.length
 }
+// Repainting an unanchored approximation needs the complete, unchanged operand.
+const approximationOperands = (text) =>
+  [...text.matchAll(/∼\s*(?:(?:[−-]|[A-Za-z]+)\s*)?\(/gu)].flatMap(({ index, 0: lead }) => {
+    let depth = 1
+    for (let end = index + lead.length; end < text.length; end++) {
+      const char = text[end]
+      if (char === '(') depth++
+      else if (char === ')') depth--
+      else if (!/[A-Za-z\p{Script=Greek}\d\s.,+−*/^−⁰¹²³⁴⁵⁶⁷⁸⁹⁻-]/u.test(char)) break
+      if (!depth) {
+        const exponent = /^(?:[−-]\d+|[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+)/u.exec(text.slice(end + 1))?.[0] ?? ''
+        return [{ index, expression: text.slice(index, end + 1).replace(/\s/gu, '') + exponent }]
+      }
+    }
+    return []
+  })
 // Resolve repeated numeric references/subscripts by the complete token (1–4,
 // 5,6, A0), then its occurrence. A bare digit search can select an unrelated
 // measurement or the same reference in an earlier sentence.
@@ -413,6 +431,8 @@ async function generate({
   pages,
   preserveUnsupported = false,
   preserveUnmatched = false,
+  allowLinkOmission = false,
+  dropLinks = [],
   formLabels = false,
   selectedPages
 }) {
@@ -449,20 +469,44 @@ async function generate({
     const value = char.normalize('NFKC')
     return [...value].length === 1 && face.hasGlyphForCodePoint(value.codePointAt(0)) ? value : char
   }
+  // Use a matching outline when the prose font lacks a relation glyph. The
+  // alias CID keeps the requested mathematical symbol searchable and copyable.
+  const relationOutlines = new Map([
+    ['⩽', '≤'],
+    ['⩾', '≥'],
+    ['∼', '~']
+  ])
+  const relationGlyph = (char) => {
+    const fallback = relationOutlines.get(char)
+    return fallback && !face.hasGlyphForCodePoint(char.codePointAt(0)) ? fallback : char
+  }
   // A confirmed Computer Modern acute/dotless-i pair can use one
   // precomposed outline while keeping both requested ToUnicode code points.
   const glyphTokens = (text) => text.match(/´ı|˝[oOuU]|[\s\S]/gu) ?? []
+  // The bundled face lacks these Unicode scripts. Use the corresponding
+  // ordinary outline, with a separate ToUnicode value and a smaller, shifted
+  // run. Folding the character to body text would change the expression.
+  const fallbackScripts = /[₀-₉ₐ-ₜᵢᵣᵤᵥᵦ-ᵪˣ]/u
+  const fallbackScript = (token) =>
+    fallbackScripts.test(token) && !face.hasGlyphForCodePoint(token.codePointAt(0))
+      ? token === 'ˣ'
+        ? 0.36
+        : -0.17
+      : 0
+  const scriptScale = 0.72
   const outline = (token) =>
     token === '´ı'
       ? 'í'
       : doubleAcutePair.test(token)
         ? composeDoubleAcute(token)
-        : greekGlyph(token)
+        : fallbackScript(token)
+          ? token.normalize('NFKC')
+          : relationGlyph(greekGlyph(token))
   const shapeText = (text) => glyphTokens(text).map(outline).join('')
   const normalizeOutputGlyphs = (text, source) =>
     [...text]
       .map((char) => {
-        if (face.hasGlyphForCodePoint(char.codePointAt(0)) || greekGlyph(char) !== char) return char
+        if (face.hasGlyphForCodePoint(char.codePointAt(0)) || outline(char) !== char) return char
         // A superscript sign/digit needs its native raised glyph. Folding it before
         // anchor matching would silently turn a power into a body-line number.
         if (/^[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]$/u.test(char)) return char
@@ -575,9 +619,10 @@ async function generate({
     const runs = []
     for (const char of glyphTokens(text)) {
       const fontIndex = fontForCharacter.get(char) ?? 0,
+        script = fallbackScript(char),
         previous = runs.at(-1)
-      if (previous?.fontIndex === fontIndex) previous.text += char
-      else runs.push({ text: char, fontIndex })
+      if (previous?.fontIndex === fontIndex && previous.script === script) previous.text += char
+      else runs.push({ text: char, fontIndex, script })
     }
     return runs
   }
@@ -723,16 +768,19 @@ async function generate({
             e.free(pointer)
           }
         }
+        const hasVisibleAppearance =
+          p.FPDFAnnot_HasKey(annot, 'AP') && !emptyLinkAppearances[pageIndex][i]
         result.push({
           index: i,
+          pageNumber: pageIndex + 1,
           uri,
           internalDestination,
           left,
           top,
           right,
           bottom,
-          wholeRegion:
-            !quads && (!p.FPDFAnnot_HasKey(annot, 'AP') || emptyLinkAppearances[pageIndex][i])
+          hasVisibleAppearance,
+          wholeRegion: !quads && !hasVisibleAppearance
         })
       } finally {
         e.free(at)
@@ -913,10 +961,9 @@ async function generate({
       for (let x = left; x < right; x++) overlaps ||= alpha[y * width + x] > 0
     if (!overlaps) return false
     if (!sourceInk) return true
-    // Native labels may already sit over a flat raster backdrop. Keep that
-    // image intact and admit only its identical opaque color, both under the
-    // original owned ink and throughout the proposed replacement rectangle.
-    // Borders, transparent pixels and raster text still block replacement.
+    // Inspect the backdrop beneath the owned glyphs and the replacement area.
+    // A solid backdrop is safe, as is a white image margin extending into
+    // unpainted page space. Colored edges and raster ink still block replacement.
     const sourceBox = boundsBetween(
         toView(sourceInk.x, sourceInk.bottom),
         toView(sourceInk.x + sourceInk.width, sourceInk.top)
@@ -927,14 +974,18 @@ async function generate({
       y1 = Math.ceil((sourceBox.top * height) / size.height)
     if (x0 < 0 || y0 < 0 || x1 > width || y1 > height || x0 >= x1 || y0 >= y1) return true
     const color = colors[y0 * width + x0]
+    let solid = color >>> 24 === 255
+    let blank = true
     for (const [a, b, c, d] of [
       [x0, x1, y0, y1],
       [left, right, top, bottom]
     ])
       for (let y = c; y < d; y++)
         for (let x = a; x < b; x++) {
-          const index = y * width + x
-          if (colors[index] >>> 24 !== 255 || colors[index] !== color) return true
+          const pixel = colors[y * width + x]
+          solid &&= pixel === color
+          blank &&= pixel === 0xffffffff || pixel >>> 24 === 0
+          if (!solid && !blank) return true
         }
     return false
   }
@@ -1452,7 +1503,7 @@ async function generate({
           p.FPDFText_ClosePage(text)
         }
       }
-      const macrons = objects.some((o) => o.type === 1 && o.text.trim() === '¯')
+      const overhangingAccents = objects.some((o) => o.type === 1 && /^[¯˜]$/u.test(o.text.trim()))
         ? resolveNativeMathAccents(
             objects
               .filter((o) => o.type === 1)
@@ -1460,13 +1511,13 @@ async function generate({
                 ...o,
                 fontName: nativeFontName(o)
               }))
-          ).filter((accent) => objects[accent.accentIndex]?.text.trim() === '¯')
+          ).filter((accent) => /^[¯˜]$/u.test(objects[accent.accentIndex]?.text.trim() ?? ''))
         : []
       planningSnapshot = {
         number,
         page,
         objects,
-        macrons,
+        overhangingAccents,
         zeroInkPositioningMarkers,
         overprintGroups
       }
@@ -1476,6 +1527,21 @@ async function generate({
       throw error
     }
   }
+  const linkRect = ({ left, bottom, right, top }) => [left, bottom, right, top]
+  const linkBelongsTo = (link, rect) => {
+    const center = (link.bottom + link.top) / 2
+    return (
+      link.left >= rect.x - objectTolerance &&
+      link.right <= rect.x + rect.width + objectTolerance &&
+      center > rect.bottom &&
+      center < rect.top
+    )
+  }
+  const suppressedLinks = new Set(),
+    omissionsByUnit = new Map()
+  let planningLink
+  const planningLinkFor = (link, rect) =>
+    allowLinkOmission && !link.hasVisibleAppearance && linkBelongsTo(link, rect) ? link : undefined
   const planUnit = (
     unit,
     numericInitialProof,
@@ -1599,9 +1665,8 @@ async function generate({
       )
       const sourceRect = fragmentBounds(fragment),
         origin = geometry[fragment.pageNumber - 1]
-      const { page, objects, macrons, zeroInkPositioningMarkers, overprintGroups } = planningPage(
-        fragment.pageNumber
-      )
+      const { page, objects, overhangingAccents, zeroInkPositioningMarkers, overprintGroups } =
+        planningPage(fragment.pageNumber)
       let sourceSize, sourcePoint, sourceColor, sourceBaseline, cos, sin
       let mixedSizes = false
       const proseColors = new Map()
@@ -1619,11 +1684,11 @@ async function generate({
             o.bounds[3] <= sourceRect.top + objectTolerance &&
             o.bounds[1] >= sourceRect.bottom - objectTolerance
         )
-        // A raised macron can enter the preceding line's font box. Its proven
+        // A raised accent can enter the preceding line's font box. Its proven
         // mathematical base owns it; never claim it as neighboring prose.
         selected = selected.filter(
           (o) =>
-            !macrons.some(
+            !overhangingAccents.some(
               (accent) =>
                 accent.accentIndex === o.i && !selected.some((base) => base.i === accent.baseIndex)
             )
@@ -1643,6 +1708,37 @@ async function generate({
           const fragmentSource =
             fragment.items?.map((item) => item.text).join('') ??
             (unit.fragments.length === 1 ? unit.source : undefined)
+          // An extensible delimiter can have an extraction box above its
+          // actual ink. Use the native origin to identify the retained glyph
+          // before narrowing its collision rectangle.
+          const ownsTallDelimiter = (object) => {
+            const [left, bottom, right, top] = object.bounds
+            if (
+              unit.fragments.length !== 1 ||
+              fragment.items?.length !== 1 ||
+              !/^[no]$/u.test(fragmentSource ?? '') ||
+              !/^(?:[A-Z]{6}\+)?CMEX(?:7|8|9|10|12)$/u.test(nativeFontName(object)) ||
+              top - bottom < sourceRect.height * 1.2 ||
+              top - bottom < (right - left) * 2
+            )
+              return false
+            const at = e.alloc(24)
+            try {
+              if (!p.FPDFPageObj_GetMatrix(object.obj, at)) return false
+              const [a, b, c, d, x, y] = e.m.HEAPF32.slice(at / 4, at / 4 + 6)
+              return (
+                a > 0 &&
+                d > 0 &&
+                b === 0 &&
+                c === 0 &&
+                Math.abs(x - sourceRect.x) < 0.05 &&
+                y >= sourceRect.bottom &&
+                y <= sourceRect.top
+              )
+            } finally {
+              e.free(at)
+            }
+          }
           const exact = objects.filter(
             (o) =>
               o.type === 1 &&
@@ -1654,8 +1750,8 @@ async function generate({
               o.bounds[3] > sourceRect.bottom &&
               fragmentSource &&
               (unchanged
-                ? (o.numericGlyphSource || recoveredFragments.has(fragment)) &&
-                  sourceMatches(fragmentSource, o.numericGlyphSource ?? o.text)
+                ? sourceMatches(fragmentSource, o.numericGlyphSource ?? o.text) &&
+                  (o.numericGlyphSource || recoveredFragments.has(fragment) || ownsTallDelimiter(o))
                 : sourceMatches(fragmentSource, o.text))
           )
           if (exact.length === 1) {
@@ -2372,17 +2468,35 @@ async function generate({
         }))
         const fractions = [...new Set(bodyBaselines)]
           .flatMap((baseline) =>
-            resolveInlineFractions(fractionItems, baseline, bodySize).map((fraction) => ({
+            resolveInlineFractions(fractionItems, baseline, bodySize, true).map((fraction) => ({
               ...fraction,
               baseline
             }))
           )
           .filter(
             (fraction, i, all) =>
-              all.findIndex((other) => other.numerator === fraction.numerator) === i &&
-              unit.source.includes(fraction.label)
+              all.findIndex((other) => other.numerator === fraction.numerator) === i
           )
           .flatMap((fraction) => {
+            // Older snapshots can flatten a ruled 1/(2x) to 12x. Require the
+            // complete token and the exact explicit target before using the
+            // original fraction objects for that spelling.
+            const coefficient = /^1\/\(([1-9]\d?[A-Za-z])\)$/u.exec(fraction.label),
+              flattened = coefficient && '1' + coefficient[1],
+              flattenedMatches = flattened
+                ? [
+                    ...unit.source.matchAll(
+                      /(?<![A-Za-z\p{Script=Greek}\d_])1[1-9]\d?[A-Za-z](?![A-Za-z\p{Script=Greek}\d_])/gu
+                    )
+                  ].filter(([label]) => label === flattened)
+                : [],
+              sourceLabel =
+                flattenedMatches.length === 1 &&
+                unit.source.split(flattened).length === 2 &&
+                unit.translation.split(fraction.label).length === 2
+                  ? flattened
+                  : fraction.label
+            if (!unit.source.includes(sourceLabel)) return []
             const numerator = selected.find((object) => object.i === fraction.numerator),
               denominator = selected.filter((object) => fraction.denominator.includes(object.i)),
               bars = objects.filter(
@@ -2400,7 +2514,13 @@ async function generate({
                   Math.abs(object.bounds[0] - fraction.bounds[0]) < bodySize * 0.15 &&
                   Math.abs(object.bounds[2] - fraction.bounds[2]) < bodySize * 0.15
               )
-            if (bars.length !== 1) return []
+            if (
+              bars.length !== 1 ||
+              (sourceLabel !== fraction.label &&
+                (bars[0].i !== numerator.i + 1 ||
+                  denominator.some((object, index) => object.i !== bars[0].i + index + 1)))
+            )
+              return []
             let textIndices = fraction.indices,
               label = fraction.label,
               bounds = [
@@ -2462,6 +2582,7 @@ async function generate({
               {
                 ...fraction,
                 label,
+                ...(sourceLabel !== fraction.label ? { sourceLabel } : {}),
                 textIndices,
                 indices: [...textIndices, bars[0].i].sort((a, b) => a - b),
                 graphicIndices: [bars[0].i],
@@ -2731,7 +2852,10 @@ async function generate({
           return accent
             ? {
                 ...object,
-                text: object.i === (accent.textIndices ?? accent.indices)[0] ? accent.label : ''
+                text:
+                  object.i === (accent.textIndices ?? accent.indices)[0]
+                    ? (accent.sourceLabel ?? accent.label)
+                    : ''
               }
             : object
         })
@@ -3835,7 +3959,9 @@ async function generate({
         // objects are retained even when a link covers only part of their glyphs.
         // Their entire label must survive verbatim; no text object is split.
         for (const link of origin.links) {
+          planningLink = undefined
           if (
+            suppressedLinks.has(link) ||
             link.right === link.left ||
             link.top === link.bottom ||
             link.right <= sourceRect.x ||
@@ -3852,7 +3978,6 @@ async function generate({
             link.top >= sourceRect.top
           )
             continue
-          check(link.wholeRegion, 'annotations')
           const intersectsLinkLine = (o) => {
             if (
               o.bounds[0] >= link.right ||
@@ -3878,6 +4003,8 @@ async function generate({
             }
           }
           const intersecting = selected.filter(intersectsLinkLine)
+          if (intersecting.length) planningLink = planningLinkFor(link, sourceRect)
+          check(link.wholeRegion, 'annotations')
           const centered = intersecting.filter(
             (o) =>
               (o.bounds[0] + o.bounds[2]) / 2 > link.left &&
@@ -4294,6 +4421,7 @@ async function generate({
               )
           })
         }
+        planningLink = undefined
         for (const { label: object, mark } of underlines) {
           const label = object.text.trim(),
             sourceOffset = offsets.get(object.i),
@@ -4374,10 +4502,10 @@ async function generate({
         for (const accent of [...accents, ...fractions, ...radicals, ...negatedEqualities]) {
           const sourceOffset = offsets.get((accent.textIndices ?? accent.indices)[0]),
             label = accent.label,
-            occurrences = (text) => [
+            occurrences = (text, spelling) => [
               ...text.matchAll(
                 new RegExp(
-                  [...sourceGraphemes.segment(label.replace(/\s/gu, ''))]
+                  [...sourceGraphemes.segment(spelling.replace(/\s/gu, ''))]
                     .map(
                       ({ segment }) =>
                         '(?:' +
@@ -4396,8 +4524,8 @@ async function generate({
                 )
               )
             ],
-            from = occurrences(unit.source),
-            to = occurrences(unit.translation),
+            from = occurrences(unit.source, accent.sourceLabel ?? label),
+            to = occurrences(unit.translation, label),
             occurrence = from.findIndex((match) => match.index === sourceOffset)
           if (accent.radical || accent.negatedEquality)
             check(
@@ -4545,6 +4673,10 @@ async function generate({
             })
             .flatMap((marker) => marker.sourceIndices)
         )
+        const explicitScripts = new Set(
+          resolveExplicitScriptIndices(unit.source, unit.translation, markers, bodySize)
+        )
+        for (const index of explicitScripts) explicitPowers.add(index)
         const powerIndices = new Set(
           resolveExplicitPowerIndices(unit.source, unit.translation, markers, bodySize)
         )
@@ -4695,6 +4827,42 @@ async function generate({
         // A proven paired native stack must not degrade to flat prose when
         // the target changes its token or occurrence count.
         for (const group of resolveNestedScriptGroups(unit.source, unit.source, markers)) {
+          // The same paired math atom can appear as pᵢ^ε in the translation.
+          // Only use the explicit spelling when the existing native stack
+          // proof identifies both original script levels.
+          if (/^[A-Za-z]\p{Script=Greek}i$/u.test(group.label)) {
+            const [base, upper, lower] = group.sourceIndices.map((index) =>
+              markers.find((marker) => marker.sourceIndices.includes(index))
+            )
+            if (
+              base?.sourceIndices[0] === group.baselineIndex &&
+              upper?.rise > 0 &&
+              lower?.rise < 0
+            ) {
+              const pattern = new RegExp(
+                '(?<![A-Za-z\\p{Script=Greek}\\p{N}_])' +
+                  base.label +
+                  'ᵢ' +
+                  '\\^(?:' +
+                  upper.label +
+                  '|\\(' +
+                  upper.label +
+                  '\\))' +
+                  '(?![A-Za-z\\p{Script=Greek}\\p{N}_^])',
+                'gu'
+              )
+              if (
+                unit.source.split(group.label).length === 2 &&
+                [...unit.translation.matchAll(pattern)].length === 1
+              )
+                for (const index of [upper.sourceIndices[0], lower.sourceIndices[0]]) {
+                  explicitScripts.add(index)
+                  explicitPowers.add(index)
+                }
+            }
+          }
+          const scripts = group.sourceIndices.filter((index) => index !== group.baselineIndex)
+          if (scripts.length && scripts.every((index) => explicitScripts.has(index))) continue
           if (
             group.scriptOnly ||
             group.indexedProduct ||
@@ -5048,6 +5216,9 @@ async function generate({
         }
         let privateSymbolOrderMatches, ketOrderMatches
         for (const object of selected) {
+          // Repaint a proved explicit script as one expression. Retaining an
+          // individual native sign can reintroduce a break inside it.
+          if (explicitScripts.has(object.i)) continue
           const label = object.text.trim(),
             sourceOffset = offsets.get(object.i),
             marker = markers.find((value) => value.sourceIndices.includes(object.i)),
@@ -5181,10 +5352,18 @@ async function generate({
             )
             targetOffset = to[occurrence].index + brand.length
           }
+          const fencedAlphabet = nativeAlphabet && /^\|[A-Z]\|$/u.test(label)
           const completeSymbol = (text, offset) =>
-            !/[A-Za-z\p{Script=Greek}]$/u.test(label) ||
-            !/[A-Za-z\p{Script=Greek}]/u.test(text[offset + label.length] ?? '')
-          if (nativeSymbol && targetOffset >= 0 && !completeSymbol(unit.translation, targetOffset))
+            fencedAlphabet
+              ? text[offset - 1] !== '|' && text[offset + label.length] !== '|'
+              : !/[A-Za-z\p{Script=Greek}]$/u.test(label) ||
+                !/[A-Za-z\p{Script=Greek}]/u.test(text[offset + label.length] ?? '')
+          if (
+            nativeSymbol &&
+            targetOffset >= 0 &&
+            (!completeSymbol(unit.translation, targetOffset) ||
+              (fencedAlphabet && !completeSymbol(unit.source, sourceOffset)))
+          )
             targetOffset = -1
           if (
             targetOffset < 0 &&
@@ -5316,11 +5495,20 @@ async function generate({
         }
         // Retain only complete, position-matched objects in a verbatim unchanged
         // prefix/suffix. Keep each retained run on one source line.
+        const first = selected[0],
+          numberedPrefix = first?.text.trim(),
+          keepNumberedPrefix =
+            horizontalSource &&
+            offsets.get(first?.i) === 0 &&
+            /^\d{1,3}\. [A-Za-z]$/u.test(numberedPrefix) &&
+            unit.translation.startsWith(numberedPrefix) &&
+            /^\s/u.test(unit.translation.slice(numberedPrefix.length)),
+          hasInlineAnchors = region.anchors.length > 0
         const matrix = e.alloc(24)
         let firstBaseline
         region.singleLine = true
         try {
-          for (const o of region.anchors.length ? selected : []) {
+          for (const o of hasInlineAnchors || keepNumberedPrefix ? selected : []) {
             if (region.anchors.some((anchor) => anchor.indices.includes(o.i))) continue
             check(p.FPDFPageObj_GetMatrix(o.obj, matrix))
             const [a, b, , , x, y] = e.m.HEAPF32.slice(matrix / 4, matrix / 4 + 6),
@@ -5333,7 +5521,7 @@ async function generate({
         } finally {
           e.free(matrix)
         }
-        if (region.anchors.length) {
+        if (hasInlineAnchors || keepNumberedPrefix) {
           let prefix = 0,
             suffix = 0
           while (
@@ -5363,6 +5551,7 @@ async function generate({
                 sourceOffset + label.length <= prefix ? sourceOffset : targetOffset
             const keep =
               label.length > 0 &&
+              (hasInlineAnchors || (keepNumberedPrefix && o === first)) &&
               !/[\p{C}]/u.test(label) &&
               !region.anchors.some((anchor) => anchor.indices.includes(o.i)) &&
               // A regenerated partial link already owns the intersecting
@@ -5966,8 +6155,11 @@ async function generate({
       for (const anchor of anchors) {
         for (const annotation of anchor.annotation
           ? [anchor.annotation, ...(anchor.additionalAnnotations ?? [])]
-          : [])
+          : []) {
+          planningLink = planningLinkFor(annotation, sourceRect)
           check(linkFits(sourceRect, anchor, annotation), 'annotations')
+          planningLink = undefined
+        }
         if (anchor.glyphBounds)
           anchor.localGlyphs = boundsBetween(
             localPoint(anchor.glyphBounds.left, anchor.glyphBounds.bottom),
@@ -6381,6 +6573,19 @@ async function generate({
     }
     check(unit.translation.length <= 8000, 'overflow')
     check(!/[\p{Script=Arabic}\p{Script=Hebrew}]/u.test(unit.translation), 'font')
+    const approximationOffsets = new Set()
+    if (unit.translation.includes('∼')) {
+      const source = approximationOperands(unit.source),
+        target = approximationOperands(unit.translation),
+        signs = (value) => value.split('∼').length - 1
+      if (
+        source.length === signs(unit.source) &&
+        target.length === signs(unit.translation) &&
+        source.length === target.length &&
+        source.every(({ expression }, index) => expression === target[index].expression)
+      )
+        for (const { index } of target) approximationOffsets.add(index)
+    }
     let glyphOffset = 0,
       unsupportedScript = false
     check(
@@ -6397,7 +6602,8 @@ async function generate({
                 provedDoubleAcute.size === doubleAcuteSource.length &&
                 doubleAcuteOffsets.has(offset) &&
                 fontForCharacter.has(c)
-              : face.hasGlyphForCodePoint(greekGlyph(c).codePointAt(0)) || latinGlyph(c)) ||
+              : (c !== '∼' || approximationOffsets.has(offset)) &&
+                (face.hasGlyphForCodePoint(outline(c).codePointAt(0)) || latinGlyph(c))) ||
           regions.some((region) =>
             region.anchors.some(
               (anchor) =>
@@ -6414,6 +6620,18 @@ async function generate({
     const ends = pdfTranslationLineEnds(unit.translation).filter(
       (end) => !/^(?:´ı|˝[oOuU])$/u.test(unit.translation.slice(end - 1, end + 1))
     )
+    // A preserved inline expression introduces its own boundary. Keep a
+    // directly preceding comparison phrase with the expression it describes.
+    const comparisonPrefixes = new Map()
+    for (const { anchors } of regions) {
+      for (const anchor of anchors) {
+        if (!anchor.mathGroup || anchor.generated || !anchor.movable) continue
+        const prefix = /(?:至[少多]为|不[少多]于)[ \t]*$/u.exec(
+          unit.translation.slice(0, anchor.targetOffset)
+        )
+        if (prefix) comparisonPrefixes.set(anchor, prefix.index)
+      }
+    }
     // Shape in font units once, then scale for each fitting attempt. Bound the
     // cache so long scientific paragraphs cannot accumulate quadratic strings.
     const measurements = new Map()
@@ -6421,23 +6639,26 @@ async function generate({
       let ink = measurements.get(text)
       if (!ink) {
         const runs =
-          latinFace && latinFallback.test(text) ? fontRuns(text) : [{ text, fontIndex: 0 }]
+          (latinFace && latinFallback.test(text)) || fallbackScripts.test(text)
+            ? fontRuns(text)
+            : [{ text, fontIndex: 0, script: 0 }]
         let x = 0,
           left = 0,
           right = 0,
           top = 0,
           bottom = 0
-        for (const { text, fontIndex } of runs) {
+        for (const { text, fontIndex, script } of runs) {
           const runFace = fontIndex < fontCount ? face : latinFace,
             run = runFace.layout(shapeText(text), { liga: false, kern: false }),
-            ratio = face.unitsPerEm / runFace.unitsPerEm
+            ratio = (face.unitsPerEm / runFace.unitsPerEm) * (script ? scriptScale : 1),
+            rise = script * face.unitsPerEm
           run.glyphs.forEach((glyph, i) => {
             const at = run.positions[i],
               box = glyph.bbox
             left = Math.min(left, x + (at.xOffset + box.minX) * ratio)
             right = Math.max(right, x + (at.xOffset + box.maxX) * ratio)
-            top = Math.max(top, (at.yOffset + box.maxY) * ratio)
-            bottom = Math.min(bottom, (at.yOffset + box.minY) * ratio)
+            top = Math.max(top, (at.yOffset + box.maxY) * ratio + rise)
+            bottom = Math.min(bottom, (at.yOffset + box.minY) * ratio + rise)
             x += at.xAdvance * ratio
           })
         }
@@ -6749,10 +6970,19 @@ async function generate({
                 for (const o of sourceStarts) {
                   let area = areas.at(-1)
                   if (!area || Math.abs(area.y - o.y) >= 0.01) {
-                    check(
-                      !area || area.y - o.y >= (region.nativeProseSize ?? region.sourceSize) - 0.01,
-                      'annotations'
-                    )
+                    if (
+                      area &&
+                      area.y - o.y < (region.nativeProseSize ?? region.sourceSize) - 0.01
+                    ) {
+                      // Fixed gaps may be too short even after the native rows
+                      // passed validation. Let movable anchors use inline reflow.
+                      check(
+                        anchors.every((anchor) => anchor.movable),
+                        'annotations'
+                      )
+                      fits = false
+                      break
+                    }
                     area = {
                       x: o.x,
                       lastX: o.x,
@@ -6774,6 +7004,7 @@ async function generate({
                   if (intersects(next)) area.right = Math.min(area.right, next.local.x)
                 }
               }
+              if (!fits) break
               const breaks = pdfTranslationLineEnds(text)
               let cursor = 0
               for (const area of areas) {
@@ -6905,6 +7136,7 @@ async function generate({
           0,
           ...ends,
           ...referencePrefixes.values(),
+          ...comparisonPrefixes.values(),
           ...scriptRanges.map((range) => range.start),
           ...anchors.flatMap((a) => [a.targetOffset, a.targetOffset + a.label.length])
         ])
@@ -6913,6 +7145,7 @@ async function generate({
           (at) =>
             !anchors.some((a) => at > a.targetOffset && at < a.targetOffset + a.label.length) &&
             !anchors.some((a) => at > referencePrefixes.get(a) && at < a.targetOffset) &&
+            !anchors.some((a) => at > comparisonPrefixes.get(a) && at < a.targetOffset) &&
             !scriptRanges.some((range) => at > range.start && at < range.scriptStart)
         )
         .sort((a, b) => a - b)
@@ -6943,6 +7176,8 @@ async function generate({
           !token.anchor?.nativeFootnoteRow &&
           (/^[，。！？；：、,.;:!?）)］\]｝}》」』】”’％%]/u.test((token.text ?? '').trimStart()) ||
             /[（(［[｛{《「『【“‘]$/u.test((previous.at(-1).text ?? '').trimEnd()) ||
+            (comparisonPrefixes.has(token.anchor) &&
+              boundaries[i - 2] === comparisonPrefixes.get(token.anchor)) ||
             scriptRanges.some((range) => start > range.start && start < range.end) ||
             // Script anchors introduce their own boundaries. A literal ratio
             // remains atomic across that seam just as it does in plain prose.
@@ -7299,6 +7534,38 @@ async function generate({
         )
         .filter(Number.isFinite)
         .sort((a, b) => b - a)
+      // A short chained comparison has no tab stop. Preserve both native
+      // signs but close an artificial gap left by the translated prefix.
+      const [firstRelation, secondRelation] = region.anchors
+      const spacedComparison =
+        sourceRows.length === 1 &&
+        region.cos === 1 &&
+        region.sin === 0 &&
+        region.anchors.length === 2 &&
+        region.anchors.every(
+          (anchor) =>
+            !anchor.annotation &&
+            !anchor.generated &&
+            anchor.movable &&
+            anchor.indices.length === 1 &&
+            anchor.baseline === sourceRows[0]
+        ) &&
+        /^[⩽⩾]$/u.test(firstRelation.label) &&
+        firstRelation.label === secondRelation.label &&
+        /^[ \t]*\p{Script=Greek}[ \t]*$/u.test(
+          unit.translation.slice(firstRelation.targetOffset + 1, secondRelation.targetOffset)
+        ) &&
+        /^[ \t]*\d/u.test(unit.translation.slice(secondRelation.targetOffset + 1)) &&
+        region.lines.some((line, index) => {
+          const previous = region.lines[index - 1]
+          return (
+            line.indices === firstRelation.indices &&
+            previous?.text &&
+            /\d[ \t]*$/u.test(previous.text) &&
+            firstRelation.local.x - previous.x - measure(previous.text, region.point).width >
+              region.point * 2
+          )
+        })
       // A verbatim list ordinal must travel with its paragraph's native alphabet.
       const nativeAlphabetProse =
         (unit.source.match(/[A-Za-z]{2,}/gu) ?? []).length >= 8 &&
@@ -7313,7 +7580,8 @@ async function generate({
                 anchor.targetOffset === 0 &&
                 /^\([1-9]\d{0,2}\)$/u.test(anchor.label)))
         )
-      if (
+      if (spacedComparison) fitted = undefined
+      else if (
         sourceRows.length > 1 &&
         sourceRows.every(
           (y, index) => !index || sourceRows[index - 1] - y < region.sourceSize * 1.7
@@ -7408,6 +7676,7 @@ async function generate({
           0,
           ...ends,
           ...linkedPanelPrefixes.values(),
+          ...comparisonPrefixes.values(),
           ...Array.from(
             linkedPanelPrefixes.keys(),
             (anchor) => anchor.targetOffset + anchor.label.length + 1
@@ -7427,6 +7696,7 @@ async function generate({
             !anchors.some(
               (anchor) => at > linkedPanelPrefixes.get(anchor) && at < anchor.targetOffset
             ) &&
+            !anchors.some((a) => at > comparisonPrefixes.get(a) && at < a.targetOffset) &&
             !scriptRanges.some((range) => at > range.start && at < range.scriptStart)
         )
         .sort((a, b) => a - b)
@@ -7444,6 +7714,8 @@ async function generate({
           previous &&
           !token.anchor?.nativeFootnoteRow &&
           ((!token.anchor && linkedPanelPrefixes.has(previous.at(-1).anchor)) ||
+            (comparisonPrefixes.has(token.anchor) &&
+              boundaries[index - 1] === comparisonPrefixes.get(token.anchor)) ||
             (linkedPanelPrefixes.has(token.anchor) &&
               boundaries[index - 1] === linkedPanelPrefixes.get(token.anchor)) ||
             /^[，。！？；：、,.;:!?）)］\]｝}》」』】”’％%]/u.test(
@@ -7671,8 +7943,8 @@ async function generate({
     }
     fitted ??= fixedFit
     // Compact one-line CJK labels can be slightly wider than an abbreviated
-    // source cell. Use at most 15% horizontal condensation at the readable-size
-    // floor; do not move a link, change line height, or enlarge the source cell.
+    // source cell. A complete short prose run can use a little more width
+    // compression and borrow height within its owned box for CJK descenders.
     if (
       !fitted &&
       regions.length === 1 &&
@@ -7689,17 +7961,21 @@ async function generate({
         point = minimumPoint,
         ink = measure(unit.translation, point),
         horizontalScale = (rect.width - 0.02) / ink.width,
-        y = Math.min(region.sourceBaseline, rect.top - ink.top)
-      if (horizontalScale >= 0.85 && horizontalScale < 1 && y + ink.bottom >= rect.bottom)
-        fitted = [
-          {
-            ...region,
-            point,
-            lines: [
-              { text: unit.translation, x: rect.x - ink.left * horizontalScale, y, horizontalScale }
-            ]
-          }
-        ]
+        y = Math.min(region.sourceBaseline, rect.top - ink.top),
+        shortProse =
+          region.fragment.items?.length === 1 &&
+          region.fragment.items[0].text === unit.source &&
+          /^[a-z]+(?: [a-z]+){2,}$/u.test(unit.source),
+        compact = []
+      if (
+        horizontalScale >= (shortProse ? 0.8 : 0.85) &&
+        horizontalScale < 1 &&
+        (shortProse || y + ink.bottom >= rect.bottom) &&
+        fitPlainLines(region, point, 0, unit.translation.length, compact, horizontalScale) ===
+          unit.translation.length &&
+        compact.length === 1
+      )
+        fitted = [{ ...region, point, lines: compact }]
       // A short expanded label may have one extra owned line. Try the same
       // bounded condensation only after ordinary wrapping and one-line fitting;
       // keep scientific tokens whole and every glyph inside the source cell.
@@ -8087,12 +8363,17 @@ async function generate({
         const runs = fontRuns(line.text)
         check(!line.anchor || runs.length === 1, 'annotations')
         let x = line.x
-        return runs.map((run) => {
-          const font = fonts[run.fontIndex],
-            value = { ...line, ...run, x, encoded: font.encodeText(run.text).asBytes() }
-          x +=
-            font.widthOfTextAtSize(run.text, line.point ?? region.point) *
-            (line.horizontalScale ?? 1)
+        return runs.map(({ text, fontIndex, script }) => {
+          const font = fonts[fontIndex],
+            rowPoint = line.point ?? region.point,
+            point = script ? rowPoint * scriptScale : rowPoint,
+            value = { ...line, text, fontIndex, x, encoded: font.encodeText(text).asBytes() }
+          if (script) {
+            value.rowBaseline = line.y
+            value.y += rowPoint * script
+            value.point = point
+          }
+          x += font.widthOfTextAtSize(text, point) * (line.horizontalScale ?? 1)
           return value
         })
       })
@@ -8186,11 +8467,54 @@ async function generate({
       ]
     }
   }
+  const requestedDrops = dropLinks.flatMap(({ pageNumber, index, rect }) => {
+    const link = geometry[pageNumber - 1]?.links[index]
+    return link &&
+      !link.hasVisibleAppearance &&
+      linkRect(link).every((value, i) => Math.abs(value - rect[i]) <= 0.001)
+      ? [link]
+      : []
+  })
+  const planWithLinks = (unit) => {
+    if (!allowLinkOmission || unit.source === unit.translation) return planUnit(unit)
+    for (const link of requestedDrops)
+      if (
+        unit.fragments.some(
+          (fragment) =>
+            fragment.pageNumber === link.pageNumber && linkBelongsTo(link, fragmentBounds(fragment))
+        )
+      )
+        suppressedLinks.add(link)
+    try {
+      for (;;) {
+        planningLink = undefined
+        try {
+          planUnit(unit)
+          if (suppressedLinks.size) omissionsByUnit.set(unit, [...suppressedLinks])
+          return
+        } catch (error) {
+          // Only waive a link that failed its own mapping. Other native glyph,
+          // ownership and geometry checks still have to pass for the unit.
+          if (
+            error.failure?.code !== 'annotations' ||
+            !planningLink ||
+            suppressedLinks.has(planningLink) ||
+            suppressedLinks.size >= 8
+          )
+            throw error
+          suppressedLinks.add(planningLink)
+        }
+      }
+    } finally {
+      suppressedLinks.clear()
+      planningLink = undefined
+    }
+  }
   const fragmentRecovery = createSourceFragmentRecovery(data, pages)
   try {
     for (const unit of units) {
       try {
-        planUnit(unit)
+        planWithLinks(unit)
       } catch (error) {
         if (error.failure?.code === 'unsupported-layout') {
           try {
@@ -8375,6 +8699,42 @@ async function generate({
                   plan.sourceInk
                 )
               )
+              // A small descender can reach the next row's font box. If
+              // excluding it exposes that row's exact saved text, it belongs
+              // to the current verified run and does not share ownership.
+              const onlyOverhang = (object, other) => {
+                const items = other.fragment.items
+                if (
+                  plan.cos !== 1 ||
+                  plan.sin !== 0 ||
+                  other.verifiedObjects ||
+                  !items?.length ||
+                  !plan.fragment.items?.length ||
+                  object.bounds[1] < other.rect.top - 0.8 ||
+                  object.bounds[3] <= other.rect.top + 1 ||
+                  plan.fragment.items.at(-1).index >= items[0].index
+                )
+                  return false
+                const neighbor = objects.filter(
+                  (candidate) =>
+                    candidate !== object &&
+                    candidate.type === 1 &&
+                    !(
+                      candidate.bounds[0] >= other.rect.x + other.rect.width ||
+                      candidate.bounds[2] <= other.rect.x ||
+                      candidate.bounds[1] >= other.rect.top ||
+                      candidate.bounds[3] <= other.rect.bottom
+                    )
+                )
+                return (
+                  neighbor.length > 0 &&
+                  neighbor.every((candidate) => !touched.includes(candidate)) &&
+                  sourceMatches(
+                    items.map((item) => item.text).join(''),
+                    neighbor.map((candidate) => candidate.text).join('')
+                  )
+                )
+              }
               for (const o of touched) {
                 // A wider text object must not delete an unchanged fragment, even if
                 // the caller supplied disjoint rectangles for two parts of that object.
@@ -8387,7 +8747,8 @@ async function generate({
                       o.bounds[0] < other.rect.x + other.rect.width &&
                       o.bounds[2] > other.rect.x &&
                       o.bounds[1] < other.rect.top &&
-                      o.bounds[3] > other.rect.bottom
+                      o.bounds[3] > other.rect.bottom &&
+                      !onlyOverhang(o, other)
                   )
                 )
                 check(!used.has(o.obj))
@@ -8538,7 +8899,9 @@ async function generate({
               // Regenerated labels are centered in the publisher's click box.
               // Their glyph baseline can differ from the shared prose row;
               // horizontal ink/link collisions were checked independently above.
-              rowBaseline = line.anchor ? line.dy + line.anchor.baseline - line.anchor.rise : line.y
+              rowBaseline =
+                line.rowBaseline ??
+                (line.anchor ? line.dy + line.anchor.baseline - line.anchor.rise : line.y)
             check(
               painted.every((box) => {
                 if (Math.abs(box.rowBaseline - rowBaseline) < 0.001) return true
@@ -8848,6 +9211,34 @@ async function generate({
             prepared.delete(line.object)
           }
         }
+        const applied = replacements.filter((plan) => !plan.unchanged)
+        const retainedAnnotations = new Set(
+          applied.flatMap((plan) =>
+            plan.anchors.flatMap((anchor) =>
+              anchor.annotation ? [anchor.annotation, ...(anchor.additionalAnnotations ?? [])] : []
+            )
+          )
+        )
+        const removed = new Set(
+          applied.flatMap((plan) =>
+            (omissionsByUnit.get(plan.unit) ?? []).filter(
+              (link) => link.pageNumber === plan.fragment.pageNumber
+            )
+          )
+        )
+        for (const link of [...removed].sort((a, b) => b.index - a.index)) {
+          if (retainedAnnotations.has(link)) continue
+          pageNumber = link.pageNumber
+          check(
+            p.FPDFPage_RemoveAnnot(borrowedPages.get(pageNumber - 1), link.index),
+            'annotations'
+          )
+          omittedLinks.push({
+            pageNumber: link.pageNumber,
+            index: link.index,
+            rect: linkRect(link)
+          })
+        }
         for (const page of new Set(replacements.map((plan) => plan.page))) {
           const excluded = new Set(
             replacements
@@ -9001,7 +9392,12 @@ try {
       else if (retainedUnits.has(index)) Object.assign(retainedUnits.get(index), failure)
     }
     parentPort.postMessage(
-      { data, layoutFailures: [...retainedUnits.values()], diagnostics: diagnostics() },
+      {
+        data,
+        layoutFailures: [...retainedUnits.values()],
+        omittedLinks,
+        diagnostics: diagnostics()
+      },
       [data.buffer]
     )
   }

@@ -1,3 +1,4 @@
+import type { ProviderRequestPolicy } from '@aipoch/providers/transport'
 import type {
   OfficialVendorId,
   CustomReasoningEffortTransport,
@@ -12,6 +13,7 @@ export type ResponsesToChatCompletionsBridgeTarget = {
   onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
+  requestPolicy?: ProviderRequestPolicy
   vendorId?: OfficialVendorId
   reasoningEffortTransport?: CustomReasoningEffortTransport
   reasoningSupported?: boolean

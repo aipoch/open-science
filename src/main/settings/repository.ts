@@ -3,6 +3,7 @@ import {
   type ProviderCatalogState
 } from '../../shared/provider-model-catalog-codec'
 import {
+  availableOfficialModelIds,
   isCatalogModelAvailable,
   KILO_FREE_MODEL_ID,
   resolveOfficialModelCatalog
@@ -13,7 +14,12 @@ import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
-import { getOfficialVendor } from '@aipoch/providers'
+import {
+  configuredProviderConnectionKind,
+  getOfficialVendor,
+  sameConfiguredProviderConnection,
+  selectConfiguredModelId
+} from '@aipoch/providers'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
@@ -146,6 +152,8 @@ const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean
   left.type === right.type &&
   left.vendorId === right.vendorId &&
   left.region === right.region &&
+  sameConfiguredProviderConnection(left, right) &&
+  ((!left.cloudflare && !left.manualConnection) || left.model === right.model) &&
   left.keyRef === right.keyRef &&
   isDeepStrictEqual(left.catalogParameters ?? {}, right.catalogParameters ?? {})
 
@@ -436,14 +444,27 @@ class SettingsRepository {
             ? { ...provider, codexAutoUseHttps: true }
             : provider
       } else providers.push(provider)
+      let activeModel = settings.activeModel
+      if (
+        configEdit &&
+        settings.activeProviderId === provider.id &&
+        (provider.type === 'custom' || configuredProviderConnectionKind(provider.vendorId))
+      ) {
+        const availableIds =
+          provider.type === 'custom'
+            ? (provider.localModels?.map(({ id }) => id) ??
+              (provider.model ? [provider.model] : []))
+            : availableOfficialModelIds(provider)
+        // Apply explicit single-model edits to the current selection. Sessions keep their own pins.
+        const changedSingleModel =
+          provider.type === 'official' && !provider.manualModels && source?.model !== provider.model
+        if (changedSingleModel || !activeModel || !availableIds.includes(activeModel))
+          activeModel = selectConfiguredModelId(provider.model, availableIds)
+      }
       return {
         ...settings,
         providers,
-        // A custom provider has one model. Keep its active selection in the same save so
-        // validation and runtime resolution cannot keep using the model from before the edit.
-        ...(configEdit && provider.type === 'custom' && settings.activeProviderId === provider.id
-          ? { activeModel: provider.model }
-          : {}),
+        ...(activeModel !== settings.activeModel ? { activeModel } : {}),
         ...(isClaudeSubscriptionProvider(provider.type) &&
         isClaudeSubscriptionProviderId(provider.id)
           ? { claudeSubscriptionProviderId: provider.id }

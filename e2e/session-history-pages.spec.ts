@@ -489,8 +489,19 @@ for (const branched of [false, true]) {
         await expect(
           page.getByRole('button', { name: 'Next message revision', exact: true })
         ).toHaveCount(0)
-        await page.getByRole('button', { name: 'Load earlier messages', exact: true }).click()
-        await expect(page.getByText('PAGED-PROMPT-0', { exact: true })).toBeVisible()
+        const loadEarlier = page.getByRole('button', {
+          name: 'Load earlier messages',
+          exact: true
+        })
+        const earliestPrompt = page.getByText('PAGED-PROMPT-0', { exact: true })
+        // A display page contains 80 business records. The fixture has 144 records, so the
+        // earliest prompt can require a second read when the initial page has already prefetched
+        // rows to fill a short viewport.
+        for (let attempt = 0; attempt < 3 && !(await earliestPrompt.count()); attempt++) {
+          if (!(await loadEarlier.count())) break
+          await loadEarlier.click()
+        }
+        await expect(earliestPrompt).toBeVisible()
         await expect(
           page.getByRole('button', { name: 'Load earlier messages', exact: true })
         ).toHaveCount(0)

@@ -206,14 +206,22 @@ describe('service holds', () => {
     expect(stop).toHaveBeenCalledOnce()
   })
   it('bounds missing App connections and permits reconnect before commitment', async () => {
-    const { lifetime, stop } = await fixture()
+    const { lifetime, stop, options } = await fixture()
     lifetime.connect('app', 'old')
+    vi.useFakeTimers()
     lifetime.disconnect('app', 'old')
     lifetime.connect('app', 'new')
-    await new Promise((resolve) => setTimeout(resolve, 40))
+    await vi.advanceTimersByTimeAsync(options.disconnectGraceMs)
     expect(stop).not.toHaveBeenCalled()
+
+    // Keep durable writes and any Windows file replacement retries on real timers.
+    vi.useRealTimers()
+    const stopped = Promise.withResolvers<void>()
+    stop.mockImplementation(() => stopped.resolve())
+    options.report.mockImplementation(stopped.reject)
     lifetime.disconnect('app', 'new')
-    await vi.waitFor(() => expect(stop).toHaveBeenCalledWith('disconnect', expect.any(Number)))
+    await stopped.promise
+    expect(stop).toHaveBeenCalledExactlyOnceWith('disconnect', expect.any(Number))
   })
   it('persists explicit running across crash recovery but never across user stop', async () => {
     const { lifetime, options } = await fixture(true)

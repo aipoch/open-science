@@ -78,6 +78,19 @@ describe('Onboarding entry flow', () => {
     expect(container.textContent).toContain('Advanced options')
   })
 
+  it('opens the advanced form with the gateway selected from its quick-connect card', async () => {
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    const card = container.querySelector('.onboarding-provider-card-cloudflare-ai-gateway')!
+    expect(card.querySelector('input')).toBeNull()
+    const configure = card.querySelector('button')!
+    expect(configure.textContent).toBe('Configure')
+    await act(async () => configure.click())
+    await clickButton(/^Continue$/)
+    expect(container.querySelector('#provider-cloudflare-mode')).not.toBeNull()
+  })
+
   it('returns to quick connect after closing targeted Notebook settings', async () => {
     await renderEntry()
     await finishWelcomeAnimation()

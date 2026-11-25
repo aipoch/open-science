@@ -2420,7 +2420,7 @@ describe('mandatory product glossary', () => {
   })
 
   const credentialTokenSource = [
-    /\b(?:Claude|GitHub|OAuth|setup|saved|replacement|access)\s+tokens?\b/i,
+    /\b(?:API|AI Gateway|Claude|GitHub|OAuth|setup|saved|replacement|access)\s+tokens?\b/i,
     /\b(?:paste|save|remove|use|manage|prefer|exclude|read)\b[^.]*\btokens?\b/i,
     /\btokens?\s+(?:verified|verification|excluded)\b/i,
     /^Token:/

@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import {
   pdfTranslationMissingProtectedLiterals,
+  pdfTranslationProtectInlineFormulas,
   pdfTranslationWrittenNumericLiterals
 } from '../src/protected-literals.js'
 
@@ -29,4 +30,15 @@ it('preserves every dimensional occurrence without treating the connector as a n
   ).toEqual([])
   expect(pdfTranslationMissingProtectedLiterals('Use x-3.', '使用x3。')).toContain('-3')
   expect(pdfTranslationMissingProtectedLiterals('Use −3.', '使用3。')).toContain('−3')
+})
+
+it('protects formulas next to literal placeholder text and skips occupied namespaces', () => {
+  const literal = '⟦PDFMATHA⟧ ⟦PDFMATHZAZA⟧',
+    source = `${literal} accompanies [2, 5]m and ℓ∞.`
+  const protectedMath = pdfTranslationProtectInlineFormulas(source)
+  expect(protectedMath?.source).toBe(`${literal} accompanies ⟦PDFMATHZBZA⟧ and ⟦PDFMATHZBZB⟧.`)
+  expect(protectedMath?.restore(`${literal} 对应 ⟦PDFMATHZBZA⟧ 和 ⟦PDFMATHZBZB⟧。`)).toBe(
+    `${literal} 对应 [2, 5]m 和 ℓ∞。`
+  )
+  expect(protectedMath?.restore(`${literal} 对应 ⟦PDFMATHZBZA⟧。`)).toBe('')
 })

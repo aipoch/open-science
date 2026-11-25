@@ -363,7 +363,7 @@ class AcpProviderPromptExecutor {
           input.routeNotification(message.notification)
           continue
         }
-        const providerError = adapter.getPromptError?.(message.response)
+        const providerError = adapter.getPromptError?.(message.response, providerSessionId)
         if (providerError) throw providerError
         // A native terminal ends the wait. Only an accepted Stop of this prompt changes
         // a normal finish to a local interruption. Provider errors and limits keep their outcome.

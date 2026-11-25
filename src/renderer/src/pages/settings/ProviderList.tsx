@@ -136,7 +136,7 @@ const DEFAULT_FRAMEWORK_ENDPOINTS = ['messages'] as const
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
 // Vendor names and the Codex identity are proper nouns and stay as the registry supplies them.
 const describeType = (provider: ProviderView, t: TFunction): string => {
-  if (provider.type === 'custom') return t('Custom')
+  if (provider.type === 'custom') return provider.localPresetId ? t('Local') : t('Custom')
   if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
     return t('Claude subscription')
   if (isCodexSubscriptionProvider(provider.type)) return codexSubscriptionProviderIdentity().name
@@ -305,7 +305,11 @@ const ProviderList = ({
               badge={
                 <>
                   <ProviderKindIcon
-                    kindKey={providerKindKey(provider.type, provider.vendorId)}
+                    kindKey={providerKindKey(
+                      provider.type,
+                      provider.vendorId,
+                      provider.localPresetId
+                    )}
                     className="size-3"
                   />
                   {describeType(provider, t)}

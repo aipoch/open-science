@@ -68,32 +68,7 @@ async function clearStaleSocket() {
   if (stale && (await sameFile(socketPath, entry))) await fs.unlink(socketPath)
 }
 
-async function watch(bundle) {
-  const [cache, targetVersion] = args
-  if (!targetVersion) return
-  const nativeCache = join(await fs.realpath(cache), label)
-  if ((await fs.realpath(nativeCache)) !== nativeCache) return
-  const receiptPath = join(nativeCache, 'ShipItState.plist')
-  const receipt = await fs.readFile(receiptPath, 'utf8')
-  const request = JSON.parse(receipt)
-  if (
-    request.launchAfterInstallation !== false ||
-    request.bundleIdentifier !== 'com.aipoch.open-science' ||
-    (await fs.realpath(fileURLToPath(request.targetBundleURL))) !== (await fs.realpath(bundle))
-  )
-    return
-  const staged = fileURLToPath(request.updateBundleURL).replace(/\/$/, '')
-  if ((await fs.realpath(staged)) !== staged) return
-  const directory = dirname(staged)
-  if (
-    dirname(directory) !== nativeCache ||
-    !/^update\.[A-Za-z0-9]+$/.test(basename(directory)) ||
-    basename(staged) !== basename(bundle)
-  )
-    return
-  const originalBundle = await fs.lstat(bundle)
-  const originalStage = await fs.lstat(directory)
-  if (!originalStage.isDirectory() || originalStage.uid !== process.getuid()) return
+async function acceptReopens(targetVersion) {
   const peers = new Set()
   let accepting = true
   let firstOpen
@@ -121,6 +96,56 @@ async function watch(bundle) {
     // Other installations can have active sockets in the same private directory.
     void fs.rmdir(dirname(socketPath)).catch(() => undefined)
   }
+  return {
+    release,
+    reopenExpired: () => firstOpen !== undefined && performance.now() - firstOpen >= reopenWaitMs
+  }
+}
+
+async function watchSparkle(bundle, targetVersion) {
+  const original = await fs.stat(bundle)
+  const { release, reopenExpired } = await acceptReopens(targetVersion)
+  try {
+    process.send('armed')
+    const deadline = performance.now() + 120_000
+    while (performance.now() < deadline && !reopenExpired()) {
+      const current = await fs.stat(bundle).catch(() => undefined)
+      if (current && (original.dev !== current.dev || original.ino !== current.ino)) break
+      await delay(150)
+    }
+  } finally {
+    release()
+  }
+}
+
+async function watch(bundle) {
+  const [cache, targetVersion] = args
+  if (!targetVersion) return
+  if (args[2] === 'sparkle') return watchSparkle(bundle, targetVersion)
+  const nativeCache = join(await fs.realpath(cache), label)
+  if ((await fs.realpath(nativeCache)) !== nativeCache) return
+  const receiptPath = join(nativeCache, 'ShipItState.plist')
+  const receipt = await fs.readFile(receiptPath, 'utf8')
+  const request = JSON.parse(receipt)
+  if (
+    request.launchAfterInstallation !== false ||
+    request.bundleIdentifier !== 'com.aipoch.open-science' ||
+    (await fs.realpath(fileURLToPath(request.targetBundleURL))) !== (await fs.realpath(bundle))
+  )
+    return
+  const staged = fileURLToPath(request.updateBundleURL).replace(/\/$/, '')
+  if ((await fs.realpath(staged)) !== staged) return
+  const directory = dirname(staged)
+  if (
+    dirname(directory) !== nativeCache ||
+    !/^update\.[A-Za-z0-9]+$/.test(basename(directory)) ||
+    basename(staged) !== basename(bundle)
+  )
+    return
+  const originalBundle = await fs.lstat(bundle)
+  const originalStage = await fs.lstat(directory)
+  if (!originalStage.isDirectory() || originalStage.uid !== process.getuid()) return
+  const { release, reopenExpired } = await acceptReopens(targetVersion)
   // Pin the original directory before the GUI exits. The child releases it on EOF, including
   // observer crashes. It consults Foundation only after a stopped installer and a missing target.
   const witness = spawn(
@@ -196,7 +221,7 @@ async function watch(bundle) {
         announced = true
         process.send('armed')
       }
-      if (firstOpen !== undefined && performance.now() - firstOpen >= reopenWaitMs) release()
+      if (reopenExpired()) release()
       await delay(150)
     }
   } finally {

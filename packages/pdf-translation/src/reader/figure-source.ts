@@ -3007,10 +3007,11 @@ async function nativeMaskFractions(
     ({ source, sourceOnly, preserve, fragments }) =>
       !sourceOnly &&
       !preserve &&
-      /^(?:\d{2,4}[a-z]|\d{1,2}[a-z]\d{1,2})$/u.test(source) &&
       fragments.length === 1 &&
       fragments[0].pageNumber === number &&
-      fragments[0].items.length === 3
+      ((fragments[0].items.length === 3 &&
+        /^(?:\d{2,4}[a-z]|\d{1,2}[a-z]\d{1,2})$/u.test(source)) ||
+        (fragments[0].items.length === 1 && /^[a-z]$/u.test(source)))
   )
   if (!candidates.length) return []
   const { items } = await page.getTextContent()
@@ -3018,9 +3019,8 @@ async function nativeMaskFractions(
   const { width, height, transform } = page.getViewport({ scale: 1 })
   const [sx, b, c, sy, tx, ty] = transform
   if (sx <= 0 || sy >= 0 || b !== 0 || c !== 0) return []
-  return candidates.flatMap(({ id, source, fragments: [fragment] }) => {
-    const claims = fragment.items.toSorted((a, b) => a.index - b.index)
-    const runs = claims.map(({ index, text }) => {
+  const nativeRuns = (claims: PdfTranslationFragment['items']): (TextItem | undefined)[] =>
+    claims.map(({ index, text }) => {
       const item = items[index]
       return item &&
         'str' in item &&
@@ -3036,6 +3036,21 @@ async function nativeMaskFractions(
         ? item
         : undefined
     })
+  const detachedNumerators = new Map(
+    candidates.flatMap(({ id, fragments: [fragment] }) =>
+      fragment.items.length === 1 ? [[fragment.items[0].index, { id, fragment }] as const] : []
+    )
+  )
+  const bars = masks.map((mask) => ({
+    left: (mask.x * width - tx) / sx,
+    right: ((mask.x + mask.width) * width - tx) / sx,
+    top: (mask.y * height - ty) / sy,
+    bottom: ((mask.y + mask.height) * height - ty) / sy
+  }))
+  const retained = candidates.flatMap(({ id, source, fragments: [fragment] }) => {
+    if (fragment.items.length !== 3) return []
+    const claims = fragment.items.toSorted((a, b) => a.index - b.index)
+    const runs = nativeRuns(claims)
     const [digit, variable, denominator] = runs
     if (
       !digit ||
@@ -3069,12 +3084,8 @@ async function nativeMaskFractions(
       Math.abs(left + right - lowerLeft - lowerRight) > em * 0.22
     )
       return []
-    const bars = masks.filter((mask) => {
-      const x = (mask.x * width - tx) / sx,
-        end = ((mask.x + mask.width) * width - tx) / sx,
-        top = (mask.y * height - ty) / sy,
-        bottom = ((mask.y + mask.height) * height - ty) / sy
-      return (
+    const matches = bars.filter(
+      ({ left: x, right: end, top, bottom }) =>
         Math.abs(x - left) <= em * 0.1 &&
         Math.abs(end - right) <= em * 0.1 &&
         rising - top >= em * 0.08 &&
@@ -3083,10 +3094,63 @@ async function nativeMaskFractions(
         bottom - lower <= em &&
         top - bottom >= em * 0.025 &&
         top - bottom <= em * 0.13
-      )
-    })
-    return bars.length === 1 ? [id] : []
+    )
+    return matches.length === 1 ? [id] : []
   })
+  // An independently recognized denominator can prove ownership of an orphaned numerator.
+  for (const { sourceOnly, preserve, fragments } of units) {
+    if (!sourceOnly || preserve !== 'formula' || fragments.length !== 1) continue
+    const [fragment] = fragments
+    if (fragment.pageNumber !== number || fragment.items.length !== 2) continue
+    const [first, last] = fragment.items
+    const [coefficient, factor] = nativeRuns(fragment.items)
+    if (
+      !coefficient ||
+      !factor ||
+      !/^\d{1,2}$/u.test(coefficient.str) ||
+      !/^[\p{Script=Greek}][a-z] ?$/u.test(factor.str) ||
+      last.index !== first.index + 1
+    )
+      continue
+    const preceding = items.slice(Math.max(0, first.index - 5), first.index)
+    const offset = preceding.findLastIndex((item) => 'str' in item && item.str.trim())
+    if (offset < 0) continue
+    const index = first.index - preceding.length + offset
+    const owner = detachedNumerators.get(index)
+    if (!owner) continue
+    const [numerator] = nativeRuns(owner.fragment.items)
+    if (!numerator) continue
+    const {
+        height: em,
+        transform: [, , , , left, lower]
+      } = coefficient,
+      [, , , , factorX, factorY] = factor.transform,
+      [, , , , upperX, upper] = numerator.transform,
+      right = factorX + factor.width
+    if (
+      Math.abs(factor.height - em) > em * 0.02 ||
+      Math.abs(numerator.height - em) > em * 0.02 ||
+      Math.abs(factorY - lower) > em * 0.02 ||
+      Math.abs(factorX - left - coefficient.width) > em * 0.12 ||
+      Math.abs(upperX + numerator.width / 2 - (left + right) / 2) > em * 0.15 ||
+      upper - lower < em * 1.2 ||
+      upper - lower > em * 1.55
+    )
+      continue
+    const matches = bars.filter(
+      ({ left: x, right: end, top, bottom }) =>
+        Math.abs(x - left) <= em * 0.1 &&
+        Math.abs(end - right) <= em * 0.15 &&
+        upper - top >= em * 0.3 &&
+        upper - top <= em * 0.55 &&
+        bottom - lower >= em * 0.75 &&
+        bottom - lower <= em * 1.05 &&
+        top - bottom >= em * 0.025 &&
+        top - bottom <= em * 0.13
+    )
+    if (matches.length === 1) retained.push(owner.id)
+  }
+  return retained
 }
 
 // The raster frame and two equally spaced rows distinguish coordinates from prose.
