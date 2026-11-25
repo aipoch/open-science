@@ -513,6 +513,65 @@ it('serves remote speech in-process through the injected transport without forki
   }
 })
 
+it('cancels in-flight remote synthesis when the generation aborts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-remote-cancel-'))
+  const worker = stubWorker()
+  const createSpeechProcess = vi.fn()
+  const controller = new AbortController()
+  let observedSignal: AbortSignal | undefined
+  const remoteFetch = vi.fn(
+    (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        observedSignal = init?.signal ?? undefined
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+          { once: true }
+        )
+      })
+  )
+  try {
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess,
+      remoteFetch: remoteFetch as unknown as typeof fetch,
+      createWorker: () => {
+        queueMicrotask(() => worker.emit('message', { kind: 'synthesize', lane: 0, text: 'one' }))
+        return worker as unknown as Worker
+      }
+    })
+    const result = generate(
+      {
+        speechConcurrency: 1,
+        specPath: 'unused',
+        modelDirectory: 'unused',
+        engineDirectory: 'unused',
+        outputDirectory: join(root, 'output'),
+        speech: {
+          kind: 'remote-http',
+          style: 'audio-speech',
+          endpoint: 'https://api.example.com/v1/audio/speech',
+          model: 'tts-1'
+        }
+      },
+      controller.signal
+    ).catch((error) => error)
+    // Wait until the request is actually in flight, then abort the generation.
+    await vi.waitFor(() => expect(remoteFetch).toHaveBeenCalledOnce())
+    expect(observedSignal?.aborted).toBe(false)
+    controller.abort(new Error('user cancelled'))
+    const outcome = await result
+    expect(outcome).toMatchObject({ message: 'user cancelled' })
+    // The in-flight request's signal fired before cleanup settled.
+    expect(observedSignal?.aborted).toBe(true)
+    expect(createSpeechProcess).not.toHaveBeenCalled()
+    expect(await readdir(root)).toEqual([])
+  } finally {
+    controller.abort()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 it('remixes verified speech after a visual edit and resynthesizes damaged recordings', async () => {
   const root = await mkdtemp(join(tmpdir(), 'film-speech-checkpoint-'))
   try {

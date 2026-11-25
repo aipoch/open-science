@@ -118,8 +118,18 @@ export const createResearchVideoGenerator = (options: {
     signal.throwIfAborted()
     // Remote synthesis runs in this (host-owned) process so the injected transport governs
     // every request; fail fast on a malformed config before allocating scratch space.
+    // remoteAbort fires when the caller aborts OR when this generation settles, so an
+    // in-flight request can never outlive the generation that started it.
+    const remoteAbort = new AbortController()
+    const forwardAbort = (): void => remoteAbort.abort(signal.reason)
+    if (signal.aborted) remoteAbort.abort(signal.reason)
+    else signal.addEventListener('abort', forwardAbort, { once: true })
+    const remoteInFlight = new Set<Promise<unknown>>()
     const remote = input.speech
-      ? createRemoteSpeechSynthesizer(input.speech, { fetch: options.remoteFetch })
+      ? createRemoteSpeechSynthesizer(input.speech, {
+          fetch: options.remoteFetch,
+          signal: remoteAbort.signal
+        })
       : undefined
     const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'research-video-'))
     let worker: Worker | undefined
@@ -157,6 +167,13 @@ export const createResearchVideoGenerator = (options: {
     const removeScratch = (): Promise<void> =>
       rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 3 })
     const cleanup = async (): Promise<void> => {
+      // Abort in-flight remote requests first, then wait for them to settle: a cancelled
+      // generation must stop talking to the endpoint before the next one may start.
+      signal.removeEventListener('abort', forwardAbort)
+      remoteAbort.abort(
+        new Error('Film generation finished before the remote speech request completed.')
+      )
+      await Promise.allSettled([...remoteInFlight])
       const [build, narration] = await Promise.allSettled([stopBuild(), speech?.stop()])
       const narrationError: unknown = narration.status === 'rejected' ? narration.reason : undefined
       const buildError: unknown = build.status === 'rejected' ? build.reason : undefined
@@ -232,7 +249,7 @@ export const createResearchVideoGenerator = (options: {
                 throw new Error('Invalid speech worker lane')
               armIdleDeadline('narration preparation')
               if (remote) {
-                void (async () => {
+                const pending = (async () => {
                   if (value.kind === 'measure-duration' && remote.measureDuration) {
                     const duration = await remote.measureDuration(value.text)
                     if (stopping || signal.aborted) return
@@ -256,6 +273,9 @@ export const createResearchVideoGenerator = (options: {
                 })().catch((error) => {
                   if (!stopping) reject(new ResearchVideoWorkerError(error, 'speech', value.lane))
                 })
+                // Cleanup awaits this set after aborting, so no request outlives the run.
+                remoteInFlight.add(pending)
+                void pending.finally(() => remoteInFlight.delete(pending))
                 return
               }
               speech ??= ownSpeechProcess(

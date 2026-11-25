@@ -263,6 +263,36 @@ describe('createRemoteSpeechSynthesizer', () => {
     expect(requests).toHaveLength(0)
   })
 
+  it('cancels an in-flight request when the generation signal aborts', async () => {
+    const { url } = await listen((_request, _response) => {
+      /* never respond: only the abort can end this request */
+    })
+    const controller = new AbortController()
+    const synthesizer = createRemoteSpeechSynthesizer(
+      { kind: 'remote-http', style: 'audio-speech', endpoint: url, model: 'tts-1' },
+      { signal: controller.signal }
+    )
+    const pending = synthesizer.synthesize('Hello')
+    // Give fetch time to reach the server before cancelling.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    controller.abort(new Error('generation cancelled'))
+    await expect(pending).rejects.toThrow(/cancelled by generation shutdown/)
+  })
+
+  it('maps an expired timeout to a timeout error, not a cancellation', async () => {
+    const { url } = await listen((_request, _response) => {
+      /* never respond */
+    })
+    const synthesizer = createRemoteSpeechSynthesizer({
+      kind: 'remote-http',
+      style: 'audio-speech',
+      endpoint: url,
+      model: 'tts-1',
+      timeoutMs: 50
+    })
+    await expect(synthesizer.synthesize('Hello')).rejects.toThrow(/timed out/)
+  })
+
   it('rejects an oversized response before buffering it', async () => {
     const { url } = await listen((_request, response) => {
       response.writeHead(200, {

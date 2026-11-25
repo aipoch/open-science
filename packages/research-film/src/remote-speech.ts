@@ -133,7 +133,8 @@ export const decodeWav = (bytes: Uint8Array): { samples: Float32Array; sampleRat
 
 const buildRequest = (
   config: RemoteSpeechConfig,
-  text: string
+  text: string,
+  cancel?: AbortSignal
 ): { url: string; init: RequestInit } => {
   const body =
     config.style === 'audio-speech'
@@ -157,7 +158,11 @@ const buildRequest = (
         ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {})
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+      // The caller's cancellation (generation abort/cleanup) and the per-request timeout
+      // both abort the in-flight fetch, so a cancelled generation never keeps talking.
+      signal: cancel
+        ? AbortSignal.any([AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS), cancel])
+        : AbortSignal.timeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS)
     }
   }
 }
@@ -206,10 +211,11 @@ const readBounded = async (response: Response): Promise<Uint8Array> => {
  *
  * `deps.fetch` lets the host inject a proxy-aware transport (the default is the platform
  * fetch), so remote requests follow the host's network policy instead of bypassing it.
+ * `deps.signal` cancels in-flight requests when the owning generation aborts or settles.
  */
 export const createRemoteSpeechSynthesizer = (
   config: RemoteSpeechConfig,
-  deps?: { fetch?: typeof fetch }
+  deps?: { fetch?: typeof fetch; signal?: AbortSignal }
 ): SpeechSynthesizer => {
   // Validate eagerly so a malformed endpoint fails before any narration work starts.
   new URL(config.endpoint)
@@ -220,11 +226,15 @@ export const createRemoteSpeechSynthesizer = (
     throw new Error('Remote speech timeout must be a positive number of milliseconds')
   const identity = remoteSpeechIdentity(config)
   const request = async (text: string): Promise<{ samples: Float32Array; sampleRate: number }> => {
-    const { url, init } = buildRequest(config, text)
+    const { url, init } = buildRequest(config, text, deps?.signal)
     let response: Response
     try {
       response = await (deps?.fetch ?? fetch)(url, init)
     } catch (error) {
+      // A caller-side abort (generation cancelled or settled) is a cancellation, not a
+      // timeout; report it distinctly so callers never confuse the two.
+      if (deps?.signal?.aborted)
+        throw new Error('Remote speech request cancelled by generation shutdown')
       const name = (error as Error).name
       if (name === 'TimeoutError' || name === 'AbortError')
         throw new Error('Remote speech request timed out')
@@ -234,7 +244,15 @@ export const createRemoteSpeechSynthesizer = (
       await response.body?.cancel().catch(() => undefined)
       throw new Error(`Remote speech request failed with HTTP ${response.status}`)
     }
-    const bytes = await readBounded(response)
+    let bytes: Uint8Array
+    try {
+      bytes = await readBounded(response)
+    } catch (error) {
+      // Aborting mid-stream surfaces as an AbortError; keep the cancellation semantics.
+      if (deps?.signal?.aborted)
+        throw new Error('Remote speech request cancelled by generation shutdown')
+      throw error
+    }
     if (config.style === 'chat-completions') {
       let payload: { choices?: { message?: { audio?: { data?: unknown } } }[] } | undefined
       try {
