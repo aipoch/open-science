@@ -442,7 +442,7 @@ for (const scenario of [
   { query: 'import=project&many-projects&transfers&queue-full', primary: 'Continue' },
   { query: 'import=progress&transfers&queue-full', primary: 'Run in background' },
   { query: 'import=cleanup&transfers', primary: 'Run in background' },
-  { query: 'evidence', primary: 'Try again' }
+  { query: 'evidence', primary: 'Export anyway' }
 ]) {
   test(`package dialog shares one scroll region with status content: ${scenario.query}`, async ({
     page
