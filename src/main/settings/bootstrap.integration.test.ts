@@ -52,9 +52,9 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
     return {
       result: { installId: 'fixture', ok: true },
       adapterPath,
-      adapterVersion: '1.6.2',
+      adapterVersion: '2.6.0',
       codexPath: nativePath,
-      codexVersion: '0.157.1'
+      codexVersion: '0.166.0'
     }
   })
   const status = async (): Promise<CodexAuthStatus> => ({
@@ -85,8 +85,8 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
       managedAdapterPath: adapterPath,
       managedCodexPath: nativePath,
       isRunnable: async () => installed,
-      getAdapterVersion: async () => (installed ? '1.6.2' : undefined),
-      getCodexVersion: async () => (installed ? '0.157.1' : undefined),
+      getAdapterVersion: async () => (installed ? '2.6.0' : undefined),
+      getCodexVersion: async () => (installed ? '0.166.0' : undefined),
       smokeInitialize: async () => true,
       resolveNpmBinDirs: async () => []
     },

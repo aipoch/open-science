@@ -1153,7 +1153,10 @@
         "node:util",
         "node:zlib"
       ],
-      "resourcePaths": ["src/main/settings/fixtures/codex-acp-1.6.2-authentication-status.txt"],
+      "resourcePaths": [
+        "src/main/settings/fixtures/codex-acp-1.6.2-authentication-status.txt",
+        "src/main/settings/fixtures/codex-acp-2.6.0.txt"
+      ],
       "resourceTests": [
         "src/main/settings/managed-claude.test.ts",
         "src/main/settings/managed-codex.test.ts",

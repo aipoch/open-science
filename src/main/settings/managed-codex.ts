@@ -68,21 +68,21 @@ const MAX_INITIALIZE_DIAGNOSTIC_CHARS = 4 * 1024
 export const MAX_ACP_INITIALIZE_RESPONSE_CHARS = 256 * 1024
 
 export const CODEX_ACP_INTEGRITY =
-  'sha512-2eF1mbs1gTqkZJSLYOun/pFDx37sYa7W63HOPezC37b/R8AYms5O1nfQu8lrqFSGDrwDZkASVORymLcqjCNqyA=='
+  'sha512-/PBsd0H6URy4bhXhAeXqwb7RqctbXfNceRihAh6nDmn5HJ873uzoHvHxF45YmeWfgOKKRrNRLZjYsket2a7EsQ=='
 
 export const CODEX_INTEGRITIES: Readonly<Record<string, string>> = {
   'darwin-arm64':
-    'sha512-62/e4TZ34z93KK3FYIHmo/K88aH0JRPA8x7SAVBdK4iG9f9HPO2tsDrJcmOj9z6DrFpMvPEVymomCbYpqN+ylQ==',
+    'sha512-5fWH6qqUInACcRADIewjlnRxDb4QLe0uriwehiZz0+viuAAB8I+WWefqw4xwHvyKaxeiGX4uK56+vrgfvFk3FQ==',
   'darwin-x64':
-    'sha512-PscZvqKD4zlaSw1nM5Sh4lU1M+01sr4b3qzGx8pf+4OLyULg1z1yAyTR1c35C3t62H8DXy/14y7oazTR3JMMKA==',
+    'sha512-Vj5wXJPizKmrzNtnRNQf9PP6FJkG3iJU/UO3NE4WvkENZGoQfmImdwf4MVRI5NgwjSuC6LT0HbBRHPVVnwGHuw==',
   'linux-arm64':
-    'sha512-nEaBZT3ldrtqUNaBlvI+Y+fg+LbNCTsQjbUnl7Q45rl9vSSqHU2vRj1l6iJDwupZkrpeIJ/ClHIwxgMKv1SKHg==',
+    'sha512-w0ScAsBr9aZKtIFrh6HN6KU2yjKKeSCzYfbb7DB0Ccj4BYPzeZtUeQprbycLCwuX3AFQdbdjapmLho2iot74jQ==',
   'linux-x64':
-    'sha512-Eac8XlC0nCXSeUjDU9l8yLJ6P9evv1mO+AnvILoNwlegBC7B3AVXqJ05QcMhQX7RcJ3Lk2618ykCb2X2ui8VAQ==',
+    'sha512-CxDm3+D1cpbGJeHrdzINoG+3wn9BVncP4qpZaaNYkxe8iPtRJOYyCJnnPoVjWRIBvI9vPKbRoifsMSA5xDaUpw==',
   'win32-arm64':
-    'sha512-tFkxdrSXPUDQXXp3JwTxNOgI17RQcexyuaZTiNmL1A/UaVtVmVBNe+8cBk3r8b7dLpaoWFbjPwL7p5SBCrkLQg==',
+    'sha512-LWO1cyGlxbKgeUM7QJ1a6QMSsJi++3PqgIi6BmIUBoj/kzZqRIR69UDMQgeU/9izzJFYMSbwt++lHnUFyjQXlA==',
   'win32-x64':
-    'sha512-vgqs/VRXNwhLYMsZDgYfnRSXpRh5Nm782L8lacGskw86kOxbMaquvQKxkuZHUBrJA2XGcksB7rMUHy1XaCJgrA=='
+    'sha512-NS8Ps5oG5r19pCrMCUXwUqOui6odnUIoBlQkrjCJ+h1k6KiwCzC/+mI9d3nSZCqFoVONPBTmqyq8NYq3YaFGyA=='
 }
 
 export type ManagedCodexPlatform = {
@@ -963,21 +963,182 @@ export const patchCodexAcpCompactionSource = (source: string): string => {
   return source
 }
 
+// Match the release bundle exactly. A partially applied or ambiguous patch must never be installed.
+const replaceAdapterFragment = (source: string, before: string, after: string): string => {
+  const withoutApplied = source.replace(after, '')
+  if (
+    withoutApplied !== source &&
+    !withoutApplied.includes(after) &&
+    !withoutApplied.includes(before)
+  )
+    return source
+  if (withoutApplied === source && source.split(before).length === 2)
+    return source.replace(before, () => after)
+  throw new Error(`Codex ACP bundle changed near: ${before.trim().split('\n')[0]}`)
+}
+
+// 2.6 manages provider restarts and correlates compaction with its native turn. Preserve those
+// upstream paths. The app still needs startup catalogs, required Reviewer MCP, and per-call usage.
+const patchCodexAcp2 = (source: string): string => {
+  const startup = '  const hookConfig = prepareCodexHookConfig(config2);'
+  const spawn =
+    'function startCodexConnection(codexPath, env, appServerStartupArgs = ["app-server"], options = {}) {'
+  const spawnEnd = '  attachLogs(codex);'
+  const spawnBody = `${spawn}
+  const spawnEnv = env ?? process.env;
+  let codex;
+  if (codexPath) {
+    codex = process.platform === "win32" ? (0, import_cross_spawn.default)(codexPath, appServerStartupArgs, { env: spawnEnv }) : spawn(codexPath, appServerStartupArgs, { env: spawnEnv });
+  } else {
+    const bundledCodexPath = require2.resolve("@openai/codex/bin/codex.js");
+    codex = spawn(process.execPath, [bundledCodexPath, ...appServerStartupArgs], { env: spawnEnv });
+  }
+${spawnEnd}`
+  const initializeUsage = '    this.startTotal = startTotal;'
+  const acceptedUsage =
+    '    this.summedLast = this.summedLast === null ? { ...last } : combine(this.summedLast, last, (x, y) => x + y);'
+  const quota = '      quota: {\n        token_count: promptTokenUsage,'
+  const authEvent = `    if (this.isAuthenticationRequiredError(error62)) {
+      if (!params.willRetry && params.turnId === this.sessionState.currentTurnId) {
+        this.failure = RequestError.authRequired();
+      }
+      return null;
+    }
+    if (params.turnId !== this.sessionState.currentTurnId) {`
+  const turnFailure = `    if (turn.status === "failed" && this.isAuthenticationRequiredError(turn.error?.codexErrorInfo ?? null)) {
+      this.failure = RequestError.authRequired();
+      return;
+    }`
+  const errorFactory = `  openScienceTurnFailure(error) {
+    const data = this.createTurnErrorData(error);
+    return this.isAuthenticationRequiredError(error.codexErrorInfo) && !this.sessionState.authConfigured
+      ? RequestError.authRequired(data, error.message)
+      : RequestError.internalError(data, error.message);
+  }`
+  const fragments = [
+    [
+      startup,
+      `${startup}
+  if (typeof config2?.model_catalog_json === "string") {
+    hookConfig.appServerStartupArgs.push(...configOverride("model_catalog_json", config2.model_catalog_json));
+  }`
+    ],
+    // Open-Science owns session titles. A second model call after a user's first turn
+    // can bill the provider and send the prompt through an unrelated helper thread.
+    [
+      '      sessionState.titleGen?.onTurnCompleted(promptText);',
+      '      // Session titles are managed by Open-Science.'
+    ],
+    [
+      'return { type: "chat-gpt", email: account?.type === "chatgpt" ? account.email ?? "" : "" };',
+      'if (account?.type === "chatgpt") return { type: "chat-gpt", email: account.email ?? "" };\n        throw error62;'
+    ],
+    [
+      '    const releaseRoutingCapture = this.captureTurnRoutings(params.threadId, (turnId, notification) => {\n      if (compactTurnId !== null) return;',
+      `    const releaseLegacyCompletion = this.captureCompactionCompletions(params.threadId, (event) => {
+      if (event.method === "thread/compacted" && (!event.params.turnId || event.params.turnId === compactTurnId)) resolveCompleted();
+    });
+    const releaseRoutingCapture = this.captureTurnRoutings(params.threadId, (turnId, notification) => {
+      if (compactTurnId !== null && turnId === compactTurnId && notification.method === "error" && notification.params.willRetry === false) {
+        rejectCompleted(RequestError.internalError(notification.params.error, notification.params.error.message));
+      }
+      if (compactTurnId !== null) return;`
+    ],
+    [
+      '      releaseRoutingCapture();\n      closed?.dispose();',
+      '      releaseRoutingCapture();\n      releaseLegacyCompletion();\n      closed?.dispose();'
+    ],
+    // The v1 standard renderer drops the structured compaction marker that's still
+    // present in its tool facts. Preserve it for live updates and history replay.
+    [
+      '      ...terminalInfo(facts4),\n      ...output2 === void 0 ? {} : this.outputChunk',
+      '      ...(facts4.contextCompaction ? { contextCompaction: facts4.contextCompaction } : {}),\n      ...terminalInfo(facts4),\n      ...output2 === void 0 ? {} : this.outputChunk'
+    ],
+    [spawnBody, spawnBody.replaceAll('{ env: spawnEnv }', '{ env: spawnEnv, windowsHide: true }')],
+    [
+      '[mcp.name, toCodexMcpServerConfig(mcp.server)]',
+      '[mcp.name, { ...toCodexMcpServerConfig(mcp.server), ...(mcp.name === "open-science-reviewer" ? { required: true } : {}) }]'
+    ],
+    // Native inputTokens already includes both cache categories. usage_update reports context
+    // consumption; PromptResponse.usage remains the latest request in mutually exclusive categories.
+    [
+      'used = this.sessionState.lastTokenUsage?.totalTokens;\n      size = this.sessionState.modelContextWindow;',
+      'used = params.tokenUsage.last.inputTokens;\n      size = this.sessionState.modelContextWindow;'
+    ],
+    [
+      'used = params.tokenUsage.last.totalTokens;\n      size = params.tokenUsage.modelContextWindow;',
+      'used = params.tokenUsage.last.inputTokens;\n      size = params.tokenUsage.modelContextWindow;'
+    ],
+    [
+      'function toTokenCount(usage) {\n  return {',
+      'function toTokenCount(usage) {\n  usage = { ...usage, cachedInputTokens: usage.cachedInputTokens ?? 0, cacheWriteInputTokens: usage.cacheWriteInputTokens ?? 0 };\n  return {'
+    ],
+    [initializeUsage, `${initializeUsage}\n    this.openScienceModelCalls = [];`],
+    [
+      acceptedUsage,
+      `    const delta = previous === null ? last : combine(total, previous, (x, y) => x - y);
+    const valid = (count) => TOKEN_COUNT_FIELDS.every((field) => Number.isSafeInteger(count[field]) && count[field] >= 0);
+    const increment = valid(delta) ? delta : last;
+    if (valid(increment) && TOKEN_COUNT_FIELDS.some((field) => increment[field] > 0)) {
+      this.openScienceModelCalls.push(increment);
+    }
+${acceptedUsage}`
+    ],
+    [
+      quota,
+      `      ...(promptTokenUsage !== null ? {
+        "${ACP_TURN_TOKEN_USAGE_META_KEY}": toPromptUsage(sessionState.promptTokenUsage.openScienceModelCalls.reduce((sum, call) => combine(sum, call, (a, b) => a + b), ZERO_TOKEN_COUNT)),
+        "${ACP_MODEL_TURN_COUNT_META_KEY}": sessionState.promptTokenUsage.openScienceModelCalls.length,
+        "${ACP_MODEL_CALL_USAGE_META_KEY}": sessionState.promptTokenUsage.openScienceModelCalls.map(toPromptUsage)
+      } : {}),
+${quota}`
+    ],
+    [
+      '    return usage === null ? null : toPromptUsage(usage);',
+      '    return usage === null || !sessionState.lastTokenUsage ? null : toPromptUsage(sessionState.lastTokenUsage);'
+    ],
+    // AIR clients receive typed session failures. Other v1 clients must receive a rejected prompt
+    // with the upstream diagnostics, including when the only failure arrives in turn/completed.
+    [
+      authEvent,
+      '    if (params.turnId !== this.sessionState.currentTurnId) { // preserve turn attribution'
+    ],
+    [
+      turnFailure,
+      `    if (!this.supportsTypedSessionFailures && turn.status === "failed") {
+      const error = turn.error ?? (this.terminalTurnError?.turnId === turn.id ? this.terminalTurnError.error : null);
+      this.failure ??= error ? this.openScienceTurnFailure(error) : RequestError.internalError(null, "Codex turn failed.");
+      return;
+    }`
+    ],
+    [
+      '    if (this.failure !== null) {\n      failuresShownAsMessages.add(this.failure);',
+      '    this.failure ??= this.openScienceTurnFailure(params.error);\n    if (this.failure !== null) {\n      failuresShownAsMessages.add(this.failure);'
+    ],
+    ['  createTurnErrorData(error62) {', `${errorFactory}\n  createTurnErrorData(error62) {`]
+  ] as const
+  let patched = patchCodexAcpSkillInputSource(patchCodexAcpAuthenticationStatusSource(source))
+  for (const [before, after] of fragments) patched = replaceAdapterFragment(patched, before, after)
+  return patched
+}
+
 export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
   const source = await readFile(adapterPath, 'utf8')
-  const patched = patchCodexAcpReviewerMcpSource(
-    patchCodexAcpModelCatalogStartupSource(
-      patchCodexAcpSkillInputSource(
-        patchCodexAcpTurnUsageSource(
-          patchCodexAcpContextUsageSource(
-            patchCodexAcpPromptFailureSource(
-              patchCodexAcpCompactionSource(patchCodexAcpAuthenticationStatusSource(source))
+  const patched = source.includes('function prepareCodexHookConfig(config2) {')
+    ? patchCodexAcp2(source)
+    : patchCodexAcpReviewerMcpSource(
+        patchCodexAcpModelCatalogStartupSource(
+          patchCodexAcpSkillInputSource(
+            patchCodexAcpTurnUsageSource(
+              patchCodexAcpContextUsageSource(
+                patchCodexAcpPromptFailureSource(
+                  patchCodexAcpCompactionSource(patchCodexAcpAuthenticationStatusSource(source))
+                )
+              )
             )
           )
         )
       )
-    )
-  )
 
   if (patched === source) return
 
