@@ -1,7 +1,5 @@
 import type { ResearchVideoProgress, ResearchVideoStep } from '@aipoch/research-film/contracts'
 import {
-  assertResearchVideoPlayerSize,
-  filmVisualCheckSchema,
   researchVideoResolutionSchema,
   RESEARCH_VIDEO_EXPORT_OPTIONS,
   researchVideoExportTimeout,
@@ -18,6 +16,15 @@ import {
   exportResearchVideoMp4,
   ResearchVideoEncoderCleanupError
 } from '@aipoch/research-film/export'
+import {
+  filmPlayerCsp,
+  filmStageSize,
+  inspectFilmPlayer,
+  readFilmStage,
+  verifyFilmPlayerHtml,
+  type FilmAspect,
+  type FilmStage
+} from './player-review'
 import { waitForFilmStep } from './wait'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
@@ -99,7 +106,6 @@ export const readResearchVideoExportProgress = (request: {
   htmlPath: string
 }): ResearchVideoProgress | null => activeProgress.get(request.htmlPath) ?? null
 
-type FilmStage = { duration: number; W: number; H: number }
 type FilmViewport = { width: number; height: number }
 
 /** A single isolated partition is shared by HTML review and MP4 capture. */
@@ -113,7 +119,7 @@ async function withFilmPlayer<T>(
     viewport: FilmViewport
   ) => Promise<T>,
   resolution?: ResearchVideoResolution,
-  aspect: '16x9' | '9x16' = '16x9'
+  aspect: FilmAspect = '16x9'
 ): Promise<T> {
   await acquireRenderSlot(signal)
   try {
@@ -135,21 +141,18 @@ async function openFilmPlayer<T>(
     viewport: FilmViewport
   ) => Promise<T>,
   resolution?: ResearchVideoResolution,
-  aspect: '16x9' | '9x16' = '16x9'
+  aspect: FilmAspect = '16x9'
 ): Promise<T> {
   signal.throwIfAborted()
   const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
   const html = await waitForFilmStep(setupSignal, () =>
     readFile(htmlPath, { encoding: 'utf8', signal: setupSignal })
   )
-  assertResearchVideoPlayerSize(Buffer.byteLength(html))
-  if (!html.includes('<meta name="open-science-research-video" content="1">'))
-    throw new Error('Not a supported research video player')
+  verifyFilmPlayerHtml(html)
   const isolated = (renderSession ??= createRenderSession())
   if (needsReset) await resetRenderSession(isolated, signal)
   signal.throwIfAborted()
-  const width = aspect === '9x16' ? 1080 : 1920
-  const height = aspect === '9x16' ? 1920 : 1080
+  const { width, height } = filmStageSize(aspect)
   const playerUrl = `https://research-video.invalid/player?render&ar=${aspect}&job=${randomUUID()}`
   let activeWindow: BrowserWindow | undefined
   needsReset = true
@@ -161,8 +164,7 @@ async function openFilmPlayer<T>(
           status: request.url === playerUrl ? 200 : 403,
           headers: {
             'content-type': 'text/html',
-            'content-security-policy':
-              "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+            'content-security-policy': filmPlayerCsp
           }
         })
     )
@@ -198,21 +200,10 @@ async function openFilmPlayer<T>(
     const renderCall = <T>(call: () => Promise<T>): Promise<T> => waitForFilmStep(setupSignal, call)
     await renderCall(() => window.loadURL(playerUrl))
     signal.throwIfAborted()
-    const metadata = (await renderCall(() =>
-      window.webContents.executeJavaScript('window.__ready')
-    )) as {
-      duration: number
-      W: number
-      H: number
-    }
-    if (
-      metadata.W !== width ||
-      metadata.H !== height ||
-      !Number.isFinite(metadata.duration) ||
-      metadata.duration <= 0 ||
-      metadata.duration > 3600
+    const metadata = readFilmStage(
+      await renderCall(() => window.webContents.executeJavaScript('window.__ready')),
+      aspect
     )
-      throw new Error('Invalid research video stage')
     signal.throwIfAborted()
     return await inspectPlayer(window, metadata, setupSignal, viewport)
   } finally {
@@ -226,20 +217,19 @@ export async function checkResearchVideoHtml(
   request: { htmlPath: string; includeFrames: boolean },
   parentSignal: AbortSignal
 ): Promise<FilmVisualResult> {
-  const check = (aspect: '16x9' | '9x16'): Promise<FilmVisualResult> => {
+  const check = (aspect: FilmAspect): Promise<FilmVisualResult> => {
     return withFilmPlayer(
       request.htmlPath,
       parentSignal,
       async (window, stage) => {
         const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(120_000)])
         const inspect = <T>(work: () => Promise<T>): Promise<T> => waitForFilmStep(signal, work)
-        const result = filmVisualCheckSchema.parse(
-          await inspect(() => window.webContents.executeJavaScript('window.__checkFilm()'))
-        )
-        const frames: FilmVisualResult['frames'] = []
-        if (aspect === '16x9' && request.includeFrames && !result.issues.length) {
-          for (const { scene, time } of result.frames) {
-            if (time > stage.duration) throw new Error('Invalid film review time')
+        return inspectFilmPlayer({
+          aspect,
+          stage,
+          includeFrames: request.includeFrames,
+          check: () => inspect(() => window.webContents.executeJavaScript('window.__checkFilm()')),
+          capture: async (time) => {
             await inspect(() =>
               window.webContents.executeJavaScript(
                 `window.__seek(${time}); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
@@ -248,21 +238,14 @@ export async function checkResearchVideoHtml(
             const image = await inspect(() =>
               window.webContents.capturePage({ x: 0, y: 0, width: stage.W, height: stage.H })
             )
-            if (image.isEmpty()) throw new Error('The HTML review frame was empty.')
-            const jpeg = image
-              .resize({ width: 960, height: 540, quality: 'best' })
-              .toJPEG(78)
-              .toString('base64')
-            frames.push({ scene, time, jpeg })
+            return image.isEmpty()
+              ? ''
+              : image
+                  .resize({ width: 960, height: 540, quality: 'best' })
+                  .toJPEG(78)
+                  .toString('base64')
           }
-        }
-        return {
-          issues: result.issues.map((issue) => ({
-            ...issue,
-            message: (aspect + ': ' + issue.message).slice(0, 500)
-          })),
-          frames
-        }
+        })
       },
       undefined,
       aspect

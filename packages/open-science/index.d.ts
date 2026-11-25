@@ -948,6 +948,83 @@ export type FormattedReferences = {
   exports: { bibtex: string; ris: string }
 }
 
+export type ResearchFilmMode = 'research-explanation' | 'operation-replay'
+
+export type ResearchFilmResolution = '720p' | '1080p' | '4k'
+
+export type ResearchFilmScope = {
+  projectId: string
+  sessionId: string
+  /** Omit to select the active conversation branch. Use the returned branchId for subsequent calls. */
+  branchId?: string
+  mode: ResearchFilmMode
+}
+
+export type ResearchFilmProgress = {
+  phase:
+    | 'preparing'
+    | 'writing'
+    | 'loading'
+    | 'voice'
+    | 'alignment'
+    | 'mixing'
+    | 'build'
+    | 'publishing'
+    | 'verifying'
+    | 'repairing'
+    | 'completed'
+    | 'cancelled'
+    | 'failed'
+  completed?: number
+  total?: number
+  completedLines?: number
+  totalLines?: number
+  startedAt: number
+  endedAt?: number
+}
+
+export type ResearchFilmReviewFailure = {
+  attemptId: string
+  stage: 'script' | 'visual' | 'replay'
+  findings: string[]
+}
+
+export type ResearchFilmStatus = {
+  branchId?: string
+  /** Indicates a resumable interruption. Review failures require reviseResearchFilm. */
+  canResume?: boolean
+  filmStep?: number
+  generationBlock?: 'unavailable' | 'empty' | 'awaiting-reply' | 'busy'
+  /** Present when this attempt explicitly selected the advisory scoring compatibility option. */
+  narrationReview?: 'advisory'
+  narrationDownload?: {
+    availability: 'notInstalled' | 'installing' | 'ready' | 'error'
+    recommendedRevision: string
+    installedRevision?: string
+    downloadBytes: number
+    installedBytes: number
+    hasFiles: boolean
+    inUse: boolean
+    transferredBytes: number
+    updateAvailable: boolean
+    error?: 'download' | 'integrity' | 'storage' | 'incompatible'
+  }
+  progress?: ResearchFilmProgress
+  /** The currently published player, which can predate an active or failed attempt. */
+  result?: {
+    id: string
+    title: string
+    duration: number
+    /** Advisory narration score from 0 to 9, if the assessment returned a valid result. */
+    scriptScore?: number
+    narrationReview?: 'advisory'
+    sessionAppMode?: 'live' | 'drawn'
+  }
+  reviewFailure?: ResearchFilmReviewFailure
+  error?: string
+  preflightError?: string
+}
+
 export class OpenScienceApiError extends Error {
   requestId?: string
   code: string
@@ -1223,6 +1300,50 @@ export class OpenScienceClient {
     }
   ): Promise<Run>
   listArtifacts(sessionId: string, options?: RequestOptions): Promise<Artifact[]>
+  /** Starts generation or explicitly resumes an interrupted generation. Does not wait for completion. */
+  startResearchFilm(
+    request: ResearchFilmScope & {
+      installNarration?: boolean
+      resume?: boolean
+      /** Compatibility option for research explanation. Narration scoring is advisory by default. */
+      narrationReview?: 'advisory'
+    },
+    options?: RequestOptions
+  ): Promise<ResearchFilmStatus>
+  getResearchFilmStatus(
+    scope: ResearchFilmScope,
+    options?: RequestOptions
+  ): Promise<ResearchFilmStatus>
+  /** Applies feedback to a specific attempt that failed review, then runs the film checks again. */
+  reviseResearchFilm(
+    request: ResearchFilmScope & {
+      attemptId: string
+      feedback: string
+      /** Compatibility option for research explanation. Narration scoring is advisory by default. */
+      narrationReview?: 'advisory'
+    },
+    options?: RequestOptions
+  ): Promise<ResearchFilmStatus>
+  cancelResearchFilm(
+    scope: ResearchFilmScope,
+    options?: RequestOptions
+  ): Promise<ResearchFilmStatus>
+  /** Downloads the exact HTML player identified by the published result. */
+  downloadResearchFilm(
+    request: ResearchFilmScope & { filmId: string },
+    options?: RequestOptions
+  ): Promise<Response>
+  /** Render a published Film as a landscape MP4. Aborting the request cancels rendering. */
+  exportResearchFilm(
+    request: ResearchFilmScope & {
+      filmId: string
+      /** Defaults to 720p. */
+      resolution?: ResearchFilmResolution
+      /** Explicitly authorize a managed FFmpeg and ffprobe download when needed. */
+      installExportTools?: boolean
+    },
+    options?: RequestOptions
+  ): Promise<Response>
   /** Searches the global Literature library, optionally limited to one Project. */
   searchLiterature(
     request?: { query?: string; projectId?: string; offset?: number; limit?: number },

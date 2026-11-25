@@ -109,6 +109,7 @@ import {
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
 import type { TrayNavigationSession } from './tray-navigation'
+import type { TaskResearchFilmPort } from './web-service/research-film-api'
 import { defaultOcrLanguagesForLocale } from '../shared/local-models'
 
 export type IpcRegistrationOptions = {
@@ -189,6 +190,7 @@ export type ApplicationRuntimeInterfaces = {
   taskNotebookEnvironment: import('./notebook/environment-lifecycle-workflows').ManagedNotebookSetup
   taskNotebookRuntimes: import('./web-service/task-api').TaskNotebookRuntimes
   taskControls: TaskControlPorts
+  taskResearchFilms: TaskResearchFilmPort
   computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>
   sessionDeletionCapability: Pick<SessionDeletion, 'setSessionDeletionHandlers'>
   archiveCapability: Pick<ArchiveCoordinator, 'isSessionAvailableById' | 'setMarkReadSessions'>
@@ -1075,6 +1077,10 @@ export const createApplicationModules = async (
     taskNotebook: notebookRuntime.notebookService,
     taskNotebookEnvironment: notebookSurfaces.notebookEnvironmentLifecycle.managedSetup,
     taskNotebookRuntimes: notebookSurfaces.runtimeWorkflows,
+    taskResearchFilms: {
+      ...researchFilm.researchVideoPresentation,
+      renderMp4: researchFilm.headlessFilmExport.render
+    },
     taskControls: {
       findSessionAfterCatalogHydration: (sessionId) =>
         withDataRootWrite(() => sessionProjection.findSessionAfterCatalogHydration(sessionId)),

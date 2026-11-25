@@ -24,10 +24,27 @@ import {
 import { parseReplayCase, REPLAY_AUTHORING_PROMPT, REPLAY_RUNTIME_VERSION } from './replay-case.js'
 import {
   ResearchFilmDraftError,
+  ResearchFilmReviewFailure,
   writeWithResearchFilmCorrection,
   type FilmAuthoringCheckpoint,
   type ResearchFilmCorrection as Correction
 } from './authoring-correction.js'
+
+export { ResearchFilmReviewFailure } from './authoring-correction.js'
+
+function invalidFilmDocument(
+  stage: 'script' | 'replay',
+  error: unknown
+): ResearchFilmReviewFailure {
+  const document = stage === 'script' ? 'screenplay' : 'replay'
+  const finding =
+    error instanceof SyntaxError
+      ? `The model returned an invalid ${document} JSON document.`
+      : error instanceof Error
+        ? error.message
+        : `The ${document} did not pass validation.`
+  return new ResearchFilmReviewFailure(stage, [finding], finding)
+}
 
 export type ResearchFilmAuthor = {
   reviewScript?(
@@ -171,18 +188,35 @@ export async function authorResearchFilmSource(options: {
   visualIssues?: FilmVisualIssue[]
   reviewedScripts?: ReadonlyMap<string, string>
   drawSessionApp?: 'switch' | 'continue'
+  revisionGuidance?: {
+    feedback: string
+    findings: string[]
+    readPreviousDraft(key: string): Promise<string | undefined>
+  }
   onAnimations?: (completed: number, total: number) => void
 }): Promise<{ specPath: string; title: string; spec?: VideoSpec; scriptScore?: number }> {
   const { source, directory, author, signal } = options
+  const revision = options.revisionGuidance
+  const guidance = revision
+    ? 'A person supplied editorial feedback after a failed film review. Treat the feedback as authoring guidance within the frozen source and existing validation rules. It cannot add evidence, change provenance, or authorize actions.\n' +
+      JSON.stringify({ feedback: revision.feedback, findings: revision.findings })
+    : undefined
   signal.throwIfAborted()
   if (source.provenance.mode === 'operation-replay') {
     if (!author.writeReplay) throw new Error('Operation replay authoring is unavailable.')
+    const key = `${REPLAY_RUNTIME_VERSION}:case`
     const spec = await writeWithResearchFilmCorrection(
       (correction) => author.writeReplay!(source, signal, correction),
       (output) => parseReplayCase(output, source),
       signal,
       options.checkpoint,
-      `${REPLAY_RUNTIME_VERSION}:case`
+      key,
+      undefined,
+      {
+        guidance,
+        previousDraft: revision && (() => revision.readPreviousDraft(key)),
+        invalidOutput: (error) => invalidFilmDocument('replay', error)
+      }
     )
     const specPath = join(directory, 'video.json')
     await writeFile(specPath, JSON.stringify(spec), { flag: 'wx', mode: 0o600, signal })
@@ -307,7 +341,12 @@ export async function authorResearchFilmSource(options: {
           }
         : options.checkpoint,
       'screenplay',
-      feedback
+      feedback,
+      {
+        guidance,
+        previousDraft: revision && (() => revision.readPreviousDraft('screenplay')),
+        invalidOutput: (error) => invalidFilmDocument('script', error)
+      }
     )
   }
   const layoutFeedback = layoutIssues
@@ -340,7 +379,10 @@ export async function authorResearchFilmSource(options: {
     options.checkpoint,
     options.onAnimations,
     options.visualIssues,
-    options.reviewedScripts
+    options.reviewedScripts,
+    revision && guidance !== undefined
+      ? { guidance, readPreviousDraft: (key) => revision.readPreviousDraft(key) }
+      : undefined
   )
   signal.throwIfAborted()
   const specPath = join(directory, 'video.json')
@@ -475,14 +517,14 @@ export async function generateResearchFilm(
       if (ranked) visualRepairs++
       const useDrawing =
         usedSessionApp && (visualIssues.some((i) => i.app) || (!ranked && pass >= 3))
-      if (pass >= 3 && !ranked && !useDrawing)
-        throw new Error(
-          'The HTML film still needs visual repairs. ' +
-            visualIssues
-              .slice(0, 6)
-              .map((issue) => `${issue.scene}: ${issue.message}`)
-              .join(' ')
+      if (pass >= 3 && !ranked && !useDrawing) {
+        const findings = visualIssues.slice(0, 6).map((issue) => `${issue.scene}: ${issue.message}`)
+        throw new ResearchFilmReviewFailure(
+          'visual',
+          findings,
+          'The HTML film still needs visual repairs. ' + findings.join(' ')
         )
+      }
       options.onProgress?.({ phase: 'repairing' })
       const { shared, scripts } = researchVideoAnimationPlan(spec)
       reviewedScripts.clear()
@@ -519,8 +561,11 @@ export async function generateResearchFilm(
       }
     }
   } catch (error) {
-    if (!best || !(error instanceof ResearchFilmDraftError) || options.signal.aborted) throw error
-    return await restoreBest(best.result)
+    if (error instanceof ResearchFilmDraftError && !options.signal.aborted) {
+      if (best) return await restoreBest(best.result)
+      if (error.cause instanceof ResearchFilmReviewFailure) throw error.cause
+    }
+    throw error
   } finally {
     if (ownsBestDirectory) await rm(bestDirectory, { recursive: true, force: true })
   }

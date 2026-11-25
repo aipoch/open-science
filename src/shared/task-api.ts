@@ -412,6 +412,12 @@ export type AcquiredTaskArtifact = {
 }
 
 export type TaskApiErrorCode =
+  | 'film_not_found'
+  | 'film_review_conflict'
+  | 'film_busy'
+  | 'film_export_tools_unavailable'
+  | 'film_export_failed'
+  | 'unsupported_capability'
   | 'notebook_setup_failed'
   | 'notebook_runtime_unavailable'
   | 'notebook_continuation_expired'

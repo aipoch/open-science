@@ -118,6 +118,7 @@ import { containsSecretBearingMaterial } from '../permission-grants/capability'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import { TaskSubmissions, taskContinuationRequestId } from '../tasks/task-submissions'
 import type { TaskRunJournal } from '../tasks/task-run-journal'
+import type { TaskResearchFilmApi } from './research-film-api'
 import {
   TaskRunner,
   TaskRunnerError,
@@ -292,6 +293,7 @@ type TaskApiPorts = {
   notebookEnvironment?: ManagedNotebookSetup
   notebookRuntimes?: TaskNotebookRuntimes
   controls?: TaskControlPorts
+  researchFilms?: TaskResearchFilmApi
   computePreferences?: TaskComputePreferencePort
   detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
 }
@@ -403,6 +405,10 @@ class HeadlessTaskApi {
   private readonly submissions?: TaskSubmissions
   private readonly pendingQuestionResponses = new Map<string, Promise<unknown>>()
   private readonly releaseContinuationTracker?: () => void
+
+  get researchFilms(): TaskResearchFilmApi | undefined {
+    return this.ports.researchFilms
+  }
 
   constructor(
     private readonly ports: TaskApiPorts,

@@ -588,6 +588,9 @@ describe('production application command wiring', () => {
     expect(nodeEntrySource).toContain('runtime.applicationCommands.desktop')
     expect(compact(ipcSource)).toContain('taskControls: {')
     expect(compact(ipcSource)).toContain(
+      'taskResearchFilms: { ...researchFilm.researchVideoPresentation, renderMp4: researchFilm.headlessFilmExport.render }'
+    )
+    expect(compact(ipcSource)).toContain(
       "computePreferences: Pick<SessionEnabledComputeHostsOwner, 'withReservation' | 'set'>"
     )
     expect(compact(ipcSource)).toContain(
@@ -604,7 +607,7 @@ describe('production application command wiring', () => {
       "taskNotebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>"
     )
     expect(compact(webServiceSource)).toContain(
-      '{ commands: applicationCommands.task, agent: taskAgent, notebook: taskNotebook, notebookEnvironment: taskNotebookEnvironment, notebookRuntimes: taskNotebookRuntimes, controls: taskControls, computePreferences, detectActiveSessions }'
+      '{ commands: applicationCommands.task, agent: taskAgent, notebook: taskNotebook, notebookEnvironment: taskNotebookEnvironment, notebookRuntimes: taskNotebookRuntimes, controls: taskControls, researchFilms: taskResearchFilms && createTaskResearchFilmApi(taskResearchFilms), computePreferences, detectActiveSessions }'
     )
     expect(webServiceSource).toContain('localWeb: applicationCommands.localWeb')
     expect(webServiceSource).toContain('remoteWeb: applicationCommands.remoteWeb')
@@ -674,7 +677,10 @@ vi.mock('./composition/desktop-utilities', () => ({
   composeDesktopUtilities: vi.fn(() => rootFixture.owners)
 }))
 vi.mock('./composition/research-film', () => ({
-  composeResearchFilm: vi.fn(() => rootFixture.owners)
+  composeResearchFilm: vi.fn(() => ({
+    ...rootFixture.owners,
+    headlessFilmExport: { render: vi.fn() }
+  }))
 }))
 vi.mock('./composition/document-reading', () => ({
   composeDocumentReading: vi.fn(() => rootFixture.owners)

@@ -291,6 +291,47 @@ directory. HTTP calls send the token in request headers. `events()` authenticate
 a `token` URL query parameter; treat WebSocket URLs and request logs as sensitive. Tokens are
 not included in normal command output.
 
+### Research Films
+
+Use the authenticated local service to generate a narrated HTML player from a Session branch with
+the desktop app closed. `research-explanation` explains the completed research response.
+`operation-replay` presents the branch's recorded operations. Research explanation uses a local
+Chromium browser for visual checks. See [Research Film CLI and browser setup](CLI.md#research-films).
+
+```js
+const scope = { projectId, sessionId, mode: 'research-explanation' }
+const started = await client.startResearchFilm({ ...scope, installNarration: true })
+const branch = { ...scope, branchId: started.branchId }
+const status = await client.getResearchFilmStatus(branch)
+```
+
+Only set `installNarration` when authorizing the local narration model download. Poll status and
+keep the returned branch ID when available so subsequent calls stay on that branch. If
+`reviewFailure` is present, present its findings to the user and submit their requested changes
+with `reviseResearchFilm({ ...branch, attemptId, feedback })`. Use the exact attempt ID from the
+current failure. A revision goes through review again. `cancelResearchFilm(branch)` requests
+cancellation explicitly. A request timeout ends the client request, so read status before repeating
+a start, revision, or cancellation whose outcome is uncertain.
+
+Research explanation uses advisory narration scoring. `result.scriptScore` can be a number from
+0 to 9 and may be absent if the scoring model does not provide a valid result. Chromium checks the
+player in portrait and landscape. After bounded repairs, a completed attempt can publish its best
+playable candidate with remaining layout defects. Screenplay structure and player integrity checks
+remain required. `narrationReview: 'advisory'` is accepted on explanation start and revision requests
+for compatibility. Operation replay uses its own recorded-evidence checks.
+
+Once the current attempt has published a player, use
+`downloadResearchFilm({ ...branch, filmId: status.result.id })` to receive the HTML `Response`.
+While an attempt is active or failed, `status.result` may still describe an earlier published
+player.
+
+`exportResearchFilm({ ...branch, filmId: status.result.id, resolution: '1080p' })` renders that
+published Film to a narrated landscape MP4 and returns a `video/mp4` `Response`. Both modes use
+sandboxed Chromium and FFmpeg for export. Choose `720p` (default), `1080p`, or `4k`. Set
+`installExportTools: true` to authorize a managed FFmpeg and ffprobe download if needed. Supply a
+request `signal` to cancel export or `timeoutMs` to override the two-hour default. The CLI saves
+HTML and MP4 atomically to a caller-chosen file.
+
 ### Automation new-session defaults
 
 `project session-defaults show|update` manages defaults for new Sessions created through the

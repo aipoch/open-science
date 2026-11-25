@@ -146,6 +146,8 @@ const desktopExternalRoots = [
   '@aipoch/pdf-translation',
   '@aipoch/pdf-structure',
   '@aipoch/research-film',
+  // Playwright resolves its driver and injected browser scripts relative to the package.
+  'playwright-core',
   'tslib'
 ]
 

@@ -16,6 +16,7 @@
     "src/main/web-service/packed-web-assets.ts",
     "src/main/web-service/public-task-event-stream.test.ts",
     "src/main/web-service/public-task-event-stream.ts",
+    "src/main/web-service/research-film-api.ts",
     "src/main/web-service/state-file.test.ts",
     "src/main/web-service/state-file.ts",
     "src/main/web-service/task-api.test.ts",
@@ -31,6 +32,7 @@
     "src/main/web-service/http-server.ts",
     "src/main/web-service/index.ts",
     "src/main/web-service/options.ts",
+    "src/main/web-service/research-film-api.ts",
     "src/main/web-service/state-file.ts",
     "src/main/web-service/task-api.ts"
   ],

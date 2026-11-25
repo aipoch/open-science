@@ -5,6 +5,7 @@ import { Script } from 'node:vm'
 import type { VideoSpec } from './timeline.js'
 import type { FilmVisualIssue } from './visual-review.js'
 import {
+  ResearchFilmReviewFailure,
   writeWithResearchFilmCorrection,
   type FilmAuthoringCheckpoint
 } from './authoring-correction.js'
@@ -52,7 +53,11 @@ export async function writeResearchVideoAnimations(
   checkpoint?: FilmAuthoringCheckpoint,
   progress?: (completed: number, total: number) => void,
   visualIssues?: FilmVisualIssue[],
-  reviewedScripts?: ReadonlyMap<string, string>
+  reviewedScripts?: ReadonlyMap<string, string>,
+  revision?: {
+    guidance: string
+    readPreviousDraft(key: string): Promise<string | undefined>
+  }
 ): Promise<void> {
   const { panels, shared, scripts } = researchVideoAnimationPlan(spec)
   const total = shared.length + scripts.length
@@ -73,7 +78,10 @@ export async function writeResearchVideoAnimations(
       sharedFiles: Object.fromEntries(shared.filter((p) => files[p]).map((p) => [p, files[p]]))
     }
     const validate = (raw: string): string => {
-      const code = raw.trim().replace(/^```(?:javascript|js)?\s*\n([\s\S]*?)\n```$/u, '$1')
+      const code = raw
+        .trim()
+        .replace(/^```(?:javascript|js)?[ \t]*\r?\n(?:([\s\S]*?)\n)?```$/u, '$1')
+        .trim()
       if (!code) throw new Error('Animation source must not be empty.')
       const required = panels
         .filter((p) => p.script === name)
@@ -101,7 +109,20 @@ export async function writeResearchVideoAnimations(
       visualIssues
         ?.filter((issue) => issue.script === name)
         .map((issue) => `Scene ${issue.scene}: ${issue.message}`)
-        .join('\n')
+        .join('\n'),
+      {
+        guidance: revision?.guidance,
+        previousDraft: revision && (() => revision.readPreviousDraft(key)),
+        invalidOutput: (error) => {
+          const kind = input.shared ? 'Shared animation helper' : 'Animation'
+          const reason =
+            error instanceof SyntaxError
+              ? 'has invalid JavaScript syntax'
+              : 'must contain non-empty JavaScript source'
+          const finding = `${kind} ${name} ${reason}. Return a complete JavaScript replacement.`
+          return new ResearchFilmReviewFailure('visual', [finding], finding)
+        }
+      }
     )
     signal.throwIfAborted()
     // A layout edit can change the cache key of an otherwise identical drawing.

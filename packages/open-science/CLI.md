@@ -1134,6 +1134,84 @@ open-science artifacts download <download-id> --session <session-id> --output ./
 
 Artifact output paths are resolved relative to the current working directory.
 
+## Research Films
+
+Create a self-contained, narrated HTML player from a Session branch. Use
+`--mode research-explanation` to explain a completed research response or `--mode operation-replay`
+to present the branch's recorded evidence. Both modes run through the local service with the desktop
+app closed. Use the same profile as the original Run. On first use, `--install-narration` explicitly
+authorizes the service to download the local narration model.
+
+Research explanation needs Chrome, Chromium, or Microsoft Edge for headless HTML verification.
+Set `OPEN_SCIENCE_RESEARCH_FILM_BROWSER` to an absolute browser executable path before starting
+the service if the browser cannot be detected. Operation replay generation uses recorded evidence
+and runs without a browser. MP4 export for either mode uses the same sandboxed browser.
+[Headless browser setup](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md#headless-research-film-review)
+
+```bash
+open-science run --project <project> --prompt-file ./task.md --wait --json
+open-science film start <session-id> --project <project> --mode research-explanation --install-narration --json
+open-science film status <session-id> --project <project> --mode research-explanation --branch <branch-id> --json
+```
+
+Use `sessionId` from the Run. When `--branch` is omitted, the service selects the active branch.
+When the service returns `branchId`, use it for subsequent calls to keep the same branch selected.
+`film start` can return before the new player is published. Repeat `film status` to poll for
+progress. When the intended player is published, use its `result.id` as the Film ID. A status may
+include a previously published `result` while a newer attempt is running or has failed.
+
+With a published Film ID, export the MP4 in one command. The service reads its stored HTML player.
+
+```bash
+open-science film export <session-id> --project <project> --mode research-explanation --branch <branch-id> --film-id <film-id> --resolution 1080p --output ./film.mp4 --json
+```
+
+Use `film download` when you also want a local HTML copy.
+
+```bash
+open-science film download <session-id> --project <project> --mode research-explanation --branch <branch-id> --film-id <film-id> --output ./film.html --json
+```
+
+If validation blocks publication after automatic repairs, `reviewFailure` provides an `attemptId`,
+the review stage, and findings. Discuss the findings with the user and submit their instructions
+for that attempt. The service runs its checks again before publishing a revision. A saved failure
+from an earlier narration review policy can still be revised.
+
+```bash
+open-science film revise <session-id> --project <project> --mode research-explanation --branch <branch-id> --attempt-id <attempt-id> --feedback-file ./film-feedback.md --json
+```
+
+`--feedback <text>` accepts inline instructions. Poll status again and use updated findings if
+the revision also fails review. The revision command accepts feedback for a failed review and
+keeps any existing published player available until a replacement is published. A `reviewFailure` requires
+`film revise`. Use `film start --resume` when `canResume` is true after another interruption.
+`film cancel` requests cancellation of active work for the selected branch and mode. A request
+timeout ends the client request. Check status before reissuing a start, revise, or cancel request
+whose outcome is uncertain.
+
+Research explanation uses advisory narration scoring. Published results can include
+`result.scriptScore` from 0 to 9, or omit the field when the model cannot provide a valid score.
+The Chromium reviewer checks drawing failures, text overlap, and clipping in portrait and landscape.
+After bounded repairs, a completed attempt can publish its best playable candidate with remaining
+layout defects. Required screenplay structure and player integrity checks still apply.
+`--advisory-narration-review` remains accepted on `film start` and `film revise` for compatibility.
+Operation replay uses its own recorded-evidence checks and rejects the flag.
+
+`film download` writes the published HTML player. `film export` renders the same Film ID to a
+narrated landscape MP4 without generating it again. Select `--resolution 720p` (default), `1080p`,
+or `4k`. Export uses system FFmpeg and ffprobe or the service's managed copies. Include
+`--install-export-tools` to authorize the managed download when needed. The command waits for
+rendering and download. Press Ctrl+C to cancel, or set `--timeout-ms` to override the two-hour
+default. An interrupted export starts over on retry and leaves any existing destination intact.
+
+The Node SDK provides `startResearchFilm`, `getResearchFilmStatus`, `reviseResearchFilm`,
+`cancelResearchFilm`, `downloadResearchFilm`, and `exportResearchFilm`. These commands use local
+bearer authentication. The service advertises `research-film-html` for generation and HTML
+downloads and `research-film-mp4` for MP4 export. `connectToOpenScience` discovers the local
+service and configures authentication. An older service may report a missing Task API endpoint.
+A stale review attempt returns `film_review_conflict`. Check the current `reviewFailure` before
+submitting feedback again. A missing published film returns `film_not_found` with exit code `4`.
+
 ## Literature
 
 Read the running service's Literature library and format citations:

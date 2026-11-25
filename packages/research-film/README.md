@@ -6,9 +6,9 @@ For operation replay, supply `source.provenance.mode = "operation-replay"` and a
 
 The package owns screenplay validation and correction, shared and per-scene animation authoring, narration chunking and synthesis, caption alignment, audio mixing, timeline construction, the player and its bundled stage, source archives, encoding, and worker lifetimes. It preserves the original `video.json` / `anims/*.js` format.
 
-In Open-Science, generation starts only from the user's research-film button and runs independently of conversation turns. The host uses tool-less model inference for authoring; generation is not exposed as an Agent/MCP tool. Players and source bundles are stored as session-derived film files, not published as conversation Artifacts.
+In Open-Science, generation starts from the research-film button, SDK, or CLI and runs independently of conversation turns. Authoring uses a restricted model session with tools disabled. Players and source bundles are stored as session-derived film files. Download the HTML player through the Research Film workflow.
 
-The explanation player supports landscape and portrait playback. Before publication, the desktop host checks the rendered HTML in both orientations. Model-assisted review uses landscape frames. MP4 exports are landscape (16:9) at 720p, 1080p, or 4K. An interrupted MP4 export starts over on the next attempt.
+The explanation player supports landscape and portrait playback. The host checks both orientations with the desktop renderer or a sandboxed headless Chromium browser. Bounded repairs can publish the best checked draft for ranked render and text layout findings. Narration scores are advisory. The desktop app exports landscape (16:9) MP4 at 720p, 1080p, or 4K. An interrupted MP4 export starts over on the next attempt.
 
 An unfinished generation keeps individual narration WAVs and timing files under `speech/voice/`. A checksum binds their contents to the captions, spoken text, scene IDs, voice engine and model revision. Visual repairs reuse verified recordings and mix them against the current timeline in the worker's temporary directory. Before resuming an unpublished build, the host checks the player and source ZIP against the fingerprint in `pending.json`. A missing or stale fingerprint triggers a rebuild from the remaining checkpoints.
 

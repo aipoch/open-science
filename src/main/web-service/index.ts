@@ -17,6 +17,7 @@ import { projectTaskRuntimeEvents } from './application-event-projections'
 import { loadOrCreateWebToken } from './auth'
 import type { ExternalWebAccess } from './external-access-contract'
 import { startWebHttpServer, type RunningWebServer } from './http-server'
+import { createTaskResearchFilmApi, type TaskResearchFilmPort } from './research-film-api'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
 import { HeadlessTaskApi } from './task-api'
 
@@ -87,6 +88,7 @@ const createWebServiceController = (
     taskNotebookEnvironment,
     taskNotebookRuntimes,
     taskControls,
+    taskResearchFilms,
     computePreferences,
     detectActiveSessions
   }: {
@@ -101,6 +103,7 @@ const createWebServiceController = (
     taskNotebookEnvironment?: ManagedNotebookSetup
     taskNotebookRuntimes?: import('./task-api').TaskNotebookRuntimes
     taskControls?: TaskControlPorts
+    taskResearchFilms?: TaskResearchFilmPort
     computePreferences: TaskComputePreferencePort
     detectActiveSessions?: () => ReadonlyArray<{ projectId: string; sessionId: string }>
   },
@@ -133,6 +136,7 @@ const createWebServiceController = (
       notebookEnvironment: taskNotebookEnvironment,
       notebookRuntimes: taskNotebookRuntimes,
       controls: taskControls,
+      researchFilms: taskResearchFilms && createTaskResearchFilmApi(taskResearchFilms),
       computePreferences,
       detectActiveSessions
     },

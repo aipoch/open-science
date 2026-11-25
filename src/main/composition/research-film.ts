@@ -58,6 +58,12 @@ import {
   RESEARCH_FILM_MODEL_TIMEOUT_MINUTES
 } from '../../shared/research-video-presentation'
 import { desktopFileInteraction } from '../desktop-interaction'
+import { createHeadlessResearchFilmExport } from '../research-video/headless-export'
+import {
+  assertHeadlessResearchFilmReady,
+  checkHeadlessResearchFilmHtml
+} from '../research-video/headless-review'
+import { FilmDraftVisualError } from '../research-video/player-review'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 
 // ACP adapters do not expose a common HTTP retry contract. Retry only concrete transient
@@ -82,7 +88,7 @@ const isTransientFilmNetworkError = (error: unknown): boolean => {
   )
 }
 
-/** Button-owned generation: no conversation tools, Artifact publication or Notebook transport. */
+/** Film generation uses restricted inference and publishes through the Film owner. */
 export async function composeResearchFilm({
   configRoot,
   settingsService,
@@ -117,6 +123,7 @@ export async function composeResearchFilm({
   videoExportModels: ReturnType<typeof createLocalModelOwner>
   videoExportTools: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
   researchVideoPresentation: ReturnType<typeof createResearchVideoPresentationOwner>
+  headlessFilmExport: ReturnType<typeof createHeadlessResearchFilmExport>
 }> {
   const researchNarrationModels = createLocalModelOwner({
     namespace: 'research-narration',
@@ -138,6 +145,12 @@ export async function composeResearchFilm({
     dispose: () => owner.close()
   }))
   const videoExportTools = createVideoExportTools(videoExportModels)
+  const headlessFilmExport = createHeadlessResearchFilmExport(videoExportTools, videoExportModels)
+  await modules.add({ headlessFilmExport }, ({ headlessFilmExport: owner }) => ({
+    name: 'headless-film-export',
+    capability: undefined,
+    dispose: () => owner.close()
+  }))
   const resources = researchFilmResources()
   const researchVideoEngineDirectory = resources.stageDirectory
   const scriptStandard = await readFile(join(resources.authoringDirectory, 'SCRIPT.md'), 'utf8')
@@ -520,6 +533,20 @@ export async function composeResearchFilm({
       filmLog.info('film HTML checked', { ...currentFilmAttempt(), issues: issues.length })
       return issues
     },
+    reviewPlayerHeadless: async (_source, htmlPath, spec, signal) => {
+      try {
+        const issues = await checkHeadlessResearchFilmHtml(htmlPath, signal)
+        signal.throwIfAborted()
+        filmLog.info('film HTML checked', { ...currentFilmAttempt(), issues: issues.length })
+        return issues
+      } catch (error) {
+        signal.throwIfAborted()
+        if (!(error instanceof FilmDraftVisualError)) throw error
+        // An invalid player contract is a review failure, never a ranked layout candidate.
+        return [{ scene: error.scene ?? spec.scenes[0]?.id ?? 'scene-1', message: error.message }]
+      }
+    },
+    checkHeadlessReadiness: assertHeadlessResearchFilmReady,
     checkGenerationAdmission: researchVideoGenerate.assertReady,
     engineDirectory: researchVideoEngineDirectory,
     ...createResearchFilmAuthor(inferResearchVideo)
@@ -538,5 +565,11 @@ export async function composeResearchFilm({
       await Promise.all([owner.close(), researchVideoInference.shutdown()])
     }
   }))
-  return { researchNarrationModels, videoExportModels, videoExportTools, researchVideoPresentation }
+  return {
+    researchNarrationModels,
+    videoExportModels,
+    videoExportTools,
+    researchVideoPresentation,
+    headlessFilmExport
+  }
 }
