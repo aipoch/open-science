@@ -153,3 +153,31 @@ test('keeps the provider tray translucent in both themes and sizes each step to 
     await readyActions.evaluate((el) => el.computedStyleMap().get('margin-top')?.toString())
   ).toBe('auto')
 })
+
+test('exposes quick-connect actions on the first tap on touch-only devices', async ({ app }) => {
+  const { page } = app
+  const cdp = await page.context().newCDPSession(page)
+  try {
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.getByRole('button', { name: 'Next', exact: true }).click()
+    expect(
+      await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches)
+    ).toBe(true)
+    const card = page.locator('.onboarding-provider-card-anthropic')
+    const tray = card.locator('.onboarding-provider-card-actions')
+    await expect(tray).toHaveCSS('opacity', '1')
+    await expect(tray).toHaveCSS('pointer-events', 'auto')
+    const action = card.getByRole('button', { name: 'Have an API key?' })
+    await action.scrollIntoViewIfNeeded()
+    const bounds = (await action.boundingBox())!
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }]
+    })
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect(card.getByLabel('API key', { exact: true })).toBeVisible()
+  } finally {
+    await cdp.detach()
+  }
+})

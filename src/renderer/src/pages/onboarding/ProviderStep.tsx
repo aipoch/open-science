@@ -1108,7 +1108,8 @@ const ProviderStep = ({
                         'onboarding-provider-card-actions relative z-1 min-h-30 px-[1.35rem] pt-[1.1rem] pb-[1.4rem] bg-onboarding-tray backdrop-blur-[18px] backdrop-saturate-112 transition-[opacity,transform] duration-180 ease-onboarding-default motion-reduce:transition-none',
                         'onboarding-short:min-h-28 onboarding-short:pt-[0.6rem] onboarding-short:pb-[0.85rem]',
                         !(isKeyMode || isAuthorizing || installError?.cardId === card.id) &&
-                          'pointer-events-none opacity-0 transform-[translateY(0.65rem)] group-[:is(:hover,:focus-within)]/provider:pointer-events-auto group-[:is(:hover,:focus-within)]/provider:opacity-100 group-[:is(:hover,:focus-within)]/provider:transform-none'
+                          'pointer-events-none opacity-0 transform-[translateY(0.65rem)] group-[:is(:hover,:focus-within)]/provider:pointer-events-auto group-[:is(:hover,:focus-within)]/provider:opacity-100 group-[:is(:hover,:focus-within)]/provider:transform-none',
+                        '[@media(hover:none),(any-pointer:coarse)]:opacity-100 [@media(hover:none),(any-pointer:coarse)]:pointer-events-auto [@media(hover:none),(any-pointer:coarse)]:transform-none'
                       )}
                     >
                       {card.requiresConnectionConfiguration ? (
