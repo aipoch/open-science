@@ -9,7 +9,7 @@
   "ddd": 0,
   "assets": [
     {
-      "id": "providers-0",
+      "id": "providers-openai",
       "w": 64,
       "h": 64,
       "u": "",
@@ -17,7 +17,7 @@
       "e": 1
     },
     {
-      "id": "providers-1",
+      "id": "providers-anthropic",
       "w": 64,
       "h": 64,
       "u": "",
@@ -25,7 +25,7 @@
       "e": 1
     },
     {
-      "id": "providers-2",
+      "id": "providers-xai-grok",
       "w": 64,
       "h": 64,
       "u": "",
@@ -33,7 +33,7 @@
       "e": 1
     },
     {
-      "id": "providers-3",
+      "id": "providers-deepseek",
       "w": 64,
       "h": 64,
       "u": "",
@@ -41,7 +41,7 @@
       "e": 1
     },
     {
-      "id": "providers-4",
+      "id": "providers-kimi",
       "w": 64,
       "h": 64,
       "u": "",
@@ -49,7 +49,7 @@
       "e": 1
     },
     {
-      "id": "providers-5",
+      "id": "providers-codebuddy",
       "w": 64,
       "h": 64,
       "u": "",
@@ -57,7 +57,7 @@
       "e": 1
     },
     {
-      "id": "agents-0",
+      "id": "agents-openai-codex",
       "w": 64,
       "h": 64,
       "u": "",
@@ -65,7 +65,7 @@
       "e": 1
     },
     {
-      "id": "agents-1",
+      "id": "agents-claude-code",
       "w": 64,
       "h": 64,
       "u": "",
@@ -73,7 +73,7 @@
       "e": 1
     },
     {
-      "id": "agents-2",
+      "id": "agents-opencode",
       "w": 64,
       "h": 64,
       "u": "",
@@ -81,7 +81,7 @@
       "e": 1
     },
     {
-      "id": "agents-3",
+      "id": "agents-pi",
       "w": 64,
       "h": 64,
       "u": "",
@@ -89,7 +89,7 @@
       "e": 1
     },
     {
-      "id": "agents-4",
+      "id": "agents-codebuddy",
       "w": 64,
       "h": 64,
       "u": "",
@@ -97,7 +97,7 @@
       "e": 1
     },
     {
-      "id": "agents-5",
+      "id": "agents-open-science",
       "w": 64,
       "h": 64,
       "u": "",
@@ -775,7 +775,7 @@
       "ind": 1,
       "ty": 2,
       "nm": "providers: OpenAI",
-      "refId": "providers-0",
+      "refId": "providers-openai",
       "sr": 1,
       "ip": 0.0,
       "op": 45.2,
@@ -3178,7 +3178,7 @@
       "ind": 2,
       "ty": 2,
       "nm": "providers: Anthropic",
-      "refId": "providers-1",
+      "refId": "providers-anthropic",
       "sr": 1,
       "ip": 0.0,
       "op": 45.2,
@@ -5581,7 +5581,7 @@
       "ind": 3,
       "ty": 2,
       "nm": "providers: xAI",
-      "refId": "providers-2",
+      "refId": "providers-xai-grok",
       "sr": 1,
       "ip": 0.0,
       "op": 45.2,
@@ -7984,7 +7984,7 @@
       "ind": 4,
       "ty": 2,
       "nm": "providers: DeepSeek",
-      "refId": "providers-3",
+      "refId": "providers-deepseek",
       "sr": 1,
       "ip": 0.0,
       "op": 45.2,
@@ -10387,7 +10387,7 @@
       "ind": 5,
       "ty": 2,
       "nm": "providers: Kimi",
-      "refId": "providers-4",
+      "refId": "providers-kimi",
       "sr": 1,
       "ip": 0.0,
       "op": 45.2,
@@ -12790,7 +12790,7 @@
       "ind": 6,
       "ty": 2,
       "nm": "providers: CodeBuddy",
-      "refId": "providers-5",
+      "refId": "providers-codebuddy",
       "sr": 1,
       "ip": 0.0,
       "op": 45.2,
@@ -15193,7 +15193,7 @@
       "ind": 7,
       "ty": 2,
       "nm": "agents: Codex",
-      "refId": "agents-0",
+      "refId": "agents-openai-codex",
       "sr": 1,
       "ip": 34.4,
       "op": 89.2,
@@ -18100,7 +18100,7 @@
       "ind": 8,
       "ty": 2,
       "nm": "agents: Claude Code",
-      "refId": "agents-1",
+      "refId": "agents-claude-code",
       "sr": 1,
       "ip": 34.4,
       "op": 89.2,
@@ -21007,7 +21007,7 @@
       "ind": 9,
       "ty": 2,
       "nm": "agents: OpenCode",
-      "refId": "agents-2",
+      "refId": "agents-opencode",
       "sr": 1,
       "ip": 34.4,
       "op": 89.2,
@@ -23914,7 +23914,7 @@
       "ind": 10,
       "ty": 2,
       "nm": "agents: Pi",
-      "refId": "agents-3",
+      "refId": "agents-pi",
       "sr": 1,
       "ip": 34.4,
       "op": 89.2,
@@ -26821,7 +26821,7 @@
       "ind": 11,
       "ty": 2,
       "nm": "agents: CodeBuddy",
-      "refId": "agents-4",
+      "refId": "agents-codebuddy",
       "sr": 1,
       "ip": 34.4,
       "op": 89.2,
@@ -29728,7 +29728,7 @@
       "ind": 12,
       "ty": 2,
       "nm": "agents: Open-Science Agent",
-      "refId": "agents-5",
+      "refId": "agents-open-science",
       "sr": 1,
       "ip": 34.4,
       "op": 89.2,

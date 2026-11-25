@@ -128,7 +128,7 @@ describe('Welcome animation lifecycle', () => {
         expect(angles[i] - angles[i - 1]).toBeCloseTo(30, 1)
       }
       expect(
-        animationData.assets.find((asset: { id: string }) => asset.id === 'providers-0').p
+        animationData.assets.find((asset: { id: string }) => asset.id === 'providers-openai').p
       ).toMatch(/\.svg(?:\?|$)/)
       expect(providerLayer.ks.p.k.length).toBeLessThan(40)
       expect(agentLayer.ks.p.k.length).toBeLessThan(40)

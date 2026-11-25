@@ -4,16 +4,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import logoUrl from '@/assets/logo-symbol.svg'
-import agents0Url from '@/assets/onboarding/icons/agents-0.svg?url&no-inline'
-import agents1Url from '@/assets/onboarding/icons/agents-1.svg?url&no-inline'
-import agents2Url from '@/assets/onboarding/icons/agents-2.svg?url&no-inline'
-import agents3Url from '@/assets/onboarding/icons/agents-3.svg?url&no-inline'
-import providers0Url from '@/assets/onboarding/icons/providers-0.svg?url&no-inline'
-import providers1Url from '@/assets/onboarding/icons/providers-1.svg?url&no-inline'
-import providers2Url from '@/assets/onboarding/icons/providers-2.svg?url&no-inline'
-import providers3Url from '@/assets/onboarding/icons/providers-3.svg?url&no-inline'
-import providers4Url from '@/assets/onboarding/icons/providers-4.svg?url&no-inline'
-import providers5Url from '@/assets/onboarding/icons/providers-5.svg?url&no-inline'
+import codexUrl from '@/assets/onboarding/icons/openai-codex.svg?url&no-inline'
+import claudeCodeUrl from '@/assets/onboarding/icons/claude-code.svg?url&no-inline'
+import openCodeUrl from '@/assets/onboarding/icons/opencode.svg?url&no-inline'
+import piUrl from '@/assets/onboarding/icons/pi.svg?url&no-inline'
+import openAiUrl from '@/assets/onboarding/icons/openai.svg?url&no-inline'
+import anthropicUrl from '@/assets/onboarding/icons/anthropic.svg?url&no-inline'
+import grokUrl from '@/assets/onboarding/icons/xai-grok.svg?url&no-inline'
+import deepSeekUrl from '@/assets/onboarding/icons/deepseek.svg?url&no-inline'
+import kimiUrl from '@/assets/onboarding/icons/kimi.svg?url&no-inline'
+import codeBuddyUrl from '@/assets/onboarding/icons/codebuddy.svg?url&no-inline'
 import bailianUrl from '@/assets/provider-icons/bailian.svg?url&no-inline'
 import zhipuUrl from '@/assets/provider-icons/zhipu.svg?url&no-inline'
 import minimaxUrl from '@/assets/provider-icons/minimax.svg?url&no-inline'
@@ -37,23 +37,23 @@ import guideNewProjectGif from '@/assets/onboarding/guide-new-project.gif'
 import welcomeAnimation from '@/assets/onboarding/welcome-optimized.json'
 
 const welcomeAnimationAssetUrls: Record<string, string> = {
-  'providers-0': providers0Url,
-  'providers-1': providers1Url,
-  'providers-2': providers2Url,
-  'providers-3': providers3Url,
-  'providers-4': providers4Url,
-  'providers-5': providers5Url,
+  'providers-openai': openAiUrl,
+  'providers-anthropic': anthropicUrl,
+  'providers-xai-grok': grokUrl,
+  'providers-deepseek': deepSeekUrl,
+  'providers-kimi': kimiUrl,
+  'providers-codebuddy': codeBuddyUrl,
   'providers-bailian': bailianUrl,
   'providers-zhipu': zhipuUrl,
   'providers-minimax': minimaxUrl,
   'providers-stepfun': stepfunUrl,
   'providers-openrouter': openrouterUrl,
   'providers-volcengine': volcengineUrl,
-  'agents-0': agents0Url,
-  'agents-1': agents1Url,
-  'agents-2': agents2Url,
-  'agents-3': agents3Url,
-  'agents-4': providers5Url
+  'agents-openai-codex': codexUrl,
+  'agents-claude-code': claudeCodeUrl,
+  'agents-opencode': openCodeUrl,
+  'agents-pi': piUrl,
+  'agents-codebuddy': codeBuddyUrl
 }
 
 const FALLBACK_ANIMATION_TIMEOUT_MS = 3_600
@@ -127,13 +127,13 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
         const animationData = structuredClone(welcomeAnimation)
         animationData.assets = animationData.assets.map((asset) => {
           const assetUrl =
-            asset.id === 'center' || asset.id === 'agents-5'
+            asset.id === 'center' || asset.id === 'agents-open-science'
               ? logoUrl
               : welcomeAnimationAssetUrls[asset.id]
           return assetUrl ? { ...asset, p: assetUrl, u: '', e: 0 } : asset
         })
         for (const layer of animationData.layers) {
-          if (layer.refId !== 'agents-5' && layer.refId !== 'center') continue
+          if (layer.refId !== 'agents-open-science' && layer.refId !== 'center') continue
           layer.cl = 'onboarding-lottie-logo'
           if (layer.refId !== 'center') continue
           // Enlarge the symbol throughout convergence, so completion never swaps its size.
