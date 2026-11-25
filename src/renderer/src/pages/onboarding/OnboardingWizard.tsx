@@ -582,11 +582,8 @@ const OnboardingWizard = ({
 
   if (showWelcome) {
     return (
-      <main className="onboarding-entry-root relative grid min-h-svh place-items-center overflow-hidden isolate bg-transparent text-text-000">
-        <div
-          className="onboarding-entry-scrim fixed inset-0 z-0 bg-foreground/28"
-          aria-hidden="true"
-        />
+      <main className="relative grid min-h-svh place-items-center overflow-hidden isolate bg-transparent text-text-000">
+        <div className="fixed inset-0 z-0 bg-foreground/28" aria-hidden="true" />
         <div
           ref={dialogRef}
           role="dialog"
@@ -594,10 +591,12 @@ const OnboardingWizard = ({
           aria-label={t('Open-Science onboarding')}
           tabIndex={-1}
           className={cn(
-            'onboarding-entry-shell',
-            entryPhase === 'connect' && 'is-connect',
-            entryPhase === 'advanced' && 'is-advanced',
-            entryPhase === 'ready' && 'is-ready'
+            'relative z-1 max-h-[min(840px,calc(100svh_-_1.5rem))] overflow-hidden rounded-[1.25rem] border-0 bg-bg-000 shadow-onboarding-shell outline-none transition-[width,max-height] duration-520 ease-onboarding motion-reduce:transition-none onboarding-narrow:w-[calc(100vw_-_1rem)] onboarding-narrow:max-h-[calc(100svh_-_1rem)] onboarding-narrow:rounded-2xl',
+            entryPhase === 'welcome' && 'w-[min(650px,calc(100vw_-_2rem))]',
+            entryPhase === 'connect' && 'w-[min(1200px,calc(100vw_-_1.5rem))]',
+            entryPhase === 'advanced' &&
+              'w-[min(1040px,calc(100vw_-_2rem))] h-[min(760px,calc(100svh_-_2rem))]',
+            entryPhase === 'ready' && 'w-[min(900px,calc(100vw_-_2rem))] overflow-y-auto'
           )}
         >
           {entryPhase === 'welcome' ? (
@@ -622,17 +621,16 @@ const OnboardingWizard = ({
               skipError={skipError && { ...skipError, onDismiss: () => setSkipError(undefined) }}
             />
           ) : entryPhase === 'advanced' ? (
-            <section
-              className="onboarding-advanced flex h-full flex-col"
-              data-onboarding-entry="advanced"
-            >
-              <header className="onboarding-advanced-header shrink-0 pt-6 px-6 pb-5 border-b border-b-border">
-                <h1>{t('Advanced options')}</h1>
+            <section className="flex h-full flex-col" data-onboarding-entry="advanced">
+              <header className="shrink-0 pt-6 px-6 pb-5 border-b border-b-border">
+                <h1 className="m-0 mb-4 font-onboarding-serif text-[1.65rem]">
+                  {t('Advanced options')}
+                </h1>
                 <OnboardingProgress step={step} compact />
               </header>
               <div
                 ref={stepCard}
-                className="onboarding-advanced-content flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
+                className="[&_:is(h2,h3)]:text-[1.0625rem] [&_:is(h2,h3)]:leading-6 [&_:is(h2,h3)]:font-medium flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
               >
                 {stepContent}
               </div>

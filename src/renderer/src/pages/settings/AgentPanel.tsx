@@ -741,6 +741,13 @@ const AgentPanel = ({
           the active runtime can't be uninstalled (switch to the other one first). */}
       <SettingsSection
         data-settings-anchor="agent.framework"
+        className={
+          isOnboarding
+            ? 'p-0 [&_:where(h2)]:text-[0.9375rem] [&_:where(h2)]:leading-[1.4]'
+            : undefined
+        }
+        headerClassName={isOnboarding ? 'sm:gap-3' : undefined}
+        contentClassName={isOnboarding ? 'mt-4' : undefined}
         title={title}
         headingAs={isOnboarding ? 'h2' : 'h3'}
         aria-label={title}

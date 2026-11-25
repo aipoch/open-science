@@ -4,10 +4,12 @@ import { ErrorNotice, type ErrorNoticeButton } from '@/components/error-notice'
 export type OnboardingFailure = { summary: string; details: string }
 
 export function OnboardingErrorNotice({
+  className,
   failure,
   onDismiss,
   retry
 }: {
+  className?: string
   failure: OnboardingFailure
   onDismiss: () => void
   retry?: ErrorNoticeButton
@@ -16,6 +18,7 @@ export function OnboardingErrorNotice({
   return (
     <ErrorNotice
       key={failure.details}
+      className={className}
       inline
       level="warning"
       role="alert"

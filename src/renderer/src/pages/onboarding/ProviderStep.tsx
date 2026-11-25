@@ -19,7 +19,7 @@ import type {
 import { CODEX_IMPORT_FILE_MISSING_MESSAGE } from '../../../../shared/codex-runtime'
 import { unwrapIpcErrorDetail } from '../../../../shared/failure/messages'
 import { isProviderUsableByFramework } from '../../../../shared/settings-runtime'
-import { cn } from '@/lib/utils'
+import { clsx } from 'clsx'
 import {
   selectActiveAgentFramework,
   selectFrameworkApiEndpoints,
@@ -92,6 +92,12 @@ type ProviderStepProps = {
   skipError?: OnboardingFailure & { onDismiss: () => void }
   operation: ProviderStepOperation
 }
+
+const providerLinkClass =
+  'mx-auto mt-[0.55rem] block text-[0.72rem] text-text-200 underline underline-offset-[0.2rem] hover:text-text-000'
+
+const quickNoticeClass =
+  'rounded-md border border-[color-mix(in_oklab,var(--warning-ink)_28%,var(--border))] bg-[color-mix(in_oklab,var(--warning-ink)_8%,var(--card))] px-3 py-2 [--warning-ink:var(--color-status-warning-foreground)] dark:[--warning-ink:var(--color-status-warning-dark-foreground)]'
 
 type QuickProviderCard = {
   id: string
@@ -975,29 +981,34 @@ const ProviderStep = ({
       ? QUICK_PROVIDER_CARDS.find((card) => card.id === installError.cardId)
       : undefined
     return (
-      <section className="onboarding-quick-connect" data-onboarding-entry="connect">
-        <header className="onboarding-quick-header flex items-start justify-between gap-6">
+      <section
+        className="flex max-h-[inherit] flex-col px-10 pt-8 pb-6 onboarding-narrow:px-[1.15rem] onboarding-narrow:pt-[1.35rem] onboarding-narrow:pb-[1.15rem]"
+        data-onboarding-entry="connect"
+      >
+        <header className="flex items-start justify-between gap-6">
           <div>
-            <h1>{t('Bring the AI you already use.')}</h1>
-            <p>{t('Connect your AI account to start researching in Open-Science.')}</p>
-            <p className="onboarding-provider-count">
+            <h1 className="m-0 mt-[0.7rem] font-onboarding-serif text-[clamp(1.9rem,4vw,2.45rem)] font-normal tracking-[-0.04em]">
+              {t('Bring the AI you already use.')}
+            </h1>
+            <p className="mt-[0.35rem] text-[0.95rem] leading-[1.45] text-muted-foreground">
+              {t('Connect your AI account to start researching in Open-Science.')}
+            </p>
+            <p className="mt-[0.3rem] text-[0.95rem] leading-[1.2] text-muted-foreground">
               {t('Our catalog includes {{modelCount}} chat models.', {
                 modelCount: bundledModelCount
               })}
             </p>
           </div>
-          <div
-            className="onboarding-step-dots flex gap-[0.35rem] pt-[0.3rem]"
-            aria-label={t('Step 2 of 3')}
-          >
-            <span />
-            <span className="is-active" />
-            <span />
+          <div className="flex gap-[0.35rem] pt-[0.3rem]" aria-label={t('Step 2 of 3')}>
+            <span className="size-[0.4rem] rounded-[50%] bg-border" />
+            <span className="h-[0.4rem] w-[1.35rem] rounded-[0.25rem] bg-primary" />
+            <span className="size-[0.4rem] rounded-[50%] bg-border" />
           </div>
         </header>
 
-        <div className="onboarding-provider-viewport">
-          <div className="onboarding-provider-track">
+        <div className="onboarding-provider-viewport mt-10 -mx-10 overflow-visible onboarding-narrow:-mx-[1.15rem] onboarding-short:mt-5">
+          {/* Leave room inside the scrollport for the raised card and its shadow. */}
+          <div className="flex gap-4 overflow-x-auto -mt-8 -mb-9 px-10 pt-8 pb-12 snap-x snap-mandatory scrollbar-thin onboarding-narrow:px-[1.15rem]">
             {QUICK_PROVIDER_CARDS.map((card) => {
               const isKeyMode = quickCardId === card.id && quickMode === 'key'
               const isAuthorizing =
@@ -1008,10 +1019,12 @@ const ProviderStep = ({
               return (
                 <article
                   key={card.id}
-                  className={cn(
-                    'onboarding-provider-card',
+                  className={clsx(
+                    'onboarding-provider-card group/provider onboarding-card-palette relative isolate flex min-h-104 flex-none basis-70 snap-center flex-col overflow-hidden rounded-2xl border',
+                    'border-[color-mix(in_oklab,var(--provider-accent)_24%,var(--border))] bg-bg-10 bg-onboarding-card bg-size-[180%_180%] shadow-(--shadow-card)',
+                    'transition-[transform,box-shadow] duration-180 ease-onboarding-default motion-reduce:transition-none onboarding-narrow:basis-[min(17.5rem,calc(100vw_-_3.5rem))] onboarding-narrow:min-h-96 onboarding-short:min-h-[min(24rem,54svh)]',
+                    '[&:is(:hover,:focus-within)]:z-2 [&:is(:hover,:focus-within)]:transform-[translateY(-0.25rem)] [&:is(:hover,:focus-within)]:border-[color-mix(in_oklab,var(--provider-accent)_45%,var(--text-200))] [&:is(:hover,:focus-within)]:shadow-onboarding-card-hover',
                     `onboarding-provider-card-${card.id}`,
-                    isKeyMode && 'is-key-mode',
                     (isAuthorizing || installError?.cardId === card.id) && 'is-authorizing'
                   )}
                   style={{ '--provider-accent': card.accent } as React.CSSProperties}
@@ -1022,28 +1035,51 @@ const ProviderStep = ({
                     if (event.pointerType === 'mouse') setHoveredQuickCardId(undefined)
                   }}
                 >
-                  <div className="onboarding-provider-card-surface">
+                  <div className="relative flex flex-1 flex-col rounded-[calc(1rem_-_1px)] [clip-path:inset(0_round_calc(1rem_-_1px))] after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:bg-onboarding-sheen after:opacity-14 after:transition-opacity after:duration-360 after:ease-onboarding-default group-[:is(:hover,:focus-within)]/provider:after:opacity-7">
                     <ProviderSilkBackground
                       color={card.accent}
                       active={hoveredQuickCardId === card.id}
                     />
-                    <div className="onboarding-provider-card-body flex-1 p-[1.45rem]">
-                      <ProviderKindIcon kindKey={card.kindKey} className="size-9" />
-                      <h2>{card.id === 'more' ? t('Custom Gateway') : card.title}</h2>
-                      <p>{t(card.description)}</p>
+                    <div className="relative z-1 flex-1 p-[1.45rem] onboarding-short:py-[0.85rem]">
+                      <ProviderKindIcon
+                        kindKey={card.kindKey}
+                        className={clsx(
+                          'size-9',
+                          ['openai', 'anthropic', 'xai'].includes(card.id) &&
+                            'brightness-0 invert-92'
+                        )}
+                      />
+                      <h2 className="mt-[1.1rem] font-onboarding-serif text-[1.65rem] font-normal tracking-[-0.035em] text-text-000">
+                        {card.id === 'more' ? t('Custom Gateway') : card.title}
+                      </h2>
+                      <p className="mt-2 text-[0.78rem] leading-[1.65] text-text-100">
+                        {t(card.description)}
+                      </p>
                     </div>
-                    <div className="onboarding-provider-card-actions">
+                    <div
+                      className={clsx(
+                        'onboarding-provider-card-actions relative z-1 min-h-30 px-[1.35rem] pt-[1.1rem] pb-[1.4rem] bg-onboarding-tray backdrop-blur-[18px] backdrop-saturate-112 transition-[opacity,transform] duration-180 ease-onboarding-default motion-reduce:transition-none',
+                        'onboarding-short:min-h-28 onboarding-short:pt-[0.6rem] onboarding-short:pb-[0.85rem]',
+                        !(isKeyMode || isAuthorizing || installError?.cardId === card.id) &&
+                          'pointer-events-none opacity-0 transform-[translateY(0.65rem)] group-[:is(:hover,:focus-within)]/provider:pointer-events-auto group-[:is(:hover,:focus-within)]/provider:opacity-100 group-[:is(:hover,:focus-within)]/provider:transform-none'
+                      )}
+                    >
                       {showKeyForm ? (
                         <form
                           onSubmit={(event) => {
                             event.preventDefault()
                             handleQuickKeySubmit(card)
                           }}
-                          className="onboarding-provider-key-form"
                         >
-                          <label htmlFor={`onboarding-key-${card.id}`}>{t('API key')}</label>
-                          <div className="onboarding-provider-key-row flex items-center gap-[0.45rem]">
+                          <label
+                            className="mb-[0.45rem] block text-[0.7rem] text-text-200"
+                            htmlFor={`onboarding-key-${card.id}`}
+                          >
+                            {t('API key')}
+                          </label>
+                          <div className="flex items-center gap-[0.45rem]">
                             <input
+                              className="box-border h-[2.3rem] min-w-0 flex-1 rounded-lg border border-text-300/35 bg-bg-10 px-[0.65rem] py-[0.55rem] text-[0.72rem] text-text-000"
                               id={`onboarding-key-${card.id}`}
                               type="password"
                               value={quickKeys[card.id] ?? ''}
@@ -1056,6 +1092,7 @@ const ProviderStep = ({
                             <Button
                               type="submit"
                               size="icon"
+                              className="box-border size-[2.3rem] min-w-[2.3rem] p-0 [&_svg]:w-[0.95rem]!"
                               aria-label={t('Test connection and connect')}
                               title={t('Test connection and connect')}
                               disabled={quickBusy}
@@ -1076,7 +1113,7 @@ const ProviderStep = ({
                           {subscriptionAvailable ? (
                             <button
                               type="button"
-                              className="onboarding-provider-card-link"
+                              className={providerLinkClass}
                               disabled={quickBusy}
                               onClick={() => {
                                 setQuickMode(undefined)
@@ -1090,7 +1127,7 @@ const ProviderStep = ({
                       ) : (
                         <>
                           {isAuthorizing && installing && (
-                            <div className="onboarding-install-progress mb-[0.7rem] py-2 px-[0.65rem] rounded-md bg-card text-foreground">
+                            <div className="mb-[0.7rem] py-2 px-[0.65rem] rounded-md bg-card text-foreground">
                               <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs tabular-nums">
                                 <span>{installProgress?.label ?? t('Installing…')}</span>
                                 {installProgress?.fraction != null && (
@@ -1103,13 +1140,22 @@ const ProviderStep = ({
                                 )}
                               </div>
                               <progress
+                                className={clsx(
+                                  'block h-1.5 w-full appearance-none overflow-hidden rounded-full forced-colors:appearance-auto',
+                                  '[&::-webkit-progress-bar]:bg-bg-300 [&::-webkit-progress-value]:rounded-[inherit] [&::-webkit-progress-value]:bg-primary [&::-webkit-progress-value]:transition-[width] [&::-webkit-progress-value]:duration-160 [&::-webkit-progress-value]:ease-[ease-out] motion-reduce:[&::-webkit-progress-value]:transition-none',
+                                  'indeterminate:[&::-webkit-progress-bar]:bg-[linear-gradient(var(--primary),var(--primary))] indeterminate:[&::-webkit-progress-bar]:bg-left indeterminate:[&::-webkit-progress-bar]:bg-size-[36%_100%] indeterminate:[&::-webkit-progress-bar]:bg-no-repeat indeterminate:[&::-webkit-progress-bar]:animate-onboarding-download motion-reduce:indeterminate:[&::-webkit-progress-bar]:animate-none'
+                                )}
                                 aria-label={installProgress?.label ?? t('Installing…')}
                                 max={1}
                                 value={installProgress?.fraction}
                               />
                             </div>
                           )}
-                          {subscriptionAvailable ? <small>{t(card.subscription)}</small> : null}
+                          {subscriptionAvailable ? (
+                            <small className="mb-[0.7rem] block text-[0.7rem] leading-[1.3] text-text-200">
+                              {t(card.subscription)}
+                            </small>
+                          ) : null}
                           {card.subscriptionKind === 'codex-subscription' && !isAuthorizing ? (
                             <div
                               role="group"
@@ -1170,7 +1216,7 @@ const ProviderStep = ({
                           ) : null}
                           <button
                             type="button"
-                            className="onboarding-provider-card-link"
+                            className={providerLinkClass}
                             onClick={() => void chooseQuickProvider(card, 'key')}
                             disabled={quickBusy}
                           >
@@ -1186,9 +1232,10 @@ const ProviderStep = ({
           </div>
         </div>
 
-        <div className="onboarding-quick-feedback">
+        <div className="onboarding-quick-feedback flex min-h-0 flex-col gap-2 overflow-y-auto overscroll-y-contain p-1 *:shrink-0">
           {installError && installCard && (
             <OnboardingErrorNotice
+              className={quickNoticeClass}
               failure={installError.failure}
               retry={
                 installCard.id === 'openai'
@@ -1213,6 +1260,7 @@ const ProviderStep = ({
               </p>
             ) : (
               <OnboardingErrorNotice
+                className={quickNoticeClass}
                 failure={
                   typeof feedback === 'object'
                     ? feedback
@@ -1226,31 +1274,45 @@ const ProviderStep = ({
             ))}
 
           {skipError ? (
-            <OnboardingErrorNotice failure={skipError} onDismiss={skipError.onDismiss} />
+            <OnboardingErrorNotice
+              className={quickNoticeClass}
+              failure={skipError}
+              onDismiss={skipError.onDismiss}
+            />
           ) : null}
-          <footer className="onboarding-quick-footer">
-            <Button type="button" variant="ghost" onClick={onBack} disabled={quickBusy}>
+          <footer className="flex flex-none items-end justify-between gap-4 pt-5 [[data-notice-level=warning]+&]:pt-1">
+            <Button
+              className="min-h-[1.9rem] text-[0.75rem] leading-(--text-sm--line-height)"
+              type="button"
+              variant="ghost"
+              onClick={onBack}
+              disabled={quickBusy}
+            >
               {t('Back', { context: 'step' })}
             </Button>
-            <div>
+            <div className="flex flex-col items-start">
               <Button
+                className="min-h-[1.9rem] text-[0.75rem] leading-(--text-sm--line-height)"
                 type="button"
                 variant="ghost"
                 data-onboarding-action="skip"
                 onClick={onSkip}
                 disabled={quickBusy}
               >
-                <span aria-hidden="true">↗</span>
+                <span className="w-[0.9rem] shrink-0 text-center" aria-hidden="true">
+                  ↗
+                </span>
                 {t('Skip to access free Kilo models.')}
               </Button>
               <Button
+                className="min-h-[1.9rem] text-[0.75rem] leading-(--text-sm--line-height)"
                 type="button"
                 variant="ghost"
                 data-onboarding-action="advanced"
                 onClick={onAdvanced}
                 disabled={quickBusy}
               >
-                <Settings2 aria-hidden="true" />
+                <Settings2 className="h-4 w-[0.9rem]! shrink-0 text-center" aria-hidden="true" />
                 {t('Advanced options')}
               </Button>
             </div>
