@@ -2,11 +2,11 @@ import { matchesElicitationPrompt } from '../../../shared/elicitation'
 import { hasPendingSandboxNetworkApproval } from '../../../shared/sandbox-network-approval'
 import {
   deriveSessionAttention,
+  latestTurnPromptIds,
   projectSessionAttention
 } from '../../../shared/session-persistence'
 import type { SessionAttention } from '../../../shared/session-attention-contract'
 import type { PersistedChatSession, SessionWaitReason } from '../../../shared/session-persistence'
-import { latestTurnPromptIds } from '../../../shared/session-persistence/turn-anchor'
 import type { SessionInteractionState } from './session-interaction-contract'
 import type { ChatSession, SessionStatus } from './session-store-contract'
 export type { SessionInteractionState } from './session-interaction-contract'

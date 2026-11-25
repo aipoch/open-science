@@ -21,11 +21,11 @@ import {
   type SessionHistoryReplay
 } from '../../shared/session-history-replay'
 import {
+  latestTurnPromptIds,
   rearmUnacceptedElicitationContinuations,
   sanitizeSessionReferences,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import { latestTurnPromptIds } from '../../shared/session-persistence/turn-anchor'
 import type {
   SessionCatalog,
   SessionMutation,

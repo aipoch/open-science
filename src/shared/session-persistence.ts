@@ -178,6 +178,7 @@ export {
   isInheritedForkTurn,
   isTurnAnchor,
   latestTurnAnchor,
+  latestTurnPromptIds,
   turnAnchorInterval
 } from './session-persistence/turn-anchor'
 export type { TurnOutcome } from './session-persistence/turn-outcome'
