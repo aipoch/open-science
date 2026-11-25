@@ -1011,7 +1011,7 @@ ${spawnEnd}`
     }`
   const errorFactory = `  openScienceTurnFailure(error) {
     const data = this.createTurnErrorData(error);
-    return this.isAuthenticationRequiredError(error.codexErrorInfo) && !this.sessionState.authConfigured
+    return this.isAuthenticationRequiredError(error.codexErrorInfo) && (this.supportsTypedSessionFailures || !this.sessionState.authConfigured)
       ? RequestError.authRequired(data, error.message)
       : RequestError.internalError(data, error.message);
   }`
@@ -1101,14 +1101,21 @@ ${quota}`
     // with the upstream diagnostics, including when the only failure arrives in turn/completed.
     [
       authEvent,
-      '    if (params.turnId !== this.sessionState.currentTurnId) { // preserve turn attribution'
+      authEvent
+        .replace(
+          'if (this.isAuthenticationRequiredError(error62))',
+          'if (this.supportsTypedSessionFailures && this.isAuthenticationRequiredError(error62))'
+        )
+        .replace('RequestError.authRequired()', 'this.openScienceTurnFailure(params.error)')
     ],
     [
       turnFailure,
-      `    if (!this.supportsTypedSessionFailures && turn.status === "failed") {
+      `    if (turn.status === "failed") {
       const error = turn.error ?? (this.terminalTurnError?.turnId === turn.id ? this.terminalTurnError.error : null);
-      this.failure ??= error ? this.openScienceTurnFailure(error) : RequestError.internalError(null, "Codex turn failed.");
-      return;
+      if (!this.supportsTypedSessionFailures || this.isAuthenticationRequiredError(error?.codexErrorInfo ?? null)) {
+        this.failure ??= error ? this.openScienceTurnFailure(error) : RequestError.internalError(null, "Codex turn failed.");
+        return;
+      }
     }`
     ],
     [

@@ -216,7 +216,7 @@ it('normalizes the managed ACP 2.6 bundle idempotently and preserves usage and t
   const adapter = join(root, 'adapter.js')
   try {
     const source = await readFile(
-      new URL('./fixtures/codex-acp-2.6.0.txt', import.meta.url),
+      new URL('../../../test/fixtures/codex-acp/2.6.0.txt', import.meta.url),
       'utf8'
     )
     await writeFile(adapter, source)
@@ -237,9 +237,22 @@ it('normalizes the managed ACP 2.6 bundle idempotently and preserves usage and t
           state.promptTokenUsage.observe(usage(total), state.lastTokenUsage);
         }
         await adapter.handleFailedTurn({ id: "turn", status: "failed", error: null });
-        return [adapter.buildQuotaMeta(state), adapter.buildPromptUsage(state), adapter.failure];
+        const air = new Adapter();
+        air.supportsTypedSessionFailures = true;
+        air.sessionState = { currentTurnId: "turn", authConfigured: true };
+        const error = { message: "Sign in again.", codexErrorInfo: "unauthorized", additionalDetails: null };
+        await air.createErrorEvent({ turnId: "turn", willRetry: false, error });
+        const authEventFailure = air.failure;
+        air.failure = null;
+        await air.handleFailedTurn({ id: "turn", status: "failed", error });
+        return [adapter.buildQuotaMeta(state), adapter.buildPromptUsage(state), adapter.failure, authEventFailure, air.failure];
       })()`,
-      { RequestError: { internalError: (_data: unknown, message: string) => message } }
+      {
+        RequestError: {
+          internalError: (_data: unknown, message: string) => message,
+          authRequired: (data: unknown) => ({ code: -32000, data })
+        }
+      }
     )
     expect(result).toMatchObject([
       {
@@ -248,7 +261,9 @@ it('normalizes the managed ACP 2.6 bundle idempotently and preserves usage and t
         [ACP_MODEL_CALL_USAGE_META_KEY]: [{ totalTokens: 30 }, { totalTokens: 5 }]
       },
       { totalTokens: 5 },
-      'Codex turn failed.'
+      'Codex turn failed.',
+      { code: -32000, data: { codexErrorInfo: 'unauthorized' } },
+      { code: -32000, data: { codexErrorInfo: 'unauthorized' } }
     ])
   } finally {
     await rm(root, { recursive: true, force: true })
