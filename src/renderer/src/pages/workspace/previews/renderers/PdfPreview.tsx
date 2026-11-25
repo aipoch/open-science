@@ -1297,6 +1297,22 @@ const MAX_CANVAS_AREA = 16 * 1024 * 1024
 // pages cannot each allocate the full canvas-area budget and spike renderer memory.
 const MAX_RENDER_SCALE = 5
 
+function pdfPageRasterScale(
+  { width, height }: { width: number; height: number },
+  cssWidth: number,
+  pixelRatio: number
+): number {
+  const physicalWidth = (cssWidth > 0 ? cssWidth : width) * Math.max(1, pixelRatio || 1)
+  // The canvas limits take precedence over the intrinsic floor for oversized pages.
+  return Math.min(
+    Math.max(1, physicalWidth / width),
+    MAX_RENDER_SCALE,
+    MAX_CANVAS_DIMENSION / width,
+    MAX_CANVAS_DIMENSION / height,
+    Math.sqrt(MAX_CANVAS_AREA / (width * height))
+  )
+}
+
 // PDF.js rejects an in-flight render with this when cancel() is called; it is an expected teardown,
 // not a page failure, so scroll-out, preview switches, and resize rerenders must not surface it.
 const isRenderCancel = (error: unknown): boolean =>
@@ -2015,10 +2031,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     ReturnType<Awaited<ReturnType<PdfDocument['getPage']>>['render']> | undefined
   >(undefined)
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const [aspectRatio, setAspectRatio] = useState(3 / 4)
-  const [pageRotation, setPageRotation] = useState(0)
-  // Bumped when a fresh page proxy is acquired so rasterization re-runs against the new page.
-  const [pageEpoch, setPageEpoch] = useState(0)
+  // A fresh viewport also invalidates paint when a translated page has the same dimensions.
+  const [baseViewport, setBaseViewport] = useState<{
+    width: number
+    height: number
+    rotation: number
+  }>()
+  const pageRotation = baseViewport?.rotation ?? 0
 
   // Acquire the page once while it is near the viewport and keep it alive; width changes then
   // re-rasterize this same page rather than reloading it through the range transport.
@@ -2059,8 +2078,8 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
           return
         }
         pageRef.current = acquiredPage
-        setPageRotation(acquiredPage.getViewport({ scale: 1 }).rotation ?? 0)
-        setPageEpoch((epoch) => epoch + 1)
+        const { width, height, rotation } = acquiredPage.getViewport({ scale: 1 })
+        setBaseViewport({ width, height, rotation })
       })
       .catch((error: unknown) => {
         if (!canceled) {
@@ -2092,12 +2111,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     if (status === 'ready') onPageReady()
   }, [status, onPageReady])
 
-  // Rasterize the live page at the target width; re-runs on width change without reacquiring it.
-  // Tied to isNearViewport so a scroll-out flips this effect's canceled flag and stops a rerender.
+  const rasterScale =
+    baseViewport && pdfPageRasterScale(baseViewport, pageWidth, window.devicePixelRatio)
+  // CSS can resize the existing bitmap while the intrinsic floor or canvas cap holds.
   useEffect(() => {
     const page = pageRef.current
     const canvas = canvasRef.current
-    if (!isNearViewport || !page || !canvas) return
+    if (!isNearViewport || !page || !canvas || rasterScale === undefined) return
 
     let canceled = false
     const draw = async (): Promise<void> => {
@@ -2112,33 +2132,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       // bail before touching a disposed page or detached canvas.
       if (canceled || pageRef.current !== page) return
 
-      const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1)
-      const baseViewport = page.getViewport({ scale: 1 })
-      // Rasterize at the physical pixels the page occupies on screen (never below intrinsic size)
-      // so zoom stays crisp at any DPI, capped by MAX_RENDER_SCALE so the deepest zoom cannot
-      // allocate the full canvas budget per page.
-      const targetCssWidth = pageWidth > 0 ? pageWidth : baseViewport.width
-      const desiredScale = Math.max(
-        1,
-        Math.min(MAX_RENDER_SCALE, (targetCssWidth * devicePixelRatio) / baseViewport.width)
-      )
-      // Hard cap so neither backing dimension nor total area exceeds browser canvas limits — must
-      // win over the intrinsic floor, or a page taller than the limit at scale 1 renders blank.
-      const limitScale = Math.min(
-        MAX_CANVAS_DIMENSION / baseViewport.width,
-        MAX_CANVAS_DIMENSION / baseViewport.height,
-        Math.sqrt(MAX_CANVAS_AREA / (baseViewport.width * baseViewport.height))
-      )
-      const scale = Math.min(desiredScale, limitScale)
-      const viewport = page.getViewport({ scale })
+      const viewport = page.getViewport({ scale: rasterScale })
       const paintCanvas = preservePaintOnRefresh
         ? canvas.ownerDocument.createElement('canvas')
         : canvas
       const context = paintCanvas.getContext('2d')
       if (!context) throw new Error('Canvas 2D context unavailable.')
 
-      // Match the actual PDF page geometry so landscape and non-standard pages are not stretched.
-      setAspectRatio(viewport.width / viewport.height)
       paintCanvas.width = viewport.width
       paintCanvas.height = viewport.height
       const renderTask = page.render({
@@ -2181,9 +2181,9 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     }
   }, [
     isNearViewport,
-    pageEpoch,
+    baseViewport,
     pageNumber,
-    pageWidth,
+    rasterScale,
     nativeAnnotationRevision,
     preservePaintOnRefresh
   ])
@@ -2239,7 +2239,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       textLayerRef.current = undefined
       host.replaceChildren()
     }
-  }, [isNearViewport, onTextLayerRendered, pageEpoch, pageNumber, pageWidth])
+  }, [isNearViewport, onTextLayerRendered, baseViewport, pageNumber, pageWidth])
 
   useEffect(() => {
     const page = pageRef.current
@@ -2274,7 +2274,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   }, [
     document,
     isNearViewport,
-    pageEpoch,
+    baseViewport,
     pageWidth,
     nativeAnnotationRevision,
     onNavigate,
@@ -2289,7 +2289,8 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     return renderIndexedFigureLinks({ host, textLayer, index: figureIndex, pageNumber, onNavigate })
   }, [figureIndex, linkEpoch, linksEnabled, pageNumber, onNavigate, isNearViewport, pageWidth])
 
-  const displayedAspectRatio = geometry ? geometry.width / geometry.height : aspectRatio
+  const pageSize = geometry ?? baseViewport
+  const displayedAspectRatio = pageSize ? pageSize.width / pageSize.height : 3 / 4
   const displayedStatus = isNearViewport ? status : 'idle'
 
   const pageContent = (
