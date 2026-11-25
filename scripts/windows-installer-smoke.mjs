@@ -1605,14 +1605,8 @@ const uninstallAndVerify = async (
     ).filter(Boolean)
     if (remainingPaths.length > 0) return undefined
     if (!(await pathExists(installDirectory))) return true
-    const remainingEntries = await readdir(installDirectory, { withFileTypes: true })
-    // Chromium may write debug.log beside the executable. NSIS removes the packaged payload.
-    return (
-      remainingEntries.every(
-        (entry) =>
-          entry.isFile() && (entry.name === basename(uninstaller) || entry.name === 'debug.log')
-      ) || undefined
-    )
+    const remainingEntries = await readdir(installDirectory)
+    return remainingEntries.every((entry) => entry === basename(uninstaller)) || undefined
   }
   try {
     await waitFor('the installed application files to be removed', cleanupCheck)
