@@ -216,6 +216,7 @@ const OnboardingWizard = ({
 
   const [step, setStep] = useState<WizardStep>('environment')
   const [entryPhase, setEntryPhase] = useState<EntryPhase>(showWelcome ? 'welcome' : 'advanced')
+  const [readySource, setReadySource] = useState<'connect' | 'advanced'>('connect')
   const [entryMethod, setEntryMethod] = useState<'account' | 'api-key'>('account')
   const [isAdvancedProviderBusy, setIsAdvancedProviderBusy] = useState(false)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
@@ -308,6 +309,7 @@ const OnboardingWizard = ({
     setEntryPhase('advanced')
   }, [])
   const openReadyEntry = useCallback((method: 'account' | 'api-key' = 'api-key'): void => {
+    setReadySource('connect')
     setEntryMethod(method)
     setEntryPhase('ready')
   }, [])
@@ -545,7 +547,14 @@ const OnboardingWizard = ({
       ) : step === 'notebook' ? (
         <NotebookStep
           onBack={() => setStep('provider')}
-          onComplete={showWelcome ? () => setEntryPhase('ready') : undefined}
+          onComplete={
+            showWelcome
+              ? () => {
+                  setReadySource('advanced')
+                  setEntryPhase('ready')
+                }
+              : undefined
+          }
         />
       ) : null}
     </>
@@ -627,7 +636,7 @@ const OnboardingWizard = ({
           ) : (
             <OnboardingReadyStep
               method={entryMethod}
-              onBack={() => setEntryPhase('connect')}
+              onBack={() => setEntryPhase(readySource)}
               onStart={completeOnboarding}
             />
           )}

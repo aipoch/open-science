@@ -895,7 +895,7 @@ const ProviderStep = ({
         details: onboardingErrorMessage(error, card.id)
       })
     } finally {
-      if (quickAuth.current === attempt && !attempt.signal.aborted) {
+      if (quickAuth.current === attempt && (!attempt.signal.aborted || !mounted.current)) {
         quickAuth.current = undefined
         setAuthStage(undefined)
         operation.finish()
@@ -931,10 +931,12 @@ const ProviderStep = ({
         details: onboardingErrorMessage(error, 'cancelQuickAuthorization')
       })
     } finally {
-      quickAuth.current = undefined
-      setAuthStage(undefined)
-      operation.finish()
-      setIsSaving(false)
+      if (quickAuth.current === attempt) {
+        quickAuth.current = undefined
+        setAuthStage(undefined)
+        operation.finish()
+        setIsSaving(false)
+      }
     }
   }
 

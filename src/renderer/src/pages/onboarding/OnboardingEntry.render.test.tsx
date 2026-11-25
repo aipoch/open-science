@@ -131,8 +131,31 @@ describe('Onboarding entry flow', () => {
     await clickButton(/^Finish$/)
     expect(container.querySelector('[data-onboarding-entry="ready"]')).not.toBeNull()
     expect(container.querySelector('[role="dialog"]')).toBe(dialog)
+    await clickButton(/^Back$/)
+    expect(container.textContent).toContain('Notebook runtime (optional)')
+    await clickButton(/^Finish$/)
+    expect(container.querySelector('[data-onboarding-entry="ready"]')).not.toBeNull()
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
   })
+
+  it('returns from Ready to quick connect and can advance again', async () => {
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      saveProvider: vi.fn().mockResolvedValue({ providerId: 'verified', validation: { ok: true } }),
+      setActiveProvider: vi.fn()
+    })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/^Import existing Codex sign-in$/)
+    expect(container.querySelector('[data-onboarding-entry="ready"]')).not.toBeNull()
+    await clickButton(/^Back$/)
+    expect(container.querySelector('[data-onboarding-entry="connect"]')).not.toBeNull()
+    await clickButton(/^Import existing Codex sign-in$/)
+    expect(container.querySelector('[data-onboarding-entry="ready"]')).not.toBeNull()
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+  })
+
   it('returns from advanced data location to quick connect without leaving the dialog', async () => {
     await renderEntry()
     await finishWelcomeAnimation()
