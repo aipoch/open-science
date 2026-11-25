@@ -120,6 +120,26 @@ describe('remoteSpeechIdentity', () => {
     expect(remoteSpeechIdentity({ ...base, voice: 'alloy' })).not.toBe(identity)
     expect(remoteSpeechIdentity({ ...base, apiKey: 'other' })).toBe(identity)
   })
+
+  it('never collides slash-bearing endpoint and model combinations', () => {
+    // Concatenation-ambiguous pairs: the structured-tuple hash must separate them.
+    const a = remoteSpeechIdentity({
+      ...base,
+      style: 'audio-speech',
+      endpoint: 'https://api.example.com/v1/audio/speech',
+      model: 'tts-1'
+    })
+    const b = remoteSpeechIdentity({
+      ...base,
+      style: 'audio-speech',
+      endpoint: 'https://api.example.com/v1/audio',
+      model: 'speech/tts-1'
+    })
+    expect(a).not.toBe(b)
+    const c = remoteSpeechIdentity({ ...base, endpoint: `${base.endpoint}/extra`, model: '' })
+    const d = remoteSpeechIdentity({ ...base, endpoint: base.endpoint, model: '/extra' })
+    expect(c).not.toBe(d)
+  })
 })
 
 let server: Server | undefined

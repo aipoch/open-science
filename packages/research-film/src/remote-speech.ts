@@ -38,18 +38,23 @@ const MAX_WAV_BYTES = 64 * 1024 * 1024
 const ESTIMATED_CHARS_PER_SECOND = 15
 
 /**
- * Stable cache and checkpoint identity for a remote backend. Covers the full endpoint
- * (scheme, host, path and query) so a different backend or parameters never reuse retained
- * narration; excludes the API key, and hashes the voice so a base64 reference sample never
- * reaches `timings.json` or the narration cache key.
+ * Stable cache and checkpoint identity for a remote backend. The unique suffix is a hash of
+ * the structured tuple (style, full endpoint, model, voice), so separator-bearing values can
+ * never collide through string concatenation — endpoint `…/speech` + model `tts-1` and
+ * endpoint `…/audio` + model `speech/tts-1` hash differently. The raw voice never appears in
+ * the result, so a base64 reference sample cannot reach `timings.json` or the narration cache
+ * key, and the API key is never part of the tuple.
  */
 export const remoteSpeechIdentity = (config: RemoteSpeechConfig): string => {
   const url = new URL(config.endpoint)
-  const voice = config.voice
-    ? createHash('sha256').update(config.voice).digest('hex').slice(0, 12)
-    : 'default'
   const endpoint = `${url.origin}${url.pathname}${url.search}`
-  return `remote-http/${config.style}/${endpoint}/${config.model}/${voice}`
+  // JSON.stringify over a string array is injective: element boundaries stay explicit, so
+  // distinct tuples can never render to the same preimage.
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify([config.style, endpoint, config.model, config.voice ?? '']))
+    .digest('hex')
+    .slice(0, 16)
+  return `remote-http/${config.style}/${endpoint}/${config.model}/${fingerprint}`
 }
 
 const readTag = (view: DataView, offset: number): string =>
