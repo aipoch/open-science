@@ -527,12 +527,48 @@ class ManagedFileVersionService {
   private async finishVersionCleanup(
     client: PrismaClient,
     source: ManagedFileSource,
-    version: Pick<ManagedFileVersionRecord, 'id' | 'contentStorageKey' | 'sizeBytes' | 'checksum'>
+    version: Pick<
+      ManagedFileVersionRecord,
+      | 'id'
+      | 'contentStorageKey'
+      | 'sizeBytes'
+      | 'checksum'
+      | 'evidenceStorageKey'
+      | 'evidenceJson'
+      | 'evidenceChecksum'
+      | 'executionSnapshotStorageKey'
+      | 'executionSnapshotJson'
+      | 'executionSnapshotChecksum'
+    >
   ): Promise<void> {
     await this.versionFileOperator.removeImmutable(version.contentStorageKey, {
       sizeBytes: Number(version.sizeBytes),
       checksum: version.checksum
     })
+    const sidecars = [
+      {
+        storageKey: version.evidenceStorageKey,
+        content: version.evidenceJson,
+        checksum: version.evidenceChecksum
+      },
+      {
+        storageKey: version.executionSnapshotStorageKey,
+        content: version.executionSnapshotJson,
+        checksum: version.executionSnapshotChecksum
+      }
+    ]
+    for (const sidecar of sidecars) {
+      if (!sidecar.storageKey) continue
+      if (!sidecar.content || !sidecar.checksum)
+        throw new ManagedFileVersionError(
+          'CONTENT_INTEGRITY_FAILED',
+          'Artifact provenance sidecar metadata is incomplete.'
+        )
+      await this.versionFileOperator.removeImmutable(sidecar.storageKey, {
+        sizeBytes: Buffer.byteLength(sidecar.content, 'utf8'),
+        checksum: sidecar.checksum
+      })
+    }
     if (source === 'artifact')
       await client.artifactVersion.updateMany({
         where: { id: version.id, state: 'cleaning' },

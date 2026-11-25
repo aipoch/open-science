@@ -29,6 +29,12 @@ export type ManagedFileVersionRecord = {
   contentType: string | null
   sizeBytes: bigint
   checksum: string
+  evidenceStorageKey?: string | null
+  evidenceJson?: string | null
+  evidenceChecksum?: string | null
+  executionSnapshotStorageKey?: string | null
+  executionSnapshotJson?: string | null
+  executionSnapshotChecksum?: string | null
   createdAt: Date
 }
 
