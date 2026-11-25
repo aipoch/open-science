@@ -2921,7 +2921,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     })
   })
 
-  it('renders a child-owned Version at its restored Notebook delegate invocation without copying root ownership', async () => {
+  it('renders a child-owned Version at its restored Notebook delegate invocation', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
       id: 'child-version',
@@ -3074,7 +3074,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         path: 'artifact-version:default/session-42/child-artifact/child-version'
       })
     )
-    expect(rootInvocationPreview).not.toHaveProperty('selectedVersionId')
+    expect(rootInvocationPreview).toHaveProperty('selectedVersionId', 'child-version')
 
     const childGraph = structuredClone(normalized.conversationGraph)!
     childGraph.activeFrameId = 'child-frame'
