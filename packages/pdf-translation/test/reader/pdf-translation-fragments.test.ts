@@ -53,6 +53,64 @@ it.each([
   }
 )
 
+it.each([
+  { stop: '', distance: 1, expectedRight: 209 },
+  { stop: '.', distance: 1, expectedRight: 144 },
+  { stop: '', distance: 6, expectedRight: 144 }
+])('borrows the verified column of a short continuation: $stop / $distance', (test) => {
+  const lead = 'The observations give enough evidence for the final condition' + test.stop
+  const source = createPdfTranslationSource({
+    resourceRequestKey: 'column-continuation',
+    fingerprint: 'column-continuation',
+    pages: [{ width: 600, height: 800 }],
+    units: [
+      {
+        id: 'lead',
+        source: lead,
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 60 / 600, y: 80 / 800, width: 240 / 600, height: 12 / 800 },
+            items: [{ index: 0, text: lead }]
+          }
+        ]
+      },
+      {
+        id: 'continuation',
+        source: 'to be true',
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 60 / 600, y: (92 + test.distance) / 800, width: 60 / 600, height: 12 / 800 },
+            items: [{ index: 1, text: 'to be true' }]
+          }
+        ]
+      },
+      {
+        id: 'sidebar',
+        source: 'Independent note',
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: {
+              x: 211 / 600,
+              y: (92 + test.distance) / 800,
+              width: 80 / 600,
+              height: 12 / 800
+            },
+            items: [{ index: 2, text: 'Independent note' }]
+          }
+        ]
+      }
+    ]
+  })
+  const unit = source.units[1]
+  const [prepared] = pdfTranslationLayoutFragments(unit, source)
+  expect((prepared.rect.x + prepared.rect.width) * 600).toBeCloseTo(test.expectedRight)
+  expect(prepared.items).toEqual(unit.fragments[0].items)
+  expect(unit.fragments[0].rect.width).toBe(60 / 600)
+})
+
 it('stops at the page edge and keeps neighboring rows outside the borrowed area', () => {
   const source = createPdfTranslationSource({
     resourceRequestKey: 'edge',

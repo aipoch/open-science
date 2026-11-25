@@ -9,3 +9,5 @@
 {"name":"perpendicular-paired-index-retains-native-glyph-levels","base":"x","upper":"4","lower":"⊥","translation":"结果 x4⊥ 稳定。","accepted":true}
 {"name":"changed-perpendicular-index-keeps-original","base":"x","upper":"4","lower":"⊥","translation":"结果 x5⊥ 稳定。","accepted":false}
 {"name":"duplicated-perpendicular-token-keeps-original","base":"x","upper":"4","lower":"⊥","translation":"结果 x4⊥ 和 x4⊥ 稳定。","accepted":false}
+{"name":"equivalent explicit scripts admit translated prose","base":"t","upper":"β","lower":"i","translation":"结果 tᵢ^β 稳定。","accepted":true,"explicit":true}
+{"name":"different explicit upper index keeps the native expression","base":"t","upper":"β","lower":"i","translation":"结果 tᵢ^γ 稳定。","accepted":false,"explicit":true}

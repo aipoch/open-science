@@ -55,8 +55,7 @@ export function splitSharedTextRuns(e, doc, page, regions, nativeFontName = unde
   const candidates = objects.filter(
     (o) =>
       o.type === 1 &&
-      (/^[\x20-\x7e\u2018\u2019]{1,512}$/u.test(o.text) ||
-        (mathClosings.has(o.obj) && /^[\x20-\x7e\u2013\u2018\u2019]{1,512}$/u.test(o.text))) &&
+      /^[\x20-\x7e\u2013\u2018\u2019]{1,512}$/u.test(o.text) &&
       (mathClosings.has(o.obj) ||
         rectangles.some(
           (r) =>
@@ -123,8 +122,7 @@ export function splitSharedTextRuns(e, doc, page, regions, nativeFontName = unde
           const code = p.FPDFText_GetUnicode(text, i)
           if (code === 32) continue
           if (
-            (!/^[\x21-\x7e\u2018\u2019]$/u.test(String.fromCharCode(code)) &&
-              !(close && code === 0x2013)) ||
+            !/^[\x21-\x7e\u2013\u2018\u2019]$/u.test(String.fromCharCode(code)) ||
             !p.FPDFText_GetCharOrigin(text, i, at, at + 8)
           )
             break

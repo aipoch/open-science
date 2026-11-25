@@ -418,6 +418,30 @@ it('keeps a variable on a different baseline outside the wrapped predicate', () 
   assert.ok(units.every((unit) => !(unit.items.includes('1:2') && unit.items.includes('1:4'))))
 })
 
+it.each([false, true])(
+  'attaches a terminal preposition and styled variable only on the next native row: %s',
+  (detached) => {
+    const y = detached ? 381 : 387
+    const units = translationUnits([
+      item('For a graph', 64, 423, 48, { hasEOL: false }),
+      item('G', 115, 423, 7, { fontName: 'math', hasEOL: false }),
+      item('we can associate a value with each vertex', 126, 423, 173),
+      item('and consider all the nonempty sets whose values are distinct.', 54, 411, 245),
+      item('The quantity is defined as the smallest size of a qualifying set', 54, 399, 245),
+      item('of', 54, y, 8, { hasEOL: false }),
+      item('G', 65, y, 7, { fontName: 'math', hasEOL: false }),
+      item('.', 72, y, 3),
+      item('A separate sentence describes the application.', 64, 357, 190)
+    ])
+    const paragraph = units.find((unit) => unit.items.includes('1:4'))
+    assert.equal(paragraph?.source.endsWith('qualifying set of G.'), !detached)
+    assert.equal(paragraph?.items.includes('1:6'), !detached)
+    assert.ok(
+      units.some((unit) => unit.source === 'A separate sentence describes the application.')
+    )
+  }
+)
+
 function wrappedWordAfterMeasurement(witness: string): PdfTranslationLayout['units'] {
   return translationUnits([
     item('1.5 K', 54, 450, 23, { hasEOL: false }),

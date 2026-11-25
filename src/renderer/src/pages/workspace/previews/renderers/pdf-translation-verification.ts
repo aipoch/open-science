@@ -1,3 +1,4 @@
+import type { PdfTranslationLinkLocation } from '@aipoch/pdf-translation/contracts'
 import {
   getPdfTranslationTextContent,
   createPdfTranslationTargetExclusions,
@@ -22,20 +23,27 @@ import {
 
 type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
 type TextItem = Extract<TextContent['items'][number], { str: string }>
-type VerifiedPower = { power: string; exponent: string }
+type VerifiedPower = { power: string; exponent: string; naturalNumberBase?: number }
+const nativePowerBase = /(?:[A-Za-z\p{Script=Greek}]\d{0,3}|(?<!\d)10|[}\]])/u.source
+const nativePowerBaseEnd = new RegExp(nativePowerBase + '$', 'u')
+const nativePowerSpelling = new RegExp('(?:' + nativePowerBase + '|ℕ)[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,2}', 'gu')
 
 // Unicode powers may retain the publisher's digit glyph and raised geometry.
 // Admit that spelling only when both PDFs prove the same adjacent base/exponent.
 function verifiedPowerText(
   original: TextContent,
   target: TextContent,
-  labels: Set<string>
+  labels: Set<string>,
+  naturalNumberFonts?: { original: Set<string>; target: Set<string> }
 ): Map<number, VerifiedPower> {
   const pairs = (
-    content: TextContent
+    content: TextContent,
+    naturalNumberFonts: Set<string> | undefined
   ): {
     index: number
     label: string
+    naturalNumberBase?: number
+    baseWidth: number
     size: number
     baseSize: number
     rise: number
@@ -53,7 +61,7 @@ function verifiedPowerText(
       const bases = content.items.filter(
         (base): base is TextItem =>
           'str' in base &&
-          /(?:[A-Za-z\p{Script=Greek}]\d{0,3}|(?<!\d)10)$/u.test(base.str) &&
+          nativePowerBaseEnd.test(base.str) &&
           base.transform[0] > 0 &&
           base.transform[1] === 0 &&
           base.transform[2] === 0 &&
@@ -64,14 +72,17 @@ function verifiedPowerText(
       )
       if (bases.length !== 1) return []
       const base = bases[0],
+        naturalNumber = base.str === 'N' && naturalNumberFonts?.has(base.fontName),
         label =
-          base.str.match(/(?:[A-Za-z\p{Script=Greek}]\d{0,3}|(?<!\d)10)$/u)![0] +
+          (naturalNumber ? 'ℕ' : nativePowerBaseEnd.exec(base.str)![0]) +
           [...marker.str].map((d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(d)]).join('')
       return labels.has(label)
         ? [
             {
               index,
               label,
+              ...(naturalNumber ? { naturalNumberBase: content.items.indexOf(base) } : {}),
+              baseWidth: base.width,
               size: marker.transform[3],
               baseSize: base.transform[3],
               rise: marker.transform[5] - base.transform[5],
@@ -80,8 +91,8 @@ function verifiedPowerText(
           ]
         : []
     })
-  const before = pairs(original),
-    after = pairs(target),
+  const before = pairs(original, naturalNumberFonts?.original),
+    after = pairs(target, naturalNumberFonts?.target),
     result = new Map<number, VerifiedPower>()
   // Verify the original sign, raised digits and returning quantity symbol
   // before reading the two native script objects as a Unicode power.
@@ -166,6 +177,9 @@ function verifiedPowerText(
       !targets.every(
         (p, i) =>
           Math.abs(p.size - sources[i].size) < 0.01 &&
+          (p.naturalNumberBase === undefined ||
+            (Math.abs(p.baseWidth - sources[i].baseWidth) < 0.01 &&
+              Math.abs(p.baseSize - sources[i].baseSize) < 0.01)) &&
           // Native CJK ink fitting can move the generated base by at most
           // 5% of its font size (capped at half a point); exponent glyphs
           // retain their exact font and width and must still be adjacent.
@@ -176,7 +190,8 @@ function verifiedPowerText(
     )
       continue
     const exponent = label.match(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+$/u)![0]
-    for (const p of targets) result.set(p.index, { power: label, exponent })
+    for (const p of targets)
+      result.set(p.index, { power: label, exponent, naturalNumberBase: p.naturalNumberBase })
   }
   return result
 }
@@ -539,7 +554,8 @@ async function verifiedFractionText(
     for (const fraction of resolveInlineFractions(
       fractionItems,
       item.transform[5],
-      item.transform[3]
+      item.transform[3],
+      true
     ))
       if (!fractions.some((other) => other.numerator === fraction.numerator))
         fractions.push(fraction)
@@ -718,19 +734,23 @@ function verifiedAccentText(
       letter = String.fromCodePoint(pair.base.str.codePointAt(0)!),
       leading = pair.mark.str + letter,
       trailing = letter + pair.mark.str,
-      // Preserve a leading spacing accent that remained adjacent to its
-      // exact native base. Raw extraction order alone cannot prove its location.
+      sourceText = textKey(ownerRegion.source),
+      targetText = textKey(ownerRegion.expected),
+      leadingCount = sourceText.split(leading).length - 1,
+      // Every occurrence keeps the requested order and each native pair
+      // still has to match its original geometry inside its owning fragment.
       leadingAccent =
         /^[˜ˆ]$/u.test(pair.mark.str) &&
         pair.base.str === letter &&
-        originals.length === 1 &&
-        pair.mark.index + 1 === pair.base.index &&
-        [ownerRegion.source, ownerRegion.expected].every((text) => {
-          const value = textKey(text)
-          return value.split(leading).length === 2 && !value.includes(trailing)
-        }),
+        leadingCount >= originals.length &&
+        targetText.split(leading).length - 1 === leadingCount &&
+        !sourceText.includes(trailing) &&
+        !targetText.includes(trailing) &&
+        originals.every(({ mark, base }) => mark.index + 1 === base.index),
       provedLeadingAccent =
-        leadingAccent && matches.length === 1 && matches[0].mark.index + 1 === matches[0].base.index
+        leadingAccent &&
+        matches.length === originals.length &&
+        matches.every(({ mark, base }) => mark.index + 1 === base.index)
     if (leadingAccent && !provedLeadingAccent) unverifiedLeadingAccent.add(ownerRegion.unitIndex)
     if (originals.length !== matches.length) continue
     if (
@@ -912,7 +932,7 @@ async function verifiedSplitNativeRun(
     sourceStyle.descent >= -1
       ? [sourceStyle.descent, sourceStyle.ascent]
       : [-1, 1]
-  const pixels = async (page: PDFPageProxy): Promise<Uint8ClampedArray | undefined> => {
+  const pixels = (page: PDFPageProxy): Promise<Uint8ClampedArray | undefined> | undefined => {
     const viewport = page.getViewport({ scale: 4 }),
       corners = [
         viewport.convertToViewportPoint(
@@ -935,37 +955,107 @@ async function verifiedSplitNativeRun(
       width = Math.ceil(Math.max(...corners.map(([x]) => x))) + 1 - x,
       height = Math.ceil(Math.max(...corners.map(([, y]) => y))) + 1 - y
     if (width <= 0 || height <= 0 || width * height > 262144) return undefined
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    try {
-      const context = canvas.getContext('2d', { willReadFrequently: true })
-      if (!context) return undefined
-      await page.render({
-        canvas,
-        canvasContext: context,
-        viewport,
-        transform: [1, 0, 0, 1, -x, -y]
-      }).promise
-      return context.getImageData(0, 0, width, height).data
-    } finally {
-      canvas.width = 0
-      canvas.height = 0
-    }
+    return renderVerificationCrop(page, viewport, { x, y, width, height })
   }
   const [original, after] = await Promise.all([pixels(originalPage), pixels(targetPage)])
-  return original &&
+  return sameVisiblePixels(original, after) ? pieces.map(({ index }) => index) : undefined
+}
+
+async function renderVerificationCrop(
+  page: PDFPageProxy,
+  viewport: ReturnType<PDFPageProxy['getViewport']>,
+  { x, y, width, height }: { x: number; y: number; width: number; height: number }
+): Promise<Uint8ClampedArray | undefined> {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  try {
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return undefined
+    await page.render({
+      canvas,
+      canvasContext: context,
+      viewport,
+      transform: [1, 0, 0, 1, -x, -y]
+    }).promise
+    return context.getImageData(0, 0, width, height).data
+  } finally {
+    canvas.width = 0
+    canvas.height = 0
+  }
+}
+
+function sameVisiblePixels(
+  before: Uint8ClampedArray | undefined,
+  after: Uint8ClampedArray | undefined
+): boolean {
+  return Boolean(
+    before &&
     after &&
-    original.length === after.length &&
-    original.some(
+    before.length === after.length &&
+    before.some(
       (value, index) =>
         index % 4 === 3 &&
         value > 0 &&
-        original[index - 3] + original[index - 2] + original[index - 1] < 765
+        before[index - 3] + before[index - 2] + before[index - 1] < 765
     ) &&
-    original.every((value, index) => value === after[index])
-    ? pieces.map(({ index }) => index)
-    : undefined
+    before.every((value, index) => value === after[index])
+  )
+}
+
+async function verifiedLegacyNegation(
+  before: string,
+  after: string,
+  originalPage: PDFPageProxy,
+  targetPage: PDFPageProxy,
+  rect: PdfTranslationRenderUnit['fragments'][number]['rect']
+): Promise<boolean> {
+  // The publisher's overlay can decode as a digit before PDFium rewrites its
+  // font mapping. The entire fragment must still have the same visible strokes.
+  if (
+    before === after ||
+    !after.includes('\u0338=') ||
+    after.replaceAll('\u0338=', '6=') !== before
+  )
+    return false
+  const source = originalPage.getViewport({ scale: 4 }),
+    target = targetPage.getViewport({ scale: 4 }),
+    x = Math.floor(rect.x * source.width) - 1,
+    y = Math.floor(rect.y * source.height) - 1,
+    width = Math.ceil((rect.x + rect.width) * source.width) + 1 - x,
+    height = Math.ceil((rect.y + rect.height) * source.height) + 1 - y
+  if (width <= 0 || height <= 0 || width * height > 524288) return false
+  const crop = { x, y, width, height }
+  const [originalInk, renderedInk] = await Promise.allSettled([
+    renderVerificationCrop(originalPage, source, crop),
+    renderVerificationCrop(targetPage, target, crop)
+  ])
+  if (originalInk.status !== 'fulfilled' || renderedInk.status !== 'fulfilled') return false
+  const original = originalInk.value,
+    rendered = renderedInk.value
+  if (!original || !rendered || original.length !== rendered.length) return false
+  const ink = (pixels: Uint8ClampedArray, index: number): boolean => {
+    const offset = index * 4
+    return (
+      pixels[offset + 3] > 127 && pixels[offset] + pixels[offset + 1] + pixels[offset + 2] < 384
+    )
+  }
+  // PDFium rounds advances to single precision. At 4x, tolerate only a one-pixel
+  // difference at the edge of visible ink, with a matching stroke in both images.
+  let visibleInk = false
+  for (let index = 0; index < original.length / 4; index++) {
+    const beforeInk = ink(original, index),
+      afterInk = ink(rendered, index)
+    visibleInk ||= beforeInk && afterInk
+    if (beforeInk === afterInk) continue
+    const pixels = beforeInk ? rendered : original,
+      column = index % width
+    const adjacent = [index - width, index + width]
+    if (column > 0) adjacent.push(index - 1, index - width - 1, index + width - 1)
+    if (column + 1 < width) adjacent.push(index + 1, index - width + 1, index + width + 1)
+    if (!adjacent.some((neighbor) => ink(pixels, neighbor))) return false
+  }
+  return visibleInk
 }
 
 // A merged source row can expose a preserved native prefix independently.
@@ -974,6 +1064,7 @@ export type VerifiedPdfTranslationRegions = Readonly<{
   rawRegionText: string[][]
   originalRegionText: string[][]
   annotations: AnnotationSnapshot[][]
+  hasLinkOmissions: boolean
 }>
 
 export type PdfTranslationRenderUnit = Readonly<{
@@ -992,6 +1083,7 @@ type VerificationInput = Readonly<{
   previousValidation: VerifiedPdfTranslationRegions | undefined
   dirtyPages: ReadonlySet<number>
   originalPages: ReadonlyMap<number, unknown>
+  omittedLinks: readonly PdfTranslationLinkLocation[]
   originalLinkOwners: ReadonlyMap<number, ReadonlyMap<number, string>>
   preservedIds: ReadonlySet<string>
   acceptedById: ReadonlyMap<string, PdfTranslationResults['units'][number]>
@@ -1011,6 +1103,7 @@ export type PdfTranslationVerificationLocation = {
   pageNumber?: number
   unitId?: string
   failedLinks?: ReadonlyMap<number, string>
+  failedLinkLocations?: readonly PdfTranslationLinkLocation[]
 }
 
 type Verification = Readonly<{
@@ -1057,6 +1150,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
       dirtyPages,
       originalPages,
       originalLinkOwners,
+      omittedLinks,
       preservedIds,
       acceptedById,
       useArtifact
@@ -1099,6 +1193,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
       for (let number = 1; number <= original.numPages; number++) {
         location.pageNumber = number
         location.failedLinks = undefined
+        location.failedLinkLocations = undefined
         if (signal.aborted) return
         const [sourcePage, translatedPage]: [PDFPageProxy, PDFPageProxy] = await Promise.all([
           original.getPage(number),
@@ -1141,10 +1236,26 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
             pages.push({ width: source.width, height: source.height, rotation: source.rotation })
             continue
           }
-          const [sourceAnnotations, targetAnnotations] = await Promise.all([
+          const [originalAnnotations, targetAnnotations] = await Promise.all([
             annotationKey(original, sourcePage, true),
             annotationKey(translated, translatedPage, originalPages.has(number))
           ])
+          const omitted = new Set<number>()
+          for (const { index, rect } of omittedLinks.filter((link) => link.pageNumber === number)) {
+            const annotation = originalAnnotations[index]
+            if (
+              originalPages.has(number) ||
+              annotation?.type !== 2 ||
+              omitted.has(index) ||
+              !sameCoordinates(annotation.rect, rect)
+            )
+              throw validationError('Omitted PDF link could not be matched to source')
+            omitted.add(index)
+          }
+          const sourceAnnotations = originalAnnotations.filter((_, index) => !omitted.has(index))
+          const sourceAnnotationIndices = originalAnnotations.flatMap((_, index) =>
+            omitted.has(index) ? [] : [index]
+          )
           annotations.push(targetAnnotations)
           const text: TextContent = await getPdfTranslationTextContent(translatedPage)
           let originalText: TextContent | undefined = await getPdfTranslationTextContent(sourcePage)
@@ -1187,6 +1298,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
             text,
             hidden,
             sourceAnnotations,
+            sourceAnnotationIndices,
             targetAnnotations,
             documentSource: runResults.source,
             units,
@@ -1200,7 +1312,24 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
             validationError
           })
           if (pendingRetentions.size) {
-            location.failedLinks = pendingRetentions
+            location.failedLinks = new Map(
+              [...pendingRetentions].map(([index, owner]) => [
+                sourceAnnotationIndices[index],
+                owner
+              ])
+            )
+            location.failedLinkLocations = [...pendingRetentions.keys()].flatMap((index) => {
+              const rect = sourceAnnotations[index].rect
+              return rect.length === 4
+                ? [
+                    {
+                      pageNumber: number,
+                      index: sourceAnnotationIndices[index],
+                      rect: [rect[0], rect[1], rect[2], rect[3]]
+                    }
+                  ]
+                : []
+            })
             throw validationError(
               'PDF moved link could not be verified',
               undefined,
@@ -1240,8 +1369,9 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           }
           if (
             units.some(
-              (unit) =>
-                /[A-Za-z\p{Script=Greek}\d⁰¹²³⁴⁵⁶⁷⁸⁹]\//u.test(unit.source) &&
+              (unit, index) =>
+                (/[A-Za-z\p{Script=Greek}\d⁰¹²³⁴⁵⁶⁷⁸⁹]\//u.test(unit.source) ||
+                  /1\/\([1-9]\d?[A-Za-z]\)/u.test(renderUnits[index].translation)) &&
                 unit.fragments.some((fragment) => fragment.pageNumber === number)
             )
           ) {
@@ -1308,11 +1438,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           for (const [unitIndex, unit] of units.entries()) {
             const fragments = unit.fragments.filter((fragment) => fragment.pageNumber === number)
             const powers = new Set(
-              [
-                ...renderUnits[unitIndex].translation.matchAll(
-                  /(?:[A-Za-z\p{Script=Greek}]\d{0,3}|(?<!\d)10)[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,2}/gu
-                )
-              ]
+              [...renderUnits[unitIndex].translation.matchAll(nativePowerSpelling)]
                 .map(([label]) => label)
                 .filter((label) => unit.source.normalize('NFKC').includes(label.normalize('NFKC')))
             )
@@ -1398,15 +1524,62 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                 }
               }
             }
-            for (const [index, { power, exponent }] of verifiedPowerText(
+            // Legacy AMS fonts can extract blackboard ℕ as N. Require the
+            // original embedded face to survive in the same owning paragraph.
+            let naturalNumberFonts
+            if (
+              [...powers].some((power) => power.startsWith('ℕ')) &&
+              sourcePage.commonObjs &&
+              translatedPage.commonObjs
+            ) {
+              await Promise.all([sourcePage.getOperatorList(), translatedPage.getOperatorList()])
+              const native = (
+                content: TextContent,
+                indices: Iterable<number>,
+                page: PDFPageProxy
+              ): { name: string; data: Uint8Array }[] =>
+                Array.from(indices).flatMap((index) => {
+                  const item = content.items[index]
+                  if (
+                    !item ||
+                    !('str' in item) ||
+                    item.str !== 'N' ||
+                    !page.commonObjs.has(item.fontName)
+                  )
+                    return []
+                  const font = page.commonObjs.get(item.fontName)
+                  return /^(?:[A-Z]{6}\+)?MSBM10$/u.test(font?.name ?? '') && font.data?.length
+                    ? [{ name: item.fontName, data: font.data as Uint8Array }]
+                    : []
+                })
+              const originals = native(originalText, sourceIndices, sourcePage)
+              const written = native(text, targetIndices, translatedPage)
+              if (
+                originals.length === 1 &&
+                written.length === 1 &&
+                originals[0].data.length === written[0].data.length &&
+                originals[0].data.every((byte, offset) => byte === written[0].data[offset])
+              ) {
+                naturalNumberFonts = {
+                  original: new Set([originals[0].name]),
+                  target: new Set([written[0].name])
+                }
+              }
+            }
+            for (const [index, { power, exponent, naturalNumberBase }] of verifiedPowerText(
               {
                 ...originalText,
                 items: originalText.items.filter((_, index) => sourceIndices.has(index))
               },
               { ...text, items: targetIndices.map((index) => text.items[index]) },
-              powers
+              powers,
+              naturalNumberFonts
             )) {
               const targetIndex = targetIndices[index]
+              if (naturalNumberBase !== undefined) {
+                const baseIndex = targetIndices[naturalNumberBase]
+                nativeLabels.set(baseIndex, { label: 'ℕ', indices: [baseIndex] })
+              }
               nativeLabels.set(targetIndex, {
                 label: powersByCaret.get(power) ?? exponent,
                 indices: [targetIndex]
@@ -2291,6 +2464,17 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                 sourceItems ??= projectText(originalText, source)
                 originalRegionText[i][f] = readRegion(rect, sourceItems, source)
               }
+              if (
+                rawRegionText[i][f].includes('\u0338=') &&
+                (await verifiedLegacyNegation(
+                  textKey(originalRegionText[i][f]),
+                  textKey(rawRegionText[i][f]),
+                  sourcePage,
+                  translatedPage,
+                  rect
+                ))
+              )
+                rawRegionText[i][f] = originalRegionText[i][f]
               if (!unchanged(i)) {
                 const indices = new Set(fragment.items.map((item) => item.index))
                 for (const mixed of mixedOwners) {
@@ -2433,7 +2617,13 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
         pages,
         originalUnitCount,
         retainedUnitIds,
-        validation: { regionText, rawRegionText, originalRegionText, annotations }
+        validation: {
+          regionText,
+          rawRegionText,
+          originalRegionText,
+          annotations,
+          hasLinkOmissions: Boolean(cached?.hasLinkOmissions || omittedLinks.length)
+        }
       }
     }
   }

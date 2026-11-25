@@ -11,6 +11,101 @@ import { readPdfTranslationCases } from './fixtures/read-cases.js'
 import { verifyPdfUnits } from './support/pdf-translation-native-verification.js'
 import { verifyPdfPreservation } from './support/pdf-translation-preservation.js'
 
+it.each(['strict', 'automatic', 'requested'] as const)(
+  'keeps translated prose and omits only its unprovable click target: %s',
+  async (mode) => {
+    const pdf = await PDFDocument.create()
+    const font = await pdf.embedFont(StandardFonts.TimesRoman)
+    const page = pdf.addPage([600, 800])
+    const text = 'Measurements were checked against references [2] and [3] before publication.'
+    const translation = '发布前已根据参考文献 [2] 和 [3] 核对测量结果。'
+    page.drawText(text, { x: 40, y: 700, size: 12, font })
+    page.drawText('Independent reference.', { x: 40, y: 650, size: 12, font })
+    const x = 40 + font.widthOfTextAtSize(text.split('[2]')[0], 12)
+    const next = 40 + font.widthOfTextAtSize(text.split('[3]')[0], 12)
+    const width = font.widthOfTextAtSize('[2]', 12)
+    const rect: [number, number, number, number] = [x, 698, x + width, 709]
+    const urls = [
+      'https://example.invalid/citation',
+      'https://example.invalid/independent',
+      'https://example.invalid/retained'
+    ]
+    const rectangles = [rect, [40, 648, 151, 660], [next, 698, next + width, 709]]
+    page.node.set(
+      PDFName.of('Annots'),
+      pdf.context.obj(
+        urls.map((url, index) =>
+          pdf.context.register(
+            pdf.context.obj({
+              Type: 'Annot',
+              Subtype: 'Link',
+              Rect: rectangles[index],
+              ...(index || mode === 'requested'
+                ? {}
+                : {
+                    QuadPoints: [x, 709, x + width, 709, x, 698, x + width, 698]
+                  }),
+              A: { S: 'URI', URI: PDFString.of(url) }
+            })
+          )
+        )
+      )
+    )
+    const data = await pdf.save(),
+      originalTask = getDocument({ data: data.slice() })
+    const registry = new TestCallerRegistry()
+    onTestFinished(() => originalTask.destroy())
+    onTestFinished(() => registry.dispose())
+    const original = await originalTask.promise
+    const { lease } = registry.acquire({ leaseId: 'optional-citation', surface: 'electron' })
+    const { source } = await extractPdfTranslationSource({
+      document: original,
+      resourceRequestKey: 'optional-citation',
+      signal: lease.signal
+    })
+    const owner = source.units.find((unit) => unit.source === text)!
+    expect(owner).toBeDefined()
+    const link = { pageNumber: 1, index: 0, rect }
+    const output = await new PdfTranslationWriter(() =>
+      resolve('resources/worker.mjs')
+    ).generateDetailed(
+      {
+        id: 'optional-citation',
+        data,
+        pages: source.pages,
+        preserveUnsupported: true,
+        preserveUnmatched: true,
+        allowLinkOmission: mode !== 'strict',
+        ...(mode === 'requested' ? { dropLinks: [link] } : {}),
+        units: [
+          { source: text, translation, fragments: pdfTranslationLayoutFragments(owner, source) }
+        ]
+      },
+      lease
+    )
+    expect(output!.layoutFailures.map(({ code }) => code)).toEqual(
+      mode === 'strict' ? ['annotations'] : []
+    )
+    const targetTask = getDocument({ data: output!.data.slice() })
+    onTestFinished(() => targetTask.destroy())
+    const target = await (await targetTask.promise).getPage(1)
+    const content = await target.getTextContent()
+    const written = content.items.flatMap((item) => ('str' in item ? [item.str] : [])).join('')
+    expect(written.replace(/\s+/gu, '')).toContain(
+      (mode === 'strict' ? text : translation).replace(/\s+/gu, '')
+    )
+    expect((await target.getAnnotations()).map(({ url }) => url)).toEqual(
+      mode === 'strict' ? urls : urls.slice(1)
+    )
+    if (mode !== 'strict') {
+      expect(output!.omittedLinks).toEqual([{ ...link, rect: rect.map(Math.fround) }])
+      expect((await (await original.getPage(1)).getAnnotations()).map(({ url }) => url)).toEqual(
+        urls
+      )
+    }
+  }
+)
+
 it.each(
   readPdfTranslationCases<{
     name: string

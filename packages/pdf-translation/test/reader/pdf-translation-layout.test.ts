@@ -26670,3 +26670,209 @@ test.each(['monospace', 'serif'])(
     expect(original?.sourceOnly).toBe(fontFamily === 'monospace' ? true : undefined)
   }
 )
+
+test.each([true, false])(
+  'keeps wrapped comparison cells on their own row only with a native caption (%s)',
+  (captioned) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height = 10
+    ): PdfLayoutTextItem => ({
+      str,
+      dir: 'ltr',
+      width,
+      height,
+      transform: [height, 0, 0, height, x, y],
+      fontName: 'Body',
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL: true
+    })
+    const items = [
+      item(
+        captioned ? 'Table 1: Comparison of instruments' : 'Comparison of instruments',
+        90,
+        710,
+        200
+      ),
+      item('Instrument', 70, 684, 65),
+      item('Measurement scope', 175, 684, 110),
+      item('Operational limits', 360, 684, 96)
+    ]
+    const scopes = [
+      ['Tracks changes in surface temperature', 'with a calibrated sensor'],
+      ['Captures wider changes in water level', 'during the rainy season'],
+      ['Reports average wind direction', 'during the observation window']
+    ]
+    for (const [n, scope] of scopes.entries()) {
+      const y = 666 - n * 36
+      items.push(
+        item(['Probe Alpha', 'Gauge Beta', 'Vane Gamma'][n], 70, y, 65),
+        item(scope[0], 175, y, 165),
+        item(scope[1], 175.3, y - 12, 130),
+        item('Requires a dry location', 360, y, 124),
+        item('for successful deployment', 360, y - 12, 135)
+      )
+    }
+    items.push(item('Measurement Results', 65, 540, 155, 14))
+    const { pages } = extractDocument({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+    const cells = pages[0].blocks.filter((block) => block.tableCell)
+    expect(cells.filter((cell) => cell.source.startsWith('Requires')).length).toBe(
+      captioned ? 3 : 0
+    )
+    if (captioned) {
+      for (const scope of scopes) {
+        expect(cells.some((cell) => cell.source === scope.join(' '))).toBe(true)
+      }
+    }
+  }
+)
+
+test('preserves separate quantity columns when printed numbers use several fonts', () => {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Body',
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    dir: 'ltr',
+    width,
+    height: 10,
+    transform: [10, 0, 0, 10, x, y],
+    fontName,
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    fontVertical: false,
+    hasEOL
+  })
+  const items = [
+    item('Table 1: Archived measurement bundles.', 154, 708, 240, 'Body', true),
+    item('Bundle', 150, 685, 32),
+    item('Description', 270, 685, 54),
+    item('Records', 360, 685, 45),
+    item('Size', 446, 685, 18, 'Body', true)
+  ]
+  const descriptions = ['Coastal temperatures', 'Daily rainfall', 'River water levels']
+  for (const [n, description] of descriptions.entries()) {
+    const y = 669 - n * 11
+    items.push(
+      item(['Collection A', 'Collection B', 'Collection C'][n], 150, y, 61),
+      item(description, 270, y, 72),
+      item(String(12 + n), 375, y, 10, 'Digits'),
+      item(',', 385.1, y, 3, 'Punctuation'),
+      item('000', 390, y, 15, 'Digits'),
+      item(n === 1 ? '200' : '20', n === 1 ? 427 : 421, y, n === 1 ? 15 : 10, 'Digits'),
+      item(n === 1 ? 'Bytes' : 'MBytes', n === 1 ? 444 : 433, y, n === 1 ? 20 : 31, 'Body', true)
+    )
+  }
+  const { pages } = extractDocument({
+    pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+  })
+  const cells = pages[0].blocks.filter((block) => block.tableCell)
+  for (const description of descriptions) {
+    expect(cells.find((cell) => cell.source === description)).toMatchObject({ source: description })
+    expect(cells.find((cell) => cell.source === description)?.sourceOnly).toBeUndefined()
+  }
+  expect(cells.filter((cell) => cell.sourceOnly && /Bytes$/.test(cell.source))).toHaveLength(3)
+  expect(cells.filter((cell) => cell.sourceOnly && /000$/.test(cell.source))).toHaveLength(3)
+})
+
+test.each([true, false])(
+  'releases a native connective that introduces a protected equality (prose follows: %s)',
+  (proseFollows) => {
+    const run = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      size = 9
+    ): PdfLayoutTextItem => ({
+      ...item(text, 50 + x, 660 + y, width, size, false),
+      transform: [size * 0.981, 0, 0, size, 50 + x, 660 + y],
+      fontName,
+      fontFamily: 'sans-serif',
+      fontAscent: fontName === 'Greek' ? 0.482 : 0.715,
+      fontDescent: -0.282,
+      fontVertical: false
+    })
+    const items = [
+      run('where', 0, 0, 24.2),
+      run(' ', 24.2, 0, 2.95),
+      run('K', 27.09, 0, 2.99, 'Italic'),
+      run('ref', 30.01, -1.88, 9.05, 'Italic', 7),
+      run(' ', 39.06, -1.88, 3.2, 'Italic', 7),
+      run('=', 42.26, 0, 7.27, 'Symbol', 9.34),
+      run(' ', 49.53, 0, 2.61, 'Symbol', 9.34),
+      run('2', 52.13, 0, 4.4),
+      run('K', 57.18, 0, 2.99, 'Italic'),
+      run('2', 60.59, 3.25, 3.49, 'Body', 7),
+      run('/', 64.69, 0, 5.43),
+      run('σ', 70.35, 0, 5.48, 'Greek'),
+      run(' ', 75.83, 0, 2.36, 'Greek'),
+      { ...run('is the nominal scale factor of the sensor', 78.19, 0, 171.4), hasEOL: true }
+    ]
+    if (!proseFollows) items[0].hasEOL = true
+    const { units } = extractDocument(document([page(items)]))
+    const connective = units.find((unit) => unit.items.includes('1:0'))
+    const relation = units.find((unit) => unit.items.includes('1:5'))
+    if (proseFollows) {
+      expect(connective).toMatchObject({ source: 'where', items: ['1:0'] })
+      expect(connective?.sourceOnly).toBeUndefined()
+      expect(relation).toMatchObject({ preserve: 'formula', sourceOnly: true })
+      expect(relation?.items).toEqual(['1:2', '1:3', '1:5', '1:7', '1:8', '1:9', '1:10', '1:11'])
+    }
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      items.flatMap((run, index) => (run.str.trim() ? ['1:' + index] : [])).sort()
+    )
+  }
+)
+
+test('keeps wrapped frequency and angle ranges in their prose paragraph', () => {
+  const run = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Body',
+    size = 12,
+    eol = false
+  ): PdfLayoutTextItem => ({ ...item(text, x, y, width, size, eol), fontName })
+  const items = [
+    run(
+      'Measurements were recorded at each position across a broad',
+      60,
+      380,
+      468,
+      'Body',
+      12,
+      true
+    ),
+    run('band (8-', 60, 400, 49),
+    run('15', 109, 400, 14),
+    run('Hz, a full period), and captured with a wide', 126, 400, 402, 'Body', 12, true),
+    run('coverage (', 60, 420, 52),
+    run('5', 112, 420, 6, 'Symbols'),
+    run('°', 118, 416, 3, 'Symbols', 8.5),
+    run('-', 124, 420, 4),
+    run('70', 131, 420, 12, 'Symbols'),
+    run('°', 143, 416, 3, 'Symbols', 8.5),
+    run(') over the entire observation window at each point', 146.5, 420, 381.5, 'Body', 12, true),
+    run('while the sensor position remained fixed.', 60, 440, 225, 'Body', 12, true)
+  ]
+  const { units } = extractDocument(document([page(items)]))
+  expect(units).toHaveLength(1)
+  expect(units[0].source).toMatch(/band \(8-15 Hz, a full period\), and captured with a wide/u)
+  expect(units[0].source).toMatch(/wide coverage \(5°\s*-\s*70°\s*\) over/u)
+  expect(units[0].sourceOnly).toBeUndefined()
+  expect(units[0].items).toEqual(items.map((_, i) => `1:${i}`))
+})
