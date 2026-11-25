@@ -19,6 +19,7 @@ test('limits image catalog refresh to official providers and saves custom model 
   const format = settings.getByRole('combobox', { name: 'API format', exact: true })
   const modelId = settings.getByLabel('Model ID', { exact: true })
   const baseUrl = 'http://127.0.0.1:9/v1'
+  await expect(settings.getByLabel('Name', { exact: true })).toBeVisible({ timeout: 60_000 })
   await settings.getByLabel('Name', { exact: true }).fill('Manual image service')
   await settings.getByLabel('Base URL', { exact: true }).fill(baseUrl)
   for (const label of ['MiniMax', 'Qwen Images', 'Seedream', 'OpenAI Images']) {
