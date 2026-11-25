@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { LoaderCircle, Settings2, X, Zap } from 'lucide-react'
 import { OFFICIAL_VENDORS, type OfficialVendorId } from '@aipoch/providers'
@@ -120,7 +121,7 @@ type QuickProviderCard = {
   title: string
   description?: string
   requiresConnectionConfiguration?: boolean
-  subscription: string
+  subscriptionLabel?: (t: TFunction) => string
   accent: string
 }
 
@@ -155,23 +156,23 @@ const PROVIDER_ACCENTS: Partial<Record<OfficialVendorId, string>> = {
 const QUICK_SUBSCRIPTIONS: Partial<
   Record<
     OfficialVendorId,
-    Pick<QuickProviderCard, 'subscriptionKind' | 'description' | 'subscription'>
+    Pick<QuickProviderCard, 'subscriptionKind' | 'description' | 'subscriptionLabel'>
   >
 > = {
   openai: {
     subscriptionKind: 'codex-subscription',
     description: 'Use an existing Codex profile or sign in with a separate Open-Science profile.',
-    subscription: 'Use your eligible ChatGPT subscription'
+    subscriptionLabel: (t) => t('Use your eligible ChatGPT subscription')
   },
   anthropic: {
     subscriptionKind: 'claude-subscription',
     description: 'Use an existing Claude profile or sign in with a separate Open-Science profile.',
-    subscription: 'Use your eligible Claude subscription'
+    subscriptionLabel: (t) => t('Use your eligible Claude subscription')
   },
   xai: {
     subscriptionKind: 'xai-subscription',
     description: 'Sign in to your xAI subscription with a browser device code.',
-    subscription: 'Sign in with your xAI account'
+    subscriptionLabel: (t) => t('Sign in with your xAI account')
   }
 }
 
@@ -186,7 +187,6 @@ const QUICK_PROVIDER_CARDS: QuickProviderCard[] = [
     title: vendor.label,
     description: vendor.requiresConnectionConfiguration ? undefined : 'API key — models provided',
     requiresConnectionConfiguration: vendor.requiresConnectionConfiguration,
-    subscription: '',
     accent: PROVIDER_ACCENTS[vendor.id] ?? '#dce3ea',
     ...QUICK_SUBSCRIPTIONS[vendor.id]
   })),
@@ -195,7 +195,6 @@ const QUICK_PROVIDER_CARDS: QuickProviderCard[] = [
     kindKey: 'custom',
     title: 'Custom Gateway',
     description: 'Use a compatible endpoint or connect another model provider.',
-    subscription: '',
     accent: '#dbe8ff'
   }
 ]
@@ -1213,9 +1212,9 @@ const ProviderStep = ({
                               />
                             </div>
                           )}
-                          {subscriptionAvailable ? (
+                          {card.subscriptionLabel ? (
                             <small className="mb-[0.7rem] block text-[0.7rem] leading-[1.3] text-text-200">
-                              {t(card.subscription)}
+                              {card.subscriptionLabel(t)}
                             </small>
                           ) : null}
                           {card.subscriptionKind === 'codex-subscription' && !isAuthorizing ? (
