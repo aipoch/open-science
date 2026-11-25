@@ -5319,7 +5319,7 @@ it('keeps transient generation failures retryable', async () => {
 
 it.each([
   'owned',
-  'retry without the rejected link',
+  'structured writer result',
   'stale claim',
   'geometry-owned',
   'geometry-stale claim',
@@ -5329,11 +5329,12 @@ it.each([
   'changed action after retry'
 ] as const)('retains a rejected link only with one exact native owner: %s', async (kind) => {
   const f = fixture()
-  const omitLink = kind === 'retry without the rejected link'
+  const structuredResult = kind === 'structured writer result'
   const geometry = kind.startsWith('geometry-')
   const prime = kind.startsWith('prime-')
   const staleClaim = kind.endsWith('stale claim')
-  const ownsLink = kind === 'owned' || kind === 'geometry-owned' || kind === 'prime-below'
+  const ownsLink =
+    structuredResult || kind === 'owned' || kind === 'geometry-owned' || kind === 'prime-below'
   const source = [
     geometry ? 'Compare the results from 2010.' : 'Compare Eq. (4) after 4 independent trials.',
     'An independent paragraph.'
@@ -5410,13 +5411,15 @@ it.each([
     url: 'https://example.invalid/unrelated'
   }
   f.originalPage.getAnnotations.mockResolvedValue(
-    omitLink ? [annotation, unrelatedLink] : withDistinctActions(annotation)
+    structuredResult ? [annotation, unrelatedLink] : withDistinctActions(annotation)
   )
   let attempt = 0
   let opens = 0
   const generatePdf = vi.fn(async (input: PdfTranslationPdfRequest) => {
+    expect(input.allowLinkOmission).toBe(false)
+    expect(input.dropLinks).toBeUndefined()
     const data = new Uint8Array([++attempt])
-    return omitLink ? { data, layoutFailures: [], omittedLinks: input.dropLinks } : data
+    return structuredResult ? { data, layoutFailures: [] } : data
   })
   const releaseRebuild = Promise.withResolvers<typeof f.target>()
   const rejectedOwner = staleClaim || kind === 'prime-inside'
@@ -5451,28 +5454,23 @@ it.each([
                     glyph(') after 4 independent trials.', 136, 700, 150),
                     glyph(target[1], 60, 655, 200)
                   ])
-                : generation === 2 && omitLink
-                  ? [glyph(target[0], 60, 700, 260), glyph(target[1], 60, 655, 200)]
-                  : generation === 2 && !rejectedOwner
-                    ? withPrime([before[0], glyph(target[1], 60, 655, 200)])
-                    : before
+                : generation === 2 && !rejectedOwner
+                  ? withPrime([before[0], glyph(target[1], 60, 655, 200)])
+                  : before
         }),
-        getAnnotations: async (): Promise<Record<string, unknown>[]> =>
-          omitLink && generation === 2
-            ? [unrelatedLink]
-            : [
-                ...withDistinctActions(
-                  generation === 1
-                    ? {
-                        ...annotation,
-                        rect: geometry ? [555, 698, 563, 710] : [129, 698, 137, 710]
-                      }
-                    : generation === 2 && !rejectedOwner
-                      ? repaired
-                      : annotation
-                ),
-                ...(omitLink ? [unrelatedLink] : [])
-              ]
+        getAnnotations: async (): Promise<Record<string, unknown>[]> => [
+          ...withDistinctActions(
+            generation === 1
+              ? {
+                  ...annotation,
+                  rect: geometry ? [555, 698, 563, 710] : [129, 698, 137, 710]
+                }
+              : generation === 2 && !rejectedOwner
+                ? repaired
+                : annotation
+          ),
+          ...(structuredResult ? [unrelatedLink] : [])
+        ]
       }))
     }
     if (generation === 2 && ownsLink) {
@@ -5496,15 +5494,8 @@ it.each([
   await waitFor(() => expect(hook.result.current.state.status).toBe('ready'))
   expect(generatePdf).toHaveBeenCalledTimes(rejectedOwner ? 1 : 2)
   expect(hook.result.current.ready?.retainedUnitIds).toEqual(
-    omitLink ? [] : ownsLink ? ['paragraph-0'] : ['paragraph-0', 'paragraph-1']
+    ownsLink ? ['paragraph-0'] : ['paragraph-0', 'paragraph-1']
   )
-  if (omitLink) {
-    expect(generatePdf.mock.calls[1][0].dropLinks).toEqual([
-      { pageNumber: 1, index: 0, rect: annotation.rect }
-    ])
-    expect(generatePdf.mock.calls[1][0].units.map((unit) => unit.translation)).toEqual(target)
-    expect(hook.result.current.layoutFailures).toEqual({})
-  }
   if (ownsLink)
     expect(hook.result.current.layoutFailures['paragraph-0']).toMatchObject({
       code: 'validation-failed',

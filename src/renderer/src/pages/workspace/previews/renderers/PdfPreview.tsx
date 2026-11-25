@@ -2208,6 +2208,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       const textLayer = new TextLayerBuilder({
         pdfPage: page,
         onAppend: (layer: HTMLDivElement) => {
+          if (canceled || pageRef.current !== page || textLayerRef.current !== textLayer) return
           layer.style.setProperty('--total-scale-factor', String(viewport.scale))
           layer.style.setProperty('--scale-round-x', '1px')
           layer.style.setProperty('--scale-round-y', '1px')
@@ -2218,8 +2219,12 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       })
       textLayerRef.current = textLayer
       await textLayer.render({ viewport })
-      if (textLayerRef.current === textLayer) textLayerRef.current = undefined
-      if (canceled || pageRef.current !== page) return
+      // PDF.js registers even completed layers for global selection. Keep the
+      // builder until disposal; a superseded late render must unregister itself.
+      if (canceled || pageRef.current !== page || textLayerRef.current !== textLayer) {
+        textLayer.cancel()
+        return
+      }
       for (const span of textLayer.div.querySelectorAll('span')) {
         if (!span.textContent?.trim()) span.classList.add('pdf-text-layer-whitespace')
       }
@@ -3679,6 +3684,7 @@ const PdfReaderContent = ({
       return
     }
     let canceled = false
+    const debounceMs = searchTextCacheRef.current.canScanQuickly(searchDocument.numPages) ? 40 : 180
     const timer = setTimeout(() => {
       void (async () => {
         setSearchIncomplete(false)
@@ -3730,7 +3736,7 @@ const PdfReaderContent = ({
           revealSearchMatch({ pageNumber: matches[0].pageNumber, occurrence: 0 })
         }
       })()
-    }, 180)
+    }, debounceMs)
     return () => {
       canceled = true
       clearTimeout(timer)
@@ -5750,7 +5756,11 @@ const PdfReaderContent = ({
                 data-pdf-notes-sidebar={showNotesSidebar || undefined}
               >
                 <PdfNotebookView
-                  key={`${pdfBookmarkSource?.projectId}:${pdfBookmarkSource?.versionId}:${pdfBookmarkSource?.checksum}`}
+                  key={
+                    attachmentVersionId
+                      ? `literature:${attachmentVersionId}`
+                      : `${pdfBookmarkSource?.projectId}:${pdfBookmarkSource?.versionId}:${pdfBookmarkSource?.checksum}`
+                  }
                   source={pdfBookmarkSource}
                   active={readingMode === 'notes' || showNotesSidebar}
                   sidebar={showNotesSidebar}
