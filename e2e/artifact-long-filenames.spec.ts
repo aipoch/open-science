@@ -116,6 +116,8 @@ test('publishes and downloads long Unicode attachments before and after restart'
           'artifacts',
           'download',
           artifact.id,
+          '--session',
+          session!.id,
           '--output',
           output,
           '--config-root',
