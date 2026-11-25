@@ -396,15 +396,6 @@ const AgentPanel = ({
       description: t("OpenAI's coding agent, connected through the Codex ACP adapter."),
       ready: codexReady,
       installed: Boolean(codex.resolvedPath),
-      updateRequired: Boolean(
-        codex.resolvedPath &&
-        ((codex.version && !isSupportedCodexAcpVersion(codex.version)) ||
-          !isSupportedCodexCliVersion(codex.nativeVersion))
-      ),
-      minimumVersion:
-        codex.version && !isSupportedCodexAcpVersion(codex.version)
-          ? MINIMUM_CODEX_ACP_VERSION
-          : undefined,
       versionDetail:
         codex.resolvedPath || codex.version || codex.nativeVersion
           ? t('Codex CLI {{nativeVersion}}, ACP {{adapterVersion}}', {
@@ -413,7 +404,10 @@ const AgentPanel = ({
             })
           : undefined,
       updateAvailable: Boolean(
-        codexManaged && codex.nativeManaged && hasCodexNativeUpdate(codex.nativeVersion)
+        codexReady &&
+        codexManaged &&
+        codex.nativeManaged &&
+        hasCodexNativeUpdate(codex.nativeVersion)
       ),
       updateHint:
         codex.resolvedPath &&
@@ -422,7 +416,7 @@ const AgentPanel = ({
           ? t(
               'Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.'
             )
-          : hasCodexNativeUpdate(codex.nativeVersion)
+          : codexReady && hasCodexNativeUpdate(codex.nativeVersion)
             ? codexManaged && codex.nativeManaged
               ? t(
                   'Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.',
@@ -460,7 +454,9 @@ const AgentPanel = ({
       uninstallCommand: 'npm uninstall -g @agentclientprotocol/codex-acp',
       managed: codexManaged,
       installSources:
-        codex.resolvedPath && !isSupportedCodexCliVersion(codex.nativeVersion)
+        codex.resolvedPath &&
+        (!isSupportedCodexCliVersion(codex.nativeVersion) ||
+          (codex.version && !isSupportedCodexAcpVersion(codex.version)))
           ? getCodexInstallSources().filter((source) => source.id === 'managed')
           : getCodexInstallSources(),
       install: codexInstall,
@@ -639,6 +635,12 @@ const AgentPanel = ({
         (check) => check.id === 'agent' && check.status === 'failed'
       ))
 
+  const repairDisabled =
+    anyInstalling ||
+    isUninstalling ||
+    isDetectingAnyFramework ||
+    promptInFlight ||
+    (!isOnboarding && isSwitching)
   const pendingRepairCard = frameworkCards.find((card) => card.key === pendingRepair)
   const installedRadioId =
     installedFrameworks.find((card) => card.ready && card.frameworkId === agentFrameworkId)
@@ -878,14 +880,14 @@ const AgentPanel = ({
         name={pendingRepairCard?.name ?? null}
         sources={pendingRepairCard?.installSources ?? []}
         installing={pendingRepairCard?.install.isInstalling ?? false}
-        disabled={anyInstalling || isUninstalling || (!isOnboarding && isSwitching)}
+        disabled={repairDisabled}
         npmAvailable={npmAvailable}
         blockedInstallSources={
           pendingRepairCard?.frameworkId === agentFrameworkId ? blockedInstallSources : {}
         }
         onCancel={() => setPendingRepair(null)}
         onRepair={(source) => {
-          if (!pendingRepairCard) return
+          if (!pendingRepairCard || repairDisabled) return
           setPendingRepair(null)
           void installFramework(pendingRepairCard, source)
         }}

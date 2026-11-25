@@ -371,7 +371,7 @@ describe('runEnvironmentCheck', () => {
 
   it('uses diagnostic message when runtime detection provides one', async () => {
     const diagnosticMessage =
-      'Native Codex 0.157.1 is installed at /Applications/ChatGPT.app/Contents/Resources/codex, but the Codex ACP adapter required by Open-Science is missing.'
+      'Native Codex 0.166.0 is installed at /Applications/ChatGPT.app/Contents/Resources/codex, but the Codex ACP adapter required by Open-Science is missing.'
 
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
@@ -427,7 +427,7 @@ describe('runEnvironmentCheck', () => {
             codexComponents: {
               nativeCliFound: true,
               nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
-              nativeCliVersion: '0.157.1',
+              nativeCliVersion: '0.166.0',
               adapterFound: false,
               adapterPath: undefined,
               adapterVersion: undefined
@@ -446,7 +446,7 @@ describe('runEnvironmentCheck', () => {
       id: 'agent',
       label: 'Codex native CLI',
       status: 'passed',
-      summary: 'Codex CLI 0.157.1 is installed.',
+      summary: 'Codex CLI 0.166.0 is installed.',
       detail: '/Applications/ChatGPT.app/Contents/Resources/codex'
     })
 
@@ -459,7 +459,7 @@ describe('runEnvironmentCheck', () => {
     })
   })
 
-  it.each([undefined, '0.153.4', '0.157.1-alpha.1'])(
+  it.each([undefined, '0.153.4', '0.166.0-alpha.1'])(
     'requires repair when a paired native CLI version is unsupported (%s)',
     async (nativeVersion) => {
       // Regression (spec P2): a paired external adapter can set nativeCliFound=true without a version
@@ -480,7 +480,7 @@ describe('runEnvironmentCheck', () => {
                 nativeCliVersion: nativeVersion,
                 adapterFound: true,
                 adapterPath: '/opt/tools/codex-acp',
-                adapterVersion: '1.6.2'
+                adapterVersion: '2.6.0'
               }
             }
           }
@@ -491,7 +491,7 @@ describe('runEnvironmentCheck', () => {
 
       const nativeCheck = result.checks.find((check) => check.label === 'Codex native CLI')
       expect(nativeCheck?.status).toBe('failed')
-      expect(nativeCheck?.summary).toContain('0.157.1 or later')
+      expect(nativeCheck?.summary).toContain('0.166.0 or later')
       expect(result.ready).toBe(false)
     }
   )
@@ -507,14 +507,14 @@ describe('runEnvironmentCheck', () => {
           runtime: {
             found: true,
             path: '/usr/local/bin/codex-acp',
-            version: '1.6.2',
+            version: '2.6.0',
             codexComponents: {
               nativeCliFound: true,
               nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
-              nativeCliVersion: '0.157.1',
+              nativeCliVersion: '0.166.0',
               adapterFound: true,
               adapterPath: '/usr/local/bin/codex-acp',
-              adapterVersion: '1.6.2'
+              adapterVersion: '2.6.0'
             }
           }
         }
@@ -528,12 +528,12 @@ describe('runEnvironmentCheck', () => {
 
     expect(nativeCheck).toMatchObject({
       status: 'passed',
-      summary: 'Codex CLI 0.157.1 is installed.'
+      summary: 'Codex CLI 0.166.0 is installed.'
     })
 
     expect(adapterCheck).toMatchObject({
       status: 'passed',
-      summary: 'Codex ACP adapter 1.6.2 is ready.'
+      summary: 'Codex ACP adapter 2.6.0 is ready.'
     })
   })
 
@@ -549,7 +549,7 @@ describe('runEnvironmentCheck', () => {
             found: false,
             codexComponents: {
               nativeCliFound: true,
-              nativeCliVersion: '0.157.1',
+              nativeCliVersion: '0.166.0',
               adapterFound: true,
               adapterPath: '/data/codex-acp',
               adapterVersion: '1.1.4',
@@ -564,7 +564,7 @@ describe('runEnvironmentCheck', () => {
 
     expect(result.checks.find((check) => check.label === 'Codex ACP adapter')).toMatchObject({
       status: 'failed',
-      summary: 'Codex ACP adapter 1.1.4 must be updated to 1.6.2 or later.'
+      summary: 'Codex ACP adapter 1.1.4 must be updated to 2.6.0 or later.'
     })
     expect(result.ready).toBe(false)
   })

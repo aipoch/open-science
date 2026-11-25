@@ -211,8 +211,67 @@ import {
   uninstallManagedCodex
 } from './managed-codex'
 
+it('normalizes the managed ACP 2.6 bundle idempotently and preserves usage and terminal failures', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'codex-acp-26-'))
+  const adapter = join(root, 'adapter.js')
+  try {
+    const source = await readFile(
+      new URL('../../../test/fixtures/codex-acp/2.6.0.txt', import.meta.url),
+      'utf8'
+    )
+    await writeFile(adapter, source)
+    await ensureManagedCodexContextUsage(adapter)
+    const patched = await readFile(adapter, 'utf8')
+    await ensureManagedCodexContextUsage(adapter)
+    expect(await readFile(adapter, 'utf8')).toBe(patched)
+    const methods = patched.split('// Executable usage and failure methods\n')[1]
+    const result = await runInNewContext(
+      `${methods}
+      (async () => {
+        const adapter = new Adapter();
+        const state = { currentModelId: "fixture", threadHasHistory: false };
+        adapter.beginPromptTokenUsage(state);
+        const usage = (n) => toTokenCount({ ...ZERO_TOKEN_COUNT, inputTokens: n, totalTokens: n });
+        for (const [total, last] of [[30, 10], [30, 10], [5, 5]]) {
+          state.lastTokenUsage = usage(last);
+          state.promptTokenUsage.observe(usage(total), state.lastTokenUsage);
+        }
+        await adapter.handleFailedTurn({ id: "turn", status: "failed", error: null });
+        const air = new Adapter();
+        air.supportsTypedSessionFailures = true;
+        air.sessionState = { currentTurnId: "turn", authConfigured: true };
+        const error = { message: "Sign in again.", codexErrorInfo: "unauthorized", additionalDetails: null };
+        await air.createErrorEvent({ turnId: "turn", willRetry: false, error });
+        const authEventFailure = air.failure;
+        air.failure = null;
+        await air.handleFailedTurn({ id: "turn", status: "failed", error });
+        return [adapter.buildQuotaMeta(state), adapter.buildPromptUsage(state), adapter.failure, authEventFailure, air.failure];
+      })()`,
+      {
+        RequestError: {
+          internalError: (_data: unknown, message: string) => message,
+          authRequired: (data: unknown) => ({ code: -32000, data })
+        }
+      }
+    )
+    expect(result).toMatchObject([
+      {
+        [ACP_TURN_TOKEN_USAGE_META_KEY]: { totalTokens: 35 },
+        [ACP_MODEL_TURN_COUNT_META_KEY]: 2,
+        [ACP_MODEL_CALL_USAGE_META_KEY]: [{ totalTokens: 30 }, { totalTokens: 5 }]
+      },
+      { totalTokens: 5 },
+      'Codex turn failed.',
+      { code: -32000, data: { codexErrorInfo: 'unauthorized' } },
+      { code: -32000, data: { codexErrorInfo: 'unauthorized' } }
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 it('runs Windows Codex command shims through the shell during version verification', async () => {
-  const spawnVersion = vi.fn(async () => ({ status: 0, stdout: 'codex-cli 0.157.1' }))
+  const spawnVersion = vi.fn(async () => ({ status: 0, stdout: 'codex-cli 0.166.0' }))
 
   await expect(
     runManagedCodexVersion(
@@ -222,7 +281,7 @@ it('runs Windows Codex command shims through the shell during version verificati
       'win32',
       spawnVersion
     )
-  ).resolves.toBe('0.157.1')
+  ).resolves.toBe('0.166.0')
   expect(spawnVersion).toHaveBeenCalledWith(
     '"C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd"',
     ['--version'],
@@ -351,8 +410,8 @@ describe('managed Codex paths and platform resolution', () => {
     const root = '/data/open-science'
     const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
 
-    expect(CODEX_ACP_VERSION).toBe('1.6.2')
-    expect(CODEX_VERSION).toBe('0.157.1')
+    expect(CODEX_ACP_VERSION).toBe('2.6.0')
+    expect(CODEX_VERSION).toBe('0.166.0')
     expect(CODEX_ACP_INTEGRITY).toMatch(/^sha512-/)
     expect(Object.keys(CODEX_INTEGRITIES).sort()).toEqual([
       'darwin-arm64',
@@ -826,8 +885,8 @@ describe('installManagedCodex', () => {
     await writeFile(join(managedCodexRoot(root), 'old-install'), 'old')
 
     const controller = new AbortController()
-    const verifyAdapter = vi.fn().mockResolvedValue('1.6.2')
-    const verifyCodex = vi.fn().mockResolvedValue('0.157.1')
+    const verifyAdapter = vi.fn().mockResolvedValue('2.6.0')
+    const verifyCodex = vi.fn().mockResolvedValue('0.166.0')
     const verifyPair = vi.fn().mockResolvedValue(undefined)
     const outcome = await installManagedCodex({
       installId: 'codex-1',
@@ -847,13 +906,13 @@ describe('installManagedCodex', () => {
     expect(outcome).toEqual({
       result: { installId: 'codex-1', ok: true },
       adapterPath: managedCodexAdapterEntry(root),
-      adapterVersion: '1.6.2',
+      adapterVersion: '2.6.0',
       codexPath: managedCodexBinary(root, platform),
-      codexVersion: '0.157.1'
+      codexVersion: '0.166.0'
     })
     expect(metadataUrls).toEqual([
-      'https://reg/@agentclientprotocol%2fcodex-acp/1.6.2',
-      'https://reg/@openai%2fcodex/0.157.1-darwin-arm64'
+      'https://reg/@agentclientprotocol%2fcodex-acp/2.6.0',
+      'https://reg/@openai%2fcodex/0.166.0-darwin-arm64'
     ])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('codex-acp')
     expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('native-codex')
@@ -920,8 +979,8 @@ describe('installManagedCodex', () => {
       platform,
       fetchJson,
       fetchTarball,
-      verifyAdapter: () => Promise.resolve('1.6.2'),
-      verifyCodex: () => Promise.resolve('0.157.1'),
+      verifyAdapter: () => Promise.resolve('2.6.0'),
+      verifyCodex: () => Promise.resolve('0.166.0'),
       verifyPair,
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
       existingCodexPath: externalCodexPath
@@ -930,11 +989,11 @@ describe('installManagedCodex', () => {
     expect(outcome).toEqual({
       result: { installId: 'adapter-only', ok: true },
       adapterPath: managedCodexAdapterEntry(root),
-      adapterVersion: '1.6.2',
+      adapterVersion: '2.6.0',
       codexPath: externalCodexPath,
-      codexVersion: '0.157.1'
+      codexVersion: '0.166.0'
     })
-    expect(metadataUrls).toEqual(['https://reg/@agentclientprotocol%2fcodex-acp/1.6.2'])
+    expect(metadataUrls).toEqual(['https://reg/@agentclientprotocol%2fcodex-acp/2.6.0'])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('adapter-only')
     expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-codex')
     await expect(readFile(managedCodexBinary(root, platform))).rejects.toThrow()
@@ -994,15 +1053,15 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.6.2'),
+        verifyAdapter: () => Promise.resolve('2.6.0'),
         verifyCodex: (path) =>
           Promise.resolve(
             path !== externalCodexPath || reason === 'handshake'
-              ? '0.157.1'
+              ? '0.166.0'
               : reason === 'obsolete'
                 ? '0.153.4'
                 : reason === 'prerelease'
-                  ? '0.157.1-alpha.1'
+                  ? '0.166.0-alpha.1'
                   : undefined
           ),
         verifyPair,
@@ -1013,11 +1072,11 @@ describe('installManagedCodex', () => {
       expect(outcome).toEqual({
         result: { installId: 'codex-fallback', ok: true },
         adapterPath: managedCodexAdapterEntry(root),
-        adapterVersion: '1.6.2',
+        adapterVersion: '2.6.0',
         codexPath: managedCodexBinary(root, platform),
-        codexVersion: '0.157.1'
+        codexVersion: '0.166.0'
       })
-      expect(metadataUrls).toContain('https://reg/@openai%2fcodex/0.157.1-darwin-arm64')
+      expect(metadataUrls).toContain('https://reg/@openai%2fcodex/0.166.0-darwin-arm64')
       expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-incompatible-codex')
       expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe(
         'managed-compatible-codex'
@@ -1064,8 +1123,8 @@ describe('installManagedCodex', () => {
       platform,
       fetchJson,
       fetchTarball,
-      verifyAdapter: () => Promise.resolve('1.6.2'),
-      verifyCodex: () => Promise.resolve('0.157.1'),
+      verifyAdapter: () => Promise.resolve('2.6.0'),
+      verifyCodex: () => Promise.resolve('0.166.0'),
       verifyPair,
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
     })
@@ -1119,11 +1178,11 @@ describe('installManagedCodex', () => {
       fetchTarball,
       verifyAdapter: async () => {
         smokeChecks += 1
-        return '1.6.2'
+        return '2.6.0'
       },
       verifyCodex: async () => {
         smokeChecks += 1
-        return '0.157.1'
+        return '0.166.0'
       },
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
     })
@@ -1176,7 +1235,7 @@ describe('installManagedCodex', () => {
       platform,
       fetchJson,
       fetchTarball,
-      verifyAdapter: () => Promise.resolve('1.6.2'),
+      verifyAdapter: () => Promise.resolve('2.6.0'),
       verifyCodex: () => Promise.resolve(undefined),
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
     })
@@ -1219,8 +1278,8 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.157.1'),
+        verifyAdapter: () => Promise.resolve('2.6.0'),
+        verifyCodex: () => Promise.resolve('0.166.0'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1270,8 +1329,8 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.157.1'),
+        verifyAdapter: () => Promise.resolve('2.6.0'),
+        verifyCodex: () => Promise.resolve('0.166.0'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1326,8 +1385,8 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.157.1'),
+        verifyAdapter: () => Promise.resolve('2.6.0'),
+        verifyCodex: () => Promise.resolve('0.166.0'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1387,8 +1446,8 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.157.1'),
+        verifyAdapter: () => Promise.resolve('2.6.0'),
+        verifyCodex: () => Promise.resolve('0.166.0'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1451,8 +1510,8 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.157.1'),
+        verifyAdapter: () => Promise.resolve('2.6.0'),
+        verifyCodex: () => Promise.resolve('0.166.0'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1512,8 +1571,8 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.157.1'),
+        verifyAdapter: () => Promise.resolve('2.6.0'),
+        verifyCodex: () => Promise.resolve('0.166.0'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1569,8 +1628,8 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson: fetchJsonSpy,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.157.1'),
+        verifyAdapter: () => Promise.resolve('2.6.0'),
+        verifyCodex: () => Promise.resolve('0.166.0'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1629,8 +1688,8 @@ describe('installManagedCodex', () => {
         platform,
         fetchJson,
         fetchTarball,
-        verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.157.1'),
+        verifyAdapter: () => Promise.resolve('2.6.0'),
+        verifyCodex: () => Promise.resolve('0.166.0'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -2516,7 +2575,7 @@ describe('patchCodexAcpModelCatalogStartupSource', () => {
 })
 
 describe('Codex Reviewer MCP normalization', () => {
-  // The config projection from pinned codex-acp 1.6.2; transport conversion is unchanged.
+  // The config projection from codex-acp 1.6.2; transport conversion is unchanged.
   const fixture = `function createSessionConfig(serversToConfigure) {
     return {
       "mcp_servers": Object.fromEntries(serversToConfigure.map((mcp) => [mcp.name, this.createMcpSeverConfig(mcp.server)]))

@@ -488,7 +488,7 @@ describe('codexFramework', () => {
     })
   })
 
-  it.each(['gpt-5.4', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'])(
+  it.each(['gpt-5.5', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'])(
     'keeps bundled metadata for trusted official model %s',
     (model) => {
       const framework = createCodexFramework()
@@ -526,7 +526,7 @@ describe('codexFramework', () => {
       vendorId: 'openai' as const,
       apiEndpoints: ['responses' as const],
       baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       key: 'sk-plaintext-secret'
     }
     const config = framework.prepareModelConfig(activeProvider, {
@@ -545,7 +545,7 @@ describe('codexFramework', () => {
   it.each([
     ['gpt-6-astra', '0.144.6'],
     ['gpt-6.1-sol', '0.144.6'],
-    ['gpt-6.1-sol', CODEX_VERSION]
+    ['gpt-5.4', CODEX_VERSION]
   ])('adds local metadata for unbundled official model %s on Codex %s', (model, nativeVersion) => {
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(
@@ -592,7 +592,7 @@ describe('codexFramework', () => {
         type: 'custom',
         apiEndpoints: ['responses'],
         baseUrl: 'https://api.openai.com/v1/responses',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         key: 'sk-plaintext-secret'
       },
       {
@@ -1271,13 +1271,16 @@ describe('codexFramework', () => {
 
   it.each([
     ['ask', 'read-only'],
-    ['auto', 'agent'],
+    ['auto', 'workspace-write'],
     ['full', 'agent-full-access']
   ] as const)('maps the %s profile to Codex mode %s', (profile, modeId) => {
     const framework = createCodexFramework()
     const modes = {
       currentModeId: 'agent',
-      availableModes: ['read-only', 'agent', 'agent-full-access'].map((id) => ({ id, name: id }))
+      availableModes: ['read-only', 'workspace-write', 'agent', 'agent-full-access'].map((id) => ({
+        id,
+        name: id
+      }))
     }
 
     expect(framework.mapPermissionProfile(profile, modes)).toMatchObject({
@@ -1302,24 +1305,18 @@ describe('codexFramework', () => {
     ).toThrow(/not available: ask/i)
   })
 
-  it('uses conservative review when Codex does not advertise its native Auto mode', () => {
-    const framework = createCodexFramework()
-
-    expect(
-      framework.mapPermissionProfile('auto', {
-        currentModeId: 'agent-full-access',
-        availableModes: [
-          { id: 'read-only', name: 'Read only' },
-          { id: 'agent-full-access', name: 'Full access' }
-        ]
-      })
-    ).toMatchObject({
-      modeId: 'read-only',
-      state: {
-        effectiveProfile: 'auto',
-        currentModeId: 'read-only',
-        autoReviewStrategy: 'conservative'
-      }
+  it.each([
+    [['read-only', 'workspace-write', 'agent'], 'workspace-write', 'conservative'],
+    [['read-only', 'agent'], 'agent', 'native'],
+    [['read-only', 'agent-full-access'], 'read-only', 'conservative']
+  ] as const)('selects the Auto reviewer for advertised modes %j', (ids, modeId, strategy) => {
+    const modes = {
+      currentModeId: 'read-only',
+      availableModes: ids.map((id) => ({ id, name: id }))
+    }
+    expect(createCodexFramework().mapPermissionProfile('auto', modes)).toMatchObject({
+      modeId,
+      state: { effectiveProfile: 'auto', currentModeId: modeId, autoReviewStrategy: strategy }
     })
   })
 
@@ -1392,6 +1389,8 @@ describe('codexFramework', () => {
 
     const env = spawnProcess.mock.calls[0][2].env as NodeJS.ProcessEnv
     expect(env).toMatchObject({
+      INITIAL_AGENT_MODE: 'workspace-write',
+      CODEX_ACP_PROMPT_SUGGESTIONS: 'false',
       PATH: expect.stringContaining('/isolated-parent-bin'),
       CODEX_HOME: '/data/codex',
       CODEX_API_KEY: 'app-key',
