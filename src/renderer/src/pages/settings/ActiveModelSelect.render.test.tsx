@@ -213,6 +213,33 @@ describe('ActiveModelSelect', () => {
     expect(option?.getAttribute('data-disabled')).toBeNull()
   })
 
+  it('explains that a disabled CodeBuddy subscription model requires the CodeBuddy framework', () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: FRAMEWORKS,
+      providers: [
+        provider({
+          id: 'builtin-codebuddy-china',
+          type: 'codebuddy-subscription',
+          name: 'CodeBuddy (China)',
+          apiEndpoints: ['chat-completions'],
+          models: ['hy4std']
+        })
+      ]
+    })
+    render()
+    openSelect()
+
+    expect(document.body.querySelector('[data-slot="select-label"]')?.textContent).toContain(
+      'Requires CodeBuddy'
+    )
+    const option = optionByText('hy4std')
+    expect(option?.getAttribute('aria-disabled')).toBe('true')
+    expect(option?.getAttribute('aria-label')).toBe(
+      'Switch the agent framework to CodeBuddy to use hy4std with this subscription.'
+    )
+  })
+
   it('explains a model-specific endpoint mismatch on hover', async () => {
     const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({

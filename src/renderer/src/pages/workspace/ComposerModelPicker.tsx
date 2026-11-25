@@ -481,7 +481,9 @@ const ComposerModelPicker = ({
                         aria-hidden="true"
                       />
                       <span className="min-w-0 flex-1 truncate">
-                        {t('Unavailable for {{framework}}', { framework: frameworkName })}
+                        {group.provider.type === 'codebuddy-subscription'
+                          ? t('Requires CodeBuddy')
+                          : t('Unavailable for {{framework}}', { framework: frameworkName })}
                       </span>
                     </DropdownMenuItem>
                   )}

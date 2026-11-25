@@ -107,7 +107,9 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 {group.provider.name}
                 {compatible ? null : (
                   <span className="ml-1 font-normal text-muted-foreground">
-                    {t('not usable with this framework')}
+                    {group.provider.type === 'codebuddy-subscription'
+                      ? t('Requires CodeBuddy')
+                      : t('not usable with this framework')}
                   </span>
                 )}
               </SelectLabel>

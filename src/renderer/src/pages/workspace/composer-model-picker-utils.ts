@@ -29,6 +29,11 @@ export const modelUnavailableReason = (
   if (option.unavailableReason === 'streaming-unsupported') {
     return t('This model does not support streaming. Pick a streaming-capable model for the Agent.')
   }
+  if (provider.type === 'codebuddy-subscription') {
+    return t('Switch the agent framework to CodeBuddy to use {{model}} with this subscription.', {
+      model: option.label
+    })
+  }
 
   return t('{{model}} uses {{modelRoutes}}, but {{framework}} supports {{frameworkRoutes}}.', {
     model: option.label,
@@ -38,14 +43,16 @@ export const modelUnavailableReason = (
   })
 }
 
-// Why a provider can't drive the current framework, shown on hover next to "· unavailable". One axis:
-// a chat-endpoint mismatch. Framework and provider names are proper nouns and interpolate verbatim.
+// Explain provider restrictions before comparing the provider and framework's API endpoints.
 export const incompatibilityReason = (
   provider: { apiEndpoints?: readonly ModelProtocol[]; type: ProviderType; name: string },
   frameworkName: string,
   frameworkEndpoints: readonly ModelProtocol[],
   t: TFunction
 ): string => {
+  if (provider.type === 'codebuddy-subscription') {
+    return t('Switch the agent framework to CodeBuddy to use this subscription.')
+  }
   const endpoints = providerEndpoints(provider)
   if (
     frameworkName === 'Codex' &&

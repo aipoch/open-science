@@ -57,7 +57,11 @@ const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
           ? t('Model not supported over the Codex bridge')
           : t("Main model isn't compatible with {{framework}}", { framework: frameworkName })
       }
-      description={`${reason} ${!modelUnsupportedByBridge ? t("Pick a compatible model below, or switch the agent framework above — otherwise conversations on this framework won't start.") : ''}`.trim()}
+      description={
+        modelUnsupportedByBridge || active.type === 'codebuddy-subscription'
+          ? reason
+          : `${reason} ${t("Pick a compatible model below, or switch the agent framework above — otherwise conversations on this framework won't start.")}`
+      }
     />
   )
 }
