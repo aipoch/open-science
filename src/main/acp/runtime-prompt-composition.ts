@@ -497,7 +497,7 @@ const composeAcpRuntimePromptOwners = (
       },
       commitNotebookDispatch: (appSessionId) =>
         base.sessionCapabilities.commitNotebookDispatch(appSessionId),
-      prepareNotebookIntent: (request, mode) => {
+      prepareNotebookIntent: (request, mode, signal) => {
         const notebook = options.notebook
         if (!notebook) return
         const scope = {
@@ -506,9 +506,11 @@ const composeAcpRuntimePromptOwners = (
           messageBranchId: request.provenanceContext?.messageBranchId,
           promptMessageId: request.provenanceContext?.promptMessageId
         }
-        const current = notebook.currentExecutionIntent
-          ? notebook.currentExecutionIntent(scope)
-          : base.sessionCapabilities.notebookExecutionIntentFor(request.sessionId)
+        const lookupCurrent = (): NotebookExecutionIntent | undefined =>
+          notebook.currentExecutionIntent
+            ? notebook.currentExecutionIntent(scope)
+            : base.sessionCapabilities.notebookExecutionIntentFor(request.sessionId)
+        const current = lookupCurrent()
         // Lightweight runtime adapters without a Notebook authority port keep their existing
         // presentation-only contract. Production root and child capabilities always carry one.
         if (!notebook.createExecutionIntent && !current && !notebookExecutionIntent(request)) return
@@ -527,6 +529,11 @@ const composeAcpRuntimePromptOwners = (
           !request.suppressUserMessage &&
           operation?.task &&
           operation.refusalId
+        const remember = (intent: NotebookExecutionIntent): void => {
+          markNotebookExecutionIntent(request, intent)
+          const promptId = request.provenanceContext?.promptMessageId
+          if (promptId) notebook.rememberExecutionIntent?.(scope, promptId, intent)
+        }
         if ((humanTurn || taskContinuation) && operation && notebook.createExecutionIntent) {
           operation.assertCurrent()
           if (operation.projectId && operation.projectId !== scope.projectId)
@@ -538,6 +545,42 @@ const composeAcpRuntimePromptOwners = (
               current.hasClaimedContinuation)
           )
             throw new Error('The Notebook refusal changed. Refresh it before continuing execution.')
+          if (
+            humanTurn &&
+            operation.desktopContinuation &&
+            operation.refusalId &&
+            current?.recheckMemory
+          ) {
+            const createIntent = notebook.createExecutionIntent
+            const admissionSignal = operation.admissionSignal
+              ? AbortSignal.any([signal, operation.admissionSignal])
+              : signal
+            const assertCurrent = (): void => {
+              admissionSignal.throwIfAborted()
+              operation.assertCurrent()
+              if (lookupCurrent() !== current || current.hasClaimedContinuation)
+                throw new Error(
+                  'The Notebook refusal changed. Refresh it before continuing execution.'
+                )
+            }
+            return current.recheckMemory(admissionSignal).then(() => {
+              assertCurrent()
+              return {
+                signal: admissionSignal,
+                assertCurrent,
+                commit: () => {
+                  assertCurrent()
+                  const continuation = createIntent({
+                    ...scope,
+                    continuedFromRefusalId: operation.refusalId
+                  })
+                  continuation.prepareUserExecution(operation.assertCurrent)
+                  current.claimContinuation()
+                  remember(continuation)
+                }
+              }
+            })
+          }
           if (taskContinuation && operation.task) {
             const { branchId, promptMessageId } = operation.task
             if (
@@ -583,9 +626,8 @@ const composeAcpRuntimePromptOwners = (
           intent = new NotebookExecutionIntent(scope)
           intent.block('originating-execution-context-unavailable')
         }
-        markNotebookExecutionIntent(request, intent)
-        const promptId = request.provenanceContext?.promptMessageId
-        if (promptId) notebook.rememberExecutionIntent?.(scope, promptId, intent)
+        remember(intent)
+        return undefined
       },
       observeNotebookExecutionLoop: ({
         appSessionId,

@@ -455,7 +455,7 @@ const registerAcpCommands = (
                 continuation: undefined,
                 suppressUserMessage: undefined
               },
-              { projectId, refusalId, assertCurrent }
+              { projectId, refusalId, desktopContinuation: true, assertCurrent }
             )
           )
         )

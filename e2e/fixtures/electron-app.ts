@@ -16,6 +16,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   writeFile
 } from 'node:fs/promises'
@@ -418,6 +419,10 @@ type ElectronApp = {
     crossFramework?: boolean
     providerBaseUrl?: string
   }) => Promise<Page>
+  setNotebookMemorySample: (
+    status: 'healthy' | 'pressured' | 'unavailable',
+    delayMs?: number
+  ) => Promise<void>
   configureLiveAgent: (
     settingsPath: string,
     model: string,
@@ -1469,6 +1474,20 @@ class ElectronAppHarness implements ElectronApp {
     const path = join(this.testRoot, name)
     await mkdir(path, { recursive: true })
     return path
+  }
+
+  async setNotebookMemorySample(
+    status: 'healthy' | 'pressured' | 'unavailable',
+    delayMs = 0
+  ): Promise<void> {
+    if (process.platform !== 'win32' || process.env.OPEN_SCIENCE_E2E_EXECUTABLE)
+      throw new Error('Notebook memory samples can only be controlled in source Windows E2E.')
+    if (!Number.isSafeInteger(delayMs) || delayMs < 0 || delayMs > 10_000)
+      throw new Error('Invalid Notebook memory sample delay.')
+    const path = join(this.roots.storageRoot, 'e2e-notebook-memory-sample.json')
+    const next = `${path}.next`
+    await writeFile(next, JSON.stringify({ status, delayMs }), 'utf8')
+    await rename(next, path)
   }
 
   async holdNextFakeSessionCreate(): Promise<{ started: string; release: string; closed: string }> {

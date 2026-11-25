@@ -37,6 +37,7 @@
     "src/renderer/src/stores/notebook-memory-notice-store.ts",
     "src/renderer/src/pages/workspace/NotebookResourcePanel.tsx",
     "src/renderer/src/pages/workspace/ProjectComputeInbox.resources.test.tsx",
+    "src/renderer/src/pages/workspace/useNotebookMemoryContinuation.ts",
     "src/renderer/src/pages/workspace/ComputeCellPreview.tsx",
     "src/renderer/src/pages/workspace/ComputeCellPreview.test.tsx",
     "src/renderer/src/pages/workspace/ComputePanel.tsx",

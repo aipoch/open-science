@@ -102,8 +102,14 @@ it('shows a live Agent refusal without a Notebook pane and ends it on Escape', a
 it('keeps a failed explicit continuation visible and dismisses only after a successful click', async () => {
   const continueExecution = vi
     .fn()
-    .mockRejectedValueOnce(new Error('Continuation unavailable'))
-    .mockResolvedValue(undefined)
+    .mockRejectedValueOnce(new Error('NOTEBOOK_MEMORY_PRESSURE: low'))
+  let acknowledge!: (result: { sessionId: string; messageId: string }) => void
+  continueExecution.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        acknowledge = resolve
+      })
+  )
   const refusal: NotebookMemoryRejectedEvent = {
     projectId: 'project',
     sessionId: 'session',
@@ -119,20 +125,30 @@ it('keeps a failed explicit continuation visible and dismisses only after a succ
     }
   }
   await act(async () =>
-    root.render(<NotebookMemoryNoticeBridge projectId="project" onContinue={continueExecution} />)
+    root.render(<NotebookMemoryNoticeBridge projectId="project" sendMessage={continueExecution} />)
   )
   await act(async () => rejected(refusal))
   expect(continueExecution).not.toHaveBeenCalled()
 
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Recheck and retry' })))
-  expect(continueExecution).toHaveBeenCalledExactlyOnceWith(refusal)
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Check and continue' })))
+  expect(continueExecution).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      projectId: 'project',
+      sessionId: 'session',
+      notebookContinuation: { refusalId: 'refusal', kind: 'memory' }
+    })
+  )
   expect(screen.getByRole('dialog')).toBeTruthy()
-  expect(screen.getByText('Continuation unavailable')).toBeTruthy()
+  expect(screen.getByText('Memory is still too low. This Notebook did not run.')).toBeTruthy()
   expect(execute).not.toHaveBeenCalled()
 
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Recheck and retry' })))
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Check and continue' })))
+  for (const name of ['Later', 'Manage resources', 'Checking…'])
+    expect(screen.getByRole('button', { name })).toHaveProperty('disabled', true)
+  await act(async () => fireEvent.keyDown(document.body, { key: 'Escape' }))
+  expect(screen.getByRole('dialog')).toBeTruthy()
   expect(continueExecution).toHaveBeenCalledTimes(2)
-  expect(continueExecution).toHaveBeenNthCalledWith(2, refusal)
+  await act(async () => acknowledge({ sessionId: 'session', messageId: 'acknowledged-message' }))
   expect(screen.queryByRole('dialog')).toBeNull()
   expect(execute).not.toHaveBeenCalled()
 })
@@ -191,9 +207,7 @@ it('updates recovery without running and opens the existing Compute preview on M
   ).toBeTruthy()
   expect(continueExecution).not.toHaveBeenCalled()
   expect(execute).not.toHaveBeenCalled()
-  await act(async () =>
-    fireEvent.click(screen.getByRole('button', { name: 'Manage Notebook resources' }))
-  )
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Manage resources' })))
   expect(usePreviewWorkbenchStore.getState().activeItemId).toBe(PROJECT_COMPUTE_PREVIEW_ID)
   expect(screen.queryByRole('dialog')).toBeNull()
   expect(continueExecution).not.toHaveBeenCalled()
@@ -341,7 +355,7 @@ it('refreshes visible policy with one request in flight and stops polling after 
     expect(
       screen.getByRole('row', { name: 'Available RAM / total 512 MiB / 8 GiB 3 GiB / 8 GiB' })
     ).toBeTruthy()
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Later' })))
     await act(async () => vi.advanceTimersByTimeAsync(20_000))
     expect(getMemoryPolicyState).toHaveBeenCalledTimes(1)
     expect(execute).not.toHaveBeenCalled()
@@ -375,7 +389,7 @@ it('does not reopen a cancelled refusal when the same blocked intent calls again
       'The memory checking component is unavailable. Update or repair the installation before retrying.'
     )
   ).toBeTruthy()
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Later' })))
   await act(async () => rejected(refusal))
   expect(screen.queryByRole('dialog')).toBeNull()
   await act(async () => rejected({ ...refusal, refusalId: 'new-intent' }))

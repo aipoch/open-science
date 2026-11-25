@@ -3,7 +3,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ActionToast } from '@/components/ActionToast'
 import { ErrorNotice } from '@/components/error-notice'
+import { Notice } from '@/components/notice'
 import { Button } from '@/components/ui/button'
+import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import type { ChatSession } from '@/stores/session-store'
 import * as Dialog from '@/components/ui/dialog'
 import {
   dialogBodyClassName,
@@ -26,6 +29,37 @@ import {
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import type { NotebookMemoryRejectedEvent } from '../../../../shared/notebook-memory'
+import {
+  useNotebookMemoryContinuation,
+  useNotebookMemoryContinuationStatus
+} from './useNotebookMemoryContinuation'
+
+export const NotebookMemoryContinuationNotice = ({
+  session
+}: {
+  session?: ChatSession
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const status = useNotebookMemoryContinuationStatus(isDesktopRenderer() ? session : undefined)
+  if (!status) return null
+  return (
+    <Notice
+      inline
+      className="mb-2"
+      role="status"
+      level={status === 'started' ? 'success' : 'info'}
+      description={
+        status === 'continuing'
+          ? t('Continuing Notebook work…')
+          : status === 'started'
+            ? t('Notebook execution started')
+            : status === 'not-executed'
+              ? t('Memory check passed. Notebook did not run this turn.')
+              : t('Memory check passed. Notebook execution could not be confirmed.')
+      }
+    />
+  )
+}
 
 type MemoryReading = NotebookMemoryRejectedEvent['memory']
 
@@ -173,16 +207,23 @@ function MemoryCheckDetails({
 export const NotebookMemoryNoticeBridge = ({
   projectId,
   canManage = true,
-  onContinue
+  onContinue,
+  sendMessage
 }: {
   projectId?: string
   canManage?: boolean
   onContinue?: (event: NotebookMemoryRejectedEvent) => void | Promise<void>
+  sendMessage?: WorkspaceAgentRuntime['sendMessage']
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const { rejection, latestCheck, terminal, rejectedTerminalId } = useNotebookMemoryNoticeStore()
   const reproductionRejection = rejection?.source === 'reproduction'
   const terminalRejection = rejection?.source === 'user' && rejection.inputKind === 'terminal'
+  const memoryDecision =
+    isDesktopRenderer() && !terminalRejection && !reproductionRejection && rejection?.refusalId
+      ? { ...rejection, refusalId: rejection.refusalId }
+      : undefined
+  const recheck = useNotebookMemoryContinuation(memoryDecision, 'notice', sendMessage)
   const needsDesktop =
     !isDesktopRenderer() &&
     Boolean(rejection?.refusalId) &&
@@ -260,13 +301,20 @@ export const NotebookMemoryNoticeBridge = ({
       'execution-domain-unavailable'
     ].includes(memory.reason)
   const manageDisabled = !canManage || Boolean(rejection && rejection.projectId !== projectId)
+  const later = (): void => {
+    if (!recheck.isChecking()) dismissNotebookMemoryRejection()
+  }
   const manage = (): void => {
-    if (manageDisabled) return
+    if (manageDisabled || recheck.isChecking()) return
     dismissNotebookMemoryRejection()
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectComputePreviewItem())
   }
   const retry = async (): Promise<void> => {
     if (!rejection || retrying.current || !noticeOwner) return
+    if (memoryDecision) {
+      if (rejection.projectId === projectId) await recheck.checkAndContinue()
+      return
+    }
     if (retryTerminal) {
       dismissNotebookMemoryRejection()
       await retryTerminal()
@@ -275,7 +323,7 @@ export const NotebookMemoryNoticeBridge = ({
     if (
       terminalRejection ||
       !onContinue ||
-      (!reproductionRejection && !rejection.refusalId) ||
+      !reproductionRejection ||
       rejection.projectId !== projectId
     )
       return
@@ -301,7 +349,7 @@ export const NotebookMemoryNoticeBridge = ({
       <Dialog.Root
         open={Boolean(rejection)}
         onOpenChange={(open) => {
-          if (!open) dismissNotebookMemoryRejection()
+          if (!open) later()
         }}
       >
         <Dialog.Portal>
@@ -358,7 +406,7 @@ export const NotebookMemoryNoticeBridge = ({
                   {t('The latest memory status could not be read. Retry will check it again.')}
                 </p>
               ) : null}
-              {recovered ? (
+              {recovered && !recheck.error ? (
                 <p className="mt-3 text-sm text-text-200" role="status">
                   {t('Memory has recovered. Execution still requires your choice.')}
                 </p>
@@ -376,30 +424,44 @@ export const NotebookMemoryNoticeBridge = ({
               {actionError && actionError.owner === noticeOwner ? (
                 <ErrorNotice inline description={actionError.message} />
               ) : null}
+              {recheck.error && <ErrorNotice inline role="alert" description={recheck.error} />}
             </div>
             <div className={dialogFooterClassName}>
-              <Button variant="ghost" onClick={dismissNotebookMemoryRejection}>
-                {t('Cancel')}
+              <Button variant="ghost" disabled={recheck.busy} onClick={later}>
+                {memoryDecision ? t('Later') : t('Cancel')}
               </Button>
-              <Button variant="secondary" disabled={manageDisabled || busy} onClick={manage}>
-                {t('Manage Notebook resources')}
+              <Button
+                variant="secondary"
+                disabled={manageDisabled || busy || recheck.busy}
+                onClick={manage}
+              >
+                {memoryDecision ? t('Manage resources') : t('Manage Notebook resources')}
               </Button>
               {rejection && !needsDesktop ? (
                 <Button
-                  aria-busy={busy || undefined}
+                  aria-busy={busy || recheck.busy || undefined}
                   disabled={
                     busy ||
-                    (terminalRejection
-                      ? !retryTerminal
-                      : (!reproductionRejection && !rejection.refusalId) ||
-                        rejection.projectId !== projectId ||
-                        !onContinue)
+                    recheck.busy ||
+                    (memoryDecision
+                      ? rejection.projectId !== projectId || !sendMessage
+                      : terminalRejection
+                        ? !retryTerminal
+                        : !reproductionRejection ||
+                          rejection.projectId !== projectId ||
+                          !onContinue)
                   }
                   onClick={() => void retry()}
                 >
-                  {reproductionRejection
-                    ? t('Open reproducibility checks')
-                    : t('Recheck and retry')}
+                  {memoryDecision ? (
+                    <span key={String(recheck.busy)} className="button-feedback">
+                      {recheck.busy ? t('Checking…') : t('Check and continue')}
+                    </span>
+                  ) : reproductionRejection ? (
+                    t('Open reproducibility checks')
+                  ) : (
+                    t('Recheck and retry')
+                  )}
                 </Button>
               ) : null}
             </div>

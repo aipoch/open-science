@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createNotebookExecutionAdmission,
-  guardNotebookExecutionAdmission
+  guardNotebookExecutionAdmission,
+  type NotebookMemoryRecheck
 } from './execution-admission'
 import { MemoryPolicyService, type MemoryPolicySample } from './memory-policy'
 
@@ -19,6 +20,48 @@ const healthy = (platform: 'win32' | 'linux', executionScope: string): MemoryPol
 })
 
 describe('host and original execution-domain admission', () => {
+  it.each(['pressure', 'cancelled'] as const)(
+    'does not use a pre-click background sample for an explicit recheck (%s)',
+    async (outcome) => {
+      const available = healthy('win32', 'windows:host')
+      const low = { ...available, facts: { ...available.facts, availableBytes: 2 } }
+      const background = Promise.withResolvers<MemoryPolicySample>()
+      const sample = vi.fn(async (): Promise<MemoryPolicySample> => low)
+      sample.mockResolvedValueOnce(low).mockImplementationOnce(() => background.promise)
+      const policy = new MemoryPolicyService({
+        adapter: { platform: 'win32', defaultExecutionScope: 'windows:host', sample }
+      })
+      const controller = new AbortController()
+      let recheck!: NotebookMemoryRecheck
+      const admission = createNotebookExecutionAdmission({
+        policy: async () => policy,
+        onRejected: (_, retry) => {
+          recheck = retry
+        }
+      })
+      try {
+        await expect(admission.prepare('submit')).rejects.toThrow('NOTEBOOK_MEMORY_PRESSURE')
+        const polling = policy.getState({ force: true })
+        await vi.waitFor(() => expect(sample).toHaveBeenCalledTimes(2))
+        const checking = recheck(controller.signal)
+        const result = expect(checking).rejects.toMatchObject(
+          outcome === 'cancelled' ? { name: 'AbortError' } : { code: 'NOTEBOOK_MEMORY_PRESSURE' }
+        )
+        if (outcome === 'cancelled') {
+          controller.abort()
+          await result
+        }
+        background.resolve(available)
+        await expect(polling).resolves.toMatchObject({ status: 'healthy' })
+        await result
+        expect(sample).toHaveBeenCalledTimes(outcome === 'cancelled' ? 2 : 3)
+      } finally {
+        background.resolve(available)
+        policy.dispose()
+      }
+    }
+  )
+
   it('allows fresh macOS warnings and recovery but refuses critical, invalidated and stale samples', async () => {
     let now = 0
     let pressureLevel: 'normal' | 'warning' | 'critical' = 'warning'
@@ -94,8 +137,47 @@ describe('host and original execution-domain admission', () => {
         expect.objectContaining({
           status: 'unavailable',
           reason: { code: 'sample-expired' }
-        })
+        }),
+        expect.any(Function)
       )
+    } finally {
+      host.dispose()
+      guest.dispose()
+    }
+  })
+
+  it('leaves a WSL refusal stopped when its exact execution domain is gone', async () => {
+    const hostSample = vi.fn(async () => healthy('win32', 'windows:host'))
+    const host = new MemoryPolicyService({
+      adapter: { platform: 'win32', sample: hostSample }
+    })
+    const executionScope = 'wsl:original'
+    const available = healthy('linux', executionScope)
+    const guest = new MemoryPolicyService({
+      adapter: {
+        platform: 'linux',
+        defaultExecutionScope: executionScope,
+        sample: async () => ({ ...available, facts: { ...available.facts, availableBytes: 2 } })
+      }
+    })
+    let recheck!: NotebookMemoryRecheck
+    const admission = createNotebookExecutionAdmission({
+      policy: async () => host,
+      onRejected: (_, retry) => {
+        recheck = retry
+      }
+    }).withExecutionDomain!(guest, executionScope)
+    try {
+      await expect(admission.prepare('dispatch')).rejects.toThrow('NOTEBOOK_MEMORY_PRESSURE')
+      guest.dispose()
+      await expect(recheck(new AbortController().signal)).rejects.toMatchObject({
+        code: 'NOTEBOOK_MEMORY_UNAVAILABLE',
+        message: expect.stringContaining(
+          'original Notebook execution domain is no longer available'
+        ),
+        memory: expect.objectContaining({ executionScope })
+      })
+      expect(hostSample).toHaveBeenCalledOnce()
     } finally {
       host.dispose()
       guest.dispose()
