@@ -128,5 +128,5 @@
   },
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "The onboarding flow adds reviewed SVG, binary, JSON, and Kilo provider icon assets beyond the existing renderer asset boundary. Retain full validation for asset resolution and packaging."
+  "fullTestReason": "The bundled Kilo provider icon expands the reviewed renderer asset boundary. Retain full validation for asset resolution and packaging."
 }

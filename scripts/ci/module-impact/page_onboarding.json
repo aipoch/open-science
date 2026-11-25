@@ -54,5 +54,5 @@
   },
   "capabilityOverlays": [],
   "fallbackCapability": "renderer_view",
-  "fullTestReason": "The first-run onboarding flow adds reviewed entry and welcome files plus a Kilo provider operation hook beyond the existing page boundary. Retain full validation for setup, skip, and provider flows."
+  "fullTestReason": "The Kilo provider setup step adds an operation hook and a desktop settings command beyond the reviewed onboarding boundary. Retain full validation for skip and provider setup."
 }
