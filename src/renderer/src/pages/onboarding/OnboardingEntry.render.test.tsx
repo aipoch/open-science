@@ -187,6 +187,45 @@ describe('Onboarding entry flow', () => {
     expect(container.querySelector('section[aria-label="Configure model"]')).not.toBeNull()
   })
 
+  it.each(['account', 'api-key'] as const)(
+    'finishes with the verified %s connection on Ready Escape',
+    async (method) => {
+      const saved = { providerId: 'verified', validation: { ok: true } }
+      const setActiveProvider = vi.fn(async (id: string, model?: string) => {
+        useSettingsStore.setState({ activeProviderId: id, activeModel: model })
+      })
+      useSettingsStore.setState({
+        ...codexReadyState(),
+        saveProvider: vi.fn().mockResolvedValue(saved),
+        saveValidatedProvider: vi.fn().mockResolvedValue(saved),
+        setActiveProvider
+      })
+      if (method === 'api-key') readyBuiltInState()
+      await renderEntry()
+      await finishWelcomeAnimation()
+      await clickButton(/^Next$/)
+      if (method === 'account') {
+        await clickButton(/^Import existing Codex sign-in$/)
+      } else {
+        const key = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
+        await act(async () => fireEvent.change(key, { target: { value: 'valid' } }))
+        await act(async () => fireEvent.submit(key.form!))
+      }
+
+      const ready = container.querySelector('[data-onboarding-entry="ready"]')!
+      expect(ready).not.toBeNull()
+      expect(setActiveProvider).toHaveBeenCalledOnce()
+      const { activeModel } = useSettingsStore.getState()
+      await act(async () => fireEvent.keyDown(ready, { key: 'Escape' }))
+      const settings = useSettingsStore.getState()
+      expect(settings.completeOnboarding).toHaveBeenCalledOnce()
+      expect(settings.addOnboardingKiloProvider).not.toHaveBeenCalled()
+      expect(settings.activeProviderId).toBe('verified')
+      expect(settings.activeModel).toBe(activeModel)
+      expect(setActiveProvider).toHaveBeenCalledOnce()
+    }
+  )
+
   it('honors disabled Skip when Escape is pressed during authorization', async () => {
     const pending = Promise.withResolvers<never>()
     useSettingsStore.setState({

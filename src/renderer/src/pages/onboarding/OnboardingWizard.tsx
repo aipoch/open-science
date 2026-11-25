@@ -367,7 +367,9 @@ const OnboardingWizard = ({
         event.preventDefault()
         if (entryPhase === 'connect') {
           dialog.querySelector<HTMLButtonElement>('[data-onboarding-action="skip"]')?.click()
-        } else if (entryPhase !== 'advanced') void skipEntry()
+        } else if (entryPhase === 'ready') {
+          dialog.querySelector<HTMLButtonElement>('[data-onboarding-action="finish"]')?.click()
+        } else if (entryPhase === 'welcome') void skipEntry()
         return
       }
       if (event.key !== 'Tab') return

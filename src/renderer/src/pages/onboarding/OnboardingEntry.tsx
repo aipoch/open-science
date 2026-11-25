@@ -403,7 +403,13 @@ const OnboardingReadyStep = ({
         <Button type="button" variant="ghost" onClick={onBack} disabled={isStarting}>
           {t('Back', { context: 'step' })}
         </Button>
-        <Button type="button" size="lg" onClick={() => void handleStart()} disabled={isStarting}>
+        <Button
+          type="button"
+          size="lg"
+          data-onboarding-action="finish"
+          onClick={() => void handleStart()}
+          disabled={isStarting}
+        >
           {isStarting ? t('Finishing setup…') : t('Start exploring')}
           <ArrowRight aria-hidden="true" />
         </Button>
