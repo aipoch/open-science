@@ -4,7 +4,10 @@ import { ErrorNotice } from '@/components/error-notice'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings-runtime'
 import { isModelBridgeSupported } from '../../../../shared/provider-bridge-policy'
-import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
+import {
+  incompatibilityReason,
+  requiredSubscriptionFramework
+} from '../workspace/composer-model-picker-utils'
 
 // Settings-time compatibility guard for the Model panel. The active provider must be able to drive the
 // selected agent framework (endpoint + provider-type). When the current pair is incompatible, this
@@ -26,10 +29,10 @@ const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
   const active = providers.find((provider) => provider.id === activeProviderId)
   if (!active) return null
 
-  const compatible = isProviderUsableByFramework(
-    { apiEndpoints: active.apiEndpoints, type: active.type },
-    { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-  )
+  const compatible = isProviderUsableByFramework(active, {
+    id: agentFrameworkId,
+    supportedApiTypes: frameworkEndpoints
+  })
   const modelUnsupportedByBridge =
     agentFrameworkId === 'codex' && !isModelBridgeSupported(active, activeModel)
   if (compatible && !modelUnsupportedByBridge) return null
@@ -42,8 +45,8 @@ const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
         'This model is not supported over the Codex Chat Completions bridge. Pick another model for a Codex session.'
       )
     : incompatibilityReason(
-        { apiEndpoints: active.apiEndpoints, type: active.type, name: active.name },
-        frameworkName,
+        active,
+        { id: agentFrameworkId, displayName: frameworkName },
         frameworkEndpoints,
         tCommon
       )
@@ -58,7 +61,7 @@ const ModelFrameworkCompatibilityAlert = (): React.JSX.Element | null => {
           : t("Main model isn't compatible with {{framework}}", { framework: frameworkName })
       }
       description={
-        modelUnsupportedByBridge || active.type === 'codebuddy-subscription'
+        modelUnsupportedByBridge || requiredSubscriptionFramework(active, agentFrameworkId, t)
           ? reason
           : `${reason} ${t("Pick a compatible model below, or switch the agent framework above — otherwise conversations on this framework won't start.")}`
       }

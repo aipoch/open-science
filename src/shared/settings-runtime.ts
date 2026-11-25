@@ -224,6 +224,18 @@ export const requiresChatCompletionsBridge = (
   )
 }
 
+export const subscriptionFrameworks = (provider: {
+  type: ProviderType
+  codexHarnessAvailable?: boolean
+}): readonly AgentFrameworkId[] | undefined => {
+  if (provider.type === 'codebuddy-subscription') return ['codebuddy']
+  if (isClaudeSubscriptionProvider(provider.type)) return ['claude-code']
+  if (isCodexSubscriptionProvider(provider.type)) {
+    return provider.codexHarnessAvailable === false ? ['codex'] : ['codex', 'open-science-agent']
+  }
+  return undefined
+}
+
 // Whether a provider can actually drive a given framework. Two axes: endpoint compatibility (above),
 // AND provider-type — a `claude-isolated` provider carries an app-owned Anthropic OAuth token
 // that no other framework can consume, so it is only usable by Claude Code regardless of endpoint.
@@ -237,26 +249,20 @@ export const isProviderUsableByFramework = (
   },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean => {
-  if (provider.type === 'codebuddy-subscription') return framework.id === 'codebuddy'
+  const owners = subscriptionFrameworks(provider)
+  if (owners) {
+    if (!owners.includes(framework.id)) return false
+    // Claude still requires the Messages protocol within its native framework.
+    if (!isClaudeSubscriptionProvider(provider.type)) return true
+  }
   if (
     framework.id === 'open-science-agent' &&
-    !['custom', 'official', 'xai-subscription', 'lab'].includes(provider.type) &&
-    !isCodexSubscriptionProvider(provider.type)
+    !['custom', 'official', 'xai-subscription', 'lab'].includes(provider.type)
   )
     return false
-  // Lab speaks the two gateway protocols natively. It deliberately has no compatibility-bridge
-  // path: a model that does not natively speak the framework's protocol is reported as incompatible
-  // instead of being routed through a conversion bridge that cannot resolve a host-owned credential.
+  // Lab credentials cannot use the protocol conversion bridges.
   if (isLabProvider(provider.type))
     return isProviderCompatibleWith(providerEndpoints(provider), framework.supportedApiTypes)
-  if (isCodexSubscriptionProvider(provider.type))
-    return (
-      framework.id === 'codex' ||
-      (framework.id === 'open-science-agent' && provider.codexHarnessAvailable !== false)
-    )
-  // Both Claude subscription modes rely on the ~/.claude or app-owned credential that only
-  // claude-code knows how to read; OpenCode receives neither an endpoint nor a token.
-  if (isClaudeSubscriptionProvider(provider.type) && framework.id !== 'claude-code') return false
 
   const endpoints = providerEndpoints(provider)
 

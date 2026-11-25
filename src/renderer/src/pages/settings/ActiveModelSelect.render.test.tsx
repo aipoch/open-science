@@ -213,17 +213,23 @@ describe('ActiveModelSelect', () => {
     expect(option?.getAttribute('data-disabled')).toBeNull()
   })
 
-  it('explains that a disabled CodeBuddy subscription model requires the CodeBuddy framework', () => {
+  it.each([
+    ['codebuddy-subscription', 'CodeBuddy', 'chat-completions'],
+    ['claude-shared', 'Claude Code', 'messages'],
+    ['claude-isolated', 'Claude Code', 'messages'],
+    ['codex-shared', 'Codex or Open-Science Agent', 'responses'],
+    ['codex-isolated', 'Codex', 'responses']
+  ] as const)('explains the framework restriction for %s', (type, required, endpoint) => {
     useSettingsStore.setState({
       agentFrameworkId: 'opencode',
       agentFrameworks: FRAMEWORKS,
       providers: [
         provider({
-          id: 'builtin-codebuddy-china',
-          type: 'codebuddy-subscription',
-          name: 'CodeBuddy (China)',
-          apiEndpoints: ['chat-completions'],
-          models: ['hy4std']
+          id: 'subscription',
+          type,
+          codexHarnessAvailable: type !== 'codex-isolated',
+          apiEndpoints: [endpoint],
+          models: ['subscription-model']
         })
       ]
     })
@@ -231,12 +237,12 @@ describe('ActiveModelSelect', () => {
     openSelect()
 
     expect(document.body.querySelector('[data-slot="select-label"]')?.textContent).toContain(
-      'Requires CodeBuddy'
+      `Requires ${required}`
     )
-    const option = optionByText('hy4std')
+    const option = optionByText('subscription-model')
     expect(option?.getAttribute('aria-disabled')).toBe('true')
     expect(option?.getAttribute('aria-label')).toBe(
-      'Switch the agent framework to CodeBuddy to use hy4std with this subscription.'
+      `Switch the agent framework to ${required} to use subscription-model with this subscription.`
     )
   })
 

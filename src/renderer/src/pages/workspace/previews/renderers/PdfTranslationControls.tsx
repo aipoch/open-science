@@ -583,7 +583,7 @@ function TranslationSettingsFields({
                           agentCatalog.providers.find(
                             (provider) => provider.id === entry.providerId
                           )!,
-                          agentCatalog.frameworkName,
+                          { id: agentCatalog.frameworkId, displayName: agentCatalog.frameworkName },
                           agentCatalog.frameworkEndpoints,
                           t
                         )

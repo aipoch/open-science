@@ -73,6 +73,7 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
+  subscriptionFrameworks,
   isLabProvider,
   isXaiSubscriptionProvider,
   DEFAULT_ENDPOINT_ORDER,
@@ -1699,9 +1700,7 @@ class ProviderAccountsModule {
     return resolveProviderDraft(draft)
   }
 
-  // The route-mismatch sentence for a provider the active framework cannot drive, or undefined
-  // when the pairing works. Subscription providers never reach this (their auth-status check owns
-  // the verdict), so no credential-specific branch is needed here.
+  // Report framework-bound credentials before falling back to protocol details.
   private frameworkIncompatibilityMessage(
     provider: ResolvedProvider,
     framework: ReturnType<typeof getAgentFramework>
@@ -1716,6 +1715,12 @@ class ProviderAccountsModule {
       )
     ) {
       return undefined
+    }
+
+    const owners = subscriptionFrameworks(provider)
+    if (owners && !owners.includes(framework.id)) {
+      const names = owners.map((id) => getAgentFramework(id).displayName).join(' or ')
+      return `Switch the agent framework to ${names} to use this subscription.`
     }
 
     return `Not compatible with ${framework.displayName}: it needs ${framework.supportedApiTypes

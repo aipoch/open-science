@@ -290,12 +290,14 @@ const ProviderList = ({
           // A pairing the active framework cannot drive stays visible with a tag (and the route
           // mismatch on hover): hiding the card would look like data loss, and the tag is the
           // discoverable path to "switch the framework to use this provider".
-          const frameworkIncompatible = !isProviderUsableByFramework(
-            { apiEndpoints: provider.apiEndpoints, type: provider.type },
-            activeFramework
-          )
+          const frameworkIncompatible = !isProviderUsableByFramework(provider, activeFramework)
           const incompatibilityMessage = frameworkIncompatible
-            ? incompatibilityReason(provider, frameworkLabel, frameworkEndpoints, t)
+            ? incompatibilityReason(
+                provider,
+                { id: agentFrameworkId, displayName: frameworkLabel },
+                frameworkEndpoints,
+                t
+              )
             : undefined
 
           return (
