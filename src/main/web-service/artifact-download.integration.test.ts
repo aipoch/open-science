@@ -520,8 +520,10 @@ it.each(['historical', 'native'] as const)(
       await fixture.dispose()
     }
   },
-  // Exercise the real publication retry window as well as SQLite setup on slower CI hosts.
-  30_000
+  // Exercise the real publication retry window as well as SQLite setup on slower CI hosts. The
+  // native identity case also indexes 231 distractor Sessions, which can exceed 30 seconds on
+  // Windows hosted runners even though the request and cleanup paths remain healthy.
+  60_000
 )
 
 await configureTestElectronHost(await import('electron'))
