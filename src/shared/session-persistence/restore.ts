@@ -13,7 +13,7 @@ import type {
 import { isPreparedSessionRun } from './prompt-preparation'
 import type { PersistedChatSession } from './session'
 import { isPersistedNotebookRunActivity } from './tool-activity'
-import { latestTurnAnchor } from './turn-anchor'
+import { latestTurnAnchor, latestTurnPromptIds } from './turn-anchor'
 
 // Restored interrupted sessions carry this error verbatim; the resume banner itself is driven by the Turn Outcome cause.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
@@ -119,11 +119,6 @@ const markInterruptedPrompt = (
 const latestTurnAnchorId = (messages: PersistedChatMessage[]): string | undefined =>
   latestTurnAnchor(messages)?.id
 
-// Deliberately NOT the turn anchor: a durable question revision continues under its routed reply
-// Message, so rearm must target (and require) the literal latest user message.
-const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefined =>
-  [...messages].reverse().find((message) => message.role === 'user')?.id
-
 // An answered app-owned question is not delivered until the provider acknowledges the next
 // prompt. Keep recovery manual (as for restored permission decisions): never replay work on startup.
 export const rearmUnacceptedElicitationContinuations = (
@@ -135,16 +130,18 @@ export const rearmUnacceptedElicitationContinuations = (
   if (session.runtimeTranscriptOwner !== 'main' || !session.conversationGraph) return session
   const graph = session.conversationGraph
   const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)
-  const promptId = promptMessageId ?? latestUserMessageId(session.messages)
-  if (!promptId || promptId !== latestUserMessageId(session.messages)) return session
-  if (session.activeRun && session.activeRun.promptMessageId !== promptId) return session
-  const recoverable = new Set(
+  const currentPromptIds = latestTurnPromptIds(session.messages)
+  const activePromptId = session.activeRun?.promptMessageId
+  const promptId = promptMessageId ?? activePromptId
+  if (activePromptId && activePromptId !== promptId) return session
+  const recoverable = new Map(
     graph.activities
       .filter(
         (activity) =>
           activity.agentFrameId === frame?.id &&
           activity.messageBranchId === frame?.activeBranchId &&
-          activity.promptMessageId === promptId &&
+          currentPromptIds.has(activity.promptMessageId) &&
+          (!promptId || activity.promptMessageId === promptId) &&
           activity.elicitation?.durable?.kind === 'agent-user-choice' &&
           activity.elicitation.continuationPending === true &&
           (activity.elicitation.state === 'answered' ||
@@ -153,9 +150,10 @@ export const rearmUnacceptedElicitationContinuations = (
             (activity.id === question.toolCallId &&
               activity.elicitation.durable.requestId === question.requestId))
       )
-      .map(({ id }) => id)
+      .map(({ id, promptMessageId }) => [id, promptMessageId] as const)
   )
   if (recoverable.size === 0) return session
+  const recoveredPromptIds = new Set(recoverable.values())
   const rearm = <T extends PersistedToolActivity>(activity: T): T => {
     if (!recoverable.has(activity.id) || !activity.elicitation) return activity
     return {
@@ -180,13 +178,13 @@ export const rearmUnacceptedElicitationContinuations = (
     failure: undefined,
     resumeRecovery: undefined,
     messages: session.messages.map((message) =>
-      message.id === promptId ? { ...message, interrupted: undefined } : message
+      recoveredPromptIds.has(message.id) ? { ...message, interrupted: undefined } : message
     ),
     activities: session.activities?.map(rearm),
     conversationGraph: {
       ...graph,
       messages: graph.messages.map((message) =>
-        message.id === promptId ? { ...message, interrupted: undefined } : message
+        recoveredPromptIds.has(message.id) ? { ...message, interrupted: undefined } : message
       ),
       activities: graph.activities.map(rearm)
     }
@@ -208,31 +206,30 @@ export const restorePendingElicitationWait = (
     return session
   }
   const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)
+  if (!frame) return session
   const messages = resolveActiveConversationMessages(graph)
-  const prompt = messages.findLast(({ role }) => role === 'user')
-  if (
-    !frame ||
-    !prompt ||
-    prompt.status !== 'complete' ||
-    prompt.agentFrameId !== frame.id ||
-    prompt.introducedOnBranchId !== frame.activeBranchId ||
-    !prompt.runtimeSegmentId ||
-    (session.resumeRecovery?.promptMessageId !== undefined &&
-      session.resumeRecovery.promptMessageId !== prompt.id)
-  )
-    return session
+  const currentPromptIds = latestTurnPromptIds(messages)
+  const recoveryPromptId =
+    session.activeRun?.promptMessageId ?? session.resumeRecovery?.promptMessageId
   const pending = resolveActiveConversationActivities(graph).activities.filter(
     ({ elicitation }) =>
       elicitation?.state === 'pending' && elicitation.durable?.kind === 'agent-user-choice'
   )
-  const restorable = pending.some((activity) => {
+  const restorable = pending.find((activity) => {
     const authority = graph.activities.find(({ id }) => id === activity.id)!
+    const prompt = messages.find(({ id }) => id === authority.promptMessageId)
     const durable = activity.elicitation!.durable!
     const flat = (session.activities ?? []).filter(({ id }) => id === activity.id)
     return (
+      prompt &&
+      currentPromptIds.has(prompt.id) &&
+      (!recoveryPromptId || recoveryPromptId === prompt.id) &&
+      prompt.status === 'complete' &&
+      prompt.agentFrameId === frame.id &&
+      prompt.introducedOnBranchId === frame.activeBranchId &&
+      Boolean(prompt.runtimeSegmentId) &&
       authority.agentFrameId === frame.id &&
       authority.messageBranchId === frame.activeBranchId &&
-      authority.promptMessageId === prompt.id &&
       (!durable.promptMessageId || durable.promptMessageId === prompt.id) &&
       pending.filter(({ elicitation }) => elicitation!.durable!.requestId === durable.requestId)
         .length === 1 &&
@@ -246,8 +243,9 @@ export const restorePendingElicitationWait = (
     )
   })
   if (!restorable) return session
+  const promptMessageId = graph.activities.find(({ id }) => id === restorable.id)!.promptMessageId
   const clearInterrupted = <T extends PersistedChatMessage>(message: T): T =>
-    message.id === prompt.id ? { ...message, interrupted: undefined } : message
+    message.id === promptMessageId ? { ...message, interrupted: undefined } : message
   return {
     ...session,
     status: 'waiting-for-user',

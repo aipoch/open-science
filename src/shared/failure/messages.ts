@@ -42,6 +42,9 @@ export const VISION_EVIDENCE_INVALID_MESSAGE = 'The Vision model returned invali
 export const NO_ACTIVE_PROVIDER_MESSAGE =
   'No active model provider is configured. Configure one in settings.'
 
+export const EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE =
+  'The requested model provider is no longer configured.'
+
 export const CLAUDE_ACP_MISSING_MESSAGE =
   'Claude ACP is not installed. Install Claude Agent in Settings to use Claude Code.'
 
@@ -76,5 +79,5 @@ export const upstreamHttpErrorPrefix = (status: number): string => `Upstream HTT
 export const unwrapIpcErrorDetail = (message: string): string =>
   message
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')
-    .replace(/^Error(?::\s*|$)/i, '')
+    .replace(/^(?:ApplicationCommandError|Error)(?::\s*|$)/i, '')
     .trim()

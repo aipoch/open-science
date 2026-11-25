@@ -172,7 +172,7 @@ type ManagedInstallImpl = (options: {
   installId: string
   onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
-  registries?: string[]
+  registries?: readonly string[]
   signal?: AbortSignal
 }) => Promise<{
   result: { installId: string; ok: boolean; error?: string }
@@ -207,6 +207,7 @@ const createService = (
     installManagedClaudeImpl?: ManagedInstallImpl
     installManagedOpencodeImpl?: ManagedInstallImpl
     installManagedCodexImpl?: ManagedCodexInstallImpl
+    probeRegistry?: SettingsServiceOptions['probeRegistry']
     // When set, opencode detection resolves this path/version; otherwise it finds nothing.
     opencodeDetected?: { path: string; version: string }
     // When set, CodeBuddy detection resolves this path/version; otherwise it finds nothing.
@@ -260,6 +261,7 @@ const createService = (
     installManagedOpencodeImpl: options.installManagedOpencodeImpl as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedCodexImpl: options.installManagedCodexImpl as any,
+    probeRegistry: options.probeRegistry ?? (async () => 10),
     detectDeps: {
       env: {},
       homePath: '/home',
@@ -6028,6 +6030,32 @@ describe('installOpencode', () => {
 
     expect(result.ok).toBe(false)
     expect((await service.getSettingsView()).opencode).toEqual({})
+  })
+
+  it('forwards probe-selected registry order through SettingsService for OpenCode', async () => {
+    const installManagedOpencodeImpl = vi.fn<ManagedInstallImpl>(async ({ installId }) => ({
+      result: { installId, ok: true },
+      resolvedPath: '/data/opencode-managed/bin/opencode',
+      version: '1.18.3'
+    }))
+    const service = createService(undefined, {
+      probeRegistry: async (registry) => {
+        if (registry === 'npmjs') {
+          await new Promise((resolve) => setTimeout(resolve, 25))
+          return 25
+        }
+        return 5
+      },
+      installManagedOpencodeImpl
+    })
+
+    await service.installOpencode({ source: 'managed' }, () => undefined)
+
+    expect(installManagedOpencodeImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registries: ['https://registry.npmmirror.com', 'https://registry.npmjs.org']
+      })
+    )
   })
 })
 

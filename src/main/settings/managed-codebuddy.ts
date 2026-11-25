@@ -15,18 +15,22 @@ import { Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
 
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import { CODEBUDDY_VERSION } from './codebuddy-install'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
   defaultFetchTarball,
+  describeManagedInstallError,
   downloadAndVerify,
   type FetchJson,
   type FetchTarball,
   type ManagedInstallOutcome
 } from './managed-claude'
 import { runVerificationProcess } from '../update/verification-process'
+
+const log = createLogger('managed-codebuddy')
 
 const CODEBUDDY_PACKAGE = '@tencent-ai/codebuddy-code'
 export { CODEBUDDY_VERSION } from './codebuddy-install'
@@ -356,7 +360,7 @@ export type InstallManagedCodeBuddyOptions = {
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
   dataRoot: string
-  registries?: string[]
+  registries?: readonly string[]
   version?: string
   platform?: NodeJS.Platform
   execPath?: string
@@ -476,7 +480,12 @@ export const installManagedCodeBuddy = async ({
         version: verifiedVersion
       }
     } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error)
+      lastError = describeManagedInstallError(error)
+      log.warn('managed CodeBuddy registry attempt failed', {
+        installId,
+        registry,
+        error: lastError
+      })
       onEvent({
         kind: 'log',
         installId,

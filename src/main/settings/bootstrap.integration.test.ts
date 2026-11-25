@@ -91,6 +91,7 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
       resolveNpmBinDirs: async () => []
     },
     installManagedCodexImpl: install,
+    probeRegistry: async () => 10,
     codexAuth: {
       getStatus: status,
       loginIsolated: status,

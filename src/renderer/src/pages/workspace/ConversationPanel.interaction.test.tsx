@@ -4,6 +4,12 @@ import {
   useWorkspaceElicitationFailures
 } from '@/lib/acp/useWorkspaceElicitation'
 import { applyWorkspaceRuntimeEvent } from '@/lib/acp/workspace-events'
+import type { ElicitationResponse } from '../../../../shared/elicitation'
+import {
+  EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE
+} from '../../../../shared/failure/messages'
+import { getResumeFailureMessage } from '@/lib/acp/workspace-runtime-prompt-preparation-owner'
 import {
   reportWorkspaceOperationError,
   clearWorkspaceOperationError,
@@ -3942,6 +3948,148 @@ describe('ConversationPanel composer intake', () => {
     expect(getComposerForm().hidden).toBe(false)
     expect(container.textContent).not.toContain('Waiting for a response')
   })
+
+  it.each([NO_ACTIVE_PROVIDER_MESSAGE, EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE])(
+    'shows the current question recovery even when older questions still appear to be waiting (%s)',
+    async (providerError) => {
+      const prompts = ['old-wait', 'old-error', 'current']
+      let stored: PersistedChatSession = materializeSessionConversationGraph({
+        id: 'saved-ask-user-recovery',
+        projectId: 'project-a',
+        title: 'Saved Ask User recovery',
+        cwd: '/workspace',
+        status: 'waiting-for-user',
+        runtimeTranscriptOwner: 'main',
+        messages: [
+          ...prompts.map((key, index) => ({
+            id: key,
+            role: 'user' as const,
+            content: 'Choose an option.',
+            status: 'complete' as const,
+            eventIds: [],
+            createdAt: index * 3 + 1,
+            updatedAt: index * 3 + 1
+          })),
+          {
+            id: 'steering',
+            role: 'user',
+            responseToMessageId: 'current',
+            content: 'Focus on the latest results.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 10,
+            updatedAt: 10
+          }
+        ],
+        activities: prompts.map((key, index) => ({
+          id: key + '-question',
+          kind: 'tool' as const,
+          title: 'Choose an option',
+          status: 'completed' as const,
+          eventIds: [],
+          promptMessageId: key,
+          sortIndex: index * 3 + 2,
+          createdAt: index * 3 + 2,
+          updatedAt: index * 3 + 3,
+          elicitation: {
+            message: 'Choose an option.',
+            fields: [],
+            state: 'declined' as const,
+            respondedAt: index * 3 + 3,
+            continuationPending: true as const,
+            continuationRecovery:
+              key === 'old-wait'
+                ? undefined
+                : {
+                    error:
+                      key === 'old-error'
+                        ? 'Previous question failed'
+                        : `Error invoking remote method 'acp:resume-session': ApplicationCommandError: ${providerError}`
+                  },
+            durable: {
+              kind: 'agent-user-choice' as const,
+              requestId: key + '-request',
+              promptMessageId: key
+            }
+          }
+        })),
+        createdAt: 1,
+        updatedAt: 10
+      })
+      const owner = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => structuredClone(stored),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          stored = mutate(structuredClone(stored))
+          return structuredClone(stored)
+        }
+      })
+      const respond = vi.fn(async ({ action, request, requestId }: ElicitationResponse) => {
+        if (!request) throw new Error('Missing question request')
+        await owner.prepareElicitation({
+          projectId: stored.projectId,
+          sessionId: stored.id,
+          toolCallId: request.toolCallId,
+          requestId,
+          action
+        })
+      })
+      const activeSession = hydrateSession(stored)
+      expect(pendingWorkspaceElicitations(activeSession).map(({ requestId }) => requestId)).toEqual(
+        ['current-request']
+      )
+
+      renderPanel({
+        view: { activeSession },
+        elicitation: { requests: pendingWorkspaceElicitations(activeSession), respond },
+        agentControls: {
+          modelUnavailable: true,
+          modelConfiguration: {
+            providerId: 'removed',
+            model: 'old-model',
+            reasoningEffort: 'default'
+          }
+        }
+      })
+
+      expect(
+        container.querySelector('[data-testid="elicitation-continuation-progress"]')
+      ).toBeNull()
+      const recovery = container.querySelector('[data-testid="elicitation-recovery"]')
+      expect(recovery?.textContent).toContain('Session model unavailable')
+      expect(recovery?.textContent).toContain('Your response was saved.')
+      expect(recovery?.textContent).toContain(
+        'Select “End this wait”, then choose an available model in the message composer.'
+      )
+      expect(recovery?.textContent).toContain(providerError)
+      expect(recovery?.textContent).not.toContain('Previous question failed')
+      expect(recovery?.querySelector('[data-testid="mock-model-picker"]')).toBeNull()
+      expect(recovery?.textContent).not.toContain('Retry continuation')
+
+      await act(async () =>
+        [...(recovery?.querySelectorAll('button') ?? [])]
+          .find((button) => button.textContent === 'End this wait')!
+          .click()
+      )
+
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'current-request', action: 'cancel' })
+      )
+      expect(stored.status).toBe('idle')
+      expect(stored.activities?.[0].elicitation?.continuationPending).toBe(true)
+      expect(stored.activities?.[1].elicitation?.continuationRecovery?.error).toBe(
+        'Previous question failed'
+      )
+
+      // Even when a legacy status says "waiting", recorded older questions do not block the composer.
+      const settled = hydrateSession({ ...stored, status: 'waiting-for-user' })
+      renderPanel({ view: { activeSession: settled }, elicitation: { requests: [], respond } })
+      expect(pendingWorkspaceElicitations(settled)).toEqual([])
+      expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+      const composer = container.querySelector('[data-testid="ordinary-composer-form"]')
+      expect(composer?.hasAttribute('inert')).toBe(false)
+      expect(composer?.querySelector('[data-testid="mock-model-picker"]')).not.toBeNull()
+    }
+  )
 
   it('retains the saved-question recovery exit after navigating away during a failed recovery write', async () => {
     const session: ChatSession = {
@@ -10308,6 +10456,32 @@ describe('ConversationPanel unified failure notices', () => {
     await act(async () => action('resume')?.click())
     expect(resume).toHaveBeenCalledOnce()
     expect(revise).not.toHaveBeenCalled()
+  })
+
+  it('directs resume failures for a missing saved provider to the conversation model picker', () => {
+    const activeSession = { ...errorSession, status: 'idle' as const, error: undefined }
+    const raw = new Error(
+      `Error invoking remote method 'acp:resume-session': ApplicationCommandError: ${EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE}`
+    )
+    const message = getResumeFailureMessage(raw)
+    expect(message).toBe(EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE)
+
+    act(() =>
+      reportWorkspaceOperationError(activeSession.id, message, {
+        operation: 'resume',
+        rawError: raw
+      })
+    )
+    renderPanel({ view: { activeSession, actionError: message } })
+
+    expect(slot()?.querySelector('h2')?.textContent).toBe('Session model unavailable')
+    expect(slot()?.textContent).toContain(
+      "Choose an available model in this conversation's model picker, then try again."
+    )
+    expect(action('open-provider-settings')).toBeNull()
+    expect(action('retry')).toBeNull()
+    expect(slot()?.querySelector('pre')?.textContent).toContain(raw.message)
+    act(() => clearWorkspaceOperationError(activeSession.id))
   })
 
   it.each([false, true])(
