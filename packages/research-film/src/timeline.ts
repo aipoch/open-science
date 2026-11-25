@@ -129,13 +129,17 @@ function alignWords(
       return [words[index], start + a, start + b]
     })
   }
+  return estimateWordTimings(words, duration).map(([a, b], i) => [words[i], start + a, start + b])
+}
+
+export function estimateWordTimings(words: string[], duration: number): VoiceTiming['words'] {
   const weights = words.map((w) => w.length + 2 + (punctuation.test(w) ? 4 : 0))
   const total = weights.reduce((a, b) => a + b, 0)
   let elapsed = 0
-  return words.map((word, i) => {
-    const a = start + (duration * elapsed) / total
-    elapsed += weights[i]
-    return [word, a, start + (duration * elapsed) / total]
+  return weights.map((weight) => {
+    const a = (duration * elapsed) / total
+    elapsed += weight
+    return [a, (duration * elapsed) / total]
   })
 }
 

@@ -128,5 +128,8 @@ it('stamps the remote identity on generation-side synthesizer proxies', async ()
   expect(mocks.remoteIdentity).toHaveBeenCalledExactlyOnceWith(speech)
   expect(generateResearchVideoInWorker).toHaveBeenCalledOnce()
   const synthesizers = vi.mocked(generateResearchVideoInWorker).mock.calls[0][2]
-  expect(synthesizers[0].identity).toBe('remote-http/identity')
+  expect(synthesizers[0]).toMatchObject({
+    identity: 'remote-http/identity',
+    proportionalTiming: true
+  })
 })

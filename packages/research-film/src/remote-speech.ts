@@ -34,19 +34,9 @@ export type RemoteSpeechConfig = {
 
 const DEFAULT_TIMEOUT_MS = 60_000
 const MAX_WAV_BYTES = 64 * 1024 * 1024
-/**
- * Speaking-rate assumption for word-boundary probes. Estimates are a pure function of the
- * probe text, so narration's shared probe cache stays coherent across lines and lanes; the
- * real line duration anchors the computed boundaries.
- */
+// A standalone duration estimate for callers without synthesized audio yet.
 const ESTIMATED_CHARS_PER_SECOND = 15
-/**
- * Query-parameter name fragments that indicate a credential. The endpoint URL is persisted
- * verbatim (origin + path + query) into the synthesizer identity and therefore into
- * `timings.json`, which ships inside the generated player/source archive — a credential
- * in the query string would leak into the artifact and onto the wire. Non-sensitive routing
- * parameters (region, tenant, api-version, …) stay allowed.
- */
+// Keep credentials in authorization headers when making requests.
 const SENSITIVE_QUERY_PARTS = new Set([
   'key',
   'apikey',
@@ -116,15 +106,7 @@ const parseEndpoint = (endpoint: string): URL => {
   return url
 }
 
-/**
- * Stable cache and checkpoint identity for a remote backend. The unique suffix is a hash of
- * the structured tuple (style, full endpoint, model, voice), so separator-bearing values can
- * never collide through string concatenation — endpoint `…/speech` + model `tts-1` and
- * endpoint `…/audio` + model `speech/tts-1` hash differently. The raw voice never appears in
- * the result, so a base64 reference sample cannot reach `timings.json` or the narration cache
- * key, and the API key is never part of the tuple. Credential-bearing endpoints are rejected
- * before any derivation, so a secret can never be persisted through the identity.
- */
+/** Cache identity shared with exported artifacts. Only the protocol and digest are public. */
 export const remoteSpeechIdentity = (config: RemoteSpeechConfig): string => {
   const url = parseEndpoint(config.endpoint)
   const endpoint = `${url.origin}${url.pathname}${url.search}`
@@ -133,8 +115,7 @@ export const remoteSpeechIdentity = (config: RemoteSpeechConfig): string => {
   const fingerprint = createHash('sha256')
     .update(JSON.stringify([config.style, endpoint, config.model, config.voice ?? '']))
     .digest('hex')
-    .slice(0, 16)
-  return `remote-http/${config.style}/${endpoint}/${config.model}/${fingerprint}`
+  return `remote-http/${config.style}/${fingerprint}`
 }
 
 const readTag = (view: DataView, offset: number): string =>
@@ -162,8 +143,11 @@ export const decodeWav = (bytes: Uint8Array): { samples: Float32Array; sampleRat
     dataLength = 0
   while (offset + 8 <= bytes.byteLength) {
     const tag = readTag(view, offset)
-    const size = view.getUint32(offset + 4, true)
+    const declaredSize = view.getUint32(offset + 4, true)
     const body = offset + 8
+    // Pipe writers cannot seek back to fill in the final data chunk length.
+    const size =
+      tag === 'data' && declaredSize === 0xffffffff ? bytes.byteLength - body : declaredSize
     if (body + size > bytes.byteLength) throw new Error('Remote speech WAV chunk is truncated')
     if (tag === 'fmt ') {
       if (size < 16) throw new Error('Remote speech WAV format chunk is invalid')
@@ -192,7 +176,8 @@ export const decodeWav = (bytes: Uint8Array): { samples: Float32Array; sampleRat
     throw new Error(
       `Remote speech WAV encoding (format ${format}, ${bits}-bit) is not supported; request wav output`
     )
-  const frames = Math.floor(dataLength / frameBytes)
+  const frames = dataLength / frameBytes
+  if (!Number.isInteger(frames)) throw new Error('Remote speech WAV contains a partial audio frame')
   if (frames < 1) throw new Error('Remote speech WAV contains no audio frames')
   const sample = (index: number): number => {
     const at = dataOffset + index * bytesPerSample
@@ -284,10 +269,7 @@ const readBounded = async (response: Response): Promise<Uint8Array> => {
 }
 
 /**
- * `SpeechSynthesizer` over an HTTP TTS endpoint. Word boundaries use a character-proportional
- * estimate that is a pure function of the probe text, so the narration probe cache stays
- * coherent across lines and lanes and never issues extra billed requests; exact timing remains
- * the local engine's advantage.
+ * Remote narration aligns captions against the duration of the returned PCM.
  *
  * `deps.fetch` lets the host inject a proxy-aware transport (the default is the platform
  * fetch), so remote requests follow the host's network policy instead of bypassing it.
@@ -351,6 +333,7 @@ export const createRemoteSpeechSynthesizer = (
 
   return {
     identity,
+    proportionalTiming: true,
     synthesize: request,
     async measureDuration(text) {
       const estimate = text.length / ESTIMATED_CHARS_PER_SECOND

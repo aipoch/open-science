@@ -73,6 +73,16 @@ describe('decodeWav', () => {
     expect(() => decodeWav(new Uint8Array(bytes))).toThrow(/missing its data chunk/)
   })
 
+  it('decodes pipe WAV data through EOF and rejects incomplete stereo frames', () => {
+    const bytes = wav([1, -1, 0.5, -0.5], 24000, 2)
+    bytes.writeUInt32LE(0xffffffff, 4)
+    bytes.writeUInt32LE(0xffffffff, 40)
+    expect(decodeWav(bytes).samples).toHaveLength(2)
+    expect(() => decodeWav(bytes.subarray(0, -2))).toThrow(/partial audio frame/)
+    bytes.writeUInt32LE(0xffffffff, 16)
+    expect(() => decodeWav(bytes)).toThrow(/truncated/)
+  })
+
   it('rejects truncated chunk payloads', () => {
     const bytes = wav([1, 1, 1, 1])
     bytes.writeUInt32LE(bytes.length, 40)
@@ -95,8 +105,10 @@ describe('remoteSpeechIdentity', () => {
     apiKey: 'secret-key'
   }
 
-  it('never embeds the API key', () => {
-    expect(remoteSpeechIdentity(base)).not.toContain('secret-key')
+  it('exposes only protocol and digest in the exported identity', () => {
+    expect(remoteSpeechIdentity({ ...base, endpoint: base.endpoint + '?tenant=internal' })).toMatch(
+      /^remote-http\/chat-completions\/[0-9a-f]{64}$/
+    )
   })
 
   it('hashes a voice sample instead of embedding it', () => {

@@ -75,18 +75,13 @@ const result = await generateResearchFilm({
 })
 ```
 
-Word-boundary alignment uses a deterministic character-proportional duration estimate that is a
-pure function of the probe text, so the shared narration probe cache stays coherent across lines
-and lanes and caption timing never triggers extra billed requests; exact prefix probing remains
-a local-engine advantage. Endpoints must be plain http(s) URLs without userinfo and without
-credential-bearing query parameters (`api_key`, `token`, `signature`, …): because the endpoint is
-persisted verbatim in the synthesizer identity, such credentials are rejected before identity
-derivation and before any request — pass credentials through `apiKey` (the `Authorization`
-header) instead; non-sensitive routing parameters such as `region` or `tenant` remain allowed.
-The synthesizer identity appends a SHA-256 fingerprint over the
-canonical tuple (style, full endpoint, model, voice), so slash-bearing values cannot collide and
-`timings.json` and narration checkpoint keys stay credential-free and never reuse retained audio
-across endpoint changes. Responses are read through a bounded stream with a hard byte cap, and
+Remote captions distribute each chunk's measured audio duration across its spoken words by
+character count and punctuation, without additional HTTP requests. Local Kokoro retains its
+prefix and suffix timing probes. Endpoints must use HTTP(S) and reject URL userinfo and
+credential-bearing query parameters. Pass credentials through `apiKey`. The engine identity in
+`timings.json` and the source archive contains only the protocol and a SHA-256 digest of the
+endpoint, model, and voice configuration. Changing any of these invalidates retained speech.
+Responses are read through a bounded stream with a hard byte cap, and
 every early rejection releases the response body, before decoding. Endpoints
 must return WAV (PCM 16/24/32-bit or IEEE float32); compressed audio is rejected with an
 actionable error. The host remains responsible for credentials, disclosure of narration text to

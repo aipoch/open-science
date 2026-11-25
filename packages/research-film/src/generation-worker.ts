@@ -86,6 +86,7 @@ if ('kind' in input && input.kind === 'speech') {
   const synthesizers: SpeechSynthesizer[] = Array.from(
     { length: generation.speechConcurrency ?? 1 },
     (_, lane) => ({
+      proportionalTiming: Boolean(generation.speech),
       identity: generation.speech
         ? remoteSpeechIdentity(generation.speech)
         : 'kokoro-js-1.2.1/af_heart/q8/speed-1',
