@@ -89,7 +89,6 @@ type ProviderStepProps = {
   onBusyChange?: (busy: boolean) => void
   onAdvanced?: () => void
   onSkip?: () => void | Promise<void>
-  isSkipping?: boolean
   skipError?: OnboardingFailure & { onDismiss: () => void }
   operation: ProviderStepOperation
 }
@@ -194,7 +193,6 @@ const ProviderStep = ({
   onBusyChange,
   onAdvanced,
   onSkip,
-  isSkipping: entryIsSkipping = false,
   skipError,
   operation
 }: ProviderStepProps): React.JSX.Element => {
@@ -247,6 +245,7 @@ const ProviderStep = ({
   const [isSaving, setIsSaving] = useState(false)
   const [isSkipping, setIsSkipping] = useState(false)
   const busy = operation.pending
+  const quickBusy = busy || isSaving
   const mounted = useRef(false)
   useEffect(() => {
     mounted.current = true
@@ -442,7 +441,7 @@ const ProviderStep = ({
     valueOverride?: ProviderFormValue,
     signal?: AbortSignal
   ): Promise<void> => {
-    if (!canContinue || busy) return
+    if (!canContinue) return
     const value = valueOverride ?? formValue
     // Quick subscription selection may have just switched frameworks; use the persisted snapshot.
     const currentSettings = useSettingsStore.getState()
@@ -483,7 +482,8 @@ const ProviderStep = ({
       return
     }
 
-    if (!operation.begin()) return
+    // Quick authorization already owns the operation while preparing its runtime.
+    if (!signal && !operation.begin()) return
     setIsSaving(true)
     setValidationMessage(undefined)
 
@@ -712,8 +712,10 @@ const ProviderStep = ({
         )
       }
     } finally {
-      operation.finish()
-      if (!signal) setIsSaving(false)
+      if (!signal) {
+        operation.finish()
+        setIsSaving(false)
+      }
     }
   }
 
@@ -822,14 +824,14 @@ const ProviderStep = ({
     card: QuickProviderCard,
     mode: 'account' | 'key' | CodexAuthMode
   ): Promise<void> => {
-    if (isSaving || quickAuth.current) return
+    if (quickBusy || quickAuth.current) return
     if (card.kindKey === 'custom') {
       onAdvanced?.()
       return
     }
 
     const kindKey = mode === 'key' ? card.kindKey : card.subscriptionKind
-    if (!kindKey) return
+    if (!kindKey || (mode !== 'key' && !operation.begin())) return
 
     const nextValue = {
       ...createEmptyProviderFormValue(providerKindPatch(kindKey)),
@@ -893,11 +895,9 @@ const ProviderStep = ({
         details: onboardingErrorMessage(error, card.id)
       })
     } finally {
-      if (quickAuth.current === attempt) {
-        if (!attempt.signal.aborted) {
-          quickAuth.current = undefined
-          setAuthStage(undefined)
-        }
+      if (quickAuth.current === attempt && !attempt.signal.aborted) {
+        quickAuth.current = undefined
+        setAuthStage(undefined)
         operation.finish()
         setIsSaving(false)
       }
@@ -939,6 +939,7 @@ const ProviderStep = ({
   }
 
   const handleQuickKeyChange = (card: QuickProviderCard, key: string): void => {
+    if (quickBusy) return
     if (installError) {
       setInstallError(undefined)
       setValidationMessage(undefined)
@@ -955,7 +956,7 @@ const ProviderStep = ({
   }
 
   const handleQuickKeySubmit = (card: QuickProviderCard): void => {
-    if (isSaving) return
+    if (quickBusy) return
     setInstallError(undefined)
     setQuickCardId(card.id)
     const nextValue = {
@@ -1041,7 +1042,7 @@ const ProviderStep = ({
                               id={`onboarding-key-${card.id}`}
                               type="password"
                               value={quickKeys[card.id] ?? ''}
-                              disabled={isSaving}
+                              disabled={quickBusy}
                               onChange={(event) => handleQuickKeyChange(card, event.target.value)}
                               placeholder={t('Enter your API key')}
                               autoComplete="off"
@@ -1052,7 +1053,7 @@ const ProviderStep = ({
                               size="icon"
                               aria-label={t('Test connection and connect')}
                               title={t('Test connection and connect')}
-                              disabled={isSaving}
+                              disabled={quickBusy}
                             >
                               {isSaving && quickCardId === card.id ? (
                                 <LoaderCircle
@@ -1071,6 +1072,7 @@ const ProviderStep = ({
                             <button
                               type="button"
                               className="onboarding-provider-card-link"
+                              disabled={quickBusy}
                               onClick={() => {
                                 setQuickMode(undefined)
                                 setQuickCardId(undefined)
@@ -1114,7 +1116,7 @@ const ProviderStep = ({
                                   key={mode}
                                   type="button"
                                   size="sm"
-                                  disabled={isSaving}
+                                  disabled={quickBusy}
                                   className="h-auto min-w-0 py-1.5 text-xs whitespace-normal"
                                   onClick={() => void chooseQuickProvider(card, mode)}
                                 >
@@ -1133,7 +1135,7 @@ const ProviderStep = ({
                                     ? undefined
                                     : () => void chooseQuickProvider(card, 'account')
                                 }
-                                disabled={isSaving}
+                                disabled={quickBusy}
                                 aria-busy={isAuthorizing}
                                 className="min-w-0 flex-1"
                               >
@@ -1165,7 +1167,7 @@ const ProviderStep = ({
                             type="button"
                             className="onboarding-provider-card-link"
                             onClick={() => void chooseQuickProvider(card, 'key')}
-                            disabled={isSaving}
+                            disabled={quickBusy}
                           >
                             {t('Have an API key?')}
                           </button>
@@ -1187,6 +1189,7 @@ const ProviderStep = ({
                 installCard.id === 'openai'
                   ? {
                       label: t('Retry'),
+                      disabled: quickBusy,
                       onClick: () => void chooseQuickProvider(installCard, 'codex-isolated')
                     }
                   : undefined
@@ -1221,7 +1224,7 @@ const ProviderStep = ({
             <OnboardingErrorNotice failure={skipError} onDismiss={skipError.onDismiss} />
           ) : null}
           <footer className="onboarding-quick-footer">
-            <Button type="button" variant="ghost" onClick={onBack} disabled={isSaving}>
+            <Button type="button" variant="ghost" onClick={onBack} disabled={quickBusy}>
               {t('Back', { context: 'step' })}
             </Button>
             <div>
@@ -1230,7 +1233,7 @@ const ProviderStep = ({
                 variant="ghost"
                 data-onboarding-action="skip"
                 onClick={onSkip}
-                disabled={isSaving || entryIsSkipping}
+                disabled={quickBusy}
               >
                 <span aria-hidden="true">↗</span>
                 {t('Skip to access free Kilo models.')}
@@ -1240,7 +1243,7 @@ const ProviderStep = ({
                 variant="ghost"
                 data-onboarding-action="advanced"
                 onClick={onAdvanced}
-                disabled={isSaving || entryIsSkipping}
+                disabled={quickBusy}
               >
                 <Settings2 aria-hidden="true" />
                 {t('Advanced options')}

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { OnboardingWizard } from './OnboardingWizard'
 import {
   clickButton,
+  findButton,
   fillRequiredProviderFields,
   readyBuiltInState,
   resetOnboardingStores,
@@ -246,6 +247,46 @@ describe('Onboarding entry flow', () => {
     expect(skip.disabled).toBe(false)
     await act(async () => fireEvent.keyDown(skip, { key: 'Escape' }))
     expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
+  })
+
+  it('blocks competing quick actions until a pending Kilo skip settles', async () => {
+    const pending = Promise.withResolvers<void>()
+    const addOnboardingKiloProvider = vi.fn().mockReturnValue(pending.promise)
+    const saveValidatedProvider = vi.fn()
+    const saveProvider = vi.fn()
+    useSettingsStore.setState({ addOnboardingKiloProvider, saveValidatedProvider, saveProvider })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    const key = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
+    await act(async () => fireEvent.change(key, { target: { value: 'valid' } }))
+    await clickButton(/free Kilo models/)
+    const skip = findButton(/free Kilo models/)!
+    const controls = [
+      key,
+      key.form!.querySelector('button')!,
+      findButton(/^Back$/)!,
+      findButton(/Advanced options/)!,
+      findButton(/Import existing Codex sign-in/)!,
+      skip
+    ]
+    for (const control of controls) {
+      expect(control.disabled).toBe(true)
+      await act(async () => control.click())
+    }
+    await act(async () => {
+      fireEvent.submit(key.form!)
+      fireEvent.keyDown(container.querySelector('[role="dialog"]')!, { key: 'Escape' })
+    })
+    expect(addOnboardingKiloProvider).toHaveBeenCalledOnce()
+    expect(saveValidatedProvider).not.toHaveBeenCalled()
+    expect(saveProvider).not.toHaveBeenCalled()
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-onboarding-entry="connect"]')).not.toBeNull()
+    await act(async () => pending.reject(new Error('offline')))
+    for (const control of controls) expect(control.disabled).toBe(false)
+    await clickButton(/Advanced options/)
+    expect(container.querySelector('[data-onboarding-entry="advanced"]')).not.toBeNull()
   })
 
   it('provisions free Kilo after an invalid quick key and Skip', async () => {

@@ -223,11 +223,11 @@ const OnboardingWizard = ({
     !isCheckingEnvironment &&
     environmentCheck?.ready === true &&
     environmentCheck.agentFrameworkId === agentFrameworkId
-  const [isSkipping, setIsSkipping] = useState(false)
   const [skipError, setSkipError] = useState<OnboardingFailure>()
   const dialogRef = useRef<HTMLDivElement>(null)
   const previousDialogFocus = useRef<HTMLElement | null>(null)
   const providerOperation = useProviderStepOperation()
+  const { begin: beginProviderOperation, finish: finishProviderOperation } = providerOperation
   const stepCard = useRef<HTMLDivElement>(null)
   const previousStep = useRef(step)
   useEffect(() => {
@@ -312,8 +312,7 @@ const OnboardingWizard = ({
     setEntryPhase('ready')
   }, [])
   const skipEntry = useCallback(async (): Promise<void> => {
-    if (isSkipping) return
-    setIsSkipping(true)
+    if (!beginProviderOperation()) return
     setSkipError(undefined)
     try {
       await addOnboardingKiloProvider()
@@ -324,9 +323,15 @@ const OnboardingWizard = ({
         details: onboardingErrorMessage(error, 'addOnboardingKiloProvider / completeOnboarding')
       })
       setEntryPhase('connect')
-      setIsSkipping(false)
+      finishProviderOperation()
     }
-  }, [addOnboardingKiloProvider, completeOnboarding, isSkipping, t])
+  }, [
+    addOnboardingKiloProvider,
+    beginProviderOperation,
+    completeOnboarding,
+    finishProviderOperation,
+    t
+  ])
 
   const handleAdvancedProviderAdvance = useCallback(
     (method: 'account' | 'api-key' = 'api-key'): void => {
@@ -395,7 +400,7 @@ const OnboardingWizard = ({
 
     dialog.addEventListener('keydown', handleKeyDown)
     return () => dialog.removeEventListener('keydown', handleKeyDown)
-  }, [entryPhase, isSkipping, showWelcome, skipEntry])
+  }, [entryPhase, showWelcome, skipEntry])
 
   const didRequestCheck = useRef(false)
   const didKickEnv = useRef(false)
@@ -607,7 +612,6 @@ const OnboardingWizard = ({
               onAdvance={openReadyEntry}
               onAdvanced={openAdvancedEntry}
               onSkip={skipEntry}
-              isSkipping={isSkipping}
               skipError={skipError && { ...skipError, onDismiss: () => setSkipError(undefined) }}
             />
           ) : entryPhase === 'advanced' ? (
