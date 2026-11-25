@@ -122,16 +122,16 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
               : welcomeAnimationAssetUrls[asset.id]
           return assetUrl ? { ...asset, p: assetUrl, u: '', e: 0 } : asset
         })
-        animationData.layers = animationData.layers.map((layer) => {
-          if (layer.refId === 'agents-5') return { ...layer, cl: 'onboarding-lottie-logo' }
-          if (layer.refId !== 'center') return layer
+        for (const layer of animationData.layers) {
+          if (layer.refId !== 'agents-5' && layer.refId !== 'center') continue
+          layer.cl = 'onboarding-lottie-logo'
+          if (layer.refId !== 'center') continue
           // Enlarge the symbol throughout convergence, so completion never swaps its size.
           for (const frame of layer.ks.s.k) {
             frame.s = frame.s.map((value, index) => (index < 2 ? value * 1.36 : value))
             frame.e = frame.e.map((value, index) => (index < 2 ? value * 1.36 : value))
           }
-          return { ...layer, cl: 'onboarding-lottie-logo' }
-        })
+        }
         animation = lottie.loadAnimation({
           container,
           renderer: 'svg',
