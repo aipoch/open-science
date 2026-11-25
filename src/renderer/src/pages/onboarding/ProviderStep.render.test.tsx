@@ -1524,9 +1524,7 @@ describe('ProviderStep', () => {
     const footerRule = css.match(
       /\.onboarding-quick-footer,\n\.onboarding-ready-actions \{[\s\S]*?\n\}/
     )?.[0]
-    const readyActionsRule = css.match(
-      /\.onboarding-ready-actions \{\n  margin-top: auto;\n\}/
-    )?.[0]
+    const readyActionsRule = css.match(/\.onboarding-ready-actions \{\s+margin-top: auto;\n\}/)?.[0]
 
     expect(footerRule).toBeDefined()
     expect(readyActionsRule).toBeDefined()
