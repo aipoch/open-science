@@ -9,6 +9,7 @@ import { ScrollBar } from '@/components/ui/scroll-area'
 import { ErrorNotice } from '@/components/error-notice'
 import type { UseCase } from '../../../../shared/use-cases'
 import type { UseCaseIntroductionLoader } from './use-case-introduction-loader'
+import { UseCaseVideo } from './UseCaseVideo'
 import { UseCaseCover } from './UseCaseCover'
 
 // Resolve published relative resources without allowing executable URLs or raw HTML.
@@ -137,6 +138,7 @@ const UseCaseIntroduction = ({
 export type UseCaseDetailsContentProps = {
   item: UseCase
   introductions: UseCaseIntroductionLoader
+  videoActive?: boolean
   onOpenMarketplace?: () => void
   renderImport: (item: UseCase) => ReactNode
   renderDownloadStatus: (item: UseCase) => ReactNode
@@ -145,6 +147,7 @@ export type UseCaseDetailsContentProps = {
 export const UseCaseDetailsContent = ({
   item,
   introductions,
+  videoActive = true,
   onOpenMarketplace,
   renderImport,
   renderDownloadStatus
@@ -183,6 +186,9 @@ export const UseCaseDetailsContent = ({
       <div data-case-detail-scroll className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2">
         <div className="relative mx-auto mb-8 aspect-[16/9] w-full max-w-[640px] overflow-hidden rounded-xl border border-border">
           <UseCaseCover key={item.imageUrl} src={item.imageUrl} />
+          {videoActive && item.video && (
+            <UseCaseVideo key={item.video.id} video={item.video} title={item.title} />
+          )}
         </div>
         <UseCaseIntroduction
           key={item.introductionUrl ?? item.slug}

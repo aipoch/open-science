@@ -23,12 +23,38 @@ const filename = z
       value !== '.' &&
       value !== '..'
   )
+const videoId = z.string().regex(/^[A-Za-z0-9_-]{11}$/)
+const videoSchema = z.object({ id: videoId, title: z.string().optional() })
+const publishedVideo = z.object({
+  type: z.literal('youtube'),
+  file_path: z.string().max(2048),
+  file_name: z.string().max(1000).optional().catch(undefined)
+})
+
+function parseVideo(value: unknown): z.infer<typeof videoSchema> | undefined {
+  const parsed = publishedVideo.safeParse(value)
+  if (!parsed.success || !URL.canParse(parsed.data.file_path)) return
+  const url = new URL(parsed.data.file_path)
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) return
+  let id: string | null | undefined
+  if (url.hostname === 'youtu.be') id = url.pathname.slice(1)
+  else if (['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(url.hostname)) {
+    id =
+      url.pathname === '/watch'
+        ? url.searchParams.get('v')
+        : /^\/(?:embed|shorts)\/([^/]+)$/.exec(url.pathname)?.[1]
+  }
+  if (!id || !videoId.safeParse(id).success) return
+  return { id, title: parsed.data.file_name }
+}
+
 const manifestSchema = z
   .array(
     z.object({
       name: useCaseSourceSchema.shape.useCase,
       title: z.string().trim().min(1).max(1000),
       cover: z.object({ file_name: filename }),
+      video: z.unknown().optional().transform(parseVideo),
       catalog: z.string().trim().max(200).optional(),
       catalog_name: z.string().trim().max(200).optional(),
       introduction: z.object({ file_name: filename }).optional(),
@@ -49,6 +75,7 @@ export type UseCase = {
   slug: string
   title: string
   imageUrl: string
+  video?: z.infer<typeof videoSchema>
   packageUrl: string
   sizeBytes: number
   sha256: string
@@ -69,6 +96,7 @@ export const parseUseCases = (value: unknown): UseCase[] => {
       slug: item.name,
       title: item.title,
       imageUrl: resource(item.cover.file_name),
+      ...(item.video ? { video: item.video } : {}),
       packageUrl: resource(item.case.file_name),
       sizeBytes: item.case.bytes,
       sha256: item.case.sha256.toLowerCase(),
@@ -88,6 +116,7 @@ export const useCaseCatalogContract = defineApplicationCommandContract(
       slug: useCaseSourceSchema.shape.useCase,
       title: z.string(),
       imageUrl: z.string(),
+      video: videoSchema.optional(),
       packageUrl: z.string(),
       sizeBytes: z.number(),
       sha256: z.string(),

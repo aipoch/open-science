@@ -897,6 +897,10 @@ describe('startWebHttpServer', () => {
         directives.get('script-src') ??
         directives.get('default-src')
       expect(workerSources).toContain('blob:')
+      expect(directives.get('frame-src')).toEqual([
+        "'self'",
+        'https://www.youtube-nocookie.com/embed/'
+      ])
       expect(directives.get('script-src')).toEqual(["'self'"])
       expect(response.headers.get('x-frame-options')).toBe('DENY')
       expect(response.headers.get('referrer-policy')).toBe('no-referrer')

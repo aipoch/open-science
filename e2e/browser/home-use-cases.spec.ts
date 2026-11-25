@@ -1818,3 +1818,59 @@ test('workspace drag cursor crosses iframe previews and restores on release', as
     page.frameLocator('iframe[title="Resize cursor preview"]').locator('body')
   ).toHaveCSS('cursor', 'crosshair')
 })
+
+test('keeps the cover while a video starts, stops previews on leave, and plays inside details', async ({
+  page
+}) => {
+  const video = {
+    type: 'youtube',
+    file_path: 'https://youtu.be/OThnK2w5mMg',
+    file_name: 'Example film'
+  }
+  await page.route('**/usecases/manifest.json', (route) =>
+    route.fulfill({ json: [{ ...catalog[0], video }, ...catalog.slice(1)] })
+  )
+  // The embedded document is a separate origin. Hold its playback event independently of iframe load.
+  await page.route('https://www.youtube-nocookie.com/embed/**', (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><title>Player fixture</title>'
+    })
+  )
+  await page.goto('/home-use-cases.html')
+  const card = page.getByRole('article').first()
+  const imageOnly = page.getByRole('article').nth(1)
+  const frame = page.locator('iframe[title="Example film"]')
+  await expect(card.locator('svg.lucide-play')).toBeVisible()
+  await imageOnly.hover()
+  await expect(imageOnly.locator('svg.lucide-play')).toHaveCount(0)
+  await expect(frame).toHaveCount(0)
+  await card.hover()
+  await expect(frame).toHaveAttribute('src', /controls=0/)
+  await expect(frame.locator('..')).toHaveCSS('opacity', '0')
+  await expect(card.locator('img')).toBeVisible()
+  const report = async (event: string, info?: number): Promise<void> => {
+    const body = frame.contentFrame().locator('body')
+    await body.evaluate((_, data) => parent.postMessage(JSON.stringify(data), '*'), { event, info })
+  }
+  await report('onStateChange', 1)
+  await expect(frame.locator('..')).toHaveCSS('opacity', '1')
+  await expect(frame).toHaveAttribute('tabindex', '-1')
+  await imageOnly.hover()
+  await expect(frame).toHaveCount(0)
+  await card.getByRole('button').focus()
+  await expect(frame).toHaveCount(1)
+  await card.getByRole('button').press('Enter')
+  const dialog = page.getByRole('dialog', { name: 'Case details' })
+  await expect(dialog.locator('iframe')).toHaveCount(1)
+  await expect(card.locator('iframe')).toHaveCount(0)
+  await expect(frame).not.toHaveAttribute('src', /controls=0/)
+  await report('onStateChange', 1)
+  await expect(frame).toHaveAttribute('tabindex', '0')
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await card.hover()
+  await report('onError', 101)
+  await expect(frame).toHaveCount(0)
+  await expect(card.locator('img')).toBeVisible()
+})

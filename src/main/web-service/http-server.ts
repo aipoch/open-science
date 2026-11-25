@@ -114,7 +114,7 @@ const gzipAsync = promisify(gzip)
 const log = createLogger('web-service')
 const STATIC_RESPONSE_SECURITY_HEADERS = {
   'content-security-policy':
-    "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' https: blob:; frame-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' https: blob:; frame-src 'self' https://www.youtube-nocookie.com/embed/; connect-src 'self' ws: wss:; frame-ancestors 'none'",
   'x-frame-options': 'DENY',
   'referrer-policy': 'no-referrer'
 } as const

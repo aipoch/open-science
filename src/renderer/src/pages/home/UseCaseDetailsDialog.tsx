@@ -19,6 +19,7 @@ type Props = UseCaseDetailsContentProps & {
 export const UseCaseDetailsDialog = ({
   item,
   introductions,
+  videoActive,
   opener,
   onClose,
   onOpenMarketplace,
@@ -65,6 +66,7 @@ export const UseCaseDetailsDialog = ({
           <UseCaseDetailsContent
             item={item}
             introductions={introductions}
+            videoActive={videoActive}
             onOpenMarketplace={onOpenMarketplace}
             renderImport={renderImport}
             renderDownloadStatus={renderDownloadStatus}
