@@ -58,7 +58,9 @@ import {
   resendEditedWorkspaceMessage,
   deleteWorkspaceSession,
   NotebookContinuationBranchError,
+  readWorkspaceSendPreview,
   sendWorkspaceMessage,
+  subscribeWorkspaceSendPreview,
   type ResendEditedMessageInput,
   type SendWorkspaceMessageIntent,
   type SendWorkspaceMessageResult
@@ -148,7 +150,13 @@ const setWorkspacePermissionProfile = async (
   return true
 }
 
+const workspaceSendPreview = {
+  read: readWorkspaceSendPreview,
+  subscribe: subscribeWorkspaceSendPreview
+}
+
 type WorkspaceAgentRuntime = {
+  sendPreview?: typeof workspaceSendPreview
   actionError: string | null
   isConnecting: boolean
   pendingPermissions: AcpPermissionRequest[]
@@ -629,6 +637,7 @@ const useOwnedWorkspaceAgentRuntime = (
 
   return {
     actionError: runtime.actionError,
+    sendPreview: workspaceSendPreview,
     isConnecting: runtime.isConnecting,
     pendingPermissions: visiblePendingPermissions,
     permissionProfiles: runtime.state.permissionProfiles,

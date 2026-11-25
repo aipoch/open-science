@@ -8,12 +8,14 @@
     "src/renderer/src/lib/session-persistence/session-write-recovery.ts",
     "src/renderer/src/lib/acp/runtime-writer-client.test.ts",
     "src/renderer/src/lib/acp/runtime-writer-client.ts",
+    "src/renderer/src/lib/acp/workspace-send-attempt.ts",
     "src/renderer/src/lib/session-persistence/session-history.test.ts",
     "src/renderer/src/lib/session-persistence/session-history.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/session-persistence/session-persistence.ts",
     "src/renderer/src/lib/acp/runtime-writer-client.ts",
+    "src/renderer/src/lib/acp/workspace-send-attempt.ts",
     "src/renderer/src/lib/session-persistence/session-history.ts"
   ],
   "consumerModules": [],

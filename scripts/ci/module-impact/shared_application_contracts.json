@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/shared/send-attempt-diagnostics.ts",
     "src/shared/acp-select-options.ts",
     "src/shared/agent-framework-id.ts",
     "src/shared/interface-scale.ts",
@@ -49,6 +50,7 @@
     "src/shared/lab.test.ts"
   ],
   "interfacePaths": [
+    "src/shared/send-attempt-diagnostics.ts",
     "src/shared/agent-framework-id.ts",
     "src/shared/interface-scale.ts",
     "src/shared/application-command-contract.ts",

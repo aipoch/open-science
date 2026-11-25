@@ -80,7 +80,7 @@ export const prepareWorkspacePrompt = async (
   }
 }
 
-// 先查旧写入的确切回执，再释放那次准备。已经保存的用户消息留给同一 ID 的重试。
+// Check the exact write receipt before releasing the preparation. Keep saved messages for retries with the same ID.
 export const reconcileExpiredWorkspacePrompt = async (
   preparation: WorkspacePromptReceipt
 ): Promise<{ rolledBack: boolean; failure?: string }> => {
@@ -94,7 +94,7 @@ export const reconcileExpiredWorkspacePrompt = async (
       { bypassCache: true }
     )
   } catch (error) {
-    // 下次发送前重新核对，避免读取失败后把旧消息当成从未保存。
+    // Recheck before the next send so a failed read does not treat a saved message as missing.
     return {
       rolledBack: false,
       failure: describeWorkspacePromptRollbackFailure(undefined, errorText(error))

@@ -58,7 +58,7 @@ export async function waitForWorkspaceSendStorage<Result>(
               })
             )
           } catch {
-            // 诊断异常不影响发送超时。
+            // A diagnostics failure must leave the send deadline in effect.
           }
         }, SEND_STORAGE_DEADLINE_MS)
       })

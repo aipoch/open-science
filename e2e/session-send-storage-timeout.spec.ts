@@ -183,7 +183,7 @@ for (const phase of ['earlier-save', 'prepare-prompt', 'append-user'] as const) 
             }
             const result = await original(event, request, options)
             if (commands.some((command) => command.kind === 'rollback-prompt')) state.cleanups += 1
-            // 延迟真实数据库写入的回执，让旧消息可能已落盘，但发送方仍看不到结果。
+            // Delay the database acknowledgement so the message can be durable while the sender still awaits confirmation.
             if (
               !state.held &&
               request.id === sessionId &&
@@ -252,7 +252,7 @@ for (const phase of ['earlier-save', 'prepare-prompt', 'append-user'] as const) 
       expect(requests.filter((marker) => marker === promptA)).toHaveLength(0)
 
       if (phase === 'append-user') {
-        // A 超时发生在用户仍停留在 B 的时候。
+        // Conversation A times out while the user is still viewing conversation B.
         await expect.poll(async () => (await probe()).timeout?.recovery?.event).toBe('send-timeout')
         await expect(reply(page, promptB)).toBeVisible()
       }

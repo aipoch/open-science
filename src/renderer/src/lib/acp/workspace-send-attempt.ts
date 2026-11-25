@@ -62,7 +62,7 @@ export function createWorkspaceSendAttempt(
         }
       })
     } catch {
-      // 诊断桥不可用时继续发送。
+      // Continue sending if the diagnostics bridge is unavailable.
     }
   }
   const bind = (id: string, project?: string): void => {

@@ -484,6 +484,7 @@ const directReturnObject = (arrow: ReturnType<typeof variableArrow>): Node => {
 }
 const hookKeys = [
   'actionError',
+  'sendPreview',
   'isConnecting',
   'pendingPermissions',
   'permissionProfiles',
@@ -518,6 +519,10 @@ const sendIntentKeys = [
   'expectedFrameworkId',
   'sessionId',
   'messageId',
+  'retryStorageTimeout',
+  'composerSnapshot',
+  'onPreparationStarted',
+  'onMessagePersisted',
   'onMessageAppended',
   'onPromptAccepted',
   'branchSourceSessionId',

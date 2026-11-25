@@ -796,7 +796,7 @@ const WorkspaceMessageScrollerImpl = ({
   const fullConversationItems = useMemo(() => {
     if (!optimisticMessage || historyItems.some(({ id }) => id === optimisticMessage.id))
       return historyItems
-    // 临时气泡也进入消息列表，保存后同 ID 的历史行沿用滚动锚点。
+    // Insert the pending bubble into the list so the saved row with the same ID inherits its scroll anchor.
     return [
       ...historyItems,
       {

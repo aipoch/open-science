@@ -13,7 +13,7 @@ import {
 const log = createLogger('send-attempt')
 const scope = new AsyncLocalStorage<SendAttemptScope>()
 
-/** 仅在进程边界接收经过校验的诊断身份，不参与会话或运行授权。 */
+/** Accepts validated diagnostic identities at process boundaries. Authorization stays with the session and runtime. */
 export function withSendAttempt<Result>(
   value: unknown,
   ids: { projectId?: string; sessionId?: string; promptMessageId?: string },
@@ -41,7 +41,7 @@ export function writeSendAttempt(fields: SendAttemptFields): void {
     const level = fields.result === 'failed' || fields.result === 'timed-out' ? 'warn' : 'info'
     log[level]('conversation send phase', { ...identity, ...fields })
   } catch {
-    // 日志故障不能影响原操作。
+    // Logging failures must leave the original operation unaffected.
   }
 }
 
@@ -49,7 +49,7 @@ export function startMainSendPhase(
   phase: SendAttemptPhase,
   metadata?: Pick<SendAttemptFields, 'detail' | 'timeoutMs'>
 ): ReturnType<typeof startSendAttemptPhase> {
-  // 捕获本阶段身份，即使回调由别的异步入口触发也能关联。
+  // Capture the phase identity so callbacks from another async entry point can still be correlated.
   const identity = scope.getStore()
   return identity
     ? startSendAttemptPhase(

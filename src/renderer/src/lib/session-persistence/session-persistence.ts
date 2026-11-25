@@ -1277,7 +1277,7 @@ const deferExportedSessionSave = (target: string): void => {
   )
 }
 
-// 同一会话的显式写入分隔快照合并，数据库侧仍负责项目及全局操作的顺序。
+// Explicit writes delimit snapshot coalescing within a session. The database orders project and global work.
 const activePreparationSaveOptions = (
   options: SaveSessionOptions | undefined
 ): SaveSessionOptions | undefined =>
@@ -1403,7 +1403,7 @@ const createOrderedSessionPersistence = (
     }
   }
 
-  // 导出暂停和未确认的写入仍占用自己的队列，防止同一会话的后续写入超车。
+  // Export pauses and unconfirmed writes hold their queue position to preserve per-session write order.
   const schedule = <Result>(
     target: string,
     task: () => Promise<Result>,
@@ -3169,7 +3169,7 @@ const createStoreSaver = (
         if (manifest) persistence.recovery.retainManifest(manifest)
         return Promise.resolve()
       }
-      // 快照生成时立即将写入加入该目标的队列。
+      // Queue the write as soon as the snapshot is captured.
       const scheduled = intent
         ? persistence.recovery.trackSession(
             target,

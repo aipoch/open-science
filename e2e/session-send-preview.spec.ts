@@ -129,7 +129,7 @@ for (const phase of ['prepare-prompt', 'append-user']) {
             if (commands.length) state.saves.push(commands.map(({ kind }) => kind))
             if (state.startedAt || !commands.some(({ kind }) => kind === phase))
               return save(event, request, options)
-            // 在真实写入完成后只扣住回执，写入和保存顺序沿用生产路径。
+            // Hold the acknowledgement after the real write completes, preserving production write ordering.
             const result = await save(event, request, options)
             state.startedAt = Date.now()
             await gate.promise

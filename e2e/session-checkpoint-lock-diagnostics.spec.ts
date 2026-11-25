@@ -96,7 +96,7 @@ test('exports checkpoint lock contention and its outcome for each send attempt',
     if ((await session.getAttribute('aria-current')) !== 'page') await session.click()
     await expect(page.getByText(reply(seed), { exact: true })).toBeVisible()
 
-    // 使用隔离资料目录中的实际日志锁文件，保留 ACP 和存储的正常执行路径。
+    // Use the real journal lock in the isolated profile so ACP and storage follow their normal paths.
     const holdLock = async (): Promise<void> => {
       await writeFile(lock, '', { flag: 'wx', mode: 0o600 })
       releaseLock = async () => {

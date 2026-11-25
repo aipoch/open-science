@@ -13,7 +13,7 @@ const results = {
   failed: 'failed'
 } as const
 
-/** 只接受当前 ACP 连接接回的恢复操作 ID，发送身份始终由主进程持有。 */
+/** Accepts resume operation IDs from the current ACP connection. The main process owns the send identity. */
 export async function traceCheckpointLock<Result>(
   connection: ClientConnection,
   resume: (operationId?: string) => Promise<Result>

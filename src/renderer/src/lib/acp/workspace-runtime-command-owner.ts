@@ -2083,7 +2083,7 @@ const retainExpiredStorageWait = <Result>(
 ): void => {
   attempt.storageTimeout = timeout
   setUnconfirmedWorkspaceSendStorage(timeout.wait.sessionId, true)
-  // 用户看到超时后，旧写入仍保有原顺序。等待它结束并清理回执后才允许同一会话重试。
+  // Keep the timed-out write in order. Let it settle and reconcile its receipt before retrying in this session.
   const late = async (acknowledged: boolean, result?: Result): Promise<void> => {
     const outcome = await reconcile?.(result)
     attempt.trace.record({
@@ -2142,7 +2142,7 @@ export const subscribeWorkspaceSendPreview = (
   }
 }
 
-/** 保存回执确认后清掉草稿引用，即使原会话已卸载。 */
+/** Releases the draft reference after save confirmation, even if the conversation has unmounted. */
 const releaseWorkspaceSendPreview = (attempt: WorkspaceSendAttempt, persisted = true): void => {
   const notifyPersisted = attempt.onMessagePersisted
   if (persisted && notifyPersisted && attempt.preview) attempt.composerMessageCommitted = true
@@ -2226,7 +2226,7 @@ const sendWorkspaceMessage = async (
   if (sessionId && existingAttempt?.storageTimeout) {
     const timeout = existingAttempt.storageTimeout
     reportWorkspaceOperationError(sessionId, timeout.message, { sendStorageTimeout: true })
-    // 编辑过的草稿是另一条消息，不能继承已落盘的旧消息 ID。
+    // An edited draft is a new message and needs its own ID.
     if (input.messageId)
       input.onPreparationRejected?.(timeout.message, sessionId, input.attachments, input.messageId)
     else input.onPreparationCancelled?.(sessionId, input.attachments)

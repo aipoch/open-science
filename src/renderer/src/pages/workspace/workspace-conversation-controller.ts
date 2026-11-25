@@ -9,10 +9,6 @@ import {
   useState,
   useSyncExternalStore
 } from 'react'
-import {
-  readWorkspaceSendPreview,
-  subscribeWorkspaceSendPreview
-} from '@/lib/acp/workspace-runtime-command-owner'
 import type { ComposerSendSnapshot } from './composer-contract'
 
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
@@ -58,6 +54,7 @@ import type { WorkspaceSessionController } from './workspace-session-controller'
 
 type WorkspaceConversationRuntime = Pick<
   WorkspaceAgentRuntime,
+  | 'sendPreview'
   | 'sendMessage'
   | 'resendEditedMessage'
   | 'cancelRun'
@@ -441,14 +438,17 @@ const useWorkspaceConversationController = (
       )
   }, [activeSessionId, cancelInFlightRun, promptInFlightSessionIds, runtime])
   const activeProjectId = activeSession?.projectId
+  const sendPreview = runtime.sendPreview
   const subscribePreview = useCallback(
-    (listener: () => void) =>
-      activeSessionId ? subscribeWorkspaceSendPreview(activeSessionId, listener) : () => {},
-    [activeSessionId]
+    (listener: () => void) => {
+      if (activeSessionId && sendPreview) return sendPreview.subscribe(activeSessionId, listener)
+      return () => {}
+    },
+    [activeSessionId, sendPreview]
   )
   const preview = useSyncExternalStore(subscribePreview, () =>
     activeSessionId && activeProjectId
-      ? readWorkspaceSendPreview(activeProjectId, activeSessionId)
+      ? sendPreview?.read(activeProjectId, activeSessionId)
       : undefined
   )
   const optimisticMessage = useMemo<ChatMessage | undefined>(

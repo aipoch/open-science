@@ -1585,66 +1585,66 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       options.sendAttempt,
       { projectId: session.projectId, sessionId: session.id, promptMessageId },
       () =>
-        traceMainSendWait('save-session', () =>
-          this.saveSessionWithAuthority(session, options, authority)
-        )
-    )
-  }
-
-  private async saveSessionWithAuthority(
-    session: PersistedChatSession,
-    options: SaveSessionOptions,
-    authority: SessionSaveAuthority
-  ): Promise<PersistedChatSession> {
-    // A renderer may already have a delayed projection save when another client reserves export.
-    // Wait outside the scheduler lane so browsing/global reads and unrelated Sessions stay usable.
-    const terminalWriteRelease = this.stateOwner.assertRuntimeTerminalWriteAvailable(session.id)
-    if (terminalWriteRelease)
-      await traceMainSendWait('wait-terminal-write', () => terminalWriteRelease)
-    if (options.conversationCommands?.some(({ kind }) => kind === 'prepare-prompt')) {
-      const failure = this.stateOwner
-        .listRuntimeTerminalFailures()
-        .find(
-          (event) =>
-            event.sessionId === session.id && event.terminalScope?.projectId === session.projectId
-        )
-      if (failure?.promptMessageId && failure.terminalScope)
-        await traceMainSendWait('retry-terminal-write', () =>
-          this.stateOwner.retryRuntimeTerminalCommit({
-            projectId: session.projectId,
-            sessionId: session.id,
-            promptMessageId: failure.promptMessageId!,
-            executionId: failure.terminalScope!.executionId
-          })
-        )
-    }
-    for (;;) {
-      const enterLane = startMainSendPhase('wait-save-lane')
-      let entered = false
-      const result = await this.operationScheduler
-        .runSession(session.projectId, session.id, async () => {
-          entered = true
-          enterLane('completed')
-          const reservation = this.exportingSessions.get(sessionKey(session.projectId, session.id))
-          if (reservation) return { released: reservation.released }
-          await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
-          const save = (): Promise<PersistedChatSession> =>
-            this.stateOwner.saveSession(
-              session,
-              sanitizeRendererSaveSessionOptions(options, session),
-              authority
+        traceMainSendWait('save-session', async () => {
+          // A renderer may already have a delayed projection save when another client reserves export.
+          // Wait outside the scheduler lane so browsing/global reads and unrelated Sessions stay usable.
+          const terminalWriteRelease = this.stateOwner.assertRuntimeTerminalWriteAvailable(
+            session.id
+          )
+          if (terminalWriteRelease)
+            await traceMainSendWait('wait-terminal-write', () => terminalWriteRelease)
+          if (options.conversationCommands?.some(({ kind }) => kind === 'prepare-prompt')) {
+            const failure = this.stateOwner
+              .listRuntimeTerminalFailures()
+              .find(
+                (event) =>
+                  event.sessionId === session.id &&
+                  event.terminalScope?.projectId === session.projectId
+              )
+            if (failure?.promptMessageId && failure.terminalScope)
+              await traceMainSendWait('retry-terminal-write', () =>
+                this.stateOwner.retryRuntimeTerminalCommit({
+                  projectId: session.projectId,
+                  sessionId: session.id,
+                  promptMessageId: failure.promptMessageId!,
+                  executionId: failure.terminalScope!.executionId
+                })
+              )
+          }
+          for (;;) {
+            const enterLane = startMainSendPhase('wait-save-lane')
+            let entered = false
+            const saveInSession = this.operationScheduler.runSession(
+              session.projectId,
+              session.id,
+              async () => {
+                entered = true
+                enterLane('completed')
+                const reservation = this.exportingSessions.get(
+                  sessionKey(session.projectId, session.id)
+                )
+                if (reservation) return { released: reservation.released }
+                await assertSessionIdentityOwnership(this.repository, this.stateOwner, session)
+                const save = (): Promise<PersistedChatSession> =>
+                  this.stateOwner.saveSession(
+                    session,
+                    sanitizeRendererSaveSessionOptions(options, session),
+                    authority
+                  )
+                return { saved: await traceMainSendWait('persist-session', save) }
+              }
             )
-          return { saved: await traceMainSendWait('persist-session', save) }
+            const result = await saveInSession.catch((error) => {
+              if (!entered) enterLane('failed')
+              throw error
+            })
+            if (result.saved) {
+              return this.projectRuntimeSession(result.saved)
+            }
+            await traceMainSendWait('wait-session-export', () => result.released)
+          }
         })
-        .catch((error) => {
-          if (!entered) enterLane('failed')
-          throw error
-        })
-      if (result.saved) {
-        return this.projectRuntimeSession(result.saved)
-      }
-      await traceMainSendWait('wait-session-export', () => result.released)
-    }
+    )
   }
 
   saveSessionSpecialistBinding(

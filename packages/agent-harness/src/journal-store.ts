@@ -14,7 +14,7 @@ export type JournalAgentStoreOptions = {
   maxCacheBytes?: number
   /** Successful payload writes, not physical disk blocks. Observer errors cannot affect commits. */
   onWrite?: (event: { kind: 'journal' | 'snapshot'; bytes: number }) => void
-  /** 仅观察发生竞争的锁，观察器失败不会影响存储操作。 */
+  /** Observes contended locks without letting observer failures affect storage operations. */
   onLockWait?: (event: JournalLockWaitEvent) => void | Promise<void>
 }
 type JournalLockWaitEvent = { sessionId: string; timeoutMs: number } & (
@@ -182,7 +182,7 @@ export function createJournalAgentStore(options: JournalAgentStoreOptions): Agen
     try {
       void Promise.resolve(options.onLockWait?.(event)).catch(() => undefined)
     } catch {
-      // 诊断观察器不参与锁的生命周期。
+      // The diagnostic observer cannot hold or release the lock.
     }
   }
   const locked = async <T>(sessionId: string, file: string, work: () => Promise<T>): Promise<T> => {
