@@ -815,13 +815,17 @@ function verifiedAccentText(
 // Saving can split one untouched PDF.js run into several text objects. Text
 // concatenation alone cannot prove its inner glyph positions: require identical
 // rendered ink as well as the complete text, outer bounds and font matrix.
-async function verifiedSplitNativeRun(
+type VerificationCrop = { x: number; y: number; width: number; height: number }
+type SplitRun = { targets: number[]; source: VerificationCrop; target: VerificationCrop }
+const maxSplitRunPixels = 262144
+
+function splitNativeRun(
   before: TextItem,
   target: TextContent,
   originalPage: PDFPageProxy,
   targetPage: PDFPageProxy,
   sourceStyle?: TextContent['styles'][string]
-): Promise<number[] | undefined> {
+): SplitRun | undefined {
   if (
     ![before.width, ...before.transform].every(Number.isFinite) ||
     before.transform[0] <= 0 ||
@@ -932,7 +936,7 @@ async function verifiedSplitNativeRun(
     sourceStyle.descent >= -1
       ? [sourceStyle.descent, sourceStyle.ascent]
       : [-1, 1]
-  const pixels = (page: PDFPageProxy): Promise<Uint8ClampedArray | undefined> | undefined => {
+  const crop = (page: PDFPageProxy): VerificationCrop | undefined => {
     const viewport = page.getViewport({ scale: 4 }),
       corners = [
         viewport.convertToViewportPoint(
@@ -954,31 +958,48 @@ async function verifiedSplitNativeRun(
       y = Math.floor(Math.min(...corners.map(([, y]) => y))) - 1,
       width = Math.ceil(Math.max(...corners.map(([x]) => x))) + 1 - x,
       height = Math.ceil(Math.max(...corners.map(([, y]) => y))) + 1 - y
-    if (width <= 0 || height <= 0 || width * height > 262144) return undefined
-    return renderVerificationCrop(page, viewport, { x, y, width, height })
+    if (width <= 0 || height <= 0 || width * height > maxSplitRunPixels) return undefined
+    return { x, y, width, height }
   }
-  const [original, after] = await Promise.all([pixels(originalPage), pixels(targetPage)])
-  return sameVisiblePixels(original, after) ? pieces.map(({ index }) => index) : undefined
+  const source = crop(originalPage)
+  const targetCrop = crop(targetPage)
+  return source && targetCrop
+    ? { source, target: targetCrop, targets: pieces.map(({ index }) => index) }
+    : undefined
 }
 
-async function renderVerificationCrop(
+function enclosingCrop(a: VerificationCrop, b: VerificationCrop): VerificationCrop {
+  const x = Math.min(a.x, b.x)
+  const y = Math.min(a.y, b.y)
+  return {
+    x,
+    y,
+    width: Math.max(a.x + a.width, b.x + b.width) - x,
+    height: Math.max(a.y + a.height, b.y + b.height) - y
+  }
+}
+
+async function renderVerificationCrops(
   page: PDFPageProxy,
   viewport: ReturnType<PDFPageProxy['getViewport']>,
-  { x, y, width, height }: { x: number; y: number; width: number; height: number }
-): Promise<Uint8ClampedArray | undefined> {
+  { x, y, width, height }: VerificationCrop,
+  crops: VerificationCrop[]
+): Promise<Uint8ClampedArray[]> {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
   try {
     const context = canvas.getContext('2d', { willReadFrequently: true })
-    if (!context) return undefined
+    if (!context) return []
     await page.render({
       canvas,
       canvasContext: context,
       viewport,
       transform: [1, 0, 0, 1, -x, -y]
     }).promise
-    return context.getImageData(0, 0, width, height).data
+    return crops.map(
+      (crop) => context.getImageData(crop.x - x, crop.y - y, crop.width, crop.height).data
+    )
   } finally {
     canvas.width = 0
     canvas.height = 0
@@ -1027,12 +1048,12 @@ async function verifiedLegacyNegation(
   if (width <= 0 || height <= 0 || width * height > 524288) return false
   const crop = { x, y, width, height }
   const [originalInk, renderedInk] = await Promise.allSettled([
-    renderVerificationCrop(originalPage, source, crop),
-    renderVerificationCrop(targetPage, target, crop)
+    renderVerificationCrops(originalPage, source, crop, [crop]),
+    renderVerificationCrops(targetPage, target, crop, [crop])
   ])
   if (originalInk.status !== 'fulfilled' || renderedInk.status !== 'fulfilled') return false
-  const original = originalInk.value,
-    rendered = renderedInk.value
+  const [original] = originalInk.value,
+    [rendered] = renderedInk.value
   if (!original || !rendered || original.length !== rendered.length) return false
   const ink = (pixels: Uint8ClampedArray, index: number): boolean => {
     const offset = index * 4
@@ -1190,6 +1211,14 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
       )
       const annotations: AnnotationSnapshot[][] = []
       const unverifiedLeadingAccent = new Set<number>()
+      const unitIndicesByPage = new Map<number, number[]>()
+      for (const [index, unit] of units.entries()) {
+        for (const { pageNumber } of unit.fragments) {
+          let indices = unitIndicesByPage.get(pageNumber)
+          if (!indices) unitIndicesByPage.set(pageNumber, (indices = []))
+          if (indices.at(-1) !== index) indices.push(index)
+        }
+      }
       for (let number = 1; number <= original.numPages; number++) {
         location.pageNumber = number
         location.failedLinks = undefined
@@ -1236,6 +1265,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
             pages.push({ width: source.width, height: source.height, rotation: source.rotation })
             continue
           }
+          const pageUnitIndices = unitIndicesByPage.get(number) ?? []
           const [originalAnnotations, targetAnnotations] = await Promise.all([
             annotationKey(original, sourcePage, true),
             annotationKey(translated, translatedPage, originalPages.has(number))
@@ -1272,18 +1302,25 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           }
           if (!(await nativeParameterBodyUnchanged(sourcePage, translatedPage, originalText, text)))
             throw validationError('Native mathematical parameter table changed')
+          const nativeVerificationOptions = {
+            nativeDocumentFactory: pdfjsLib.getDocument,
+            signal,
+            pageText: new Map([
+              [sourcePage, originalText],
+              [translatedPage, text]
+            ])
+          }
           if (
-            !(await sameNativeMatrixBody(original, translated, number, {
-              nativeDocumentFactory: pdfjsLib.getDocument,
-              signal
-            }))
+            !(await sameNativeMatrixBody(original, translated, number, nativeVerificationOptions))
           )
             throw validationError('Retained neighboring PDF glyph changed')
           if (
-            !(await sameNativeFunctionDisplay(original, translated, number, {
-              nativeDocumentFactory: pdfjsLib.getDocument,
-              signal
-            }))
+            !(await sameNativeFunctionDisplay(
+              original,
+              translated,
+              number,
+              nativeVerificationOptions
+            ))
           )
             throw validationError('Retained neighboring PDF glyph changed')
           const unchanged = (index: number): boolean =>
@@ -1362,17 +1399,19 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                 }
               ]
             })
+          let rawTargetItems: ReturnType<typeof projectText> | undefined
+          const rawTarget = (): ReturnType<typeof projectText> =>
+            (rawTargetItems ??= projectText(text, target))
           const nativeLabels = new Map<number, { label: string; indices: number[] }>()
           for (const [item, label] of pageLatinAccentText) {
             const index = text.items.indexOf(item)
             if (index >= 0) nativeLabels.set(index, { label, indices: [index] })
           }
           if (
-            units.some(
-              (unit, index) =>
-                (/[A-Za-z\p{Script=Greek}\d⁰¹²³⁴⁵⁶⁷⁸⁹]\//u.test(unit.source) ||
-                  /1\/\([1-9]\d?[A-Za-z]\)/u.test(renderUnits[index].translation)) &&
-                unit.fragments.some((fragment) => fragment.pageNumber === number)
+            pageUnitIndices.some(
+              (index) =>
+                /[A-Za-z\p{Script=Greek}\d⁰¹²³⁴⁵⁶⁷⁸⁹]\//u.test(units[index].source) ||
+                /1\/\([1-9]\d?[A-Za-z]\)/u.test(renderUnits[index].translation)
             )
           ) {
             originalText ??= await getPdfTranslationTextContent(sourcePage)
@@ -1384,20 +1423,14 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
             ))
               nativeLabels.set(index, value)
           }
-          if (
-            units.some(
-              (unit) =>
-                /[\u0302ˆ¯˜˙]/u.test(unit.source) &&
-                unit.fragments.some((fragment) => fragment.pageNumber === number)
-            )
-          ) {
+          if (pageUnitIndices.some((index) => /[\u0302ˆ¯˜˙]/u.test(units[index].source))) {
             originalText ??= await getPdfTranslationTextContent(sourcePage)
-            const projected = projectText(text, target),
-              regions = units.flatMap((unit, index) =>
-                unit.fragments
+            const projected = rawTarget(),
+              regions = pageUnitIndices.flatMap((index) =>
+                units[index].fragments
                   .filter((fragment) => fragment.pageNumber === number)
                   .map((fragment) => ({
-                    source: unit.source,
+                    source: units[index].source,
                     expected: renderUnits[index].translation,
                     unitIndex: index,
                     sourceIndices: new Set(
@@ -1435,7 +1468,8 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           }
           // Power spellings belong to a paragraph, not every matching variable
           // on the page. Another paragraph may intentionally use plain digits.
-          for (const [unitIndex, unit] of units.entries()) {
+          for (const unitIndex of pageUnitIndices) {
+            const unit = units[unitIndex]
             const fragments = unit.fragments.filter((fragment) => fragment.pageNumber === number)
             const powers = new Set(
               [...renderUnits[unitIndex].translation.matchAll(nativePowerSpelling)]
@@ -1475,12 +1509,12 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
               authorLabels.length >= 2 &&
               authorLabels.length === raisedLabels.length &&
               authorLabels.every((label, index) => label === raisedLabels[index].normalize('NFKC'))
-            if (!fragments.length || (!powers.size && !authorFootnotes)) continue
+            if (!powers.size && !authorFootnotes) continue
             originalText ??= await getPdfTranslationTextContent(sourcePage)
             const sourceIndices = new Set(
               fragments.flatMap((fragment) => fragment.items.map((item) => item.index))
             )
-            const targetIndices = projectText(text, target)
+            const targetIndices = rawTarget()
               .filter((item) =>
                 fragments.some(({ rect }) =>
                   item.points.every(
@@ -1586,7 +1620,8 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
               })
             }
           }
-          for (const [index, unit] of units.entries()) {
+          for (const index of pageUnitIndices) {
+            const unit = units[index]
             const raised = /^[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,2}(?=\p{L})/u.exec(renderUnits[index].translation)?.[0]
             const fragment = unit.fragments[0]
             if (
@@ -1601,7 +1636,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
               const item = originalText!.items[itemIndex]
               return item && 'str' in item ? [item] : []
             })
-            const candidates = projectText(text, target).filter((item) =>
+            const candidates = rawTarget().filter((item) =>
               item.points.every(
                 ([x, y]) =>
                   x >= fragment.rect.x * target.width - 1 &&
@@ -1622,7 +1657,6 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                 indices: [candidates[0].index]
               })
           }
-          let rawTargetItems: ReturnType<typeof projectText> | undefined
           if (
             hidden &&
             [...nativeLabels.values()].some((label) =>
@@ -1631,7 +1665,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           )
             throw validationError('Target native exclusion overlaps a glyph projection')
           const projectedTarget = (): ReturnType<typeof projectText> => {
-            const items = (rawTargetItems ??= projectText(text, target)),
+            const items = rawTarget(),
               consumed = new Set([...nativeLabels.values()].flatMap((fraction) => fraction.indices))
             return items.flatMap((item) => {
               const fraction = nativeLabels.get(item.index)
@@ -1653,8 +1687,8 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           const owned = new Map<number, string>()
           const overlapping = new Set<string>()
           const claimedSourceItems = new Set(
-            units.flatMap((unit) =>
-              unit.fragments
+            pageUnitIndices.flatMap((index) =>
+              units[index].fragments
                 .filter((fragment) => fragment.pageNumber === number)
                 .flatMap((fragment) => fragment.items.map((item) => item.index))
             )
@@ -1672,6 +1706,22 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                   )
               )
           )
+          const indexText = (
+            content: TextContent
+          ): Map<string, { item: TextItem; index: number }[]> => {
+            const indexed = new Map<string, { item: TextItem; index: number }[]>()
+            for (const [index, item] of content.items.entries()) {
+              if (!('str' in item)) continue
+              let matches = indexed.get(item.str)
+              if (!matches) indexed.set(item.str, (matches = []))
+              matches.push({ item, index })
+            }
+            return indexed
+          }
+          const originalByText = indexText(originalText)
+          let targetByText: ReturnType<typeof indexText> | undefined
+          const targetsWithText = (value: string): { item: TextItem; index: number }[] =>
+            (targetByText ??= indexText(text)).get(value) ?? []
           const foreignMatches = new Map<number, number[]>(),
             preservedUnownedGroups = new Map<number, number[]>()
           const retainedForeignItems = (
@@ -1711,11 +1761,13 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                   after.str === before.str &&
                   Math.abs(after.width - before.width) < 0.02 &&
                   after.transform.every((value, n) => Math.abs(value - before.transform[n]) < 0.02)
-                if (originalText.items.filter(same).length !== 1)
+                if (originalByText.get(before.str)?.filter(({ item }) => same(item)).length !== 1)
                   throw validationError('Ambiguous neighboring PDF glyph')
                 foreignMatches.set(
                   item.index,
-                  text.items.flatMap((after, index) => (same(after) ? [index] : []))
+                  targetsWithText(before.str)
+                    .filter(({ item }) => same(item))
+                    .map(({ index }) => index)
                 )
               }
               const matches = foreignMatches.get(item.index)!
@@ -1736,10 +1788,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           }
           originalText ??= await getPdfTranslationTextContent(sourcePage)
           const unchangedNativePage =
-            units.every(
-              (unit, i) =>
-                unchanged(i) || !unit.fragments.some((fragment) => fragment.pageNumber === number)
-            ) &&
+            pageUnitIndices.every(unchanged) &&
             originalText.items.length === text.items.length &&
             originalText.items.every((before, index) => {
               const after = text.items[index]
@@ -1756,8 +1805,8 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
             number,
             PdfTranslationRenderUnit['fragments'][number]['rect'] | null
           >()
-          for (const unit of units)
-            for (const fragment of unit.fragments) {
+          for (const index of pageUnitIndices)
+            for (const fragment of units[index].fragments) {
               if (fragment.pageNumber !== number) continue
               for (const claimed of fragment.items) {
                 const item = originalText.items[claimed.index]
@@ -1813,25 +1862,19 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
               })
             return (
               inside(owner) &&
-              units.some(
-                ({ fragments }) =>
+              pageUnitIndices.some((index) => {
+                const { fragments } = units[index]
+                return (
                   fragments.some(({ rect }) => rect === owner) &&
                   fragments.some(
                     ({ pageNumber, rect }) =>
                       pageNumber === number && rect !== owner && inside(rect)
                   )
-              )
+                )
+              })
             )
           }
           // Match exact text and full geometry uniquely in both directions.
-          const originalByText = new Map<string, { item: TextItem; index: number }[]>()
-          originalText.items.forEach((item, index) => {
-            if ('str' in item)
-              originalByText.set(item.str, [
-                ...(originalByText.get(item.str) ?? []),
-                { item, index }
-              ])
-          })
           const nativeMatches = new Map<number, number[]>(),
             unownedNativeTargets = new Set<number>(),
             preservedTargetOwners = new Map<
@@ -1861,7 +1904,8 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           // Some untouched Form glyphs were painted twice in the source. Keep
           // that complete multiset only when every source member is unclaimed,
           // and all target copies retain exactly the same text and geometry.
-          for (const entries of originalByText.values())
+          for (const entries of originalByText.values()) {
+            if (entries.length < 2) continue
             for (const { item, index } of entries) {
               if (preservedUnownedGroups.has(index) || !sourceOnlyItems.has(index)) continue
               const same = (after: TextContent['items'][number]): boolean =>
@@ -1869,19 +1913,23 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                   after.str === item.str &&
                   after.width === item.width &&
                   after.transform.every((value, i) => value === item.transform[i]),
-                originals = entries.filter(({ item }) => same(item)),
-                targets = text.items.flatMap((item, index) => (same(item) ? [index] : []))
+                originals = entries.filter(({ item }) => same(item))
               if (
                 originals.length < 2 ||
-                originals.length !== targets.length ||
                 !originals.every(
                   ({ index }) => sourceOnlyItems.has(index) && !sourceRegionOwners.has(index)
                 )
               )
                 continue
+              const targets = targetsWithText(item.str)
+                .filter(({ item }) => same(item))
+                .map(({ index }) => index)
+              if (targets.length !== originals.length) continue
               originals.forEach(({ index }) => preservedUnownedGroups.set(index, targets))
               targets.forEach((index) => unownedNativeTargets.add(index))
             }
+          }
+          const splitRuns: (SplitRun & { index: number })[] = []
           for (const index of sourceOnlyItems) {
             if (
               sourceRegionOwners.has(index) ||
@@ -1897,22 +1945,71 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
               )
             )
             if (originals.length !== 1) continue
-            const targets = await verifiedSplitNativeRun(
+            const run = splitNativeRun(
               before,
               text,
               sourcePage,
               translatedPage,
               originalText.styles?.[before.fontName]
             )
-            if (
-              !targets ||
-              targets.some(
-                (index) => preservedTargetOwners.has(index) || unownedNativeTargets.has(index)
-              )
+            if (run) splitRuns.push({ ...run, index })
+          }
+          // Render nearby proofs together. Both canvases and the pixels read back
+          // stay within the single-run budget; each comparison uses its own crop.
+          for (let start = 0; start < splitRuns.length;) {
+            if (signal.aborted) return
+            let { source: sourceBounds, target: targetBounds } = splitRuns[start]
+            let readPixels = Math.max(
+              sourceBounds.width * sourceBounds.height,
+              targetBounds.width * targetBounds.height
             )
-              continue
-            preservedUnownedGroups.set(index, targets)
-            targets.forEach((index) => unownedNativeTargets.add(index))
+            let end = start + 1
+            for (; end < splitRuns.length; end++) {
+              const run = splitRuns[end]
+              const nextSource = enclosingCrop(sourceBounds, run.source)
+              const nextTarget = enclosingCrop(targetBounds, run.target)
+              readPixels += Math.max(
+                run.source.width * run.source.height,
+                run.target.width * run.target.height
+              )
+              if (
+                Math.max(
+                  readPixels,
+                  nextSource.width * nextSource.height,
+                  nextTarget.width * nextTarget.height
+                ) > maxSplitRunPixels
+              )
+                break
+              sourceBounds = nextSource
+              targetBounds = nextTarget
+            }
+            const batch = splitRuns.slice(start, end)
+            const [before, after] = await Promise.all([
+              renderVerificationCrops(
+                sourcePage,
+                sourcePage.getViewport({ scale: 4 }),
+                sourceBounds,
+                batch.map((run) => run.source)
+              ),
+              renderVerificationCrops(
+                translatedPage,
+                translatedPage.getViewport({ scale: 4 }),
+                targetBounds,
+                batch.map((run) => run.target)
+              )
+            ])
+            for (const [i, { index, targets }] of batch.entries()) {
+              if (
+                !sameVisiblePixels(before[i], after[i]) ||
+                targets.some(
+                  (index) => preservedTargetOwners.has(index) || unownedNativeTargets.has(index)
+                )
+              )
+                continue
+              preservedUnownedGroups.set(index, targets)
+              targets.forEach((index) => unownedNativeTargets.add(index))
+            }
+            start = end
           }
           // Reflowed scientific scripts may change font advances and horizontal
           // position while preserving their text and raised baseline, with at most 2% ink fitting.
@@ -1931,15 +2028,16 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                 )
               : undefined
           const sourceScripts = new Map<string, number[]>()
+          const sourceItemsByOwner = Map.groupBy(sourceRegionOwners, ([, owner]) => owner)
           for (const [index, region] of sourceRegionOwners) {
             const item = originalText.items[index]
             if (!region || !item || !('str' in item)) continue
             const identity = scriptIdentity(item)
             if (!identity) continue
             const size = Math.hypot(item.transform[0], item.transform[1])
-            const base = [...sourceRegionOwners].some(([other, owner]) => {
+            const base = sourceItemsByOwner.get(region)?.some(([other]) => {
               const candidate = originalText!.items[other]
-              if (owner !== region || !candidate || !('str' in candidate)) return false
+              if (!candidate || !('str' in candidate)) return false
               const bodySize = Math.hypot(candidate.transform[0], candidate.transform[1]),
                 rise = Math.abs(item.transform[5] - candidate.transform[5])
               return size <= bodySize * 0.85 && rise >= bodySize * 0.1 && rise <= bodySize
@@ -1978,8 +2076,8 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           }
           // Padding accommodates font advances, but cannot give a neighboring
           // paragraph ownership of a glyph fully inside one exact source region.
-          const targetRegions = units.flatMap((unit) =>
-            unit.fragments
+          const targetRegions = pageUnitIndices.flatMap((index) =>
+            units[index].fragments
               .filter((fragment) => fragment.pageNumber === number)
               .map((fragment) => fragment.rect)
           )
@@ -2258,24 +2356,25 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                 `(?<![A-Za-z\\d])${before.token[0]}\\s*${before.token[1]}(?![A-Za-z\\d])`,
                 'gu'
               )
-              const owners = units.flatMap((unit, index) =>
-                !unchanged(index) &&
-                [unit.source, renderUnits[index].translation].every(
-                  (value) => [...value.matchAll(token)].length === 1
-                ) &&
-                [before.base, before.script, ...before.suffix].every(
-                  (part) =>
-                    !sourceOnlyItems.has(part.index) &&
-                    unit.fragments.some(
-                      ({ pageNumber, rect, items }) =>
-                        pageNumber === number &&
-                        sourceRegionOwners.get(part.index) === rect &&
-                        items.some((item) => item.index === part.index && item.text === part.str)
-                    )
+              const owners = pageUnitIndices.filter((index) => {
+                const unit = units[index]
+                return (
+                  !unchanged(index) &&
+                  [unit.source, renderUnits[index].translation].every(
+                    (value) => [...value.matchAll(token)].length === 1
+                  ) &&
+                  [before.base, before.script, ...before.suffix].every(
+                    (part) =>
+                      !sourceOnlyItems.has(part.index) &&
+                      unit.fragments.some(
+                        ({ pageNumber, rect, items }) =>
+                          pageNumber === number &&
+                          sourceRegionOwners.get(part.index) === rect &&
+                          items.some((item) => item.index === part.index && item.text === part.str)
+                      )
+                  )
                 )
-                  ? [unit]
-                  : []
-              )
+              })
               if (owners.length !== 1) continue
               const placements = targetRaised.flatMap((after) => {
                 if (
@@ -2311,7 +2410,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
                 const rect = regions[0]
                 const conflicting = preservedTargetOwners.get(after.script.index)
                 return regions.length === 1 &&
-                  owners[0].fragments.some((fragment) => fragment.rect === rect) &&
+                  units[owners[0]].fragments.some((fragment) => fragment.rect === rect) &&
                   (!conflicting || conflicting === rect)
                   ? [{ index: after.script.index, y, rect }]
                   : []
@@ -2443,7 +2542,7 @@ export function createPdfTranslationVerification(signal: AbortSignal): Verificat
           )
           // Verify the complete target across its own ordered regions, rather than
           // requiring an entire cross-page paragraph to appear on every page.
-          for (let i = 0; i < units.length; i++) {
+          for (const i of pageUnitIndices) {
             for (const [f, fragment] of units[i].fragments.entries()) {
               if (fragment.pageNumber !== number) continue
               const { rect } = fragment

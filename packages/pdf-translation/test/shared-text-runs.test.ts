@@ -158,10 +158,11 @@ it.each([
       e.m.HEAPU8[buffer] ^= 1
       rejectedPaints++
     }
-    splitSharedTextRuns(e, input.doc, native, rectangles)
+    const inspected = splitSharedTextRuns(e, input.doc, native, rectangles)
     p.FPDF_RenderPageBitmap = nativeRender
     p.FPDFText_SetText = setText
     const after = objects()
+    expect(inspected).toEqual(after)
     expect(Buffer.compare(Buffer.from(render()), Buffer.from(before))).toBe(0)
     expect(
       after

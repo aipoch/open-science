@@ -12,6 +12,7 @@ import { Readable } from 'node:stream'
 import * as fontkit from 'fontkit'
 import {
   PDFDocument,
+  ParseSpeeds,
   PDFDict,
   PDFName,
   PDFRawStream,
@@ -53,6 +54,9 @@ import {
   resolveExplicitPowerIndices,
   resolveOrdinalSuffixIndices
 } from './scientific-scripts.mjs'
+
+// This worker is terminated externally, so pdf-lib can finish its object batches without timers.
+const loadOptions = { updateMetadata: false, parseSpeed: ParseSpeeds.Fastest }
 
 // Structured worker diagnostics contain only fixed reason codes, locations and measurements.
 const retainedUnits = new Map()
@@ -379,7 +383,7 @@ async function restoreIndexedImagePalettes(metadata, output, selectedPages) {
     })
   if (!candidates.length) return output
 
-  const generated = await PDFDocument.load(output, { updateMetadata: false }),
+  const generated = await PDFDocument.load(output, loadOptions),
     pages = generated.getPages(),
     copier = PDFObjectCopier.for(metadata.context, generated.context)
   let repaired = false
@@ -419,7 +423,11 @@ async function restoreIndexedImagePalettes(metadata, output, selectedPages) {
     }
   }
   return repaired
-    ? generated.save({ addDefaultPage: false, updateFieldAppearances: false })
+    ? generated.save({
+        addDefaultPage: false,
+        updateFieldAppearances: false,
+        objectsPerTick: Infinity
+      })
     : output
 }
 
@@ -631,7 +639,7 @@ async function generate({
   let input = e.open(data)
   check(p.FPDF_GetPageCount(input.doc) === pages.length)
   check(p.FPDF_GetSignatureCount(input.doc) === 0)
-  const metadata = await PDFDocument.load(data, { updateMetadata: false }),
+  const metadata = await PDFDocument.load(data, loadOptions),
     nativePages = metadata.getPages(),
     sharedDictionaries = new Map(),
     resourceKeys = ['ExtGState', 'XObject'].map((name) => PDFName.of(name))
@@ -659,11 +667,15 @@ async function generate({
     detachedResources = true
   }
   if (detachedResources) {
-    const detached = await metadata.save({ addDefaultPage: false, updateFieldAppearances: false })
+    const detached = await metadata.save({
+      addDefaultPage: false,
+      updateFieldAppearances: false,
+      objectsPerTick: Infinity
+    })
     input.close()
     input = e.open(detached)
   }
-  await unwrapPageContainers(e, input.doc, data, pages.length, selectedPages)
+  unwrapPageContainers(e, input.doc, metadata, selectedPages)
   // InDesign exports citation links with an empty appearance ("q Q"). It has
   // no paint to relocate; keep the stream and action intact when moving the rect.
   // Inspect every appearance mode, rejecting state dictionaries and unknown paint.
@@ -912,26 +924,32 @@ async function generate({
           alpha = new Uint8Array(width * height),
           colors = new Uint32Array(width * height)
         check(buffer && stride >= width * 4)
-        for (let y = 0; y < height; y++)
-          for (let x = 0; x < width; x++)
-            alpha[y * width + x] = e.m.HEAPU8[buffer + y * stride + x * 4 + 3]
+        const pixels = e.m.HEAPU8
+        for (let y = 0; y < height; y++) {
+          let src = buffer + y * stride + 3
+          for (let x = 0; x < width; x++, src += 4) alpha[y * width + x] = pixels[src]
+        }
         // Check the visible backdrop separately. A solid vector fill can
         // cover a raster drop shadow, without making unrelated paths into
         // new image obstacles elsewhere on the page.
+        let backdropChanged = false
         for (const [index, [object, active]] of states.entries()) {
-          const record = objects[index]
-          check(
-            p.FPDFPageObj_SetIsActive(
-              object,
-              active && record.type !== 1 && !preserved.includes(record.i)
-            )
-          )
+          const { type, i } = objects[index]
+          if (active && type !== 1 && type !== 3 && type !== 5 && !preserved.includes(i)) {
+            check(p.FPDFPageObj_SetIsActive(object, true))
+            backdropChanged = true
+          }
         }
-        check(p.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0))
-        p.FPDF_RenderPageBitmap(bitmap, page, 0, 0, width, height, 0, 0)
-        for (let y = 0; y < height; y++)
-          for (let x = 0; x < width; x++)
-            colors[y * width + x] = e.m.HEAPU32[(buffer + y * stride) / 4 + x]
+        // If only images and Forms paint the backdrop, their first bitmap already has its colors.
+        if (backdropChanged) {
+          check(p.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, 0))
+          p.FPDF_RenderPageBitmap(bitmap, page, 0, 0, width, height, 0, 0)
+        }
+        const painted = e.m.HEAPU32
+        for (let y = 0; y < height; y++) {
+          const start = (buffer + y * stride) / 4
+          colors.set(painted.subarray(start, start + width), y * width)
+        }
         graphicMask = { key: maskKey, width, height, alpha, colors }
       } finally {
         for (const [object, active] of states) check(p.FPDFPageObj_SetIsActive(object, active))
@@ -957,8 +975,13 @@ async function generate({
       top = Math.max(0, Math.floor((box.bottom * height) / size.height)),
       bottom = Math.min(height, Math.ceil((box.top * height) / size.height))
     let overlaps = false
-    for (let y = top; y < bottom; y++)
-      for (let x = left; x < right; x++) overlaps ||= alpha[y * width + x] > 0
+    for (let y = top; y < bottom && !overlaps; y++)
+      for (let x = left; x < right; x++) {
+        if (alpha[y * width + x]) {
+          overlaps = true
+          break
+        }
+      }
     if (!overlaps) return false
     if (!sourceInk) return true
     // Inspect the backdrop beneath the owned glyphs and the replacement area.
@@ -1355,6 +1378,7 @@ async function generate({
   let planningSnapshot
   const closePlanningPage = () => {
     if (!planningSnapshot) return
+    if (planningSnapshot.textPage) p.FPDFText_ClosePage(planningSnapshot.textPage)
     p.FPDF_ClosePage(planningSnapshot.page)
     planningSnapshot = undefined
   }
@@ -1372,7 +1396,7 @@ async function generate({
           ...fragmentBounds(fragment),
           sourceItems: fragment.items?.map((item) => item.text) ?? []
         }))
-      splitSharedTextRuns(
+      const objects = splitSharedTextRuns(
         e,
         input.doc,
         page,
@@ -1400,7 +1424,6 @@ async function generate({
         ],
         nativeFontName
       )
-      const objects = e.objects(page)
       const { sources: overprintedSources, groups: overprintGroups } =
         recoverOverprintedTextSources(e, page, objects)
       for (const object of objects) object.text = overprintedSources.get(object.obj) ?? object.text
@@ -1519,7 +1542,12 @@ async function generate({
         objects,
         overhangingAccents,
         zeroInkPositioningMarkers,
-        overprintGroups
+        overprintGroups,
+        textPage: 0,
+        readTextPage() {
+          if (!this.textPage) this.textPage = p.FPDFText_LoadPage(page)
+          return this.textPage
+        }
       }
       return planningSnapshot
     } catch (error) {
@@ -1665,8 +1693,9 @@ async function generate({
       )
       const sourceRect = fragmentBounds(fragment),
         origin = geometry[fragment.pageNumber - 1]
+      const snapshot = planningPage(fragment.pageNumber)
       const { page, objects, overhangingAccents, zeroInkPositioningMarkers, overprintGroups } =
-        planningPage(fragment.pageNumber)
+        snapshot
       let sourceSize, sourcePoint, sourceColor, sourceBaseline, cos, sin
       let mixedSizes = false
       const proseColors = new Map()
@@ -2911,7 +2940,7 @@ async function generate({
         if (unchanged) {
           // Read-only fragments may be part of a larger object or nested in a Form.
           // Verify the visible region without requiring ownership to delete it.
-          const text = p.FPDFText_LoadPage(page)
+          const text = snapshot.readTextPage()
           check(text, 'source-mismatch')
           let at
           try {
@@ -2980,7 +3009,6 @@ async function generate({
             })
           } finally {
             if (at) e.free(at)
-            p.FPDFText_ClosePage(text)
           }
           continue
         }
@@ -4076,7 +4104,7 @@ async function generate({
             (/\p{L}/u.test(sourceLabel) || /^\[\d{1,3}\][).,:;]+$/u.test(sourceLabel)) &&
             anchor.some((o) => o.bounds[0] < link.left - 1 || o.bounds[2] > link.right + 1)
           ) {
-            const text = p.FPDFText_LoadPage(page)
+            const text = snapshot.readTextPage()
             check(text, 'annotations')
             const at = e.alloc(32)
             try {
@@ -4090,22 +4118,34 @@ async function generate({
                 offset += object.text.length
               }
               check(count >= 0 && count <= 100000, 'annotations')
-              for (let index = 0; index < count; index++) {
-                const code = p.FPDFText_GetUnicode(text, index),
-                  position = positions.get(p.FPDFText_GetTextObject(text, index))
-                if (!code || code === 10 || code === 13 || !position) continue
-                const char = String.fromCodePoint(code),
-                  local = position.text.indexOf(char, position.cursor)
-                if (local < 0) continue
-                position.cursor = local + char.length
-                if (!p.FPDFText_GetCharBox(text, index, at, at + 8, at + 16, at + 24)) continue
-                const [left, right, bottom, top] = e.m.HEAPF64.slice(at / 8, at / 8 + 4)
-                if (![left, right, bottom, top].every(Number.isFinite)) continue
-                const x = (left + right) / 2,
-                  y = (bottom + top) / 2
-                if (x >= link.left && x <= link.right && y >= link.bottom && y <= link.top) {
-                  first = Math.min(first, position.offset + local)
-                  last = Math.max(last, position.offset + local + char.length)
+              // A page can contain many links. Index native character ownership once,
+              // retaining the original reading order within each text object.
+              if (!snapshot.linkCharacters) {
+                const byObject = new Map()
+                for (let index = 0; index < count; index++) {
+                  const object = p.FPDFText_GetTextObject(text, index)
+                  if (!byObject.has(object)) byObject.set(object, [])
+                  byObject.get(object).push(index)
+                }
+                snapshot.linkCharacters = byObject
+              }
+              for (const [object, position] of positions) {
+                for (const index of snapshot.linkCharacters.get(object) ?? []) {
+                  const code = p.FPDFText_GetUnicode(text, index)
+                  if (!code || code === 10 || code === 13) continue
+                  const char = String.fromCodePoint(code),
+                    local = position.text.indexOf(char, position.cursor)
+                  if (local < 0) continue
+                  position.cursor = local + char.length
+                  if (!p.FPDFText_GetCharBox(text, index, at, at + 8, at + 16, at + 24)) continue
+                  const [left, right, bottom, top] = e.m.HEAPF64.slice(at / 8, at / 8 + 4)
+                  if (![left, right, bottom, top].every(Number.isFinite)) continue
+                  const x = (left + right) / 2,
+                    y = (bottom + top) / 2
+                  if (x >= link.left && x <= link.right && y >= link.bottom && y <= link.top) {
+                    first = Math.min(first, position.offset + local)
+                    last = Math.max(last, position.offset + local + char.length)
+                  }
                 }
               }
               const label = rawLabel.slice(first, last).trim(),
@@ -4121,7 +4161,6 @@ async function generate({
               }
             } finally {
               e.free(at)
-              p.FPDFText_ClosePage(text)
             }
           }
           let localized, nativeUriTail
@@ -8604,6 +8643,7 @@ async function generate({
     } while (retained.size)
   }
   try {
+    const plansByPage = Map.groupBy(plans, (plan) => plan.fragment.pageNumber)
     const borrowedPages = new Map()
     const originalOrigins = new Map()
     const originRecovery = createSourceFragmentRecovery(data, pages)
@@ -8619,6 +8659,8 @@ async function generate({
           const used = new Set()
           for (let i = 0; i < pages.length; i++) {
             if (selectedPages && !selectedPages.has(i + 1)) continue
+            const pagePlans = plansByPage.get(i + 1)
+            if (!pagePlans?.some((plan) => !plan.unchanged)) continue
             currentPlan = undefined
             pageNumber = i + 1
             let page = borrowedPages.get(i)
@@ -8644,7 +8686,7 @@ async function generate({
               object.text = overprintedSources.get(object.obj) ?? object.text
             applyActualTextSources(i + 1, objects)
             const occupied = []
-            for (const plan of plans.filter((plan) => plan.fragment.pageNumber === i + 1)) {
+            for (const plan of pagePlans) {
               currentPlan = plan
               const { rect } = plan
               check(
@@ -8739,11 +8781,10 @@ async function generate({
                 // A wider text object must not delete an unchanged fragment, even if
                 // the caller supplied disjoint rectangles for two parts of that object.
                 check(
-                  !plans.some(
+                  !pagePlans.some(
                     (other) =>
                       other.unchanged &&
                       (!other.verifiedObjects || other.objectIndices.includes(o.i)) &&
-                      other.fragment.pageNumber === i + 1 &&
                       o.bounds[0] < other.rect.x + other.rect.width &&
                       o.bounds[2] > other.rect.x &&
                       o.bounds[1] < other.rect.top &&
@@ -8794,7 +8835,7 @@ async function generate({
         check(output.length <= 64 * 1024 ** 2)
         return output
       }
-      const source = e.open(await carrier.save())
+      const source = e.open(await carrier.save({ objectsPerTick: Infinity }))
       try {
         check(p.FPDF_ImportPages(input.doc, source.doc, '1', pages.length))
       } finally {
@@ -9240,34 +9281,37 @@ async function generate({
           })
         }
         for (const page of new Set(replacements.map((plan) => plan.page))) {
-          const excluded = new Set(
-            replacements
-              .filter((plan) => plan.page === page)
-              .flatMap((plan) => plan.selected.map((object) => object.obj))
-          )
-          const present = new Map(e.objects(page).map((object) => [object.obj, object])),
-            matrixAt = e.alloc(24)
-          try {
-            for (const [object, origin] of originalOrigins.get(page) ?? []) {
-              if (
-                excluded.has(object) ||
-                present.get(object)?.type !== 1 ||
-                present.get(object)?.text !== origin.text ||
-                p.FPDFTextObj_GetFont(object) !== origin.font ||
-                !p.FPDFPageObj_GetMatrix(object, matrixAt)
-              )
-                continue
-              if (
-                Array.from(e.m.HEAPF32.slice(matrixAt / 4, matrixAt / 4 + 6)).some(
-                  (value, index) => value !== origin.matrix[index]
+          const origins = originalOrigins.get(page)
+          if (origins?.size) {
+            const excluded = new Set(
+              replacements
+                .filter((plan) => plan.page === page)
+                .flatMap((plan) => plan.selected.map((object) => object.obj))
+            )
+            const present = new Map(e.objects(page).map((object) => [object.obj, object])),
+              matrixAt = e.alloc(24)
+            try {
+              for (const [object, origin] of origins) {
+                if (
+                  excluded.has(object) ||
+                  present.get(object)?.type !== 1 ||
+                  present.get(object)?.text !== origin.text ||
+                  p.FPDFTextObj_GetFont(object) !== origin.font ||
+                  !p.FPDFPageObj_GetMatrix(object, matrixAt)
                 )
-              )
-                continue
-              e.m.HEAPF32.set([...origin.matrix.slice(0, 4), ...origin.point], matrixAt / 4)
-              check(p.FPDFPageObj_SetMatrix(object, matrixAt))
+                  continue
+                if (
+                  Array.from(e.m.HEAPF32.slice(matrixAt / 4, matrixAt / 4 + 6)).some(
+                    (value, index) => value !== origin.matrix[index]
+                  )
+                )
+                  continue
+                e.m.HEAPF32.set([...origin.matrix.slice(0, 4), ...origin.point], matrixAt / 4)
+                check(p.FPDFPageObj_SetMatrix(object, matrixAt))
+              }
+            } finally {
+              e.free(matrixAt)
             }
-          } finally {
-            e.free(matrixAt)
           }
           preserveOpenRectanglePaths(e, page)
           check(p.FPDFPage_GenerateContent(page))
@@ -9295,8 +9339,8 @@ async function generate({
 // a new document would strand internal GoTo links and named destinations. Redirect
 // donor page references through the public copier before copying their contents.
 async function replaceChangedPages(baselineData, changedData, pageNumbers, count) {
-  const baseline = await PDFDocument.load(baselineData, { updateMetadata: false }),
-    changed = await PDFDocument.load(changedData, { updateMetadata: false }),
+  const baseline = await PDFDocument.load(baselineData, loadOptions),
+    changed = await PDFDocument.load(changedData, loadOptions),
     before = baseline.getPages(),
     after = changed.getPages()
   check(before.length === count && after.length === count, 'invalid-input')
@@ -9338,7 +9382,7 @@ async function replaceChangedPages(baselineData, changedData, pageNumbers, count
   for (const [ref] of baseline.context.enumerateIndirectObjects())
     if (!reachable.has(ref)) baseline.context.delete(ref)
   const saveStarted = performance.now()
-  const output = await baseline.save()
+  const output = await baseline.save({ objectsPerTick: Infinity })
   timings.mergeSaveMs += performance.now() - saveStarted
   return output
 }

@@ -7725,6 +7725,18 @@ describe('PdfPreviewContent', () => {
     // intrinsic 400px width — the crisp bitmap simply downscales via CSS.
     expect(container.querySelector<HTMLCanvasElement>('canvas')?.width).toBe(400)
 
+    for (const width of [320, 340, 360]) {
+      await act(async () => {
+        measuredWidth = width
+        resizeCallbacks[0]?.([] as unknown as ResizeObserverEntry[], {} as ResizeObserver)
+      })
+      expect(container.querySelector<HTMLElement>('[data-page-number="1"]')?.style.width).toBe(
+        `${width}px`
+      )
+    }
+    expect(render).toHaveBeenCalledTimes(3)
+    expect(getPage).toHaveBeenCalledTimes(1)
+
     clientWidthSpy.mockRestore()
   })
 
