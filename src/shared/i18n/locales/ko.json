@@ -7764,6 +7764,8 @@
     "OCR languages": "OCR 언어",
     "OCR installed. Read the PDF again.": "OCR이 설치되었습니다. PDF를 다시 읽으세요.",
     "Image support is not configured": "이미지 지원이 설정되지 않았습니다",
+    "Model request blocked": "모델 요청이 차단됨",
+    "The HTTP address for this model is missing from the allowlist. If you trust the address, verify and save the provider in Model settings, then retry. Saving grants both the Agent and Notebook access to this address.": "이 모델의 HTTP 주소가 허용 목록에 없습니다. 신뢰하는 주소라면 모델 설정에서 모델 제공업체를 검증하고 저장한 후 다시 시도하세요. 저장하면 에이전트와 Notebook 모두 이 주소에 접근할 수 있습니다.",
     "Model configuration needs attention": "모델 설정을 확인해야 합니다",
     "The model service address is invalid": "모델 서비스 주소가 올바르지 않습니다",
     "Check the model provider base URL and endpoint path, then retry.": "모델 제공업체의 기본 URL과 엔드포인트 경로를 확인한 후 다시 시도하세요.",

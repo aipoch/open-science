@@ -8098,6 +8098,8 @@
     "OCR languages": "Idiomas de OCR",
     "OCR installed. Read the PDF again.": "OCR instalado. Vuelva a leer el PDF.",
     "Image support is not configured": "La compatibilidad con imágenes no está configurada",
+    "Model request blocked": "Solicitud al modelo bloqueada",
+    "The HTTP address for this model is missing from the allowlist. If you trust the address, verify and save the provider in Model settings, then retry. Saving grants both the Agent and Notebook access to this address.": "La dirección HTTP de este modelo no figura en la lista de direcciones permitidas. Si confía en ella, verifique y guarde el proveedor en los ajustes del modelo y vuelva a intentarlo. Al guardar, tanto el agente como el Notebook obtienen acceso a esta dirección.",
     "Model configuration needs attention": "La configuración del modelo requiere atención",
     "The model service address is invalid": "La dirección del servicio del modelo no es válida",
     "Check the model provider base URL and endpoint path, then retry.": "Compruebe la URL base y la ruta del endpoint del proveedor del modelo y vuelva a intentarlo.",

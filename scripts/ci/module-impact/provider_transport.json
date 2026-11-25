@@ -9,6 +9,7 @@
     "src/main/settings/codex-transport-fallback-log.test.ts",
     "src/main/settings/codex-transport-fallback-log.ts",
     "src/main/settings/provider-failure-observation.ts",
+    "src/main/settings/provider-http-access.ts",
     "src/main/settings/provider-loopback-http-host.architecture.test.ts",
     "src/main/settings/provider-loopback-http-host.test.ts",
     "src/main/settings/provider-loopback-http-host.ts",
@@ -22,6 +23,7 @@
     "src/main/settings/codebuddy-skill-selector-transport.ts",
     "src/main/settings/codex-transport-fallback-log.ts",
     "src/main/settings/provider-failure-observation.ts",
+    "src/main/settings/provider-http-access.ts",
     "src/main/settings/provider-loopback-http-host.ts",
     "src/main/settings/skill-selection-contract.ts",
     "src/main/settings/skill-selector-routing.ts"

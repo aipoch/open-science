@@ -882,7 +882,7 @@ it('refuses a persisted remote HTTP target before forwarding a prompt or credent
 it('rechecks shared HTTP authorization for every open-session request', async () => {
   let allowed = true
   const upstream = vi.fn<typeof fetch>(async () =>
-    Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
+    Response.json({ error: { message: 'Provider rejected the model' } }, { status: 400 })
   )
   const bridge = new ProtocolForwardingBridge(
     [
@@ -910,11 +910,14 @@ it('rechecks shared HTTP authorization for every open-session request', async ()
         body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }] })
       })
 
-    expect((await request()).status).toBe(200)
+    // The first error is cacheable. A later denial must take precedence over its replay.
+    expect((await request()).status).toBe(400)
     allowed = false
     const blocked = await request()
-    expect(blocked.ok).toBe(false)
-    expect(await blocked.text()).toContain('HTTPS')
+    expect(blocked.status).toBe(403)
+    expect(await blocked.json()).toMatchObject({
+      error: { code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' }
+    })
     expect(upstream).toHaveBeenCalledTimes(1)
   } finally {
     await bridge.close()

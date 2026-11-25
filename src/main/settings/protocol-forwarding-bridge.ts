@@ -1,3 +1,4 @@
+import { resolveProviderHttpAccess } from './provider-http-access'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -265,6 +266,7 @@ export class ProtocolForwardingBridge {
       providerRequestHeadersFingerprint(headersToForward),
       body
     )
+    const access = await resolveProviderHttpAccess(target, endpoint.toString())
     const replay = connection ? undefined : this.deterministicErrors.get(replayKey)
     if (replay) {
       response.writeHead(replay.status, replay.headers)
@@ -279,10 +281,11 @@ export class ProtocolForwardingBridge {
       ? (url, init) => this.fetchImpl(url, { ...init, redirect: 'error', credentials: 'omit' })
       : this.fetchImpl
     const fetchUpstream = withProviderConnectionMarker(transport, response)
-    const send = async (url: URL, headers: Headers): Promise<Response> => {
-      const allowInsecureHttp = target.isInsecureHttpAllowed
-        ? await target.isInsecureHttpAllowed(url.toString())
-        : target.allowInsecureHttp
+    const send = async (
+      url: URL,
+      headers: Headers,
+      allowInsecureHttp: boolean | undefined
+    ): Promise<Response> => {
       return fetchProviderRequest(fetchUpstream, url, {
         allowInsecureHttp,
         method: 'POST',
@@ -291,7 +294,7 @@ export class ProtocolForwardingBridge {
         signal: request.signal
       })
     }
-    let upstream = await send(endpoint, headersToForward)
+    let upstream = await send(endpoint, headersToForward, access)
     // A host-owned credential can expire mid-generation. Refresh exactly once; a second 401 is a
     // real authentication failure and must not loop.
     if (
@@ -303,7 +306,12 @@ export class ProtocolForwardingBridge {
       await upstream.body?.cancel()
       const refreshed = await target.resolveConnection(request.signal, true)
       request.signal.throwIfAborted()
-      upstream = await send(resolveEndpoint(refreshed.endpoint), forwardingHeaders(refreshed))
+      const url = resolveEndpoint(refreshed.endpoint)
+      upstream = await send(
+        url,
+        forwardingHeaders(refreshed),
+        await resolveProviderHttpAccess(target, url.toString())
+      )
     }
     if (connection && !upstream.ok) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, { signal: request.signal })

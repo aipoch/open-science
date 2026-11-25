@@ -8241,6 +8241,8 @@
     "OCR languages": "Языки OCR",
     "OCR installed. Read the PDF again.": "OCR установлен. Прочитайте PDF повторно.",
     "Image support is not configured": "Поддержка изображений не настроена",
+    "Model request blocked": "Запрос к модели заблокирован",
+    "The HTTP address for this model is missing from the allowlist. If you trust the address, verify and save the provider in Model settings, then retry. Saving grants both the Agent and Notebook access to this address.": "HTTP-адрес этой модели отсутствует в списке разрешённых адресов. Если вы доверяете адресу, проверьте и сохраните поставщика в настройках модели, затем повторите запрос. После сохранения агент и Notebook получат доступ к этому адресу.",
     "Model configuration needs attention": "Необходимо проверить настройки модели",
     "The model service address is invalid": "Неверный адрес сервиса модели",
     "Check the model provider base URL and endpoint path, then retry.": "Проверьте базовый URL и путь конечной точки поставщика модели, затем повторите попытку.",

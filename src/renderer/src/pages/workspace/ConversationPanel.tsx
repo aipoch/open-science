@@ -349,6 +349,7 @@ type ConversationPanelView = {
   sendPreparing?: boolean
   persistenceBlocked?: boolean
   persistenceIssue?: SessionWriteIssue
+  actionErrorCode?: string
   actionError: string | null
   sideChatDisabledReason?: string
   sessionImport?: { projectId: string; projectName?: string; canImport: boolean }
@@ -514,6 +515,7 @@ const ConversationPanel = ({
     persistenceBlocked,
     persistenceIssue,
     actionError,
+    actionErrorCode,
     sideChatDisabledReason,
     sessionImport
   } = view
@@ -1142,6 +1144,7 @@ const ConversationPanel = ({
       },
       {
         id: 'action',
+        code: actionErrorCode,
         message: attachmentNotice && actionError === composerError ? undefined : actionError,
         failure: operationFailure ?? (actionError === composerError ? composerFailure : undefined),
         detail:

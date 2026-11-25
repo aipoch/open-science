@@ -1,3 +1,4 @@
+import { resolveProviderHttpAccess } from './provider-http-access'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -101,9 +102,7 @@ export class ChatCompletionsCompatibilityBridge {
     if (this.target.key) headers.authorization = `Bearer ${this.target.key}`
     if (this.target.wire === 'messages') headers['anthropic-version'] = '2023-06-01'
     const startedAt = Date.now()
-    const allowInsecureHttp = this.target.isInsecureHttpAllowed
-      ? await this.target.isInsecureHttpAllowed(this.target.endpoint)
-      : this.target.allowInsecureHttp
+    const allowInsecureHttp = await resolveProviderHttpAccess(this.target, this.target.endpoint)
     const upstream = await fetchProviderRequest(this.fetchImpl, this.target.endpoint, {
       allowInsecureHttp,
       method: 'POST',

@@ -1,3 +1,4 @@
+import { resolveProviderHttpAccess } from './provider-http-access'
 import {
   prepareNativeResponsesRequest,
   NativeResponsesRequestError,
@@ -734,9 +735,7 @@ export class NativeResponsesCompatibilityProxy {
     try {
       const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
       const url = responsesUrl(this.target.baseUrl)
-      const allowInsecureHttp = this.target.isInsecureHttpAllowed
-        ? await this.target.isInsecureHttpAllowed(url)
-        : this.target.allowInsecureHttp
+      const allowInsecureHttp = await resolveProviderHttpAccess(this.target, url)
       const response = await fetchProviderRequest(this.fetchImpl, url, {
         allowInsecureHttp,
         method: 'POST',
@@ -1029,6 +1028,8 @@ export class NativeResponsesCompatibilityProxy {
         toolLessScoped
       })
       phase = 'upstream-fetch'
+      const upstreamUrl = responsesUrl(target.baseUrl)
+      const allowInsecureHttp = await resolveProviderHttpAccess(target, upstreamUrl)
       const replay = this.deterministicErrors.get(replayKey)
       if (replay) {
         phase = 'forward-response'
@@ -1048,10 +1049,6 @@ export class NativeResponsesCompatibilityProxy {
       )
       const providerRequestStartedAt = Date.now()
       const fetchUpstream = withProviderConnectionMarker(this.fetchImpl, response)
-      const upstreamUrl = responsesUrl(target.baseUrl)
-      const allowInsecureHttp = target.isInsecureHttpAllowed
-        ? await target.isInsecureHttpAllowed(upstreamUrl)
-        : target.allowInsecureHttp
       let upstream = await fetchProviderRequest(fetchUpstream, upstreamUrl, {
         allowInsecureHttp,
         method: 'POST',
@@ -1061,9 +1058,7 @@ export class NativeResponsesCompatibilityProxy {
       })
       if (upstream.status === 401 && target.resolveKey) {
         const refreshedKey = await target.resolveKey(true)
-        const retryAllowInsecureHttp = target.isInsecureHttpAllowed
-          ? await target.isInsecureHttpAllowed(upstreamUrl)
-          : target.allowInsecureHttp
+        const retryAllowInsecureHttp = await resolveProviderHttpAccess(target, upstreamUrl)
         upstream = await fetchProviderRequest(fetchUpstream, upstreamUrl, {
           allowInsecureHttp: retryAllowInsecureHttp,
           method: 'POST',

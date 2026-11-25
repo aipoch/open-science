@@ -148,6 +148,7 @@ const setWorkspacePermissionProfile = async (
 }
 
 type WorkspaceAgentRuntime = {
+  actionErrorCode?: ReturnType<typeof useAcpRuntime>['actionErrorCode']
   actionError: string | null
   isConnecting: boolean
   pendingPermissions: AcpPermissionRequest[]
@@ -631,6 +632,7 @@ const useOwnedWorkspaceAgentRuntime = (
 
   return {
     actionError: runtime.actionError,
+    actionErrorCode: runtime.actionErrorCode,
     isConnecting: runtime.isConnecting,
     pendingPermissions: visiblePendingPermissions,
     permissionProfiles: runtime.state.permissionProfiles,

@@ -1267,7 +1267,19 @@ it('rejects a persisted remote HTTP provider before projecting credentials into 
     model: 'model',
     keyRef: encryptKey('PRIVACY_CANARY')
   }
-  expect(() => owner.resolveProvider(provider)).toThrow(/HTTPS/)
+  expect(() => owner.resolveProvider(provider)).toThrow(
+    expect.objectContaining({ code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' })
+  )
+  for (const baseUrl of [
+    'http://user:pass@gateway.example',
+    'http://gateway.example?token=x',
+    'invalid'
+  ]) {
+    expect(() => owner.resolveProvider({ ...provider, baseUrl })).toThrow()
+    expect(() => owner.resolveProvider({ ...provider, baseUrl })).not.toThrow(
+      expect.objectContaining({ code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' })
+    )
+  }
   expect(owner.toProviderView(provider).baseUrl).toBe(provider.baseUrl)
 })
 
@@ -1286,7 +1298,7 @@ it('projects the shared HTTP grant only when the backend supplies it', () => {
   }
   const framework = getAgentFramework('claude-code')
   expect(() => owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)).toThrow(
-    /HTTPS/
+    expect.objectContaining({ code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' })
   )
   expect(
     owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework, {

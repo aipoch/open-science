@@ -1,4 +1,7 @@
+import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from './failure/messages'
+
 export const APPLICATION_COMMAND_ERROR_CODES = [
+  MODEL_HTTP_DESTINATION_NOT_ALLOWED,
   'invalid-command-arguments',
   'invalid-command-result',
   'command-unavailable',
@@ -41,6 +44,9 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'csl-undefined-macro',
   'csl-missing-sections'
 ] as const
+
+export const isAcpSessionAdmissionChannel = (channel: string): boolean =>
+  channel === 'acp:create-session' || channel === 'acp:resume-session'
 
 export const isSessionReadChannel = (channel: string): boolean =>
   channel === 'sessions:load-one' || channel === 'sessions:load-history-page'
@@ -121,6 +127,23 @@ export const toApplicationCommandErrorEnvelope = (
             message: error instanceof Error ? error.message : String(error)
           }
   )
+
+// Legacy ACP callers receive raw success values. Preserve a typed policy denial across Electron
+// IPC without changing the existing rejection behavior of unrelated admission failures.
+export const acpSessionAdmissionIpcResult = async <T>(
+  invoke: () => Promise<T>
+): Promise<T | { ok: false; error: ApplicationCommandErrorEnvelope }> => {
+  try {
+    return await invoke()
+  } catch (error) {
+    if (
+      error instanceof ApplicationCommandError &&
+      error.code === MODEL_HTTP_DESTINATION_NOT_ALLOWED
+    )
+      return { ok: false, error: toApplicationCommandErrorEnvelope(error) }
+    throw error
+  }
+}
 
 const invalidOutcome = (): ApplicationCommandError =>
   new ApplicationCommandError(

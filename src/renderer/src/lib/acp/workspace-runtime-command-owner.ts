@@ -1,3 +1,4 @@
+import { errorDetail } from '@/lib/error-detail'
 import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
 import * as annotationProtocol from '../../../../shared/annotations'
 import type { FileReference } from '../../../../shared/artifacts'
@@ -221,7 +222,7 @@ const resolveSendAgentTarget = (
   }
 }
 const createSessionFailureMessage = (error: unknown): string =>
-  errorMessage(error)
+  (errorDetail(error) ?? errorMessage(error))
     .replace(/^Error invoking remote method '[^']*':\s*/i, '')
     .replace(/^Error(?::\s*|$)/i, '')
     .trim() || 'Agent session could not be created.'
@@ -254,7 +255,8 @@ const rejectPreparedPrompt = async (
   preparation: WorkspacePromptPreparation | undefined,
   rejected:
     ((error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void) | undefined,
-  providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined
+  providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined,
+  rawError?: unknown
 ): Promise<void> => {
   if (preparingSessionAttempts.get(sessionId)?.cancelled) return
   if (preparation && !ownsWorkspacePromptPreparation(preparation)) return
@@ -269,7 +271,7 @@ const rejectPreparedPrompt = async (
   if (attempt) attempt.rollback = cleanup
   if (preparation) withdrawWorkspacePrompt(preparation)
   markPendingSessionRetryable(sessionId)
-  reportWorkspaceOperationError(sessionId, message, { providerTarget })
+  reportWorkspaceOperationError(sessionId, message, { providerTarget, rawError })
   rejected?.(message, sessionId, restoredAttachments)
   void cleanup?.then(({ failure }) => {
     if (failure !== undefined) console.warn('Unsent prompt rollback failed', failure)
@@ -742,11 +744,19 @@ const rejectUnboundPendingPrompt = async (
   pending: SendWorkspaceMessageResult,
   message: string,
   rejected: SendWorkspaceMessageIntent['onPreparationRejected'],
-  providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined
+  providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined,
+  rawError?: unknown
 ): Promise<void> => {
   if (!ownsPrompt(pending.sessionId, pending.messageId)) return
   withdrawUnboundPendingPrompt(pending)
-  await rejectPreparedPrompt(pending.sessionId, message, undefined, rejected, providerTarget)
+  await rejectPreparedPrompt(
+    pending.sessionId,
+    message,
+    undefined,
+    rejected,
+    providerTarget,
+    rawError
+  )
 }
 
 const startPendingPrompt = (
@@ -792,7 +802,8 @@ const startPendingPrompt = (
           pending,
           createSessionFailureMessage(error),
           request.onPreparationRejected,
-          request.agentConfiguration
+          request.agentConfiguration,
+          error
         )
       }
       return undefined

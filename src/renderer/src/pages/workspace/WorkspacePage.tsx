@@ -2005,6 +2005,10 @@ const WorkspacePage = ({
                       ({ sessionId }) => sessionId === activeSession?.id
                     ),
                     actionError: visibleActionError,
+                    actionErrorCode:
+                      !activeSession && visibleActionError === actionError
+                        ? runtime.actionErrorCode
+                        : undefined,
                     authenticationRecovery,
                     sideChatDisabledReason,
                     sessionImport: {

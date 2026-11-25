@@ -7766,6 +7766,8 @@
     "OCR languages": "OCR 语言",
     "OCR installed. Read the PDF again.": "OCR 已安装，请重新读取 PDF。",
     "Image support is not configured": "尚未配置图片支持",
+    "Model request blocked": "模型请求已被拦截",
+    "The HTTP address for this model is missing from the allowlist. If you trust the address, verify and save the provider in Model settings, then retry. Saving grants both the Agent and Notebook access to this address.": "此模型的 HTTP 地址不在白名单中。如果信任该地址，请在“模型”设置中验证并保存提供商，然后重试。保存后，智能体和 Notebook 都可以访问该地址。",
     "Model configuration needs attention": "模型配置需要处理",
     "The model service address is invalid": "模型服务地址有误",
     "Check the model provider base URL and endpoint path, then retry.": "请检查模型服务商的基础地址和接口路径，然后重试。",

@@ -1,3 +1,4 @@
+import { resolveProviderHttpAccess } from './provider-http-access'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { randomUUID } from 'node:crypto'
 import type { OfficialVendorId, CustomReasoningEffortTransport } from '@aipoch/providers'
@@ -88,7 +89,7 @@ export async function selectChatSkills(input: {
       target.vendorId === 'opencode-go' ? `open-science-selector-${randomUUID()}` : undefined
     const request = async (withTool: boolean): Promise<Response> =>
       fetchProviderRequest(fetchImpl, target.url, {
-        allowInsecureHttp: await target.isInsecureHttpAllowed?.(target.url),
+        allowInsecureHttp: await resolveProviderHttpAccess(target, target.url),
         method: 'POST',
         headers: {
           'content-type': 'application/json',

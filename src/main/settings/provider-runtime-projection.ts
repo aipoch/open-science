@@ -1,3 +1,5 @@
+import { providerNetworkDestination } from '../../shared/provider-network-authorization'
+import { modelHttpDestinationDenied } from './provider-http-access'
 import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
   catalogModelApiEndpoints,
@@ -378,7 +380,11 @@ class ProviderRuntimeProjectionOwner {
     }
     if (provider.type === 'custom' && provider.baseUrl) {
       const error = getCustomProviderBaseUrlError(provider.baseUrl, { allowInsecureHttp })
-      if (error) throw new Error(error)
+      if (error) {
+        if (!allowInsecureHttp && providerNetworkDestination(provider.baseUrl))
+          throw modelHttpDestinationDenied()
+        throw new Error(error)
+      }
     }
     const key =
       provider.type === 'xai-subscription'

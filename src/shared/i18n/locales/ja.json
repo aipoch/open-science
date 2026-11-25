@@ -7766,6 +7766,8 @@
     "OCR languages": "OCR 言語",
     "OCR installed. Read the PDF again.": "OCR をインストールしました。PDF を再度読み込んでください。",
     "Image support is not configured": "画像入力が設定されていません",
+    "Model request blocked": "モデルへのリクエストがブロックされました",
+    "The HTTP address for this model is missing from the allowlist. If you trust the address, verify and save the provider in Model settings, then retry. Saving grants both the Agent and Notebook access to this address.": "このモデルの HTTP アドレスは許可リストにありません。信頼できるアドレスであれば、モデル設定でプロバイダーを検証して保存し、再試行してください。保存すると、エージェントと Notebook の両方がこのアドレスにアクセスできるようになります。",
     "Model configuration needs attention": "モデル設定の確認が必要です",
     "The model service address is invalid": "モデルサービスのアドレスが無効です",
     "Check the model provider base URL and endpoint path, then retry.": "モデルプロバイダーのベース URL とエンドポイントのパスを確認してから、再試行してください。",

@@ -1,3 +1,5 @@
+import { parseApplicationCommandError } from '../../../../shared/application-command-contract'
+import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../../../../shared/failure/messages'
 import { classifyFailure } from '../../../../shared/failure/classify'
 import type { ClassifiedFailure } from '../../../../shared/failure/contract'
 import { create } from 'zustand'
@@ -67,7 +69,7 @@ const reportWorkspaceOperationError = (
   sessionId: string,
   error: string,
   context?: { providerTarget?: ProviderTarget } & (
-    { operation: 'resume'; rawError: unknown } | { operation?: undefined }
+    { operation: 'resume'; rawError: unknown } | { operation?: undefined; rawError?: unknown }
   )
 ): void => {
   useWorkspaceOperationErrors.setState(
@@ -88,7 +90,13 @@ const reportWorkspaceOperationError = (
           ...failures,
           [sessionId]: classifyFailure({
             origin: 'operation',
-            code: context?.operation === 'resume' ? 'resume-operation' : undefined,
+            code:
+              parseApplicationCommandError(context?.rawError)?.code ===
+              MODEL_HTTP_DESTINATION_NOT_ALLOWED
+                ? MODEL_HTTP_DESTINATION_NOT_ALLOWED
+                : context?.operation === 'resume'
+                  ? 'resume-operation'
+                  : undefined,
             text:
               context?.operation === 'resume' ? (errorDetail(context.rawError) ?? error) : error,
             model: context?.providerTarget?.model

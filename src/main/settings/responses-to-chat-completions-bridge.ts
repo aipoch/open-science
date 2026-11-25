@@ -1,3 +1,4 @@
+import { resolveProviderHttpAccess } from './provider-http-access'
 import { Readable } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { pipeline } from 'node:stream/promises'
@@ -470,6 +471,8 @@ export class ResponsesToChatCompletionsBridge {
         ? { 'x-opencode-session': goSession, 'user-agent': 'open-science/codex-bridge' }
         : {})
     }
+    const upstreamUrl = chatUrl(target.baseUrl)
+    const allowInsecureHttp = await resolveProviderHttpAccess(target, upstreamUrl)
     const replay = this.deterministicErrors.get(replayKey)
     if (replay) {
       json(response, providerErrorClientStatus(replay.upstreamStatus), {
@@ -482,10 +485,6 @@ export class ResponsesToChatCompletionsBridge {
       return
     }
     const startedAt = Date.now()
-    const upstreamUrl = chatUrl(target.baseUrl)
-    const allowInsecureHttp = target.isInsecureHttpAllowed
-      ? await target.isInsecureHttpAllowed(upstreamUrl)
-      : target.allowInsecureHttp
     const upstream = await fetchProviderRequest(this.fetchImpl, upstreamUrl, {
       allowInsecureHttp,
       method: 'POST',
