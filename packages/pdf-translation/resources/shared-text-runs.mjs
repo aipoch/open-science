@@ -13,8 +13,8 @@ export function splitSharedTextRuns(e, doc, page, regions, nativeFontName = unde
     p = e.p,
     width = Math.ceil(p.FPDF_GetPageWidthF(page) * 2),
     height = Math.ceil(p.FPDF_GetPageHeightF(page) * 2)
-  if (width * height > 16 * 1024 ** 2) return
   const objects = e.objects(page)
+  if (width * height > 16 * 1024 ** 2) return objects
   // The digit and closing delimiter can share the following prose's native run.
   // Only a same-row minus and the independently owned complete run prove a seam.
   const mathClosings = new Map()
@@ -76,7 +76,7 @@ export function splitSharedTextRuns(e, doc, page, regions, nativeFontName = unde
               o.bounds[3] <= r.top + 2
           )))
   )
-  if (!candidates.length) return
+  if (!candidates.length) return objects
   const render = () => {
     const bitmap = p.FPDFBitmap_Create(width, height, 1)
     if (!bitmap) throw Error('Could not verify shared text run')
@@ -361,6 +361,7 @@ export function splitSharedTextRuns(e, doc, page, regions, nativeFontName = unde
   } finally {
     e.free(at)
   }
+  return changed ? e.objects(page) : objects
 }
 
 // PDFium omits text from closely overprinted glyph objects (synthetic bold),
