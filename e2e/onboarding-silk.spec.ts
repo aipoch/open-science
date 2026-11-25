@@ -1,6 +1,4 @@
-import { OFFICIAL_VENDORS } from '@aipoch/providers'
 import { expect } from '@playwright/test'
-import { setTimeout as delay } from 'node:timers/promises'
 import type { Locator } from 'playwright'
 import sharp from 'sharp'
 import { test } from './fixtures/electron-app'
@@ -22,59 +20,83 @@ const pixels = (canvas: Locator): Promise<string> =>
     return sample.toDataURL()
   })
 
-test('shows Silk on every provider and advances only the hovered texture', async ({
+const waitForCardTransitions = (card: Locator): Promise<void> =>
+  card.evaluate(async (element) => {
+    const transitions = element
+      .getAnimations({ subtree: true })
+      .filter(
+        (animation) =>
+          animation instanceof CSSTransition &&
+          animation.effect?.getTiming().iterations !== Infinity
+      )
+    await Promise.allSettled(transitions.map((animation) => animation.finished))
+  })
+
+const expectStableCard = async (card: Locator, frame: string): Promise<void> => {
+  await waitForCardTransitions(card)
+  const screenPixels = async (): Promise<Buffer> =>
+    sharp(await card.screenshot())
+      .removeAlpha()
+      .raw()
+      .toBuffer()
+  const settled = await screenPixels()
+  for (let sample = 0; sample < 3; sample++) {
+    await card.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        )
+    )
+    expect(await pixels(card.locator('canvas'))).toBe(frame)
+    const current = await screenPixels()
+    expect(current.length).toBe(settled.length)
+    // Include the mask and controls, allowing two levels of compositor rounding per channel.
+    expect(current.some((value, i) => Math.abs(value - settled[i]) > 2)).toBe(false)
+  }
+}
+
+test('animates only the hovered Silk card and keeps keyboard focus visually stable', async ({
   app
 }, info) => {
-  const page = app.page
+  const { page } = app
   await page.emulateMedia({ reducedMotion: 'no-preference', colorScheme: 'dark' })
   await expect(page.locator('html')).toHaveClass(/dark/)
   await page.locator('[data-onboarding-action="next"]').click()
-  const heading = page.getByRole('heading', { name: 'Bring the AI you already use.' })
-  await heading.hover()
-  const canvases = page.locator('.onboarding-provider-silk canvas')
-  await expect(canvases).toHaveCount(OFFICIAL_VENDORS.length + 1)
-  const canvasesToRead = await canvases.all()
-  const allFrames = (): Promise<string[]> => Promise.all(canvasesToRead.map(pixels))
-  const idle = await allFrames()
-  const card = page.locator('.onboarding-provider-card-anthropic')
+  const connect = page.locator('[data-onboarding-entry="connect"]')
+  const header = connect.locator('header')
+  await header.hover()
+  const card = connect.locator('.onboarding-provider-card-anthropic')
+  const control = connect.locator('.onboarding-provider-card-openai')
   const canvas = card.locator('canvas')
-  const index = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'anthropic')
-  const expectIdle = async (frames: string[]): Promise<void> => {
-    // Include the composited mask and controls; a frozen canvas alone can still look animated.
-    await page.locator('.onboarding-entry-shell').evaluate(async (element) => {
-      await Promise.all(
-        element.getAnimations({ subtree: true }).map((animation) => animation.finished)
-      )
-    })
-    const screenPixels = async (): Promise<Buffer> =>
-      sharp(await card.screenshot())
-        .removeAlpha()
-        .raw()
-        .toBuffer()
-    const settled = await screenPixels()
-    for (let i = 0; i < 4; i++) {
-      await delay(500)
-      expect(await allFrames()).toEqual(frames)
-      const sample = await screenPixels()
-      expect(sample.length).toBe(settled.length)
-      // Allow compositor rounding of up to two levels per color channel.
-      expect(sample.some((value, channel) => Math.abs(value - settled[channel]) > 2)).toBe(false)
-    }
-  }
+  const otherCanvas = control.locator('canvas')
+  const tray = card.locator('.onboarding-provider-card-actions')
+  const idle = await pixels(canvas)
+  const otherIdle = await pixels(otherCanvas)
+  await expectStableCard(card, idle)
   await card.screenshot({ path: info.outputPath('anthropic-idle.png') })
-  await expectIdle(idle)
+
   await card.hover()
-  await expect.poll(() => pixels(canvas)).not.toBe(idle[index])
+  await expect.poll(() => pixels(canvas)).not.toBe(idle)
   const moving = await pixels(canvas)
+  expect(await pixels(otherCanvas)).toBe(otherIdle)
   await expect.poll(() => pixels(canvas)).not.toBe(moving)
+  expect(await pixels(otherCanvas)).toBe(otherIdle)
+  await expect(tray).toHaveCSS('opacity', '1')
   await card.screenshot({ path: info.outputPath('anthropic-hover.png') })
-  await heading.hover()
-  const stopped = await allFrames()
-  expect(stopped.filter((_, i) => i !== index)).toEqual(idle.filter((_, i) => i !== index))
-  await expectIdle(stopped)
-  expect(stopped[index]).not.toBe(idle[index])
-  // Keyboard focus exposes controls but must not restart the Silk after mouse leave.
-  await card.getByRole('button').first().focus()
-  await expect(card.getByRole('button').first()).toBeFocused()
-  await expectIdle(stopped)
+
+  await header.hover()
+  await expect(tray).toHaveCSS('opacity', '0')
+  const stopped = await pixels(canvas)
+  expect(stopped).not.toBe(idle)
+  await expectStableCard(card, stopped)
+
+  // Tab through the carousel as a keyboard user while the pointer remains on the header.
+  const focusable = await connect.locator('button:enabled, input:enabled').count()
+  for (let i = 0; i < focusable && !(await card.locator(':focus').count()); i++) {
+    await page.keyboard.press('Tab')
+  }
+  await expect(card.locator(':focus')).toBeFocused()
+  await expect(tray).toHaveCSS('opacity', '1')
+  await expectStableCard(card, stopped)
+  expect(await pixels(otherCanvas)).toBe(otherIdle)
 })
