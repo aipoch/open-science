@@ -1590,7 +1590,7 @@ const definitions: readonly OfficialVendor[] = [
       ]
     }
   },
-  // OpenRouter is an aggregation gateway (many vendors behind one key), so it sits last in the picker.
+  // OpenRouter is an aggregation gateway with many vendors behind one key.
   {
     id: 'openrouter',
     label: 'OpenRouter',
@@ -1901,7 +1901,16 @@ const definitions: readonly OfficialVendor[] = [
       ]
     }
   },
-  // Requesty is also a multi-vendor gateway, so it follows OpenRouter at the end of the picker.
+  {
+    id: 'vectrust',
+    label: 'Vectrust',
+    requiresConnectionConfiguration: true,
+    apiEndpoints: ['messages', 'chat-completions', 'responses'],
+    apiKeyUrl: 'https://api.openai-next.com/console/token',
+    models: [],
+    reasoningEffort: { supported: false }
+  },
+  // Requesty is another multi-vendor gateway.
   {
     id: 'requesty',
     label: 'Requesty',
@@ -2067,6 +2076,38 @@ const definitions: readonly OfficialVendor[] = [
         'xai/grok-4.6'
       ]
     }
+  },
+  {
+    id: 'cloudflare-ai-gateway',
+    label: 'Cloudflare AI Gateway',
+    cloudProvider: true,
+    requiresConnectionConfiguration: true,
+    apiEndpoints: ['chat-completions', 'messages'],
+    apiKeyUrl: 'https://dash.cloudflare.com/profile/api-tokens',
+    models: [],
+    reasoningEffort: { supported: false }
+  },
+  {
+    id: 'aws-bedrock',
+    label: 'AWS Bedrock',
+    cloudProvider: true,
+    requiresConnectionConfiguration: true,
+    apiEndpoints: ['messages', 'chat-completions'],
+    messagesApiKeyHeader: true,
+    apiKeyUrl: 'https://console.aws.amazon.com/bedrock/home#/api-keys',
+    models: [],
+    reasoningEffort: { supported: false }
+  },
+  {
+    id: 'microsoft-foundry',
+    label: 'Microsoft Foundry',
+    cloudProvider: true,
+    requiresConnectionConfiguration: true,
+    apiEndpoints: ['messages', 'chat-completions'],
+    messagesApiKeyHeader: true,
+    apiKeyUrl: 'https://ai.azure.com/',
+    models: [],
+    reasoningEffort: { supported: false }
   },
   {
     id: 'kilo',

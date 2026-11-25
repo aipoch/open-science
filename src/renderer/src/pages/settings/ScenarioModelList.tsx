@@ -106,7 +106,7 @@ const resolveFixedSummary = (
         kind: 'fixed',
         model: entry.label,
         providerName: entry.providerName,
-        providerKind: providerKindKey(entry.providerType, entry.vendorId),
+        providerKind: providerKindKey(entry.providerType, entry.vendorId, entry.localPresetId),
         effortLabel
       }
     : {
@@ -117,7 +117,11 @@ const resolveFixedSummary = (
         ...(provider
           ? {
               providerName: provider.name,
-              providerKind: providerKindKey(provider.type, provider.vendorId)
+              providerKind: providerKindKey(
+                provider.type,
+                provider.vendorId,
+                provider.localPresetId
+              )
             }
           : {}),
         effortLabel

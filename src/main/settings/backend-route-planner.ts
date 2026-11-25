@@ -360,6 +360,9 @@ class BackendRoutePlanner {
                   runtimeTarget: candidate,
                   baseUrl,
                   ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                  ...(candidate.provider.requestPolicy && {
+                    requestPolicy: candidate.provider.requestPolicy
+                  }),
                   model,
                   ...(candidate.provider.vendorId === 'apodex'
                     ? { backgroundModel: 'apodex-1.1-mini' }

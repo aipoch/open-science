@@ -1,5 +1,7 @@
+import { resolveConfiguredProviderTarget } from './manual-provider-target'
 import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
+  availableOfficialModelIds,
   catalogModelApiEndpoints,
   resolveOfficialModelCatalog,
   isCatalogModelAvailable,
@@ -10,6 +12,7 @@ import {
   type CatalogModel,
   type OfficialVendorId,
   getOfficialVendor,
+  configuredProviderConnectionKind,
   isVendorModelMultimodal,
   resolveVendorBaseUrl,
   resolveVendorChatCompletionsBaseUrl,
@@ -144,6 +147,11 @@ class ProviderRuntimeProjectionOwner {
         provider.type === 'custom' ? provider.reasoningEffortTransport : undefined,
       vendorId: provider.vendorId,
       region: provider.region,
+      ...(provider.cloudflare && { cloudflare: provider.cloudflare }),
+      ...(provider.manualConnection && { manualConnection: provider.manualConnection }),
+      ...(provider.localPresetId && { localPresetId: provider.localPresetId }),
+      ...(provider.localModels && { localModels: provider.localModels }),
+      ...(provider.manualModels && { manualModels: provider.manualModels }),
       models: this.availableModels(
         needsKey && provider.vendorId === 'kilo' ? { ...provider, keyRef: undefined } : provider
       ),
@@ -328,9 +336,11 @@ class ProviderRuntimeProjectionOwner {
             descriptor,
             key
           )
-          const effort = descriptor.reasoningEffort
-            ? reasoningProfileFromCapability(descriptor.reasoningEffort)
-            : ({ supported: false } as const)
+          const effort = storedProvider.manualModels
+            ? resolveProviderReasoningEffortProfile(storedProvider, descriptor.id)
+            : descriptor.reasoningEffort
+              ? reasoningProfileFromCapability(descriptor.reasoningEffort)
+              : ({ supported: false } as const)
           return this.withFramework(
             this.providerTarget(storedProvider, descriptor.id, provider, effort),
             framework
@@ -427,7 +437,11 @@ class ProviderRuntimeProjectionOwner {
     // Hand-entered Claude subscription overrides retain their engine-specific context syntax.
     const contextWindow =
       provider.type === 'custom'
-        ? resolveCustomModelContextWindow(provider.contextWindow)
+        ? resolveCustomModelContextWindow(
+            provider.localModels
+              ? provider.localModels.find(({ id }) => id === model)?.contextWindow
+              : provider.contextWindow
+          )
         : isClaudeSubscriptionProvider(provider.type)
           ? /\[1m\]$/i.test(model ?? '')
             ? 1_000_000
@@ -467,6 +481,14 @@ class ProviderRuntimeProjectionOwner {
     descriptor: CatalogModel | undefined,
     key: string | undefined
   ): ResolvedProvider {
+    // Catalog entries bind the context window to the selected model, including pinned sessions.
+    if (configuredProviderConnectionKind(vendorId)) {
+      if (!descriptor) return { type: 'custom', vendorId, model, apiEndpoints: [] }
+      return {
+        ...resolveConfiguredProviderTarget(vendorId, provider, model, key),
+        contextWindow: descriptor.contextWindow
+      }
+    }
     const contextWindow = descriptor?.contextWindow
     const routes = descriptor?.routes
     const modelAllowsAnonymousAccess =
@@ -547,12 +569,9 @@ class ProviderRuntimeProjectionOwner {
     }
     if (isLabProvider(provider.type))
       return provider.fetchedModels ? [...provider.fetchedModels] : []
-    if (provider.type === 'official' && provider.vendorId) {
-      return resolveOfficialModelCatalog(provider)
-        .filter(isCatalogModelAvailable)
-        .map((entry) => entry.id)
-    }
-    return provider.model ? [provider.model] : []
+    if (provider.type === 'official' && provider.vendorId)
+      return availableOfficialModelIds(provider)
+    return provider.localModels?.map(({ id }) => id) ?? (provider.model ? [provider.model] : [])
   }
 }
 

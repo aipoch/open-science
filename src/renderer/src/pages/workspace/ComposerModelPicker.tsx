@@ -176,6 +176,9 @@ const ComposerModelPicker = ({
           providerName: selectedProvider.name,
           providerType: selectedProvider.type,
           ...(selectedProvider.vendorId ? { vendorId: selectedProvider.vendorId } : {}),
+          ...(selectedProvider.localPresetId
+            ? { localPresetId: selectedProvider.localPresetId }
+            : {}),
           model: '',
           label: selectedProvider.name
         }
@@ -211,7 +214,11 @@ const ComposerModelPicker = ({
             <>
               {displayCurrent ? (
                 <ProviderKindIcon
-                  kindKey={providerKindKey(displayCurrent.providerType, displayCurrent.vendorId)}
+                  kindKey={providerKindKey(
+                    displayCurrent.providerType,
+                    displayCurrent.vendorId,
+                    displayCurrent.localPresetId
+                  )}
                   className="size-4"
                 />
               ) : null}
@@ -325,7 +332,8 @@ const ComposerModelPicker = ({
                     <ProviderKindIcon
                       kindKey={providerKindKey(
                         displayCurrent.providerType,
-                        displayCurrent.vendorId
+                        displayCurrent.vendorId,
+                        displayCurrent.localPresetId
                       )}
                       className="size-3 shrink-0"
                     />
@@ -440,7 +448,11 @@ const ComposerModelPicker = ({
                           }
                           leading={
                             <ProviderKindIcon
-                              kindKey={providerKindKey(option.providerType, option.vendorId)}
+                              kindKey={providerKindKey(
+                                option.providerType,
+                                option.vendorId,
+                                option.localPresetId
+                              )}
                               className="size-4 shrink-0"
                             />
                           }

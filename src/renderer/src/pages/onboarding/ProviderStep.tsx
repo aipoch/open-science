@@ -25,12 +25,17 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerFormLocalModels,
+  providerFormManualModels,
+  providerFormModel,
   providerFormModelForFramework,
   providerFormTokenLimits,
   providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
 import { describeValidation, localizeProviderResourceMessage } from '../settings/validation-message'
+import { mergeLocalModels } from '../settings/provider-model-form'
+import { modelCatalogErrorMessage } from '../settings/model-catalog-feedback'
 import type { ProviderStepOperation } from './use-provider-step-operation'
 
 const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
@@ -46,10 +51,15 @@ const toUpsertRequest = (value: ProviderFormValue, id?: string): UpsertProviderR
   codexTransport: value.codexTransport,
   name: value.name,
   baseUrl: value.baseUrl,
-  model: value.model,
+  model: providerFormModel(value),
+  localModels: providerFormLocalModels(value),
+  manualModels: providerFormManualModels(value),
   ...providerFormTokenLimits(value),
   vendorId: value.vendorId,
   region: value.region,
+  cloudflare: value.cloudflare,
+  manualConnection: value.manualConnection,
+  localPresetId: value.type === 'custom' ? (value.localPresetId ?? null) : undefined,
   // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
   apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,
@@ -93,6 +103,7 @@ const ProviderStep = ({
   )
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
+  const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const addOnboardingKiloProvider = useSettingsStore((state) => state.addOnboardingKiloProvider)
   const existingKiloId = useSettingsStore(
     (state) =>
@@ -113,6 +124,8 @@ const ProviderStep = ({
 
   const [isSaving, setIsSaving] = useState(false)
   const [isSkipping, setIsSkipping] = useState(false)
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false)
+  const [catalogError, setCatalogError] = useState<string>()
   const busy = operation.pending
   const mounted = useRef(false)
   useEffect(() => {
@@ -191,6 +204,29 @@ const ProviderStep = ({
 
   // Required fields must be filled before the draft can be tested.
   const formErrors = getProviderFormErrors(formValue)
+
+  const handleRefreshModels = async (): Promise<void> => {
+    if (!operation.begin()) return
+    setIsRefreshingModels(true)
+    setCatalogError(undefined)
+    try {
+      const result = await refreshProviderModels({ draft: toUpsertRequest(formValue) })
+      if (!mounted.current) return
+      if (!result.ok) {
+        setCatalogError(modelCatalogErrorMessage(result.code, t))
+        return
+      }
+      setFormValue((current) => ({
+        ...current,
+        localModels: mergeLocalModels(current.localModels ?? [], result.models ?? [])
+      }))
+    } catch {
+      if (mounted.current) setCatalogError(modelCatalogErrorMessage(undefined, t))
+    } finally {
+      operation.finish()
+      if (mounted.current) setIsRefreshingModels(false)
+    }
+  }
 
   const handleClaudeTokenFallback = async (token: string): Promise<ValidateProviderResult> => {
     manualClaudePasteWonRef.current = true
@@ -505,11 +541,16 @@ const ProviderStep = ({
           <ProviderForm
             key={savedProviderId ?? 'new-provider'}
             value={formValue}
-            onChange={(patch) =>
+            onChange={(patch) => {
+              if ('baseUrl' in patch || 'localPresetId' in patch || 'key' in patch)
+                setCatalogError(undefined)
               setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
-            }
+            }}
             errors={showProviderErrors ? formErrors : undefined}
-            disabled={isSaving || isSkipping}
+            disabled={isSaving || isSkipping || isRefreshingModels}
+            onRefreshModels={formValue.localPresetId ? handleRefreshModels : undefined}
+            isRefreshingModels={isRefreshingModels}
+            catalogError={catalogError}
             encryptionAvailable={encryptionAvailable}
             showCodexSubscriptions={
               agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent'

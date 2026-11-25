@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { OFFICIAL_VENDORS } from '@aipoch/providers'
 
-import { LOCAL_MODEL_PRESETS, providerKindPatch } from './provider-form-value'
+import { LOCAL_MODEL_PRESETS } from '@aipoch/providers'
+import { providerKindPatch } from './provider-form-value'
 import { matchesProviderPickerQuery, providerPickerEntries } from './provider-picker-catalog'
 
 const keysMatching = (query: string, entries = providerPickerEntries({})): string[] =>

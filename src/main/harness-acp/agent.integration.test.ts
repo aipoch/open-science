@@ -8,6 +8,7 @@ import { ScheduleMcp } from '../schedules/mcp'
 import type { ScheduleManagement } from '../schedules/management'
 import { SCHEDULE_TURN_META, type ScheduleCreateRequest } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import { createServer, type ServerResponse } from 'node:http'
 import { once } from 'node:events'
 import { mkdtemp, rm, readFile, readdir, writeFile } from 'node:fs/promises'
@@ -326,6 +327,48 @@ const prompt = (
       { type: 'text', text, ...(traceEnabled ? { _meta: { [HARNESS_TRACE_ENABLED]: true } } : {}) }
     ]
   })
+it('reports an input budget stop and sends the same prompt with a larger window', async () => {
+  const model = await modelServer()
+  const f = await fixture(model.endpoint, undefined, true, 24_000)
+  const logDir = join(f.directory, 'logs')
+  initLogger({ logDir, mirrorToConsole: false })
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: []
+  })
+  const marker = 'private-budget-test-prompt'
+  const input = marker.repeat(4400)
+  const response = await prompt(f.connection, sessionId, input)
+  expect(response.stopReason).toBe('max_turn_requests')
+  expect(model.requests).toEqual([])
+
+  const error = harnessTurnAdapter.getPromptError?.(response, sessionId)
+  expect(classifyFailure(collectPromptFailureFacts(error)).reason).toBe('input/context-overflow')
+  await flushLogs()
+  const log = await readFile(join(logDir, 'main.log'), 'utf8')
+  expect(log).not.toContain(marker)
+  expect(log).not.toContain('local-test-token')
+  expect(JSON.parse(log.trim())).toMatchObject({
+    level: 'warn',
+    scope: 'acp:harness',
+    msg: 'Built-in Agent input budget exhausted before dispatch',
+    data: {
+      providerSessionId: sessionId,
+      protocol: 'chat-completions',
+      contextWindow: 24_000,
+      inputBudget: 17_504
+    }
+  })
+
+  const larger = await fixture(model.endpoint, undefined, true, 128_000)
+  const session = await larger.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: larger.directory,
+    mcpServers: []
+  })
+  expect((await prompt(larger.connection, session.sessionId, input)).stopReason).toBe('end_turn')
+  expect(model.requests).toHaveLength(1)
+})
+
 async function mcpServer(
   disconnectAfterCall = false,
   waitForCall?: Promise<void>,
