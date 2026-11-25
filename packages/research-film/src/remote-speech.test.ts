@@ -264,7 +264,7 @@ describe('createRemoteSpeechSynthesizer', () => {
   })
 
   it('cancels an in-flight request when the generation signal aborts', async () => {
-    const { url } = await listen((_request, _response) => {
+    const { url } = await listen(() => {
       /* never respond: only the abort can end this request */
     })
     const controller = new AbortController()
@@ -280,7 +280,7 @@ describe('createRemoteSpeechSynthesizer', () => {
   })
 
   it('maps an expired timeout to a timeout error, not a cancellation', async () => {
-    const { url } = await listen((_request, _response) => {
+    const { url } = await listen(() => {
       /* never respond */
     })
     const synthesizer = createRemoteSpeechSynthesizer({
