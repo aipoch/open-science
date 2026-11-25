@@ -53,17 +53,17 @@
 
 > 이 문서는 영어 `README.md`의 번역본입니다. 내용이 다르면 [영문 원본](../../README.md)을 기준으로 합니다.
 
-### 💡 AIPOCH Open-Science v1.3.4 업데이트
+### 💡 AIPOCH Open-Science v1.3.5 업데이트
 
-_2026년 11월 22일_
+_2026년 11월 24일_
 
-- **내장 Agent 안을 들여다보기**: 프로젝트는 Agent 추적을 선택할 수 있고, 턴과 모델 요청, 도구 실행에 대한 연관된 스팬을 직접 호스팅하는 OTLP/HTTP 수신자로 내보낼 수 있으며, 캡처 수준은 직접 조절합니다.
-- **막히지 않는 Windows 업데이트**: 내장 Agent가 실행 중일 때도 앱 내 업데이트가 멈추지 않고, 안정 Windows 업데이트는 다시 작은 설치 프로그램 델타로 적용됩니다.
-- **긴 Notebook 기록도 빠르게 유지**: Run 시작과 완료, 결과 선택, 미리보기 열기가 더 이상 전체 기록을 다시 읽지 않습니다.
-- **믿을 수 있는 메모리 읽기**: Compute 요약이 이제 macOS의 활성 상태 보기와 일치하고, Windows에서는 물리 메모리와 함께 한도 대비 확정 메모리를 표시합니다.
-- **CodeBuddy 추론 수준**: 수준 선택기는 이제 선택한 CodeBuddy 모델이 실제로 지원하는 수준만 제공합니다.
+- **더 작아진 macOS 업데이트**: 앱 내 업데이트가 전체 설치 프로그램 대신 서명된 델타를 다운로드하므로 대부분의 업데이트는 전송량의 일부만 사용합니다.
+- **읽던 위치를 잃지 않고 문헌 읽기**: 본문 참조에서 그림과 표를 미리 볼 수 있고, 선택한 구절은 PDF 리더에서 그 자리에서 번역됩니다.
+- **더 많은 모델 연결 방법**: 클라우드 게이트웨이(Cloudflare AI Gateway, AWS Bedrock Runtime, Microsoft Foundry, Vectrust)와 로컬 프리셋(Ollama, LM Studio, llama.cpp, vLLM)이 프로바이더 카탈로그에 추가되었습니다.
+- **더 가볍고 안정적인 앱**: 트랜스크립트 기록과 Notebook 그림은 필요할 때 불러오고, Notebook 메모리 수용은 작업을 계속하기 전에 다시 확인합니다.
+- **더 나은 복구**: 세션 재개는 프로바이더를 사용할 수 없는 경우에도 실패하지 않고, PDF 번역은 네이티브 레이아웃을 더 충실하게 보존합니다.
 
-[v1.3.4 전체 릴리스 노트 보기](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
+[v1.3.5 전체 릴리스 노트 보기](https://github.com/aipoch/open-science/releases/tag/v1.3.5)
 
 <a id="share-your-research"></a>
 
