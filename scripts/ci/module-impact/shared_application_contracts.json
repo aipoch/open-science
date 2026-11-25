@@ -43,7 +43,10 @@
     "src/shared/provider-url-policy.ts",
     "src/shared/codebuddy-subscription.ts",
     "src/shared/lab.ts",
-    "src/shared/lab.test.ts"
+    "src/shared/lab.test.ts",
+    "src/shared/provider-network-authorization.test.ts",
+    "src/shared/provider-network-authorization.ts",
+    "src/shared/provider-url-policy-http.test.ts"
   ],
   "interfacePaths": [
     "src/shared/agent-framework-id.ts",
@@ -78,7 +81,8 @@
     "src/shared/session-event-hydrator.ts",
     "src/shared/runtime-startup.ts",
     "src/shared/provider-url-policy.ts",
-    "src/shared/lab.ts"
+    "src/shared/lab.ts",
+    "src/shared/provider-network-authorization.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -103,7 +107,9 @@
       "src/shared/pdf-text.test.ts",
       "src/shared/runtime-payload-client.test.ts",
       "src/shared/session-event-hydrator.test.ts",
-      "src/shared/lab.test.ts"
+      "src/shared/lab.test.ts",
+      "src/shared/provider-network-authorization.test.ts",
+      "src/shared/provider-url-policy-http.test.ts"
     ],
     "contract": [],
     "consumer": [
