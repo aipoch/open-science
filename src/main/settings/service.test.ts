@@ -6099,12 +6099,11 @@ describe('installCodex', () => {
       }
     })
     const pending = service.installCodex({ source: 'managed', signInAttemptId: 'owner' }, vi.fn())
-    const cancelled = expect(pending).rejects.toThrow()
     await started.promise
     await service.cancelCodexLogin('other')
     expect(signal?.aborted).toBe(false)
     await service.cancelCodexLogin('owner')
-    await cancelled
+    await expect(pending).resolves.toMatchObject({ ok: false, error: 'Installation cancelled.' })
     expect((await repository.getSettings()).codex?.nativePath).toBeUndefined()
   })
 
