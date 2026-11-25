@@ -2456,6 +2456,28 @@ describe('PR Gate workflow', () => {
 })
 
 describe('E2E throughput contracts', () => {
+  it('exposes focused Windows browser and functional diagnostics', () => {
+    const windows = load(
+      readFileSync('.github/workflows/windows-e2e-regression.yml', 'utf8')
+    ) as Workflow
+    const raw = readFileSync('.github/workflows/windows-e2e-regression.yml', 'utf8')
+    expect(raw).toContain('diagnostic_suite:')
+    expect(raw).toContain('test_pattern:')
+    const steps = windows.jobs.windows_e2e.steps ?? []
+    expect(steps.find((step) => step.id === 'browser_diagnostic')?.run).toContain(
+      'npm run test:e2e:browser'
+    )
+    expect(steps.find((step) => step.id === 'functional_diagnostic')?.run).toContain(
+      'npm run test:e2e:journey'
+    )
+    expect(steps.find((step) => step.id === 'workspace_diagnostic')?.run).toContain(
+      'npm run test:e2e:workspace'
+    )
+    expect(steps.find((step) => step.name === 'Enforce selected diagnostic')?.run).toContain(
+      'case "$SUITE"'
+    )
+  })
+
   it('dispatches the real E2E bundles with a valid focused plan', () => {
     const classify = workflow.jobs.preflight.steps?.find(({ id }) => id === 'classify')
     const dir = mkdtempSync(join(tmpdir(), 'e2e-plan-'))

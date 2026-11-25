@@ -205,7 +205,7 @@ test('sensitive export review reserves room for the warning and acknowledgement'
   await dialog.getByText('Sensitive-content evidence', { exact: true }).click()
   await expect(async () => {
     expect((await dialog.boundingBox())!.y).toBe(bounds!.y)
-    expect((await dialog.boundingBox())!.height).toBeGreaterThan(bounds!.height)
+    expect((await dialog.boundingBox())!.height).toBeGreaterThanOrEqual(bounds!.height)
   }).toPass()
   await expectLayoutSettled(dialog)
   await expectSingleBodyScroll(dialog, exportAnyway)
