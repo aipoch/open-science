@@ -121,9 +121,6 @@ export const createResearchVideoGenerator = (options: {
     // remoteAbort fires when the caller aborts OR when this generation settles, so an
     // in-flight request can never outlive the generation that started it.
     const remoteAbort = new AbortController()
-    const forwardAbort = (): void => remoteAbort.abort(signal.reason)
-    if (signal.aborted) remoteAbort.abort(signal.reason)
-    else signal.addEventListener('abort', forwardAbort, { once: true })
     const remoteInFlight = new Set<Promise<unknown>>()
     const remote = input.speech
       ? createRemoteSpeechSynthesizer(input.speech, {
@@ -132,6 +129,12 @@ export const createResearchVideoGenerator = (options: {
         })
       : undefined
     const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'research-video-'))
+    // Register cancellation only after setup can no longer throw: a failed synthesizer
+    // validation or scratch allocation must never leave a listener (and the generation
+    // state it captures) attached to the caller's reused signal.
+    const forwardAbort = (): void => remoteAbort.abort(signal.reason)
+    if (signal.aborted) remoteAbort.abort(signal.reason)
+    else signal.addEventListener('abort', forwardAbort, { once: true })
     let worker: Worker | undefined
     let stopping = false
     let speech: ReturnType<typeof ownSpeechProcess> | undefined

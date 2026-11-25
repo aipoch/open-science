@@ -1,6 +1,6 @@
 import { fork, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { EventEmitter, once } from 'node:events'
+import { EventEmitter, getEventListeners, once } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -509,6 +509,40 @@ it('serves remote speech in-process through the injected transport without forki
     expect(await readdir(root)).toEqual([])
   } finally {
     controller.abort()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('leaves no abort listener behind when remote setup fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-remote-setup-fail-'))
+  const controller = new AbortController()
+  try {
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess: vi.fn()
+    })
+    // The credential-bearing endpoint fails eager validation before scratch allocation.
+    const outcome = await generate(
+      {
+        speechConcurrency: 1,
+        specPath: 'unused',
+        modelDirectory: 'unused',
+        engineDirectory: 'unused',
+        outputDirectory: join(root, 'output'),
+        speech: {
+          kind: 'remote-http',
+          style: 'audio-speech',
+          endpoint: 'https://user:pass@example.com/v1/audio/speech',
+          model: 'tts-1'
+        }
+      },
+      controller.signal
+    ).catch((error) => error)
+    expect(outcome).toBeInstanceOf(Error)
+    // A failed setup must not leave a listener (and the state it captures) on a reused signal.
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+    expect(await readdir(root)).toEqual([])
+  } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
