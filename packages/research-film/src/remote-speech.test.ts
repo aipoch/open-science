@@ -408,6 +408,35 @@ describe('createRemoteSpeechSynthesizer', () => {
     await expect(synthesizer.synthesize('Hello')).rejects.toThrow(/missing synthesized audio/)
   })
 
+  it('rejects camelCase and compound credential query parameters', () => {
+    const base = { kind: 'remote-http', style: 'audio-speech', model: 'tts-1' } as const
+    // camelCase humps and pure-lowercase compounds must both be caught (round-8 cases).
+    for (const name of [
+      'authToken',
+      'bearerToken',
+      'secretKey',
+      'jwt',
+      'authtoken',
+      'secretkey',
+      'refreshToken',
+      'passphrase'
+    ]) {
+      expect(() =>
+        remoteSpeechIdentity({
+          ...base,
+          endpoint: `https://api.example.com/v1/audio/speech?${name}=value`
+        })
+      ).toThrow(/credential|apiKey/)
+    }
+    // Non-credential parameters keep working, including camelCase routing names.
+    expect(() =>
+      remoteSpeechIdentity({
+        ...base,
+        endpoint: 'https://api.example.com/v1/audio/speech?region=cn&apiVersion=2&tenant=acme'
+      })
+    ).not.toThrow()
+  })
+
   it('rejects malformed configuration eagerly', () => {
     expect(() =>
       createRemoteSpeechSynthesizer({

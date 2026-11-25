@@ -53,11 +53,16 @@ const SENSITIVE_QUERY_PARTS = new Set([
   'token',
   'accesstoken',
   'refreshtoken',
+  'authtoken',
+  'bearertoken',
   'idtoken',
   'secret',
+  'secretkey',
   'clientsecret',
+  'privatekey',
   'password',
   'passwd',
+  'passphrase',
   'pwd',
   'auth',
   'authorization',
@@ -68,8 +73,25 @@ const SENSITIVE_QUERY_PARTS = new Set([
   'credentials',
   'session',
   'sessionid',
-  'otp'
+  'otp',
+  'jwt',
+  'hmac'
 ])
+
+/**
+ * Split a query-parameter name into normalized tokens for credential matching: camelCase
+ * humps (`authToken` → `auth`, `token`), acronym boundaries (`HTTPBearer` → `HTTP`,
+ * `Bearer`), separators (`api_key`), and lowercasing — so a credential hides behind no
+ * casing or compound spelling. Matching stays exact per token, never a substring, which
+ * keeps names like `monkey` or `keyboard` valid.
+ */
+const queryNameTokens = (name: string): string[] =>
+  name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+|\s+/)
+    .filter((token) => token.length > 0)
+    .map((token) => token.toLowerCase())
 
 /**
  * Parse and validate a remote endpoint before it can influence identity or the wire: only
@@ -85,9 +107,7 @@ const parseEndpoint = (endpoint: string): URL => {
       'Remote speech endpoint must not embed credentials in the URL; pass them via apiKey'
     )
   for (const name of url.searchParams.keys()) {
-    const hit = name
-      .split(/[^a-z0-9]+/i)
-      .find((part) => part.length > 0 && SENSITIVE_QUERY_PARTS.has(part.toLowerCase()))
+    const hit = queryNameTokens(name).find((token) => SENSITIVE_QUERY_PARTS.has(token))
     if (hit)
       throw new Error(
         `Remote speech endpoint query parameter "${name}" looks like a credential; pass credentials via apiKey`
