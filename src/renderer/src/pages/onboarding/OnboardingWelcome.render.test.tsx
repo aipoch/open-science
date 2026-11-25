@@ -104,6 +104,29 @@ describe('Welcome animation lifecycle', () => {
       expect(Buffer.byteLength(serialized)).toBeLessThan(150_000)
       expect(animationData.fr).toBe(30)
       expect(animationData.op).toBe(90.9)
+      const providers = animationData.layers.filter((layer: { refId: string }) =>
+        layer.refId.startsWith('providers-')
+      )
+      expect(providers).toHaveLength(12)
+      const iconUrls = providers.map(
+        (layer: { refId: string }) =>
+          animationData.assets.find((asset: { id: string }) => asset.id === layer.refId)?.p
+      )
+      expect(new Set(iconUrls).size).toBe(12)
+      for (const url of iconUrls) expect(url).toMatch(/\.svg(?:\?|$)/)
+      const angles: number[] = []
+      for (const layer of providers) {
+        const [x, y] = layer.ks.p.k[0].s
+        const dx = x - animationData.w / 2
+        const dy = y - animationData.h / 2
+        expect(Math.hypot(dx, dy)).toBeCloseTo(163, 0)
+        angles.push((Math.atan2(dy, dx) * 180) / Math.PI)
+        expect(layer.ks.p.k.length).toBeLessThan(40)
+      }
+      angles.sort((a, b) => a - b)
+      for (let i = 1; i < angles.length; i++) {
+        expect(angles[i] - angles[i - 1]).toBeCloseTo(30, 1)
+      }
       expect(
         animationData.assets.find((asset: { id: string }) => asset.id === 'providers-0').p
       ).toMatch(/\.svg(?:\?|$)/)
