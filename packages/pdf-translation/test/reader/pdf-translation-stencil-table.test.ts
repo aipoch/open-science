@@ -180,6 +180,84 @@ it.each(['stacked', 'no bar', 'shifted bar', 'linear text'] as const)(
   }
 )
 
+it.each(['aligned bar', 'missing bar', 'offset numerator'] as const)(
+  'preserves a detached numerator only with its native fraction evidence (%s)',
+  async (shape) => {
+    const items = [
+      { str: 'v', x: shape === 'offset numerator' ? 35 : 26, y: 70, width: 4 },
+      { str: '3', x: 20, y: 56.5, width: 5 },
+      { str: 'πt', x: 25, y: 56.5, width: 11 },
+      { str: 'Next result', x: 17, y: 30, width: 44 }
+    ].map(({ str, x, y, width }) => ({
+      str,
+      dir: 'ltr',
+      width,
+      height: 10,
+      transform: [10, 0, 0, 10, x, y]
+    }))
+    const makeFragment = (
+      indices: number[],
+      rect: PdfTranslationFragment['rect']
+    ): PdfTranslationFragment => ({
+      pageNumber: 1,
+      rect,
+      items: indices.map((index) => ({ index, text: items[index].str }))
+    })
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'detached-fraction',
+      fingerprint: 'detached-fraction',
+      pages: [{ width: 100, height: 100 }],
+      units: [
+        {
+          id: 'numerator',
+          source: 'v',
+          fragments: [
+            makeFragment([0], { x: items[0].transform[4] / 100, y: 0.22, width: 0.04, height: 0.1 })
+          ]
+        },
+        {
+          id: 'denominator',
+          source: '3πt',
+          sourceOnly: true,
+          preserve: 'formula',
+          fragments: [makeFragment([1, 2], { x: 0.2, y: 0.35, width: 0.16, height: 0.1 })]
+        },
+        {
+          id: 'prose',
+          source: 'Next result',
+          fragments: [makeFragment([3], { x: 0.17, y: 0.62, width: 0.44, height: 0.1 })]
+        }
+      ]
+    })
+    const page = {
+      rotate: 0,
+      getViewport: () => ({ width: 100, height: 100, transform: [1, 0, 0, -1, 0, 100] }),
+      getTextContent: async () => ({ items }),
+      getOperatorList: async () =>
+        shape === 'missing bar'
+          ? { fnArray: [], argsArray: [] }
+          : {
+              fnArray: [OPS.save, OPS.transform, OPS.paintSolidColorImageMask, OPS.restore],
+              argsArray: [[], [16, 0, 0, -0.5, 20, 66], [], []]
+            },
+      cleanup: () => {}
+    } as unknown as PDFPageProxy
+    const result = await preservePdfFigureSources({
+      extraction: { source },
+      document: { getPage: async () => page },
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    expect(result.source.units.map(({ fragments }) => fragments)).toEqual(
+      source.units.map(({ fragments }) => fragments)
+    )
+    expect(result.source.units.filter(({ sourceOnly }) => sourceOnly).map(({ id }) => id)).toEqual(
+      shape === 'aligned bar' ? ['numerator', 'denominator'] : ['denominator']
+    )
+  }
+)
+
 it.each([
   'closed evidence',
   'missing rule',
