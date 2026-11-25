@@ -521,9 +521,6 @@ const useWorkspacePanelLayout = (
   useEffect(() => {
     const toggleSidebarFromShortcut = (event: KeyboardEvent): void => {
       const isMac = window.api?.platform === 'darwin'
-      const hasBlockingDialog = Array.from(
-        document.querySelectorAll<HTMLElement>(OPEN_DIALOG_SELECTOR)
-      ).some((dialog) => dialog !== mobileSidebarDialogRef.current)
       if (
         event.defaultPrevented ||
         event.isComposing ||
@@ -531,11 +528,15 @@ const useWorkspacePanelLayout = (
         event.key.toLowerCase() !== 'b' ||
         !(isMac ? event.metaKey : event.ctrlKey) ||
         event.altKey ||
-        event.shiftKey ||
-        hasBlockingDialog
+        event.shiftKey
       ) {
         return
       }
+
+      const hasBlockingDialog = Array.from(
+        document.querySelectorAll<HTMLElement>(OPEN_DIALOG_SELECTOR)
+      ).some((dialog) => dialog !== mobileSidebarDialogRef.current)
+      if (hasBlockingDialog) return
 
       event.preventDefault()
       if (isMobile) toggleMobileSidebar()

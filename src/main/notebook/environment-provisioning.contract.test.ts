@@ -1,5 +1,5 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -64,6 +64,99 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
     ...overrides
   }
 }
+
+it('tracks a managed installation and can cancel an exact queued request without affecting another language', async () => {
+  const root = makeRoot()
+  const fetchingR = Promise.withResolvers<void>()
+  const finishFetch = Promise.withResolvers<void>()
+  const deps = makeDeps(root)
+  const lifecycle = createNotebookEnvironmentLifecycle({
+    root,
+    provisioner: new DefaultRuntimeProvisioner({
+      ...deps,
+      fetchBundle: async (spec, version, report, signal) => {
+        if (spec.language === 'r') {
+          report({ phase: 'fetch-r', event: { code: 'downloading-r-runtime' }, progress: 0.25 })
+          fetchingR.resolve()
+          await finishFetch.promise
+        }
+        return deps.fetchBundle(spec, version, report, signal)
+      }
+    }),
+    projectProgress: () => undefined
+  })
+  const rTarget = { language: 'r', operationId: 'r-setup' } as const
+  const pyTarget = { language: 'python', operationId: 'py-setup' } as const
+  try {
+    expect(lifecycle.managedSetup.start({ ...rTarget, action: 'prepare' })).toMatchObject({
+      ...rTarget,
+      status: 'preparing'
+    })
+    await fetchingR.promise
+    expect(lifecycle.managedSetup.start({ ...rTarget, action: 'prepare' })).toMatchObject({
+      ...rTarget,
+      status: 'preparing',
+      progress: { phase: 'fetch-r', fraction: 0.25 }
+    })
+    lifecycle.managedSetup.start({ ...pyTarget, action: 'prepare' })
+    expect(lifecycle.managedSetup.cancel({ ...rTarget, language: 'python' }).status).toBe(
+      'unconfirmed'
+    )
+    lifecycle.managedSetup.cancel(pyTarget)
+    finishFetch.resolve()
+    await vi.waitFor(() => {
+      expect(lifecycle.managedSetup.get(rTarget).status).toBe('completed')
+      expect(lifecycle.managedSetup.get(pyTarget).status).toBe('cancelled')
+    })
+    await expect(lifecycle.status()).resolves.toMatchObject({ pythonReady: false, rReady: true })
+    const newPython = { ...pyTarget, operationId: 'new-py-setup' }
+    lifecycle.managedSetup.start({ ...newPython, action: 'prepare' })
+    expect(lifecycle.managedSetup.cancel(pyTarget).status).toBe('cancelled')
+    await vi.waitFor(() => expect(lifecycle.managedSetup.get(newPython).status).toBe('completed'))
+  } finally {
+    finishFetch.resolve()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+it('reports a recovery block and rebuilds only the explicitly authorized managed default', async () => {
+  const root = makeRoot()
+  let blocked = true
+  const lifecycle = createNotebookEnvironmentLifecycle({
+    root,
+    provisioner: new DefaultRuntimeProvisioner(makeDeps(root)),
+    assertProvisionAllowed: () => {
+      if (blocked) throw new Error('RUNTIME_RECOVERY_BLOCKED: retry after recovery.')
+    },
+    onRepairStarting: (_language, target) => {
+      expect(target).toEqual({ kind: 'default-environment', environmentName: DEFAULT_PY_ENV })
+    },
+    onRepairCompleted: () => {
+      blocked = false
+    },
+    projectProgress: () => undefined
+  })
+  const prepare = { language: 'python', operationId: 'failed-prepare' } as const
+  const repair = { language: 'python', operationId: 'explicit-repair' } as const
+  try {
+    lifecycle.managedSetup.start({ ...prepare, action: 'prepare' })
+    await vi.waitFor(() =>
+      expect(lifecycle.managedSetup.get(prepare)).toMatchObject({
+        status: 'failed',
+        reason: 'notebook_environment_recovery_required'
+      })
+    )
+    expect(() => lifecycle.managedSetup.start({ ...prepare, action: 'repair' })).toThrow(
+      /already in use/
+    )
+    lifecycle.managedSetup.start({ ...repair, action: 'repair' })
+    await vi.waitFor(() => expect(lifecycle.managedSetup.get(repair).status).toBe('completed'))
+    await expect(lifecycle.status()).resolves.toMatchObject({ pythonReady: true, rReady: false })
+    expect(blocked).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 describe('DefaultRuntimeProvisioner.createNamedEnvironment', () => {
   it.skipIf(process.platform === 'win32')(

@@ -1,12 +1,14 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import { Maximize2, X } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
 
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import { ErrorNotice } from '@/components/error-notice'
+import { resolveProjectId } from '../../../../shared/project-scope'
+import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
 
 import {
   formatNotebookFigureFilename,
@@ -16,29 +18,73 @@ import {
 import { useNearViewport } from './previews/useNearViewport'
 
 type NotebookToolFigureOutputsProps = {
+  reference?: NotebookSessionReference
   run: NotebookRunRecord
 }
 
-type NotebookToolFigureOutputContentProps = {
+type NotebookToolFigureOutputContentProps = NotebookToolFigureOutputsProps & {
   figures: NotebookRunFigure[]
 }
 
 type NotebookToolFigureCardProps = {
+  reference?: NotebookSessionReference
+  runId: string
   figure: NotebookRunFigure
   filename: string
   onOpen: (figure: NotebookRunFigure, trigger: HTMLButtonElement) => void
 }
 
 const NotebookToolFigureCard = ({
+  reference,
+  runId,
   figure,
   filename,
   onOpen
 }: NotebookToolFigureCardProps): React.JSX.Element => {
   const { t } = useTranslation()
-  // Notebook runs already retain bounded capture payloads. Keep those large base64 strings out of
-  // the DOM and image decoder until the individual card enters the transcript's viewport overscan.
   const [setCardElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
 
+  const [loaded, setLoaded] = useState<string | null>()
+  const requested = useRef(false)
+  const { outputIndex, mimeType, payload: captured } = figure
+  const sessionId = reference?.sessionId
+  const projectId = reference && resolveProjectId(reference)
+  const workspaceCwd = reference?.workspaceCwd
+  useEffect(() => {
+    if (!isNearViewport || captured !== undefined || loaded !== undefined || requested.current)
+      return
+    if (!sessionId || !projectId || workspaceCwd === undefined) return
+    // A card is keyed to one figure. Let its read finish if it scrolls away and reuse it on return.
+    requested.current = true
+    void window.api.notebook
+      .runFigure({ sessionId, projectId, workspaceCwd, runId, outputIndex, mimeType })
+      .then(setLoaded, () => setLoaded(null))
+  }, [
+    isNearViewport,
+    captured,
+    loaded,
+    sessionId,
+    projectId,
+    workspaceCwd,
+    runId,
+    outputIndex,
+    mimeType
+  ])
+  const payload = captured ?? loaded
+  if (payload === null)
+    return (
+      <ErrorNotice
+        inline
+        description={t('Preview unavailable.')}
+        primaryButton={{
+          label: t('Retry'),
+          onClick: () => {
+            requested.current = false
+            setLoaded(undefined)
+          }
+        }}
+      />
+    )
   return (
     <div className="rounded-2xl bg-bg-000 p-2 shadow-sm">
       <button
@@ -47,20 +93,27 @@ const NotebookToolFigureCard = ({
         data-testid="notebook-tool-figure-button"
         className="group relative block w-fit max-w-full cursor-zoom-in overflow-hidden rounded-lg border border-border-200 bg-bg-000 text-left transition-[border-color,transform] duration-150 ease-out hover:border-border-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55 motion-reduce:transition-none motion-reduce:active:translate-y-0"
         aria-label={t('Preview {{name}}', { name: filename })}
-        onClick={(event) => onOpen(figure, event.currentTarget)}
+        disabled={payload === undefined}
+        onClick={(event) => onOpen({ ...figure, payload }, event.currentTarget)}
       >
         <span className="flex max-w-full items-center justify-center">
-          {isNearViewport ? (
+          {isNearViewport && payload !== undefined ? (
             <img
               data-testid="notebook-tool-figure-image"
-              src={`data:${figure.mimeType};base64,${figure.payload}`}
+              src={`data:${figure.mimeType};base64,${payload}`}
               alt={filename}
               className="block h-auto max-h-[300px] w-auto max-w-full object-contain"
               decoding="async"
               draggable={false}
             />
           ) : (
-            <span className="h-36 w-60 max-w-full bg-bg-100" aria-hidden="true" />
+            <span className="flex h-36 w-60 max-w-full items-center justify-center bg-bg-100">
+              {isNearViewport && (
+                <span role="status" className="text-sm text-text-200">
+                  {t('Loading image…')}
+                </span>
+              )}
+            </span>
           )}
         </span>
         <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-gradient-to-t from-black/55 to-transparent px-2 pb-1 pt-3.5 text-white opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
@@ -75,7 +128,9 @@ const NotebookToolFigureCard = ({
 }
 
 const NotebookToolFigureOutputContent = ({
-  figures
+  figures,
+  run,
+  reference
 }: NotebookToolFigureOutputContentProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [selectedFigure, setSelectedFigure] = useState<NotebookRunFigure>()
@@ -94,7 +149,9 @@ const NotebookToolFigureOutputContent = ({
 
           return (
             <NotebookToolFigureCard
-              key={figure.key}
+              key={JSON.stringify([figure.key, figure.mimeType, reference?.workspaceCwd])}
+              reference={reference}
+              runId={run.runId}
               figure={figure}
               filename={filename}
               onOpen={(nextFigure, trigger) => {
@@ -136,7 +193,7 @@ const NotebookToolFigureOutputContent = ({
             </Dialog.Title>
             {dialogFigure ? (
               <figure className="min-h-0">
-                <div className="relative flex max-h-[88vh] min-h-40 items-center justify-center overflow-hidden rounded-xl bg-bg-000 shadow-dialog">
+                <div className="relative flex max-h-[88vh] min-h-40 items-center justify-center overflow-hidden rounded-xl bg-bg-000 text-text-000 shadow-dialog">
                   <img
                     data-testid="notebook-figure-preview-image"
                     src={`data:${dialogFigure.mimeType};base64,${dialogFigure.payload}`}
@@ -167,15 +224,15 @@ const NotebookToolFigureOutputContent = ({
   )
 }
 
-// Transcript-only figure treatment. It deliberately sits beside the tool row rather than inside
-// that row's detail panel, so the row can collapse without hiding the result. The owning tool group
-// still controls whether this subtree exists. The stateful child mounts only when figures exist, so
-// a run changing from no figures to figures cannot alter this component's hook order.
+// Replay can supply captured figures directly. Transcript projections carry only MIME descriptors.
 const NotebookToolFigureOutputs = ({
-  run
+  run,
+  reference
 }: NotebookToolFigureOutputsProps): React.JSX.Element | null => {
-  const figures = resolveNotebookRunFigures(run)
-  return figures.length > 0 ? <NotebookToolFigureOutputContent figures={figures} /> : null
+  const figures = resolveNotebookRunFigures(run, true)
+  return figures.length > 0 ? (
+    <NotebookToolFigureOutputContent run={run} reference={reference} figures={figures} />
+  ) : null
 }
 
 export { NotebookToolFigureOutputs }

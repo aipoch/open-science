@@ -70,6 +70,7 @@ describe('delegation settlement continuation dispatch', () => {
     const sendAppContinuationObserved = vi.fn(
       async (_request, onProviderPromptAccepted: () => void) => {
         onProviderPromptAccepted()
+        return { stopReason: 'end_turn' }
       }
     )
     const onPromptEnded = vi.fn(async () => {

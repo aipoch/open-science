@@ -192,6 +192,73 @@ function numberedLogarithmOwner(entries: Entry[], at: number, page: number): Uni
   return operator.owner
 }
 
+// A named operator shares the display's baseline while its argument occupies
+// the raised and lowered tiers of a protected native delimiter pair.
+function numberedExponentialOwner(entries: Entry[], at: number): Unit | undefined {
+  const anchor = entries[at],
+    label = anchor.item,
+    h = label.height
+  if (!anchor.owner.sourceOnly || anchor.owner.preserve !== 'formula') return
+  const baseline = label.transform[5]
+  const packet = entries.slice(Math.max(0, at - 64), at)
+  const sameBaseline = (entry: Entry): boolean =>
+    Math.abs(entry.item.transform[5] - baseline) < h * 0.05
+  const offset = packet.findLastIndex((entry) => entry.item.str === 'exp' && sameBaseline(entry))
+  if (offset < 1) return
+  const operator = packet[offset],
+    open = packet[offset + 1],
+    sign = packet[offset + 2]
+  if (!open || !sign) return
+  const argument = packet.slice(offset + 2).findIndex((entry) => entry.owner !== sign.owner)
+  if (argument < 3 || argument > 12) return
+  const end = offset + 2 + argument,
+    close = packet[end],
+    comma = packet.at(-1)!
+  const contents = packet.slice(offset + 2, end)
+  const loneFormula = (entry: Entry): boolean =>
+    entry.owner.sourceOnly === true &&
+    entry.owner.preserve === 'formula' &&
+    entry.owner.fragments.length === 1 &&
+    entry.owner.fragments[0].items.length === 1
+  if (
+    operator.owner.sourceOnly ||
+    operator.owner.preserve ||
+    operator.owner.source !== 'exp' ||
+    operator.owner.fragments.length !== 1 ||
+    operator.owner.fragments[0].items.length !== 1 ||
+    open.item.str !== '\u0010' ||
+    close.item.str !== '\u0011' ||
+    !loneFormula(open) ||
+    !loneFormula(close) ||
+    open.item.fontName !== close.item.fontName ||
+    [operator, open, close].some((entry) => Math.abs(entry.item.height - h) > h * 0.05) ||
+    open.item.transform[5] - baseline < h * 0.85 ||
+    open.item.transform[5] - baseline > h * 1.4 ||
+    Math.abs(open.item.transform[5] - close.item.transform[5]) > h * 0.05 ||
+    open.item.transform[4] - operator.item.transform[4] - operator.item.width < 0 ||
+    open.item.transform[4] - operator.item.transform[4] - operator.item.width > h * 0.3 ||
+    sign.item.str !== '−' ||
+    !sameBaseline(sign) ||
+    !sign.owner.sourceOnly ||
+    sign.owner.preserve !== 'formula' ||
+    sign.owner.fragments.length !== 1 ||
+    sign.owner.fragments[0].items.length !== contents.length ||
+    contents.some(
+      (entry) =>
+        entry.item.transform[4] < open.item.transform[4] + open.item.width - h * 0.05 ||
+        entry.item.transform[4] + entry.item.width > close.item.transform[4] + h * 0.05
+    ) ||
+    !contents.some((entry) => entry.item.transform[5] - baseline > h * 0.45) ||
+    !contents.some((entry) => baseline - entry.item.transform[5] > h * 0.45) ||
+    comma.item.str !== ',' ||
+    !sameBaseline(comma) ||
+    label.transform[4] - comma.item.transform[4] - comma.item.width < h * 4 ||
+    !packet.slice(0, offset).some((entry) => /=$/u.test(entry.item.str) && sameBaseline(entry))
+  )
+    return
+  return operator.owner
+}
+
 // The consecutive glyphs of a relation centered under a protected display sum
 // are its lower limit. The full-size term on the sum's right confirms the row.
 function loweredSummationLimit(entries: Entry[], at: number, page: number): Unit | undefined {
@@ -475,6 +542,8 @@ export function nativeLiteralMathCandidates(
         })
       )
         continue
+      const exponential = numberedExponentialOwner(entries, at)
+      if (exponential) result.add(exponential.id)
       let first = at
       while (first > 0) {
         const p = entries[first - 1].item

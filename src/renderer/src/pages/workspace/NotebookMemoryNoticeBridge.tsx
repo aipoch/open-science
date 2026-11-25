@@ -1,3 +1,4 @@
+import { isDesktopRenderer } from '@/lib/interface-scale'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ActionToast } from '@/components/ActionToast'
@@ -182,6 +183,11 @@ export const NotebookMemoryNoticeBridge = ({
   const { rejection, latestCheck, terminal, rejectedTerminalId } = useNotebookMemoryNoticeStore()
   const reproductionRejection = rejection?.source === 'reproduction'
   const terminalRejection = rejection?.source === 'user' && rejection.inputKind === 'terminal'
+  const needsDesktop =
+    !isDesktopRenderer() &&
+    Boolean(rejection?.refusalId) &&
+    !terminalRejection &&
+    !reproductionRejection
   const retryTerminal =
     terminalRejection && terminal && terminal.id === rejectedTerminalId && terminal.enabled
       ? terminal.retry
@@ -320,9 +326,15 @@ export const NotebookMemoryNoticeBridge = ({
               <ErrorNotice
                 inline
                 tone="amber"
-                description={t(
-                  'This code did not run. Choose whether to retry or manage Notebook resources.'
-                )}
+                description={
+                  needsDesktop
+                    ? t(
+                        'Open the same Session and branch in the Open-Science desktop app, then choose Continue Notebook work in Compute.'
+                      )
+                    : t(
+                        'This code did not run. Choose whether to retry or manage Notebook resources.'
+                      )
+                }
               >
                 {rejection && (
                   <MemoryCheckDetails trigger={rejection.memory} latest={latestCheck} />
@@ -372,7 +384,7 @@ export const NotebookMemoryNoticeBridge = ({
               <Button variant="secondary" disabled={manageDisabled || busy} onClick={manage}>
                 {t('Manage Notebook resources')}
               </Button>
-              {rejection ? (
+              {rejection && !needsDesktop ? (
                 <Button
                   aria-busy={busy || undefined}
                   disabled={

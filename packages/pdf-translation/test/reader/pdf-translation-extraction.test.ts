@@ -54,6 +54,141 @@ const setup = (items = [text('An intact source paragraph.')]) => {
 }
 
 describe('extractPdfTranslationSource', () => {
+  it.each([0, -0.9])('preserves a raised tensor power with script offset %s', async (offset) => {
+    const run = (str: string, x: number, width: number, baseline = 500, height = 10) => ({
+      ...text(str, x),
+      transform: [height, 0, 0, height, x, baseline],
+      width,
+      height,
+      hasEOL: false
+    })
+    const fixture = setup([
+      run('The group acts on', 190, 100),
+      run('⊗', 290, 11, 507.5),
+      run('3', 301, 4, 505 + offset, 7),
+      run('(', 305.5, 4),
+      run('F', 309.5, 6),
+      run(') by cyclic rotation.', 316, 90)
+    ])
+    const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+    const power = source.units.find((unit) => unit.source === '⊗3')
+    expect(power?.sourceOnly).toBe(offset === 0 ? true : undefined)
+    expect(power?.preserve).toBe(offset === 0 ? 'literal' : undefined)
+    expect(power?.fragments[0].items).toEqual([
+      { index: 1, text: '⊗' },
+      { index: 2, text: '3' }
+    ])
+    expect(source.units.filter((u) => !u.sourceOnly && u !== power).map((u) => u.source)).toEqual([
+      'The group acts on',
+      ') by cyclic rotation.'
+    ])
+    expect(coverage).toMatchObject({ includedItemCount: 6, excludedItemCount: 0 })
+  })
+
+  it.each([
+    { drift: 0, witness: 'geometric', spelling: 'geometrical' },
+    { drift: 0, witness: 'geo-metrical', spelling: 'geo-metrical' },
+    { drift: 0, witness: 'curved', spelling: undefined },
+    { drift: 2, witness: 'geometric', spelling: undefined }
+  ])(
+    'joins an attested word across the native prose margin ($witness, $drift)',
+    async ({ drift, witness, spelling }) => {
+      const run = (
+        source: string,
+        x: number,
+        width: number,
+        fontName = 'body',
+        baseline = 500,
+        hasEOL = false
+      ) => ({
+        ...text(source, x),
+        transform: [10, 0, 0, 10, x, baseline],
+        width,
+        height: source.trim() ? 10 : 0,
+        fontName,
+        hasEOL
+      })
+      const lead = 'is the stored result computed from a geo-'
+      const tail = 'metrical correction and the fixed boundary'
+      const items = [
+        run(
+          `The ${witness} model captures the shape of the entire region.`,
+          130,
+          200,
+          'body',
+          650,
+          true
+        ),
+        run('where', 120, 25.54),
+        run(' ', 145.54, 3.38),
+        run('Q', 148.92, 6.11, 'italic'),
+        run('(', 155.64, 3.87),
+        run('s', 159.48, 3.6, 'italic'),
+        run(') = Tr', 163.08, 27.9),
+        run('(', 190.92, 4.56, 'delimiter', 508),
+        run('θ', 195.6, 5.15, 'italic'),
+        run('(', 200.76, 3.87),
+        run('s', 204.6, 3.6, 'italic'),
+        run(') ln', 208.2, 13.81),
+        run(' ', 222.01, 1.67),
+        run('θ', 223.68, 5.15, 'italic'),
+        run('(', 228.84, 3.87),
+        run('s', 232.68, 3.6, 'italic'),
+        run(')', 236.28, 3.87),
+        run(')', 240.12, 4.56, 'delimiter', 508),
+        run(' ', 244.68, 3.48, 'delimiter', 508),
+        run(lead, 248.16, 209, 'body', 500, true),
+        run(tail, 120 + drift, 207, 'body', 488)
+      ]
+      const fixture = setup(items)
+      const font = { ascent: 0.75, descent: -0.25, vertical: false }
+      fixture.page.getTextContent.mockResolvedValue({
+        items,
+        styles: {
+          body: font,
+          italic: font,
+          delimiter: { ...font, ascent: 0.04, descent: -1.759 }
+        }
+      })
+      const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+      const math = source.units.find((unit) => unit.source === 'θ(s) ln θ(s)')
+      expect(math).toMatchObject({ sourceOnly: true, preserve: 'formula' })
+      expect(
+        math?.fragments.flatMap((fragment) => fragment.items.map(({ index }) => index))
+      ).toEqual([8, 9, 10, 11, 13, 14, 15, 16])
+      const expected = spelling
+        ? [`is the stored result computed from a ${spelling} correction and the fixed boundary`]
+        : [lead, tail]
+      const prose = source.units.filter(({ source }) => expected.includes(source))
+      expect(prose.map(({ source }) => source)).toEqual(expected)
+      expect(prose.flatMap(({ fragments }) => fragments.map(({ items }) => items))).toEqual([
+        [{ index: 19, text: lead }],
+        [{ index: 20, text: tail }]
+      ])
+      expect(coverage).toMatchObject({
+        textItemCount: 18,
+        includedItemCount: 18,
+        excludedItemCount: 0
+      })
+    }
+  )
+
+  it('keeps only an isolated native square out of translation', async () => {
+    const inputs = ['□', '◻', 'A □ marks an empty cell.', 'Translate the neighboring sentence.']
+    const items = inputs.map((source, index) => text(source, 40, 80 + index * 55))
+    const fixture = setup(items)
+    const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+    const square = source.units.find((unit) => unit.source === '□')
+    expect(square).toMatchObject({ sourceOnly: true, preserve: 'literal' })
+    expect(square?.fragments.flatMap((fragment) => fragment.items)).toEqual([
+      { index: 0, text: '□' }
+    ])
+    expect(source.units.filter((unit) => !unit.sourceOnly).map((unit) => unit.source)).toEqual(
+      inputs.slice(1)
+    )
+    expect(coverage).toMatchObject({ includedItemCount: 4, excludedItemCount: 0 })
+  })
+
   it.each([0, 9])(
     'preserves whole bundled scientific rows when column drift is %s',
     async (drift) => {
@@ -2108,6 +2243,59 @@ it.each([true, false])(
     }
   }
 )
+
+it.each([true, false])('keeps independent first-page author fields (%s)', async (matches) => {
+  const values = [
+    'Keywords:',
+    'Principal Author:',
+    'Name: Ellen Field',
+    'Institution: Hilltown Institute',
+    'E-mail: person@example.org',
+    matches ? 'Co-authors: (names and institutions)' : 'Liaisons: (names and institutions)',
+    'Avery Green (Woodland Institute)',
+    'River Bloom (Harbor College)',
+    'Abstract (optional):'
+  ]
+  const contents = [
+    { ...text('A study of local history'), transform: [25, 0, 0, 25, 72, 710], height: 25 },
+    ...values.map((value, index) => ({
+      ...text(value),
+      transform: [12, 0, 0, 12, 72, 573 - index * 14.45],
+      width: value.length * 6,
+      height: 12,
+      fontName: [0, 1, 5, 8].includes(index) ? 'heading' : 'body'
+    })),
+    {
+      ...text('The survey compares archived records of the northern sector.'),
+      transform: [12, 0, 0, 12, 72, 573 - values.length * 14.45],
+      width: 435,
+      height: 12
+    }
+  ]
+  const fixture = setup(contents)
+  const { source, coverage } = await extractPdfTranslationSource(fixture.context)
+  expect(coverage.includedItemCount).toBe(contents.length)
+  expect(coverage.excludedItemCount).toBe(0)
+  const cover = source.units.slice(1, -1)
+  expect(
+    cover.flatMap((unit) =>
+      unit.fragments.flatMap((fragment) => fragment.items.map(({ index }) => index))
+    )
+  ).toEqual(values.map((_, index) => index + 1))
+  if (matches) {
+    expect(cover.filter((unit) => unit.sourceOnly).map((unit) => unit.source)).toEqual([
+      values.slice(2, 5).join(' '),
+      values.slice(6, 8).join(' ')
+    ])
+    expect(
+      cover
+        .filter((unit) => !unit.sourceOnly)
+        .map((unit) => [unit.source, unit.fragments.length, unit.fragments[0].items.length])
+    ).toEqual([0, 1, 5, 8].map((index) => [values[index], 1, 1]))
+  } else {
+    expect(cover.map((unit) => unit.source)).toEqual([values.join(' ')])
+  }
+})
 
 it('anchors the end of a protected relation to its original row', async () => {
   const row = (str: string, x: number, width: number, fontName = 'body', y = 278, height = 11) => ({

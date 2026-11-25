@@ -6,6 +6,7 @@ import {
 } from '../../../shared/session-persistence'
 import type { SessionAttention } from '../../../shared/session-attention-contract'
 import type { PersistedChatSession, SessionWaitReason } from '../../../shared/session-persistence'
+import { latestTurnPromptIds } from '../../../shared/session-persistence/turn-anchor'
 import type { SessionInteractionState } from './session-interaction-contract'
 import type { ChatSession, SessionStatus } from './session-store-contract'
 export type { SessionInteractionState } from './session-interaction-contract'
@@ -174,12 +175,12 @@ export const isCurrentSavedQuestion = (
   activity: NonNullable<SessionInteractionSource['activities']>[number]
 ): boolean => {
   if (!isCurrentQuestionBranch(session, activity.id, activity.elicitation?.durable)) return false
-  // A revision can continue under a routed user reply, which is also a valid prompt here.
-  const currentPromptId =
-    session.activeRun?.promptMessageId ??
-    session.messages?.findLast(({ role }) => role === 'user')?.id
+  const activePromptId = session.activeRun?.promptMessageId
+  const currentPromptIds = activePromptId
+    ? new Set([activePromptId])
+    : latestTurnPromptIds(session.messages ?? [])
   const authority = session.conversationGraph?.activities.find(({ id }) => id === activity.id)
-  return matchesElicitationPrompt(authority ?? activity, currentPromptId)
+  return matchesElicitationPrompt(authority ?? activity, currentPromptIds)
 }
 
 const hasOnlyHistoricalQuestions = (session: SessionInteractionSource): boolean => {

@@ -5625,8 +5625,12 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
         ({
           getState: () => ({ permissionProfiles: { session: { selectedProfile: state.profile } } }),
           requestAppApproval: (input: Parameters<AcpPermissionContext['requestAppApproval']>[0]) =>
-            context.requestAppApproval(input)
-        }) as unknown as Pick<AcpRuntimeCoordinator, 'getState' | 'requestAppApproval'>
+            context.requestAppApproval(input),
+          pendingNotebookReviews: (sessionId: string) => context.pendingNotebookReviews(sessionId)
+        }) as unknown as Pick<
+          AcpRuntimeCoordinator,
+          'getState' | 'requestAppApproval' | 'pendingNotebookReviews'
+        >
     )
     let call = 0
     const outer = async (
@@ -5743,6 +5747,18 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
       expect(h.emitted).toHaveLength(0)
       const pending = h.rpc()
       await vi.waitFor(() => expect(h.emitted).toHaveLength(1))
+      const scope = { projectId: 'project', sessionId: 'session', promptMessageId: h.state.prompt }
+      expect(await h.service.inspectTaskExecution(scope)).toMatchObject({
+        status: 'waiting_for_user',
+        reasonCode: 'notebook_runtime_review_required',
+        language,
+        messageBranchId: 'branch',
+        kernelDispatched: false,
+        next: {
+          action: 'review_notebook_runtime_in_app',
+          message: expect.stringContaining('get_setup_status')
+        }
+      })
       expect(
         (
           await h.service.listRuntimes({
@@ -5756,6 +5772,7 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
       await h.respond()
       const bound = await pending
       expect(bound.body.result?.bound?.runtimeId, JSON.stringify(bound)).toBe(h.interpreterPath)
+      expect((await h.service.inspectTaskExecution(scope)).status).toBe('unconfirmed')
       await h.outer()
       expect((await h.rpc()).body.result?.bound?.runtimeId).toBe(h.interpreterPath)
       expect(h.emitted).toHaveLength(1)

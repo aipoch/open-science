@@ -23,6 +23,7 @@ vi.mock('electron', () => ({
 }))
 
 import {
+  createSessionFile,
   MAX_PERSISTED_SESSION_BYTES,
   SESSION_SIZE_LIMIT_ERROR_CODE,
   type PersistedChatSession,
@@ -125,6 +126,182 @@ afterEach(async () => {
 })
 
 describe('session persistence repository (per-session files)', () => {
+  it('persists a Session locator that survives a repository restart without reading the payload', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    const repository = new SessionRepository(root)
+    await repository.saveSession(session)
+
+    const reopened = new SessionRepository(root, {
+      readSessionFile: async () => {
+        throw new Error('Session payload should not be read for locator lookup')
+      }
+    })
+
+    await expect(reopened.locateSession(session.id)).resolves.toEqual({
+      sessionId: session.id,
+      projectId: session.projectId,
+      storagePath: 'sessions/project-a/session-1.json'
+    })
+  })
+
+  it('rebuilds a corrupt locator once from Session identities without hydrating payloads', async () => {
+    const root = await createStorageRoot()
+    const session = createSession()
+    await new SessionRepository(root).saveSession(session)
+    await writeFile(join(root, 'sessions', 'session-locator.json'), '{broken', 'utf8')
+
+    const reopened = new SessionRepository(root, {
+      readSessionFile: async () => {
+        throw new Error('Session payload should not be read during locator rebuild')
+      }
+    })
+    const scan = vi.spyOn(reopened, 'scanSessionIdentities')
+
+    await expect(reopened.locateSession(session.id)).resolves.toMatchObject({
+      sessionId: session.id,
+      projectId: session.projectId
+    })
+    await expect(reopened.locateSession(session.id)).resolves.toMatchObject({
+      sessionId: session.id,
+      projectId: session.projectId
+    })
+
+    expect(scan).toHaveBeenCalledOnce()
+  })
+
+  it('rebuilds a valid locator once when a newly discovered Session is missing', async () => {
+    const root = await createStorageRoot()
+    const existing = createSession()
+    const repository = new SessionRepository(root)
+    await repository.saveSession(existing)
+
+    const discovered = createSession({ id: 'session-2', projectId: 'project-b' })
+    const discoveredProjectDir = join(root, 'sessions', discovered.projectId)
+    await mkdir(discoveredProjectDir, { recursive: true })
+    await writeFile(
+      join(discoveredProjectDir, `${discovered.id}.json`),
+      `${JSON.stringify(createSessionFile(discovered))}\n`,
+      'utf8'
+    )
+    await writeFile(
+      join(root, 'sessions', 'session-locator.json'),
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            sessionId: existing.id,
+            projectId: existing.projectId,
+            storagePath: `sessions/${existing.projectId}/${existing.id}.json`
+          }
+        ]
+      }),
+      'utf8'
+    )
+
+    const reopened = new SessionRepository(root)
+    const scan = vi.spyOn(reopened, 'scanSessionIdentities')
+
+    await expect(reopened.locateSession(discovered.id)).resolves.toEqual({
+      sessionId: discovered.id,
+      projectId: discovered.projectId,
+      storagePath: `sessions/${discovered.projectId}/${discovered.id}.json`
+    })
+    await expect(reopened.locateSession('session-missing')).resolves.toBeUndefined()
+    await expect(reopened.locateSession('session-missing')).resolves.toBeUndefined()
+
+    expect(scan).toHaveBeenCalledOnce()
+  })
+
+  it('retries locator reconstruction after an incomplete identity scan', async () => {
+    const root = await createStorageRoot()
+    await new SessionRepository(root).saveSession(createSession())
+    await writeFile(join(root, 'sessions', 'session-locator.json'), '{broken', 'utf8')
+
+    const reopened = new SessionRepository(root)
+    const scan = vi.spyOn(reopened, 'scanSessionIdentities').mockResolvedValueOnce({
+      sessions: [],
+      isComplete: false,
+      generation: 0
+    })
+
+    await expect(reopened.locateSession('session-1')).rejects.toThrow(
+      'complete Session identity scan'
+    )
+    await expect(reopened.locateSession('session-1')).resolves.toMatchObject({
+      sessionId: 'session-1'
+    })
+    expect(scan).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains every locator when different projects save concurrently', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    await repository.saveSession(createSession())
+    await repository.locateSession('absent')
+    const ids = ['one', 'two', 'three', 'four']
+    await Promise.all(
+      ids.map((id) => repository.saveSession(createSession({ id, projectId: 'project-' + id })))
+    )
+    const locator = JSON.parse(
+      await readFile(join(root, 'sessions', 'session-locator.json'), 'utf8')
+    )
+    expect(locator.entries.map((entry: { sessionId: string }) => entry.sessionId)).toEqual(
+      expect.arrayContaining(ids)
+    )
+  })
+
+  it('updates and removes locator entries as Session ownership changes', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    const session = await repository.saveSession(createSession())
+
+    await repository.saveSession({ ...session, projectId: 'project-b' })
+    await expect(repository.locateSession(session.id)).resolves.toMatchObject({
+      projectId: 'project-b',
+      storagePath: 'sessions/project-b/session-1.json'
+    })
+
+    await repository.deleteSession('project-b', session.id)
+    await expect(repository.locateSession(session.id)).resolves.toBeUndefined()
+  })
+
+  it('keeps pending imports hidden in warm and restarted Session locators', async () => {
+    const root = await createStorageRoot()
+    const repository = new SessionRepository(root)
+    await repository.saveSession(createSession())
+    const importId = 'a3ad8350-0011-4c89-8001-800000000001'
+    const pending = join(root, 'session-package-imports', importId)
+    await mkdir(pending, { recursive: true })
+    const imported = createSession({ id: 'imported-session', projectId: `import-${importId}` })
+    await repository.saveSession(imported)
+    const restarted = new SessionRepository(root)
+    await expect(repository.locateSession(imported.id)).resolves.toBeUndefined()
+    await expect(restarted.locateSession(imported.id)).resolves.toBeUndefined()
+    await rm(pending, { recursive: true })
+    await expect(repository.locateSession(imported.id)).resolves.toMatchObject({
+      projectId: imported.projectId
+    })
+    await expect(restarted.locateSession(imported.id)).resolves.toMatchObject({
+      projectId: imported.projectId
+    })
+  })
+
+  it('keeps the authoritative Session save when locator maintenance fails', async () => {
+    const root = await createStorageRoot()
+    const failure = Object.assign(new Error('locator disk failure'), { code: 'EIO' })
+    const renameFile = vi.fn(async (source: string, destination: string) => {
+      if (destination.endsWith('session-locator.json')) throw failure
+      await rename(source, destination)
+    })
+    const repository = new SessionRepository(root, { renameFile })
+
+    await expect(repository.saveSession(createSession())).resolves.toMatchObject({ revision: 1 })
+    await expect(
+      readLogicalSessionText(join(root, 'sessions', 'project-a', 'session-1.json'))
+    ).resolves.toContain('Saved conversation')
+  })
+
   it('reports read and parse costs on the pure background snapshot path without transcript content', async () => {
     const repository = new SessionRepository(await createStorageRoot())
     await repository.saveSession(createSession())
@@ -994,7 +1171,9 @@ describe('session persistence repository (per-session files)', () => {
 
     await expect(repository.saveSession(createSession())).resolves.toMatchObject({ revision: 1 })
 
-    expect(renameFile).toHaveBeenCalledTimes(2)
+    expect(
+      renameFile.mock.calls.filter(([, destination]) => destination.endsWith('session-1.jsonl'))
+    ).toHaveLength(2)
     expect(wait).toHaveBeenCalledTimes(1)
     await expect(
       readLogicalSessionText(join(storageRoot!, 'sessions', 'project-a', 'session-1.json'))

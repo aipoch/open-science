@@ -163,7 +163,11 @@ import type {
   ValidateProviderResult,
   VisionModelConfiguration as VisionModel
 } from '../../shared/settings'
-import { isCodexSubscriptionProvider } from '../../shared/settings-runtime'
+import {
+  isCodexSubscriptionProvider,
+  isProviderUsableByFramework
+} from '../../shared/settings-runtime'
+import { KILO_FREE_MODEL_ID } from '../../shared/provider-model-catalog'
 import type { CloseActionPreference } from '../../shared/window-controls'
 import type {
   InstallMissingWslDependenciesRequest,
@@ -183,6 +187,7 @@ import type {
 } from '../../shared/wsl-setup'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
+  getAgentFramework,
   type AgentFrameworkId,
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
@@ -496,6 +501,7 @@ class SettingsService {
   private readonly connectors: ConnectorSettingsModule
   private readonly lab: LabAccountOwner
   private readonly providers: ProviderAccountsModule
+  private readonly deviceCredentials: DeviceCredentialStore
   private readonly runtimeManager: AgentRuntimeManager
   private readonly installCoordinator: SettingsInstallCoordinator
   private readonly providerAcpValidator: ProviderAcpValidator
@@ -617,10 +623,11 @@ class SettingsService {
     this.log = options.log ?? createLogger('settings')
     this.preferences = new SettingsPreferencesModule(this.repository)
     this.notebookRuntimeSettings = new NotebookRuntimeSettingsModule(this.repository)
+    this.deviceCredentials = new DeviceCredentialStore(this.configRoot)
     this.connectors = new ConnectorSettingsModule(
       this.repository,
       options.openAlexFetch,
-      new DeviceCredentialStore(this.configRoot)
+      this.deviceCredentials
     )
     this.userClaudeDir = options.userClaudeDir ?? getUserClaudeConfigDir()
     const userCodexDir = options.userCodexDir ?? join(homedir(), '.codex')
@@ -1627,11 +1634,12 @@ class SettingsService {
     try {
       if (request.action === 'status') {
         const settings = await this.repository.getSettings()
-        const framework = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+        const selectedFramework = settings.agentFrameworkId ?? null
+        const framework = selectedFramework ?? DEFAULT_AGENT_FRAMEWORK_ID
         const usingCodex = framework === 'codex'
+        const activeProvider = settings.providers.find(({ id }) => id === settings.activeProviderId)
         const provider =
-          settings.providers.find(({ id }) => id === settings.activeProviderId) ??
-          settings.providers[0]
+          activeProvider ?? (settings.providers.length === 1 ? settings.providers[0] : undefined)
         const providerArgv =
           (usingCodex || framework === DEFAULT_AGENT_FRAMEWORK_ID) &&
           provider?.id === 'cli-openai' &&
@@ -1651,22 +1659,40 @@ class SettingsService {
                 'OPENAI_API_KEY',
                 '--json'
               ]
-            : usingCodex && !provider
-              ? ['codex', 'login']
-              : usingCodex &&
-                  provider?.type === 'codex-isolated' &&
-                  provider.codexAuthMode === 'isolated'
-                ? ['codex', 'login', '--force']
-                : undefined
+            : usingCodex &&
+                provider?.type === 'codex-isolated' &&
+                provider.codexAuthMode === 'isolated'
+              ? ['codex', 'login', '--force']
+              : undefined
         return {
           ok: true,
+          selectedFramework,
+          keylessKiloAvailable: !activeProvider && this.supportsKeylessKilo(framework),
           next: {
             ...(usingCodex ? { runtime: ['runtime', 'install', 'codex', '--json'] } : {}),
             ...(providerArgv ? { provider: providerArgv } : {})
           }
         }
       }
-      if (request.action === 'runtime' || request.action === 'codex-prepare') {
+      if (
+        request.action === 'provider-options' ||
+        request.action === 'provider-credential-target' ||
+        request.action === 'provider-save' ||
+        request.action === 'provider-activate'
+      ) {
+        return await this.providers.bootstrapApiProvider(request, this.deviceCredentials)
+      }
+      if (request.action === 'agent-runtime') {
+        if (!(await this.prepareAgentRuntime(request.framework, onEvent)))
+          throw new BootstrapError('runtime_unavailable')
+      } else if (request.action === 'kilo-free') {
+        if (!this.supportsKeylessKilo(request.framework))
+          throw new BootstrapError('invalid_request')
+        await this.repository.addOnboardingKiloProvider(request.framework)
+        const { activeProviderId: providerId } = await this.repository.getSettings()
+        if (!providerId) throw new BootstrapError('configuration_conflict')
+        await this.providers.validateProvider({ providerId, model: KILO_FREE_MODEL_ID })
+      } else if (request.action === 'runtime' || request.action === 'codex-prepare') {
         await this.runtimeManager.bootstrapCodex(onEvent)
         if (request.action === 'codex-prepare') await this.providers.prepareBootstrapCodex()
       } else if (request.action === 'codex-complete') {
@@ -1680,7 +1706,47 @@ class SettingsService {
       return { ok: true }
     } catch (error) {
       // Installer/provider exceptions can contain secret inputs. Only return our closed codes.
-      return { ok: false, code: error instanceof BootstrapError ? error.code : 'bootstrap_failed' }
+      return error instanceof BootstrapError
+        ? { ok: false, code: error.code, ...(error.category ? { category: error.category } : {}) }
+        : { ok: false, code: 'bootstrap_failed' }
+    }
+  }
+
+  private supportsKeylessKilo(framework: AgentFrameworkId): boolean {
+    const kilo = {
+      id: 'keyless-kilo',
+      type: 'official',
+      vendorId: 'kilo',
+      name: 'Kilo Gateway'
+    } as const
+    return isProviderUsableByFramework(
+      {
+        type: kilo.type,
+        apiEndpoints: this.providers.resolveProviderApiEndpoints(kilo, KILO_FREE_MODEL_ID)
+      },
+      getAgentFramework(framework)
+    )
+  }
+
+  private async prepareAgentRuntime(
+    framework: AgentFrameworkId,
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<boolean> {
+    const preflight = await this.getPreflight()
+    const request = { source: 'managed' } as const
+    switch (framework) {
+      case 'open-science-agent':
+        return preflight.openScienceAgentReady === true
+      case 'claude-code':
+        return preflight.claudeReady || (await this.installClaude(request, onEvent)).ok
+      case 'opencode':
+        return preflight.opencodeReady || (await this.installOpencode(request, onEvent)).ok
+      case 'codex':
+        return preflight.codexReady || (await this.installCodex(request, onEvent)).ok
+      case 'codebuddy':
+        return preflight.codebuddyReady || (await this.installCodeBuddy(request, onEvent)).ok
+      case 'pi':
+        return preflight.piReady === true || (await this.installPi(request, onEvent)).ok
     }
   }
 

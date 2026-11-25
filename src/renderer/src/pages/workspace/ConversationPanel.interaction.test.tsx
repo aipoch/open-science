@@ -3960,15 +3960,27 @@ describe('ConversationPanel composer intake', () => {
         cwd: '/workspace',
         status: 'waiting-for-user',
         runtimeTranscriptOwner: 'main',
-        messages: prompts.map((key, index) => ({
-          id: key,
-          role: 'user' as const,
-          content: 'Choose an option.',
-          status: 'complete' as const,
-          eventIds: [],
-          createdAt: index * 3 + 1,
-          updatedAt: index * 3 + 1
-        })),
+        messages: [
+          ...prompts.map((key, index) => ({
+            id: key,
+            role: 'user' as const,
+            content: 'Choose an option.',
+            status: 'complete' as const,
+            eventIds: [],
+            createdAt: index * 3 + 1,
+            updatedAt: index * 3 + 1
+          })),
+          {
+            id: 'steering',
+            role: 'user',
+            responseToMessageId: 'current',
+            content: 'Focus on the latest results.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 10,
+            updatedAt: 10
+          }
+        ],
         activities: prompts.map((key, index) => ({
           id: key + '-question',
           kind: 'tool' as const,
@@ -4002,7 +4014,7 @@ describe('ConversationPanel composer intake', () => {
           }
         })),
         createdAt: 1,
-        updatedAt: 9
+        updatedAt: 10
       })
       const owner = new AcpDurableContinuationContextOwner({
         loadSessionForContinuation: async () => structuredClone(stored),
@@ -10597,7 +10609,7 @@ it.each(['legacy', 'turn'] as const)(
 it('offers Fork to continue while leaving the imported conversation read-only', async () => {
   forkSessionMock.mockClear()
   const activeSession: ChatSession = {
-    id: 'imported-session',
+    id: 'import-session',
     projectId: 'project-a',
     title: 'Imported research',
     cwd: '',
@@ -10613,6 +10625,13 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
       manifestChecksum: 'a'.repeat(64)
     }
   }
+  renderPanel({
+    view: { activeSession: { ...activeSession, contentLoaded: false, packageOrigin: undefined } }
+  })
+  expect(container.querySelector('[data-testid="session-switch-skeleton"]')).not.toBeNull()
+  expect(
+    container.querySelector('[data-testid="conversation-composer-dock"]')?.childElementCount
+  ).toBe(0)
   renderPanel({ view: { activeSession } })
   const button = [...container.querySelectorAll('button')].find((button) =>
     button.textContent?.includes('Fork to continue')

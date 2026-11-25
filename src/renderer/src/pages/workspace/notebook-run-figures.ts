@@ -6,6 +6,7 @@ type CapturedNotebookFigure = {
   source: 'captured'
   key: string
   mimeType: string
+  outputIndex: number
   payload: string
   name: string
   filename?: string
@@ -13,7 +14,7 @@ type CapturedNotebookFigure = {
   extension: string
 }
 
-type NotebookRunFigure = CapturedNotebookFigure
+type NotebookRunFigure = Omit<CapturedNotebookFigure, 'payload'> & { payload?: string }
 
 const imageExtensionForMimeType = (mimeType: string): string => {
   switch (mimeType.toLowerCase()) {
@@ -54,20 +55,31 @@ const normalizeFigureExtension = (extension: string): string => {
 // Notebook figures remain the immutable kernel-captured payload. A single captured figure and a
 // single saved visual file form the only unambiguous association available in persisted run data.
 // Multiple candidates keep fallbacks rather than guessing from unrelated array order.
-const resolveNotebookRunFigures = (run: NotebookRunRecord): NotebookRunFigure[] => {
-  const captured: CapturedNotebookFigure[] = []
+function resolveNotebookRunFigures(run: NotebookRunRecord): CapturedNotebookFigure[]
+function resolveNotebookRunFigures(
+  run: NotebookRunRecord,
+  includeDeferred: true
+): NotebookRunFigure[]
+function resolveNotebookRunFigures(
+  run: NotebookRunRecord,
+  includeDeferred = false
+): NotebookRunFigure[] {
+  const captured: NotebookRunFigure[] = []
 
   run.outputs.forEach((output, outputIndex) => {
     if (output.type !== 'display') return
 
-    Object.entries(output.data).forEach(([mimeType, payload], mimeIndex) => {
+    const types = Object.keys(output.data)
+    if (includeDeferred && output.deferredImageTypes) types.push(...output.deferredImageTypes)
+    types.forEach((mimeType, mimeIndex) => {
       if (!mimeType.startsWith('image/')) return
 
       captured.push({
         source: 'captured',
         key: `captured-${outputIndex}-${mimeIndex}`,
         mimeType,
-        payload,
+        outputIndex,
+        payload: output.data[mimeType],
         name: `Figure ${captured.length + 1}`,
         index: captured.length + 1,
         extension: imageExtensionForMimeType(mimeType)
@@ -130,7 +142,7 @@ const formatNotebookFigureFilename = (figure: NotebookRunFigure, t: TFunction): 
   figure.filename ?? `${t('Figure {{index}}', { index: figure.index })}.${figure.extension}`
 
 const formatNotebookRunFigureMeta = (run: NotebookRunRecord, t: TFunction): string | undefined => {
-  const figureCount = resolveNotebookRunFigures(run).length
+  const figureCount = resolveNotebookRunFigures(run, true).length
 
   if (figureCount === 0) return undefined
 

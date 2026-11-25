@@ -3,11 +3,11 @@ import {
   DownloadSourceError,
   resilientDownload
 } from '@aipoch/resilient-download'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseUseCases, USE_CASE_MANIFEST_URL, type UseCase } from '../../shared/use-cases'
-import { assertPackageCapacity, PackageCapacityError } from './capacity'
+import { assertPackageCapacity, PackageCapacityError, packageDiskReserveBytes } from './capacity'
 
 export type UseCaseDownloadFailureReason =
   | 'manifest'
@@ -177,7 +177,8 @@ const classifyDownloadError = (error: unknown): unknown => {
 export const downloadUseCase = async (
   slug: string,
   signal: AbortSignal,
-  progress: (bytes: number, total: number) => void
+  progress: (bytes: number, total: number) => void,
+  temporaryRoot = tmpdir()
 ): Promise<{ path: string; release: () => Promise<void> }> => {
   const manifestSignal = AbortSignal.any([signal, AbortSignal.timeout(15000)])
   let manifest: Response
@@ -208,7 +209,8 @@ export const downloadUseCase = async (
   if (!item) throw new UseCaseDownloadError('unavailable', 'Use case is unavailable.')
   let directory: string
   try {
-    directory = await mkdtemp(join(tmpdir(), 'open-science-use-case-'))
+    await mkdir(temporaryRoot, { recursive: true, mode: 0o700 })
+    directory = await mkdtemp(join(temporaryRoot, 'open-science-use-case-'))
   } catch (error) {
     throw classifyDownloadError(error)
   }
@@ -216,7 +218,7 @@ export const downloadUseCase = async (
   // A slug is a portable filename, including on Windows where published titles can contain colons.
   const path = join(directory, `case-${slug}.science`)
   try {
-    await assertPackageCapacity(directory, item.sizeBytes)
+    await assertPackageCapacity(directory, item.sizeBytes, packageDiskReserveBytes)
     await resilientDownload(item.packageUrl, path, {
       signal,
       expectedSize: item.sizeBytes,

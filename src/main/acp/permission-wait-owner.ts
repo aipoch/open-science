@@ -3,6 +3,7 @@ import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import {
   materializeSessionConversationGraph,
+  resolveRestorablePermissionToolAuthority,
   sanitizeSessionPermissionRuntimeContext,
   type PersistedChatSession,
   type SessionPermissionRuntimeContext,
@@ -13,7 +14,7 @@ import type {
   SessionMutation,
   SessionRuntimeContextCommands
 } from '../session-persistence/coordinator'
-import type { DurablePermissionWaitCandidate } from './permission-broker'
+import { taskPermissionOptions, type DurablePermissionWaitCandidate } from './permission-broker'
 
 type PermissionWaitSessions = SessionRuntimeContextCommands &
   Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'> &
@@ -26,6 +27,27 @@ type RestoredPermissionDecision = Readonly<{
 }>
 
 type PublishPermissionWaitSession = (session: PersistedChatSession) => Promise<void> | void
+
+const restorableTaskPermission = (
+  session: PersistedChatSession,
+  promptMessageId: string
+): ReturnType<typeof resolveRestorablePermissionToolAuthority> => {
+  const authority = resolveRestorablePermissionToolAuthority(session)
+  if (session.packageOrigin || authority?.permission.state !== 'pending') return undefined
+  const { permission, activity } = authority
+  const graph = session.conversationGraph!
+  const frame = graph.frames.find(({ id }) => id === graph.activeFrameId)
+  if (
+    permission.request.appOwned ||
+    permission.request.delegated ||
+    permission.originatingPromptMessageId !== promptMessageId ||
+    activity.agentFrameId !== frame?.id ||
+    activity.messageBranchId !== frame.activeBranchId ||
+    !taskPermissionOptions(permission.request).length
+  )
+    return undefined
+  return authority
+}
 
 const isRevisionConflict = (error: unknown): boolean =>
   typeof error === 'object' &&
@@ -252,14 +274,20 @@ class AcpPermissionWaitOwner {
     return cleared ? cancelledRequestId : undefined
   }
 
-  async beginContinuation(projectId: string, sessionId: string, requestId: string): Promise<void> {
+  async beginContinuation(
+    projectId: string,
+    sessionId: string,
+    requestId: string,
+    beforePersist?: (session: PersistedChatSession) => void
+  ): Promise<void> {
     await this.transitionContinuation(
       projectId,
       sessionId,
       requestId,
       'pending',
       'continuing',
-      'running'
+      'running',
+      beforePersist
     )
   }
 
@@ -346,7 +374,8 @@ class AcpPermissionWaitOwner {
     requestId: string,
     expectedState: SessionPermissionRuntimeContext['state'],
     state: SessionPermissionRuntimeContext['state'],
-    sessionStatus: 'waiting-permission' | 'running'
+    sessionStatus: 'waiting-permission' | 'running',
+    beforePersist?: (session: PersistedChatSession) => void
   ): Promise<void> {
     if (!this.sessions) return
     await this.patch(
@@ -363,7 +392,9 @@ class AcpPermissionWaitOwner {
         }
         return { ...permission, state }
       },
-      sessionStatus
+      sessionStatus,
+      undefined,
+      beforePersist
     )
   }
 
@@ -405,5 +436,5 @@ class AcpPermissionWaitOwner {
   }
 }
 
-export { AcpPermissionWaitOwner }
+export { AcpPermissionWaitOwner, restorableTaskPermission }
 export type { PermissionWaitSessions, PublishPermissionWaitSession, RestoredPermissionDecision }

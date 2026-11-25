@@ -68,7 +68,7 @@ export type SwitchOperationDeps = {
 // pre-approval profile snapshot supplies the approved UUID/revision so approval-time drift still
 // fails closed.
 export type SwitchParams = {
-  name?: string | null
+  name: string | null
   revision?: number
 }
 
@@ -164,7 +164,7 @@ export class SwitchOperation {
 
     // Phase 1 — pre-approval resolution. Resolve the exact public name to the live profile so the
     // approval summary describes a real, enabled target. null → Main Agent (no mutable Main Profile).
-    const targetName = params.name ?? null
+    const targetName = params.name
     const preResolved = await this.resolveTarget(targetName)
 
     // Phase 2 — request the injected approval gateway. The summary carries ONLY the target public

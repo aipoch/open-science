@@ -3,6 +3,7 @@ import type { ArtifactFile } from '../../shared/artifacts'
 import type {
   DelegatedCallerSource,
   DelegatedQuestionAnswer,
+  DelegatedQuestionTaskResponse,
   ResolvedSubagentModelSnapshot
 } from '../../shared/delegated-work-contract'
 import type { AgentUserChoicePrompt } from '../../shared/elicitation'
@@ -66,6 +67,7 @@ type DurableDelegatedQuestionRequest = Readonly<{
   answers?: readonly DelegatedQuestionAnswer[]
   respondedAt?: number
   continuationAttemptId?: string
+  taskResponse?: DelegatedQuestionTaskResponse
   failure?: Readonly<{ code: string; message: string }>
 }>
 
@@ -293,6 +295,8 @@ type ConfirmQuestionInput = Readonly<{
   executionModel: ResolvedSubagentModelSnapshot
   startedAt: number
   initiatingTurnMessageId: string
+  taskResponse?: DelegatedQuestionTaskResponse
+  assertTaskCurrent?: () => void
 }>
 
 type DelegatedWorkDurableRecords = Readonly<{

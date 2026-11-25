@@ -188,6 +188,12 @@ export function composeDelegation({
     onAgentRuntimeUpdate: (update) => broadcastToRenderers('acp:agent-runtime-update', update),
     settlementContinuations: {
       dispatch: createDelegationSettlementContinuationDispatch({
+        trackTaskContinuation: (identity, send) => {
+          const activeRuntime = runtimeRef.current
+          return activeRuntime
+            ? activeRuntime.trackTaskContinuation(identity, send)
+            : send(() => undefined)
+        },
         sendAppContinuationObserved: (request, onProviderPromptAccepted) => {
           const activeRuntime = runtimeRef.current
           if (!activeRuntime) {

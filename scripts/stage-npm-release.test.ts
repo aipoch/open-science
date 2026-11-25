@@ -3,11 +3,13 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { releaseManifests, stageNpmRelease } from './stage-npm-release.mjs'
+import { packTarball } from './pack-npm-release.mjs'
 import {
   runtimeTargets,
   runtimePackageName,
   currentRuntimeTarget
 } from '../packages/open-science/runtime-package.mjs'
+import { defaultMcpServerConfig } from '../packages/open-science/agent-mcp-groups.mjs'
 
 describe('native npm release manifests', () => {
   it.each(runtimeTargets)('pins the entry package and native payload for $id', (target) => {
@@ -41,7 +43,7 @@ describe('native npm release manifests', () => {
   })
 })
 
-it('ships the MCP entry and its dependencies in the npm entry package', async () => {
+it('ships grouped MCP entry code, setup docs and dependencies in the npm entry package', async () => {
   const root = await mkdtemp(join(tmpdir(), 'osci-mcp-stage-'))
   try {
     const put = async (file: string, value: string): Promise<void> => {
@@ -55,7 +57,14 @@ it('ships the MCP entry and its dependencies in the npm entry package', async ()
       'packages/open-science/package.json',
       await readFile('packages/open-science/package.json', 'utf8')
     )
-    for (const file of ['mcp.mjs', 'cli.mjs'])
+    for (const file of [
+      'agent-mcp-groups.mjs',
+      'agent-mcp-readiness.mjs',
+      'cli.mjs',
+      'mcp.mjs',
+      'README.md',
+      'CLI.md'
+    ])
       await put(
         `packages/open-science/${file}`,
         await readFile(`packages/open-science/${file}`, 'utf8')
@@ -70,9 +79,29 @@ it('ships the MCP entry and its dependencies in the npm entry package', async ()
       })
     )
     await stageNpmRelease(root)
-    expect(await readFile(join(root, 'out/npm-release/main/mcp.mjs'), 'utf8')).toContain(
-      'createResearchMcpServer'
+    const staged = join(root, 'out/npm-release/main')
+    expect(await readFile(join(staged, 'mcp.mjs'), 'utf8')).toContain('createResearchMcpServer')
+    expect(await readFile(join(staged, 'agent-mcp-groups.mjs'), 'utf8')).toContain(
+      'defaultMcpServerConfig'
     )
+    const packageReadme = await readFile(join(staged, 'README.md'), 'utf8')
+    for (const server of ['open-science-core', 'open-science-research', 'open-science-literature'])
+      expect(packageReadme).toContain(server)
+    expect(await readFile(join(staged, 'CLI.md'), 'utf8')).toContain('mcp --group <group>')
+    const archive = await packTarball(staged, root)
+    expect(archive.files.map((file) => file.path)).toEqual(
+      expect.arrayContaining([
+        'agent-mcp-groups.mjs',
+        'agent-mcp-readiness.mjs',
+        'mcp.mjs',
+        'README.md',
+        'CLI.md'
+      ])
+    )
+    const rootReadme = await readFile('README.md', 'utf8')
+    const configBlock = rootReadme.match(/```json\n(\{\n {2}"mcpServers":[\s\S]*?\n\})\n```/)
+    expect(configBlock).not.toBeNull()
+    expect(JSON.parse(configBlock![1])).toEqual({ mcpServers: defaultMcpServerConfig() })
     const manifest = JSON.parse(
       await readFile(join(root, 'out/npm-release/main/package.json'), 'utf8')
     )
