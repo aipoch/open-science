@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { create } from 'zustand'
-import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
-import { NotebookContinuationBranchError } from '@/lib/acp/workspace-runtime-command-owner'
+import {
+  NotebookContinuationBranchError,
+  type WorkspaceAgentRuntime
+} from '@/lib/acp/useWorkspaceAgentRuntime'
 import {
   dismissNotebookMemoryRejection,
   useNotebookMemoryNoticeStore
@@ -287,7 +289,7 @@ export const useNotebookMemoryContinuation = (
         ? t('Could not confirm memory status. This Notebook did not run.')
         : failure === 'handoff'
           ? t('Notebook continuation could not be started. The previous request remains stopped.')
-          : failure instanceof NotebookContinuationBranchError
+          : failure
             ? failure.message
             : undefined
   return {

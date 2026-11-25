@@ -24,7 +24,8 @@ import { NotebookMemoryNoticeBridge } from './NotebookMemoryNoticeBridge'
 
 vi.mock('react-i18next', () => createI18nTestStub())
 const { sendMessage } = vi.hoisted(() => ({ sendMessage: vi.fn() }))
-vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
+vi.mock('@/lib/acp/useWorkspaceAgentRuntime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/acp/useWorkspaceAgentRuntime')>()),
   useWorkspaceAgentRuntime: () => ({ sendMessage })
 }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
