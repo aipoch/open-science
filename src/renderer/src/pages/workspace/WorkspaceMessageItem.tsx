@@ -4,6 +4,7 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import { cn, formatByteSize } from '@/lib/utils'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 import { useSessionStore } from '@/stores/session-store'
@@ -875,6 +876,7 @@ const VisibleArtifactPreview = ({
         // An in-flight thumbnail can settle after unmount or after desktop shutdown starts.
         if (
           canceled ||
+          useDesktopRuntimeRecoveryStore.getState().closing ||
           (error instanceof Error &&
             String(error).endsWith('ApplicationCommandError: The local service is stopping.'))
         )

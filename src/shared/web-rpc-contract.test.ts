@@ -189,6 +189,7 @@ describe('Web RPC contract', () => {
       'notebook.retryResourceRelease',
       'notebook.runCell',
       'notebook.runEvidence',
+      'notebook.runFigure',
       'notebook.runIndex',
       'notebook.shutdown',
       'notebook.state',

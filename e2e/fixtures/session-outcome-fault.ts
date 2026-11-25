@@ -2,7 +2,10 @@ import type { ElectronApplication, Page } from 'playwright'
 import type { PersistedChatSession } from '../../src/shared/session-persistence'
 import type { AcpPromptRequest } from '../../src/shared/acp'
 import { join } from 'node:path'
-import { SessionJournalStore } from '../../src/main/session-persistence/journal'
+import {
+  SessionJournalCorruptionError,
+  SessionJournalStore
+} from '../../src/main/session-persistence/journal'
 
 type NativeApp = { readonly page: Page }
 type SessionIdentity = { projectId: string; sessionId: string }
@@ -37,9 +40,19 @@ export const readRawOutcomeSession = async (
   })
   // Read from the fixture's Node process so both legacy JSON and journal authority use the real
   // reader, including appended revisions. A primary manifest is not a Session snapshot.
-  const stored = await new SessionJournalStore({ maxBytes: 64 * 1024 * 1024 }).read(
-    join(root, 'sessions', identity.projectId, `${identity.sessionId}.json`)
-  )
+  const path = join(root, 'sessions', identity.projectId, `${identity.sessionId}.json`)
+  const read = (): ReturnType<SessionJournalStore['read']> =>
+    new SessionJournalStore({ maxBytes: 64 * 1024 * 1024 }).read(path)
+  const stored = await read().catch((error: unknown) => {
+    // This out-of-process observer does not share the application's writer lane.
+    if (
+      error instanceof SessionJournalCorruptionError &&
+      (error.message === 'Session journal changed or was not read completely.' ||
+        error.message === 'Session changed while reading.')
+    )
+      return read()
+    throw error
+  })
   const document = stored?.document
   if (
     !document ||

@@ -177,6 +177,67 @@ export function nativeBoundedReferencePackets(
         owner.items[0] === first.key)
     )
   }
+  // A terminal singular heading can introduce one closed preprint citation.
+  // Protect its owner only, as separately printed author material can follow.
+  const lastPage = pages.at(-1)
+  if (lastPage && units.some((unit) => unit.source === 'Reference')) {
+    const physical = rows(lastPage)
+    const [titleRow, firstRow, lastRow, after] = physical ?? []
+    const [title] = titleRow?.entries ?? []
+    const [author, titleStart] = firstRow?.entries ?? []
+    const [titleEnd, locator] = lastRow?.entries ?? []
+    const heading = title?.owner,
+      reference = author?.owner
+    if (
+      heading?.source === 'Reference' &&
+      !heading.sourceOnly &&
+      !heading.risks.length &&
+      heading.items.length === 1 &&
+      title.index === 0 &&
+      titleRow.entries.length === 1 &&
+      titleRow.baseline > lastPage.height * 0.8 &&
+      reference &&
+      !reference.sourceOnly &&
+      reference.risks.every((risk) => risk === 'possible-continuation') &&
+      firstRow.entries.length === 2 &&
+      lastRow?.entries.length === 2 &&
+      [author, titleStart, titleEnd, locator].every(
+        (entry, n, ordered) =>
+          entry.owner === reference &&
+          entry.key === reference.items[n] &&
+          (n === 0 || entry.index > ordered[n - 1].index)
+      ) &&
+      reference.items.length === 4 &&
+      /^\[[A-Za-z][A-Za-z0-9+-]{1,14}\] \p{Lu}[^,]+,$/u.test(author.item.str) &&
+      /^\p{Lu}.*\p{L}$/u.test(titleStart.item.str) &&
+      /^\p{L}.*\p{L}$/u.test(titleEnd.item.str) &&
+      /^, arXiv:\d{4}\.\d{4,5}(?:v[1-9]\d*)? \[[A-Za-z0-9. -]+\] [1-9]\d? (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:19|20)\d{2}$/u.test(
+        locator.item.str.trim()
+      )
+    ) {
+      const font = author.item.height,
+        left = title.item.transform[4],
+        lead = titleRow.baseline - firstRow.baseline,
+        wrap = firstRow.baseline - lastRow.baseline
+      if (
+        lead > font * 2 &&
+        lead < font * 3 &&
+        wrap > font &&
+        wrap < font * 1.6 &&
+        (!after || (lastRow.baseline - after.baseline > font * 3 && !reset(after))) &&
+        near(author.item.transform[4], left, font) &&
+        near(titleEnd.item.transform[4], left, font) &&
+        [title, titleStart, titleEnd, locator].every(({ item }) => near(item.height, font, font)) &&
+        new Set([title.item.fontName, author.item.fontName, titleStart.item.fontName]).size === 3 &&
+        titleStart.item.fontName === titleEnd.item.fontName &&
+        author.item.fontName === locator.item.fontName &&
+        [titleRow, firstRow, lastRow].every((row) => closedRow(row, lastPage)) &&
+        exclusive([heading, reference], lastPage)
+      )
+        result.add(signature(reference))
+    }
+  }
+
   const headings = units.filter(
     (u) => /^(?:References|REFERENCES|Bibliography|BIBLIOGRAPHY)$/u.test(u.source) && entries(u)
   )

@@ -75,6 +75,48 @@ it.each([true, false])(
     }
   }
 )
+it.each([true, false])(
+  'splits same-face Roman headings with consecutive openings in a single column: %s',
+  (consecutive) => {
+    const shortOpening = (y: number) => [
+      { ...item('', 321.9, y, 0, 'Body', 10), height: 0 },
+      item('We record each response in the same calibrated range', 321.9, y, 241.1, 'Body', 10),
+      item(
+        'and compare these values at the available sampling sites.',
+        312,
+        y - 12,
+        251,
+        'Body',
+        10
+      )
+    ]
+    const input = [
+      item('III. C', 350.3, 465.3, 22.7, 'Body', 10, false),
+      item('OMPARING', 373.5, 465.3, 41.2, 'Body', 8, false),
+      item('F', 417.7, 465.3, 5.5, 'Body', 10, false),
+      item('REQUENCY', 423.7, 465.3, 58, 'Body', 8, false),
+      item('R', 484.7, 465.3, 6.1, 'Body', 10, false),
+      item('ANGES', 491.3, 465.3, 33.5, 'Body', 8, false),
+      ...shortOpening(448.5),
+      item(consecutive ? 'IV. S' : 'V. S', 399.9, 164.1, 24.8, 'Body', 10, false),
+      item('UMMARY', 425.2, 164.1, 50, 'Body', 8, false),
+      ...shortOpening(147.3)
+    ]
+    const units = extract(input)
+    const title = units.find((unit) => unit.items.includes('1:0'))
+    const prose = units.find((unit) => unit.items.includes('1:7'))
+    expect(title).toBeDefined()
+    expect(prose).toBeDefined()
+    if (consecutive) {
+      expect(title?.items).toEqual(['1:0', '1:1', '1:2', '1:3', '1:4', '1:5'])
+      expect(title?.source).toBe('III. COMPARING FREQUENCY RANGES')
+      expect(prose?.source).toMatch(/^We record/u)
+    } else {
+      expect(title).toBe(prose)
+    }
+  }
+)
+
 const title = () => [
   item('A careful study of the relationships between distinct', 86, 660, 440, 'Title', 20),
   item('observed structures', 196, 620, 220, 'Title', 20),

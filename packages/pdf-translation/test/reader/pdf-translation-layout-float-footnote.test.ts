@@ -945,3 +945,117 @@ it.each([false, true])(
     expect(units.find((unit) => unit.items.includes('2:4'))).not.toBe(head)
   }
 )
+
+it.each(['complete', 'foreign-prose', 'unmatched-topic'])(
+  'requires the native float stack and topic before joining a page sentence (%s)',
+  (variant) => {
+    const line = (
+      str: string,
+      x: number,
+      baseline: number,
+      width: number,
+      size = 9,
+      fontName = 'body',
+      hasEOL = true
+    ): PdfLayoutPage['items'][number] => ({
+      str,
+      width,
+      height: size,
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      fontAscent: 0.84,
+      fontDescent: -0.26,
+      transform: [size, 0, 0, size, x, 792 - baseline],
+      hasEOL
+    })
+    const page = (number: number, items: PdfLayoutPage['items']): PdfLayoutPage => ({
+      page: number,
+      width: 612,
+      height: 792,
+      rotation: 0,
+      items
+    })
+    const head = 'Figure 2 illustrates how the three procedures respond to the same observation.'
+    const breakLine =
+      'One procedure produces a clear signal in the trial. Despite recovering most of the'
+    const tail =
+      'seasonal variation removed by the simpler procedure, the adjusted estimate remains stable'
+    const ending = 'across repeated trials, preserving the measurement accuracy of the study.'
+    const title = 'Paired Observations of Coastal Currents'
+    const caption = (
+      text: string,
+      x: number,
+      y: number,
+      w: number,
+      eol = true
+    ): PdfLayoutPage['items'][number] => line(text, x, y, w, 8, 'caption', eol)
+    const rows = [545, 556, 567, 582, 593, 604].flatMap((y, r) =>
+      [151, 240, 295, 350, 406, 461].map((x, c) =>
+        line(c ? `${2 + r}.${81 - c}` : `Protocol ${r + 1}`, x, y, c ? 18 : 50, 9, 'body', c === 5)
+      )
+    )
+    const floats = [
+      line(title, 73, 78, 184, 9, 'body', false),
+      line('2', 498, 78, 4, 9, 'body', false),
+      caption('(a) Early sample', 128, 214, 53, false),
+      caption('(b) Later sample', 256, 214, 55, false),
+      caption('(c) Matched sample', 416, 214, 66),
+      caption(
+        'Fig. 1. Profiles for the three tidal intervals at the sampled stations.',
+        73,
+        236,
+        429
+      ),
+      caption('The uncertainty is shown for each profile.', 73, 246, 177, false),
+      ...(variant === 'foreign-prose'
+        ? [line('An independent paragraph separates the figures.', 73, 318, 260)]
+        : []),
+      caption('(a) Interval totals', 132, 416, 63, false),
+      caption('(b) Corrected estimates', 321, 416, 96),
+      caption('Fig. 2. The corrected estimate retains the pattern across trials.', 73, 438, 429),
+      caption(
+        variant === 'unmatched-topic'
+          ? 'It recovers most of the lost measurement precision.'
+          : 'It recovers most of the lost seasonal variation.',
+        73,
+        448,
+        227
+      ),
+      caption('Table 1. Summary of the measurements.', 178, 492, 219),
+      ...['Sample', 'Procedure', 'Mean', 'Median', 'Range', 'Spread', 'Score'].map((s, i) =>
+        line(s, [78, 151, 240, 295, 350, 406, 461][i], 518, 23, 9, 'bold', i === 6)
+      ),
+      line('Coast', 78, 556, 24),
+      line('Inlet', 78, 593, 20),
+      ...rows
+    ]
+    const pages = [
+      page(1, [
+        line(
+          'A separate preceding paragraph documents the native measurement baseline.',
+          110,
+          599,
+          429
+        ),
+        line('This paragraph closes before the results are interpreted.', 110, 612, 367),
+        line(head, 120, 639, 419),
+        line(breakLine, 110, 653, 429, 9, 'body', false)
+      ]),
+      page(2, [...floats, line(tail, 73, 639, 429), line(ending, 73, 653, 330, 9, 'body', false)]),
+      page(3, [line('The next leaf has a separate, complete paragraph.', 110, 105, 310)]),
+      page(4, [line(title, 73, 78, 184, 9, 'body', false), line('4', 498, 78, 4)])
+    ]
+    const { units } = extract(pages)
+    const first = units.find((unit) => unit.items.includes('1:2'))
+    const second = units.find((unit) => unit.items.includes(`2:${floats.length}`))
+    if (variant === 'complete') {
+      expect(first).toBe(second)
+      expect(first?.source).toBe(`${head} ${breakLine} ${tail} ${ending}`)
+      expect(first?.items).toEqual(['1:2', '1:3', `2:${floats.length}`, `2:${floats.length + 1}`])
+      expect(first?.fragments.map((fragment) => fragment.page)).toEqual([1, 2])
+    } else {
+      expect(first).not.toBe(second)
+    }
+  }
+)

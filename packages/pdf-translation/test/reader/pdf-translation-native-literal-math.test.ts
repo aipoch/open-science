@@ -400,3 +400,44 @@ it.each(['display', 'inline', 'displaced', 'mixed prose'])(
     expect(units).toEqual(before)
   }
 )
+
+it.each(['stacked argument', 'flat argument'])(
+  'retains the exponential operator only beside its complete native argument: %s',
+  (geometry) => {
+    const items = [
+      item('An adjacent explanation remains available to translate.', 40, 630),
+      item('q=', 120, 600),
+      item('exp', 150, 600),
+      item('\u0010', 165, 611),
+      item('−', 170, 600),
+      item('r', 176, 607),
+      item('na', 176, geometry === 'flat argument' ? 600 : 593),
+      item('\u0011', 190, 611),
+      item(',', 212, 600),
+      { ...item('(3)', 262, 600), hasEOL: true },
+      { ...item('(4)', 262, 560), hasEOL: true }
+    ]
+    const units: Unit[] = items.flatMap((_, index) => {
+      if (index === 5 || index === 6) return []
+      const owned = index === 4 ? [4, 5, 6] : [index]
+      return [
+        {
+          id: `owner-${index}`,
+          source: owned.map((j) => items[j].str).join(' '),
+          ...(index > 0 && index !== 2 ? { sourceOnly: true, preserve: 'formula' } : {}),
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.1, width: 0.1, height: 0.02 },
+              items: owned.map((j) => ({ index: j, text: items[j].str }))
+            }
+          ]
+        }
+      ]
+    })
+    const before = structuredClone(units)
+    const selected = literalMathCandidates(units, { items, lang: null, styles: {} }, 1)
+    expect([...selected]).toEqual(geometry === 'stacked argument' ? ['owner-2'] : [])
+    expect(units).toEqual(before)
+  }
+)

@@ -1,10 +1,12 @@
 import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
 import type { AcpPermissionRequest, AcpPermissionScope } from '../../shared/acp-permission-contract'
 import type { ArtifactFile } from '../../shared/artifacts'
+import type { DelegatedQuestionTaskResponse } from '../../shared/delegated-work-contract'
 import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { ReviewWithChecks } from '../../shared/reviewer'
 import type { SpecialistView } from '../../shared/specialist'
+import type { TaskPermissionDecision } from '../acp/permission-broker'
 import type { DelegatedArtifactEvidence } from './artifact-evidence-contract'
 import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
 import type { DurableDelegateRequest } from './delegate-request-contract'
@@ -67,6 +69,7 @@ type RootDelegatePermissionRequest = Readonly<{
   providerToolName?: string
   isMcp?: boolean
   toolKind?: AcpPermissionRequest['toolKind']
+  taskBranchId?: string
   riskScope: string
   options: readonly Readonly<{
     optionId: string
@@ -78,6 +81,38 @@ type RootDelegatePermissionRequest = Readonly<{
 
 type RootDelegatePermissionResponse = DelegatePermissionResponse &
   Readonly<{ frameId: string; attemptId: string }>
+
+export type ConfirmTaskDelegateQuestion = Readonly<{
+  requestId: string
+  answers: readonly DelegatedQuestionAnswer[]
+  task: Readonly<{
+    frameId: string
+    attemptId: string
+    branchId: string
+    rootBranchId: string
+    canonicalDigest: string
+    response: DelegatedQuestionTaskResponse
+    assertCurrent(): void
+  }>
+}>
+
+export type TaskDelegateInteractions = Readonly<{
+  permissions(
+    session: SessionKey
+  ): Promise<readonly { request: AcpPermissionRequest; branchId: string }[]>
+  respondPermission(
+    session: SessionKey,
+    input: Readonly<{
+      requestId: string
+      frameId: string
+      attemptId: string
+      branchId: string
+      optionId: string
+    }>,
+    decision: TaskPermissionDecision
+  ): Promise<boolean>
+  answerQuestion(session: SessionKey, input: ConfirmTaskDelegateQuestion): Promise<void>
+}>
 
 type RootDelegatePermissionEvent =
   | Readonly<{ kind: 'requested'; request: RootDelegatePermissionRequest }>
@@ -233,7 +268,8 @@ type DurableDelegatedWork = Readonly<{
   ): Promise<void>
   confirmQuestion(
     session: SessionKey,
-    input: Readonly<{ requestId: string; answers: readonly DelegatedQuestionAnswer[] }>
+    input: Omit<ConfirmTaskDelegateQuestion, 'task'> &
+      Partial<Pick<ConfirmTaskDelegateQuestion, 'task'>>
   ): Promise<Readonly<{ requestId: string; continuationAttemptId: string }>>
   sessionSummary(session: SessionKey): Promise<SessionSubagentSummary>
   readAgentFrame(
@@ -241,7 +277,11 @@ type DurableDelegatedWork = Readonly<{
     frameId: string
   ): Promise<ReadOnlyAgentFrameDetail | undefined>
   rootPermissionRequests(session: SessionKey): Promise<readonly RootDelegatePermissionRequest[]>
-  respondToPermission(session: SessionKey, response: RootDelegatePermissionResponse): Promise<void>
+  respondToPermission(
+    session: SessionKey,
+    response: RootDelegatePermissionResponse,
+    decision?: TaskPermissionDecision
+  ): Promise<void>
   setPermissionProfile(session: SessionKey, profile: PermissionProfileId): Promise<void>
   stopChildren(
     caller: AuthenticatedDelegateCaller,

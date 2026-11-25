@@ -419,7 +419,12 @@ async function generate({
   const fontBytes = await readFile(new URL('./NotoSansSC-Regular.otf', import.meta.url))
   const face = fontkit.create(fontBytes)
   // PDF.js supplies exact outlines for these missing Latin glyphs in the CJK face.
-  const latinFallback = /[ČčĘęŁłŐőŰűı]/u
+  const latinFallback = /[ĆćČčĘęŁłŐőŰűı]|˝[oOuU]/u
+  const doubleAcutePair = /^˝[oOuU]$/u
+  const doubleAcuteWord =
+    /(?<![\p{Script=Latin}\p{M}])[A-Za-z]+˝[oOuU][A-Za-z]+(?![\p{Script=Latin}\p{M}])/gu
+  const composeDoubleAcute = (text) =>
+    text.replace(/˝([oOuU])/gu, (_, vowel) => (vowel + '\u030b').normalize('NFC'))
   let latinBytes, latinFace
   if (units.some((unit) => latinFallback.test(unit.translation))) {
     try {
@@ -446,8 +451,13 @@ async function generate({
   }
   // A confirmed Computer Modern acute/dotless-i pair can use one
   // precomposed outline while keeping both requested ToUnicode code points.
-  const glyphTokens = (text) => text.match(/´ı|[\s\S]/gu) ?? []
-  const outline = (token) => (token === '´ı' ? 'í' : greekGlyph(token))
+  const glyphTokens = (text) => text.match(/´ı|˝[oOuU]|[\s\S]/gu) ?? []
+  const outline = (token) =>
+    token === '´ı'
+      ? 'í'
+      : doubleAcutePair.test(token)
+        ? composeDoubleAcute(token)
+        : greekGlyph(token)
   const shapeText = (text) => glyphTokens(text).map(outline).join('')
   const normalizeOutputGlyphs = (text, source) =>
     [...text]
@@ -476,7 +486,12 @@ async function generate({
       font.layout = (text, features) => {
         const run = layout(shapeText(text), features)
         run.glyphs = run.glyphs.map((glyph) => {
-          const char = index < fontCount ? glyphAliases.get(glyph.id)?.[index] : undefined
+          const char =
+            index < fontCount
+              ? glyphAliases.get(glyph.id)?.[index]
+              : index === doubleAcuteFontIndex
+                ? doubleAcuteGlyphs.get(glyph.id)
+                : undefined
           return char && outline(char) !== char
             ? Object.assign(Object.create(glyph), {
                 codePoints: [...char].map((part) => part.codePointAt(0))
@@ -498,10 +513,17 @@ async function generate({
   // subset. The same alias rank can share a font across unrelated glyph IDs.
   const glyphAliases = new Map(),
     fontForCharacter = new Map()
-  const latinCharacters = new Set()
+  const latinCharacters = new Set(),
+    doubleAcuteGlyphs = new Map()
+  let doubleAcuteFontIndex
   for (const unit of units)
     for (const char of glyphTokens(unit.translation)) {
       if (fontForCharacter.has(char)) continue
+      if (doubleAcutePair.test(char)) {
+        const glyph = latinFace?.glyphForCodePoint(outline(char).codePointAt(0))
+        if (glyph?.id) doubleAcuteGlyphs.set(glyph.id, char)
+        continue
+      }
       if (latinGlyph(char)) {
         latinCharacters.add(char)
         continue
@@ -537,6 +559,17 @@ async function generate({
     fonts.push(font)
     for (const char of latinCharacters) fontForCharacter.set(char, fontCount)
     carrierPage.drawText(latinCharacters.values().next().value, { font, size: 12, x: 0, y: 0 })
+  }
+  if (doubleAcuteGlyphs.size) {
+    // A CID has one ToUnicode value. Keep aliases separate from composed Latin vowels.
+    doubleAcuteFontIndex = fonts.length
+    const font = await carrier.embedFont(latinBytes, {
+      subset: true,
+      features: { liga: false, kern: false }
+    })
+    fonts.push(font)
+    for (const char of doubleAcuteGlyphs.values()) fontForCharacter.set(char, doubleAcuteFontIndex)
+    carrierPage.drawText(doubleAcuteGlyphs.values().next().value, { font, size: 12, x: 0, y: 0 })
   }
   const fontRuns = (text) => {
     const runs = []
@@ -1483,6 +1516,21 @@ async function generate({
           : [],
       acuteOffsets = new Set(carriedAcute.map((word) => word.index + word[0].indexOf('´ı'))),
       provedAcute = new Set()
+    const doubleAcuteSource = unit.source.match(doubleAcuteWord) ?? [],
+      doubleAcuteTarget =
+        !unchanged && doubleAcuteSource.length
+          ? [...unit.translation.matchAll(doubleAcuteWord)]
+          : [],
+      carriedDoubleAcute =
+        doubleAcuteSource.length === doubleAcuteTarget.length &&
+        doubleAcuteSource.every((word) => word === doubleAcuteSource[0]) &&
+        doubleAcuteTarget.every((word) => word[0] === doubleAcuteSource[0])
+          ? doubleAcuteSource[0]
+          : undefined,
+      doubleAcuteOffsets = new Set(
+        doubleAcuteTarget.map((word) => word.index + word[0].indexOf('˝'))
+      ),
+      provedDoubleAcute = new Set()
     // A semantic paragraph may arrive as one fragment per publisher line. Treat
     // consecutive, aligned rows as one owned region so a wrapped native citation
     // is not pinned to two different regions. Keep columns, pages, gaps and rows
@@ -1728,6 +1776,62 @@ async function generate({
             ) {
               selected = candidates
               sourceRect.width = measuredRight - sourceRect.x
+            }
+          }
+        }
+        // A justified paragraph can have one complete native row slightly wider
+        // than PDF.js measured. Recheck the entire source before owning the overhang.
+        if (!unchanged && unit.fragments.length === 1 && selected.length >= 4 && fragment.items) {
+          const right = sourceRect.x + sourceRect.width,
+            overhanging = objects.filter((object) => {
+              const [left, bottom, edge, top] = object.bounds
+              return (
+                object.type === 1 &&
+                Math.abs(left - sourceRect.x) <= objectTolerance &&
+                bottom >= sourceRect.bottom &&
+                top <= sourceRect.top &&
+                edge > right + objectTolerance &&
+                edge - right < (top - bottom) * 0.3 &&
+                !selected.includes(object) &&
+                object.text.trim().split(/\s+/u).length >= 8 &&
+                fragment.items.filter(({ text }) => text === object.text.trim()).length === 1 &&
+                selected.some(
+                  (row) =>
+                    p.FPDFTextObj_GetFont(row.obj) === p.FPDFTextObj_GetFont(object.obj) &&
+                    Math.abs(row.bounds[0] - left) <= objectTolerance &&
+                    Math.abs(row.bounds[2] - right) <= objectTolerance
+                ) &&
+                !selected.some((row) => row.bounds[1] < top && row.bounds[3] > bottom)
+              )
+            })
+          if (overhanging.length === 1) {
+            const [row] = overhanging,
+              edge = row.bounds[2],
+              ordered = [...selected, row].sort((a, b) => a.i - b.i),
+              crosses = ([x0, y0, x1, y1]) =>
+                x0 < edge && x1 > right && y0 < sourceRect.top && y1 > sourceRect.bottom
+            if (
+              sourceMatches(
+                unit.source,
+                ordered.map((object) => object.text).join(''),
+                origin.verifiedHyphens(sourceRect)
+              ) &&
+              !objects.some((object) => !ordered.includes(object) && crosses(object.bounds)) &&
+              !origin.links.some((link) =>
+                crosses([link.left, link.bottom, link.right, link.top])
+              ) &&
+              !units.some(
+                (other) =>
+                  other !== originalUnit &&
+                  other.fragments.some((neighbor) => {
+                    if (neighbor.pageNumber !== fragment.pageNumber) return false
+                    const box = fragmentBounds(neighbor)
+                    return crosses([box.x, box.bottom, box.x + box.width, box.top])
+                  })
+              )
+            ) {
+              selected = ordered
+              sourceRect.width = edge - sourceRect.x
             }
           }
         }
@@ -2376,7 +2480,12 @@ async function generate({
               /^(?:[A-Z]{6}\+)?CM(?:R|TI)\d+$/u.test(nativeFontName(o)) &&
               o.text.includes(acuteName)
           )
-        const latinAccent = selected.some((o) => o.text.trim() === '¨') || legacyAcute
+        const doubleAcute =
+          carriedDoubleAcute &&
+          horizontalSource &&
+          selected.some((o) => o.text.includes(carriedDoubleAcute))
+        const latinAccent =
+          selected.some((o) => o.text.trim() === '¨') || legacyAcute || doubleAcute
         const negatedNumber =
           /\u0338= \d/u.test(unit.source) &&
           selected.some((o) => o.text.trim() === '\u0338') &&
@@ -2409,6 +2518,7 @@ async function generate({
         if (
           latinAccent ||
           negatedNumber ||
+          /\p{Script=Greek}\s*=˜/u.test(unit.source) ||
           accentObjects.some((o) => /CMEX/u.test(o.fontName) && /^[be]$/u.test(o.text.trim()))
         ) {
           const text = p.FPDFText_LoadPage(page),
@@ -2463,6 +2573,34 @@ async function generate({
                 bottom - top < object.size * 0.15
               )
                 provedAcute.add([fragment.pageNumber, object.i, offset].join(':'))
+            }
+          }
+        }
+        if (doubleAcute) {
+          for (const object of accentObjects) {
+            if (!/^(?:[A-Z]{6}\+)?URWPalladioL-Roma$/u.test(object.fontName)) continue
+            for (const word of object.text.matchAll(doubleAcuteWord)) {
+              if (word[0] !== carriedDoubleAcute) continue
+              const offset = word.index + word[0].indexOf('˝'),
+                mark = object.glyphs?.find((glyph) => glyph.offset === offset),
+                base = object.glyphs?.find((glyph) => glyph.offset === offset + 1)
+              if (mark?.text !== '˝' || base?.text !== object.text[offset + 1]) continue
+              const [left, bottom, right, upper] = mark.bounds,
+                [x, y, end, top] = base.bounds,
+                width = end - x,
+                height = top - y
+              if (
+                right > left &&
+                upper > bottom &&
+                width > 0 &&
+                height > 0 &&
+                left >= x &&
+                right <= end &&
+                upper - bottom < height * 0.5 &&
+                bottom >= top &&
+                bottom - top < object.size * 0.15
+              )
+                provedDoubleAcute.add([fragment.pageNumber, object.i, offset].join(':'))
             }
           }
         }
@@ -2527,22 +2665,25 @@ async function generate({
         const expectsPlanckSymbol = unit.source.includes('ℏ') && !unit.source.includes('~')
         // Retain the proven legacy relation as a native glyph. Raw spelling
         // still belongs to the final PDFium source-identity check.
-        const rawSlantedRelations = new Map()
+        const rawLegacyRelations = new Map()
         selected = selected.map((object) => {
           const literal = object.text.trim()
-          const symbol = literal === '6' ? '⩽' : literal === '>' ? '⩾' : ''
+          const nonMember = literal === '<'
+          const symbol = nonMember ? '∉' : literal === '6' ? '⩽' : literal === '>' ? '⩾' : ''
+          const font = nonMember ? /^(?:[A-Z]{6}\+)?txsyc$/u : /^(?:[A-Z]{6}\+)?MSAM10$/u
+          const [width, height] = nonMember ? [0.432, 0.717] : [0.611, 0.772]
           const point = sizes.get(object.i),
             [x0, y0, x1, y1] = object.bounds
           if (
             !symbol ||
             !fragment.items?.some(({ text }) => text === symbol) ||
-            !/^(?:[A-Z]{6}\+)?MSAM10$/u.test(nativeFontName(object)) ||
+            !font.test(nativeFontName(object)) ||
             !(point > 0) ||
-            Math.abs((x1 - x0) / point - 0.611) > 0.002 ||
-            Math.abs((y1 - y0) / point - 0.772) > 0.002
+            Math.abs((x1 - x0) / point - width) > 0.002 ||
+            Math.abs((y1 - y0) / point - height) > 0.002
           )
             return object
-          rawSlantedRelations.set(object.i, object.text)
+          rawLegacyRelations.set(object.i, object.text)
           return { ...object, text: object.text.replace(literal, symbol) }
         })
         const matchingObjects = selected.map((native) => {
@@ -3528,7 +3669,7 @@ async function generate({
         const region = {
           fragment,
           rect: sourceRect,
-          source: selected.map((o) => rawSlantedRelations.get(o.i) ?? o.text).join(''),
+          source: selected.map((o) => rawLegacyRelations.get(o.i) ?? o.text).join(''),
           sourceVerification: leadingObjectPrefixes.size
             ? matchingObjects.map((o) => o.text).join('')
             : undefined,
@@ -4905,7 +5046,7 @@ async function generate({
           check(angularAnchors.length === sourceAngles.length)
           region.anchors.push(...angularAnchors)
         }
-        let privateSymbolOrderMatches
+        let privateSymbolOrderMatches, ketOrderMatches
         for (const object of selected) {
           const label = object.text.trim(),
             sourceOffset = offsets.get(object.i),
@@ -4968,7 +5109,15 @@ async function generate({
               /^(?:[A-Z]{6}\+)?CMMI10$/u.test(nativeFontName(object)) &&
               object.bounds[2] > object.bounds[0] &&
               object.bounds[3] > object.bounds[1],
+            // Keep the whole native ket when the target face lacks the closing glyph.
+            nativeKet =
+              /^\|[01+−]⟩$/u.test(label) &&
+              /^(?:[A-Z]{6}\+)?LibertinusMath-Regular$/u.test(nativeFontName(object)) &&
+              !face.hasGlyphForCodePoint('⟩'.codePointAt(0)) &&
+              object.bounds[2] > object.bounds[0] &&
+              object.bounds[3] > object.bounds[1],
             nativeSymbol =
+              nativeKet ||
               nativeSmileRelation ||
               Boolean(legacyRhoArgument) ||
               nativeNegatedRelation ||
@@ -5082,6 +5231,13 @@ async function generate({
               unit.translation.replace(/[^\uf020-\uf0ff]/gu, '')
             check(privateSymbolOrderMatches, 'annotations')
           }
+          if (nativeKet) {
+            const kets = /\|[01+−]⟩/gu
+            ketOrderMatches ??=
+              (unit.source.match(kets) ?? []).join(' ') ===
+              (unit.translation.match(kets) ?? []).join(' ')
+            check(ketOrderMatches && targetOffset >= 0, 'annotations')
+          }
           if (
             nativeAlphabet ||
             nativeEncodedSymbol ||
@@ -5148,6 +5304,7 @@ async function generate({
             label: targetLabel,
             registeredBrand: registeredMarks.has(object.i),
             needsInlineReflow:
+              nativeKet ||
               nativeSmileRelation ||
               (/^[°◦]$/u.test(label) &&
                 marker?.scale < 0.9 &&
@@ -5589,9 +5746,44 @@ async function generate({
                   object.bounds[0] >= script.bounds[2] &&
                   object.bounds[0] - script.bounds[2] < sizes.get(script.i) * 0.3
               )
+              const ownBaseline = objectBaselines.get(object.i)
+              let expressionBaseline
+              // Operators and primes inside a fenced native indexed expression
+              // follow the prose baseline for row-spacing checks.
+              const mark = object.text.trim()
+              if (/^[+→′]$/u.test(mark)) {
+                const first = object.i - (mark === '′' ? 4 : 2)
+                const length = mark === '+' ? 5 : 6
+                const expression = Array.from({ length }, (_, i) =>
+                  selected.find((entry) => entry.i === first + i)
+                )
+                const open = admittedProse.find((entry) => entry.i === first - 1)
+                const close = admittedProse.find((entry) => entry.i === first + length)
+                const spelling = expression.map((entry) => entry?.text.trim() ?? '').join('')
+                const operands = [0, 1, 3, length - 1].every((index) =>
+                  region.anchors.some(
+                    (anchor) => anchor.indices.length === 1 && anchor.indices[0] === first + index
+                  )
+                )
+                const proseBaseline = open && objectBaselines.get(open.i)
+                const mathBaseline = objectBaselines.get(first)
+                if (
+                  operands &&
+                  /^[𝐀-𝑧]\d(?:\+[𝐀-𝑧][𝐀-𝑧\d]|→[𝐀-𝑧]′\d)$/u.test(spelling) &&
+                  open?.text.endsWith('(') &&
+                  close?.text.startsWith(')') &&
+                  Math.abs(objectBaselines.get(close.i) - proseBaseline) < tolerance &&
+                  Math.abs(mathBaseline - proseBaseline) < bodySize * 0.12 &&
+                  Math.abs(objectBaselines.get(first + 3) - mathBaseline) < tolerance &&
+                  Math.abs(ownBaseline - mathBaseline) < bodySize * (mark === '′' ? 0.18 : 0.02) &&
+                  open.bounds[2] < object.bounds[0] &&
+                  object.bounds[2] < close.bounds[0]
+                )
+                  expressionBaseline = proseBaseline
+              }
               return {
                 object,
-                baseline: scriptOwner?.anchor.baseline ?? objectBaselines.get(object.i)
+                baseline: scriptOwner?.anchor.baseline ?? expressionBaseline ?? ownBaseline
               }
             })
             for (const { object, baseline } of positionedProse.sort(
@@ -6200,7 +6392,12 @@ async function generate({
         const supported =
           (c === '´ı'
             ? provedAcute.size === carriedAcute.length && acuteOffsets.has(offset)
-            : face.hasGlyphForCodePoint(greekGlyph(c).codePointAt(0)) || latinGlyph(c)) ||
+            : doubleAcutePair.test(c)
+              ? carriedDoubleAcute &&
+                provedDoubleAcute.size === doubleAcuteSource.length &&
+                doubleAcuteOffsets.has(offset) &&
+                fontForCharacter.has(c)
+              : face.hasGlyphForCodePoint(greekGlyph(c).codePointAt(0)) || latinGlyph(c)) ||
           regions.some((region) =>
             region.anchors.some(
               (anchor) =>
@@ -6215,7 +6412,7 @@ async function generate({
       unsupportedScript ? 'unsupported-layout' : 'font'
     )
     const ends = pdfTranslationLineEnds(unit.translation).filter(
-      (end) => unit.translation.slice(end - 1, end + 1) !== '´ı'
+      (end) => !/^(?:´ı|˝[oOuU])$/u.test(unit.translation.slice(end - 1, end + 1))
     )
     // Shape in font units once, then scale for each fitting attempt. Bound the
     // cache so long scientific paragraphs cannot accumulate quadratic strings.
@@ -6231,7 +6428,7 @@ async function generate({
           top = 0,
           bottom = 0
         for (const { text, fontIndex } of runs) {
-          const runFace = fontIndex === fontCount ? latinFace : face,
+          const runFace = fontIndex < fontCount ? face : latinFace,
             run = runFace.layout(shapeText(text), { liga: false, kern: false }),
             ratio = face.unitsPerEm / runFace.unitsPerEm
           run.glyphs.forEach((glyph, i) => {
@@ -6407,7 +6604,7 @@ async function generate({
       if (!separated) overlappingCandidate = true
       return separated
     }
-    const fitPlainLines = (region, point, start, limit, lines) => {
+    const fitPlainLines = (region, point, start, limit, lines, horizontalScale = 1) => {
       const rect = region.local
       while (start < limit) {
         let stop = start,
@@ -6416,7 +6613,7 @@ async function generate({
           if (end <= start) continue
           if (end > limit) break
           const next = measure(unit.translation.slice(start, end), point)
-          if (next.width > rect.width) break
+          if (next.width * horizontalScale > rect.width) break
           stop = end
           ink = next
         }
@@ -6440,13 +6637,17 @@ async function generate({
           region.centeredX !== undefined && start === 0 && stop === unit.translation.length
             ? Math.max(
                 0,
-                Math.min(rect.width - ink.width, region.centeredX - rect.x - ink.width / 2)
+                Math.min(
+                  rect.width - ink.width * horizontalScale,
+                  region.centeredX - rect.x - (ink.width * horizontalScale) / 2
+                )
               )
             : 0
         lines.push({
           text: unit.translation.slice(start, stop),
-          x: rect.x - ink.left + inset,
-          y: baseline
+          x: rect.x - ink.left * horizontalScale + inset,
+          y: baseline,
+          ...(horizontalScale !== 1 ? { horizontalScale } : {})
         })
         start = stop
       }
@@ -7548,6 +7749,41 @@ async function generate({
         }
       }
     }
+    // A short translated block can need more width without needing more rows.
+    // Keep longer blocks on the normal paragraph fit to preserve their rhythm.
+    const [plainRegion] = regions
+    if (
+      !fitted &&
+      regions.length === 1 &&
+      plainRegion.sourceInk &&
+      plainRegion.cos === 1 &&
+      plainRegion.sin === 0 &&
+      !plainRegion.anchors.length &&
+      plainRegion.baselines.length &&
+      plainRegion.baselines.length <= 2 &&
+      /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(
+        unit.translation
+      )
+    ) {
+      const point = minimumPoint,
+        rowCount = plainRegion.baselines.length,
+        scales =
+          rowCount === 1
+            ? [(plainRegion.local.width - 0.02) / measure(unit.translation, point).width]
+            : [0.98, 0.95, 0.9, 0.85]
+      for (const scale of scales) {
+        if (scale < 0.85 || scale >= 1) continue
+        const lines = []
+        if (
+          fitPlainLines(plainRegion, point, 0, unit.translation.length, lines, scale) ===
+            unit.translation.length &&
+          lines.length <= rowCount
+        ) {
+          fitted = [{ ...plainRegion, point, lines }]
+          break
+        }
+      }
+    }
     check(
       fitted,
       overlappingCandidate
@@ -8426,7 +8662,7 @@ async function generate({
         // Earlier insertion can hide new lines behind the source's interleaved row backgrounds.
         const backdropAnchor = (plan, first) => {
           if (
-            plan.anchors.length ||
+            plan.anchors.some((anchor) => !anchor.generated || anchor.annotation) ||
             plan.lines.length < 2 ||
             plan.selected.length < 2 ||
             plan.sin !== 0
@@ -8500,7 +8736,13 @@ async function generate({
               for (const source of selected) {
                 const [x, y, right, top] = e.bounds(source)
                 if (pending.has(source)) {
-                  supportsLaterText ||= x >= l && y >= b && right <= r && top <= t
+                  // PDFium outline bounds can extend a fraction beyond the native row fill.
+                  const tolerance = 0.02
+                  supportsLaterText ||=
+                    x >= l - tolerance &&
+                    y >= b - tolerance &&
+                    right <= r + tolerance &&
+                    top <= t + tolerance
                 } else if (x < r && right > l && y < t && top > b) {
                   return
                 }

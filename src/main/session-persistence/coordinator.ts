@@ -57,7 +57,11 @@ import type {
 import type { SessionDeletionReceipt } from '../artifacts/provenance-message-snapshot'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import * as computeHostAccess from '../compute/session-compute-host-access'
-import type { ProjectSessionDeletionState, SessionRecoverySnapshot } from './repository'
+import type {
+  ProjectSessionDeletionState,
+  SessionLocation,
+  SessionRecoverySnapshot
+} from './repository'
 import { createLogger, diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { AcpRuntimeEvent } from '../../shared/acp'
@@ -121,6 +125,7 @@ const SESSION_CPU_TRACE_ENABLED = process.env.OPEN_SCIENCE_PERF_SESSION_TRACE ==
 type SessionMutationRepository = {
   shouldPreserveRuntimeState?(projectId: string, sessionId: string): boolean
   hasLiveRuntimeSession?(projectId: string, sessionId: string): boolean
+  locateSession?(sessionId: string): Promise<SessionLocation | undefined>
   deleteRecoveryFile?(request: DeleteSessionRecoveryFileRequest): Promise<void>
   loadAllWithDiagnostics(options?: {
     mode?: 'repair' | 'read-only'
@@ -1519,9 +1524,11 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // Finds a persisted Session's owner for runtime admission. Fresh, unsaved sessions have no durable
   // archive state and deliberately return undefined.
   sessionProjectId(sessionId: string): Promise<string | undefined> {
-    return this.operationScheduler.runSessionIdentity(sessionId, async () =>
-      this.stateOwner.sessionProjectId(sessionId)
-    )
+    return this.operationScheduler.runSessionIdentity(sessionId, async () => {
+      const metadataProjectId = this.stateOwner.sessionProjectId(sessionId)
+      if (metadataProjectId !== undefined) return metadataProjectId
+      return (await this.repository.locateSession?.(sessionId))?.projectId
+    })
   }
 
   // Metadata commands retain field-level optimistic concurrency without carrying a transcript.

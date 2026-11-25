@@ -22,10 +22,6 @@ public static class OpenScienceBootIdentity {
 }
 '@
 [OpenScienceBootIdentity]::Read()`
-
-// A cold PowerShell process must compile the query via Add-Type, which can take longer on busy machines.
-const WINDOWS_BOOT_QUERY_TIMEOUT_MS = 15_000
-
 const WINDOWS_POWERSHELL_ARGS = [
   '-NoProfile',
   '-NonInteractive',
@@ -62,7 +58,8 @@ export function prefetchSystemBootIdentity(): Promise<string> {
     execFile(
       resolveWindowsPowerShellExecutable(),
       WINDOWS_POWERSHELL_ARGS,
-      { encoding: 'utf8', timeout: WINDOWS_BOOT_QUERY_TIMEOUT_MS, windowsHide: true },
+      // Add-Type can take several seconds to compile the probe on a cold Windows host.
+      { encoding: 'utf8', timeout: 12_000, windowsHide: true },
       (error, stdout) => {
         if (error) return reject(bootIdentityUnavailable('PowerShell query failed', error))
         try {

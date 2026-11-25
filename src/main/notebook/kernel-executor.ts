@@ -27,7 +27,7 @@ import {
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { reapWindowsOwnedJob, spawnWindowsOwnedProcess } from '../process-tree-windows'
 import { runtimeMetadataIfConfigured } from '../runtime-metadata'
-import { kernelExecutableReadRoot } from './kernel-executable-read-root'
+import { condaRLibraryReadRoot, kernelExecutableReadRoot } from './kernel-executable-read-root'
 import { diagnoseKernelExit } from './kernel-exit-diagnostics'
 import { prepareReplCellBindings, type ReplCellBindings } from './repl-cell-bindings'
 import { prepareShellNpmEnvironment } from './shell-npm-environment'
@@ -1449,6 +1449,9 @@ class NotebookKernelExecutor implements NotebookExecutor {
               ...(kind === 'r' ? [request.resolvedInterpreter?.rLibrary ?? ''] : []),
               request.inputRoot ?? '',
               kernelExecutableReadRoot(invocation.executable, kind, this.platform),
+              ...(kind === 'r' && request.resolvedInterpreter
+                ? [condaRLibraryReadRoot(invocation.executable, this.platform)]
+                : []),
               loopPath,
               ...(kind === 'repl' ? [loopPackageConfigPath(loopPath)] : []),
               ...(this.platform === 'win32' ? [] : environmentPathRoots(spawnEnv, this.platform))

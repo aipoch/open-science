@@ -766,6 +766,24 @@ class AcpPermissionContext {
     return this.broker.getPendingRequests()
   }
 
+  getTaskPermissions(
+    ...args: Parameters<AcpPermissionBroker['getTaskPermissions']>
+  ): AcpPermissionRequest[] {
+    return this.broker.getTaskPermissions(...args)
+  }
+
+  respondTaskPermission(
+    ...args: Parameters<AcpPermissionBroker['respondTaskPermission']>
+  ): Promise<boolean> {
+    return this.broker.respondTaskPermission(...args)
+  }
+
+  pendingNotebookReviews(
+    sessionId: string
+  ): ReturnType<AcpPermissionBroker['pendingNotebookReviews']> {
+    return this.broker.pendingNotebookReviews(sessionId)
+  }
+
   hasPendingForSession(sessionId: string): boolean {
     return this.broker.hasPendingForSession(sessionId)
   }

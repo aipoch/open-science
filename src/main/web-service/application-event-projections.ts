@@ -1,4 +1,8 @@
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import {
+  isAppOwnedNotebookCodeReview,
+  isAppOwnedNotebookRuntimeReview
+} from '../../shared/acp-permission-contract'
 import { WEB_RPC_PROTOCOL_VERSION, isWebRpcEventChannel } from '../../shared/web-rpc-contract'
 import type { TaskRunIdentity, TaskRunProgressEvent } from '../../shared/task-api'
 import type { ApplicationEvent } from '../application-events'
@@ -14,7 +18,13 @@ type PublicTaskEvent = TaskRunIdentity &
     | { type: 'run.event'; data: AcpRuntimeEvent }
     | {
         type: 'permission.requested'
-        data: Extract<ApplicationEvent, { channel: 'acp:permission-request' }>['payload']
+        data:
+          | Extract<ApplicationEvent, { channel: 'acp:permission-request' }>['payload']
+          | {
+              sessionId: string
+              title: string
+              reasonCode: 'notebook_code_review_required' | 'notebook_runtime_review_required'
+            }
       }
     | { type: 'run.progress'; data: TaskRunProgressEvent }
   )
@@ -33,12 +43,38 @@ const projectWebRendererEvent = (event: ApplicationEvent): WebRendererEvent | un
       }
     : undefined
 
+const isNotebookCodeReviewCard = (value: unknown): boolean =>
+  isAppOwnedNotebookCodeReview(value) ||
+  (value !== null &&
+    typeof value === 'object' &&
+    'appOwned' in value &&
+    value.appOwned === true &&
+    'notebookCodeReview' in value &&
+    value.notebookCodeReview === true)
+
+const isNotebookRuntimeReviewCard = (value: unknown): boolean =>
+  isAppOwnedNotebookRuntimeReview(value) ||
+  (value !== null &&
+    typeof value === 'object' &&
+    'appOwned' in value &&
+    value.appOwned === true &&
+    'notebookRuntimeReview' in value &&
+    value.notebookRuntimeReview === true)
+
 const projectPublicTaskEvents = (
   event: ApplicationEvent,
   resolveActiveRun: ResolveActiveTaskRun = () => undefined
 ): PublicTaskEvent[] => {
   if (event.channel === 'acp:event') {
     return event.payload.flatMap((item) => {
+      if (
+        isAppOwnedNotebookCodeReview(item) ||
+        isAppOwnedNotebookRuntimeReview(item) ||
+        (item.kind === 'permission' &&
+          (isNotebookCodeReviewCard(item.raw) || isNotebookRuntimeReviewCard(item.raw)))
+      ) {
+        return []
+      }
       const run = item.sessionId
         ? resolveActiveRun(item.sessionId, item.promptMessageId)
         : undefined
@@ -46,8 +82,36 @@ const projectPublicTaskEvents = (
     })
   }
   if (event.channel === 'acp:permission-request') {
-    const run = resolveActiveRun(event.payload.sessionId)
-    return run ? [{ ...run, type: 'permission.requested', data: event.payload }] : []
+    const { sessionId } = event.payload
+    if (isAppOwnedNotebookRuntimeReview(event.payload)) {
+      const { projectId, promptMessageId } = event.payload.rawInput.notebookRuntimeSelection
+      if (typeof promptMessageId !== 'string' || !promptMessageId) return []
+      const run = resolveActiveRun(sessionId, promptMessageId)
+      return run && run.projectId === projectId
+        ? [
+            {
+              ...run,
+              type: 'permission.requested',
+              data: {
+                sessionId,
+                title: 'Notebook runtime review is pending in this Session.',
+                reasonCode: 'notebook_runtime_review_required'
+              }
+            }
+          ]
+        : []
+    }
+    if (isNotebookRuntimeReviewCard(event.payload)) return []
+    const run = resolveActiveRun(sessionId)
+    if (!run) return []
+    const data = isNotebookCodeReviewCard(event.payload)
+      ? {
+          sessionId,
+          title: 'Notebook code review is pending in this Session.',
+          reasonCode: 'notebook_code_review_required' as const
+        }
+      : event.payload
+    return [{ ...run, type: 'permission.requested', data }]
   }
   return []
 }

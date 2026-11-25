@@ -600,6 +600,24 @@ describe('published Session adoption', () => {
 })
 
 describe('SessionPersistenceCoordinator', () => {
+  it('resolves a cold Session owner from the locator without hydrating the catalog', async () => {
+    const session = createSession({ id: 'cold-session', projectId: 'project-cold' })
+    const locateSession = vi.fn(async () => ({
+      sessionId: session.id,
+      projectId: session.projectId,
+      storagePath: `sessions/${session.projectId}/${session.id}.json`
+    }))
+    const repository = createSessionRepository({ locateSession })
+    repository.loadAllWithDiagnostics = vi.fn(async () => {
+      throw new Error('Targeted owner lookup must not hydrate the Session catalog.')
+    })
+    const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+
+    await expect(coordinator.sessionProjectId(session.id)).resolves.toBe(session.projectId)
+    expect(locateSession).toHaveBeenCalledWith(session.id)
+    expect(repository.loadAllWithDiagnostics).not.toHaveBeenCalled()
+  })
+
   it('defers late renderer saves until export releases without occupying other persistence lanes', async () => {
     const repository = createSessionRepository()
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())

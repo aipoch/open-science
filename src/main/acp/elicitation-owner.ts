@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 import type { CreateElicitationRequest, CreateElicitationResponse } from '@agentclientprotocol/sdk'
+import type { TaskQuestionResponse } from '../../shared/task-interaction'
 
 import {
   MAX_ELICITATION_ANSWERS,
@@ -19,7 +20,8 @@ import {
   type ElicitationProjection,
   type ElicitationResponse,
   type AgentTurnProvenanceContext,
-  type PendingElicitationRequest
+  type PendingElicitationRequest,
+  type TaskQuestionReceipt
 } from '../../shared/elicitation'
 import { isRecord } from '../value-guards'
 
@@ -30,7 +32,63 @@ type ElicitationRoute = {
 type PendingElicitation = {
   request: PendingElicitationRequest
   projection: ElicitationProjection
+  provenance?: AgentTurnProvenanceContext
   resolve?: (response: CreateElicitationResponse) => void
+}
+
+export type LiveTaskQuestion = {
+  request: PendingElicitationRequest
+  provenance: AgentTurnProvenanceContext
+  waitsForProvider: boolean
+  receipt?: TaskQuestionReceipt
+}
+
+export const taskQuestionRevision = (
+  request: PendingElicitationRequest,
+  promptMessageId: string,
+  branchId: string
+): number =>
+  createHash('sha256')
+    .update(
+      JSON.stringify([
+        request.requestId,
+        request.sessionId,
+        request.toolCallId,
+        promptMessageId,
+        branchId,
+        request.message,
+        request.fields
+      ])
+    )
+    .digest()
+    .readUIntBE(0, 6)
+
+export const taskQuestionAnswer = (
+  request: PendingElicitationRequest,
+  response: TaskQuestionResponse
+): { receipt: TaskQuestionReceipt; answers: ElicitationAnswer[] } => {
+  const answers =
+    response.action === 'accept' ? validateElicitationAnswers(request, response.answers) : []
+  answers.sort(
+    (a, b) =>
+      request.fields.findIndex(({ id }) => id === a.fieldId) -
+      request.fields.findIndex(({ id }) => id === b.fieldId)
+  )
+  return {
+    answers,
+    receipt: {
+      source: response.source,
+      action: response.action,
+      reviewedRevision: response.expectedRevision,
+      checksum: createHash('sha256')
+        .update(
+          JSON.stringify(
+            answers.map((answer) => [answer.fieldId, answer.status ?? 'answered', answer.value])
+          )
+        )
+        .digest('hex')
+    }
+  }
 }
 
 export type ResolvedElicitation = {
@@ -374,6 +432,7 @@ const isLosslessFieldProjection = (
 
 export class AcpElicitationOwner {
   private readonly pending = new Map<string, PendingElicitation>()
+  private readonly taskReceipts = new Map<string, LiveTaskQuestion>()
   private readonly createRequestId: () => string
   private readonly now: () => number
 
@@ -423,6 +482,11 @@ export class AcpElicitationOwner {
       message: request.message,
       fields: request.fields,
       state: 'pending',
+      ...(durableChoiceContext?.provenanceContext || resolvedDurable?.provenanceContext
+        ? { taskRequestId: requestId }
+        : {}),
+      taskRunId: (durableChoiceContext?.provenanceContext ?? resolvedDurable?.provenanceContext)
+        ?.taskRunId,
       ...(resolvedDurable ? { durable: resolvedDurable } : {})
     })
     if (!projection) return undefined
@@ -450,7 +514,12 @@ export class AcpElicitationOwner {
     const { request, projection } = prepared
 
     return new Promise((resolve) => {
-      this.pending.set(request.requestId, { request, projection, resolve })
+      this.pending.set(request.requestId, {
+        request,
+        projection,
+        resolve,
+        provenance: durableChoiceContext?.provenanceContext
+      })
       if (!this.tryPublishProjection(request, projection)) {
         this.pending.delete(request.requestId)
         resolve({ action: 'cancel' })
@@ -466,7 +535,11 @@ export class AcpElicitationOwner {
     const prepared = this.prepare(params, route, durable)
     if (!prepared) return undefined
     const { request, projection } = prepared
-    this.pending.set(request.requestId, { request, projection })
+    this.pending.set(request.requestId, {
+      request,
+      projection,
+      provenance: durable.provenanceContext
+    })
     if (this.tryPublishProjection(request, projection)) return structuredClone(request)
     this.pending.delete(request.requestId)
     return undefined
@@ -517,7 +590,7 @@ export class AcpElicitationOwner {
     return structuredClone(request)
   }
 
-  respond(response: ElicitationResponse): ResolvedElicitation {
+  respond(response: ElicitationResponse, taskReceipt?: TaskQuestionReceipt): ResolvedElicitation {
     const pending = this.pending.get(response.requestId)
     if (!pending) throw new Error('Unknown structured input request')
 
@@ -547,9 +620,22 @@ export class AcpElicitationOwner {
       state,
       ...(answers && answers.length > 0 ? { answers } : {}),
       respondedAt: this.now(),
-      ...(pending.request.durable && response.action !== 'cancel'
+      ...(taskReceipt ? { taskResponse: taskReceipt } : {}),
+      ...(pending.request.durable &&
+      response.action !== 'cancel' &&
+      (!taskReceipt || !pending.resolve)
         ? { continuationPending: true as const }
         : {})
+    }
+    if (taskReceipt && pending.provenance) {
+      this.taskReceipts.set(response.requestId, {
+        request: pending.request,
+        provenance: pending.provenance,
+        waitsForProvider: pending.resolve !== undefined,
+        receipt: taskReceipt
+      })
+      if (this.taskReceipts.size > 128)
+        this.taskReceipts.delete(this.taskReceipts.keys().next().value!)
     }
     this.tryPublishProjection(pending.request, projection)
     const decision = { action: response.action, ...(answers ? { answers } : {}) }
@@ -584,6 +670,18 @@ export class AcpElicitationOwner {
     return Array.from(this.pending.values(), ({ request }) => structuredClone(request))
   }
 
+  listTaskQuestions(sessionId: string): LiveTaskQuestion[] {
+    const current = [...this.pending.values()].flatMap(({ request, provenance, resolve }) =>
+      request.sessionId === sessionId && provenance
+        ? [{ request, provenance, waitsForProvider: resolve !== undefined }]
+        : []
+    )
+    const recorded = [...this.taskReceipts.values()].filter(
+      ({ request }) => request.sessionId === sessionId
+    )
+    return structuredClone([...current, ...recorded])
+  }
+
   cancelForSession(sessionId: string): void {
     for (const pending of Array.from(this.pending.values())) {
       if (pending.request.sessionId === sessionId) {
@@ -593,6 +691,7 @@ export class AcpElicitationOwner {
   }
 
   dispose(): void {
+    this.taskReceipts.clear()
     for (const pending of Array.from(this.pending.values())) {
       if (pending.resolve && !pending.request.durable) {
         this.respond({ requestId: pending.request.requestId, action: 'cancel' })

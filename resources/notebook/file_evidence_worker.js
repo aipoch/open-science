@@ -28,9 +28,8 @@ const releaseDirectory = () => {
   directoryBinding = undefined
 }
 const pathOperation = (name, pathCount = 1) => {
-  // Node's JavaScript realpath wrapper cannot consume a Windows namespace path and truncates it
-  // to the drive component. The native implementation keeps the namespace intact for long paths.
-  const operation = name === 'realpathSync' ? fs.realpathSync.native : fs[name]
+  const operation =
+    process.platform === 'win32' && name === 'realpathSync' ? fs.realpathSync.native : fs[name]
   if (process.platform !== 'win32') return operation
   return (...args) =>
     operation(...args.map((arg, index) => (index < pathCount ? boundPath(arg) : arg)))

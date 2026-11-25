@@ -1982,3 +1982,145 @@ it.each([0, 4])('joins a repeated named term before the next section (offset=%s)
   expect(head === tail).toBe(offset === 0)
   expect(units.find((unit) => unit.items.includes('1:11'))).not.toBe(head)
 })
+
+it('keeps left-column index terms separate from the numbered introduction across the gutter', () => {
+  const documentPage = page(1, [
+    item('Index', 54, 181, 24, false, 9, 'Bold'),
+    item('Terms:', 81, 181, 24, false, 9, 'Bold'),
+    item('Search behavior, layout, and adaptive controls', 128, 181, 166, true, 9),
+    item('in compact interfaces and small controlled studies', 54, 171, 240, true, 9),
+    item('of navigation strategies and entry patterns', 54, 161, 240, true, 9),
+    item('during routine tasks', 54, 151, 84, true, 9),
+    item('1', 318, 375, 5, false, 9, 'SmallCaps'),
+    item('I', 334, 375, 4, false, 9, 'SmallCaps'),
+    item('NTRODUCTION', 338, 375, 65, false, 7.2, 'SmallCaps'),
+    item('', 318, 375, 0),
+    item('Navigation usually requires multiple operations before a user', 318, 360, 240, true, 9),
+    item('can choose the appropriate control and confirm the new state.', 318, 350, 240, true, 9),
+    item('We compare several designs for the same interaction.', 318, 340, 212, true, 9)
+  ])
+  const { units } = groupPdfTranslationPages({ pages: [documentPage], pageCount: 1 })
+  expect(units.map((unit) => unit.items)).toEqual([
+    ['1:0', '1:1', '1:2', '1:3', '1:4', '1:5'],
+    ['1:6', '1:7', '1:8', '1:10', '1:11', '1:12']
+  ])
+})
+
+it.each([true, false])('separates a styled paragraph at a repeated indent (%s)', (styled) => {
+  const { units } = groupPdfTranslationPages({
+    pageCount: 1,
+    pages: [
+      page(1, [
+        item('The estimate is now complete.', 97.5, 545.2, 142, false),
+        item('', 97.5, 545.2, 0),
+        item('Independent calibration.', 97.5, 532.8, 118, false, 10, styled ? 'Emphasis' : 'Body'),
+        item('The reference instrument was measured under the same', 221, 532.8, 272),
+        item('conditions and each instrument was tested at three settings.', 82, 520.4, 411)
+      ])
+    ]
+  })
+  expect(units.map(({ items }) => items)).toEqual(
+    styled ? [['1:0'], ['1:2', '1:3', '1:4']] : [['1:0', '1:2', '1:3', '1:4']]
+  )
+  expect(units.at(-1)?.source).toContain('under the same conditions')
+})
+
+it.each([0, 3])('separates a flush paragraph at its extra leading (%s)', (space) => {
+  const items = [
+    item('The two calibration stages established initial values for', 317, 426, 245, true, 9),
+    item('the independent conditions for the reference test.', 317, 415.4, 235, true, 9),
+    item(
+      'In this study, we compare the response of the test fixtures',
+      317,
+      404.8 - space,
+      245,
+      true,
+      9
+    ),
+    item(
+      'under identical laboratory conditions using the same settings',
+      317,
+      394.2 - space,
+      245,
+      true,
+      9
+    ),
+    item('and record the final values at the end of each trial.', 317, 383.6 - space, 215, true, 9)
+  ]
+  const { units } = groupPdfTranslationPages({ pages: [page(1, items)] })
+  expect(units.map((unit) => unit.items)).toEqual(
+    space
+      ? [
+          ['1:0', '1:1'],
+          ['1:2', '1:3', '1:4']
+        ]
+      : [['1:0', '1:1', '1:2', '1:3', '1:4']]
+  )
+})
+
+it.each([true, false])(
+  'joins a wrapped proof predicate before an aligned end mark: %s',
+  (aligned) => {
+    const { units } = groupPdfTranslationPages({
+      pageCount: 1,
+      pages: [
+        page(1, [
+          item('q', 280.96, 510.35, 4.41, false, 7.97, 'ScriptItalic'),
+          item('2', 281.16, 502.3, 4.23, false, 7.97, 'Script'),
+          item('+ 5', 289.25, 506.06, 16.42, false, 10.91, 'Roman'),
+          item('. If', 305.67, 506.06, 15.35, false, 10.91),
+          item('T', 324.73, 506.06, 7.8, false, 10.91, 'Variable'),
+          item('has no hinge in its boundary, then', 337.01, 506.06, 155.82, false, 10.91),
+          item('T', 496.53, 506.06, 7.8, false, 10.91, 'Variable'),
+          item('is the', 508.82, 506.06, 26.2, true, 10.91),
+          item('desired simple loop of length at least', 67, 491.47, 173.8, false, 10.91),
+          item('7', 245.62, 495.77, 4.23, false, 7.97, 'Script'),
+          item('2', 247.93, 487.71, 4.23, false, 7.97, 'Script'),
+          item('+ 1', 258.1, 491.47, 16.36, false, 10.91, 'Roman'),
+          item('>', 277.49, 491.47, 8.49, false, 10.91, 'Variable'),
+          item('3.', 289.98, 491.47, 9.5, false, 10.91, 'Roman'),
+          item('■', aligned ? 526.51 : 519.51, 491.47, 8.49, false, 10.91, 'ProofMark')
+        ])
+      ]
+    })
+    const head = units.find((unit) => unit.items.includes('1:5'))
+    expect(head?.source).toContain('has no hinge')
+    expect(head?.items.includes('1:8')).toBe(aligned)
+    expect(units.find((unit) => unit.items.includes('1:0'))?.preserve).toBe('formula')
+    expect(units.find((unit) => unit.items.includes('1:9'))?.preserve).toBe('formula')
+    expect(units.find((unit) => unit.items.includes('1:14'))?.items).toEqual(['1:14'])
+  }
+)
+
+it.each([true, false])(
+  'keeps the wrapped induction cue together before aligned operators (%s)',
+  (aligned) => {
+    const { units } = groupPdfTranslationPages({
+      pages: [
+        page(1, [
+          item(
+            'Each selected case maintains the same assumptions as the preceding claim.',
+            89,
+            77,
+            437,
+            false,
+            12
+          ),
+          item('By', 535, 77, 15, true, 12),
+          item('induction,', 72, 53, 51, false, 12),
+          { ...item(' ', 123, 53, 13, false, 12), height: 0 },
+          item('S', 136, 62, 10, false, 12, 'Display'),
+          item('S', 263, aligned ? 62 : 57, 10, false, 12, 'Display')
+        ])
+      ]
+    })
+    const head = units.find((unit) => unit.items.includes('1:1'))
+    expect(head?.source.endsWith('By induction,')).toBe(aligned)
+    expect(head?.fragments).toHaveLength(aligned ? 2 : 1)
+    expect(units.map(({ items }) => items)).toEqual(
+      aligned
+        ? [['1:0', '1:1', '1:2'], ['1:4'], ['1:5']]
+        : [['1:0', '1:1'], ['1:4'], ['1:5'], ['1:2']]
+    )
+  }
+)

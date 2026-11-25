@@ -630,7 +630,7 @@ export async function getPdfTranslationTextContent(
     ...pairedSlashes.values(),
     ...content.items.flatMap((item, index) =>
       'str' in item &&
-      (/^[367>]$/u.test(item.str) ||
+      (/^[367<>]$/u.test(item.str) ||
         legacyCmexOperators.has(item.str) ||
         item.str === 'Õ' ||
         item.str === '\u0002' ||
@@ -743,6 +743,40 @@ export async function getPdfTranslationTextContent(
           renderSlot <= 0xf8ff
         )
           return { ...item, str: less ? '⩽' : '⩾' }
+      }
+      // This embedded Type 1 face explicitly names slot 60 as non-membership.
+      if (
+        item.str === '<' &&
+        item.dir === 'ltr' &&
+        item.transform[0] > 0 &&
+        item.transform[1] === 0 &&
+        item.transform[2] === 0 &&
+        item.transform[3] > 0 &&
+        Math.abs(item.width / item.transform[0] - 0.536) < 0.0001 &&
+        page.commonObjs.has(item.fontName)
+      ) {
+        const font = page.commonObjs.get(item.fontName),
+          slot = 60,
+          renderSlot = font?.toFontChar?.[slot],
+          unicode = font?.toUnicode?._map
+        if (
+          font?.type === 'Type1' &&
+          font.subtype === 'Type1C' &&
+          /^(?:[A-Z]{6}\+)?txsyc$/u.test(font.name ?? '') &&
+          font.composite === false &&
+          font.missingFile === false &&
+          font.isInvalidPDFjsFont === false &&
+          font.systemFontInfo === null &&
+          font.defaultEncoding?.[slot] === 'less' &&
+          font.differences?.[slot] === 'nelement' &&
+          font.widths?.[slot] === 536 &&
+          unicode &&
+          !Object.hasOwn(unicode, slot) &&
+          Number.isSafeInteger(renderSlot) &&
+          renderSlot >= 0xe000 &&
+          renderSlot <= 0xf8ff
+        )
+          return { ...item, str: '∉' }
       }
       if (dingbats.has(item.fontName) && /^[37]$/u.test(item.str))
         return { ...item, str: item.str === '3' ? '✓' : '✗' }

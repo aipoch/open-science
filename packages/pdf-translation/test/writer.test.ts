@@ -49,6 +49,65 @@ import { PdfTranslationWriter } from '../src/writer.js'
 import { readPdfTranslationCases } from './fixtures/read-cases.js'
 import { TestCallerRegistry } from './support/callers.js'
 
+it.each([false, true])(
+  'checks the right ink overhang of an owned paragraph row (occupied strip: %s)',
+  async (occupied): Promise<void> => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.TimesRoman),
+      page = pdf.addPage([600, 800]),
+      caller = lease(),
+      line = 'A plain steel rail runs between the flat walls',
+      rows = [line, line, line + ',', line, line],
+      expectedText = '测量结果已核对。',
+      width = font.widthOfTextAtSize(line, 12) - 0.5
+    for (const [index, text] of rows.entries()) {
+      page.drawText(text, { font, size: 12, x: 40, y: 700 - 15 * index })
+    }
+    page.drawText('Sidebar.', { font, size: 12, x: 300, y: 700 })
+    if (occupied) {
+      page.drawRectangle({ x: 40 + width + 0.5, y: 676, width: 0.75, height: 1 })
+    }
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const output = await new PdfTranslationWriter(entry).generateDetailed(
+        {
+          id: 'owned-row-right-overhang',
+          data: await pdf.save(),
+          pages: [{ width: 600, height: 800 }],
+          preserveUnsupported: true,
+          preserveUnmatched: true,
+          units: [
+            {
+              source: rows.join(' '),
+              translation: expectedText,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 40 / 600, y: 90 / 800, width: width / 600, height: 75 / 800 },
+                  items: rows.map((text, index) => ({ text, index: index * 2 }))
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(output!.layoutFailures).toEqual(
+        occupied ? [expect.objectContaining({ code: 'unsupported-layout', unitIndex: 0 })] : []
+      )
+      task = getDocument({ data: output!.data.slice(), useSystemFonts: true })
+      const content = await (await (await task.promise).getPage(1)).getTextContent(),
+        text = content.items.flatMap((item) => ('str' in item ? [item.str] : [])).join(' ')
+      expect(text).toContain('Sidebar.')
+      expect(text).toContain(occupied ? line : expectedText)
+      expect(text).not.toContain(occupied ? expectedText : line)
+    } finally {
+      await task?.destroy()
+      caller.release()
+    }
+  }
+)
+
 function expectSamePixels(actual: Uint8ClampedArray, expected: Uint8ClampedArray): void {
   if (!Buffer.from(actual).equals(Buffer.from(expected))) {
     expect(actual.length).toBe(expected.length)

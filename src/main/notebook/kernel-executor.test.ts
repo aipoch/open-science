@@ -3347,6 +3347,58 @@ describe.skipIf(!process.env.OPEN_SCIENCE_TEST_RSCRIPT || !process.env.OPEN_SCIE
   }
 )
 
+it.skipIf(process.platform !== 'darwin' || !process.env.OPEN_SCIENCE_TEST_R_ENV)(
+  'starts an external Conda R kernel without allowing writes into the interpreter',
+  async () => {
+    const interpreter = realpathSync(join(process.env.OPEN_SCIENCE_TEST_R_ENV!, 'bin', 'Rscript'))
+    const prefix = dirname(dirname(interpreter))
+    cwdDir = await mkdtemp(join(tmpdir(), 'os-external-conda-r-'))
+    const request = baseRequest(cwdDir)
+    const outside = join(cwdDir, 'ungranted.txt')
+    await Promise.all([
+      mkdir(request.inputRoot),
+      mkdir(request.dataRoot, { recursive: true }),
+      mkdir(request.runtimeRoot),
+      writeFile(outside, 'outside')
+    ])
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: resolve(
+        import.meta.dirname,
+        '../../../packages/notebook-network-sandbox/vendor'
+      ),
+      temporaryRoot: join(cwdDir, 'commands'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      getFolderRestrictionEnabled: async () => true,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+    const executor = new NotebookKernelExecutor({
+      rLoopPath: resolve(import.meta.dirname, '../../../resources/notebook/r_loop.R'),
+      processSandbox: owner
+    })
+    try {
+      const result = await executor.execute({
+        ...request,
+        cwd: request.notebookSessionRoot,
+        language: 'r',
+        sessionId: 'external-r-session',
+        projectId: 'external-r-project',
+        resolvedInterpreter: { command: interpreter },
+        code: [
+          'cat(mean(c(8, 12, 16)), "\\n", sep="")',
+          `cat(file.access(${JSON.stringify(join(prefix, 'lib', 'R'))}, mode=2), "\\n", sep="")`,
+          `cat(file.access(${JSON.stringify(outside)}, mode=4), "\\n", sep="")`
+        ].join('\n')
+      })
+      expect(result, result.stderr).toMatchObject({ status: 'completed', stdout: '12\n-1\n-1' })
+    } finally {
+      await executor.shutdown()
+      await owner.dispose()
+    }
+  },
+  30_000
+)
+
 describe.skipIf(!rExecutable || !rScriptExecutable)('NotebookKernelExecutor (real R loop)', () => {
   it('bounds R output before it crosses the loop protocol', async () => {
     cwdDir = await mkdtemp(join(tmpdir(), 'os-r-loop-output-limit-'))
