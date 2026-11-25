@@ -240,6 +240,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 
 .onboarding-entry-shell.is-ready {
   width: min(900px, calc(100vw - 2rem));
+  overflow-y: auto;
 }
 
 .onboarding-entry-brand {

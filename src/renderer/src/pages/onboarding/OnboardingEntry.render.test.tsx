@@ -290,6 +290,44 @@ describe('Onboarding entry flow', () => {
     }
   )
 
+  it('summarizes final save failures, discloses details on demand and retries without replacing the connection', async () => {
+    const cause = 'IPC settings:complete-onboarding failed: EIO'
+    const pending = Promise.withResolvers<void>()
+    const completeOnboarding = vi
+      .fn()
+      .mockRejectedValueOnce(new Error(cause))
+      .mockReturnValueOnce(pending.promise)
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      completeOnboarding,
+      saveProvider: vi.fn().mockResolvedValue({ providerId: 'verified', validation: { ok: true } }),
+      setActiveProvider: vi.fn()
+    })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/^Import existing Codex sign-in$/)
+    const ready = container.querySelector('[data-onboarding-entry="ready"]')!
+    await act(async () => fireEvent.keyDown(ready, { key: 'Escape' }))
+    expect(ready.querySelector('[role="alert"]')?.textContent).toBe('Could not finish setup.')
+    const details = ready.querySelector('details')!
+    expect(details.open).toBe(false)
+    expect(details.querySelector('summary')?.textContent).toContain('Error details')
+    await act(async () => details.querySelector('summary')!.click())
+    expect(details.open).toBe(true)
+    expect(details.querySelector('pre')?.textContent).toBe(cause)
+    await act(async () => ready.querySelector<HTMLButtonElement>('[aria-label="Dismiss"]')!.click())
+    expect(ready.querySelector('[role="alert"]')).toBeNull()
+    expect(ready.querySelector('details')).toBeNull()
+    await clickButton(/^Start exploring$/)
+    await act(async () => fireEvent.keyDown(ready, { key: 'Escape' }))
+    expect(completeOnboarding).toHaveBeenCalledTimes(2)
+    await act(async () => pending.resolve())
+    expect(ready.querySelector('[role="alert"]')).toBeNull()
+    expect(useSettingsStore.getState().setActiveProvider).toHaveBeenCalledOnce()
+    expect(useSettingsStore.getState().addOnboardingKiloProvider).not.toHaveBeenCalled()
+  })
+
   it('honors disabled Skip when Escape is pressed during authorization', async () => {
     const pending = Promise.withResolvers<never>()
     useSettingsStore.setState({

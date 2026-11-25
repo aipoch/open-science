@@ -20,6 +20,8 @@ import minimaxUrl from '@/assets/provider-icons/minimax.svg?url&no-inline'
 import stepfunUrl from '@/assets/provider-icons/stepfun.svg?url&no-inline'
 import openrouterUrl from '@/assets/provider-icons/openrouter.svg?url&no-inline'
 import volcengineUrl from '@/assets/provider-icons/volcengine.svg?url&no-inline'
+import { OnboardingErrorNotice, type OnboardingFailure } from './OnboardingErrorNotice'
+import { onboardingErrorMessage } from './onboarding-error'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
@@ -367,7 +369,7 @@ const OnboardingReadyStep = ({ onBack, onStart }: OnboardingReadyStepProps): Rea
   const { t } = useTranslation()
   const [slide, setSlide] = useState(0)
   const [isStarting, setIsStarting] = useState(false)
-  const [error, setError] = useState<string>()
+  const [error, setError] = useState<OnboardingFailure>()
 
   const handleStart = async (): Promise<void> => {
     if (isStarting) return
@@ -376,7 +378,10 @@ const OnboardingReadyStep = ({ onBack, onStart }: OnboardingReadyStepProps): Rea
     try {
       await onStart()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('Could not finish setup.'))
+      setError({
+        summary: t('Could not finish setup.'),
+        details: onboardingErrorMessage(cause, 'completeOnboarding')
+      })
       setIsStarting(false)
     }
   }
@@ -427,9 +432,7 @@ const OnboardingReadyStep = ({ onBack, onStart }: OnboardingReadyStepProps): Rea
       </div>
 
       {error ? (
-        <p className="mt-3 text-sm text-destructive" role="alert">
-          {error}
-        </p>
+        <OnboardingErrorNotice failure={error} onDismiss={() => setError(undefined)} />
       ) : null}
 
       <div className="onboarding-ready-actions">
