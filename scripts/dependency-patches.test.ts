@@ -103,7 +103,7 @@ describe('dependency patch installation', () => {
     writeFileSync(entry, scenario.source)
     writeFileSync(
       join(packageDir, 'dist', 'message-scroller', 'index.d.ts'),
-      scenario.name === 'already patched'
+      scenario.name === 'already patched' || 'currentDeclarations' in scenario
         ? declarations
         : 'pauseApi' in scenario && scenario.pauseApi
           ? previousPauseDeclarations

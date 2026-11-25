@@ -13,7 +13,7 @@ const AGENT_REPLY = 'Deterministic reply: Summarize the deterministic fixture.'
 // historical turn.
 test('does not re-anchor a historical turn when the reply row replaces the loader', async ({
   app
-}) => {
+}, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
 
@@ -74,4 +74,5 @@ test('does not re-anchor a historical turn when the reply row replaces the loade
       { timeout: 15_000 }
     )
     .toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('reopened-prompt-anchor.png') })
 })

@@ -432,8 +432,8 @@ for (const branched of [false, true]) {
 
       // Observe the actual preload→Main calls, without replacing storage results or renderer state.
       let application = (app as unknown as { application: ElectronApplication }).application
-      const installReadProbe = (): Promise<void> =>
-        application.evaluate(({ ipcMain }) => {
+      const installReadProbe = async (): Promise<void> => {
+        await application.evaluate(({ ipcMain }) => {
           const calls: string[] = []
           Reflect.set(globalThis, 'sessionHistoryReadProbe', calls)
           const handlers = Reflect.get(ipcMain, '_invokeHandlers') as Map<
@@ -452,6 +452,10 @@ for (const branched of [false, true]) {
             })
           }
         })
+        // Startup may have prefetched the selected session before the probe was installed.
+        // Start a fresh renderer with the real Main handlers already under observation.
+        await page.reload({ waitUntil: 'domcontentloaded' })
+      }
       await installReadProbe()
       const readCalls = (): Promise<string[]> =>
         application.evaluate(() => Reflect.get(globalThis, 'sessionHistoryReadProbe') as string[])
@@ -498,7 +502,10 @@ for (const branched of [false, true]) {
         // earliest prompt can require a second read when the initial page has already prefetched
         // rows to fill a short viewport.
         for (let attempt = 0; attempt < 3 && !(await earliestPrompt.count()); attempt++) {
-          if (!(await loadEarlier.count())) break
+          // A pending page temporarily changes the button label. Wait for its result or the
+          // next available read before deciding whether the fixture needs another page.
+          await expect(earliestPrompt.or(loadEarlier).first()).toBeVisible()
+          if (await earliestPrompt.count()) break
           await loadEarlier.click()
         }
         await expect(earliestPrompt).toBeVisible()
