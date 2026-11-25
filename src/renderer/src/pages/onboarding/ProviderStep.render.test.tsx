@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { useState } from 'react'
@@ -1489,58 +1487,5 @@ describe('ProviderStep', () => {
     await act(async () => root.unmount())
     expect(cancelXaiOAuthLogin).toHaveBeenCalledOnce()
     root = createRoot(container)
-  })
-
-  it('keeps the quick-connect action tray translucent over Silk', () => {
-    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
-    const actionRule = css.slice(
-      css.indexOf('.onboarding-provider-card-actions {'),
-      css.indexOf('.onboarding-provider-card-actions small {')
-    )
-
-    expect(actionRule).toContain('backdrop-filter: blur(18px) saturate(1.12);')
-    expect(actionRule).toContain('border-top: 0;')
-    expect(actionRule).toContain('color-mix(in oklab, var(--bg-10) 46%, transparent)')
-  })
-
-  it('uses one provider card treatment across color schemes', () => {
-    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
-    const cardRule = css.slice(
-      css.indexOf('.onboarding-provider-card {'),
-      css.indexOf('.onboarding-provider-card-surface {')
-    )
-
-    expect(cardRule).toContain('--silk-idle-opacity: 0.52;')
-    expect(cardRule).toContain('--silk-hover-opacity: 0.68;')
-    expect(cardRule).toContain('--bg-10: hsl(60 3% 10%);')
-    expect(cardRule).toContain('--primary: oklch(0.72 0.1 184);')
-    expect(cardRule).toContain('background-size: 180% 180%;')
-    expect(css).not.toContain('.dark .onboarding-provider-card {')
-    expect(css).not.toContain('.dark .onboarding-provider-card-actions {')
-  })
-
-  it('lets quick feedback and actions flow without reserving an empty spacer', () => {
-    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
-    const footerRule = css.match(
-      /\.onboarding-quick-footer,\n\.onboarding-ready-actions \{[\s\S]*?\n\}/
-    )?.[0]
-    const readyActionsRule = css.match(/\.onboarding-ready-actions \{\s+margin-top: auto;\n\}/)?.[0]
-
-    expect(footerRule).toBeDefined()
-    expect(readyActionsRule).toBeDefined()
-    expect(footerRule).not.toContain('margin-top: auto;')
-    expect(readyActionsRule).toContain('margin-top: auto;')
-  })
-
-  it('sizes the quick-connect popup to content before capping overflow', () => {
-    const css = readFileSync(resolve(__dirname, '../../assets/main.css'), 'utf8')
-    const quickConnectRule = css.match(/\.onboarding-quick-connect \{[\s\S]*?\n\}/)?.[0]
-    const quickFeedbackRule = css.match(/\.onboarding-quick-feedback \{[\s\S]*?\n\}/)?.[0]
-
-    expect(quickConnectRule).toBeDefined()
-    expect(quickFeedbackRule).toBeDefined()
-    expect(quickConnectRule).toContain('max-height: inherit;')
-    expect(quickConnectRule).not.toMatch(/^\s*(?:min-)?height:/m)
-    expect(quickFeedbackRule).toContain('overflow-y: auto;')
   })
 })

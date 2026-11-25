@@ -128,270 +128,180 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   }
 }
 
+@custom-variant onboarding-narrow (@media (max-width: 680px));
+@custom-variant onboarding-short (@media (max-height: 740px));
+
+@theme {
+  --ease-onboarding-default: ease;
+  --ease-onboarding: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-onboarding-ring: onboarding-ring-gather 3.06s var(--ease-onboarding) both;
+  --animate-onboarding-download: onboarding-download-pending 1.6s ease-in-out infinite alternate;
+  --animate-onboarding-guide: onboarding-guide-cycle 5.2s linear both;
+  --font-onboarding-serif: Georgia, 'Times New Roman', serif;
+}
+
+@theme inline {
+  --shadow-onboarding-shell:
+    var(--shadow-dialog), 0 1.5rem 5rem color-mix(in oklab, var(--foreground) 18%, transparent);
+  --shadow-onboarding-card-hover:
+    var(--shadow-card), 0 0.5rem 1.5rem color-mix(in oklab, var(--provider-accent) 12%, transparent);
+  --shadow-onboarding-guide-focus: 0 0 0 3px color-mix(in oklab, var(--primary) 25%, transparent);
+
+  --background-image-onboarding-silk:
+    radial-gradient(
+      circle at 17% 26%,
+      color-mix(in oklab, var(--provider-accent) 42%, transparent) 0 1px,
+      transparent 1.25px
+    ),
+    repeating-linear-gradient(
+      38deg,
+      transparent 0 2.8rem,
+      color-mix(in oklab, var(--provider-accent) 14%, transparent) 3rem 3.25rem,
+      transparent 3.5rem 6.4rem
+    ),
+    linear-gradient(
+      25deg,
+      color-mix(in oklab, var(--provider-accent) 26%, transparent),
+      transparent 68%
+    );
+  --background-image-onboarding-guide-bars: repeating-linear-gradient(
+    90deg,
+    transparent 0 0.8rem,
+    color-mix(in oklab, var(--primary) 70%, transparent) 0.8rem 1.25rem,
+    transparent 1.25rem 1.7rem
+  );
+  --background-image-onboarding-guide-scatter:
+    radial-gradient(circle at 30% 40%, var(--primary) 0 0.14rem, transparent 0.16rem),
+    radial-gradient(circle at 62% 65%, var(--primary) 0 0.14rem, transparent 0.16rem),
+    radial-gradient(circle at 76% 30%, var(--primary) 0 0.14rem, transparent 0.16rem);
+  --background-image-onboarding-card: linear-gradient(
+    165deg,
+    color-mix(in oklab, var(--provider-accent) 22%, var(--bg-10)),
+    color-mix(in oklab, var(--provider-accent) 6%, var(--bg-10)) 65%,
+    var(--bg-10)
+  );
+  --background-image-onboarding-sheen: linear-gradient(
+    120deg,
+    transparent,
+    color-mix(in oklab, var(--bg-000) 24%, transparent),
+    transparent
+  );
+  --background-image-onboarding-tray: linear-gradient(
+    transparent,
+    color-mix(in oklab, var(--bg-10) 46%, transparent)
+  );
+}
+
 /* First-run onboarding entry: the quick path is intentionally a modal surface so the existing
    workspace remains the visual context while the user chooses an account or API key. */
-.onboarding-entry-root {
-  position: relative;
-  display: grid;
-  min-height: 100svh;
-  place-items: center;
-  overflow: hidden;
-  isolation: isolate;
-  background: transparent;
-  color: var(--text-000);
-}
-
-.onboarding-entry-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  background: color-mix(in oklab, var(--foreground) 28%, transparent);
-}
 
 .onboarding-entry-shell {
-  position: relative;
-  z-index: 1;
-  width: min(650px, calc(100vw - 2rem));
-  max-height: min(840px, calc(100svh - 1.5rem));
-  overflow: hidden;
-  border: 0;
+  @apply relative z-1 w-[min(650px,calc(100vw_-_2rem))] max-h-[min(840px,calc(100svh_-_1.5rem))] overflow-hidden border-0;
   /* Initial dialog focus must not frame the modal; controls keep their own focus outlines. */
-  outline: none;
-  border-radius: 1.25rem;
-  background: var(--bg-000);
-  box-shadow:
-    var(--shadow-dialog),
-    0 1.5rem 5rem color-mix(in oklab, var(--foreground) 18%, transparent);
-  transition:
-    width 520ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    max-height 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  @apply outline-none rounded-[1.25rem] bg-bg-000 shadow-onboarding-shell transition-[width,max-height] duration-520 ease-onboarding;
 }
 
 .onboarding-entry-shell.is-connect {
-  width: min(1200px, calc(100vw - 1.5rem));
+  @apply w-[min(1200px,calc(100vw_-_1.5rem))];
 }
 
 .onboarding-entry-shell.is-advanced {
-  width: min(1040px, calc(100vw - 2rem));
-  height: min(760px, calc(100svh - 2rem));
-}
-.onboarding-advanced {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-}
-.onboarding-advanced-header {
-  flex-shrink: 0;
-  padding: 1.5rem 1.5rem 1.25rem;
-  border-bottom: 1px solid var(--border);
+  @apply w-[min(1040px,calc(100vw_-_2rem))] h-[min(760px,calc(100svh_-_2rem))];
 }
 .onboarding-advanced-header h1 {
-  margin: 0 0 1rem;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 1.65rem;
-}
-.onboarding-advanced-progress {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem 1.5rem;
-}
-.onboarding-advanced-content {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.onboarding-advanced-agent {
-  border-top: 1px solid var(--border);
-  padding: 1.25rem 1.5rem 1.5rem;
-}
-.onboarding-advanced-model-header {
-  padding: 1.25rem 1.5rem 0.75rem;
-}
-.onboarding-advanced-model-content {
-  padding: 1.25rem 1.5rem 1.5rem;
-}
-.onboarding-advanced-model-footer {
-  padding: 0.8rem 1.5rem;
+  @apply mt-0 mx-0 mb-4 font-onboarding-serif text-[1.65rem];
 }
 .onboarding-agent-panel {
-  padding: 0;
+  @apply p-0;
 }
 .onboarding-agent-panel > [data-slot='settings-section'] {
-  padding: 0;
+  @apply p-0;
 }
 .onboarding-agent-panel > [data-slot='settings-section'] > :first-child {
-  gap: 0.75rem;
+  @apply gap-3;
 }
 .onboarding-agent-panel > [data-slot='settings-section'] h2 {
-  font-size: 0.9375rem;
-  line-height: 1.4;
+  @apply text-[0.9375rem] leading-[1.4];
 }
 .onboarding-advanced .onboarding-advanced-content :is(h2, h3) {
-  font-size: 1.0625rem;
-  line-height: 1.5rem;
-  font-weight: 500;
+  @apply text-[1.0625rem] leading-[1.5rem] font-medium;
 }
 .onboarding-agent-panel > [data-slot='settings-section'] > :last-child {
-  margin-top: 1rem;
+  @apply mt-4;
 }
 
 .onboarding-entry-shell.is-ready {
-  width: min(900px, calc(100vw - 2rem));
-  overflow-y: auto;
-}
-
-.onboarding-entry-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
-  color: var(--text-000);
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 1.35rem;
-  letter-spacing: -0.035em;
+  @apply w-[min(900px,calc(100vw_-_2rem))] overflow-y-auto;
 }
 
 .onboarding-entry-brand-mark,
 .onboarding-guide-brand-mark {
-  display: inline-block;
-  width: 1.55rem;
-  height: 1.55rem;
-  object-fit: contain;
+  @apply inline-block size-[1.55rem] object-contain;
 }
 
 .onboarding-welcome {
-  position: relative;
-  display: flex;
-  min-height: min(680px, calc(100svh - 2rem));
-  flex-direction: column;
-  align-items: center;
-  padding: 2rem 2.5rem 2.25rem;
-  text-align: center;
+  @apply relative flex min-h-[min(680px,calc(100svh_-_2rem))] flex-col items-center pt-8 px-10 pb-9 text-center;
 }
 
 .onboarding-welcome-art {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  display: grid;
-  width: min(100%, 31rem);
-  height: 23rem;
-  margin: 0;
-  transform: translate(-50%, -50%);
-  place-items: center;
-  transition: transform 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.onboarding-welcome-animation {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.onboarding-welcome-lottie,
-.onboarding-welcome-fallback {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
+  @apply absolute top-1/2 left-1/2 grid w-[min(100%,31rem)] h-92 m-0 transform-[translate(-50%,-50%)] place-items-center transition-transform duration-900 ease-onboarding;
 }
 
 .onboarding-welcome-lottie {
-  overflow: hidden;
-  color: var(--primary);
+  @apply absolute inset-0 grid place-items-center overflow-hidden text-primary;
 }
 
 .onboarding-welcome-lottie.is-hidden {
-  display: none;
+  @apply hidden;
 }
 
 .onboarding-welcome-lottie svg {
-  width: min(100%, 31rem);
-  height: 100%;
+  @apply w-[min(100%,31rem)] h-full;
 }
 
 .onboarding-welcome-fallback {
-  overflow: hidden;
+  @apply overflow-hidden;
 }
 
 .onboarding-welcome.is-complete .onboarding-welcome-art {
-  transform: translate(-50%, calc(-50% - 6rem)) scale(0.88);
+  @apply transform-[translate(-50%,calc(-50%_-_6rem))_scale(0.88)];
 }
 .dark .onboarding-entry-brand-mark,
 .dark .onboarding-guide-brand-mark,
 .dark .onboarding-welcome-logo > img,
 .dark .onboarding-lottie-logo {
-  filter: brightness(0) invert(0.92);
-}
-
-.onboarding-welcome-logo {
-  position: relative;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  color: var(--primary);
+  @apply brightness-0 invert-92;
 }
 
 .onboarding-welcome-logo > img {
-  width: 11rem;
-  height: 11rem;
-  object-fit: contain;
+  @apply size-44 object-contain;
 }
 
 .onboarding-ring {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border: 1px solid color-mix(in oklab, var(--primary) 20%, transparent);
-  border-radius: 50%;
-  color: var(--muted-foreground);
-  font-size: 0.65rem;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  animation: onboarding-ring-gather 3.06s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  @apply absolute flex items-center justify-between border border-primary/20 rounded-[50%] text-muted-foreground text-[0.65rem] tracking-[0.02em] uppercase animate-onboarding-ring;
 }
 
 .onboarding-ring span {
-  position: absolute;
-  left: 50%;
-  top: -0.45rem;
-  transform: translateX(-50%);
-  white-space: nowrap;
+  @apply absolute left-1/2 -top-[0.45rem] transform-[translateX(-50%)] whitespace-nowrap;
 }
 
 .onboarding-ring span:nth-child(2) {
-  transform: translateX(-50%) rotate(90deg) translateX(8.3rem) rotate(-90deg);
+  @apply transform-[translateX(-50%)_rotate(90deg)_translateX(8.3rem)_rotate(-90deg)];
 }
 .onboarding-ring span:nth-child(3) {
-  top: auto;
-  bottom: -0.45rem;
+  @apply top-auto -bottom-[0.45rem];
 }
 .onboarding-ring span:nth-child(4) {
-  left: auto;
-  right: -1.8rem;
-  top: 50%;
-  transform: translateY(-50%);
+  @apply left-auto -right-[1.8rem] top-1/2 transform-[translateY(-50%)];
 }
 .onboarding-ring-outer {
-  width: 21rem;
-  height: 13rem;
+  @apply w-84 h-52;
 }
 .onboarding-ring-inner {
-  width: 14rem;
-  height: 8rem;
-  animation-delay: 0.25s;
-  animation-duration: 2.88s;
-  border-color: color-mix(in oklab, var(--primary) 30%, transparent);
+  @apply w-56 h-32 [animation-delay:0.25s] [animation-duration:2.88s] border-primary/30;
 }
 .onboarding-ring-convergence {
-  width: 9rem;
-  height: 5rem;
-  animation-delay: 0.5s;
-  animation-duration: 2.7s;
-  border-color: color-mix(in oklab, var(--primary) 42%, transparent);
+  @apply w-36 h-20 [animation-delay:0.5s] [animation-duration:2.7s] border-primary/42;
 }
 
 @keyframes onboarding-ring-gather {
@@ -410,130 +320,81 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
 }
 
 .onboarding-welcome-copy {
-  margin-top: 22rem;
-  opacity: 0;
-  transform: translateY(0.75rem);
-  transition:
-    opacity 650ms ease,
-    transform 650ms ease;
+  @apply mt-88 opacity-0 transform-[translateY(0.75rem)] transition-[opacity,transform] duration-650 ease-onboarding-default;
 }
 
 .onboarding-welcome.is-complete .onboarding-welcome-copy {
-  margin-top: 22rem;
-  opacity: 1;
-  transform: none;
+  @apply opacity-100 transform-none;
 }
 
 .onboarding-welcome-copy h1,
 .onboarding-ready h1,
 .onboarding-quick-header h1 {
-  margin: 0;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: clamp(2rem, 4vw, 2.8rem);
-  font-weight: 400;
-  letter-spacing: -0.04em;
+  @apply m-0 font-onboarding-serif text-[clamp(2rem,4vw,2.8rem)] font-normal tracking-[-0.04em];
 }
 
 .onboarding-welcome-copy p,
 .onboarding-ready-subtitle,
 .onboarding-quick-header p {
-  margin-top: 0.7rem;
-  color: var(--muted-foreground);
-  font-size: 0.95rem;
-  line-height: 1.45;
+  @apply mt-[0.7rem] text-muted-foreground text-[0.95rem] leading-[1.45];
 }
 
 .onboarding-quick-connect,
 .onboarding-ready {
-  display: flex;
-  flex-direction: column;
-  padding: 2rem 2.5rem 1.5rem;
+  @apply flex flex-col pt-8 px-10 pb-6;
 }
 
 .onboarding-ready {
-  min-height: min(760px, calc(100svh - 1.5rem));
+  @apply min-h-[min(760px,calc(100svh_-_1.5rem))];
 }
 
 .onboarding-quick-connect {
-  max-height: inherit;
+  @apply max-h-[inherit];
 }
 .onboarding-quick-feedback {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.25rem;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
+  @apply flex min-h-0 flex-col gap-2 p-1 overflow-y-auto overscroll-y-contain;
 }
 .onboarding-quick-feedback > * {
-  flex-shrink: 0;
+  @apply shrink-0;
 }
 .onboarding-quick-feedback [data-notice-level='warning'] {
   --warning-ink: var(--color-status-warning-foreground);
-  border: 1px solid color-mix(in oklab, var(--warning-ink) 28%, var(--border));
-  border-radius: var(--radius-md);
-  background: color-mix(in oklab, var(--warning-ink) 8%, var(--card));
-  padding: 0.5rem 0.75rem;
+  @apply border border-[color-mix(in_oklab,var(--warning-ink)_28%,var(--border))] rounded-md bg-[color-mix(in_oklab,var(--warning-ink)_8%,var(--card))] py-2 px-3;
 }
 .dark .onboarding-quick-feedback [data-notice-level='warning'] {
   --warning-ink: var(--color-status-warning-dark-foreground);
 }
 .onboarding-quick-footer {
-  flex: none;
+  @apply flex-none;
 }
 .onboarding-quick-feedback > [data-notice-level='warning'] + .onboarding-quick-footer {
-  padding-top: 0.25rem;
-}
-.onboarding-quick-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1.5rem;
+  @apply pt-1;
 }
 
 .onboarding-quick-header h1 {
-  margin-top: 0.7rem;
-  font-size: clamp(1.9rem, 4vw, 2.45rem);
+  @apply mt-[0.7rem] text-[clamp(1.9rem,4vw,2.45rem)];
 }
 .onboarding-quick-header h1 + p {
-  margin-top: 0.35rem;
+  @apply mt-[0.35rem];
 }
 .onboarding-provider-count {
-  margin-top: 0.3rem !important;
-  line-height: 1.2 !important;
-}
-.onboarding-step-dots {
-  display: flex;
-  gap: 0.35rem;
-  padding-top: 0.3rem;
+  @apply mt-[0.3rem]! leading-[1.2]!;
 }
 .onboarding-step-dots span {
-  width: 0.4rem;
-  height: 0.4rem;
-  border-radius: 50%;
-  background: var(--border);
+  @apply size-[0.4rem] rounded-[50%] bg-border;
 }
 .onboarding-step-dots span.is-active {
-  width: 1.35rem;
-  border-radius: 0.25rem;
-  background: var(--primary);
+  @apply w-[1.35rem] rounded-[0.25rem] bg-primary;
 }
 
 .onboarding-provider-viewport {
-  margin: 2.5rem -2.5rem 0;
-  overflow: visible;
+  @apply mt-10 -mx-10 mb-0 overflow-visible;
 }
 .onboarding-provider-track {
-  display: flex;
-  gap: 1rem;
-  overflow-x: auto;
+  @apply flex gap-4 overflow-x-auto;
   /* Horizontal scrolling also clips vertically; reserve room for lift and shadows.
      Negative margins keep the surrounding header and footer in their original positions. */
-  margin-block: -2rem -2.25rem;
-  padding: 2rem 2.5rem 3rem;
-  scroll-snap-type: x mandatory;
-  scrollbar-width: thin;
+  @apply -mt-8 -mb-9 pt-8 px-10 pb-12 snap-x snap-mandatory scrollbar-thin;
 }
 .onboarding-provider-card {
   /* Provider cards keep the approved dark glass palette in both app themes. */
@@ -555,269 +416,121 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   --primary: oklch(0.72 0.1 184);
   --primary-foreground: oklch(0.18 0.03 190);
   --shadow-card-value: 0 0 0 1px rgb(0 0 0 / 0.5), 0 4px 24px rgb(0 0 0 / 0.45);
-  --silk-idle-opacity: 0.52;
-  --silk-hover-opacity: 0.68;
-  position: relative;
-  isolation: isolate;
-  display: flex;
-  min-height: 26rem;
-  flex: 0 0 17.5rem;
-  flex-direction: column;
-  overflow: hidden;
-  scroll-snap-align: center;
-  border: 1px solid color-mix(in oklab, var(--provider-accent) 24%, var(--border));
-  border-radius: 1rem;
-  background-color: var(--bg-10);
-  background-image: linear-gradient(
-    165deg,
-    color-mix(in oklab, var(--provider-accent) 22%, var(--bg-10)),
-    color-mix(in oklab, var(--provider-accent) 6%, var(--bg-10)) 65%,
-    var(--bg-10)
-  );
-  box-shadow: var(--shadow-card);
-  background-size: 180% 180%;
-  transition:
-    transform 180ms ease,
-    box-shadow 180ms ease;
+  @apply relative isolate flex min-h-104 flex-none basis-70 flex-col overflow-hidden snap-center;
+  @apply border border-[color-mix(in_oklab,var(--provider-accent)_24%,var(--border))] rounded-2xl bg-bg-10 bg-onboarding-card shadow-(--shadow-card) bg-size-[180%_180%];
+  @apply transition-[transform,box-shadow] duration-180 ease-onboarding-default;
 }
 /* Clip the composited blur layers together, leaving the border and shadow on the outer card. */
 .onboarding-provider-card-surface {
-  position: relative;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  border-radius: calc(1rem - 1px);
-  clip-path: inset(0 round calc(1rem - 1px));
+  @apply relative flex flex-1 flex-col rounded-[calc(1rem_-_1px)] [clip-path:inset(0_round_calc(1rem_-_1px))];
 }
 .onboarding-provider-silk {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  opacity: var(--silk-idle-opacity, 0.3);
-  filter: blur(1.8px) saturate(0.76) contrast(0.84);
-  pointer-events: none;
-  background:
-    radial-gradient(
-        circle at 17% 26%,
-        color-mix(in oklab, var(--provider-accent) 42%, transparent) 0 1px,
-        transparent 1.25px
-      )
-      0 0 / 5px 5px,
-    repeating-linear-gradient(
-      38deg,
-      transparent 0 2.8rem,
-      color-mix(in oklab, var(--provider-accent) 14%, transparent) 3rem 3.25rem,
-      transparent 3.5rem 6.4rem
-    ),
-    linear-gradient(
-      25deg,
-      color-mix(in oklab, var(--provider-accent) 26%, transparent),
-      transparent 68%
-    );
-  transition:
-    opacity 420ms ease,
-    filter 420ms ease;
+  @apply absolute inset-0 z-0 overflow-hidden rounded-[inherit] opacity-52 filter-[blur(1.8px)_saturate(0.76)_contrast(0.84)] pointer-events-none;
+  @apply bg-onboarding-silk bg-size-[5px_5px,auto,auto];
+  @apply transition-[opacity,filter] duration-420 ease-onboarding-default;
 }
 .onboarding-provider-silk > div,
 .onboarding-provider-silk canvas {
-  width: 100%;
-  height: 100%;
+  @apply size-full;
 }
 .onboarding-provider-silk::after {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  border-radius: inherit;
-  background: color-mix(in oklab, var(--provider-accent) 10%, transparent);
-  opacity: 0.62;
-  backdrop-filter: blur(4px) saturate(0.8);
-  content: '';
-  pointer-events: none;
-  transition:
-    opacity 480ms ease,
-    background-color 420ms ease,
-    backdrop-filter 480ms ease;
+  @apply pointer-events-none absolute inset-0 z-1 rounded-[inherit] content-[''];
+  @apply bg-(--provider-accent)/10 opacity-62 backdrop-blur-[4px] backdrop-saturate-80;
+  @apply [transition:opacity_480ms_ease,background-color_420ms_ease,backdrop-filter_480ms_ease];
 }
 .onboarding-provider-silk.is-active {
-  opacity: var(--silk-hover-opacity, 0.42);
-  filter: blur(0.45px) saturate(0.96) contrast(0.96);
+  @apply opacity-68 filter-[blur(0.45px)_saturate(0.96)_contrast(0.96)];
 }
 .onboarding-provider-silk.is-active::after {
-  background: color-mix(in oklab, var(--provider-accent) 6%, transparent);
-  opacity: 0.22;
-  backdrop-filter: blur(1.5px) saturate(0.9);
+  @apply bg-(--provider-accent)/6 opacity-22 backdrop-blur-[1.5px] backdrop-saturate-90;
 }
 .onboarding-provider-card-surface::after {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(
-    120deg,
-    transparent,
-    color-mix(in oklab, var(--bg-000) 24%, transparent),
-    transparent
-  );
-  content: '';
-  opacity: 0.14;
-  pointer-events: none;
-  transition: opacity 360ms ease;
+  @apply absolute inset-0 rounded-[inherit] bg-onboarding-sheen content-[''] opacity-14 pointer-events-none transition-opacity duration-360 ease-onboarding-default;
 }
 .onboarding-provider-card:hover .onboarding-provider-card-surface::after,
 .onboarding-provider-card:focus-within .onboarding-provider-card-surface::after {
-  opacity: 0.07;
+  @apply opacity-7;
 }
 .onboarding-provider-card:hover,
 .onboarding-provider-card:focus-within {
-  z-index: 2;
-  transform: translateY(-0.25rem);
-  border-color: color-mix(in oklab, var(--provider-accent) 45%, var(--text-200));
-  box-shadow:
-    var(--shadow-card),
-    0 0.5rem 1.5rem color-mix(in oklab, var(--provider-accent) 12%, transparent);
+  @apply z-2 transform-[translateY(-0.25rem)] border-[color-mix(in_oklab,var(--provider-accent)_45%,var(--text-200))] shadow-onboarding-card-hover;
 }
 .onboarding-provider-card-body,
 .onboarding-provider-card-actions {
-  position: relative;
-  z-index: 1;
-}
-.onboarding-provider-card-body {
-  flex: 1;
-  padding: 1.45rem;
+  @apply relative z-1;
 }
 .onboarding-provider-card-body h2 {
-  margin-top: 1.1rem;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 1.65rem;
-  font-weight: 400;
-  letter-spacing: -0.035em;
+  @apply mt-[1.1rem] font-onboarding-serif text-[1.65rem] font-normal tracking-[-0.035em] text-text-000;
 }
 .onboarding-provider-card-body p {
-  margin-top: 0.5rem;
-  color: color-mix(in oklab, var(--foreground) 90%, transparent);
-  font-size: 0.78rem;
-  line-height: 1.65;
+  @apply mt-2 text-text-100 text-[0.78rem] leading-[1.65];
 }
 .onboarding-provider-card-actions {
-  min-height: 7.5rem;
-  padding: 1.1rem 1.35rem 1.4rem;
-  border-top: 0;
-  background: linear-gradient(transparent, color-mix(in oklab, var(--bg-10) 46%, transparent));
-  backdrop-filter: blur(18px) saturate(1.12);
-  -webkit-backdrop-filter: blur(18px) saturate(1.12);
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(0.65rem);
-  transition:
-    opacity 180ms ease,
-    transform 180ms ease;
+  @apply min-h-30 px-[1.35rem] pt-[1.1rem] pb-[1.4rem];
+  @apply border-t-0 bg-onboarding-tray backdrop-blur-[18px] backdrop-saturate-112;
+  @apply opacity-0 pointer-events-none transform-[translateY(0.65rem)] transition-[opacity,transform] duration-180 ease-onboarding-default;
 }
 .onboarding-provider-card:hover .onboarding-provider-card-actions,
 .onboarding-provider-card:focus-within .onboarding-provider-card-actions,
 .onboarding-provider-card.is-authorizing .onboarding-provider-card-actions,
 .onboarding-provider-card.is-key-mode .onboarding-provider-card-actions {
-  opacity: 1;
-  pointer-events: auto;
-  transform: none;
+  @apply opacity-100 pointer-events-auto transform-none;
 }
 .onboarding-provider-card-actions small {
-  display: block;
-  margin-bottom: 0.7rem;
-  color: var(--text-200);
-  font-size: 0.7rem;
-  line-height: 1.3;
-}
-.onboarding-install-progress {
-  margin-bottom: 0.7rem;
-  padding: 0.5rem 0.65rem;
-  border-radius: var(--radius-md);
-  background: var(--card);
-  color: var(--foreground);
+  @apply block mb-[0.7rem] text-text-200 text-[0.7rem] leading-[1.3];
 }
 .onboarding-install-progress progress {
-  display: block;
-  width: 100%;
-  height: 0.375rem;
-  overflow: hidden;
-  appearance: none;
-  border-radius: 999px;
+  @apply block w-full h-1.5 overflow-hidden appearance-none rounded-full;
 }
 .onboarding-install-progress progress::-webkit-progress-bar {
-  background: var(--bg-300);
+  @apply bg-bg-300;
 }
 .onboarding-install-progress progress::-webkit-progress-value {
-  border-radius: inherit;
-  background: var(--primary);
-  transition: width 160ms ease-out;
+  @apply rounded-[inherit] bg-primary transition-[width] duration-160 ease-[ease-out];
 }
 .onboarding-install-progress progress:indeterminate::-webkit-progress-bar {
-  background: linear-gradient(var(--primary), var(--primary)) left center / 36% 100% no-repeat
-    var(--bg-300);
-  animation: onboarding-download-pending 1.6s ease-in-out infinite alternate;
+  @apply bg-bg-300 bg-[linear-gradient(var(--primary),var(--primary))] bg-left bg-size-[36%_100%] bg-no-repeat;
+  @apply animate-onboarding-download;
 }
 @keyframes onboarding-download-pending {
   to {
     background-position: right center;
   }
 }
-@media (prefers-reduced-motion: reduce) {
+@variant motion-reduce {
   .onboarding-install-progress progress:indeterminate::-webkit-progress-bar {
-    animation: none;
+    @apply animate-none;
   }
   .onboarding-install-progress progress::-webkit-progress-value {
-    transition: none;
+    @apply transition-none;
   }
 }
-@media (forced-colors: active) {
+@variant forced-colors {
   .onboarding-install-progress progress {
-    appearance: auto;
+    @apply appearance-auto;
   }
 }
 .onboarding-provider-card-link {
-  display: block;
-  margin: 0.55rem auto 0;
-  color: var(--text-200);
-  font-size: 0.72rem;
-  text-decoration: underline;
-  text-underline-offset: 0.2rem;
+  @apply block mt-[0.55rem] mx-auto mb-0 text-text-200 text-[0.72rem] underline underline-offset-[0.2rem];
 }
 .onboarding-provider-card-link:hover {
-  color: var(--text-000);
+  @apply text-text-000;
 }
 .onboarding-provider-key-form label {
-  display: block;
-  margin-bottom: 0.45rem;
-  color: var(--text-200);
-  font-size: 0.7rem;
-}
-.onboarding-provider-key-row {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
+  @apply block mb-[0.45rem] text-text-200 text-[0.7rem];
 }
 .onboarding-provider-key-row input,
 .onboarding-provider-key-row button {
-  box-sizing: border-box;
-  height: 2.3rem;
+  @apply box-border h-[2.3rem];
 }
 .onboarding-provider-key-row input {
-  min-width: 0;
-  flex: 1;
-  border: 1px solid color-mix(in oklab, var(--text-300) 35%, transparent);
-  border-radius: var(--radius);
-  background: var(--bg-10);
-  padding: 0.55rem 0.65rem;
-  color: var(--text-000);
-  font-size: 0.72rem;
+  @apply min-w-0 flex-1 border border-text-300/35 rounded-lg bg-bg-10 py-[0.55rem] px-[0.65rem] text-text-000 text-[0.72rem];
 }
 .onboarding-provider-key-row button {
-  width: 2.3rem;
-  min-width: 2.3rem;
-  padding: 0;
+  @apply w-[2.3rem] min-w-[2.3rem] p-0;
 }
 .onboarding-provider-key-row button svg {
-  width: 0.95rem;
+  @apply w-[0.95rem];
 }
 :is(
     .onboarding-provider-card-openai,
@@ -826,96 +539,37 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   )
   .onboarding-provider-card-body
   > img {
-  filter: brightness(0) invert(0.92);
-}
-.onboarding-provider-card-body h2 {
-  color: var(--text-000);
-}
-.onboarding-provider-card-body p {
-  color: var(--text-100);
+  @apply brightness-0 invert-92;
 }
 .onboarding-quick-footer,
 .onboarding-ready-actions {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-top: 1.25rem;
+  @apply flex items-end justify-between gap-4 pt-5;
 }
 .onboarding-ready-actions {
-  margin-top: auto;
+  @apply mt-auto;
 }
 .onboarding-quick-footer > div {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  @apply flex flex-col items-start;
 }
 .onboarding-quick-footer button {
-  min-height: 1.9rem;
-  font-size: 0.75rem;
+  @apply min-h-[1.9rem] text-[0.75rem];
 }
 .onboarding-quick-footer svg,
 .onboarding-quick-footer > div > button > span {
-  width: 0.9rem;
-  flex-shrink: 0;
-  text-align: center;
+  @apply w-[0.9rem] shrink-0 text-center;
 }
 
 .onboarding-ready {
-  text-align: center;
-  align-items: center;
+  @apply text-center items-center;
 }
 .onboarding-ready h1 {
-  margin-top: 2rem;
+  @apply mt-8;
 }
 .onboarding-ready-subtitle {
-  margin-top: 0.65rem;
-}
-.onboarding-connection-summary {
-  @apply bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 1rem;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 0.5rem 0.8rem;
-  font-size: 0.75rem;
+  @apply mt-[0.65rem];
 }
 .onboarding-connection-summary svg {
-  width: 0.9rem;
-}
-.onboarding-guide {
-  width: 100%;
-  margin-top: 1.5rem;
-  text-align: left;
-}
-.onboarding-guide-art {
-  position: relative;
-  height: 17rem;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 0.8rem;
-  background: var(--bg-10);
-  padding: 1.2rem 1.4rem;
-}
-
-.onboarding-guide-gif {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: inherit;
-}
-
-.onboarding-guide-cycle-signal {
-  position: absolute;
-  z-index: 4;
-  inset: 0;
-  pointer-events: none;
-  animation: onboarding-guide-cycle 5.2s linear both;
+  @apply w-[0.9rem];
 }
 
 @keyframes onboarding-guide-cycle {
@@ -926,250 +580,127 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
     opacity: 1;
   }
 }
-.onboarding-guide-browser-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  color: var(--muted-foreground);
-  font-size: 0.65rem;
-}
 .onboarding-guide-brand-mark {
-  width: 0.8rem;
-  height: 0.8rem;
-  border-width: 1px;
-}
-.onboarding-guide-window-action {
-  margin-left: auto;
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  padding: 0.25rem 0.45rem;
-}
-.onboarding-guide-heading {
-  margin-top: 1.25rem;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: 1.2rem;
-  letter-spacing: -0.03em;
-}
-.onboarding-guide-tabs {
-  display: flex;
-  gap: 1rem;
-  margin-top: 0.8rem;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.45rem;
-  color: var(--muted-foreground);
-  font-size: 0.57rem;
+  @apply size-[0.8rem] border;
 }
 .onboarding-guide-tabs span:first-child {
-  border-bottom: 2px solid var(--primary);
-  padding-bottom: 0.45rem;
-  color: var(--text-000);
-}
-.onboarding-guide-cases {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.6rem;
-  margin-top: 1rem;
+  @apply border-b-2 border-b-primary pb-[0.45rem] text-text-000;
 }
 .onboarding-guide-case {
-  position: relative;
-  display: flex;
-  min-height: 5.4rem;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: 0.3rem;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 0.45rem;
-  background: var(--bg-000);
-  padding: 0.5rem;
-  font-size: 0.55rem;
-  transition:
-    box-shadow 200ms ease,
-    transform 200ms ease;
+  @apply relative flex min-h-[5.4rem] flex-col justify-end gap-[0.3rem] overflow-hidden;
+  @apply border border-border rounded-[0.45rem] bg-bg-000 p-2 text-[0.55rem];
+  @apply transition-[box-shadow,transform] duration-200 ease-onboarding-default;
 }
 .onboarding-guide-case.is-focused {
-  transform: translateY(-0.18rem);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 25%, transparent);
+  @apply transform-[translateY(-0.18rem)] shadow-onboarding-guide-focus;
 }
 .onboarding-guide-paper,
 .onboarding-guide-bars,
 .onboarding-guide-scatter {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 3.4rem;
-  background: color-mix(in oklab, var(--primary) 10%, var(--bg-10));
+  @apply absolute inset-x-0 top-0 h-[3.4rem] bg-[color-mix(in_oklab,var(--primary)_10%,var(--bg-10))];
 }
 .onboarding-guide-paper {
-  margin: 0.45rem auto;
-  width: 2.2rem;
-  height: 2.4rem;
-  background: var(--bg-000);
-  box-shadow: 0 0.2rem 0.5rem color-mix(in oklab, var(--foreground) 15%, transparent);
+  @apply my-[0.45rem] mx-auto w-[2.2rem] h-[2.4rem] bg-bg-000 shadow-[0_0.2rem_0.5rem_color-mix(in_oklab,var(--foreground)_15%,transparent)];
 }
 .onboarding-guide-bars {
-  background: repeating-linear-gradient(
-    90deg,
-    transparent 0 0.8rem,
-    color-mix(in oklab, var(--primary) 70%, transparent) 0.8rem 1.25rem,
-    transparent 1.25rem 1.7rem
-  );
+  @apply bg-transparent bg-onboarding-guide-bars;
 }
 .onboarding-guide-scatter {
-  background:
-    radial-gradient(circle at 30% 40%, var(--primary) 0 0.14rem, transparent 0.16rem),
-    radial-gradient(circle at 62% 65%, var(--primary) 0 0.14rem, transparent 0.16rem),
-    radial-gradient(circle at 76% 30%, var(--primary) 0 0.14rem, transparent 0.16rem);
+  @apply bg-transparent bg-onboarding-guide-scatter;
 }
 .onboarding-guide-new-project {
-  position: absolute;
-  top: 1rem;
-  right: 1.5rem;
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
-  background: var(--bg-000);
-  padding: 0.3rem 0.5rem;
-  font-size: 0.6rem;
-  transition: box-shadow 200ms ease;
+  @apply absolute top-4 right-6 border border-border rounded-[0.4rem] bg-bg-000 py-[0.3rem] px-2 text-[0.6rem] transition-shadow duration-200 ease-onboarding-default;
 }
 .onboarding-guide-new-project.is-focused {
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 25%, transparent);
-}
-.onboarding-guide-cursor {
-  position: absolute;
-  right: -0.6rem;
-  bottom: -1.2rem;
-  width: 1.2rem;
-  height: 1.6rem;
-  transform: rotate(-18deg);
-  border: 2px solid var(--foreground);
-  background: var(--bg-000);
-  clip-path: polygon(0 0, 100% 67%, 62% 69%, 78% 100%, 56% 100%, 42% 73%, 14% 92%);
-}
-.onboarding-guide-caption {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-top: 0.8rem;
+  @apply shadow-onboarding-guide-focus;
 }
 .onboarding-guide-caption h2 {
-  font-size: 0.9rem;
-  font-weight: 600;
+  @apply text-[0.9rem] font-semibold;
 }
 .onboarding-guide-caption p {
-  margin-top: 0.25rem;
-  color: var(--muted-foreground);
-  font-size: 0.72rem;
-}
-.onboarding-guide-indicators {
-  display: flex;
-  gap: 0.35rem;
-  padding-top: 0.2rem;
+  @apply mt-1 text-muted-foreground text-[0.72rem];
 }
 .onboarding-guide-indicators span {
-  width: 0.35rem;
-  height: 0.35rem;
-  border-radius: 50%;
-  background: var(--border);
+  @apply size-[0.35rem] rounded-[50%] bg-border;
 }
 .onboarding-guide-indicators span.is-active {
-  width: 1.15rem;
-  border-radius: 0.25rem;
-  background: var(--primary);
+  @apply w-[1.15rem] rounded-[0.25rem] bg-primary;
 }
 .onboarding-ready-actions {
-  width: 100%;
-  padding-top: 1.25rem;
+  @apply w-full;
 }
 .onboarding-ready-actions > button:last-child {
-  min-width: 12rem;
-}
-.onboarding-ready-footnote {
-  margin-top: 0.55rem;
-  color: var(--muted-foreground);
-  font-size: 0.68rem;
+  @apply min-w-48;
 }
 
-@media (max-width: 680px) {
+@variant onboarding-narrow {
   .onboarding-entry-shell,
   .onboarding-entry-shell.is-connect,
   .onboarding-entry-shell.is-advanced,
   .onboarding-entry-shell.is-ready {
-    width: calc(100vw - 1rem);
-    max-height: calc(100svh - 1rem);
-    border-radius: 1rem;
+    @apply w-[calc(100vw_-_1rem)] max-h-[calc(100svh_-_1rem)] rounded-2xl;
   }
   .onboarding-welcome,
   .onboarding-quick-connect,
   .onboarding-ready {
-    padding: 1.35rem 1.15rem 1.15rem;
+    @apply pt-[1.35rem] px-[1.15rem] pb-[1.15rem];
   }
   .onboarding-welcome,
   .onboarding-ready {
-    min-height: calc(100svh - 1rem);
+    @apply min-h-[calc(100svh_-_1rem)];
   }
   .onboarding-welcome-art {
-    height: 18rem;
+    @apply h-72;
   }
   .onboarding-welcome-copy,
   .onboarding-welcome.is-complete .onboarding-welcome-copy {
-    margin-top: 19rem;
+    @apply mt-76;
   }
   .onboarding-welcome.is-complete .onboarding-welcome-art {
-    transform: translate(-50%, calc(-50% - 5rem)) scale(0.8);
+    @apply transform-[translate(-50%,calc(-50%_-_5rem))_scale(0.8)];
   }
   .onboarding-ring-outer {
-    width: 17rem;
-    height: 10rem;
+    @apply w-68 h-40;
   }
   .onboarding-ring-inner {
-    width: 11rem;
-    height: 6rem;
+    @apply w-44 h-24;
   }
   .onboarding-ring-convergence {
-    width: 8rem;
-    height: 4.5rem;
+    @apply w-32 h-18;
   }
   .onboarding-provider-viewport {
-    margin-left: -1.15rem;
-    margin-right: -1.15rem;
+    @apply -ml-[1.15rem] -mr-[1.15rem];
   }
   .onboarding-provider-track {
-    padding-left: 1.15rem;
-    padding-right: 1.15rem;
+    @apply pl-[1.15rem] pr-[1.15rem];
   }
   .onboarding-provider-card {
-    flex-basis: min(17.5rem, calc(100vw - 3.5rem));
-    min-height: 24rem;
-  }
-  .onboarding-quick-footer {
-    align-items: flex-end;
+    @apply basis-[min(17.5rem,calc(100vw_-_3.5rem))] min-h-96;
   }
   .onboarding-guide-cases {
-    gap: 0.35rem;
+    @apply gap-[0.35rem];
   }
   .onboarding-guide-case {
-    font-size: 0.45rem;
+    @apply text-[0.45rem];
   }
 }
 
-@media (max-height: 740px) {
+@variant onboarding-short {
   .onboarding-provider-viewport {
-    margin-top: 1.25rem;
+    @apply mt-5;
   }
   .onboarding-provider-card {
-    min-height: min(24rem, 54svh);
+    @apply min-h-[min(24rem,54svh)];
   }
   .onboarding-provider-card-body {
-    padding-block: 0.85rem;
+    @apply py-[0.85rem];
   }
   .onboarding-provider-card-actions {
-    padding-block: 0.6rem 0.85rem;
-    min-height: 7rem;
+    @apply pt-[0.6rem] pb-[0.85rem] min-h-28;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@variant motion-reduce {
   .onboarding-entry-shell,
   .onboarding-welcome-art,
   .onboarding-welcome-copy,
@@ -1177,11 +708,11 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   .onboarding-provider-card-actions,
   .onboarding-guide-case,
   .onboarding-guide-new-project {
-    transition: none;
+    @apply transition-none;
   }
   .onboarding-ring,
   .onboarding-provider-card {
-    animation: none;
+    @apply animate-none;
   }
 }
 

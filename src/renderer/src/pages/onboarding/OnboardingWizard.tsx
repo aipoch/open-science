@@ -149,7 +149,9 @@ const OnboardingProgress = ({
   return (
     <ol
       aria-label={t('Setup progress')}
-      className={compact ? 'onboarding-advanced-progress' : 'mt-7 space-y-3'}
+      className={
+        compact ? 'onboarding-advanced-progress flex flex-wrap gap-x-6 gap-y-3' : 'mt-7 space-y-3'
+      }
     >
       {steps.map((wizardStep, index) => {
         const state = index < currentIndex ? 'done' : index === currentIndex ? 'active' : 'upcoming'
@@ -524,7 +526,10 @@ const OnboardingWizard = ({
             onBusyChange={showWelcome ? setIsAdvancedProviderBusy : undefined}
           >
             {showWelcome ? (
-              <div className="onboarding-advanced-agent" inert={isAdvancedProviderBusy}>
+              <div
+                className="onboarding-advanced-agent border-t border-t-border pt-5 px-6 pb-6"
+                inert={isAdvancedProviderBusy}
+              >
                 <AgentPanel
                   variant="onboarding"
                   title={t('Set up the agent runtime')}
@@ -577,8 +582,11 @@ const OnboardingWizard = ({
 
   if (showWelcome) {
     return (
-      <main className="onboarding-entry-root">
-        <div className="onboarding-entry-scrim" aria-hidden="true" />
+      <main className="onboarding-entry-root relative grid min-h-svh place-items-center overflow-hidden isolate bg-transparent text-text-000">
+        <div
+          className="onboarding-entry-scrim fixed inset-0 z-0 bg-foreground/28"
+          aria-hidden="true"
+        />
         <div
           ref={dialogRef}
           role="dialog"
@@ -614,12 +622,18 @@ const OnboardingWizard = ({
               skipError={skipError && { ...skipError, onDismiss: () => setSkipError(undefined) }}
             />
           ) : entryPhase === 'advanced' ? (
-            <section className="onboarding-advanced" data-onboarding-entry="advanced">
-              <header className="onboarding-advanced-header">
+            <section
+              className="onboarding-advanced flex h-full flex-col"
+              data-onboarding-entry="advanced"
+            >
+              <header className="onboarding-advanced-header shrink-0 pt-6 px-6 pb-5 border-b border-b-border">
                 <h1>{t('Advanced options')}</h1>
                 <OnboardingProgress step={step} compact />
               </header>
-              <div ref={stepCard} className="onboarding-advanced-content">
+              <div
+                ref={stepCard}
+                className="onboarding-advanced-content flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
+              >
                 {stepContent}
               </div>
             </section>

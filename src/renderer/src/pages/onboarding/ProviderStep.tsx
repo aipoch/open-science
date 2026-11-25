@@ -976,7 +976,7 @@ const ProviderStep = ({
       : undefined
     return (
       <section className="onboarding-quick-connect" data-onboarding-entry="connect">
-        <header className="onboarding-quick-header">
+        <header className="onboarding-quick-header flex items-start justify-between gap-6">
           <div>
             <h1>{t('Bring the AI you already use.')}</h1>
             <p>{t('Connect your AI account to start researching in Open-Science.')}</p>
@@ -986,7 +986,10 @@ const ProviderStep = ({
               })}
             </p>
           </div>
-          <div className="onboarding-step-dots" aria-label={t('Step 2 of 3')}>
+          <div
+            className="onboarding-step-dots flex gap-[0.35rem] pt-[0.3rem]"
+            aria-label={t('Step 2 of 3')}
+          >
             <span />
             <span className="is-active" />
             <span />
@@ -1024,7 +1027,7 @@ const ProviderStep = ({
                       color={card.accent}
                       active={hoveredQuickCardId === card.id}
                     />
-                    <div className="onboarding-provider-card-body">
+                    <div className="onboarding-provider-card-body flex-1 p-[1.45rem]">
                       <ProviderKindIcon kindKey={card.kindKey} className="size-9" />
                       <h2>{card.id === 'more' ? t('Custom Gateway') : card.title}</h2>
                       <p>{t(card.description)}</p>
@@ -1039,7 +1042,7 @@ const ProviderStep = ({
                           className="onboarding-provider-key-form"
                         >
                           <label htmlFor={`onboarding-key-${card.id}`}>{t('API key')}</label>
-                          <div className="onboarding-provider-key-row">
+                          <div className="onboarding-provider-key-row flex items-center gap-[0.45rem]">
                             <input
                               id={`onboarding-key-${card.id}`}
                               type="password"
@@ -1087,7 +1090,7 @@ const ProviderStep = ({
                       ) : (
                         <>
                           {isAuthorizing && installing && (
-                            <div className="onboarding-install-progress">
+                            <div className="onboarding-install-progress mb-[0.7rem] py-2 px-[0.65rem] rounded-md bg-card text-foreground">
                               <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs tabular-nums">
                                 <span>{installProgress?.label ?? t('Installing…')}</span>
                                 {installProgress?.fraction != null && (
@@ -1271,7 +1274,7 @@ const ProviderStep = ({
 
   return (
     <>
-      <CardHeader className="onboarding-advanced-model-header gap-1 rounded-t-lg px-6 py-5">
+      <CardHeader className="gap-1 rounded-t-lg px-6 pt-5 pb-3">
         <h2 tabIndex={-1} className="text-[15px] font-semibold">
           {t('Connect a model')}
         </h2>
@@ -1291,7 +1294,7 @@ const ProviderStep = ({
       </CardHeader>
       <Separator className="bg-border-200" />
 
-      <CardContent className="onboarding-advanced-model-content flex-1 px-6 py-5">
+      <CardContent className="flex-1 px-6 pt-5 pb-6">
         <section aria-label={t('Configure model')}>
           {!encryptionAvailable ? (
             <ErrorNotice
@@ -1337,7 +1340,7 @@ const ProviderStep = ({
         </section>
       </CardContent>
       {children}
-      <CardFooter className="onboarding-advanced-model-footer sticky bottom-0 z-10 mt-auto flex-wrap justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+      <CardFooter className="sticky bottom-0 z-10 mt-auto flex-wrap justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-[0.8rem]">
         {!canContinue ? (
           <p className="mr-auto text-xs text-text-100">
             {t('Complete every required item above to continue.')}

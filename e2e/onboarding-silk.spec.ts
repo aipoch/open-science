@@ -100,3 +100,56 @@ test('animates only the hovered Silk card and keeps keyboard focus visually stab
   await expectStableCard(card, stopped)
   expect(await pixels(otherCanvas)).toBe(otherIdle)
 })
+
+test('keeps the provider tray translucent in both themes and sizes each step to its content', async ({
+  app
+}) => {
+  const { page } = app
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  const connect = page.locator('[data-onboarding-entry="connect"]')
+  const header = connect.locator('header')
+  const card = connect.locator('.onboarding-provider-card-anthropic')
+  const silk = card.locator('.onboarding-provider-silk')
+  const tray = card.locator('.onboarding-provider-card-actions')
+  for (const colorScheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme })
+    await expect
+      .poll(() => page.locator('html').evaluate((el) => el.classList.contains('dark')))
+      .toBe(colorScheme === 'dark')
+    await header.hover()
+    await expect(card).toHaveCSS('background-color', 'rgb(26, 26, 25)')
+    await expect(card).toHaveCSS('background-size', '180% 180%')
+    await expect(silk).toHaveCSS('opacity', '0.52')
+    await card.hover()
+    await expect(silk).toHaveCSS('opacity', '0.68')
+    await expect(tray).toHaveCSS('opacity', '1')
+    await expect(tray).toHaveCSS('border-top-width', '0px')
+    await expect(tray).toHaveCSS('backdrop-filter', 'blur(18px) saturate(1.12)')
+    await expect(tray).toHaveCSS('background-image', /linear-gradient\(.*0\.46\)\)/)
+  }
+
+  const feedback = connect.locator('.onboarding-quick-feedback')
+  await expect(feedback).toHaveCSS('overflow-y', 'auto')
+  await expect(feedback.locator('footer')).toHaveCSS('margin-top', '0px')
+  expect(await connect.evaluate((el) => el.computedStyleMap().get('height')?.toString())).toBe(
+    'auto'
+  )
+  expect(await connect.evaluate((el) => el.computedStyleMap().get('min-height')?.toString())).toBe(
+    'auto'
+  )
+  expect(await connect.evaluate((el) => getComputedStyle(el).maxHeight)).toBe(
+    await page
+      .getByRole('dialog', { name: 'Open-Science onboarding' })
+      .evaluate((el) => getComputedStyle(el).maxHeight)
+  )
+  await connect.getByRole('button', { name: 'Advanced options' }).click()
+  await page.getByRole('button', { name: 'Continue', exact: true }).click()
+  await page.getByRole('button', { name: /^(Skip|Use configured provider)$/ }).click()
+  await page.getByRole('button', { name: 'Finish', exact: true }).click()
+  const readyActions = page.locator('[data-onboarding-entry="ready"] .onboarding-ready-actions')
+  await expect(readyActions).toBeVisible()
+  expect(
+    await readyActions.evaluate((el) => el.computedStyleMap().get('margin-top')?.toString())
+  ).toBe('auto')
+})
