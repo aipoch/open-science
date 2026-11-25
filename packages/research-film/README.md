@@ -78,7 +78,12 @@ const result = await generateResearchFilm({
 Word-boundary alignment uses a deterministic character-proportional duration estimate that is a
 pure function of the probe text, so the shared narration probe cache stays coherent across lines
 and lanes and caption timing never triggers extra billed requests; exact prefix probing remains
-a local-engine advantage. The synthesizer identity appends a SHA-256 fingerprint over the
+a local-engine advantage. Endpoints must be plain http(s) URLs without userinfo and without
+credential-bearing query parameters (`api_key`, `token`, `signature`, …): because the endpoint is
+persisted verbatim in the synthesizer identity, such credentials are rejected before identity
+derivation and before any request — pass credentials through `apiKey` (the `Authorization`
+header) instead; non-sensitive routing parameters such as `region` or `tenant` remain allowed.
+The synthesizer identity appends a SHA-256 fingerprint over the
 canonical tuple (style, full endpoint, model, voice), so slash-bearing values cannot collide and
 `timings.json` and narration checkpoint keys stay credential-free and never reuse retained audio
 across endpoint changes. Responses are read through a bounded stream with a hard byte cap, and

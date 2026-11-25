@@ -427,4 +427,32 @@ describe('createRemoteSpeechSynthesizer', () => {
       })
     ).toThrow(/positive number/)
   })
+
+  it('rejects credential-bearing endpoints before identity derivation and requests', () => {
+    const base = { kind: 'remote-http', style: 'audio-speech', model: 'tts-1' } as const
+    // Userinfo and credential-bearing query parameters never reach identity or the wire.
+    for (const endpoint of [
+      'https://user:pass@example.com/v1/audio/speech',
+      'https://api.example.com/v1/audio/speech?api_key=secret',
+      'https://api.example.com/v1/audio/speech?access_token=secret',
+      'https://api.example.com/v1/audio/speech?X-Amz-Signature=deadbeef',
+      'https://api.example.com/v1/chat/completions?client-secret=s3cr3t'
+    ]) {
+      expect(() => remoteSpeechIdentity({ ...base, endpoint })).toThrow(/credential|apiKey/)
+      expect(() => createRemoteSpeechSynthesizer({ ...base, endpoint })).toThrow(
+        /credential|apiKey/
+      )
+    }
+    // Non-http(s) schemes are rejected as well.
+    expect(() =>
+      createRemoteSpeechSynthesizer({ ...base, endpoint: 'ftp://example.com/speech' })
+    ).toThrow(/http\(s\)/)
+    // Non-sensitive routing parameters stay allowed and remain part of the identity.
+    expect(() =>
+      remoteSpeechIdentity({
+        ...base,
+        endpoint: 'https://api.example.com/v1/audio/speech?region=cn&tenant=acme'
+      })
+    ).not.toThrow()
+  })
 })

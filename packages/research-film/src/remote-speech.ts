@@ -15,7 +15,11 @@ export type RemoteSpeechStyle = 'audio-speech' | 'chat-completions'
 export type RemoteSpeechConfig = {
   kind: 'remote-http'
   style: RemoteSpeechStyle
-  /** Full request URL. Credentials must travel in headers, never in the URL. */
+  /**
+   * Full request URL. Credentials must travel in headers, never in the URL: endpoints with
+   * userinfo or credential-bearing query parameters are rejected before identity derivation
+   * and before any request, so no secret can reach `timings.json` or the wire.
+   */
   endpoint: string
   model: string
   /**
@@ -36,6 +40,61 @@ const MAX_WAV_BYTES = 64 * 1024 * 1024
  * real line duration anchors the computed boundaries.
  */
 const ESTIMATED_CHARS_PER_SECOND = 15
+/**
+ * Query-parameter name fragments that indicate a credential. The endpoint URL is persisted
+ * verbatim (origin + path + query) into the synthesizer identity and therefore into
+ * `timings.json`, which ships inside the generated player/source archive — a credential
+ * in the query string would leak into the artifact and onto the wire. Non-sensitive routing
+ * parameters (region, tenant, api-version, …) stay allowed.
+ */
+const SENSITIVE_QUERY_PARTS = new Set([
+  'key',
+  'apikey',
+  'token',
+  'accesstoken',
+  'refreshtoken',
+  'idtoken',
+  'secret',
+  'clientsecret',
+  'password',
+  'passwd',
+  'pwd',
+  'auth',
+  'authorization',
+  'bearer',
+  'signature',
+  'sig',
+  'credential',
+  'credentials',
+  'session',
+  'sessionid',
+  'otp'
+])
+
+/**
+ * Parse and validate a remote endpoint before it can influence identity or the wire: only
+ * http(s), never URL userinfo, and never a credential-bearing query parameter — credentials
+ * must travel through the `apiKey` header instead.
+ */
+const parseEndpoint = (endpoint: string): URL => {
+  const url = new URL(endpoint)
+  if (url.protocol !== 'http:' && url.protocol !== 'https:')
+    throw new Error('Remote speech endpoint must be an http(s) URL')
+  if (url.username || url.password)
+    throw new Error(
+      'Remote speech endpoint must not embed credentials in the URL; pass them via apiKey'
+    )
+  for (const name of url.searchParams.keys()) {
+    const hit = name
+      .split(/[^a-z0-9]+/i)
+      .find((part) => part.length > 0 && SENSITIVE_QUERY_PARTS.has(part.toLowerCase()))
+    if (hit)
+      throw new Error(
+        `Remote speech endpoint query parameter "${name}" looks like a credential; pass credentials via apiKey`
+      )
+  }
+  return url
+}
 
 /**
  * Stable cache and checkpoint identity for a remote backend. The unique suffix is a hash of
@@ -43,10 +102,11 @@ const ESTIMATED_CHARS_PER_SECOND = 15
  * never collide through string concatenation — endpoint `…/speech` + model `tts-1` and
  * endpoint `…/audio` + model `speech/tts-1` hash differently. The raw voice never appears in
  * the result, so a base64 reference sample cannot reach `timings.json` or the narration cache
- * key, and the API key is never part of the tuple.
+ * key, and the API key is never part of the tuple. Credential-bearing endpoints are rejected
+ * before any derivation, so a secret can never be persisted through the identity.
  */
 export const remoteSpeechIdentity = (config: RemoteSpeechConfig): string => {
-  const url = new URL(config.endpoint)
+  const url = parseEndpoint(config.endpoint)
   const endpoint = `${url.origin}${url.pathname}${url.search}`
   // JSON.stringify over a string array is injective: element boundaries stay explicit, so
   // distinct tuples can never render to the same preimage.
@@ -217,8 +277,9 @@ export const createRemoteSpeechSynthesizer = (
   config: RemoteSpeechConfig,
   deps?: { fetch?: typeof fetch; signal?: AbortSignal }
 ): SpeechSynthesizer => {
-  // Validate eagerly so a malformed endpoint fails before any narration work starts.
-  new URL(config.endpoint)
+  // Validate eagerly (scheme, userinfo, credential-bearing query) so a malformed or
+  // credential-bearing endpoint fails before any narration work starts.
+  parseEndpoint(config.endpoint)
   if (
     config.timeoutMs !== undefined &&
     (!Number.isFinite(config.timeoutMs) || config.timeoutMs <= 0)
