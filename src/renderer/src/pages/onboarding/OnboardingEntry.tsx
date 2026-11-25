@@ -21,6 +21,14 @@ import stepfunUrl from '@/assets/provider-icons/stepfun.svg?url&no-inline'
 import openrouterUrl from '@/assets/provider-icons/openrouter.svg?url&no-inline'
 import volcengineUrl from '@/assets/provider-icons/volcengine.svg?url&no-inline'
 import { Button } from '@/components/ui/button'
+import { useSettingsStore } from '@/stores/settings-store'
+import {
+  isClaudeSubscriptionProvider,
+  isCodexSubscriptionProvider,
+  isXaiSubscriptionProvider
+} from '../../../../shared/settings-runtime'
+import { KILO_FREE_MODEL_ID } from '../../../../shared/provider-model-catalog'
+import { providerAllowsAnonymousAccess } from '../../../../shared/provider-url-policy'
 import { cn } from '@/lib/utils'
 import guideExampleCasesGif from '@/assets/onboarding/guide-example-cases.gif'
 import guideNewProjectGif from '@/assets/onboarding/guide-new-project.gif'
@@ -258,7 +266,6 @@ const OnboardingWelcome = ({ onNext }: OnboardingWelcomeProps): React.JSX.Elemen
 }
 
 type OnboardingReadyStepProps = {
-  method: 'account' | 'api-key'
   onBack: () => void
   onStart: () => Promise<void>
 }
@@ -320,11 +327,43 @@ const GuideArtwork = ({
   )
 }
 
-const OnboardingReadyStep = ({
-  method,
-  onBack,
-  onStart
-}: OnboardingReadyStepProps): React.JSX.Element => {
+function ReadyConnectionSummary(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const provider = useSettingsStore((state) =>
+    state.providers.find(({ id }) => id === state.activeProviderId)
+  )
+  const activeModel = useSettingsStore((state) => state.activeModel)
+  if (!provider) return null
+  const model = activeModel ?? provider.model
+  const freeKilo =
+    provider.type === 'official' &&
+    provider.vendorId === 'kilo' &&
+    (model === KILO_FREE_MODEL_ID ||
+      (!provider.hasKey && providerAllowsAnonymousAccess({ ...provider, model })))
+  const account =
+    isClaudeSubscriptionProvider(provider.type) ||
+    isCodexSubscriptionProvider(provider.type) ||
+    isXaiSubscriptionProvider(provider.type) ||
+    provider.type === 'codebuddy-subscription'
+  let label = t('Connected')
+  let Icon = Settings2
+  if (freeKilo) label = t('Using free Kilo models')
+  else if (account) label = t('Connected with your account')
+  else if (provider.hasKey) {
+    label = t('Connected with API key')
+    Icon = KeyRound
+  }
+  return (
+    <div className="onboarding-connection-summary">
+      <Check aria-hidden="true" />
+      <span>{provider.name}</span>
+      <Icon aria-hidden="true" />
+      <span>{label}</span>
+    </div>
+  )
+}
+
+const OnboardingReadyStep = ({ onBack, onStart }: OnboardingReadyStepProps): React.JSX.Element => {
   const { t } = useTranslation()
   const [slide, setSlide] = useState(0)
   const [isStarting, setIsStarting] = useState(false)
@@ -356,13 +395,7 @@ const OnboardingReadyStep = ({
       <p className="onboarding-ready-subtitle">
         {t('Start with a question. See where it takes you.')}
       </p>
-      <div className="onboarding-connection-summary">
-        <Check aria-hidden="true" />
-        {method === 'api-key' ? <KeyRound aria-hidden="true" /> : <Settings2 aria-hidden="true" />}
-        <span>
-          {method === 'api-key' ? t('Connected with API key') : t('Connected with your account')}
-        </span>
-      </div>
+      <ReadyConnectionSummary />
 
       <div className="onboarding-guide" aria-live="polite">
         <GuideArtwork

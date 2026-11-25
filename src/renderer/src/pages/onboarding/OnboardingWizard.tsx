@@ -217,7 +217,6 @@ const OnboardingWizard = ({
   const [step, setStep] = useState<WizardStep>('environment')
   const [entryPhase, setEntryPhase] = useState<EntryPhase>(showWelcome ? 'welcome' : 'advanced')
   const [readySource, setReadySource] = useState<'connect' | 'advanced'>('connect')
-  const [entryMethod, setEntryMethod] = useState<'account' | 'api-key'>('account')
   const [isAdvancedProviderBusy, setIsAdvancedProviderBusy] = useState(false)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const runtimeReady =
@@ -308,9 +307,8 @@ const OnboardingWizard = ({
     setStep('location')
     setEntryPhase('advanced')
   }, [])
-  const openReadyEntry = useCallback((method: 'account' | 'api-key' = 'api-key'): void => {
+  const openReadyEntry = useCallback((): void => {
     setReadySource('connect')
-    setEntryMethod(method)
     setEntryPhase('ready')
   }, [])
   const skipEntry = useCallback(async (): Promise<void> => {
@@ -334,14 +332,6 @@ const OnboardingWizard = ({
     finishProviderOperation,
     t
   ])
-
-  const handleAdvancedProviderAdvance = useCallback(
-    (method: 'account' | 'api-key' = 'api-key'): void => {
-      setEntryMethod(method)
-      setStep('notebook')
-    },
-    []
-  )
 
   useEffect(() => {
     if (!showWelcome) return
@@ -529,7 +519,7 @@ const OnboardingWizard = ({
             providerId={providerDraft.providerId}
             onProviderSaved={recordSavedProvider}
             onBack={() => setStep(showWelcome ? 'location' : 'agent')}
-            onAdvance={handleAdvancedProviderAdvance}
+            onAdvance={() => setStep('notebook')}
             canContinue={!showWelcome || runtimeReady}
             onBusyChange={showWelcome ? setIsAdvancedProviderBusy : undefined}
           >
@@ -635,7 +625,6 @@ const OnboardingWizard = ({
             </section>
           ) : (
             <OnboardingReadyStep
-              method={entryMethod}
               onBack={() => setEntryPhase(readySource)}
               onStart={completeOnboarding}
             />

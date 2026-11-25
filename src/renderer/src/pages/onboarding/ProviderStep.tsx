@@ -82,7 +82,7 @@ type ProviderStepProps = {
   providerId?: string
   onProviderSaved?: (id: string | undefined) => void
   onBack: () => void
-  onAdvance: (method?: 'account' | 'api-key') => void
+  onAdvance: () => void
   variant?: 'form' | 'quick'
   children?: React.ReactNode
   canContinue?: boolean
@@ -253,8 +253,8 @@ const ProviderStep = ({
       mounted.current = false
     }
   }, [])
-  const advanceIfMounted = (method: 'account' | 'api-key' = 'api-key'): void => {
-    if (mounted.current) onAdvance(method)
+  const advanceIfMounted = (): void => {
+    if (mounted.current) onAdvance()
   }
   const [isClaudeSignInOpen, setIsClaudeSignInOpen] = useState(false)
   const [xaiSession, setXaiSession] = useState<XaiOAuthDeviceAuthorization>()
@@ -393,7 +393,7 @@ const ProviderStep = ({
           await setActiveProvider(claudeProviderIdRef.current)
         }
         setIsClaudeSignInOpen(false)
-        advanceIfMounted('account')
+        advanceIfMounted()
       }
 
       return result
@@ -518,7 +518,7 @@ const ProviderStep = ({
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
           signal?.throwIfAborted()
-          advanceIfMounted('account')
+          advanceIfMounted()
         }
         return
       }
@@ -559,7 +559,7 @@ const ProviderStep = ({
         if (validation.ok) {
           setIsClaudeSignInOpen(false)
           if (providerId) await setActiveProvider(providerId)
-          advanceIfMounted('account')
+          advanceIfMounted()
         }
         return
       }
@@ -595,7 +595,7 @@ const ProviderStep = ({
         if (validation.ok) {
           if (providerId) await setActiveProvider(providerId)
           signal?.throwIfAborted()
-          advanceIfMounted('account')
+          advanceIfMounted()
         }
         return
       }
@@ -630,7 +630,7 @@ const ProviderStep = ({
         if (validation.ok) {
           await setActiveProvider(providerId)
           signal?.throwIfAborted()
-          advanceIfMounted('account')
+          advanceIfMounted()
         }
         return
       }
@@ -672,7 +672,7 @@ const ProviderStep = ({
         if ((quickKey || explicitImport) && providerId)
           await setActiveProvider(providerId, providerValue.model || undefined)
         signal?.throwIfAborted()
-        advanceIfMounted(value.type === 'codex-shared' ? 'account' : 'api-key')
+        advanceIfMounted()
       }
     } catch (error) {
       if (signal?.aborted) return
@@ -817,7 +817,7 @@ const ProviderStep = ({
     }
     await setActiveProvider(providerId)
     signal.throwIfAborted()
-    advanceIfMounted('account')
+    advanceIfMounted()
   }
 
   const chooseQuickProvider = async (

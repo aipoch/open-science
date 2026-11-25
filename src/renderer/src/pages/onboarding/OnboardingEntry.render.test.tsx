@@ -156,6 +156,46 @@ describe('Onboarding entry flow', () => {
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['new free Kilo', 'official', 'kilo', 'kilo-auto/free', false, 'Using free Kilo models'],
+    ['saved Codex', 'codex-shared', undefined, 'gpt-5', false, 'Connected with your account'],
+    ['saved Kilo with key', 'official', 'kilo', 'paid-model', true, 'Connected with API key'],
+    ['local gateway', 'custom', undefined, 'local-model', false, 'Connected']
+  ] as const)(
+    'shows the actual advanced connection for %s',
+    async (name, type, vendorId, model, hasKey, summary) => {
+      const provider = {
+        id: 'configured',
+        name,
+        type,
+        vendorId,
+        model,
+        models: [model],
+        hasKey,
+        supportsImageInput: false,
+        needsKey: false,
+        lastValidatedAt: 1
+      }
+      const selection = { providers: [provider], activeProviderId: provider.id, activeModel: model }
+      const addOnboardingKiloProvider = vi.fn(async () => useSettingsStore.setState(selection))
+      const provisionFree = name === 'new free Kilo'
+      if (type === 'codex-shared') useSettingsStore.setState(codexReadyState())
+      useSettingsStore.setState({ ...(!provisionFree && selection), addOnboardingKiloProvider })
+      await renderEntry()
+      await finishWelcomeAnimation()
+      await clickButton(/^Next$/)
+      await clickButton(/Advanced options/)
+      await clickButton(/^Continue$/)
+      await clickButton(provisionFree ? /^Skip$/ : /^Use configured provider$/)
+      await clickButton(/^Finish$/)
+      const badge = container.querySelector('.onboarding-connection-summary')
+      expect(badge?.textContent).toContain(name)
+      expect(badge?.textContent).toContain(summary)
+      if (!hasKey) expect(badge?.textContent).not.toContain('API key')
+      expect(addOnboardingKiloProvider).toHaveBeenCalledTimes(provisionFree ? 1 : 0)
+    }
+  )
+
   it('returns from advanced data location to quick connect without leaving the dialog', async () => {
     await renderEntry()
     await finishWelcomeAnimation()

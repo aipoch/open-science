@@ -284,7 +284,7 @@ describe('ProviderStep', () => {
     expect(persistProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'claude-shared' }))
     expect(loginSharedClaude).toHaveBeenCalledOnce()
     expect(setActiveProvider).toHaveBeenCalledWith('claude-account')
-    expect(onAdvance).toHaveBeenCalledWith('account')
+    expect(onAdvance).toHaveBeenCalledOnce()
   })
 
   it('keeps the authorizing card open and ignores a cancelled login even after retry', async () => {
@@ -376,7 +376,7 @@ describe('ProviderStep', () => {
     expect(onAdvance).not.toHaveBeenCalled()
     await clickButton(/Continue with Anthropic/)
     expect(login).toHaveBeenCalledOnce()
-    expect(onAdvance).toHaveBeenCalledWith('account')
+    expect(onAdvance).toHaveBeenCalledOnce()
   })
 
   it('stops subscription login if the compatible framework cannot be selected', async () => {
@@ -417,7 +417,7 @@ describe('ProviderStep', () => {
     await clickButton(/^Import existing Codex sign-in$/)
     expect(setAgentFramework).toHaveBeenCalledWith('codex')
     expect(saveProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'codex-shared' }))
-    expect(onAdvance).toHaveBeenCalledWith('account')
+    expect(onAdvance).toHaveBeenCalledOnce()
   })
 
   it('keeps isolated Codex sign-in on the card through preparation failure, cancellation and retry', async () => {
@@ -474,7 +474,7 @@ describe('ProviderStep', () => {
     expect(onAdvance).not.toHaveBeenCalled()
     await clickButton(/^Sign in with Open-Science$/)
     expect(login).toHaveBeenCalledOnce()
-    expect(onAdvance).toHaveBeenCalledWith('account')
+    expect(onAdvance).toHaveBeenCalledOnce()
   })
 
   it('allows dismissing a failed Codex import and manually switching to cancellable browser sign-in', async () => {
@@ -1400,7 +1400,7 @@ describe('ProviderStep', () => {
       await clickButton(/Continue with xAI/)
       expect(document.body.textContent).toContain('SECOND-CODE')
       await act(async () => second.resolve({ validation: { ok: true, category: 'ok' } }))
-      expect(onAdvance).toHaveBeenCalledWith('account')
+      expect(onAdvance).toHaveBeenCalledOnce()
     }
   )
 
