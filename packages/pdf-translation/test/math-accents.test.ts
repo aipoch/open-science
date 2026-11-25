@@ -148,3 +148,35 @@ it('resolves the Planck constant only with matching native ink and source intent
   expect(nativeMathSymbolText(glyph, 'OtherMath10', true)).toBe('~')
   expect(nativeMathSymbolText({ text: '~', bounds: [0, 0, 5.9, 1.8] }, 'MSBM10', true)).toBe('~')
 })
+
+it.each([
+  { name: 'native adjacent tilde', change: 'none', accepted: true },
+  { name: 'intervening object', change: 'sequence', accepted: false },
+  { name: 'different native font', change: 'font', accepted: false },
+  { name: 'different point size', change: 'size', accepted: false },
+  { name: 'detached mark', change: 'geometry', accepted: false },
+  { name: 'missing native character bounds', change: 'glyph', accepted: false }
+])(
+  'admits a raised tilde after a fused equality only with native proof: $name',
+  ({ change, accepted }) => {
+    const mark: NativeMathObject = {
+      i: 4,
+      text: '˜ ',
+      fontName: change === 'font' ? 'CMR9' : 'CMR10',
+      size: change === 'size' ? 9 : 10,
+      bounds: change === 'geometry' ? [11, 8, 14.4, 9] : [1.8, 8, 5.2, 9]
+    }
+    const base: NativeMathObject = {
+      i: change === 'sequence' ? 6 : 5,
+      text: 'Γ =',
+      fontName: 'CMR10',
+      size: 10,
+      bounds: [0, 0, 17, 6.8],
+      glyphs: change === 'glyph' ? undefined : [{ text: 'Γ', offset: 0, bounds: [0, 0, 6.8, 6.8] }]
+    }
+
+    expect(resolveNativeMathAccents([mark, base])[0]?.labels.includes('Γ =˜') ?? false).toBe(
+      accepted
+    )
+  }
+)

@@ -1,9 +1,85 @@
+type BootstrapApiProviderDraft = {
+  framework: AgentFramework
+  model: string
+  name?: string
+} & (
+  | { providerType: 'official'; vendorId: string; region?: string }
+  | { providerType: 'custom'; baseUrl: string; protocol: ProviderProtocol }
+)
+
 export type BootstrapRequest =
   | { action: 'status' | 'runtime' | 'codex-prepare' | 'codex-complete' }
+  | { action: 'agent-runtime' | 'kilo-free'; framework: AgentFramework }
+  | { action: 'provider-options'; framework?: AgentFramework }
+  | (BootstrapApiProviderDraft & { action: 'provider-credential-target'; providerId: string })
+  | (BootstrapApiProviderDraft & {
+      action: 'provider-save'
+      credentialRef?: string
+      providerId?: string
+      expectedProtocol?: ProviderProtocol
+      expectedEndpoint?: string
+      // SDK transport to the authenticated local service, not a CLI/MCP tool parameter.
+      key?: string
+    })
+  | {
+      action: 'provider-activate'
+      framework: AgentFramework
+      providerId: string
+      model: string
+      expectedActiveProviderId: string | null
+      expectedActiveModel: string | null
+    }
   | { action: 'provider'; key: string; model: string }
   | { action: 'openalex'; key: string }
+
+export type ProviderProtocol = 'messages' | 'chat-completions' | 'responses'
+export type BootstrapProviderModelOption = {
+  id: string
+  compatible: boolean
+  apiEndpoints: ProviderProtocol[]
+  credentialRequired: boolean
+}
+export type BootstrapProviderOptions = {
+  framework: AgentFramework
+  selectedFramework: AgentFramework | null
+  active: { providerId: string | null; model: string | null }
+  providers: {
+    id: string
+    name: string
+    type: string
+    models: BootstrapProviderModelOption[]
+    lastValidated?: { model: string; protocol: ProviderProtocol }
+    authentication: 'api' | 'user-sign-in' | 'app-managed'
+  }[]
+  official: {
+    vendorId: string
+    name: string
+    region?: string
+    regionLabel?: string
+    models: BootstrapProviderModelOption[]
+  }[]
+  customProtocols: ProviderProtocol[]
+  credentialRefs: { id: string; displayName: string }[]
+}
+export type BootstrapProviderSetup = {
+  providerId: string
+  framework: AgentFramework
+  model: string
+  saved: true
+  validation: 'passed'
+  active: boolean
+}
 export type BootstrapResult =
-  | { ok: true; providerId?: string; next?: { runtime?: string[]; provider?: string[] } }
+  | {
+      ok: true
+      providerId?: string
+      selectedFramework?: AgentFramework | null
+      keylessKiloAvailable?: boolean
+      providerOptions?: BootstrapProviderOptions
+      providerSetup?: BootstrapProviderSetup
+      providerCredentialTarget?: { protocol: ProviderProtocol; endpoint: string }
+      next?: { runtime?: string[]; provider?: string[] }
+    }
   | {
       ok: false
       code:
@@ -11,7 +87,10 @@ export type BootstrapResult =
         | 'configuration_conflict'
         | 'runtime_unavailable'
         | 'credential_invalid'
+        | 'provider_credential_missing'
+        | 'provider_validation_failed'
         | 'bootstrap_failed'
+      category?: 'ok' | 'auth' | Exclude<ProviderReadinessReason, 'credential_invalid'>
     }
 
 // Keep these standalone published types aligned with the safe Settings contracts.
@@ -229,14 +308,69 @@ export type ProviderReadinessReason =
   | 'incompatible'
   | 'server-error'
   | 'unknown'
+export type NotebookReadinessCheck = {
+  status: 'ready' | 'blocked' | 'checking' | 'unconfirmed'
+  reason?: string
+}
+export type NotebookReadiness = {
+  platform: string
+  environment: NotebookReadinessCheck & {
+    pythonReady?: boolean
+    rReady?: boolean
+    python?: NotebookReadinessCheck
+    r?: NotebookReadinessCheck
+  }
+  dependencies: NotebookReadinessCheck
+  sandbox: NotebookReadinessCheck
+  memoryPolicy: NotebookReadinessCheck & { source?: string; executionScope?: string }
+}
+export type NotebookEnvironmentOperationTarget = {
+  language: 'python' | 'r'
+  operationId: string
+}
+
+export type NotebookRuntimeSelection = {
+  language: 'python' | 'r'
+  runtimeId: string
+}
+
+export type NotebookRuntime = NotebookRuntimeSelection & {
+  source: 'managed' | 'external'
+  provenance: 'app-managed' | 'agent-created' | 'user-own'
+  interpreterPath: string
+  label: string
+  version?: string
+  runnable: boolean
+  enabled: boolean
+  detail?: string
+}
+
+export type NotebookEnvironmentOperationRequest = NotebookEnvironmentOperationTarget & {
+  action: 'prepare' | 'repair'
+}
+
+export type NotebookEnvironmentOperation = NotebookEnvironmentOperationTarget & {
+  action?: NotebookEnvironmentOperationRequest['action']
+  status: 'preparing' | 'completed' | 'failed' | 'cancelled' | 'unconfirmed'
+  progress?: { phase: string; fraction: number }
+  cancelRequested?: boolean
+  reason?: 'notebook_setup_failed' | 'notebook_environment_recovery_required'
+}
+
 export type DoctorReport = {
   ready: boolean
   checks: {
     daemon: { status: 'ready' }
-    runtime: { status: ReadinessStatus; framework: AgentFramework }
-    provider:
+    runtime: {
+      status: ReadinessStatus
+      framework: AgentFramework
+      selectedFramework?: AgentFramework | null
+    }
+    provider: (
       { status: 'ready' | 'missing' } | { status: 'not_ready'; reason?: ProviderReadinessReason }
+    ) & { keylessKiloAvailable?: boolean }
     skills: { status: 'ready'; enabled: string[] }
+    notebook?: NotebookReadiness
   }
   next: Array<{
     code: 'runtime_missing' | 'runtime_not_ready' | 'provider_missing' | 'provider_not_ready'
@@ -253,6 +387,29 @@ export type AgentConfiguration = {
   providerId: string
   model?: string
   reasoningEffort: ReasoningEffort
+}
+export type RunRequest = {
+  project: string
+  prompt: string
+  cwd?: string
+  sessionId?: string
+  notebookRuntime?: NotebookRuntimeSelection
+  permissionProfile?: PermissionProfile
+  skillIds?: string[]
+  turnIntent?: TurnIntent
+  /** Deny unresolved human interactions without changing the authorization profile. */
+  permissionPrompts?: 'none'
+  /** Defaults to relay. Use delegate only after the user delegates routine decisions. */
+  interactionMode?: TaskInteractionMode
+  /** Export Open-Science Agent traces; requires a durable local submission. */
+  otelTraces?: true
+  autoReviewEnabled?: boolean
+  specialist?: string
+  delegationPolicy?: DelegationPolicy
+  agentConfiguration?: Partial<AgentConfiguration> & { model?: string | null }
+  memoryEnabled?: boolean
+  computeHostIds?: string[]
+  enabledComputeHostIds?: string[]
 }
 export type ComputeHosts = { enabled: string[]; selected: string[] }
 export type ProjectSessionDefaults = {
@@ -285,25 +442,6 @@ export type ModelRouting =
       model: string
       reasoningEffort: ReasoningEffort
     }
-export type RunRequest = {
-  project: string
-  prompt: string
-  cwd?: string
-  sessionId?: string
-  permissionProfile?: PermissionProfile
-  skillIds?: string[]
-  turnIntent?: TurnIntent
-  /** Deny unresolved human interactions without changing the authorization profile. */
-  permissionPrompts?: 'none'
-  autoReviewEnabled?: boolean
-  specialist?: string
-  delegationPolicy?: DelegationPolicy
-  agentConfiguration?: Partial<AgentConfiguration> & { model?: string | null }
-  memoryEnabled?: boolean
-  computeHostIds?: string[]
-  enabledComputeHostIds?: string[]
-}
-
 export type RequestOptions = {
   /** Use durable admission for startRun. Requires a compatible server. */
   requestId?: string
@@ -313,15 +451,51 @@ export type RequestOptions = {
   /** Per-request deadline in milliseconds, including response-body consumption. */
   timeoutMs?: number
 }
+export type NotebookContinuation = {
+  runId: string
+  branchId: string
+  refusalId: string
+  source: 'user_relay'
+}
+export type NotebookContinuationRequest = NotebookContinuation & { prompt: string }
 export type Submission = {
   requestId: string
   status: 'pending' | 'accepted' | 'failed' | 'interrupted'
   createdAt: number
   runId?: string
+  notebookContinuation?: NotebookContinuation
   error?: { code: string; message: string }
 }
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type RunFailureCode = 'process_restarted'
+export type NotebookExecution = {
+  status: 'unconfirmed' | 'preparing' | 'running' | 'completed' | 'failed' | 'waiting_for_user'
+  projectId: string
+  sessionId: string
+  notebookRunId?: string
+  promptMessageId?: string
+  messageBranchId?: string
+  language?: 'python' | 'r'
+  runtimeId?: string
+  runtimeSource?: 'managed' | 'external'
+  kernelDispatched?: boolean
+  reasonCode?: string
+  refusalId?: string
+  refusalReason?: string
+  continuedFromRefusalId?: string
+  owner?: 'user' | 'agent'
+  requiresUser?: true
+  retryable?: false
+  next?: {
+    action:
+      | 'continue_notebook'
+      | 'continue_notebook_in_app'
+      | 'respond_permission'
+      | 'review_notebook_code_in_app'
+      | 'review_notebook_runtime_in_app'
+    message: string
+  }
+}
 export type RunProgressPhase =
   | 'accepted'
   | 'session-ready'
@@ -376,6 +550,7 @@ export type PlanLifecycle =
   'awaiting_approval' | 'approved' | 'in_progress' | 'blocked' | 'completed' | 'rejected'
 
 export type SessionPlan = {
+  branchId?: string
   artifactId: string
   artifactVersionId: string
   artifactChecksum: string
@@ -396,35 +571,152 @@ export type SessionPlan = {
   }
 }
 
-export type RunAttention = { kind: 'plan-approval'; plan: SessionPlan }
-
-export type PlanDecisionResponse = {
-  projection: SessionPlan
-  changed: boolean
-}
-
-export type PlanFeedbackResponse = {
-  kind: 'feedback'
-  routeToInteractionId: string
-  artifactVersionId: string
-  text: string
-  message: {
-    id: string
-    role: 'user'
-    content: string
-    status: 'complete'
-    responseToMessageId: string
-    eventIds: string[]
-    createdAt: number
-    updatedAt: number
+export type TaskInteractionScope = { runId: string } | { projectId: string; sessionId: string }
+export type TaskInteractionMode = 'relay' | 'delegate'
+export type NotebookReviewLanguage = 'python' | 'r' | 'repl' | 'bash'
+export type TaskInteractionPolicy = { mode: TaskInteractionMode; revision: number }
+export type TaskInteractionDecision =
+  | { source: 'user_relay'; expectedModeRevision?: never }
+  | { source: 'delegated_agent'; expectedModeRevision: number }
+export type TaskDelegatedInteraction = {
+  frameId: string
+  attemptId: string
+  branchId: string
+  attemptStatus: 'running' | 'completed' | 'cancelled' | 'error'
+  continuation?: {
+    attemptId: string
+    status: TaskDelegatedInteraction['attemptStatus'] | 'unconfirmed'
   }
-  planRevision: number
 }
+export type TaskInteractionReference = {
+  id: string
+  kind: string
+  state: 'pending' | 'responded' | 'expired' | 'unconfirmed'
+  projectId: string
+  sessionId: string
+  runId?: string
+  promptMessageId?: string
+  branchId?: string
+  revision: number
+  interactionPolicy?: TaskInteractionPolicy
+  delegated?: TaskDelegatedInteraction
+  notebookReview?: { kind: 'runtime' | 'code'; language: NotebookReviewLanguage }
+  owner: 'user' | 'agent' | 'service'
+  responseCapability?: string
+  actions: readonly string[]
+  next?: string
+}
+export type PlanInteraction = TaskInteractionReference & {
+  kind: 'plan'
+  plan?: SessionPlan
+  response?: {
+    source: 'user_relay' | 'delegated_agent'
+    action: 'approved' | 'rejected' | 'revise'
+    reviewedRevision: number
+    continuation: {
+      id: string
+      promptMessageId: string
+      status: 'queued' | 'accepted' | 'interrupted' | 'unconfirmed'
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
+    }
+  }
+}
+export type PermissionInteraction = TaskInteractionReference & {
+  kind: 'permission'
+  recovery?: 'original_run' | 'new_continuation'
+  request?: {
+    title: string
+    toolCallId: string
+    tool?: string
+    input?: unknown
+    options: readonly { optionId: string; name: string; kind: string; scope?: 'once' }[]
+  }
+  response?: {
+    source: TaskInteractionDecision['source']
+    optionId: string
+    status: 'released' | 'unconfirmed'
+    continuation?: {
+      id: string
+      taskRunStatus: 'tracked' | 'pending' | 'unconfirmed'
+      requestId?: string
+      runId?: string
+    }
+  }
+}
+export type QuestionAnswer =
+  | { fieldId: string; status: 'skipped' }
+  | { fieldId: string; status?: 'answered'; value: string | number | boolean | string[] }
+export type QuestionResponse = {
+  expectedRevision: number
+  expectedBranchId: string
+  source: 'user_relay' | 'known_context'
+} & ({ action: 'accept'; answers?: QuestionAnswer[] } | { action: 'decline'; answers?: never })
+export type QuestionInteraction = TaskInteractionReference & {
+  kind: 'question'
+  question?: {
+    message: string
+    fields: {
+      id: string
+      label: string
+      description?: string
+      kind: 'text' | 'single-select' | 'multi-select' | 'number' | 'integer' | 'boolean'
+      required?: boolean
+      options?: {
+        label: string
+        value: string
+        description?: string
+        pros?: string
+        cons?: string
+      }[]
+      minLength?: number
+      maxLength?: number
+      minimum?: number
+      maximum?: number
+      minItems?: number
+      maxItems?: number
+      format?: 'email' | 'uri' | 'date' | 'date-time'
+      defaultValue?: string | number | boolean | string[]
+    }[]
+    skipFieldIds: string[]
+  }
+  response?: {
+    source: QuestionResponse['source']
+    action: QuestionResponse['action']
+    reviewedRevision: number
+    continuation?: {
+      id: string
+      requestId?: string
+      runId?: string
+      status: 'unconfirmed' | 'pending' | 'accepted' | 'failed' | 'interrupted'
+    }
+  }
+}
+export type NotebookStopInteraction = TaskInteractionReference & {
+  kind: 'notebook-continuation'
+  refusalId: string
+  reason?: string
+}
+export type TaskInteraction =
+  PlanInteraction | PermissionInteraction | QuestionInteraction | NotebookStopInteraction
+export type RunAttention =
+  | { kind: 'plan-approval'; plan: SessionPlan }
+  | { kind: 'interactions'; interactions: TaskInteractionReference[] }
 
-export type PlanResponse = PlanDecisionResponse | PlanFeedbackResponse
+export type PlanResponse = { interaction: PlanInteraction; changed: boolean }
 
 export type Run = {
   requestId?: string
+  /** Original Task Run when a recorded interaction started a separate turn. */
+  continuedFromRunId?: string
+  /** Separate turns recorded under this Run. Follow a child Run for its own results and decisions. */
+  continuations?: {
+    runId: string
+    requestId: string
+    status: RunStatus
+    failureCode?: RunFailureCode
+  }[]
   id: string
   sessionId: string
   projectId: string
@@ -437,8 +729,11 @@ export type Run = {
   output?: string
   error?: string
   failureCode?: RunFailureCode
+  /** Notebook evidence scoped to this research turn, independent of the outer Run status. */
+  execution?: NotebookExecution
   artifacts: Artifact[]
   attention?: RunAttention
+  interactionPolicy?: TaskInteractionPolicy
   review?: {
     started: boolean
     reason?: string
@@ -452,6 +747,84 @@ export type Run = {
 
 export type SessionStatus =
   'idle' | 'running' | 'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval' | 'error'
+
+export type ExportReviewDecisionRequest = {
+  operationId: string
+  destinationPath: string
+  expiresAt: number
+  sizeBytes: number
+  sha256: string
+  source: 'user_relay'
+  decision: 'approved' | 'rejected'
+}
+
+export type PackageOperation = {
+  id: string
+  kind: 'export' | 'import' | 'fork'
+  state: 'running' | 'awaiting-selection' | 'cancelling' | 'succeeded' | 'cancelled' | 'failed'
+  session?: { projectId: string; sessionId: string }
+  importTarget?: { projectId?: string; projectName?: string }
+  sensitiveExportReview?: {
+    expiresAt: number
+    destination?: string
+    fileDigest: { sizeBytes: number; checksum: string }
+    agentDetails?: {
+      fileScope: { fileCount: number; includesSessionHistory: true }
+      findings: {
+        source: 'session_metadata' | 'package_metadata' | 'research_file'
+        rule: 'field' | 'assignment' | 'url' | 'token'
+      }[]
+    }
+  }
+  sensitiveExportDecision?: Omit<ExportReviewDecisionRequest, 'operationId' | 'source'> & {
+    source: 'user_relay' | 'desktop'
+  }
+  agent?: {
+    correlationId: string
+    destinationPath?: string
+    sourcePath?: string
+    failure?:
+      | 'destination-conflict'
+      | 'requires-user'
+      | 'content-changed'
+      | 'export-review-expired'
+      | 'invalid-archive'
+      | 'source-unavailable'
+      | 'requires-update'
+      | 'import-unconfirmed'
+      | 'fork-waiting-approval'
+      | 'fork-notebook-refused'
+  }
+  result?: {
+    filePath?: string
+    fileDigest?: { sizeBytes: number; checksum: string }
+    imported?: { projectId: string; sessionId: string }
+    packageSummary?: {
+      title: string
+      projectName: string
+      branchCount: number
+      messageCount: number
+      fileCount: number
+      totalBytes: number
+      omissionCount: number
+      externalOmissionCount: number
+    }
+    recovery?: {
+      projectId: string
+      sessionId: string
+      operationId: string
+      outcome: 'committed' | 'unconfirmed'
+    }
+  }
+}
+
+export type SessionOrigin = {
+  importId: string
+  sourceProjectId: string
+  sourceSessionId: string
+  importedAt: number
+  manifestChecksum: string
+}
 
 export type Session = {
   id: string
@@ -469,6 +842,12 @@ export type Session = {
   output?: string
   error?: string
   artifactCount: number
+  /** Absent on services that do not publish this status. */
+  readOnly?: boolean
+  packageOrigin?: SessionOrigin
+  forkOrigin?: SessionOrigin
+  /** Live Notebook intent, with evidence scoped to its prompt when available. */
+  execution?: NotebookExecution
 }
 
 export type SessionConfiguration = {
@@ -514,6 +893,11 @@ export type AgentRouting = {
 
 export type Artifact = {
   id: string
+  artifactId?: string
+  versionId?: string
+  versionNumber?: number
+  artifactRunId?: string
+  producerRunId?: string
   kind: 'workspace-file' | 'external-file' | 'managed-file'
   path: string
   name?: string
@@ -649,6 +1033,8 @@ export class OpenScienceApiError extends Error {
 }
 
 export class OpenScienceClient {
+  /** Configuration root of a service selected by connectToOpenScience. */
+  readonly configRoot?: string
   constructor(options: {
     baseUrl: string
     token: string
@@ -662,6 +1048,34 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): Promise<{ installed: boolean; onPath: boolean; target: string; pathHint?: string }>
   doctor(options?: RequestOptions): Promise<DoctorReport>
+  prepareNotebookEnvironment(
+    language: 'python' | 'r',
+    options?: RequestOptions
+  ): Promise<Record<string, never>>
+  listNotebookRuntimes(
+    language: NotebookRuntimeSelection['language'],
+    options?: RequestOptions
+  ): Promise<NotebookRuntime[]>
+  registerNotebookInterpreter(
+    input: { language: NotebookRuntimeSelection['language']; path: string },
+    options?: RequestOptions
+  ): Promise<NotebookRuntime>
+  enableNotebookRuntime(
+    input: NotebookRuntimeSelection,
+    options?: RequestOptions
+  ): Promise<NotebookRuntime>
+  startNotebookEnvironmentOperation(
+    request: NotebookEnvironmentOperationRequest,
+    options?: RequestOptions
+  ): Promise<NotebookEnvironmentOperation>
+  getNotebookEnvironmentOperation(
+    target: NotebookEnvironmentOperationTarget,
+    options?: RequestOptions
+  ): Promise<NotebookEnvironmentOperation>
+  cancelNotebookEnvironmentOperation(
+    target: NotebookEnvironmentOperationTarget,
+    options?: RequestOptions
+  ): Promise<NotebookEnvironmentOperation>
   listRuntimes(options?: RequestOptions): Promise<AgentRuntime[]>
   listConnectors(options?: RequestOptions): Promise<ConnectorsSnapshot>
   getConnector(
@@ -735,15 +1149,16 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): ReturnType<OpenScienceClient['getProjectSessionDefaults']>
   listSessions(projectId?: string, options?: RequestOptions): Promise<Session[]>
-  getSession(sessionId: string, options?: RequestOptions): Promise<Session>
+  getSession(sessionId: string, options?: RequestOptions & { projectId?: string }): Promise<Session>
   getSessionConfiguration(
     sessionId: string,
-    options?: RequestOptions
+    options?: RequestOptions & { projectId?: string }
   ): Promise<SessionConfiguration>
   updateSessionConfiguration(
     sessionId: string,
     request: {
       expectedRevision: number
+      projectId?: string
       agentConfiguration?: {
         providerId?: string
         model?: string | null
@@ -763,15 +1178,48 @@ export class OpenScienceClient {
     options?: RequestOptions
   ): Promise<AgentRouting>
   getSessionPlan(sessionId: string, options?: RequestOptions): Promise<SessionPlan | null>
+  listInteractions(
+    scope: TaskInteractionScope,
+    options?: RequestOptions
+  ): Promise<TaskInteractionReference[]>
+  getInteraction(
+    interactionId: string,
+    scope: TaskInteractionScope,
+    options?: RequestOptions
+  ): Promise<TaskInteraction>
+  setRunInteractionMode(
+    runId: string,
+    request: { expectedRevision: number; interactionMode: TaskInteractionMode },
+    options?: RequestOptions
+  ): Promise<TaskInteractionPolicy>
+  respondPermission(
+    interactionId: string,
+    scope: TaskInteractionScope,
+    response: TaskInteractionDecision & {
+      optionId: string
+      expectedRevision: number
+      expectedBranchId: string
+      expectedLanguage?: NotebookReviewLanguage
+    },
+    options?: RequestOptions
+  ): Promise<{ changed: boolean; interaction: PermissionInteraction }>
+  answerQuestion(
+    interactionId: string,
+    scope: TaskInteractionScope,
+    response: QuestionResponse,
+    options?: RequestOptions
+  ): Promise<{ changed: boolean; interaction: QuestionInteraction }>
   respondSessionPlan(
     sessionId: string,
-    response:
-      | {
-          decision: 'approved' | 'rejected'
-          artifactVersionId: string
-          expectedRevision: number
-        }
-      | { feedback: string },
+    response: TaskInteractionDecision & {
+      projectId?: string
+      artifactVersionId: string
+      expectedRevision: number
+      expectedBranchId: string
+    } & (
+        | { decision: 'approved' | 'rejected'; feedback?: never }
+        | { feedback: string; decision?: never }
+      ),
     options?: RequestOptions
   ): Promise<PlanResponse>
   forkSession(
@@ -779,18 +1227,59 @@ export class OpenScienceClient {
     sessionId: string,
     options?: RequestOptions
   ): Promise<{ projectId: string; sessionId: string } | null>
-  submitRun(
+  startAgentPackageFork(
+    projectId: string,
+    sessionId: string,
+    correlationId: string,
+    options?: RequestOptions
+  ): Promise<PackageOperation>
+  exportSessionPackage(
+    projectId: string,
+    sessionId: string,
+    destinationPath: string,
+    options?: RequestOptions
+  ): Promise<{ saved: boolean; filePath?: string }>
+  startAgentPackageExport(
+    projectId: string,
+    sessionId: string,
+    destinationPath: string,
+    correlationId: string,
+    options?: RequestOptions
+  ): Promise<PackageOperation>
+  getPackageOperation(options?: RequestOptions): Promise<PackageOperation | null>
+  respondExportReview(
+    request: ExportReviewDecisionRequest,
+    options?: RequestOptions
+  ): Promise<PackageOperation>
+  startAgentPackageImport(
+    sourcePath: string,
+    target: { projectId?: string; projectName?: string },
+    correlationId: string,
+    options?: RequestOptions
+  ): Promise<PackageOperation>
+  importSessionPackage(
+    target: { projectId?: string; projectName?: string },
+    sourcePath: string,
+    options: { nonInteractive: true },
+    rpcOptions?: RequestOptions
+  ): Promise<{ projectId: string; sessionId: string } | null>
+  submitRun(requestId: string, request: RunRequest, options?: RequestOptions): Promise<Submission>
+  continueNotebook(
     requestId: string,
-    request: RunRequest & { otelTraces?: true },
+    request: NotebookContinuationRequest,
     options?: RequestOptions
   ): Promise<Submission>
   getSubmission(requestId: string, options?: RequestOptions): Promise<Submission>
   waitForSubmission(
     requestId: string,
+    options: RequestOptions & { pollIntervalMs?: number; returnReceipt: true }
+  ): Promise<Submission>
+  waitForSubmission(
+    requestId: string,
     options?: RequestOptions & { pollIntervalMs?: number }
   ): Promise<Run>
   startRun(
-    request: RunRequest & { otelTraces?: true },
+    request: RunRequest & { otelTraces: true },
     options: RequestOptions & { requestId: string }
   ): Promise<Run>
   startRun(request: RunRequest & { otelTraces?: never }, options?: RequestOptions): Promise<Run>
@@ -920,7 +1409,6 @@ export class OpenScienceClient {
 }
 
 export function connectToOpenScience(options?: {
-  requireRunTracing?: boolean
   configRoot?: string
   env?: Record<string, string | undefined>
   fetch?: typeof globalThis.fetch

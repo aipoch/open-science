@@ -1,9 +1,10 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { WorkspaceImageToolCard, WorkspaceImageToolOutput } from './WorkspaceImageToolCard'
 import type { ToolActivity } from '@/stores/session-store-contract'
 import { TriangleAlert } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
 import type { NotebookCodeReview } from './notebook-tool-presentation'
 
 import type { SessionTextAnnotationItemType } from '../../../../shared/annotation-contract'
@@ -20,6 +21,7 @@ import { NotebookToolFigureOutputs } from './NotebookToolFigureOutputs'
 import { useNearViewport } from './previews/useNearViewport'
 import type { ToolExecutionPhase } from './tool-execution-phase'
 import {
+  getNotebookRunStatusFromActivity,
   translateToolDetailCopy,
   type ToolActivityDetails,
   type ToolCodeSection,
@@ -37,6 +39,9 @@ type WorkspaceToolDetailsRowProps = {
   phase?: ToolExecutionPhase
   details: ToolActivityDetails
   notebookRun?: NotebookRunRecord
+  retryNotebookRun?: () => void
+  showNotebookFigures?: boolean
+  notebookReference?: NotebookSessionReference
   allowFolderAccess?: boolean
   isExpanded: boolean
   onNotebookRunNearViewport?: (runId: string, isNearViewport: boolean) => void
@@ -173,6 +178,9 @@ const WorkspaceToolDetailsRow = ({
   phase,
   details,
   notebookRun,
+  retryNotebookRun,
+  showNotebookFigures = true,
+  notebookReference,
   allowFolderAccess = false,
   isExpanded,
   onNotebookRunNearViewport,
@@ -191,10 +199,12 @@ const WorkspaceToolDetailsRow = ({
   const notebookOutputLineMeta = notebookRun
     ? formatNotebookRunOutputLineMeta(notebookRun, t)
     : undefined
-  const notebookRunStatus = notebookRun ? notebookRunStatusLabel(notebookRun.status) : undefined
+  const receiptStatus = notebookRunId ? getNotebookRunStatusFromActivity(activity) : undefined
+  const runStatus = notebookRun?.status ?? receiptStatus
+  const notebookRunStatus = runStatus ? notebookRunStatusLabel(runStatus) : undefined
   const notebookTerminalMeta = notebookRunStatus
     ? t(notebookRunStatus)
-    : notebookRun?.status === 'completed'
+    : runStatus === 'completed'
       ? t('done')
       : details.metaLabel
   const notebookRunMeta = notebookFigureMeta
@@ -204,8 +214,8 @@ const WorkspaceToolDetailsRow = ({
       ]
         .filter(Boolean)
         .join(' · ')
-    : notebookRunStatus
-      ? t(notebookRunStatus)
+    : runStatus
+      ? notebookTerminalMeta
       : undefined
   const translateKnownCopy = (value: string): string => translateToolDetailCopy(value, t)
   const reviewStatus = details.codeReview
@@ -374,10 +384,27 @@ const WorkspaceToolDetailsRow = ({
         ) : (
           details.sections.map(renderSection)
         )}
+        {retryNotebookRun && (
+          <ErrorNotice
+            inline
+            description={t('Preview unavailable.')}
+            primaryButton={{ label: t('Retry'), onClick: retryNotebookRun }}
+          />
+        )}
       </WorkspaceToolActivityRowButton>
       {allowFolderAccess && notebookRun ? <NotebookFolderAccessNotice run={notebookRun} /> : null}
       {details.image?.result ? <WorkspaceImageToolOutput result={details.image.result} /> : null}
-      {notebookRun ? <NotebookToolFigureOutputs run={notebookRun} /> : null}
+      {showNotebookFigures && notebookRun ? (
+        <NotebookToolFigureOutputs
+          key={JSON.stringify([
+            notebookReference?.projectId,
+            notebookReference?.sessionId,
+            notebookRun.runId
+          ])}
+          run={notebookRun}
+          reference={notebookReference}
+        />
+      ) : null}
     </>
   )
 }

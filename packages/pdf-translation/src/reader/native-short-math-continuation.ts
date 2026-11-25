@@ -33,7 +33,9 @@ export const hasNativeShortMathContinuation = (content: Content): boolean =>
   (content.items.some((i) => 'str' in i && i.str === '√') &&
     content.items.some(
       (i) =>
-        'str' in i && /^(?:Thus|Hence|Therefore) (?:from|by|using) \(?\d+\.\d+\)?,?$/u.test(i.str)
+        'str' in i &&
+        (i.str === 'log' ||
+          /^(?:Thus|Hence|Therefore) (?:from|by|using) \(?\d+\.\d+\)?,?$/u.test(i.str))
     ))
 const mathText = /^[\p{Script=Latin}\p{Script=Greek}\p{N}\s+\-−=∈∼·|(),.:;'′[\]{}]+$/u
 /** One explicit seam class: an existing protected sum followed by its lowered
@@ -622,6 +624,155 @@ async function splitRadicalContinuation(
   return units.flatMap((unit) => edits.get(unit) ?? [unit])
 }
 
+// Keep a split logarithmic radicand native when a prose owner includes its last glyphs.
+async function preserveRadicalLogSeams(
+  units: readonly Unit[],
+  { content, operators, viewport }: NonNullable<Awaited<ReturnType<typeof nativeInkPageIdentity>>>,
+  pageNumber: number
+): Promise<readonly Unit[]> {
+  const entries = content.items.flatMap((item, index) =>
+    'str' in item && item.str.trim() ? [{ item, index }] : []
+  )
+  const native = new Map<number, string>(
+    units.flatMap((u) =>
+      u.sourceOnly && u.preserve === 'formula'
+        ? u.fragments.flatMap((f) =>
+            f.pageNumber === pageNumber ? f.items.map((i) => [i.index, i.text] as const) : []
+          )
+        : []
+    )
+  )
+  const edits = new Map<Unit, Unit[]>()
+  let paints: Awaited<ReturnType<typeof nativePaints>>
+  for (const owner of units) {
+    const [first, ...rest] = owner.fragments
+    if (
+      owner.sourceOnly ||
+      owner.preserve ||
+      owner.figure ||
+      owner.referenceBoundary ||
+      !rest.length ||
+      owner.fragments.some((f) => f.pageNumber !== pageNumber || f.unclippedRect) ||
+      first.items[0]?.text !== 'log' ||
+      !/^[a-z]$/u.test(first.items[1]?.text ?? '') ||
+      normalized(owner.source) !==
+        normalized(owner.fragments.flatMap((f) => f.items.map((i) => i.text)).join('')) ||
+      !owner.source.startsWith('log ' + first.items[1].text + ' ')
+    )
+      continue
+    const at = entries.findIndex(({ index }) => index === first.items[0].index)
+    const [radical, stem, log, argument, next] = entries.slice(Math.max(at - 2, 0), at + 3)
+    if (
+      at < 2 ||
+      !next ||
+      radical.item.str !== '√' ||
+      !/^[a-z]\/$/u.test(stem.item.str) ||
+      log.item.str !== 'log' ||
+      argument.index !== first.items[1].index ||
+      argument.item.str !== first.items[1].text ||
+      native.get(radical.index) !== radical.item.str ||
+      native.get(stem.index) !== stem.item.str ||
+      ![radical, stem, log, argument].every(({ item }) => upright(item))
+    )
+      continue
+    const h = log.item.height,
+      y = log.item.transform[5],
+      stemX = stem.item.transform[4],
+      right = argument.item.transform[4] + argument.item.width,
+      bottom = viewport.height - y
+    if (
+      Math.abs(stem.item.transform[5] - y) > h * 0.02 ||
+      Math.abs(argument.item.transform[5] - y) > h * 0.02 ||
+      Math.abs(stemX - radical.item.transform[4] - radical.item.width) > h * 0.06 ||
+      radical.item.transform[5] - y < h * 0.8 ||
+      radical.item.transform[5] - y > h ||
+      stem.item.fontName !== argument.item.fontName
+    )
+      continue
+    paints ??= await nativePaints(operators, viewport, true)
+    const rules = paints?.filter(
+      ({ hull: [x1, y1, x2, y2], plainBlack, path }) =>
+        plainBlack &&
+        !path.length &&
+        Math.abs(x1 - stemX) < h * 0.06 &&
+        Math.abs(x2 - right) < h * 0.06 &&
+        y2 > y1 &&
+        y2 - y1 < h * 0.07 &&
+        y1 > bottom - h * 0.98 &&
+        y2 < bottom - h * 0.8
+    )
+    if (rules?.length !== 1) continue
+    const preserved = {
+      ...owner,
+      sourceOnly: true as const,
+      preserve: 'formula' as const
+    }
+    const shortTail = rest[0].items
+    if (
+      first.items.length === 2 &&
+      rest.length === 1 &&
+      shortTail.length === 2 &&
+      shortTail[0].text === '.' &&
+      /^[A-Z][a-z]{1,7}$/u.test(shortTail[1].text)
+    ) {
+      edits.set(owner, [preserved])
+      continue
+    }
+    const prose = first.items[2]
+    const cut = next.item.transform[4] / viewport.width
+    const mathSource = 'log ' + argument.item.str
+    const trailingSource = owner.source.slice(mathSource.length + 1)
+    if (
+      first.items.length !== 3 ||
+      prose.index !== next.index ||
+      prose.text !== next.item.str ||
+      !/^[a-z]{2,} [a-z]{2,}/u.test(prose.text) ||
+      !trailingSource.startsWith(prose.text) ||
+      !upright(next.item) ||
+      Math.abs(next.item.transform[5] - y) > h * 0.02 ||
+      next.item.transform[4] - right < h * 0.15 ||
+      next.item.transform[4] - right > h * 0.5 ||
+      right / viewport.width <= first.rect.x ||
+      cut >= first.rect.x + first.rect.width
+    )
+      continue
+    edits.set(owner, [
+      {
+        ...preserved,
+        id: owner.id + '-radicand',
+        source: mathSource,
+        fragments: [
+          {
+            ...first,
+            items: first.items.slice(0, 2),
+            rect: {
+              ...first.rect,
+              width: right / viewport.width - first.rect.x
+            }
+          }
+        ]
+      },
+      {
+        ...owner,
+        source: trailingSource,
+        fragments: [
+          {
+            ...first,
+            items: [prose],
+            rect: {
+              ...first.rect,
+              x: cut,
+              width: first.rect.x + first.rect.width - cut
+            }
+          },
+          ...rest
+        ]
+      }
+    ])
+  }
+  return units.flatMap((u) => edits.get(u) ?? [u])
+}
+
 export async function nativeShortMathContinuations(
   units: readonly Unit[],
   page: PDFPageProxy,
@@ -645,7 +796,8 @@ export async function nativeShortMathContinuations(
         ? shortMathContinuationPlans(units, identity.content, pageNumber)
         : []
     const alternatives = await splitDisplayedAlternative(units, page, identity, pageNumber)
-    const corrected = await splitRadicalContinuation(alternatives, identity, pageNumber)
+    const radicalContinuations = await splitRadicalContinuation(alternatives, identity, pageNumber)
+    const corrected = await preserveRadicalLogSeams(radicalContinuations, identity, pageNumber)
     if (
       key !== JSON.stringify(units) ||
       identity.key !== (await nativeInkPageIdentity(page, content, viewport))?.key ||

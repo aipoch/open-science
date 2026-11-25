@@ -1,3 +1,5 @@
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
+import { MacSparkleUpdate } from './mac-sparkle'
 import type { WindowsUpdateHandoff } from './windows-update-handoff'
 import { UPDATE_INSTALLATION_REQUIRED, UpdateLifecycleError } from '../../shared/update'
 import { EventEmitter } from 'node:events'
@@ -6,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { windowsDownloadPreference } from './windows-background-download'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import type { Logger } from '@aipoch/diagnostics/node'
 import { ElectronUpdaterStrategy, type ElectronUpdaterDeps } from './electron-updater-strategy'
@@ -114,6 +116,119 @@ const createStrategy = (deps: ElectronUpdaterDeps): ElectronUpdaterStrategy =>
   new ElectronUpdaterStrategy({ platform: 'darwin', arch: 'arm64', ...deps })
 
 describe('ElectronUpdaterStrategy', () => {
+  it.each(['success', 'invalid-pair', 'handoff-failure'] as const)(
+    'uses an admitted signed macOS patch and preserves ZIP fallback (%s)',
+    async (scenario) => {
+      const updater = new FakeUpdater()
+      const directory = await mkdtemp(join(tmpdir(), 'mac-sparkle-strategy-'))
+      onTestFinished(() => rm(directory, { recursive: true, force: true }))
+      const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+      const signed = (b: Buffer): string => sign(null, b, privateKey).toString('base64')
+      const hash = (b: Buffer): string => createHash('sha512').update(b).digest('base64')
+      const patch = Buffer.from('patch')
+      const zip = Buffer.from('larger complete ZIP')
+      const file = {
+        url: 'releases/0.3.0/aipoch-open-science-0.3.0-mac-arm64.zip',
+        sha512: hash(zip),
+        size: zip.length,
+        sparkleDelta: {
+          from: '0.2.0',
+          sourceBuild: '2',
+          targetBuild: '3',
+          size: patch.length,
+          signature: signed(patch),
+          zipSignature: signed(zip),
+          sha512: hash(patch),
+          pairSignature: signed(
+            Buffer.from(
+              JSON.stringify([
+                '0.2.0',
+                '0.3.0',
+                scenario === 'invalid-pair' ? 'x64' : 'arm64',
+                '2',
+                '3',
+                hash(zip),
+                hash(patch)
+              ])
+            )
+          )
+        }
+      }
+      const request = vi.fn(async () => new Response(new Uint8Array(patch)))
+      const native = {
+        begin: vi.fn(async (url: string) => {
+          if (scenario === 'handoff-failure') throw new Error('could not prepare application')
+          const xml = await (await fetch(url)).text()
+          expect(xml).toContain('sparkle:deltaFrom="2"')
+          expect(
+            Buffer.from(await (await fetch(new URL('update.delta', url))).arrayBuffer())
+          ).toEqual(patch)
+        }),
+        commit: vi.fn(),
+        abandon: vi.fn()
+      }
+      const sparkle = new MacSparkleUpdate(
+        Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url').toString('base64'),
+        directory,
+        'arm64',
+        () => native,
+        request
+      )
+      const recoverInstall = vi.fn(async () => ({}))
+      const beforeInstallHandoff = vi.fn(async () => {})
+      const strategy = createStrategy({
+        updater,
+        currentVersion: '0.2.0',
+        fetchImpl: offlineFetch(),
+        macSparkle: sparkle,
+        downloadPreference: Promise.resolve({ enabled: true, setEnabled: vi.fn() }),
+        recoverInstall,
+        beforeInstallHandoff
+      })
+      updater.checkForUpdates.mockImplementation(async () => {
+        updater.emit('update-available', { version: '0.3.0', files: [file] })
+      })
+      updater.runDownload = async () => {
+        updater.emit('update-downloaded', {
+          version: '0.3.0',
+          files: [file],
+          downloadedFile: join(directory, 'update.zip')
+        })
+      }
+      await strategy.check()
+      expect(strategy.getBackgroundDownloadOffer()).toBe(strategy.getStatus())
+      const ready = await strategy.downloadInBackground('0.3.0')
+      expect(ready.state).toBe('ready')
+      if (scenario === 'invalid-pair') {
+        expect(request).not.toHaveBeenCalled()
+        expect(updater.downloadUpdate).toHaveBeenCalledOnce()
+        return
+      }
+      expect(ready.localPath).toBeUndefined()
+      expect(updater.downloadUpdate).not.toHaveBeenCalled()
+      expect(native.begin).not.toHaveBeenCalled()
+      await strategy.apply()
+      expect(beforeInstallHandoff.mock.invocationCallOrder[0]).toBeLessThan(
+        native.begin.mock.invocationCallOrder[0]
+      )
+      expect(request).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          href: `https://statics.aipoch.com/open-science/app/stable/${file.url}.from-0.2.0.delta`
+        }),
+        expect.anything()
+      )
+      if (scenario === 'success') {
+        expect(native.commit).toHaveBeenCalledOnce()
+        expect(updater.quitAndInstall).not.toHaveBeenCalled()
+      } else {
+        expect(native.abandon).toHaveBeenCalledOnce()
+        expect(recoverInstall).toHaveBeenCalledOnce()
+        expect(updater.downloadUpdate).toHaveBeenCalledOnce()
+        expect(beforeInstallHandoff).toHaveBeenCalledTimes(2)
+        expect(updater.quitAndInstall).toHaveBeenCalledOnce()
+      }
+    }
+  )
   it('honors persisted opt-out, cancels an owned transfer, and keeps manual download available', async ({
     onTestFinished
   }) => {

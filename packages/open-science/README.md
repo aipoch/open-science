@@ -50,8 +50,10 @@ open-science project create "First research" --json
 open-science run --project "First research" --prompt "Draft a research plan for comparing two analysis methods." --wait --jsonl
 ```
 
-Confirm `ready: true` in the doctor output before submitting work. The CLI accepts a Project ID
-or an exact, unambiguous name; SDK calls use IDs. Closing the browser does not stop the service:
+Confirm `result.readiness.agent: "ready"` before submitting work; Notebook readiness is checked
+separately. Use `open-science tools list --json` to discover the installed Agent capabilities.
+The `run` command accepts a Project ID or an exact, unambiguous name; SDK calls use IDs.
+Closing the browser does not stop the service:
 
 ```bash
 open-science status --json
@@ -61,6 +63,13 @@ open-science stop
 Stopping the service affects all connected clients. For automated tasks, review the
 [permissions and output options](https://github.com/aipoch/open-science/blob/main/packages/open-science/CLI.md)
 and the safety guidance below.
+
+## Connect an external agent through MCP
+
+Use the [README setup prompt](https://github.com/aipoch/open-science#connect-your-own-agent-through-mcp)
+to configure the three required local stdio servers: `open-science-core`,
+`open-science-research`, and `open-science-literature`. The [CLI guide](https://github.com/aipoch/open-science/blob/main/packages/open-science/CLI.md#external-agents-through-mcp)
+has client-specific commands, profiles, and readiness checks.
 
 ## Update or uninstall
 
@@ -256,9 +265,15 @@ process-local. If the daemon restarted or the suffix was evicted, the iterator y
 `stream.resync-required` with reason `stream-changed` or `cursor-expired`; read the Run or Session
 through the HTTP API to restore authoritative state.
 
-Plan First runs can opt into actionable waiting with returnOnAttention. When the returned Run has
-attention.kind equal to plan-approval, use getSessionPlan and respondSessionPlan. Calling waitForRun
-without returnOnAttention keeps the original terminal-only behavior.
+Runs can opt into actionable waiting with `returnOnAttention`. When the Run has
+`attention.kind` equal to `interactions`, use `listInteractions` and `getInteraction` in its scope.
+Relay the user's response with `respondPermission` or `respondSessionPlan`, passing the exact
+option or Plan version, revision and branch they reviewed and `source: 'user_relay'`. To apply the
+user's explicit delegation, set `interactionMode: 'delegate'` on submission or call
+`setRunInteractionMode` with the current policy revision. A delegated response requires that
+revision and `source: 'delegated_agent'`. After reconnect, query the same interaction to check
+the recorded decision and continuation. `waitForRun` without `returnOnAttention` waits for a
+terminal Run.
 
 Automatic review and Specialist binding reuse existing Session JSON fields. Delegation adds
 delegationPolicy with values allow or deny; an omitted historical value restores as allow.

@@ -405,3 +405,50 @@ index c9a579e..7b90e3f 100644
 -}
  //# sourceMappingURL=windowsExecutableCodeSignatureVerifier.js.map
 \ No newline at end of file
+diff --git a/node_modules/electron-updater/out/AppUpdater.js b/node_modules/electron-updater/out/AppUpdater.js
+--- a/node_modules/electron-updater/out/AppUpdater.js
++++ b/node_modules/electron-updater/out/AppUpdater.js
+@@ -641,6 +641,7 @@
+         return await done(true);
+     }
+     async differentialDownloadInstaller(fileInfo, downloadUpdateOptions, installerPath, provider, oldInstallerFileName) {
++        let stage = "blockmap URL resolution";
+         try {
+             if (this._testOnlyOptions != null && !this._testOnlyOptions.isUseDifferentialDownload) {
+                 return true;
+@@ -691,18 +692,22 @@
+                 }
+                 return null;
+             };
++            stage = "new blockmap download";
+             const newBlockMapData = await downloadBlockMap(blockmapFileUrls[1]);
++            stage = "new blockmap cache write";
+             await saveBlockMapToCacheDir(newBlockMapData, this.downloadedUpdateHelper.cacheDirForPendingUpdate);
+             // get old blockmap from cache dir first, if not found, download it
+             let oldBlockMapData = await getBlockMapFromCacheDir(this.downloadedUpdateHelper.cacheDir);
+             if (oldBlockMapData == null) {
++                stage = "old blockmap download";
+                 oldBlockMapData = await downloadBlockMap(blockmapFileUrls[0]);
+             }
++            stage = "differential reconstruction";
+             await new GenericDifferentialDownloader_1.GenericDifferentialDownloader(fileInfo.info, this.httpExecutor, downloadOptions).download(oldBlockMapData, newBlockMapData);
+             return false;
+         }
+         catch (e) {
+-            this._logger.error(`Cannot download differentially, fallback to full download: ${e.stack || e}`);
++            this._logger.error(`Cannot download differentially (${stage}), fallback to full download: ${e.stack || e}`);
+             if (this._testOnlyOptions != null) {
+                 // test mode
+                 throw e;
+diff --git a/node_modules/electron-updater/out/MacUpdater.js b/node_modules/electron-updater/out/MacUpdater.js
+--- a/node_modules/electron-updater/out/MacUpdater.js
++++ b/node_modules/electron-updater/out/MacUpdater.js
+@@ -92,7 +92,7 @@
+                 const cachedUpdateFilePath = path.join(this.downloadedUpdateHelper.cacheDir, CURRENT_MAC_APP_ZIP_FILE_NAME);
+                 const canDifferentialDownload = () => {
+                     if (!(0, fs_extra_1.pathExistsSync)(cachedUpdateFilePath)) {
+-                        log.info("Unable to locate previous update.zip for differential download (is this first install?), falling back to full download");
++                        log.info("No cached update.zip; performing initial full ZIP download");
+                         return false;
+                     }
+                     return !downloadUpdateOptions.disableDifferentialDownload;

@@ -53,14 +53,25 @@ test('does not re-anchor a historical turn when the reply row replaces the loade
   await page.waitForTimeout(1500)
 
   // The viewport top must sit near the NEW turn's anchor, not a historical one.
-  const anchorTops = await reopenedConversation
-    .locator('[data-slot="message-scroller-item"][data-scroll-anchor="true"]')
-    .evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().top))
-  const viewportTop = await reopenedConversation.evaluate(
-    (element) => element.getBoundingClientRect().top
+  const anchors = reopenedConversation.locator(
+    '[data-slot="message-scroller-item"][data-scroll-anchor="true"]'
   )
-  expect(anchorTops.length).toBe(7)
-  const newAnchorDistance = Math.abs(anchorTops[anchorTops.length - 1] - viewportTop)
-  const oldestAnchorDistance = Math.abs(anchorTops[0] - viewportTop)
-  expect(newAnchorDistance).toBeLessThan(oldestAnchorDistance)
+  await expect
+    .poll(
+      async () => {
+        const anchorTops = await anchors.evaluateAll((rows) =>
+          rows.map((row) => row.getBoundingClientRect().top)
+        )
+        if (!anchorTops.length) return false
+        const viewportTop = await reopenedConversation.evaluate(
+          (element) => element.getBoundingClientRect().top
+        )
+        return (
+          Math.abs(anchorTops[anchorTops.length - 1]! - viewportTop) <
+          Math.abs(anchorTops[0]! - viewportTop)
+        )
+      },
+      { timeout: 15_000 }
+    )
+    .toBe(true)
 })

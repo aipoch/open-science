@@ -53,6 +53,7 @@ type DelegateExecutionEvent =
       providerToolName?: AcpPermissionRequest['providerToolName']
       isMcp?: AcpPermissionRequest['isMcp']
       toolKind?: AcpPermissionRequest['toolKind']
+      taskBranchId?: string
       options: readonly Readonly<{
         optionId: string
         name: string
@@ -140,7 +141,10 @@ type RunningDelegateExecution = Readonly<{
     turn?: DelegateChildTurnIdentity
   ): Promise<DelegateMessageAcceptanceEvidence>
   setPermissionProfile(profile: PermissionProfileId): Promise<void>
-  respondToPermission(response: DelegatePermissionResponse): Promise<void>
+  respondToPermission(
+    response: DelegatePermissionResponse,
+    decision?: import('../acp/permission-broker').TaskPermissionDecision
+  ): Promise<void>
   cancel(): Promise<void>
 }>
 

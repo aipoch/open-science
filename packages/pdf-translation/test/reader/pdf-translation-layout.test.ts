@@ -6407,6 +6407,57 @@ test.each([false, true])(
 )
 
 test.each([true, false])(
+  'preserves a fixed-pitch Python listing through its page header: %s',
+  (fixedPitch) => {
+    const row = (
+      str: string,
+      y: number,
+      x = 93,
+      width = str.length * 5.23,
+      height = 10,
+      fontName = 'Code'
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      fontName,
+      dir: 'ltr',
+      hasEOL: true,
+      transform: [height, 0, 0, height, x, y],
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false
+    })
+    const description = 'This example compares independent readings.'
+    const pages = [
+      [
+        row('example.py', 114, 93, 54, 10, 'Caption'),
+        row("'''", 102),
+        row(description, 90, 93, fixedPitch ? undefined : 240),
+        row('The procedure is reproduced below.', 78)
+      ],
+      [
+        row('2', 727, 79, 4.6, 8.9, 'Header'),
+        row('MEASUREMENT RESULTS', 727, 230, 149, 8.9, 'Header'),
+        row("'''", 703),
+        row('from statistics import mean', 691),
+        row('def summarize():', 667),
+        row('print(mean([2, 4]))', 655, 112),
+        row('if __name__ == "__main__":', 631),
+        row('summarize()', 619, 112),
+        row('References', 587, 271, 69, 12, 'Heading')
+      ]
+    ].map((items, i) => ({ page: i + 1, width: 612, height: 792, rotation: 0, items }))
+    const { units } = extractDocument({ pages, pageCount: pages.length })
+    const code = units.filter((unit) => unit.sourceOnly && unit.preserve === 'code')
+    expect(code.flatMap((unit) => unit.items).sort()).toEqual(
+      fixedPitch ? ['1:1', '1:2', '1:3', '2:2', '2:3', '2:4', '2:5', '2:6', '2:7'] : []
+    )
+    expect(units.find((unit) => unit.items.includes('2:8'))?.source).toBe('References')
+  }
+)
+
+test.each([true, false])(
   'preserves an imported Python listing only with assignment evidence: %s',
   (code) => {
     const items = [
@@ -8262,6 +8313,37 @@ test('a wrapped two-letter acronym and linked citation stay inside their body pa
     result.units[0].items,
     inputs.map((_, index) => `1:${index}`)
   )
+})
+
+const nativeCitationTails = readPdfTranslationCases<{
+  name: string
+  page: PdfLayoutPage
+  joins: [string, [number, number]][]
+}>('wrapped-terminal-citation-tails.jsonl')
+
+test.each(nativeCitationTails)('$name', ({ page, joins }) => {
+  const result = extractDocument({ pages: [page] })
+  for (const [citation, [head, tail]] of joins) {
+    const owner = result.units.find((unit) => unit.items.includes(`1:${tail}`))
+    assert.ok(owner?.items.includes(`1:${head}`))
+    assert.ok(owner.source.endsWith(citation))
+    assert.equal(owner.sourceOnly, undefined)
+  }
+  const claims = result.units.flatMap((unit) => unit.items)
+  assert.equal(claims.length, page.items.length)
+  assert.equal(new Set(claims).size, page.items.length)
+})
+
+test.each(['font', 'gap'])('rejects a wrapped terminal citation with a mismatched %s', (fault) => {
+  const fixture = nativeCitationTails[0]
+  const page = structuredClone(fixture.page)
+  const [, [head, tail]] = fixture.joins[1]
+  if (fault === 'font') page.items[tail].fontName = 'separate'
+  if (fault === 'gap') page.items[tail].transform[5] -= 5
+  const result = extractDocument({ pages: [page] })
+  const owner = result.units.find((unit) => unit.items.includes(`1:${tail}`))
+  assert.ok(owner)
+  assert.ok(!owner.items.includes(`1:${head}`))
 })
 
 test.each(
@@ -22790,6 +22872,46 @@ test.each(['complete keyword', 'unwitnessed phrase', 'distant heading'])(
   }
 )
 
+test.each(['matching adjective', 'unwitnessed term', 'different rail', 'printed compound'])(
+  'joins an interrupted keyword term only with its native rail and spelling witness: %s',
+  (shape) => {
+    const page = wrappedKeywordListPage()
+    const [, witness, , label, body, tail, heading] = page.items
+    label.transform[4] = 84
+    body.transform[4] = 134
+    body.width = 386
+    body.str = 'Water: quality — Air: aerosols — Measurement techniques: Spec-'
+    tail.str = 'trometry'
+    tail.width = 37
+    tail.hasEOL = true
+    tail.transform[4] = shape === 'different rail' ? 120 : 133.3
+    heading.str = 'INTRODUCTION'
+    heading.fontName = 'Body'
+    heading.transform[4] = 130
+    witness.str =
+      shape === 'unwitnessed term'
+        ? 'We recorded a reference value for every pair of observations.'
+        : 'We recorded a spectrometric reading for every pair of observations.'
+    if (shape === 'printed compound')
+      page.items[2].str = 'The final comparison used spec-trometry across the samples.'
+
+    const { units } = extractDocument({ pages: [page] })
+    const owner = units.find((unit) => unit.items.includes('1:3'))
+    if (shape === 'matching adjective') {
+      expect(owner?.source).toBe(
+        'Keywords: Water: quality — Air: aerosols — Measurement techniques: Spectrometry'
+      )
+      expect(owner?.items).toEqual(['1:3', '1:4', '1:5'])
+      expect(owner?.originalStrings).toEqual([label.str, body.str, tail.str])
+      expect(owner?.risks).not.toContain('ambiguous-line-hyphen')
+    } else {
+      expect(owner?.source).toBe('Keywords: ' + body.str)
+      expect(owner?.items).toEqual(['1:3', '1:4'])
+      expect(units.find((unit) => unit.items.includes('1:5'))?.source).toBe(tail.str)
+    }
+  }
+)
+
 function subscriptedLogarithmPage(): PdfLayoutPage {
   const row = (
     str: string,
@@ -26516,3 +26638,241 @@ test.each(['aligned', 'shifted continuation', 'unclosed comprehension', 'adjacen
     expect(result.units.find((unit) => unit.items.includes('1:10'))?.sourceOnly).toBeUndefined()
   }
 )
+
+test.each(['monospace', 'serif'])(
+  'retains a complete computer algebra call between its prose lead and result (%s)',
+  (fontFamily) => {
+    const command = 'sum(1/(j+4)^2,j=2..infinity);'
+    const body = (str: string, y: number, width: number) => ({
+      ...item(str, 68, y, width, 10),
+      fontName: 'Body',
+      fontFamily: 'serif',
+      fontVertical: false
+    })
+    const code = {
+      ...item(command, 68, 476, 175, 10),
+      fontName: 'Code',
+      fontFamily,
+      fontVertical: false
+    }
+    const { units } = extractDocument(
+      document([
+        page([
+          body('We can evaluate the series in Sage:', 452, 210),
+          code,
+          body('Outputs a numerical estimate after a few seconds.', 500, 240)
+        ])
+      ])
+    )
+    const original = units.find((unit) => unit.items.includes('1:1'))
+    expect(original?.source).toBe(command)
+    expect(original?.preserve).toBe(fontFamily === 'monospace' ? 'code' : undefined)
+    expect(original?.sourceOnly).toBe(fontFamily === 'monospace' ? true : undefined)
+  }
+)
+
+test.each([true, false])(
+  'keeps wrapped comparison cells on their own row only with a native caption (%s)',
+  (captioned) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height = 10
+    ): PdfLayoutTextItem => ({
+      str,
+      dir: 'ltr',
+      width,
+      height,
+      transform: [height, 0, 0, height, x, y],
+      fontName: 'Body',
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false,
+      hasEOL: true
+    })
+    const items = [
+      item(
+        captioned ? 'Table 1: Comparison of instruments' : 'Comparison of instruments',
+        90,
+        710,
+        200
+      ),
+      item('Instrument', 70, 684, 65),
+      item('Measurement scope', 175, 684, 110),
+      item('Operational limits', 360, 684, 96)
+    ]
+    const scopes = [
+      ['Tracks changes in surface temperature', 'with a calibrated sensor'],
+      ['Captures wider changes in water level', 'during the rainy season'],
+      ['Reports average wind direction', 'during the observation window']
+    ]
+    for (const [n, scope] of scopes.entries()) {
+      const y = 666 - n * 36
+      items.push(
+        item(['Probe Alpha', 'Gauge Beta', 'Vane Gamma'][n], 70, y, 65),
+        item(scope[0], 175, y, 165),
+        item(scope[1], 175.3, y - 12, 130),
+        item('Requires a dry location', 360, y, 124),
+        item('for successful deployment', 360, y - 12, 135)
+      )
+    }
+    items.push(item('Measurement Results', 65, 540, 155, 14))
+    const { pages } = extractDocument({
+      pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+    })
+    const cells = pages[0].blocks.filter((block) => block.tableCell)
+    expect(cells.filter((cell) => cell.source.startsWith('Requires')).length).toBe(
+      captioned ? 3 : 0
+    )
+    if (captioned) {
+      for (const scope of scopes) {
+        expect(cells.some((cell) => cell.source === scope.join(' '))).toBe(true)
+      }
+    }
+  }
+)
+
+test('preserves separate quantity columns when printed numbers use several fonts', () => {
+  const item = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Body',
+    hasEOL = false
+  ): PdfLayoutTextItem => ({
+    str,
+    dir: 'ltr',
+    width,
+    height: 10,
+    transform: [10, 0, 0, 10, x, y],
+    fontName,
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    fontVertical: false,
+    hasEOL
+  })
+  const items = [
+    item('Table 1: Archived measurement bundles.', 154, 708, 240, 'Body', true),
+    item('Bundle', 150, 685, 32),
+    item('Description', 270, 685, 54),
+    item('Records', 360, 685, 45),
+    item('Size', 446, 685, 18, 'Body', true)
+  ]
+  const descriptions = ['Coastal temperatures', 'Daily rainfall', 'River water levels']
+  for (const [n, description] of descriptions.entries()) {
+    const y = 669 - n * 11
+    items.push(
+      item(['Collection A', 'Collection B', 'Collection C'][n], 150, y, 61),
+      item(description, 270, y, 72),
+      item(String(12 + n), 375, y, 10, 'Digits'),
+      item(',', 385.1, y, 3, 'Punctuation'),
+      item('000', 390, y, 15, 'Digits'),
+      item(n === 1 ? '200' : '20', n === 1 ? 427 : 421, y, n === 1 ? 15 : 10, 'Digits'),
+      item(n === 1 ? 'Bytes' : 'MBytes', n === 1 ? 444 : 433, y, n === 1 ? 20 : 31, 'Body', true)
+    )
+  }
+  const { pages } = extractDocument({
+    pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+  })
+  const cells = pages[0].blocks.filter((block) => block.tableCell)
+  for (const description of descriptions) {
+    expect(cells.find((cell) => cell.source === description)).toMatchObject({ source: description })
+    expect(cells.find((cell) => cell.source === description)?.sourceOnly).toBeUndefined()
+  }
+  expect(cells.filter((cell) => cell.sourceOnly && /Bytes$/.test(cell.source))).toHaveLength(3)
+  expect(cells.filter((cell) => cell.sourceOnly && /000$/.test(cell.source))).toHaveLength(3)
+})
+
+test.each([true, false])(
+  'releases a native connective that introduces a protected equality (prose follows: %s)',
+  (proseFollows) => {
+    const run = (
+      text: string,
+      x: number,
+      y: number,
+      width: number,
+      fontName = 'Body',
+      size = 9
+    ): PdfLayoutTextItem => ({
+      ...item(text, 50 + x, 660 + y, width, size, false),
+      transform: [size * 0.981, 0, 0, size, 50 + x, 660 + y],
+      fontName,
+      fontFamily: 'sans-serif',
+      fontAscent: fontName === 'Greek' ? 0.482 : 0.715,
+      fontDescent: -0.282,
+      fontVertical: false
+    })
+    const items = [
+      run('where', 0, 0, 24.2),
+      run(' ', 24.2, 0, 2.95),
+      run('K', 27.09, 0, 2.99, 'Italic'),
+      run('ref', 30.01, -1.88, 9.05, 'Italic', 7),
+      run(' ', 39.06, -1.88, 3.2, 'Italic', 7),
+      run('=', 42.26, 0, 7.27, 'Symbol', 9.34),
+      run(' ', 49.53, 0, 2.61, 'Symbol', 9.34),
+      run('2', 52.13, 0, 4.4),
+      run('K', 57.18, 0, 2.99, 'Italic'),
+      run('2', 60.59, 3.25, 3.49, 'Body', 7),
+      run('/', 64.69, 0, 5.43),
+      run('σ', 70.35, 0, 5.48, 'Greek'),
+      run(' ', 75.83, 0, 2.36, 'Greek'),
+      { ...run('is the nominal scale factor of the sensor', 78.19, 0, 171.4), hasEOL: true }
+    ]
+    if (!proseFollows) items[0].hasEOL = true
+    const { units } = extractDocument(document([page(items)]))
+    const connective = units.find((unit) => unit.items.includes('1:0'))
+    const relation = units.find((unit) => unit.items.includes('1:5'))
+    if (proseFollows) {
+      expect(connective).toMatchObject({ source: 'where', items: ['1:0'] })
+      expect(connective?.sourceOnly).toBeUndefined()
+      expect(relation).toMatchObject({ preserve: 'formula', sourceOnly: true })
+      expect(relation?.items).toEqual(['1:2', '1:3', '1:5', '1:7', '1:8', '1:9', '1:10', '1:11'])
+    }
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      items.flatMap((run, index) => (run.str.trim() ? ['1:' + index] : [])).sort()
+    )
+  }
+)
+
+test('keeps wrapped frequency and angle ranges in their prose paragraph', () => {
+  const run = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    fontName = 'Body',
+    size = 12,
+    eol = false
+  ): PdfLayoutTextItem => ({ ...item(text, x, y, width, size, eol), fontName })
+  const items = [
+    run(
+      'Measurements were recorded at each position across a broad',
+      60,
+      380,
+      468,
+      'Body',
+      12,
+      true
+    ),
+    run('band (8-', 60, 400, 49),
+    run('15', 109, 400, 14),
+    run('Hz, a full period), and captured with a wide', 126, 400, 402, 'Body', 12, true),
+    run('coverage (', 60, 420, 52),
+    run('5', 112, 420, 6, 'Symbols'),
+    run('°', 118, 416, 3, 'Symbols', 8.5),
+    run('-', 124, 420, 4),
+    run('70', 131, 420, 12, 'Symbols'),
+    run('°', 143, 416, 3, 'Symbols', 8.5),
+    run(') over the entire observation window at each point', 146.5, 420, 381.5, 'Body', 12, true),
+    run('while the sensor position remained fixed.', 60, 440, 225, 'Body', 12, true)
+  ]
+  const { units } = extractDocument(document([page(items)]))
+  expect(units).toHaveLength(1)
+  expect(units[0].source).toMatch(/band \(8-15 Hz, a full period\), and captured with a wide/u)
+  expect(units[0].source).toMatch(/wide coverage \(5°\s*-\s*70°\s*\) over/u)
+  expect(units[0].sourceOnly).toBeUndefined()
+  expect(units[0].items).toEqual(items.map((_, i) => `1:${i}`))
+})

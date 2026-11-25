@@ -1,4 +1,8 @@
 import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
+import type { PDFDocumentProxy } from 'pdfjs-dist'
+import type { PdfStructureSource } from '../../../../../../shared/pdf-structure'
+import { pdfCaptionKey, pdfReferenceKey } from './pdf-figure-index'
+import type { PdfLinkDestination } from './pdf-native-links'
 
 export type Selection = {
   result: PdfStructureResult
@@ -338,4 +342,129 @@ export function groupPdfFigureSelections(results: PdfStructureResult[]): Selecti
       else entries.push({ result, element })
     }
   return entries
+}
+
+// Only a complete figure reference can intercept an existing PDF jump. A panel reference
+// opens the parent figure; a compound reference or a separately captioned panel keeps its jump.
+export async function loadPdfFigurePreview(
+  source: PdfStructureSource,
+  destination: PdfLinkDestination,
+  reference: string,
+  signal?: AbortSignal,
+  onCacheMiss?: () => void
+): Promise<{ image: string; caption: string; destination: PdfLinkDestination } | undefined> {
+  const key = pdfReferenceKey(reference)
+  if (!key || signal?.aborted) return undefined
+  const page = destination.pageNumber
+  let result = await window.api.pdfStructure.readCached({ ...source, page })
+  if (signal?.aborted) return undefined
+  if (!result && signal) {
+    onCacheMiss?.()
+    if (signal.aborted) return undefined
+    const requestId = crypto.randomUUID()
+    const cancel = (): void => {
+      void window.api.pdfStructure.cancel(requestId).catch(() => undefined)
+    }
+    signal.addEventListener('abort', cancel, { once: true })
+    try {
+      result = await window.api.pdfStructure.parse({ ...source, page, requestId })
+    } catch {
+      return undefined
+    } finally {
+      signal.removeEventListener('abort', cancel)
+    }
+  }
+  if (!result || signal?.aborted) return undefined
+  const candidates = result.elements.filter(
+    (element) =>
+      key.startsWith(element.kind + ':') &&
+      element.regions[0]?.page === page &&
+      element.caption &&
+      pdfCaptionKey(element.caption.text, 'extracted') === key
+  )
+  if (candidates.length !== 1) return undefined
+  const { caption, thumbnailId, regions } = candidates[0]
+  if (!caption || !thumbnailId) return undefined
+  const image = await window.api.pdfStructure.readThumbnail({
+    ...source,
+    page,
+    extractionId: result.extractionId,
+    thumbnailId
+  })
+  if (!image || signal?.aborted) return undefined
+  const { x, y } = regions[0]
+  return { image, caption: caption.text, destination: { pageNumber: page, x, y } }
+}
+
+// The document owner keeps PDF.js pages alive. This cache owns only its render tasks,
+// temporary canvases and three most recently used page images.
+export function createPdfPagePreviewCache(document: PDFDocumentProxy): {
+  load(pageNumber: number, signal: AbortSignal, detail?: boolean): Promise<string | undefined>
+  clear(): void
+} {
+  const images = new Map<number, string>()
+  const active = new Set<AbortController>()
+
+  return {
+    async load(pageNumber, signal, detail = false) {
+      if (
+        signal.aborted ||
+        !Number.isInteger(pageNumber) ||
+        pageNumber < 1 ||
+        pageNumber > document.numPages
+      )
+        return undefined
+      const cached = !detail && images.get(pageNumber)
+      if (cached) {
+        images.delete(pageNumber)
+        images.set(pageNumber, cached)
+        return cached
+      }
+      const controller = new AbortController()
+      const abort = (): void => controller.abort()
+      let renderTask:
+        ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | undefined
+      let canvas: HTMLCanvasElement | undefined
+      const cancelRender = (): void => renderTask?.cancel()
+      signal.addEventListener('abort', abort, { once: true })
+      controller.signal.addEventListener('abort', cancelRender, { once: true })
+      active.add(controller)
+      try {
+        const page = await document.getPage(pageNumber)
+        if (controller.signal.aborted) return undefined
+        const base = page.getViewport({ scale: 1 })
+        if (!Number.isFinite(base.width + base.height) || base.width <= 0 || base.height <= 0)
+          return undefined
+        const viewport = page.getViewport({
+          scale: (detail ? 3000 : 1200) / Math.max(base.width, base.height)
+        })
+        canvas = globalThis.document.createElement('canvas')
+        canvas.width = Math.max(1, Math.floor(viewport.width))
+        canvas.height = Math.max(1, Math.floor(viewport.height))
+        const context = canvas.getContext('2d')
+        if (!context) return undefined
+        renderTask = page.render({ canvas, canvasContext: context, viewport })
+        await renderTask.promise
+        if (controller.signal.aborted) return undefined
+        const image = canvas.toDataURL('image/png')
+        if (!detail) {
+          images.delete(pageNumber)
+          images.set(pageNumber, image)
+          if (images.size > 3) images.delete(images.keys().next().value!)
+        }
+        return image
+      } catch {
+        return undefined
+      } finally {
+        signal.removeEventListener('abort', abort)
+        controller.signal.removeEventListener('abort', cancelRender)
+        active.delete(controller)
+        if (canvas) canvas.width = canvas.height = 0
+      }
+    },
+    clear() {
+      images.clear()
+      for (const controller of active) controller.abort()
+    }
+  }
 }

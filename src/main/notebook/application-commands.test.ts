@@ -266,6 +266,7 @@ describe('Notebook application commands', () => {
       ...notebookApplicationCommands.commands,
       ...notebookEnvironmentApplicationCommands.commands
     ]).toEqual([
+      expect.objectContaining({ name: 'notebook:run-figure' }),
       expect.objectContaining({ name: 'notebook:run-evidence' }),
       expect.objectContaining({ name: 'notebook:run-index' }),
       expect.objectContaining({ name: 'notebook:background-tasks' }),

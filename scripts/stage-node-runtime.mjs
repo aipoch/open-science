@@ -17,6 +17,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { x as extractTar } from 'tar'
 import { unzipSync } from 'fflate'
@@ -27,6 +28,7 @@ const root = resolve(import.meta.dirname, '..')
 export const nodeRuntime = JSON.parse(await readFile(join(root, 'build/node-runtime.json'), 'utf8'))
 const archiveLimit = 100 * 1024 * 1024
 const stagingVersion = 3
+export const NODE_RUNTIME_DOWNLOAD_BACKOFF_MS = [5_000, 15_000]
 const npmRequiredFiles = ['package.json', 'LICENSE', 'bin/npm-cli.js', 'bin/npx-cli.js']
 const npmDirectory = 'node_modules/npm'
 const cliBundle = 'cli-bundle.cjs'
@@ -202,6 +204,39 @@ export async function verifyNodeArchive(path, expected) {
     throw new Error('Node runtime archive checksum mismatch.')
 }
 
+export async function fetchNodeRuntimeArchive(
+  url,
+  { dispatcher, fetchImpl = fetch, delay = sleep, log = console.warn } = {}
+) {
+  for (let attempt = 0; attempt <= NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length; attempt += 1) {
+    let response
+    try {
+      response = await fetchImpl(url, {
+        signal: AbortSignal.timeout(120_000),
+        dispatcher
+      })
+    } catch (error) {
+      if (attempt === NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length) throw error
+      const pause = NODE_RUNTIME_DOWNLOAD_BACKOFF_MS[attempt]
+      log(
+        `Node runtime download failed (attempt ${attempt + 1}/${NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length + 1}); retrying after ${pause}ms`
+      )
+      await delay(pause)
+      continue
+    }
+    if (response.ok && response.body) return response
+    if (response.body?.cancel) await response.body.cancel()
+    const error = new Error(`Node runtime download failed (${response.status}).`)
+    const retryable = response.ok || response.status === 429 || response.status >= 500
+    if (!retryable || attempt === NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length) throw error
+    const pause = NODE_RUNTIME_DOWNLOAD_BACKOFF_MS[attempt]
+    log(
+      `Node runtime download failed (attempt ${attempt + 1}/${NODE_RUNTIME_DOWNLOAD_BACKOFF_MS.length + 1}); retrying after ${pause}ms`
+    )
+    await delay(pause)
+  }
+}
+
 async function fileDigest(path, limit = Infinity) {
   const hash = createHash('sha256')
   let size = 0
@@ -321,15 +356,10 @@ export async function stageNodeRuntime({
     if (error.code !== 'ENOENT') throw error
     const dispatcher = new EnvHttpProxyAgent()
     try {
-      const response = await fetch(
+      const response = await fetchNodeRuntimeArchive(
         `https://nodejs.org/dist/v${nodeRuntime.version}/${source.file}`,
-        {
-          signal: AbortSignal.timeout(120_000),
-          dispatcher
-        }
+        { dispatcher }
       )
-      if (!response.ok || !response.body)
-        throw new Error(`Node runtime download failed (${response.status}).`)
       const temporary = `${archive}.${randomUUID()}.partial`
       try {
         const chunks = []

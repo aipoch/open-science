@@ -2,7 +2,12 @@
 // Resolve compact inline fractions only when two equally small tiers straddle
 // a body baseline and the numerator is centered over a connected denominator.
 // The worker must additionally prove/preserve the original dividing rule.
-export const resolveInlineFractions = (items, bodyBaseline, bodyFont) => {
+export const resolveInlineFractions = (
+  items,
+  bodyBaseline,
+  bodyFont,
+  coefficientDenominator = false
+) => {
   const result = []
   const used = new Set()
   for (const numerator of items) {
@@ -109,7 +114,9 @@ export const resolveInlineFractions = (items, bodyBaseline, bodyFont) => {
         (/^\d/u.test(numerator.text.trim())
           ? /[+−*/=-]/u.test(text) ||
             /^\d{1,4}$/u.test(text) ||
-            (numerator.text.trim() === '1' && /^[A-Za-z\p{Script=Greek}]$/u.test(text))
+            (numerator.text.trim() === '1' &&
+              (/^[A-Za-z\p{Script=Greek}]$/u.test(text) ||
+                (coefficientDenominator && /^[1-9]\d?[A-Za-z]$/u.test(text))))
           : /^\d{1,4}$/u.test(text) ||
             /^[A-Za-z\p{Script=Greek}]{1,12}$/u.test(text) ||
             /^[A-Za-z\p{Script=Greek}][+−-]\d{1,3}$/u.test(text)) &&
@@ -175,7 +182,12 @@ export const resolveInlineFractions = (items, bodyBaseline, bodyFont) => {
       label:
         numerator.text.trim() +
         '/' +
-        (/^[\dA-Za-z\p{Script=Greek}]+$/u.test(denominatorText)
+        (/^[\dA-Za-z\p{Script=Greek}]+$/u.test(denominatorText) &&
+        !(
+          coefficientDenominator &&
+          numerator.text.trim() === '1' &&
+          /^[1-9]\d?[A-Za-z]$/u.test(denominatorText)
+        )
           ? denominatorText
           : '(' + denominatorText + ')'),
       numerator: numerator.i,

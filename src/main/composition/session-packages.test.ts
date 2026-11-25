@@ -107,7 +107,10 @@ async function createPublicationFixture(): Promise<{
         archiveCoordinator,
         sessionPersistenceCoordinator: owner,
         // Publication recovery has no Notebook runtime or live process resources.
-        notebookService: { waitForSessionTeardown: async () => undefined }
+        notebookService: {
+          currentExecutionIntent: () => undefined,
+          waitForSessionTeardown: async () => undefined
+        }
       }),
       readImageTasks: async () => [],
       modules: { add: (_: undefined, create: () => { capability: unknown }) => create().capability }

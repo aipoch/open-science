@@ -613,7 +613,7 @@ it.skipIf(process.platform === 'win32').each(['healthy', 'pressured', 'unavailab
             source: 'test',
             executionScope: 'windows:host',
             facts: {
-              availableBytes: current === 'pressured' ? 5 : 80,
+              availableBytes: current === 'pressured' ? 2 : 80,
               totalBytes: 100,
               committedBytes: 50,
               commitLimitBytes: 100
@@ -723,7 +723,7 @@ it('observes and releases an unstarted original batch without opening Compute or
 
 it('keeps a current refused decision visible after memory recovers even when no resource was ever created', async () => {
   const root = await mkdtemp(join(tmpdir(), 'notebook-release-empty-refusal-'))
-  let availableBytes = 5
+  let availableBytes = 2
   const policy = new MemoryPolicyService({
     adapter: {
       platform: 'win32',
@@ -760,7 +760,12 @@ it('keeps a current refused decision visible after memory recovers even when no 
       groups: [],
       releases: [],
       pendingDecisions: [
-        { projectId: scope.projectId, sessionId: scope.sessionId, refusalId: intent.refusalId }
+        {
+          projectId: scope.projectId,
+          sessionId: scope.sessionId,
+          refusalId: intent.refusalId,
+          kind: 'memory'
+        }
       ]
     })
     expect(service.currentExecutionIntent(scope)).toBe(intent)

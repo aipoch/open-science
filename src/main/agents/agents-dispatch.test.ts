@@ -328,6 +328,21 @@ describe('AgentsService.dispatch — switch op routing (issue 05)', () => {
     expect(notify).toHaveBeenCalledWith({ sessionId: 'session-trusted', targetName: null })
   })
 
+  it('rejects missing and malformed switch names without requesting approval', async () => {
+    const { service, gateway, persist, notify } = buildService({})
+    for (const params of [{}, { name: { frameId: 'frame', attemptId: 'attempt' } }, { name: 1 }]) {
+      await expect(
+        service.dispatch(
+          { op: 'switch', params },
+          { sessionId: 'session-trusted', callerRole: 'main' }
+        )
+      ).rejects.toThrow('host.agents.switch: Pass a Specialist name or explicit null')
+    }
+    expect(gateway.decide).not.toHaveBeenCalled()
+    expect(persist).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
+  })
+
   it('the trusted calling session is the only session the switch may target', async () => {
     const { service, persist } = buildService({})
     // A sandbox forges a session id in params; the dispatcher honors only the server context.

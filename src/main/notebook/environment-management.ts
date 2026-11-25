@@ -47,6 +47,7 @@ type NotebookEnvironmentManagementOptions = {
   environmentOperations: Pick<NotebookEnvironmentOperations, 'runMutation'>
   runtimeRepair: Pick<NotebookRuntimeRepairOwner, 'completeRemovedManagedEnvironment'>
   isAgentEnvironmentCreationEnabled: () => Promise<boolean>
+  invalidateDiscovery?: (language?: NotebookLanguage) => void
 }
 
 /** Owns named-environment validation, lifecycle ordering, and live-use protection. */
@@ -86,7 +87,7 @@ class NotebookEnvironmentManagementOwner {
         signal?.throwIfAborted()
         await this.options.ensureRecovered()
         this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
-        return this.options.environmentOperations.runMutation(
+        const result = await this.options.environmentOperations.runMutation(
           name,
           async () => {
             signal?.throwIfAborted()
@@ -116,6 +117,8 @@ class NotebookEnvironmentManagementOwner {
           },
           signal
         )
+        this.options.invalidateDiscovery?.(request.language)
+        return result
       }
       case 'list': {
         const environments = await manager.listEnvironments(signal)
@@ -127,7 +130,7 @@ class NotebookEnvironmentManagementOwner {
         this.assertUnused(name)
         await this.options.ensureRecovered()
         this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
-        return this.options.environmentOperations.runMutation(
+        const result = await this.options.environmentOperations.runMutation(
           name,
           async () => {
             signal?.throwIfAborted()
@@ -139,6 +142,8 @@ class NotebookEnvironmentManagementOwner {
           },
           signal
         )
+        this.options.invalidateDiscovery?.()
+        return result
       }
     }
   }
@@ -159,7 +164,7 @@ class NotebookEnvironmentManagementOwner {
     const name = assertSafeEnvName(`repro-${input.lockChecksum.slice(0, 12)}`)
     await this.options.ensureRecovered()
     this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
-    return this.options.environmentOperations.runMutation(name, async () => {
+    const result = await this.options.environmentOperations.runMutation(name, async () => {
       const result = await manager.createNamedEnvironmentFromLock!(
         name,
         input.language,
@@ -169,6 +174,8 @@ class NotebookEnvironmentManagementOwner {
       )
       return { environmentName: result.environment.name, reused: result.reused }
     })
+    this.options.invalidateDiscovery?.(input.language)
+    return result
   }
 
   private assertUnused(name: string): void {

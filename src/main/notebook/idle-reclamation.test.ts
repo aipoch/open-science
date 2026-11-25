@@ -47,7 +47,7 @@ function fixture(): {
   return { pool, resources, busy, onFailure, add }
 }
 
-const hostPressurePolicy = (availableBytes: () => number = () => 5): MemoryPolicyService =>
+const hostPressurePolicy = (availableBytes: () => number = () => 2): MemoryPolicyService =>
   new MemoryPolicyService({
     now: Date.now,
     adapter: {
@@ -165,7 +165,7 @@ describe('Notebook idle interpreter reclamation', () => {
     const { pool: unused, resources, add } = fixture()
     await unused.dispose()
     for (const group of ['data', 'repl', 'shell'] as const) add(group, group)
-    const policy = hostPressurePolicy(() => (resources.length === 3 ? 5 : 50))
+    const policy = hostPressurePolicy(() => (resources.length === 3 ? 2 : 50))
     const pool = new NotebookIdleReclamation({
       resources: () => resources,
       isSessionBusy: () => false,

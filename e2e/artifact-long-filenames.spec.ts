@@ -116,6 +116,8 @@ test('publishes and downloads long Unicode attachments before and after restart'
           'artifacts',
           'download',
           artifact.id,
+          '--session',
+          session!.id,
           '--output',
           output,
           '--config-root',
@@ -130,11 +132,14 @@ test('publishes and downloads long Unicode attachments before and after restart'
       else expect(bytes.subarray(0, 2).toString()).toBe('PK')
     }
     await page.getByRole('button', { name: 'Files', exact: true }).click()
-    for (const name of [names[0], names[2]]) {
+    const openInSplitView = async (name: string): Promise<void> => {
+      await page.getByRole('tab', { name: 'Files', exact: true }).click()
       await page
-        .getByRole('button', { name: `Preview generated file ${name}`, exact: true })
-        .last()
+        .getByRole('button', { name: `Open ${name} in split view beside the session`, exact: true })
         .click()
+    }
+    for (const name of [names[0], names[2]]) {
+      await openInSplitView(name)
       await expect(page.getByText('中文附件完整内容。', { exact: true }).last()).toBeVisible()
       const tab = page.getByRole('tab').and(page.getByTitle(name, { exact: true }))
       await expect(tab).toHaveAccessibleName(name)
@@ -147,10 +152,7 @@ test('publishes and downloads long Unicode attachments before and after restart'
       ).toBeLessThanOrEqual(160)
       expect(await prefix.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true)
     }
-    await page
-      .getByRole('button', { name: `Preview generated file ${names[1]}`, exact: true })
-      .last()
-      .click()
+    await openInSplitView(names[1])
     await expect(page.locator('[data-office-preview-state="ready"]')).toBeVisible()
     await expect(
       page.frameLocator('iframe[data-office-preview-frame]').locator('.docx-review-counter')
@@ -162,12 +164,7 @@ test('publishes and downloads long Unicode attachments before and after restart'
       .click()
     await expect(page.getByText('中文附件完整内容。', { exact: true }).last()).toBeVisible()
     await page.getByRole('button', { name: 'Files', exact: true }).click()
-    for (const name of [names[4], names[5]]) {
-      await page.getByRole('tab', { name: 'Files', exact: true }).click()
-      await page
-        .getByRole('button', { name: `Open ${name} in split view beside the session`, exact: true })
-        .click()
-    }
+    for (const name of [names[4], names[5]]) await openInSplitView(name)
     for (const name of [names[1], names[2], 'Files']) {
       const close = page.locator(`[data-preview-close="${name}"]`)
       if (await close.count()) await close.click()

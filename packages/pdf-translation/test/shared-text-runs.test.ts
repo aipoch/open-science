@@ -20,161 +20,174 @@ import {
 
 type NativeObject = { obj: number; type: number; text?: string; bounds: number[] }
 
-it.each(['kerning', 'spacing', 'pixel-rollback', 'legacy-fallback', 'effective-clip', 'long-run'])(
-  'splits shared native runs only with exact ink proof: %s',
-  async (kind) => {
-    const pdf = await PDFDocument.create(),
-      long = kind === 'long-run',
-      width = long ? 1800 : 612,
-      height = long ? 200 : 792,
-      page = pdf.addPage([width, height]),
-      font = await pdf.embedFont(
-        kind === 'kerning' || kind === 'spacing'
-          ? StandardFonts.TimesRoman
-          : StandardFonts.Helvetica
-      ),
-      x = kind === 'kerning' || kind === 'spacing' ? 165.667 : 40,
-      y = long ? 100 : 711.163,
-      size = kind === 'kerning' || kind === 'spacing' ? 7.9701 : 10,
-      first = long
-        ? 'I'.repeat(495)
-        : kind === 'kerning' || kind === 'spacing'
-          ? 'top-1 err.'
+it.each([
+  'kerning',
+  'spacing',
+  'pixel-rollback',
+  'legacy-fallback',
+  'effective-clip',
+  'long-run',
+  'en-dash'
+])('splits shared native runs only with exact ink proof: %s', async (kind) => {
+  const pdf = await PDFDocument.create(),
+    long = kind === 'long-run',
+    width = long ? 1800 : 612,
+    height = long ? 200 : 792,
+    page = pdf.addPage([width, height]),
+    font = await pdf.embedFont(
+      kind === 'kerning' || kind === 'spacing' ? StandardFonts.TimesRoman : StandardFonts.Helvetica
+    ),
+    x = kind === 'kerning' || kind === 'spacing' ? 165.667 : 40,
+    y = long ? 100 : 711.163,
+    size = kind === 'kerning' || kind === 'spacing' ? 7.9701 : 10,
+    first = long
+      ? 'I'.repeat(495)
+      : kind === 'kerning' || kind === 'spacing'
+        ? 'top-1 err.'
+        : kind === 'en-dash'
+          ? '= 1.'
           : 'Method',
-      second = kind === 'kerning' || kind === 'spacing' ? 'top-5 err.' : '11'
-    if (kind === 'effective-clip')
-      page.pushOperators(rectangle(x + 12, y - 4, 180, 18), clip(), endPath())
-    // Establish a font resource; the actual run remains one native TJ object.
-    page.drawText('', { font, size, x, y })
-    const key = page.node.newFontDictionary(font.name, font.ref),
-      parts =
-        kind === 'kerning' || kind === 'spacing'
-          ? [
-              font.encodeText('top-1 err'),
-              kind === 'spacing' ? 95 : 55,
-              font.encodeText('.'),
-              -2000,
-              font.encodeText('top-5 err'),
-              55,
-              font.encodeText('.')
-            ]
+    second =
+      kind === 'kerning' || kind === 'spacing'
+        ? 'top-5 err.'
+        : kind === 'en-dash'
+          ? 'The sensor measures the north–south axis.'
+          : '11'
+  if (kind === 'effective-clip')
+    page.pushOperators(rectangle(x + 12, y - 4, 180, 18), clip(), endPath())
+  // Establish a font resource; the actual run remains one native TJ object.
+  page.drawText('', { font, size, x, y })
+  const key = page.node.newFontDictionary(font.name, font.ref),
+    parts =
+      kind === 'kerning' || kind === 'spacing'
+        ? [
+            font.encodeText('top-1 err'),
+            kind === 'spacing' ? 95 : 55,
+            font.encodeText('.'),
+            -2000,
+            font.encodeText('top-5 err'),
+            55,
+            font.encodeText('.')
+          ]
+        : kind === 'en-dash'
+          ? [font.encodeText(first + ' ' + second)]
           : [font.encodeText(first), -2000, font.encodeText(second)]
-    page.pushOperators(
-      PDFOperator.of(PDFOperatorNames.BeginText),
-      PDFOperator.of(PDFOperatorNames.SetFontAndSize, [key, PDFNumber.of(size)]),
-      PDFOperator.of(
-        PDFOperatorNames.SetTextMatrix,
-        [1, 0, 0, 1, x, y].map((v) => PDFNumber.of(v))
-      ),
-      PDFOperator.of(PDFOperatorNames.ShowTextAdjusted, [pdf.context.obj(parts)]),
-      PDFOperator.of(PDFOperatorNames.EndText)
-    )
-    const e = await engine(),
-      input = e.open(await pdf.save()),
-      p = e.p,
-      native = p.FPDF_LoadPage(input.doc, 0),
-      at = e.alloc(64),
-      objects = () => e.objects(native) as NativeObject[],
-      initial = objects(),
-      original = initial.find((o) => o.type === 1 && o.text?.includes(first.slice(0, 5)))!,
-      render = () => {
-        const bitmap = p.FPDFBitmap_Create(width * 2, height * 2, 1)
-        try {
-          p.FPDFBitmap_FillRect(bitmap, 0, 0, width * 2, height * 2, 0xffffffff)
-          p.FPDF_RenderPageBitmap(bitmap, native, 0, 0, width * 2, height * 2, 0, 0)
-          const buffer = p.FPDFBitmap_GetBuffer(bitmap)
-          return e.m.HEAPU8.slice(buffer, buffer + height * 2 * p.FPDFBitmap_GetStride(bitmap))
-        } finally {
-          p.FPDFBitmap_Destroy(bitmap)
-        }
-      }
-    try {
-      expect(original).toBeDefined()
-      const text = p.FPDFText_LoadPage(native),
-        chars: Array<{ code: number; x: number; right: number }> = []
+  page.pushOperators(
+    PDFOperator.of(PDFOperatorNames.BeginText),
+    PDFOperator.of(PDFOperatorNames.SetFontAndSize, [key, PDFNumber.of(size)]),
+    PDFOperator.of(
+      PDFOperatorNames.SetTextMatrix,
+      [1, 0, 0, 1, x, y].map((v) => PDFNumber.of(v))
+    ),
+    PDFOperator.of(PDFOperatorNames.ShowTextAdjusted, [pdf.context.obj(parts)]),
+    PDFOperator.of(PDFOperatorNames.EndText)
+  )
+  const e = await engine(),
+    input = e.open(await pdf.save()),
+    p = e.p,
+    native = p.FPDF_LoadPage(input.doc, 0),
+    at = e.alloc(64),
+    objects = () => e.objects(native) as NativeObject[],
+    initial = objects(),
+    original = initial.find((o) => o.type === 1 && o.text?.includes(first.slice(0, 5)))!,
+    render = () => {
+      const bitmap = p.FPDFBitmap_Create(width * 2, height * 2, 1)
       try {
-        for (let i = 0; i < p.FPDFText_CountChars(text); i++) {
-          if (p.FPDFText_GetTextObject(text, i) !== original.obj) continue
-          const code = p.FPDFText_GetUnicode(text, i)
-          if (code === 32) continue
-          p.FPDFText_GetCharBox(text, i, at, at + 8, at + 16, at + 24)
-          chars.push({ code, x: e.m.HEAPF64[at / 8], right: e.m.HEAPF64[at / 8 + 1] })
-        }
+        p.FPDFBitmap_FillRect(bitmap, 0, 0, width * 2, height * 2, 0xffffffff)
+        p.FPDF_RenderPageBitmap(bitmap, native, 0, 0, width * 2, height * 2, 0, 0)
+        const buffer = p.FPDFBitmap_GetBuffer(bitmap)
+        return e.m.HEAPU8.slice(buffer, buffer + height * 2 * p.FPDFBitmap_GetStride(bitmap))
       } finally {
-        p.FPDFText_ClosePage(text)
+        p.FPDFBitmap_Destroy(bitmap)
       }
-      const firstChars = first.replace(/\s/gu, '').length,
-        rectangles = [
-          {
-            x: original.bounds[0] - 0.1,
-            width: chars[firstChars - 1].right - original.bounds[0] + 0.2,
-            bottom: y - 4,
-            top: y + 10,
-            sourceItems: [first]
-          },
-          {
-            x: chars[firstChars].x - 0.1,
-            width: original.bounds[2] - chars[firstChars].x + 0.2,
-            bottom: y - 4,
-            top: y + 10,
-            sourceItems: [second]
-          }
-        ],
-        before = render(),
-        nativeRender = p.FPDF_RenderPageBitmap,
-        setText = p.FPDFText_SetText
-      let attemptedGroups = 0,
-        rejectedPaints = 0
-      p.FPDFText_SetText = (obj: number, buffer: number) => {
-        if (e.m.HEAPU16[buffer / 2 + 1]) attemptedGroups++
-        return setText(obj, buffer)
-      }
-      p.FPDF_RenderPageBitmap = (...args: number[]) => {
-        nativeRender(...args)
-        if (!['pixel-rollback', 'legacy-fallback'].includes(kind)) return
-        p.FPDFPageObj_GetIsActive(original.obj, at)
-        if (e.m.HEAP32[at / 4]) return
-        if (
-          kind === 'legacy-fallback' &&
-          !objects().some(
-            (o) => o.obj !== original.obj && (o.text?.replace(/\s/gu, '').length ?? 0) > 1
-          )
-        )
-          return
-        const buffer = p.FPDFBitmap_GetBuffer(args[0])
-        e.m.HEAPU8[buffer] ^= 1
-        rejectedPaints++
-      }
-      splitSharedTextRuns(e, input.doc, native, rectangles)
-      p.FPDF_RenderPageBitmap = nativeRender
-      p.FPDFText_SetText = setText
-      const after = objects()
-      expect(Buffer.compare(Buffer.from(render()), Buffer.from(before))).toBe(0)
-      expect(
-        after
-          .map((o) => o.text ?? '')
-          .join('')
-          .replace(/\s/gu, '')
-      ).toBe((first + second).replace(/\s/gu, ''))
-      if (kind === 'pixel-rollback' || kind === 'effective-clip') expect(after).toEqual(initial)
-      if (kind === 'pixel-rollback') expect(rejectedPaints).toBe(2)
-      if (kind === 'legacy-fallback') {
-        expect(rejectedPaints).toBe(1)
-        expect(after.some((o) => o.obj === original.obj)).toBe(false)
-        expect(after.every((o) => (o.text?.replace(/\s/gu, '').length ?? 0) <= 1)).toBe(true)
-      }
-      if (kind === 'kerning') {
-        expect(after.some((o) => o.obj === original.obj)).toBe(false)
-        expect(after.some((o) => o.text?.replace(/\s/gu, '') === 'err')).toBe(true)
-      }
-      if (long) expect(attemptedGroups).toBeGreaterThan(30)
-    } finally {
-      e.free(at)
-      p.FPDF_ClosePage(native)
-      input.close()
     }
+  try {
+    expect(original).toBeDefined()
+    const text = p.FPDFText_LoadPage(native),
+      chars: Array<{ code: number; x: number; right: number }> = []
+    try {
+      for (let i = 0; i < p.FPDFText_CountChars(text); i++) {
+        if (p.FPDFText_GetTextObject(text, i) !== original.obj) continue
+        const code = p.FPDFText_GetUnicode(text, i)
+        if (code === 32) continue
+        p.FPDFText_GetCharBox(text, i, at, at + 8, at + 16, at + 24)
+        chars.push({ code, x: e.m.HEAPF64[at / 8], right: e.m.HEAPF64[at / 8 + 1] })
+      }
+    } finally {
+      p.FPDFText_ClosePage(text)
+    }
+    const firstChars = first.replace(/\s/gu, '').length,
+      rectangles = [
+        {
+          x: original.bounds[0] - 0.1,
+          width: chars[firstChars - 1].right - original.bounds[0] + 0.2,
+          bottom: y - 4,
+          top: y + 10,
+          sourceItems: [first]
+        },
+        {
+          x: chars[firstChars].x - 0.1,
+          width: original.bounds[2] - chars[firstChars].x + 0.2,
+          bottom: y - 4,
+          top: y + 10,
+          sourceItems: [second]
+        }
+      ],
+      before = render(),
+      nativeRender = p.FPDF_RenderPageBitmap,
+      setText = p.FPDFText_SetText
+    let attemptedGroups = 0,
+      rejectedPaints = 0
+    p.FPDFText_SetText = (obj: number, buffer: number) => {
+      if (e.m.HEAPU16[buffer / 2 + 1]) attemptedGroups++
+      return setText(obj, buffer)
+    }
+    p.FPDF_RenderPageBitmap = (...args: number[]) => {
+      nativeRender(...args)
+      if (!['pixel-rollback', 'legacy-fallback'].includes(kind)) return
+      p.FPDFPageObj_GetIsActive(original.obj, at)
+      if (e.m.HEAP32[at / 4]) return
+      if (
+        kind === 'legacy-fallback' &&
+        !objects().some(
+          (o) => o.obj !== original.obj && (o.text?.replace(/\s/gu, '').length ?? 0) > 1
+        )
+      )
+        return
+      const buffer = p.FPDFBitmap_GetBuffer(args[0])
+      e.m.HEAPU8[buffer] ^= 1
+      rejectedPaints++
+    }
+    splitSharedTextRuns(e, input.doc, native, rectangles)
+    p.FPDF_RenderPageBitmap = nativeRender
+    p.FPDFText_SetText = setText
+    const after = objects()
+    expect(Buffer.compare(Buffer.from(render()), Buffer.from(before))).toBe(0)
+    expect(
+      after
+        .map((o) => o.text ?? '')
+        .join('')
+        .replace(/\s/gu, '')
+    ).toBe((first + second).replace(/\s/gu, ''))
+    if (kind === 'pixel-rollback' || kind === 'effective-clip') expect(after).toEqual(initial)
+    if (kind === 'pixel-rollback') expect(rejectedPaints).toBe(2)
+    if (kind === 'legacy-fallback') {
+      expect(rejectedPaints).toBe(1)
+      expect(after.some((o) => o.obj === original.obj)).toBe(false)
+      expect(after.every((o) => (o.text?.replace(/\s/gu, '').length ?? 0) <= 1)).toBe(true)
+    }
+    if (kind === 'kerning') {
+      expect(after.some((o) => o.obj === original.obj)).toBe(false)
+      expect(after.some((o) => o.text?.replace(/\s/gu, '') === 'err')).toBe(true)
+    }
+    if (kind === 'en-dash') expect(after.some((o) => o.obj === original.obj)).toBe(false)
+    if (long) expect(attemptedGroups).toBeGreaterThan(30)
+  } finally {
+    e.free(at)
+    p.FPDF_ClosePage(native)
+    input.close()
   }
-)
+})
 
 it.each([
   'native',

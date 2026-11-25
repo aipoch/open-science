@@ -311,3 +311,92 @@ it('uses an explicit empty native EOL item to close a bibliography row', async (
   expect(right.length).toBeGreaterThan(0)
   expect(right.every((u) => u.sourceOnly && u.preserve === 'reference')).toBe(true)
 })
+
+function singularPreprintFixture(fault = ''): PDFDocumentProxy {
+  const intro =
+    'An ordinary explanation introduces the numerical procedure and describes its general applications in independent studies.'
+  const lead = text('[AB] Ada Example and Ben Writer,', 72, 109, 156, 11, 'Reference')
+  const titleStart = text(
+    'Measurements of linear responses in bounded',
+    231,
+    109,
+    310,
+    11,
+    'Italic'
+  )
+  const titleEnd = text('surface mappings', 72, 124, 84, 11, 'Italic')
+  const archive = text(', arXiv:0000.00000v1 [math. T0] 3 Mar 2024', 156, 124, 215, 11, 'Reference')
+  const heading = text('Reference', 72, 83, 54, 11, 'Heading')
+  heading.hasEOL = lead.hasEOL = titleEnd.hasEOL = archive.hasEOL = false
+  const following = text(
+    'A separate paragraph identifies the laboratory and its contributors to the research project.',
+    72,
+    fault === 'no-entry-boundary' ? 140 : 171,
+    456,
+    11,
+    'Reference'
+  )
+  if (fault === 'missing-locator') archive.str = ', Manuscript under review, 3 Mar 2024'
+  if (fault === 'misaligned-title') titleEnd.transform[4] += 1
+  if (fault === 'wrong-heading') heading.str = 'Sources'
+  const pages = [
+    [text(intro, 72, 101, 480, 11, 'Reference')],
+    [
+      heading,
+      text('', 72, 109, 0, 0),
+      lead,
+      titleStart,
+      titleEnd,
+      archive,
+      text('', 72, 171, 0, 0),
+      following,
+      text('2', 303, 751, 6, 11, 'Reference')
+    ]
+  ]
+  return {
+    numPages: pages.length,
+    fingerprints: ['anonymous-single-bibliography'],
+    getPage: async (n: number) => ({
+      getViewport: () => ({ width: 612, height: 800, transform: [1, 0, 0, -1, 0, 800] }),
+      getTextContent: async () => ({
+        items: pages[n - 1],
+        styles: Object.fromEntries(
+          ['Reference', 'Heading', 'Italic'].map((name) => [
+            name,
+            { ascent: 0.75, descent: -0.25, vertical: false }
+          ])
+        )
+      })
+    })
+  } as unknown as PDFDocumentProxy
+}
+
+it.each(['', 'missing-locator', 'misaligned-title', 'wrong-heading', 'no-entry-boundary'])(
+  'requires a complete independent native preprint citation under a singular heading (%s)',
+  async (fault) => {
+    const extraction = await extractPdfTranslationSource({
+      document: singularPreprintFixture(fault),
+      resourceRequestKey: 'anonymous',
+      signal: new AbortController().signal
+    })
+    const units = applyPdfContentFirstPolicy(extraction.source).units
+    const citation = units.find((unit) => unit.source.startsWith('[AB]'))
+    expect(citation?.preserve).toBe(fault ? undefined : 'reference')
+    expect(citation?.sourceOnly).toBe(fault ? undefined : true)
+    if (!fault)
+      expect(
+        citation?.fragments.flatMap((fragment) => fragment.items.map((item) => item.index))
+      ).toEqual([2, 3, 4, 5])
+    const following = units.find((unit) =>
+      unit.fragments.some(
+        (fragment) => fragment.pageNumber === 2 && fragment.items.some((item) => item.index === 7)
+      )
+    )
+    expect(following?.sourceOnly).toBeUndefined()
+    expect(
+      units.find((unit) => /^(?:Reference|Sources)$/u.test(unit.source))?.sourceOnly
+    ).toBeUndefined()
+    expect(extraction.coverage.includedItemCount).toBe(8)
+    expect(extraction.coverage.excludedItemCount).toBe(0)
+  }
+)

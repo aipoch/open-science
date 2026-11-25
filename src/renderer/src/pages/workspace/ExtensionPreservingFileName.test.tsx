@@ -50,17 +50,35 @@ describe('ExtensionPreservingFileName', () => {
     expect(container.textContent).toBe('note.md')
   })
 
-  const mockWidths = (available: () => number): void => {
+  const mockWidths = (available: () => number, measured = vi.fn()): (() => void) => {
     const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-      this: HTMLElement
-    ) {
-      const width =
-        this.dataset.testid === 'file-name-root'
-          ? available()
-          : Array.from(segmenter.segment(this.textContent ?? '')).length * 8
-      return { width } as DOMRect
-    })
+    const measureText = (text: string): { width: number } => {
+      measured()
+      return { width: Array.from(segmenter.segment(text)).length * 8 }
+    }
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ width: available() }) as DOMRect
+    )
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      measureText
+    } as unknown as CanvasRenderingContext2D)
+    let notify: () => void
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(private callback: ResizeObserverCallback) {}
+        observe(target: Element): void {
+          notify = () =>
+            this.callback(
+              [{ target, contentRect: { width: available() } } as ResizeObserverEntry],
+              this as unknown as ResizeObserver
+            )
+          notify()
+        }
+        disconnect = vi.fn()
+      }
+    )
+    return () => notify()
   }
 
   it('preserves whole filename words instead of cutting into the final word', () => {
@@ -122,27 +140,21 @@ describe('ExtensionPreservingFileName', () => {
 
   it('restores the full name when available width grows and abbreviates again when it shrinks', () => {
     let availableWidth = 80
-    let notifyResize: (() => void) | undefined
-    mockWidths(() => availableWidth)
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        constructor(callback: ResizeObserverCallback) {
-          notifyResize = () => callback([], this as unknown as ResizeObserver)
-        }
-        observe = vi.fn()
-        disconnect = vi.fn()
-      }
-    )
+    const measured = vi.fn()
+    const notifyResize = mockWidths(() => availableWidth, measured)
     const name = 'very_long_experiment_analysis_result_2025.csv'
     renderName(name)
     expect(container.querySelector('[data-testid="file-name-ellipsis"]')).not.toBeNull()
+    const calls = measured.mock.calls.length
+    act(notifyResize)
+    expect(HTMLElement.prototype.getBoundingClientRect).not.toHaveBeenCalled()
+    expect(measured).toHaveBeenCalledTimes(calls)
     availableWidth = 500
-    act(() => notifyResize?.())
+    act(notifyResize)
     expect(container.textContent).toBe(name)
     expect(container.querySelector('[data-testid="file-name-ellipsis"]')).toBeNull()
     availableWidth = 80
-    act(() => notifyResize?.())
+    act(notifyResize)
     expect(container.querySelector('[data-testid="file-name-head"]')?.textContent).toBe('very')
     expect(container.querySelector('[data-testid="file-name-ellipsis"]')).not.toBeNull()
   })

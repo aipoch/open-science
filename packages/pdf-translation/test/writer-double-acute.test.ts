@@ -11,6 +11,7 @@ it.each([
   ['double acute', 'K˝ur', 'Kűr', true],
   ['dotless i', 'Dır', 'Dır', true],
   ['caron on c', 'Čečan', 'Čečan', true],
+  ['acute on c', 'Ćać', 'Ćać', true],
   ['stroke and ogonek', 'Łę-Ęł', 'Łę-Ęł', true],
   ['another unavailable mark', 'K˝ur', 'Křr', false]
 ] as const)(

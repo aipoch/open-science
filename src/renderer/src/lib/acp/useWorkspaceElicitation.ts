@@ -10,7 +10,7 @@ import type {
 } from '../../../../shared/acp'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { isSessionSizeLimitError } from '../../../../shared/session-persistence'
-import { isCurrentQuestionBranch } from '../../stores/session-actionability'
+import { isCurrentSavedQuestion } from '../../stores/session-actionability'
 import { useSessionStore } from '../../stores/session-store'
 import type { ChatSession } from '../../stores/session-store-contract'
 import type { WorkspaceSessionRuntimeSelection } from './useWorkspaceAgentRuntime'
@@ -42,7 +42,7 @@ const pendingWorkspaceElicitations = (
         (elicitation.continuationPending &&
           (elicitation.state === 'answered' || elicitation.state === 'declined'))) &&
       elicitation.durable &&
-      isCurrentQuestionBranch(session, activity.id, elicitation.durable)
+      isCurrentSavedQuestion(session, activity)
       ? [
           {
             requestId: elicitation.durable.requestId,

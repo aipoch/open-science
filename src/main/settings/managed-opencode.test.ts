@@ -1286,3 +1286,32 @@ describe('defaultVerifyBinary', () => {
     }
   )
 })
+
+describe('installManagedOpencode error descriptions', () => {
+  it('surfaces actionable network diagnostics for nested fetch errors', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-opencode-err-'))
+    try {
+      const outcome = await installManagedOpencode({
+        installId: 'opencode-net-err',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://registry.example.test'],
+        platform: { key: 'linux-x64', binName: 'opencode' },
+        detectAvx2: () => true,
+        fetchJson: async () => {
+          throw new TypeError('fetch failed', {
+            cause: Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' })
+          })
+        }
+      })
+
+      expect(outcome.result).toEqual({
+        installId: 'opencode-net-err',
+        ok: false,
+        error: expect.stringContaining('Network error (ENOTFOUND)')
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})

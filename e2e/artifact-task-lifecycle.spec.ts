@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { expect } from '@playwright/test'
-import type { TaskRun, TaskSessionSummary } from '../src/shared/task-api'
+import type { TaskRun, TaskSessionSummary, TaskSubmission } from '../src/shared/task-api'
 import { test } from './fixtures/electron-app'
 import { createProject } from './certification/helpers'
 
@@ -38,7 +38,7 @@ for (const observe of [false, true]) {
       return JSON.parse(stdout) as T
     }
     const prompt = `Create a provenance artifact.${observe ? ' Observe the Task before publication.' : ''}`
-    const started = await cli<TaskRun>([
+    let submission = await cli<TaskSubmission>([
       'run',
       '--project',
       projectId,
@@ -47,6 +47,19 @@ for (const observe of [false, true]) {
       '--approval-profile',
       'auto'
     ])
+    await expect
+      .poll(async () => {
+        submission = await cli<TaskSubmission>([
+          'run',
+          'status',
+          '--request-id',
+          submission.requestId
+        ])
+        return submission.status
+      })
+      .toBe('accepted')
+    expect(submission.runId).toEqual(expect.any(String))
+    const started = await cli<TaskRun>(['run', 'status', submission.runId!])
     expect(started.projectId).toBe(projectId)
     if (observe) {
       expect((await cli<TaskRun>(['run', 'status', started.id])).status).toBe('running')
@@ -88,7 +101,15 @@ for (const observe of [false, true]) {
     expect(durable?.artifacts?.[0].sha256).toBe(artifact.checksum)
     expect(artifact.checksum).toMatch(/^[a-f0-9]{64}$/u)
     const downloadPath = join(evidenceRoot, 'provenance-evidence.txt')
-    await cli(['artifacts', 'download', artifact.id, '--output', downloadPath])
+    await cli([
+      'artifacts',
+      'download',
+      artifact.id,
+      '--session',
+      started.sessionId,
+      '--output',
+      downloadPath
+    ])
     const downloaded = await readFile(downloadPath)
     expect(downloaded.toString('utf8')).toBe('artifact provenance e2e')
     expect(createHash('sha256').update(downloaded).digest('hex')).toBe(artifact.checksum)

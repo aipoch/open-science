@@ -1,8 +1,13 @@
 import { expect, it } from 'vitest'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFPageProxy } from 'pdfjs-dist'
+import type { TextItem } from 'pdfjs-dist/types/src/display/api.js'
 import { preservePdfFigureSources } from '../../src/reader/figure-source.js'
-import { createPdfTranslationSource } from '../../src/reader/source.js'
+import {
+  createPdfTranslationSource,
+  type PdfTranslationFragment,
+  type PdfTranslationSource
+} from '../../src/reader/source.js'
 
 it.each(['aligned', 'color', 'missing rule', 'row mismatch'] as const)(
   'uses only proven stencil table rules and native data for retention (%s)',
@@ -172,5 +177,332 @@ it.each(['stacked', 'no bar', 'shifted bar', 'linear text'] as const)(
     expect(unit.figure).toBeUndefined()
     expect(unit.preserve).toBe(variant === 'stacked' ? 'formula' : undefined)
     expect(unit.sourceOnly).toBe(variant === 'stacked' ? true : undefined)
+  }
+)
+
+it.each(['aligned bar', 'missing bar', 'offset numerator'] as const)(
+  'preserves a detached numerator only with its native fraction evidence (%s)',
+  async (shape) => {
+    const items = [
+      { str: 'v', x: shape === 'offset numerator' ? 35 : 26, y: 70, width: 4 },
+      { str: '3', x: 20, y: 56.5, width: 5 },
+      { str: 'πt', x: 25, y: 56.5, width: 11 },
+      { str: 'Next result', x: 17, y: 30, width: 44 }
+    ].map(({ str, x, y, width }) => ({
+      str,
+      dir: 'ltr',
+      width,
+      height: 10,
+      transform: [10, 0, 0, 10, x, y]
+    }))
+    const makeFragment = (
+      indices: number[],
+      rect: PdfTranslationFragment['rect']
+    ): PdfTranslationFragment => ({
+      pageNumber: 1,
+      rect,
+      items: indices.map((index) => ({ index, text: items[index].str }))
+    })
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'detached-fraction',
+      fingerprint: 'detached-fraction',
+      pages: [{ width: 100, height: 100 }],
+      units: [
+        {
+          id: 'numerator',
+          source: 'v',
+          fragments: [
+            makeFragment([0], { x: items[0].transform[4] / 100, y: 0.22, width: 0.04, height: 0.1 })
+          ]
+        },
+        {
+          id: 'denominator',
+          source: '3πt',
+          sourceOnly: true,
+          preserve: 'formula',
+          fragments: [makeFragment([1, 2], { x: 0.2, y: 0.35, width: 0.16, height: 0.1 })]
+        },
+        {
+          id: 'prose',
+          source: 'Next result',
+          fragments: [makeFragment([3], { x: 0.17, y: 0.62, width: 0.44, height: 0.1 })]
+        }
+      ]
+    })
+    const page = {
+      rotate: 0,
+      getViewport: () => ({ width: 100, height: 100, transform: [1, 0, 0, -1, 0, 100] }),
+      getTextContent: async () => ({ items }),
+      getOperatorList: async () =>
+        shape === 'missing bar'
+          ? { fnArray: [], argsArray: [] }
+          : {
+              fnArray: [OPS.save, OPS.transform, OPS.paintSolidColorImageMask, OPS.restore],
+              argsArray: [[], [16, 0, 0, -0.5, 20, 66], [], []]
+            },
+      cleanup: () => {}
+    } as unknown as PDFPageProxy
+    const result = await preservePdfFigureSources({
+      extraction: { source },
+      document: { getPage: async () => page },
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    expect(result.source.units.map(({ fragments }) => fragments)).toEqual(
+      source.units.map(({ fragments }) => fragments)
+    )
+    expect(result.source.units.filter(({ sourceOnly }) => sourceOnly).map(({ id }) => id)).toEqual(
+      shape === 'aligned bar' ? ['numerator', 'denominator'] : ['denominator']
+    )
+  }
+)
+
+it.each([
+  'closed evidence',
+  'missing rule',
+  'shifted peer',
+  'inexact source',
+  'third-row tail'
+] as const)('separates prose at a witnessed table row start (%s)', async (evidence) => {
+  const items = [
+    ['TABLE II. Local sample descriptions.', 50, 570, 190, 'body'],
+    ['Sample', 50, 539, 35, 'bold'],
+    ['Setup', 125, 539, 25, 'bold'],
+    ['Observation', 235, 539, 60, 'bold'],
+    ['Comment', 345, 539, 40, 'bold'],
+    ['R1 Alpha', 50, 518, 45, 'bold'],
+    ['First trial', 125, 518, 42, 'body'],
+    ['The surface', 235, 518, 51, 'body'],
+    ['Appeared uniform', 345, 518, 78, 'body'],
+    ['remained clear.', 235, 506, 63, 'body'],
+    ['R2 Beta', 50, 472, 40, 'bold'],
+    ['Second trial', 125, 472, 53, 'body'],
+    ['The surface darkened', 235, 472, 96, 'body'],
+    ['Became opaque', 345, evidence === 'shifted peer' ? 464 : 472, 68, 'body'],
+    ['near the edge.', 235, 460, 62, 'body'],
+    ['R3 Gamma', 50, 426, 53, 'bold'],
+    ['Third trial', 125, 426, 46, 'body'],
+    ['The surface cracked.', 235, 426, 91, 'body'],
+    ['Sample failed', 345, 426, 57, 'body'],
+    ['The discussion begins after the bottom rule.', 55, 350, 200, 'body'],
+    ['below the coating.', 235, 414, 71, 'body']
+  ].map(([str, x, y, width, fontName]) => ({
+    str: String(str),
+    dir: 'ltr',
+    transform: [10, 0, 0, 10, Number(x), Number(y)],
+    width: Number(width),
+    height: 10,
+    fontName: String(fontName),
+    hasEOL: true
+  }))
+  const unit = (id: string, indices: number[]): PdfTranslationSource['units'][number] => ({
+    id,
+    source: indices.map((index) => items[index].str).join(' '),
+    fragments: indices.map((index) => {
+      const item = items[index]
+      return {
+        pageNumber: 1,
+        rect: {
+          x: item.transform[4] / 500,
+          y: (600 - item.transform[5] - 8) / 600,
+          width: item.width / 500,
+          height: 10 / 600
+        },
+        items: [{ index, text: item.str }]
+      }
+    })
+  })
+  const joinedIndices = evidence === 'third-row tail' ? [7, 9, 12, 14, 20] : [7, 9, 12, 14]
+  const native = unit('joined', joinedIndices)
+  const joined =
+    evidence === 'inexact source'
+      ? { ...native, source: native.source.replace('clear', 'bright') }
+      : native
+  const units = [
+    joined,
+    ...items.flatMap((_, index) =>
+      joinedIndices.includes(index) ? [] : [unit('peer-' + index, [index])]
+    )
+  ]
+  const source = createPdfTranslationSource({
+    resourceRequestKey: 'ruled',
+    fingerprint: 'ruled',
+    pages: [{ width: 500, height: 600 }],
+    units
+  })
+  const rules = evidence === 'missing rule' ? [548, 375] : [548, 532, 375]
+  const page = {
+    rotate: 0,
+    getViewport: () => ({
+      width: 500,
+      height: 600,
+      transform: [1, 0, 0, -1, 0, 600],
+      convertToViewportPoint: (x: number, y: number) => [x, 600 - y]
+    }),
+    getTextContent: async () => ({
+      items,
+      styles: { bold: { ascent: 0.8 }, body: { ascent: 0.8 } }
+    }),
+    getOperatorList: async () => ({
+      fnArray: rules.flatMap(() => [OPS.save, OPS.transform, OPS.constructPath, OPS.restore]),
+      argsArray: rules.flatMap((y) => [
+        [],
+        [1, 0, 0, 1, 50, y],
+        [OPS.stroke, [new Float32Array([0, 0, 0, 1, 400, 0])], new Float32Array([0, 0, 400, 0])],
+        []
+      ])
+    }),
+    cleanup: () => {}
+  } as unknown as PDFPageProxy
+  const result = await preservePdfFigureSources({
+    extraction: { source },
+    document: { getPage: async () => page },
+    operators: OPS,
+    signal: new AbortController().signal,
+    skipTranslation: false
+  })
+  if (evidence === 'closed evidence') {
+    const [first, second, ...peers] = result.source.units
+    expect(first.source).toBe('The surface remained clear.')
+    expect(second.source).toBe('The surface darkened near the edge.')
+    expect(first.fragments).toEqual(joined.fragments.slice(0, 2))
+    expect(second.fragments).toEqual(joined.fragments.slice(2))
+    expect(peers).toEqual(source.units.slice(1))
+    expect(result.source.originalRegions).toEqual([])
+  } else {
+    expect(result.source).toBe(source)
+  }
+})
+
+it.each(['complete', 'shifted mark', 'missing mark'] as const)(
+  'splits only the native text column of a fully witnessed marked table (%s)',
+  async (evidence) => {
+    const labels = ['Soft finish', 'Faint ridges', 'Firm edge', 'Smooth base']
+    const item = (str: string, x: number, y: number, width: number): TextItem => ({
+      str,
+      dir: 'ltr',
+      fontName: 'body',
+      transform: [8, 0, 0, 8, x, y],
+      width,
+      height: 8,
+      hasEOL: false
+    })
+    const heads = ['Sample', 'Surface note', 'Dry', 'Oiled', 'Cold', 'Warm']
+    const items = [
+      item('Table 1. Material inspection at four settings.', 50, 470, 180),
+      ...heads.map((head, i) => item(head, [50, 140, 260, 320, 380, 440][i], 422, i < 2 ? 46 : 20)),
+      ...labels.flatMap((label, i) => {
+        const y = 406 - i * 10
+        return [
+          item('Trial ' + (i + 1), 50, y, 25),
+          item(label, 140, y, 38 + i),
+          ...[270, 330, 390, 450].flatMap((x, j) => {
+            if (i === 1 && j === 2 && evidence === 'missing mark') return []
+            const checked = (i + j) % 2 === 0
+            return [
+              item(
+                checked ? '✓' : '–',
+                x - (checked ? 3 : 2) + (i === 1 && j === 2 && evidence === 'shifted mark' ? 3 : 0),
+                y,
+                checked ? 6 : 4
+              )
+            ]
+          })
+        ]
+      })
+    ]
+    const piece = (index: number): PdfTranslationFragment => {
+      const native = items[index]
+      return {
+        pageNumber: 1,
+        rect: {
+          x: native.transform[4] / 500,
+          y: (600 - native.transform[5] - 6.4) / 600,
+          width: native.width / 500,
+          height: 8 / 600
+        },
+        items: [{ index, text: native.str }]
+      }
+    }
+    const column = items.flatMap(({ str }, index) => (labels.includes(str) ? [piece(index)] : []))
+    const first = column[0],
+      last = column.at(-1)!
+    const combined = {
+      id: 'column',
+      source: labels.join(' '),
+      fragments: [
+        {
+          ...first,
+          rect: {
+            ...first.rect,
+            width: last.rect.width,
+            height: last.rect.y + last.rect.height - first.rect.y
+          },
+          items: column.flatMap((fragment) => fragment.items)
+        }
+      ]
+    }
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'marked-table',
+      fingerprint: 'marked-table',
+      pages: [{ width: 500, height: 600 }],
+      units: [
+        combined,
+        ...items.flatMap(({ str }, index) =>
+          labels.includes(str)
+            ? []
+            : [
+                {
+                  id: 'cell-' + index,
+                  source: str,
+                  ...(/^[✓–]$/u.test(str) ? { sourceOnly: true as const } : {}),
+                  fragments: [piece(index)]
+                }
+              ]
+        )
+      ]
+    })
+    const rules = [440, 416, 366]
+    const page = {
+      rotate: 0,
+      getTextContent: async () => ({ items, styles: { body: { ascent: 0.8 } } }),
+      getViewport: () => ({
+        width: 500,
+        height: 600,
+        transform: [1, 0, 0, -1, 0, 600],
+        convertToViewportPoint: (x: number, y: number) => [x, 600 - y]
+      }),
+      getOperatorList: async () => ({
+        fnArray: rules.flatMap(() => [OPS.save, OPS.transform, OPS.constructPath, OPS.restore]),
+        argsArray: rules.flatMap((y) => [
+          [],
+          [1, 0, 0, 1, 50, y],
+          [OPS.stroke, [new Float32Array([0, 0, 0, 1, 430, 0])], new Float32Array([0, 0, 430, 0])],
+          []
+        ])
+      }),
+      cleanup: () => {}
+    } as unknown as PDFPageProxy
+    const result = await preservePdfFigureSources({
+      extraction: { source },
+      document: { getPage: async () => page },
+      operators: OPS,
+      signal: new AbortController().signal,
+      skipTranslation: false
+    })
+    const owners = result.source.units.filter(({ id }) => id.startsWith('column'))
+    expect(result.source.originalRegions).toHaveLength(1)
+    if (evidence === 'complete') {
+      expect(owners.map(({ source }) => source)).toEqual(labels)
+      expect(owners.map(({ fragments }) => fragments[0].items)).toEqual(
+        column.map(({ items }) => items)
+      )
+      expect(owners.every(({ fragments }) => fragments.length === 1)).toBe(true)
+    } else {
+      expect(owners).toHaveLength(1)
+      expect(owners[0].source).toBe(combined.source)
+      expect(owners[0].fragments).toEqual(combined.fragments)
+    }
   }
 )

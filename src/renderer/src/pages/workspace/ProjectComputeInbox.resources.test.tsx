@@ -12,6 +12,7 @@ import type {
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
+import { sendWorkspaceMessage } from '@/lib/acp/workspace-runtime-command-owner'
 import {
   dismissNotebookMemoryRejection,
   observeNotebookMemoryPolicy,
@@ -19,10 +20,12 @@ import {
   useNotebookMemoryNoticeStore
 } from '@/stores/notebook-memory-notice-store'
 import { ProjectComputeInbox } from './ProjectComputeInbox'
+import { NotebookMemoryNoticeBridge } from './NotebookMemoryNoticeBridge'
 
 vi.mock('react-i18next', () => createI18nTestStub())
 const { sendMessage } = vi.hoisted(() => ({ sendMessage: vi.fn() }))
-vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
+vi.mock('@/lib/acp/useWorkspaceAgentRuntime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/acp/useWorkspaceAgentRuntime')>()),
   useWorkspaceAgentRuntime: () => ({ sendMessage })
 }))
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -135,6 +138,7 @@ describe('Compute Notebook resource controls', () => {
   afterEach(() => {
     act(() => root?.unmount())
     document.body.innerHTML = ''
+    document.documentElement.removeAttribute('data-open-science-web-events')
     vi.useRealTimers()
     vi.restoreAllMocks()
   })
@@ -371,6 +375,44 @@ describe('Compute Notebook resource controls', () => {
       memory: { ...memory, status: 'healthy', reason: 'memory-available', checkedAt: 2 }
     })
     expect(useNotebookMemoryNoticeStore.getState().rejection).toBeUndefined()
+    const decision = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      refusalId: 'refusal-original'
+    }
+    view = {
+      groups: [],
+      releases: [release({ status: 'released', continuations: [decision] })],
+      pendingDecisions: [{ ...decision, kind: 'memory' }]
+    }
+    sendMessage.mockRejectedValueOnce(new Error('NOTEBOOK_MEMORY_UNAVAILABLE: sample timed out'))
+    await render()
+    expect(container.textContent).toContain('No running Notebooks')
+    expect(container.textContent).toContain('Waiting for your decision')
+    expect(container.textContent).not.toContain('Interpreters: 1')
+    expect(sendMessage).not.toHaveBeenCalled()
+    await act(async () => button('Check and continue').click())
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not confirm memory status. This Notebook did not run.'
+    )
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await act(async () => button('Check and continue').click())
+    expect(sendMessage).toHaveBeenCalledTimes(2)
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        cwd: '/workspace',
+        requireExistingSession: true,
+        preserveSelection: true,
+        notebookContinuation: { refusalId: 'refusal-original', kind: 'memory' }
+      })
+    )
+    expect(releaseSessionResources).not.toHaveBeenCalled()
+  })
+
+  it('shows where to continue stopped Notebook work when Compute is open in Web', async () => {
+    document.documentElement.setAttribute('data-open-science-web-events', 'true')
     view = {
       groups: [],
       releases: [],
@@ -379,22 +421,85 @@ describe('Compute Notebook resource controls', () => {
       ]
     }
     await render()
-    expect(container.textContent).toContain('No running Notebooks')
-    expect(container.textContent).toContain('Waiting for your decision')
-    expect(container.textContent).not.toContain('Interpreters: 1')
+    expect(container.textContent).toContain(
+      'Open the same Session and branch in the Open-Science desktop app'
+    )
+    expect(
+      [...container.querySelectorAll('button')].some(
+        (item) => item.textContent === 'Continue Notebook work'
+      )
+    ).toBe(false)
     expect(sendMessage).not.toHaveBeenCalled()
-    await act(async () => button('Continue Notebook work').click())
-    expect(sendMessage).toHaveBeenCalledExactlyOnceWith({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      cwd: '/workspace',
-      requireExistingSession: true,
-      preserveSelection: true,
-      notebookContinuation: { refusalId: 'refusal-original' },
-      text: 'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
-    })
-    expect(releaseSessionResources).not.toHaveBeenCalled()
   })
+
+  it.each(['notice', 'compute'] as const)(
+    'shows the branch recovery action only at the clicked %s',
+    async (entrance) => {
+      const decision = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        refusalId: `refusal-branch-${entrance}`,
+        messageBranchId: 'original-branch',
+        kind: 'memory' as const
+      }
+      view = { groups: [], releases: [], pendingDecisions: [decision] }
+      const continueNotebookExecution = vi.fn()
+      sendMessage.mockImplementationOnce((input) =>
+        sendWorkspaceMessage(
+          {
+            state: {
+              status: 'connected',
+              cwd: '/workspace',
+              sessionIds: ['session-1'],
+              events: [],
+              pendingPermissions: [],
+              permissionProfiles: {},
+              permissionGrants: {},
+              contextUsageBySession: {},
+              promptInFlight: false,
+              promptInFlightSessionIds: []
+            },
+            createSession: vi.fn(),
+            resumeSession: vi.fn(),
+            resetSessionContext: vi.fn(),
+            sendPrompt: vi.fn(),
+            continueNotebookExecution
+          },
+          input
+        )
+      )
+      if (entrance === 'notice')
+        presentNotebookMemoryRejection({
+          ...decision,
+          source: 'agent',
+          memory: {
+            status: 'pressured',
+            reason: 'windows-physical-low',
+            source: 'windows-performance-info',
+            executionScope: 'windows:host',
+            checkedAt: 1
+          }
+        })
+      root = createRoot(container)
+      await act(async () =>
+        root?.render(
+          <>
+            <ProjectComputeInbox />
+            <NotebookMemoryNoticeBridge projectId="project-1" sendMessage={sendMessage} />
+          </>
+        )
+      )
+      const surface = entrance === 'notice' ? document.querySelector('[role="dialog"]')! : container
+      await act(async () => button('Check and continue', surface).click())
+      const guidance =
+        'Return to the conversation branch where Notebook execution stopped before continuing.'
+      expect(surface.querySelector('[role="alert"]')?.textContent).toContain(guidance)
+      if (entrance === 'notice') expect(container.textContent).not.toContain(guidance)
+      else expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(button('Check and continue', surface).disabled).toBe(false)
+      expect(continueNotebookExecution).not.toHaveBeenCalled()
+    }
+  )
 
   it('polls at five-second intervals without overlapping reads and stops while hidden or unmounted', async () => {
     vi.useFakeTimers()

@@ -3705,36 +3705,69 @@ it.each([
   await waitFor(() => expect(hook.result.current.state.status).toBe(change ? 'error' : 'ready'))
 })
 
-describe.each(['˜', 'ˆ'])('native leading accent %s', (accent) => {
-  it.each(['leading', 'shifted-mark', 'reversed-native-order', 'duplicate-base'])(
-    'keeps an exact leading spacing accent only for adjacent unchanged owned pairs: %s',
+describe.each([
+  { accent: '˜', base: 'q' },
+  { accent: 'ˆ', base: 'q' },
+  { accent: '˜', base: 'Γ =' }
+])('native $accent accent over $base', ({ accent, base }) => {
+  const fused = base.endsWith('='),
+    label = fused ? base + accent : accent + base
+  it.each([
+    'intact',
+    'shifted-mark',
+    'reversed-native-order',
+    'duplicate-base',
+    ...(fused ? ['changed-font'] : ['repeated-intact', 'repeated-shifted'])
+  ])(
+    'keeps an exact spacing accent only for adjacent unchanged owned pairs: %s',
     async (variant) => {
-      const f = fixture(),
-        glyph = (str: string, x: number, y: number, width: number): typeof f.item => ({
+      const repeated = variant.startsWith('repeated-'),
+        expression = repeated ? label + ' + ' + label : label,
+        f = fixture(),
+        glyph = (
+          str: string,
+          x: number,
+          y: number,
+          width: number
+        ): typeof f.item & { fontName: string } => ({
           str,
           width,
+          fontName: 'native',
           transform: [10, 0, 0, 10, x, y]
         }),
         original = [
           glyph('Value ', 60, 700, 30),
           glyph(accent, 100, 701.6, 5),
-          glyph('q', 100.2, 700, 4.7)
+          glyph(base, 100.2, 700, fused ? 17 : 4.7),
+          ...(repeated
+            ? [glyph('+', 116, 700, 5), glyph(accent, 130, 701.6, 5), glyph(base, 130.2, 700, 4.7)]
+            : [])
         ],
         movedMark = glyph(accent, variant === 'shifted-mark' ? 141 : 140, 701.6, 5),
-        movedBase = glyph('q', 140.2, 700, 4.7),
+        movedBase = {
+          ...glyph(base, 140.2, 700, fused ? 17 : 4.7),
+          fontName: variant === 'changed-font' ? 'different' : 'native'
+        },
         target = [
           glyph('数值 ', 60, 700, 25),
           ...(variant === 'reversed-native-order'
             ? [movedBase, movedMark]
             : [movedMark, movedBase]),
-          ...(variant === 'duplicate-base' ? [movedBase] : [])
+          ...(variant === 'duplicate-base' ? [movedBase] : []),
+          ...(repeated
+            ? [
+                glyph('+', 156, 700, 5),
+                glyph(accent, variant === 'repeated-shifted' ? 174 : 170, 701.6, 5),
+                glyph(base, 170.2, 700, 4.7)
+              ]
+            : [])
         ],
         source = createPdfTranslationSource({
           ...f.results.source,
           units: [
             {
               ...f.results.source.units[0],
-              source: `Value ${accent}q`,
+              source: `Value ${expression}`,
               fragments: [
                 {
                   ...f.results.source.units[0].fragments[0],
@@ -3747,17 +3780,24 @@ describe.each(['˜', 'ˆ'])('native leading accent %s', (accent) => {
         results = {
           source,
           units: [
-            { id: 'one', translationSource: `Value ${accent}q`, translation: `数值 ${accent}q` }
+            {
+              id: 'one',
+              translationSource: `Value ${expression}`,
+              translation: `数值 ${expression}`
+            }
           ]
         },
         artifact = { results, data: new Uint8Array([4, 5]) }
-      f.originalPage.getTextContent.mockResolvedValue({ items: original })
-      f.targetPage.getTextContent.mockResolvedValue({ items: target })
+      const styles = { native: { ascent: 0.85 }, different: { ascent: 0.8 } }
+      f.originalPage.getTextContent.mockImplementation(async () => ({ items: original, styles }))
+      f.targetPage.getTextContent.mockImplementation(async () => ({ items: target, styles }))
       const hook = renderHook(() =>
         usePdfTranslationDocument(f.original, results, artifact, 'reader:0')
       )
       await waitFor(() =>
-        expect(hook.result.current.state.status).toBe(variant === 'leading' ? 'ready' : 'error')
+        expect(hook.result.current.state.status).toBe(
+          variant.endsWith('intact') ? 'ready' : 'error'
+        )
       )
     }
   )
@@ -4516,6 +4556,82 @@ it.each(
   await waitFor(() => expect(hook.result.current.state.status).toBe(accepted ? 'ready' : 'error'))
 })
 
+it.each(['same-face', 'ordinary-face', 'changed-font-program'])(
+  'requires the retained blackboard font for a natural-number power: %s',
+  async (variant) => {
+    const f = fixture(),
+      item = (
+        str: string,
+        x: number,
+        y: number,
+        size: number,
+        width: number,
+        fontName: string
+      ): typeof f.item & { fontName: string; height: number } => ({
+        ...f.item,
+        str,
+        width,
+        fontName,
+        height: size,
+        transform: [size, 0, 0, size, x, y]
+      }),
+      original = [
+        item('Value ', 60, 700, 10, 28, 'body'),
+        item('N', 90, 700, 10, 8, 'native'),
+        item('3', 98, 704, 7, 4, 'body')
+      ],
+      translated = [
+        item('数值', 60, 700, 10, 20, 'body'),
+        item('N', 82, 700, 10, 8, 'native'),
+        item('3', 90, 704, 7, 4, 'body')
+      ],
+      sourceText = 'Value N3',
+      source = createPdfTranslationSource({
+        ...f.results.source,
+        units: [
+          {
+            id: 'one',
+            source: sourceText,
+            fragments: [
+              {
+                ...f.results.source.units[0].fragments[0],
+                items: original.map(({ str }, index) => ({ index, text: str }))
+              }
+            ]
+          }
+        ]
+      }),
+      results = {
+        source,
+        units: [{ id: 'one', translationSource: sourceText, translation: '数值 ℕ³' }]
+      }
+    const setFonts = (page: object, name: string, byte: number): void => {
+      Object.assign(page, {
+        commonObjs: {
+          has: (key: string) => key === 'native',
+          get: () => ({ name, data: new Uint8Array([1, byte, 3]) })
+        },
+        getOperatorList: vi.fn(async () => ({ fnArray: [], argsArray: [] }))
+      })
+    }
+    setFonts(f.originalPage, 'MSBM10', 2)
+    setFonts(
+      f.targetPage,
+      variant === 'ordinary-face' ? 'Times-Roman' : 'MSBM10',
+      variant === 'changed-font-program' ? 8 : 2
+    )
+    f.originalPage.getTextContent.mockResolvedValue({ items: original })
+    f.targetPage.getTextContent.mockResolvedValue({ items: translated })
+    const artifact = { results, data: new Uint8Array([4, 5]) }
+    const hook = renderHook(() =>
+      usePdfTranslationDocument(f.original, results, artifact, 'reader:0')
+    )
+    await waitFor(() =>
+      expect(hook.result.current.state.status).toBe(variant === 'same-face' ? 'ready' : 'error')
+    )
+  }
+)
+
 it.each(
   readPdfTranslationCases<{ name: string; change: string; accepted: boolean }>(
     'same-paragraph-fragment-read-padding.jsonl'
@@ -5203,6 +5319,7 @@ it('keeps transient generation failures retryable', async () => {
 
 it.each([
   'owned',
+  'retry without the rejected link',
   'stale claim',
   'geometry-owned',
   'geometry-stale claim',
@@ -5212,6 +5329,7 @@ it.each([
   'changed action after retry'
 ] as const)('retains a rejected link only with one exact native owner: %s', async (kind) => {
   const f = fixture()
+  const omitLink = kind === 'retry without the rejected link'
   const geometry = kind.startsWith('geometry-')
   const prime = kind.startsWith('prime-')
   const staleClaim = kind.endsWith('stale claim')
@@ -5286,12 +5404,20 @@ it.each([
     geometry
       ? Array.from({ length: 9 }, (_, index) => ({ ...value, url: `${value.url}/${index}` }))
       : [value]
-  f.originalPage.getAnnotations.mockResolvedValue(withDistinctActions(annotation))
+  const unrelatedLink = {
+    ...annotation,
+    rect: [420, 648, 480, 659],
+    url: 'https://example.invalid/unrelated'
+  }
+  f.originalPage.getAnnotations.mockResolvedValue(
+    omitLink ? [annotation, unrelatedLink] : withDistinctActions(annotation)
+  )
   let attempt = 0
   let opens = 0
-  const generatePdf = vi.fn<(input: PdfTranslationPdfRequest) => Promise<Uint8Array>>(
-    async () => new Uint8Array([++attempt])
-  )
+  const generatePdf = vi.fn(async (input: PdfTranslationPdfRequest) => {
+    const data = new Uint8Array([++attempt])
+    return omitLink ? { data, layoutFailures: [], omittedLinks: input.dropLinks } : data
+  })
   const releaseRebuild = Promise.withResolvers<typeof f.target>()
   const rejectedOwner = staleClaim || kind === 'prime-inside'
   const repaired =
@@ -5325,18 +5451,28 @@ it.each([
                     glyph(') after 4 independent trials.', 136, 700, 150),
                     glyph(target[1], 60, 655, 200)
                   ])
-                : generation === 2 && !rejectedOwner
-                  ? withPrime([before[0], glyph(target[1], 60, 655, 200)])
-                  : before
+                : generation === 2 && omitLink
+                  ? [glyph(target[0], 60, 700, 260), glyph(target[1], 60, 655, 200)]
+                  : generation === 2 && !rejectedOwner
+                    ? withPrime([before[0], glyph(target[1], 60, 655, 200)])
+                    : before
         }),
         getAnnotations: async (): Promise<Record<string, unknown>[]> =>
-          withDistinctActions(
-            generation === 1
-              ? { ...annotation, rect: geometry ? [555, 698, 563, 710] : [129, 698, 137, 710] }
-              : generation === 2 && !rejectedOwner
-                ? repaired
-                : annotation
-          )
+          omitLink && generation === 2
+            ? [unrelatedLink]
+            : [
+                ...withDistinctActions(
+                  generation === 1
+                    ? {
+                        ...annotation,
+                        rect: geometry ? [555, 698, 563, 710] : [129, 698, 137, 710]
+                      }
+                    : generation === 2 && !rejectedOwner
+                      ? repaired
+                      : annotation
+                ),
+                ...(omitLink ? [unrelatedLink] : [])
+              ]
       }))
     }
     if (generation === 2 && ownsLink) {
@@ -5360,8 +5496,15 @@ it.each([
   await waitFor(() => expect(hook.result.current.state.status).toBe('ready'))
   expect(generatePdf).toHaveBeenCalledTimes(rejectedOwner ? 1 : 2)
   expect(hook.result.current.ready?.retainedUnitIds).toEqual(
-    ownsLink ? ['paragraph-0'] : ['paragraph-0', 'paragraph-1']
+    omitLink ? [] : ownsLink ? ['paragraph-0'] : ['paragraph-0', 'paragraph-1']
   )
+  if (omitLink) {
+    expect(generatePdf.mock.calls[1][0].dropLinks).toEqual([
+      { pageNumber: 1, index: 0, rect: annotation.rect }
+    ])
+    expect(generatePdf.mock.calls[1][0].units.map((unit) => unit.translation)).toEqual(target)
+    expect(hook.result.current.layoutFailures).toEqual({})
+  }
   if (ownsLink)
     expect(hook.result.current.layoutFailures['paragraph-0']).toMatchObject({
       code: 'validation-failed',
@@ -8950,5 +9093,81 @@ it.each([0.07, 0.3])(
     await waitFor(() =>
       expect(hook.result.current.state.status).toBe(shift < 0.1 ? 'ready' : 'error')
     )
+  }
+)
+
+it.each(['same', 'edge', 'moved', 'changed', 'blank'] as const)(
+  'verifies a retained legacy relation by its original ink (%s)',
+  async (ink) => {
+    const f = fixture()
+    const sourceText = 'The result is valid when x 6= 0.'
+    const resultText = '当 x 不等于 0 时，结果有效。'
+    const source = createPdfTranslationSource({
+      ...f.results.source,
+      units: [
+        {
+          ...f.results.source.units[0],
+          source: sourceText,
+          fragments: [
+            {
+              ...f.results.source.units[0].fragments[0],
+              items: [{ index: 0, text: sourceText }]
+            }
+          ]
+        }
+      ]
+    })
+    const results = {
+      source,
+      units: [{ id: 'one', translationSource: sourceText, translation: resultText }]
+    }
+    f.originalPage.getTextContent.mockResolvedValue({ items: [{ ...f.item, str: sourceText }] })
+    f.targetPage.getTextContent.mockResolvedValue({
+      items: [{ ...f.item, str: 'The result is valid when x \u0338= 0.' }]
+    })
+    const row = (dark: number[]): Uint8ClampedArray =>
+      new Uint8ClampedArray(
+        [0, 1, 2, 3].flatMap((index) =>
+          dark.includes(index) ? [0, 0, 0, 255] : [255, 255, 255, 255]
+        )
+      )
+    const originalInk = row(ink === 'blank' ? [] : [1])
+    const targetInk = row(
+      ink === 'changed' || ink === 'blank'
+        ? []
+        : ink === 'edge'
+          ? [1, 2]
+          : ink === 'moved'
+            ? [1, 3]
+            : [1]
+    )
+    const sourceRender = vi.fn(() => ({ promise: Promise.resolve() }))
+    const targetRender = vi.fn(() => ({ promise: Promise.resolve() }))
+    Object.assign(f.originalPage, { render: sourceRender })
+    Object.assign(f.targetPage, { render: targetRender })
+    const context = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementationOnce(
+        () =>
+          ({ getImageData: () => ({ data: originalInk }) }) as unknown as CanvasRenderingContext2D
+      )
+      .mockImplementationOnce(
+        () => ({ getImageData: () => ({ data: targetInk }) }) as unknown as CanvasRenderingContext2D
+      )
+    try {
+      const artifact = { results, data: new Uint8Array([4, 5]) }
+      const hook = renderHook(() =>
+        usePdfTranslationDocument(f.original, results, artifact, 'reader:0')
+      )
+      const accepted = ink === 'same' || ink === 'edge'
+      await waitFor(() =>
+        expect(hook.result.current.state.status).toBe(accepted ? 'ready' : 'error')
+      )
+      expect(sourceRender).toHaveBeenCalledOnce()
+      expect(targetRender).toHaveBeenCalledOnce()
+      if (accepted) expect(hook.result.current.ready?.retainedUnitIds).toEqual(['one'])
+    } finally {
+      context.mockRestore()
+    }
   }
 )

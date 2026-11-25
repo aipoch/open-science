@@ -353,7 +353,7 @@ describe('runtime state ownership architecture', () => {
     expect(runtime).toContain('this.sessionPlanWorkflow.sessionDeleted(request.sessionId)')
     expect(runtime).toContain('return this.sessionPlanWorkflow.call(input)')
     expect(runtime).toContain('return this.sessionPlanWorkflow.projection(projectId, sessionId)')
-    expect(runtime).toContain('const result = await this.sessionPlanWorkflow.respond(input)')
+    expect(runtime).toContain('this.sessionPlanWorkflow.respond(input, isAuthorizationCurrent)')
     expect(runtime).toContain('this.planContinuations.schedule(input.projectId, input.sessionId)')
     expect(planComposition).toContain('const interactions = base.planInteractions')
     expect(planComposition).toContain('const service = base.planService')

@@ -34,6 +34,7 @@ import {
   callable,
   DEFAULT_EMPTY,
   DEFAULT_EMPTY_ABSENT_ONLY,
+  ELECTRON,
   EVENT,
   RUNTIME_VALIDATED,
   WEB,
@@ -58,7 +59,7 @@ export const contracts = {
   >()('acp', ['acp:continue-interrupted-turn']),
   'acp.continueNotebookExecution': callable<
     (request: AcpContinueNotebookExecutionRequest) => Promise<AcpStateCommandResponse>
-  >()('acp', ['acp:continue-notebook-execution']),
+  >()('acp', ['acp:continue-notebook-execution', ELECTRON]),
   'acp.createSession': callable<
     (request?: AcpCreateSessionRequest) => Promise<AcpCreateSessionResponse>
   >()('acp', ['acp:create-session', WEB, DEFAULT_EMPTY, DEFAULT_EMPTY_ABSENT_ONLY]),

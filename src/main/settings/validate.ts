@@ -1,8 +1,13 @@
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { randomUUID } from 'node:crypto'
 
-import { type ModelProtocol, usesVendorMessagesApiKeyHeader } from '@aipoch/providers'
+import {
+  type ModelProtocol,
+  resolveProviderProbePolicy,
+  usesVendorMessagesApiKeyHeader
+} from '@aipoch/providers'
 
+import { upstreamHttpErrorPrefix } from '../../shared/failure/messages'
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
 import { DEFAULT_ENDPOINT_ORDER, preferredEndpoint } from '../../shared/settings-runtime'
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
@@ -16,7 +21,8 @@ import {
 import {
   ResponseBodyLimitError,
   readBoundedResponseText,
-  fetchProviderRequest
+  fetchProviderRequest,
+  withProviderRequestPolicy
 } from '@aipoch/providers/transport'
 
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
@@ -33,16 +39,11 @@ import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completion
 // Default probe timeout; a stuck gateway should fail fast rather than hang the wizard.
 const DEFAULT_VALIDATE_TIMEOUT_MS = 20_000
 const ANTHROPIC_VERSION = '2023-06-01'
-// Reasoning providers may spend the first few output tokens on an internal block. With a one-token
-// budget Kimi k3 returns a 200 response whose message envelope is incomplete (`type`/`role` empty),
-// even though normal Claude Code requests work. Sixteen tokens is still a cheap probe while allowing
-// the provider to finish the Anthropic envelope that validation checks below.
-const ANTHROPIC_PROBE_MAX_TOKENS = 16
 // Keep an unmodified loopback fetch for the temporary local bridge. Tests and callers may inject/mock
 // the upstream fetch, but that must not intercept the request from the validator into 127.0.0.1.
 const loopbackFetch = globalThis.fetch.bind(globalThis)
 
-// A minimal, cheap Messages request used only to confirm the endpoint + credentials + model work.
+// A short probe checks endpoint reachability, credentials, and the selected model route.
 type ValidationHttpRequest = {
   url: string
   headers: Record<string, string>
@@ -97,14 +98,8 @@ const nativeResponsesCompatibilityProbeBody = (model: string): Record<string, un
   stream: true
 })
 
-// Builds the probe request for a custom provider against the endpoint it actually speaks: an
-// OpenAI-compatible gateway gets a `/v1/chat/completions` request, an Anthropic one `/v1/messages`.
-// The endpoint is chosen from the provider's apiType (OpenAI wins when it offers both), matching how
-// the model is driven. Throws on an unusable base URL so the caller can classify it as bad-url.
-// The endpoint preference to intersect the provider against when no active framework is supplied. A
-// direct caller (or unit test) that doesn't care about a specific framework probes the provider's own
-// best route: Responses > Chat Completions > Messages.
-
+// Prefer a declared route shared with the active framework. Without a framework constraint,
+// the route order is Responses, Chat Completions, then Messages.
 const buildValidationRequest = (
   provider: ResolvedProvider,
   requireBridgeToolCall = false,
@@ -152,7 +147,7 @@ const buildMessagesValidationRequest = (provider: ResolvedProvider): ValidationH
 
   const body = JSON.stringify({
     model: provider.model ?? '',
-    max_tokens: ANTHROPIC_PROBE_MAX_TOKENS,
+    max_tokens: resolveProviderProbePolicy(provider.vendorId).messages.maxOutputTokens,
     messages: [{ role: 'user', content: 'ping' }]
   })
 
@@ -194,8 +189,8 @@ const buildChatCompletionsValidationRequest = (
         })
       : {
           model: provider.model ?? '',
-          // Requesty rejects Chat probes below 16 output tokens, including for OpenAI models.
-          max_tokens: provider.vendorId === 'requesty' ? 16 : 1,
+          max_tokens: resolveProviderProbePolicy(provider.vendorId)['chat-completions']
+            .maxOutputTokens,
           messages: [{ role: 'user', content: 'ping' }],
           stream: false
         }
@@ -234,29 +229,8 @@ const buildResponsesValidationRequest = (provider: ResolvedProvider): Validation
     body: JSON.stringify({
       model: provider.model ?? '',
       input: 'ping',
-      max_output_tokens: 16
+      max_output_tokens: resolveProviderProbePolicy(provider.vendorId).responses.maxOutputTokens
     })
-  }
-}
-
-const hasValidMessagesResponse = (bodyText: string): boolean => {
-  try {
-    const parsed = JSON.parse(bodyText) as {
-      type?: unknown
-      role?: unknown
-      content?: unknown
-      usage?: { input_tokens?: unknown; output_tokens?: unknown }
-    }
-
-    return (
-      parsed.type === 'message' &&
-      parsed.role === 'assistant' &&
-      Array.isArray(parsed.content) &&
-      typeof parsed.usage?.input_tokens === 'number' &&
-      typeof parsed.usage?.output_tokens === 'number'
-    )
-  } catch {
-    return false
   }
 }
 
@@ -553,6 +527,13 @@ const validateProviderThroughLocalResponsesAdapter = async (
       body: JSON.stringify(adapter.body),
       signal: controller.signal
     })
+    if (
+      response.status === 502 &&
+      response.headers.get('x-open-science-provider-failure') === 'connection'
+    ) {
+      await response.body?.cancel()
+      return toResult('network')
+    }
     const upstreamStatus = Number(response.headers.get('x-open-science-upstream-status'))
     const status =
       Number.isInteger(upstreamStatus) && upstreamStatus >= 100 && upstreamStatus <= 599
@@ -614,10 +595,15 @@ const validateProviderThroughResponsesToChatCompletionsBridge = async (
   if (!targetBaseUrl) return toResult('bad-url', { message: 'Missing base URL.' })
 
   const bridge = new ResponsesToChatCompletionsBridge(
-    { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
+    {
+      baseUrl: targetBaseUrl,
+      key: provider.key,
+      model: provider.model,
+      ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy })
+    },
     fetchImpl
   )
-  return validateProviderThroughLocalResponsesAdapter(
+  const result = await validateProviderThroughLocalResponsesAdapter(
     {
       start: () => bridge.start(),
       close: () => bridge.close(),
@@ -629,6 +615,12 @@ const validateProviderThroughResponsesToChatCompletionsBridge = async (
     timeoutMs,
     provider.key
   )
+  if (result.status && result.status >= 500 && result.message) {
+    const prefix = upstreamHttpErrorPrefix(result.status)
+    if (result.message.startsWith(prefix))
+      return { ...result, message: result.message.slice(prefix.length) }
+  }
+  return result
 }
 
 const validateProviderThroughNativeResponsesCompatibility = async (
@@ -703,7 +695,8 @@ const validateCustomProvider = async (
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetchProviderRequest(fetchImpl, request.url, {
+    const fetchUpstream = withProviderRequestPolicy(fetchImpl, provider.requestPolicy, provider.key)
+    const response = await fetchProviderRequest(fetchUpstream, request.url, {
       method: 'POST',
       headers: request.headers,
       body: request.body,
@@ -737,7 +730,8 @@ const validateCustomProvider = async (
       })
     }
 
-    if (category === 'ok' && request.endpoint === 'messages') {
+    const { validateResponse } = resolveProviderProbePolicy(provider.vendorId)[request.endpoint]
+    if (category === 'ok' && validateResponse) {
       let bodyText = ''
       try {
         bodyText = await readBoundedResponseText(
@@ -752,12 +746,15 @@ const validateCustomProvider = async (
             message: error.message
           })
         }
-        // An unreadable success body cannot prove the Messages contract.
+        // An unreadable body cannot prove that the model endpoint is working.
       }
-      if (!hasValidMessagesResponse(bodyText)) {
+      if (!validateResponse(bodyText)) {
         return toResult('unknown', {
           status: response.status,
-          message: 'The provider returned success without a valid Anthropic message.'
+          message:
+            request.endpoint === 'messages'
+              ? 'The provider returned success without a valid Anthropic message.'
+              : 'The provider returned an unexpected response. Check the API settings before retrying.'
         })
       }
     }
@@ -803,12 +800,11 @@ const validateProviderUnredacted = (
   provider: ResolvedProvider,
   deps: ValidateProviderDeps = {}
 ): Promise<ValidateProviderResult> => {
-  if (provider.vendorId !== 'opencode-go') return validateCustomProvider(provider, deps)
+  const { sessionHeader } = resolveProviderProbePolicy(provider.vendorId)
+  if (!sessionHeader) return validateCustomProvider(provider, deps)
 
-  // Settings probes do not run through OpenCode's chat.headers plugin. Give each independent probe
-  // its own session, stable for every upstream request within that invocation. Decorate the upstream
-  // fetch (not the loopback request) so Messages, Chat Completions, Responses, and both Codex adapters
-  // all satisfy Go's routing contract without changing real conversation session identities.
+  // Scope the session to this probe invocation and decorate each upstream request,
+  // including requests sent through a local bridge.
   const sessionId = `open-science-probe-${randomUUID()}`
   const fetchImpl = deps.fetchImpl ?? fetch
   return validateCustomProvider(provider, {
@@ -817,7 +813,7 @@ const validateProviderUnredacted = (
       const headers = new Headers(
         init?.headers ?? (input instanceof Request ? input.headers : undefined)
       )
-      headers.set('x-opencode-session', sessionId)
+      headers.set(sessionHeader, sessionId)
       headers.set('user-agent', 'open-science/provider-validation')
       return fetchImpl(input, { ...init, headers })
     }

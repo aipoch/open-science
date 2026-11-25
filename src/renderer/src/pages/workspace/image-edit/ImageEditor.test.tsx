@@ -86,6 +86,7 @@ const startTask = vi.fn(
 )
 const cancelTask = vi.fn(async () => undefined)
 let owner: ReturnType<typeof useImageEditing>
+const reportVersion = vi.fn<(item: PreviewFileItem | undefined) => void>()
 function Capture(): null {
   const value = useImageEditing()
   useEffect(() => {
@@ -136,7 +137,11 @@ function EditActionBoundary({
     { execute: () => void; disabled?: boolean } | undefined
   >()
   return (
-    <ImageEditorBoundary item={item} onEditActionChange={setEditAction}>
+    <ImageEditorBoundary
+      item={item}
+      onEditActionChange={setEditAction}
+      onVersionChange={reportVersion}
+    >
       {({ editDisabledReason }) => children({ editAction, editDisabledReason })}
     </ImageEditorBoundary>
   )
@@ -2049,6 +2054,19 @@ it.each(['cancelled', 'failed'] as const)(
     )
   }
 )
+
+it('clears the reported version when a retained draft is removed in preview', async () => {
+  await render()
+  await click('Edit image')
+  await click('Back to image preview')
+  expect(reportVersion).toHaveBeenLastCalledWith(
+    expect.objectContaining({ selectedVersionId: 'v1' })
+  )
+
+  const [key] = owner!.drafts.keys()
+  await act(async () => owner!.update(key, () => undefined))
+  expect(reportVersion).toHaveBeenLastCalledWith(undefined)
+})
 
 it('retains the submitted draft when leaving, and resumes the same task on return', async () => {
   await render()

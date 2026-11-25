@@ -269,11 +269,34 @@ describe('AcpDurableContinuationContextOwner', () => {
     { providerStopped: true, approvedPlan: false, previouslyRestored: false },
     { providerStopped: false, approvedPlan: true, previouslyRestored: false },
     { providerStopped: false, approvedPlan: false, previouslyRestored: true },
-    { providerStopped: false, approvedPlan: true, previouslyRestored: true }
+    { providerStopped: false, approvedPlan: true, previouslyRestored: true },
+    { providerStopped: false, approvedPlan: false, previouslyRestored: false, reply: 'steering' },
+    {
+      providerStopped: true,
+      approvedPlan: false,
+      previouslyRestored: false,
+      reply: 'revised-answer'
+    }
   ])(
-    'answers a persisted question after restart (stopped: $providerStopped, approved Plan: $approvedPlan, previously restored: $previouslyRestored)',
-    async ({ providerStopped, approvedPlan, previouslyRestored }) => {
-      const initial = createSession([message('prompt-active', 'Choose the next step.')])
+    'answers a persisted question after restart (stopped: $providerStopped, approved Plan: $approvedPlan, previously restored: $previouslyRestored, reply: $reply)',
+    async ({ providerStopped, approvedPlan, previouslyRestored, reply }) => {
+      const prompt = message('prompt-active', 'Choose the next step.')
+      const initial = createSession(
+        reply === 'revised-answer'
+          ? [
+              message('original', 'Start the analysis.'),
+              { ...prompt, responseToMessageId: 'original' }
+            ]
+          : reply === 'steering'
+            ? [
+                prompt,
+                {
+                  ...message('steering', 'Focus on recent results.'),
+                  responseToMessageId: prompt.id
+                }
+              ]
+            : [prompt]
+      )
       initial.runtimeTranscriptOwner = 'main'
       initial.status = 'running'
       initial.activeRun = { promptMessageId: 'prompt-active', startedAt: 1 }
@@ -341,6 +364,7 @@ describe('AcpDurableContinuationContextOwner', () => {
         }
       }
       let restored = normalizeSessionFile(JSON.parse(JSON.stringify(projected)))!
+      expect(restored.status).toBe('waiting-for-user')
       expect(restored.activities?.[0].elicitation?.state).toBe('pending')
       const owner = new AcpDurableContinuationContextOwner({
         loadSessionForContinuation: async () => structuredClone(restored),
@@ -836,7 +860,13 @@ describe('AcpDurableContinuationContextOwner', () => {
   it.each(['accept', 'decline'] as const)(
     'retains the committed %s decision after restarting an unaccepted continuation',
     async (action) => {
-      let session = createSession([message('prompt-active', 'Choose an approach.')])
+      let session = createSession([
+        message('prompt-active', 'Choose an approach.'),
+        {
+          ...message('steering', 'Focus on recent results.'),
+          responseToMessageId: 'prompt-active'
+        }
+      ])
       session.runtimeTranscriptOwner = 'main'
       setActivities(session, [pendingChoice()])
       const owner = new AcpDurableContinuationContextOwner({
@@ -911,6 +941,39 @@ describe('AcpDurableContinuationContextOwner', () => {
     expect(session.status).toBe('idle')
     expect(session.activities?.[0].elicitation?.state).toBe('cancelled')
     expect(session.activities?.[0].elicitation?.answers).toBeUndefined()
+  })
+
+  it('keeps another current question waiting after ending one following a routed reply', async () => {
+    const session = createSession([
+      message('prompt-active', 'Choose an approach.'),
+      {
+        ...message('revised-answer', 'Use the revised approach.'),
+        responseToMessageId: 'prompt-active'
+      },
+      {
+        ...message('steering', 'Focus on recent results.'),
+        responseToMessageId: 'revised-answer'
+      }
+    ])
+    const first = pendingChoice()
+    const second = pendingChoice({ id: 'tool-choice-2', promptMessageId: 'revised-answer' })
+    second.elicitation!.durable = {
+      kind: 'agent-user-choice',
+      requestId: 'choice-2',
+      promptMessageId: 'revised-answer'
+    }
+    setActivities(session, [first, second])
+    const owner = createOwner(session)
+    const input = { projectId: session.projectId, sessionId: session.id, action: 'cancel' as const }
+
+    await owner.prepareElicitation({ ...input, requestId: 'choice-1', toolCallId: first.id })
+    expect(session.status).toBe('waiting-for-user')
+    expect(session.activities?.find(({ id }) => id === second.id)?.elicitation?.state).toBe(
+      'pending'
+    )
+
+    await owner.prepareElicitation({ ...input, requestId: 'choice-2', toolCallId: second.id })
+    expect(session.status).toBe('idle')
   })
 
   it.each(['accept', 'decline'] as const)(

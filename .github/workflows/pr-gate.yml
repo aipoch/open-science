@@ -1549,6 +1549,9 @@ jobs:
       - name: Install headless Chromium
         if: ${{ matrix.group == 'presentation' || (matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos')) }}
         run: npx playwright install chromium --only-shell
+      - name: Verify macOS ZIP differential downloads
+        if: matrix.group == 'journeys'
+        run: npx --no-install electron scripts/ci/macos-zip-differential.cjs
       - name: Test macOS-native behavior
         id: unit_macos_native
         if: ${{ matrix.group == 'journeys' && ((fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full') || (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') && fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded')) }}

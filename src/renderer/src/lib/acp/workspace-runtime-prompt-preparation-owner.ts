@@ -5,6 +5,7 @@ import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import {
   CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
+  EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE,
   unwrapIpcErrorDetail,
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
   RESUME_RECONNECT_FAILED_MESSAGE,
@@ -245,6 +246,9 @@ const getResumeFailureMessage = (error: unknown): string => {
   if (failure.reason === 'configuration/resume-unsupported') return RESUME_UNSUPPORTED_MESSAGE
   if (failure.reason === 'session/reconnect-failed') {
     return RESUME_RECONNECT_FAILED_MESSAGE
+  }
+  if (failure.reason === 'configuration/selected-provider-unavailable') {
+    return EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE
   }
   if (failure.reason === 'configuration/model-unavailable') {
     return RESUME_MODEL_INCOMPATIBLE_MESSAGE

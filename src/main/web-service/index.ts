@@ -7,6 +7,8 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationCommandComposition } from '../application-command-composition-contract'
 import type { ApplicationEventSource } from '../application-events'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
+import type { ManagedNotebookSetup } from '../notebook/environment-lifecycle-workflows'
+import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import { resolveConfigRoot } from '../storage-root'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import { FileTaskRunJournal, type TaskRunJournal } from '../tasks/task-run-journal'
@@ -82,6 +84,9 @@ const createWebServiceController = (
     applicationEvents,
     permissionApprovalPresence,
     taskAgent,
+    taskNotebook,
+    taskNotebookEnvironment,
+    taskNotebookRuntimes,
     taskControls,
     taskResearchFilms,
     computePreferences,
@@ -94,6 +99,9 @@ const createWebServiceController = (
     applicationEvents: ApplicationEventSource
     permissionApprovalPresence?: PermissionApprovalPresence
     taskAgent: TaskAgentPort
+    taskNotebook?: Pick<NotebookRuntimeService, 'inspectTaskExecution'>
+    taskNotebookEnvironment?: ManagedNotebookSetup
+    taskNotebookRuntimes?: import('./task-api').TaskNotebookRuntimes
     taskControls?: TaskControlPorts
     taskResearchFilms?: TaskResearchFilmPort
     computePreferences: TaskComputePreferencePort
@@ -124,6 +132,9 @@ const createWebServiceController = (
     {
       commands: applicationCommands.task,
       agent: taskAgent,
+      notebook: taskNotebook,
+      notebookEnvironment: taskNotebookEnvironment,
+      notebookRuntimes: taskNotebookRuntimes,
       controls: taskControls,
       researchFilms: taskResearchFilms && createTaskResearchFilmApi(taskResearchFilms),
       computePreferences,

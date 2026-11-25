@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
   copyFileSync,
@@ -14,9 +14,9 @@ import {
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { gunzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync } from 'node:zlib'
 
-import { load } from 'js-yaml'
+import { dump, load } from 'js-yaml'
 import { afterEach, expect, it } from 'vitest'
 
 import { buildManifest } from './generate-version-manifest.mjs'
@@ -119,6 +119,44 @@ const writeFeed = (dir: string, arch: string, version: string): void => {
 }
 const merge = (dir: string): ReturnType<typeof spawnSync> =>
   spawnSync(process.execPath, [join(repo, 'scripts/merge-mac-feed.mjs'), dir], { encoding: 'utf8' })
+
+it('preserves valid signed Sparkle patches and refuses altered bytes before release', () => {
+  const dir = temporaryDirectory()
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+  const bytes = Buffer.from('patch')
+  let lastPatch = ''
+  for (const arch of ['arm64', 'x64']) {
+    writeFeed(dir, arch, '0.27.0')
+    const feedPath = join(dir, arch + '-mac.yml')
+    const feed = load(readFileSync(feedPath, 'utf8')) as {
+      files: Array<Record<string, unknown> & { url: string }>
+    }
+    const file = feed.files[0]
+    file.sparklePublicKey = Buffer.from(
+      publicKey.export({ format: 'jwk' }).x!,
+      'base64url'
+    ).toString('base64')
+    const sha512 = createHash('sha512').update(bytes).digest('base64')
+    const pair = JSON.stringify(['0.26.0', '0.27.0', arch, '26', '27', file.sha512, sha512])
+    file.sparkleDelta = {
+      from: '0.26.0',
+      sourceBuild: '26',
+      targetBuild: '27',
+      zipSignature: sign(null, readFileSync(join(dir, file.url)), privateKey).toString('base64'),
+      pairSignature: sign(null, Buffer.from(pair), privateKey).toString('base64'),
+      size: bytes.length,
+      signature: sign(null, bytes, privateKey).toString('base64'),
+      sha512
+    }
+    lastPatch = join(dir, file.url + '.from-0.26.0.delta')
+    writeFileSync(lastPatch, bytes)
+    writeFileSync(join(dir, file.url + '.blockmap'), 'fixture')
+    writeFileSync(feedPath, dump(feed))
+  }
+  expect(merge(dir).status).toBe(0)
+  writeFileSync(lastPatch, 'other')
+  expect(String(merge(dir).stderr)).toContain('Sparkle patch checksum or signature mismatch')
+})
 
 it('rejects macOS feeds from different release versions', () => {
   const dir = temporaryDirectory()
@@ -709,7 +747,27 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
       `aipoch-open-science-${version}-mac-arm64.zip`,
       `aipoch-open-science-${version}-mac-x64.zip`
     ]
-    for (const name of macZips) writeFileSync(join(dir, `${name}.blockmap`), `map for ${name}`)
+    const mapBytes = gzipSync(
+      JSON.stringify({
+        version: '2',
+        files: [{ name: 'file', offset: 0, sizes: [19], checksums: ['fixture'] }]
+      })
+    )
+    for (const name of macZips) writeFileSync(join(dir, `${name}.blockmap`), mapBytes)
+    const previousDir = join(channelPrefix, 'releases/0.37.1')
+    mkdirSync(previousDir, { recursive: true })
+    for (const name of macZips) {
+      writeFileSync(join(previousDir, name.replace(version, '0.37.1') + '.blockmap'), mapBytes)
+    }
+    writeFileSync(
+      join(cwd, 'bin', 'curl'),
+      `#!/usr/bin/env node
+const fs = require('node:fs'), path = require('node:path');
+const url = new URL(process.argv.at(-1));
+process.stdout.write(fs.readFileSync(path.join(process.env.TEST_OBJECT_STORE, 'test-bucket', url.pathname)));
+`,
+      { mode: 0o755 }
+    )
     const cliPackages = [
       `open-science-cli_${version}_amd64.deb`,
       `open-science-cli_${version}_arm64.deb`,
@@ -777,6 +835,7 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
           ...env,
           PATH: `${join(cwd, 'bin')}:${process.env.PATH}`,
           VERSION: version,
+          PREVIOUS_STABLE: '0.37.1',
           MODE: 'promote',
           METADATA_ONLY: 'false',
           DIST_DIR: 'dist-assets',
@@ -797,6 +856,13 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
       const result = run(step)
       expect(result.status, `${step}: ${result.stderr}`).toBe(0)
     }
+    const previousIntelMap = join(previousDir, macZips[1].replace(version, '0.37.1') + '.blockmap')
+    unlinkSync(previousIntelMap)
+    expect(run('Sync installers to versioned path').status).not.toBe(0)
+    expect(load(readFileSync(join(channel, 'latest-mac.yml'), 'utf8'))).toMatchObject({
+      version: '0.37.1'
+    })
+    writeFileSync(previousIntelMap, mapBytes)
     const published = run('Sync installers to versioned path')
     expect(published.status, published.stderr).toBe(0)
     const manifest = JSON.parse(readFileSync(join(channel, 'version.json'), 'utf8'))
@@ -814,9 +880,7 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
     expect(manifest.version).toBe(version)
     const uploaded = readdirSync(join(channel, 'releases', version))
     for (const name of macZips) {
-      expect(readFileSync(join(channel, 'releases', version, `${name}.blockmap`), 'utf8')).toBe(
-        `map for ${name}`
-      )
+      expect(readFileSync(join(channel, 'releases', version, `${name}.blockmap`))).toEqual(mapBytes)
     }
     for (const name of cliPackages) expect(uploaded, name).not.toContain(name)
   }

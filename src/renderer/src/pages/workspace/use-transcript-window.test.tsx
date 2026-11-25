@@ -36,6 +36,27 @@ describe('useTranscriptWindow', () => {
     act(() => root.unmount())
   })
 
+  it('fills a short imported tail and can still reveal the first message', () => {
+    const root = createRoot(document.createElement('div'))
+    const viewport = document.createElement('div')
+    const ref = { current: viewport }
+    let current!: ReturnType<typeof useTranscriptWindow>
+    Object.defineProperties(viewport, {
+      clientHeight: { value: 500 },
+      scrollHeight: { get: () => (current.entries.length > 8 ? 1000 : 500) }
+    })
+    const Harness = (): null => {
+      current = useTranscriptWindow('import-session', items, -1, ref, false, 8)
+      return null
+    }
+    act(() => root.render(<Harness />))
+    expect(current.entries).toHaveLength(16)
+    expect(current.entries.at(-1)?.item.id).toBe('message-120')
+    act(() => current.revealMessage('message-1'))
+    expect(current.entries[0].item.id).toBe('message-1')
+    act(() => root.unmount())
+  })
+
   it('retains paused rows after a collapse reaches bottom until deliberate following resumes', () => {
     const root = createRoot(document.createElement('div'))
     const viewport = document.createElement('div')

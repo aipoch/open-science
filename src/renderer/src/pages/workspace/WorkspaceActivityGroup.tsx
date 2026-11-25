@@ -7,7 +7,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../../shared/compute'
-import type { NotebookRunRecord } from '../../../../shared/notebook'
+import type { NotebookRunRecord, NotebookSessionReference } from '../../../../shared/notebook'
 import { RemoteJobRow } from '@/components/RemoteJobRow'
 import { extractJobIdFromActivity } from '@/components/job-binding-utils'
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'
@@ -21,6 +21,7 @@ import { WorkspaceWebSearchActivityRow } from './WorkspaceWebSearchActivityRow'
 import { WorkspaceWebFetchActivityRow } from './WorkspaceWebFetchActivityRow'
 import { isBuiltinWebFetchActivity, readWebFetchResult } from './workspace-web-fetch-details'
 import {
+  getNotebookRunIdFromActivity,
   buildToolActivityDetails,
   getSkillLoadDocument,
   isSkillActivity
@@ -44,6 +45,8 @@ import {
   readWebSearchResult
 } from './workspace-web-search-details'
 import {
+  hasTerminalNotebookReceipt,
+  isNotebookExecutionActivity,
   getCorrelatedNotebookRun,
   getToolExecutionPhase,
   isNotebookCodeReviewActivity
@@ -59,6 +62,8 @@ const isManagePackagesActivity = (
   isNotebookManagePackagesToolName(activity.title)
 
 type WorkspaceActivityGroupProps = {
+  notebookRunRetries?: ReadonlyMap<string, () => void>
+  notebookReference?: NotebookSessionReference
   allowFolderAccess?: boolean
   group: ConversationActivityGroupItem
   isExpanded: boolean
@@ -123,6 +128,8 @@ const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
   phase,
   legacyIsSearch,
   expansionOverride,
+  notebookRunRetries,
+  notebookReference,
   allowFolderAccess,
   notebookRunsById,
   onNotebookRunNearViewport,
@@ -133,6 +140,8 @@ const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
   onOpenJobDetail
 }: Pick<
   WorkspaceActivityGroupProps,
+  | 'notebookRunRetries'
+  | 'notebookReference'
   | 'allowFolderAccess'
   | 'notebookRunsById'
   | 'onNotebookRunNearViewport'
@@ -149,6 +158,13 @@ const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const correlatedNotebookRun = getCorrelatedNotebookRun(activity, notebookRunsById)
+  const receiptRunId = isNotebookExecutionActivity(activity)
+    ? getNotebookRunIdFromActivity(activity)
+    : undefined
+  const run =
+    correlatedNotebookRun ?? (receiptRunId ? notebookRunsById?.get(receiptRunId) : undefined)
+  const expandedRun = expansionOverride ? run : undefined
+  const deferFigures = isNotebookExecutionActivity(activity) && hasTerminalNotebookReceipt(activity)
   const packageEvidence = readPackageWebEvidence(activity)
   const ownedWebFetch = isBuiltinWebFetchActivity(activity)
   const fetchResult = ownedWebFetch ? readWebFetchResult(activity) : undefined
@@ -175,9 +191,10 @@ const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
     () =>
       packageEvidence || isWebFetch || isSearch || skillLoadDocument || skillLoadWithoutDocument
         ? undefined
-        : buildToolActivityDetails(activity, t),
+        : buildToolActivityDetails(activity, t, expandedRun),
     [
       activity,
+      expandedRun,
       t,
       packageEvidence,
       isWebFetch,
@@ -248,18 +265,25 @@ const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
         />
       ) : toolDetails ? (
         <WorkspaceToolDetailsRow
+          notebookReference={notebookReference}
           allowFolderAccess={allowFolderAccess}
           activity={activity}
           phase={phase}
           details={toolDetails}
           notebookRun={
-            correlatedNotebookRun ??
+            run ??
             (toolDetails.notebookRunId
               ? notebookRunsById?.get(toolDetails.notebookRunId)
               : undefined)
           }
           isExpanded={isRowExpanded}
-          onNotebookRunNearViewport={onNotebookRunNearViewport}
+          retryNotebookRun={
+            toolDetails.notebookRunId
+              ? notebookRunRetries?.get(toolDetails.notebookRunId)
+              : undefined
+          }
+          showNotebookFigures={isRowExpanded}
+          onNotebookRunNearViewport={deferFigures ? undefined : onNotebookRunNearViewport}
           onToggle={onToggleRow}
           annotationPort={annotationPort}
           revealRequest={revealRequest?.itemId === activity.id ? revealRequest : undefined}
@@ -290,6 +314,8 @@ const WorkspaceActivityGroupRow = memo(function WorkspaceActivityGroupRow({
 
 // Renders adjacent tool calls as one collapsible transcript row group.
 const WorkspaceActivityGroup = ({
+  notebookRunRetries,
+  notebookReference,
   allowFolderAccess = false,
   group,
   isExpanded,
@@ -402,6 +428,8 @@ const WorkspaceActivityGroup = ({
                 phase={getToolExecutionPhase(activity, permission, notebookRunsById)}
                 legacyIsSearch={isSearchActivity(activity, group.activities, activityIndex)}
                 expansionOverride={expansionOverrides[activity.id]}
+                notebookRunRetries={notebookRunRetries}
+                notebookReference={notebookReference}
                 allowFolderAccess={allowFolderAccess}
                 notebookRunsById={notebookRunsById}
                 onNotebookRunNearViewport={onNotebookRunNearViewport}

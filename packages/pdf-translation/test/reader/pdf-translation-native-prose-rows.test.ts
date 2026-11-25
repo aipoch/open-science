@@ -32,6 +32,65 @@ const page = (items: PdfLayoutTextItem[]): PdfLayoutPage => ({
   rotation: 0,
   items
 })
+
+it.each([true, false])('retains only a numbered native optimization display (%s)', (numbered) => {
+  const items = [
+    part('The following model minimizes the estimated error,', 45, 622, 245),
+    part('H', 125, 606, 6, 'Math', 10, false),
+    part('=', 134, 606, 8, 'Symbol', 10, false),
+    part('max', 145, 606, 17, 'Body', 10, false),
+    part('H', 151, 599.5, 5, 'Index', 7, false),
+    part('V', 166, 606, 6, 'Math', 10, false),
+    part('(', 173, 606, 4, 'Symbol', 10, false),
+    part('H', 177, 606, 6, 'Math', 10, false),
+    part('(', 184, 606, 4, 'Symbol', 10, false),
+    part('t', 188, 606, 4, 'Math', 10, false),
+    part('))', 192, 606, 8, 'Symbol', 10, false),
+    part('subject to 2', 205, 606, 48, 'Body', 10, false),
+    part('j', 253, 604.5, 3, 'Math', 7, false),
+    part('(', 257, 606, 4, 'Symbol', 10, false),
+    part('H', 261, 606, 6, 'Math', 10, false),
+    part('(', 268, 606, 4, 'Symbol', 10, false),
+    part('t', 272, 606, 4, 'Math', 10, false),
+    part(')) =', 276, 606, 18, 'Symbol', 10, false),
+    part('2', 296, 606, 5, 'Body', 10, false),
+    part(',', 301, 606, 3, 'Symbol', 10, false),
+    part('∀', 310, 606, 5, 'Math', 10, false),
+    part('t', 315, 606, 4, 'Math', 10, false),
+    part('∈', 321, 606, 7, 'Symbol', 10, false),
+    part('T', 330, 606, 5, 'Math', 10, false),
+    part('.', 335, 606, 3, 'Symbol', 10, !numbered),
+    ...(numbered ? [part('(2)', 530, 606, 12)] : []),
+    part('The next paragraph describes the analysis.', 45, 586, 220)
+  ]
+  const { units } = groupPdfTranslationPages({ pages: [page(items)] })
+  const core = units.find(({ source }) => source.includes('subject to'))
+  expect(core?.source.startsWith('max')).toBe(true)
+  expect(core?.preserve).toBe(numbered ? 'formula' : undefined)
+  expect(Boolean(core?.sourceOnly)).toBe(numbered)
+  expect(
+    units.find(({ source }) => source.startsWith('The next paragraph'))?.sourceOnly
+  ).toBeFalsy()
+})
+
+it('preserves standalone set notation and keeps the explanatory prose eligible', () => {
+  const { units } = groupPdfTranslationPages({
+    pages: [
+      page([
+        part('Consider the boundary below.', 50, 650, 160),
+        part('k∈Z', 180, 620, 21, 'Math'),
+        part('A sample with k∈Z meets the condition.', 50, 590, 220)
+      ])
+    ]
+  })
+  expect(units).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ source: 'k∈Z', sourceOnly: true, preserve: 'formula' }),
+      expect.objectContaining({ source: 'A sample with k∈Z meets the condition.' })
+    ])
+  )
+  expect(units.find(({ source }) => source.startsWith('A sample'))?.sourceOnly).toBeUndefined()
+})
 const source = (input: PdfLayoutPage): ReturnType<typeof groupPdfTranslationPages> => {
   const result = groupPdfTranslationPages({ pages: [input] })
   const actual = result.units.flatMap((u) => u.items.map((key, at) => [key, u.originalStrings[at]]))

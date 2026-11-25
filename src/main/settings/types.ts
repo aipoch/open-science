@@ -1,3 +1,5 @@
+import type { LocalProviderModel } from '../../shared/local-provider-preset'
+import type { ProviderModel } from '../../shared/configured-provider-model'
 import type { CatalogSnapshot, CatalogStatus } from '@aipoch/providers'
 import type { CodeBuddyAuthMode } from '../../shared/codebuddy-subscription'
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
@@ -14,6 +16,9 @@ import type {
   ModelProtocol,
   ModelReasoningEffort,
   OfficialVendorId,
+  CloudflareGateway,
+  LocalProviderPresetId,
+  ManualProviderConnection,
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
@@ -109,6 +114,11 @@ export type StoredProvider = {
   // Set for official-vendor providers only.
   vendorId?: OfficialVendorId
   region?: string
+  cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
+  localPresetId?: LocalProviderPresetId
+  localModels?: readonly LocalProviderModel[]
+  manualModels?: readonly ProviderModel[]
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]

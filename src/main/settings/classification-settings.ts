@@ -29,6 +29,7 @@ import {
 } from '@aipoch/providers/client'
 
 import { prepareClassificationImages } from './classification-images'
+import { safeNetworkErrorCode } from './provider-failure-observation'
 import { netFetchStandard } from '../network-fetch'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
@@ -947,7 +948,9 @@ export class ClassificationSettingsOwner {
       }
       throw new Error('Classification request failed.')
     } catch (error) {
+      const errorCode = phase === 'fetch' ? safeNetworkErrorCode(error) : undefined
       log.warn('classification request failed', {
+        ...(errorCode ? { errorCode } : {}),
         ...context,
         attempt: attemptCount,
         status,

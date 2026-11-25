@@ -190,7 +190,11 @@ const ModelPolicySelect = (props: ModelPolicySelectProps): React.JSX.Element => 
               {configuration.mode === 'fixed' && selectedEntry ? (
                 <>
                   <ProviderKindIcon
-                    kindKey={providerKindKey(selectedEntry.providerType, selectedEntry.vendorId)}
+                    kindKey={providerKindKey(
+                      selectedEntry.providerType,
+                      selectedEntry.vendorId,
+                      selectedEntry.localPresetId
+                    )}
                     className="size-4"
                   />
                   <span className="truncate">
@@ -227,7 +231,11 @@ const ModelPolicySelect = (props: ModelPolicySelectProps): React.JSX.Element => 
                     value={entry.key}
                     icon={
                       <ProviderKindIcon
-                        kindKey={providerKindKey(entry.providerType, entry.vendorId)}
+                        kindKey={providerKindKey(
+                          entry.providerType,
+                          entry.vendorId,
+                          entry.localPresetId
+                        )}
                         className="size-4"
                       />
                     }

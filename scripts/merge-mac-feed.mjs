@@ -34,6 +34,8 @@ const files = feeds.map((feed, index) => {
   if (!stat.isFile() || !stat.size) throw new Error(`Invalid macOS blockmap: ${blockmap}`)
   return entries[0]
 })
+if (files[0].sparklePublicKey !== files[1].sparklePublicKey)
+  throw new Error('Both macOS architectures must advertise the same Sparkle key')
 const releaseDate = feeds
   .map((feed) => feed.releaseDate)
   .filter(Boolean)

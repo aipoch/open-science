@@ -1,3 +1,5 @@
+import { decodeProviderModels } from '../../shared/configured-provider-model'
+import { decodeLocalProviderModels } from '../../shared/local-provider-preset'
 import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import { z } from 'zod'
 import {
@@ -26,7 +28,13 @@ import type { PackageMirror } from '../../shared/mirror'
 import {
   type ModelProtocol,
   type ModelReasoningEffort,
-  isOfficialVendorId
+  configuredProviderConnectionKind,
+  isLocalProviderPresetId,
+  isOfficialVendorId,
+  recoverConfiguredProviderModels,
+  resolveConfiguredProviderConnection,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList
 } from '@aipoch/providers'
 import type { LabModelCapabilities } from '../../shared/lab'
 import {
@@ -225,6 +233,28 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   const labServerUrl = asString(value.labServerUrl)
   const labCatalogToken = asString(value.labCatalogToken)
   const model = asString(value.model)
+  if (type === 'official' && vendorId && configuredProviderConnectionKind(vendorId)) {
+    const connection = resolveConfiguredProviderConnection(vendorId, value)
+    if (!connection) return undefined
+
+    const manualModels = supportsConfiguredProviderModelList(vendorId)
+      ? decodeProviderModels(value.manualModels)
+      : undefined
+    const modelId = model?.trim()
+    const recovered = recoverConfiguredProviderModels(
+      vendorId,
+      connection,
+      modelId && characterCount(modelId) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+        ? modelId
+        : undefined,
+      manualModels
+    )
+    if (!recovered || characterCount(recovered.model) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
+      return undefined
+    if (connection.cloudflare) provider.cloudflare = connection.cloudflare
+    if (connection.manualConnection) provider.manualConnection = connection.manualConnection
+    Object.assign(provider, recovered)
+  }
   const positiveWholeNumber = (candidate: unknown): number | undefined => {
     const number = asNumber(candidate)
     return isPositiveWholeTokenLimit(number) ? number : undefined
@@ -385,13 +415,34 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     provider.labServerUrl = labServerUrl
   if (labCatalogToken && labCatalogToken.length <= 128 && type === 'lab')
     provider.labCatalogToken = labCatalogToken
-  if (model && characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
+  if (
+    !provider.model &&
+    model &&
+    characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+  )
     provider.model = model
   if (type === 'custom') {
-    if (contextWindow !== undefined) provider.contextWindow = contextWindow
+    if (isLocalProviderPresetId(value.localPresetId)) {
+      provider.localPresetId = value.localPresetId
+      const models = decodeLocalProviderModels(value.localModels)
+      if (models) {
+        provider.localModels = models
+        provider.model = selectConfiguredModelId(
+          provider.model,
+          models.map(({ id }) => id)
+        )
+      }
+    }
     if (maxInputTokens !== undefined) provider.maxInputTokens = maxInputTokens
     if (maxOutputTokens !== undefined) provider.maxOutputTokens = maxOutputTokens
   }
+  if (
+    contextWindow !== undefined &&
+    !provider.manualModels &&
+    (type === 'custom' ||
+      ((provider.cloudflare || provider.manualConnection) && provider.model === model?.trim()))
+  )
+    provider.contextWindow = contextWindow
   if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
   if (reasoningEffortPreset !== undefined && type === 'custom') {
     provider.reasoningEffortPreset = reasoningEffortPreset

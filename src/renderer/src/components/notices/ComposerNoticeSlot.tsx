@@ -118,7 +118,7 @@ const ComposerFailureNoticeSlot = ({
       value !== undefined &&
       (providerMessage || current.failure.diagnostics.protocol
         ? ['status', 'provider', 'model'].includes(key)
-        : key !== 'raw')
+        : key !== 'raw' && key !== 'adapterCode')
   )
   const canCopyError = !current.summary || Boolean(diagnostics.details)
   const details = [diagnostics.details, actionFailure?.id === current.id && actionFailure.message]
