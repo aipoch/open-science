@@ -102,6 +102,45 @@ if (process.versions.electron) {
   require('./session-outcome-preload.cjs')
   if (process.env.OPEN_SCIENCE_E2E_USE_CASE_GATE) require('./use-case-download-preload.cjs')
   if (process.platform === 'darwin') require('./mock-node-credentials.cjs')
+  if (
+    process.platform === 'win32' &&
+    root.includes('open-science-electron-e2e-') &&
+    root === process.env.OPEN_SCIENCE_CONFIG_ROOT &&
+    root === process.env.OPEN_SCIENCE_STORAGE_ROOT
+  ) {
+    const Module = require('node:module')
+    const load = Module._load
+    const wrapped = new WeakSet()
+    const control = join(root, 'e2e-notebook-memory-sample.json')
+    Module._load = function (request, ...args) {
+      const binding = Reflect.apply(load, this, [request, ...args])
+      if (request !== '@aipoch/process-tree-native' || wrapped.has(binding)) return binding
+      const sample = binding.sampleWindowsResources
+      binding.sampleWindowsResources = async (includeProcesses, retained) => {
+        if (includeProcesses || retained.length || !existsSync(control))
+          return sample(includeProcesses, retained)
+        const { status, delayMs } = JSON.parse(readFileSync(control, 'utf8'))
+        const startedAt = Date.now()
+        if (delayMs) await require('node:timers/promises').setTimeout(delayMs)
+        const gibibyte = 1024 ** 3
+        return {
+          supported: true,
+          complete: status !== 'unavailable',
+          startedAt,
+          endedAt: Date.now(),
+          system: {
+            availableBytes: status === 'pressured' ? 128 * 1024 ** 2 : 8 * gibibyte,
+            totalPhysicalBytes: 16 * gibibyte,
+            commitLimitBytes: 20 * gibibyte,
+            committedBytes: 8 * gibibyte
+          },
+          processes: []
+        }
+      }
+      wrapped.add(binding)
+      return binding
+    }
+  }
   const fs = require('node:fs/promises')
   const statfs = fs.statfs
   fs.statfs = async (...args) => {

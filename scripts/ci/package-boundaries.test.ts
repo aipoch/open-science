@@ -158,44 +158,53 @@ it('module evidence never pulls in upstream or unrelated package tests', async (
 
 // Cover packages still outside the independent-suite registry as well. Tests and
 // fixtures must not import host code, even when the test compiles a source string.
-it('all package tests and fixtures keep relative dependencies inside their package', () => {
-  const violations: string[] = []
-  for (const file of files('packages').filter(
-    (path) =>
-      /\.[cm]?[jt]sx?$/.test(path) &&
-      (/\.(test|spec)\./.test(path) || /\/(test|tests|test-fixtures)\//.test(path))
-  )) {
-    const root = resolve(file.split('/').slice(0, 2).join('/'))
-    const text = readFileSync(file, 'utf8')
-    const inspect = (source: string): void => {
-      for (const { fileName: specifier } of ts.preProcessFile(source, true, true).importedFiles) {
-        if (!specifier.startsWith('.')) continue
-        const target = relative(root, resolve(file, '..', specifier))
-          .split(sep)
-          .join('/')
-        if (target === '..' || target.startsWith('../')) violations.push(`${file} -> ${specifier}`)
+const packageRoots = readdirSync('packages', { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => `packages/${entry.name}`)
+
+it.each(packageRoots)(
+  '%s tests and fixtures keep relative dependencies inside their package',
+  (packageRoot) => {
+    const root = resolve(packageRoot)
+    const violations: string[] = []
+    for (const file of files(packageRoot).filter(
+      (path) =>
+        /\.[cm]?[jt]sx?$/.test(path) &&
+        (/\.(test|spec)\./.test(path) || /\/(test|tests|test-fixtures)\//.test(path))
+    )) {
+      const text = readFileSync(file, 'utf8')
+      const inspect = (source: string): void => {
+        for (const { fileName: specifier } of ts.preProcessFile(source, true, true).importedFiles) {
+          if (!specifier.startsWith('.')) continue
+          const target = relative(root, resolve(file, '..', specifier))
+            .split(sep)
+            .join('/')
+          if (target === '..' || target.startsWith('../'))
+            violations.push(`${file} -> ${specifier}`)
+        }
       }
-    }
-    inspect(text)
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
-    const visit = (node: ts.Node): void => {
-      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) inspect(node.text)
-      if (
-        ts.isCallExpression(node) &&
-        node.arguments[0] &&
-        ts.isStringLiteral(node.arguments[0]) &&
-        ['vi.mock', 'vi.doMock', 'vi.importActual', 'jest.mock'].includes(
-          node.expression.getText(source)
-        )
-      ) {
-        inspect(`import ${JSON.stringify(node.arguments[0].text)}`)
+      inspect(text)
+      const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+      const visit = (node: ts.Node): void => {
+        if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) inspect(node.text)
+        if (
+          ts.isCallExpression(node) &&
+          node.arguments[0] &&
+          ts.isStringLiteral(node.arguments[0]) &&
+          ['vi.mock', 'vi.doMock', 'vi.importActual', 'jest.mock'].includes(
+            node.expression.getText(source)
+          )
+        ) {
+          inspect(`import ${JSON.stringify(node.arguments[0].text)}`)
+        }
+        ts.forEachChild(node, visit)
       }
-      ts.forEachChild(node, visit)
+      visit(source)
     }
-    visit(source)
-  }
-  expect(violations).toEqual([])
-}, 60_000)
+    expect(violations).toEqual([])
+  },
+  60_000
+)
 
 it('module evidence follows independent package dependency direction', async () => {
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')

@@ -6974,6 +6974,10 @@ it.each(['valid', 'changed-action', 'changed-vector'] as const)(
 
 it.each([
   'same-ink',
+  'batch-same',
+  'batch-second-changed',
+  'batch-second-blank',
+  'batch-distant',
   'split-final-space',
   'final-space-wrong-font',
   'final-space-changed-ink',
@@ -6995,6 +6999,7 @@ it.each([
   'verifies a split untouched neighboring run with complete geometry and rendered ink: %s',
   async (kind) => {
     const { createCanvas } = await import('@napi-rs/canvas')
+    const batched = kind.startsWith('batch-')
     const staggered = kind.startsWith('staggered-'),
       splitSpace = kind === 'split-final-space' || kind.startsWith('final-space-'),
       moved = kind === 'moved-piece' || kind === 'staggered-moved'
@@ -7055,17 +7060,26 @@ it.each([
                 rect: {
                   x: 100 / 600,
                   y: 90 / 800,
-                  width: before.width / 600,
-                  height: (staggered ? 14 : 10) / 800
+                  width: (before.width + (batched ? 45 : 0)) / 600,
+                  height: (kind === 'batch-distant' ? 310 : staggered ? 14 : 10) / 800
                 },
-                items: [{ index: 1, text: before.str }]
+                items: batched
+                  ? [
+                      { index: 1, text: before.str },
+                      { index: 2, text: before.str }
+                    ]
+                  : [{ index: 1, text: before.str }]
               }
             ]
           }
         ]
       })
+    const beside = (item: typeof before): typeof before => ({
+      ...item,
+      transform: [10, 0, 0, 10, item.transform[4] + 45, kind === 'batch-distant' ? 400 : 700]
+    })
     const originalText = {
-      items: [{ ...f.item, str: 'cell' }, before],
+      items: [{ ...f.item, str: 'cell' }, before, ...(batched ? [beside(before)] : [])],
       styles:
         staggered || kind === 'neighbor-ink' || kind === 'invalid-font-metrics'
           ? {
@@ -7083,6 +7097,7 @@ it.each([
         f.item,
         first,
         ...(splitSpace ? [space] : kind === 'staggered-missing' ? [] : [last]),
+        ...(batched ? [beside(first), beside(last)] : []),
         ...(['duplicate-piece', 'staggered-duplicate'].includes(kind) ? [last] : [])
       ],
       styles: staggered ? originalText.styles : {}
@@ -7121,6 +7136,10 @@ it.each([
                   3,
                   3
                 )
+              if (batched && kind !== 'batch-second-blank') {
+                const x = 145 * 4 + 4 + transform[4]
+                context.fillRect(x + (changed ? 1 : 0), 4, 3, 3)
+              }
               if (changed && ['neighbor-ink', 'invalid-font-metrics'].includes(kind))
                 context.fillRect(4, 440 + transform[5], 3, 3)
             }
@@ -7130,6 +7149,7 @@ it.each([
       originalRender = render(false),
       targetRender = render(
         [
+          'batch-second-changed',
           'changed-ink',
           'staggered-changed-ink',
           'neighbor-ink',
@@ -7156,12 +7176,20 @@ it.each([
       )
       await waitFor(() =>
         expect(hook.result.current.state.status).toBe(
-          ['same-ink', 'neighbor-ink', 'staggered-same-ink', 'split-final-space'].includes(kind)
+          [
+            'same-ink',
+            'batch-same',
+            'batch-distant',
+            'neighbor-ink',
+            'staggered-same-ink',
+            'split-final-space'
+          ].includes(kind)
             ? 'ready'
             : 'error'
         )
       )
       if (
+        batched ||
         [
           'staggered-same-ink',
           'staggered-changed-ink',
@@ -7175,8 +7203,9 @@ it.each([
           'transparent-ink'
         ].includes(kind)
       ) {
-        expect(originalRender).toHaveBeenCalledOnce()
-        expect(targetRender).toHaveBeenCalledOnce()
+        const expectedRenders = kind === 'batch-distant' ? 2 : 1
+        expect(originalRender).toHaveBeenCalledTimes(expectedRenders)
+        expect(targetRender).toHaveBeenCalledTimes(expectedRenders)
       } else {
         expect(originalRender).not.toHaveBeenCalled()
         expect(targetRender).not.toHaveBeenCalled()

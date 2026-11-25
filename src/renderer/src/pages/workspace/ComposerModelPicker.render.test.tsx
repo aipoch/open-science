@@ -258,6 +258,18 @@ describe('ComposerModelPicker', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('explains a non-streaming model under Codex even when the provider supports Responses', async () => {
+    useSettingsStore.setState({
+      ...codexFramework,
+      providers: [provider({ apiEndpoints: ['responses'], modelStreaming: { m: false } })]
+    })
+    render()
+    await openMenu(container.querySelector('button')!)
+    await openSubmenu(modelRowTrigger()!)
+    const row = menuItems().find((item) => item.getAttribute('aria-disabled') === 'true')
+    expect(row?.title).toContain('does not support streaming')
+  })
+
   it('renders nothing when there is a single selectable option', () => {
     useSettingsStore.setState({
       providers: [provider({ id: 'p1', models: ['only'], reasoningEffortPreset: 'unsupported' })]
@@ -487,7 +499,7 @@ describe('ComposerModelPicker', () => {
 
     const expectedReason = incompatibilityReason(
       { apiEndpoints: ['chat-completions'], type: 'custom', name: 'OpenAI Gateway' },
-      'Claude Code',
+      { id: 'claude-code', displayName: 'Claude Code' },
       ['messages'],
       i18next.getFixedT('en')
     )
@@ -596,7 +608,7 @@ describe('ComposerModelPicker', () => {
   it('explains an endpoint mismatch by route, not by vendor name', () => {
     const reason = incompatibilityReason(
       { apiEndpoints: ['chat-completions'], type: 'custom', name: 'OpenAI Gateway' },
-      'Claude Code',
+      { id: 'claude-code', displayName: 'Claude Code' },
       ['messages'],
       i18next.getFixedT('en')
     )

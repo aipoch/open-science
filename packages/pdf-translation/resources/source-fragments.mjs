@@ -84,9 +84,30 @@ export function createSourceFragmentRecovery(data, pages) {
     },
     async originalTextOrigins(e, page, objects, pageNumber, resources) {
       try {
+        const literals = new Set(
+          objects
+            .filter((o) => o.type === 1 && o.text.length === 1 && /^[!-~]$/u.test(o.text))
+            .map((o) => o.text)
+        )
+        if (!literals.size) return new Map()
         const { PDFName, PDFDict, PDFRawStream } = await import('pdf-lib')
-        const { createHash } = await import('node:crypto')
-        const { inflateSync } = await import('node:zlib')
+        const fonts = resources?.lookup(PDFName.of('Font'))
+        if (!(fonts instanceof PDFDict)) return
+        const fontDicts = fonts
+          .values()
+          .map((ref) => fonts.context.lookup(ref))
+          .filter((f) => f instanceof PDFDict)
+        // Origin proof requires an embedded program in one of these two descriptor entries.
+        if (
+          !fontDicts.some((font) => {
+            const descriptor = font.lookup(PDFName.of('FontDescriptor'))
+            return (
+              descriptor instanceof PDFDict &&
+              (descriptor.has(PDFName.of('FontFile')) || descriptor.has(PDFName.of('FontFile3')))
+            )
+          })
+        )
+          return new Map()
         if (!loading) {
           const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
           loading = getDocument({
@@ -100,18 +121,26 @@ export function createSourceFragmentRecovery(data, pages) {
           size = pages[pageNumber - 1]
         if (viewport.rotation || viewport.width !== size.width || viewport.height !== size.height)
           return
-        const content = await original.getTextContent(),
-          ops = await original.getOperatorList()
+        const content = await original.getTextContent()
+        if (content.items.length > 10000) return
+        // An operator list can decode every image on the page. Request it only if an
+        // extracted item could supply the original position of a native single glyph.
         if (
-          content.items.length > 10000 ||
-          ops.fnArray.length > 100000 ||
-          ops.fnArray.length !== ops.argsArray.length
+          !content.items.some(
+            (item) =>
+              literals.has(item.str) &&
+              item.dir === 'ltr' &&
+              item.transform[1] === 0 &&
+              item.transform[2] === 0
+          )
         )
-          return
+          return new Map()
+        const ops = await original.getOperatorList()
+        if (ops.fnArray.length > 100000 || ops.fnArray.length !== ops.argsArray.length) return
         const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+        const { createHash } = await import('node:crypto')
+        const { inflateSync } = await import('node:zlib')
         const hash = (b) => createHash('sha256').update(b).digest('hex')
-        const fonts = resources?.lookup(PDFName.of('Font'))
-        if (!(fonts instanceof PDFDict)) return
         const profiles = new Map(),
           byFont = new Map(),
           stack = []
@@ -156,14 +185,9 @@ export function createSourceFragmentRecovery(data, pages) {
                 f.type === 'Type1' &&
                 JSON.stringify(f.fontMatrix) === '[0.001,0,0,0.001,0,0]'
               ) {
-                const matches = fonts
-                  .values()
-                  .map((ref) => fonts.context.lookup(ref))
-                  .filter(
-                    (raw) =>
-                      raw instanceof PDFDict &&
-                      raw.get(PDFName.of('BaseFont'))?.toString() === '/' + f.name
-                  )
+                const matches = fontDicts.filter(
+                  (raw) => raw.get(PDFName.of('BaseFont'))?.toString() === '/' + f.name
+                )
                 if (matches.length === 1) {
                   const descriptor = matches[0].lookup(PDFName.of('FontDescriptor'))
                   const files = ['FontFile', 'FontFile3']
@@ -270,6 +294,7 @@ export function createSourceFragmentRecovery(data, pages) {
             })
           }
         }
+        if (!programs.size) return new Map()
         const p = e.p,
           ptr = e.alloc(32),
           native = new Map(),

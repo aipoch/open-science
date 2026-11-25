@@ -553,10 +553,14 @@ export async function sameNativeMatrixBody(
   original: PDFDocumentProxy,
   translated: PDFDocumentProxy,
   pageNumber: number,
-  options: { nativeDocumentFactory: typeof getDocument; signal: AbortSignal }
+  options: {
+    nativeDocumentFactory: typeof getDocument
+    signal: AbortSignal
+    pageText?: ReadonlyMap<PDFPageProxy, Content>
+  }
 ): Promise<boolean> {
   const sourcePage = await original.getPage(pageNumber),
-    content = await getPdfTranslationTextContent(sourcePage)
+    content = options.pageText?.get(sourcePage) ?? (await getPdfTranslationTextContent(sourcePage))
   if (!hasNativeMatrixCandidate(content)) return true
   const readers: ReturnType<typeof createNativeMatrixReader>[] = []
   try {
@@ -580,7 +584,9 @@ export async function sameNativeMatrixBody(
     const before = await read(original, sourcePage, content)
     if (!before?.length) return true
     const outputPage = await translated.getPage(pageNumber),
-      after = await read(translated, outputPage, await getPdfTranslationTextContent(outputPage))
+      outputText =
+        options.pageText?.get(outputPage) ?? (await getPdfTranslationTextContent(outputPage)),
+      after = await read(translated, outputPage, outputText)
     options.signal.throwIfAborted()
     return (
       !!after &&

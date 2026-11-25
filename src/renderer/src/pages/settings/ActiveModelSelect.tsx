@@ -17,7 +17,10 @@ import {
 } from '../../../../shared/configured-model-catalog'
 import { ProviderKindIcon } from './provider-icons'
 import { providerKindKey } from './provider-form-value'
-import { modelUnavailableReason } from '../workspace/composer-model-picker-utils'
+import {
+  modelUnavailableReason,
+  requiredSubscriptionFramework
+} from '../workspace/composer-model-picker-utils'
 
 const mainModelLabel = (option: ConfiguredModelCatalogEntry): string =>
   option.providerType === 'lab' ? option.model || option.providerName : option.label
@@ -100,6 +103,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
       <SelectContent>
         {groups.map((group) => {
           const compatible = group.options.some((option) => option.selectable)
+          const required = requiredSubscriptionFramework(group.provider, agentFrameworkId, t)
 
           return (
             <SelectGroup key={group.provider.id}>
@@ -107,7 +111,9 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 {group.provider.name}
                 {compatible ? null : (
                   <span className="ml-1 font-normal text-muted-foreground">
-                    {t('not usable with this framework')}
+                    {required
+                      ? t('Requires {{framework}}', { framework: required })
+                      : t('not usable with this framework')}
                   </span>
                 )}
               </SelectLabel>
@@ -136,7 +142,7 @@ const ActiveModelSelect = (): React.JSX.Element | null => {
                 const reason = modelUnavailableReason(
                   option,
                   group.provider,
-                  frameworkName,
+                  { id: agentFrameworkId, displayName: frameworkName },
                   frameworkEndpoints,
                   t
                 )

@@ -2,7 +2,9 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
-import { load } from 'js-yaml'
+import { pathToFileURL } from 'node:url'
+import { gzipSync } from 'node:zlib'
+import { dump, load } from 'js-yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const feeds = [
@@ -39,7 +41,20 @@ function fixture(): {
   // Pin Node and Bash so runner-installed wrappers cannot replace the fixture PATH.
   symlinkSync(process.execPath, join(bin, 'node'))
   mkdirSync(channel, { recursive: true })
-  mkdirSync(join(root, 'dist-assets'))
+  const dist = join(root, 'dist-assets')
+  const previousStable = '2.0.0'
+  const macZips = (version: string): string[] =>
+    ['arm64', 'x64'].map((arch) => `aipoch-open-science-${version}-mac-${arch}.zip`)
+  const blockmap = gzipSync(
+    JSON.stringify({
+      version: '2',
+      files: [{ name: 'file', offset: 0, sizes: [17], checksums: ['fixture'] }]
+    })
+  )
+  const previousDir = join(channel, 'releases', previousStable)
+  mkdirSync(previousDir, { recursive: true })
+  for (const zip of macZips(previousStable))
+    writeFileSync(join(previousDir, zip + '.blockmap'), blockmap)
   writeFileSync(
     join(bin, 'aws'),
     `#!/usr/bin/env node
@@ -74,12 +89,21 @@ else {
   }
   const stage = (version: string): void => {
     writeFileSync(join(root, 'version.json'), JSON.stringify({ version }) + '\n')
-    writeFileSync(join(root, 'dist-assets', 'installer.deb'), 'fixture installer')
-    for (const name of feeds)
-      writeFileSync(
-        join(root, 'dist-assets', name),
-        `version: ${version}\nfiles:\n  - url: releases/${version}/installer.deb\n    size: 17\n`
-      )
+    rmSync(dist, { recursive: true, force: true })
+    mkdirSync(dist)
+    const zips = macZips(version)
+    for (const file of ['installer.deb', ...zips])
+      writeFileSync(join(dist, file), 'fixture installer')
+    for (const zip of zips) writeFileSync(join(dist, zip + '.blockmap'), blockmap)
+    for (const name of feeds) {
+      const installers = name.endsWith('-mac.yml')
+        ? zips.filter(
+            (zip) => name === 'latest-mac.yml' || zip.endsWith(`-${name.split('-')[0]}.zip`)
+          )
+        : ['installer.deb']
+      const files = installers.map((file) => ({ url: `releases/${version}/${file}`, size: 17 }))
+      writeFileSync(join(dist, name), dump({ version, files }))
+    }
   }
   const snapshot = (): Record<string, string> =>
     Object.fromEntries(
@@ -113,6 +137,8 @@ else {
           S3_BUCKET: 'fixture-bucket',
           S3_PREFIX: 'stable',
           VERSION: version,
+          PREVIOUS_STABLE: previousStable,
+          CDN_BASE_URL: pathToFileURL(dirname(channel)).href,
           MODE: mode,
           BOOTSTRAP_LINUX_ARM64: String(bootstrap),
           FAIL_KEY: failKey
@@ -122,7 +148,7 @@ else {
       })
     }
   }
-  current('2.0.0')
+  current(previousStable)
   return { root, channel, current, stage, snapshot, run }
 }
 

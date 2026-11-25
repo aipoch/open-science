@@ -206,7 +206,7 @@ describe('WorkspacePage Compute entry with Web capabilities', () => {
       await act(async () =>
         fireEvent.click(
           screen.getByRole('button', {
-            name: source === 'reproduction' ? 'Open reproducibility checks' : 'Recheck and retry'
+            name: source === 'reproduction' ? 'Open reproducibility checks' : 'Check and continue'
           })
         )
       )
@@ -221,8 +221,8 @@ describe('WorkspacePage Compute entry with Web capabilities', () => {
             projectId: 'proj-1',
             sessionId: 'sess-1',
             requireExistingSession: true,
-            notebookContinuation: { refusalId: 'live-refusal' },
-            text: 'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
+            notebookContinuation: { refusalId: 'live-refusal', kind: 'memory' },
+            text: 'Continue the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
           })
         )
       }

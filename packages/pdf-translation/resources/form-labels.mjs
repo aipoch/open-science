@@ -250,7 +250,7 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
         height,
         stride,
         p.FPDFBitmap_GetFormat(bitmap),
-        digest(e.m.HEAPU8.slice(at, at + stride * height))
+        digest(e.m.HEAPU8.subarray(at, at + stride * height))
       ]
     } finally {
       p.FPDFBitmap_Destroy(bitmap)
@@ -484,9 +484,10 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
           for (const child of children)
             if (p.FPDFPageObj_GetType(child) === 5)
               nestedText = walk(child, outer, depth + 1) || nestedText
-          const objects = children.map((child) => describe(child, text, input.doc, page))
-          if (!objects.some((o) => o.type === 1 && o.text)) return nestedText
           if (nestedText) return true
+          if (!children.some((child) => p.FPDFPageObj_GetType(child) === 1)) return false
+          const objects = children.map((child) => describe(child, text, input.doc, page))
+          if (!objects.some((o) => o.type === 1 && o.text)) return false
           forms.push({
             key: JSON.stringify(objects),
             outer,
@@ -499,7 +500,8 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
           })
           return true
         }
-        for (const object of e.objects(page)) walk(object.obj, [1, 0, 0, 1, 0, 0], 0)
+        const count = p.FPDFPage_CountObjects(page)
+        for (let i = 0; i < count; i++) walk(p.FPDFPage_GetObject(page, i), [1, 0, 0, 1, 0, 0], 0)
       } finally {
         if (text) p.FPDFText_ClosePage(text)
         e.free(at)
@@ -597,7 +599,9 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
       if (!page) throw Error('Could not open PDF Form content')
       const text = p.FPDFText_LoadPage(page)
       try {
-        const objects = e.objects(page).map((o) => describe(o.obj, text, native.doc, page)),
+        const pageObjects = e.objects(page)
+        if (!pageObjects.some(({ type }) => type === 1)) continue
+        const objects = pageObjects.map((o) => describe(o.obj, text, native.doc, page)),
           [a, , , d, x, y] = records[index].matrix,
           // PDFium applies the Form's own Matrix to its children; its outer
           // object matrix contains only the invocation transform.

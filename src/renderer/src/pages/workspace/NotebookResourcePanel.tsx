@@ -40,6 +40,7 @@ import { ComputePanel } from './ComputePanel'
 import { formatComputeUptime } from './compute-monitor-presentation'
 import { formatByteSize } from '@/lib/utils'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import { useNotebookMemoryContinuation } from './useNotebookMemoryContinuation'
 
 const NotebookContinuation = ({
   decision,
@@ -62,6 +63,12 @@ const NotebookContinuation = ({
   )
   const [sending, setSending] = useState(false)
   const canContinue = isDesktopRenderer()
+  const memoryDecision = canContinue && decision.kind === 'memory'
+  const recheck = useNotebookMemoryContinuation(
+    memoryDecision ? decision : undefined,
+    'compute',
+    runtime.sendMessage
+  )
   const continueWork = async (): Promise<void> => {
     if (!session || sending) return
     setSending(true)
@@ -93,7 +100,7 @@ const NotebookContinuation = ({
       setSending(false)
     }
   }
-  if (!session) return <></>
+  if (!session || recheck.handedOff) return <></>
   return (
     <div className="space-y-2 rounded-lg border border-border-200 bg-bg-000 p-3 text-xs">
       <p className="font-medium">{session.title}</p>
@@ -101,15 +108,31 @@ const NotebookContinuation = ({
         {t('Project: {{name}}', { name: projectName ?? decision.projectId })}
       </p>
       <p className="text-text-100">
-        {canContinue
-          ? t(
-              'Notebook work remains stopped until you explicitly continue. This sends a new guidance message and checks memory again.'
-            )
-          : t(
-              'Open the same Session and branch in the Open-Science desktop app, then choose Continue Notebook work in Compute.'
-            )}
+        {memoryDecision
+          ? t('Notebook execution needs your decision.')
+          : canContinue
+            ? t(
+                'Notebook work remains stopped until you explicitly continue. This sends a new guidance message and checks memory again.'
+              )
+            : t(
+                'Open the same Session and branch in the Open-Science desktop app, then choose Continue Notebook work in Compute.'
+              )}
       </p>
-      {canContinue ? (
+      {recheck.error && <ErrorNotice inline role="alert" description={recheck.error} />}
+      {memoryDecision ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={recheck.busy}
+          aria-busy={recheck.busy || undefined}
+          onClick={() => void recheck.checkAndContinue().then(refresh)}
+        >
+          <span key={String(recheck.busy)} className="button-feedback">
+            {recheck.busy ? t('Checking…') : t('Check and continue')}
+          </span>
+        </Button>
+      ) : canContinue ? (
         <Button
           type="button"
           size="sm"
@@ -306,8 +329,8 @@ const NotebookResourcePanel = ({
   }
   const decisions = new Map(
     [
-      ...snapshot.pendingDecisions,
-      ...[...releases.values()].flatMap((release) => release.continuations)
+      ...[...releases.values()].flatMap((release) => release.continuations),
+      ...snapshot.pendingDecisions
     ].map((decision) => [
       `${decision.projectId}:${decision.sessionId}:${decision.refusalId}`,
       decision

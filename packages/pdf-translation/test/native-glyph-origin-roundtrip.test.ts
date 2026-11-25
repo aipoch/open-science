@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import assert from 'node:assert/strict'
 import { Worker } from 'node:worker_threads'
-import { it, expect } from 'vitest'
+import { it, expect, vi } from 'vitest'
 import {
   PDFDocument,
   PDFName,
@@ -15,6 +15,28 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFRef } from 'pdf-lib'
 import { createSourceFragmentRecovery } from '../resources/source-fragments.mjs'
 import { engine } from '../resources/pdfium.mjs'
+
+it('reads short text objects once and preserves runs across the buffer boundary', async () => {
+  const pdf = await PDFDocument.create()
+  const page = pdf.addPage([1200, 120])
+  const font = await pdf.embedFont(StandardFonts.Helvetica)
+  const runs = ['Short run', 'A'.repeat(255), 'B'.repeat(256), 'Final run']
+  runs.forEach((run, i) => page.drawText(run, { x: 10, y: 100 - i * 20, size: 4, font }))
+  const e = await engine()
+  const input = e.open(await pdf.save())
+  const nativePage = e.p.FPDF_LoadPage(input.doc, 0)
+  const read = vi.spyOn(e.p, 'FPDFTextObj_GetText')
+  try {
+    const objects = e.objects(nativePage).filter((object) => object.type === 1)
+    expect(objects.map((object) => object.text)).toEqual(runs)
+    expect(read.mock.calls.filter(([obj]) => obj === objects[0].obj)).toHaveLength(1)
+  } finally {
+    read.mockRestore()
+    e.p.FPDF_ClosePage(nativePage)
+    input.close()
+  }
+})
+
 async function fixture(): Promise<Uint8Array> {
   const f = JSON.parse(
     fs
