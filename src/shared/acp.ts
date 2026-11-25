@@ -669,6 +669,7 @@ export type AcpSessionAgentTarget = SessionAgentConfiguration & {
 }
 
 export type AcpCreateSessionRequest = {
+  sendAttempt?: import('./send-attempt-diagnostics').SendAttemptIdentity
   cwd?: string
   // Scopes generated artifacts / notebooks to a project's storage subtree. Defaults per runtime.
   projectId?: string
@@ -708,6 +709,7 @@ export type AcpCreateSessionResponse = {
 }
 
 export type AcpResumeSessionRequest = {
+  sendAttempt?: import('./send-attempt-diagnostics').SendAttemptIdentity
   sessionId: string
   providerSessionId?: string
   providerContinuityToken?: string
@@ -767,6 +769,7 @@ export type AcpContinueNotebookExecutionRequest = AcpPromptRequest & {
 }
 
 export type AcpPromptRequest = {
+  sendAttempt?: import('./send-attempt-diagnostics').SendAttemptIdentity
   /** Application-owned execution policy; never grants additional authority. */
   permissionPrompts?: 'none'
   sessionId: string

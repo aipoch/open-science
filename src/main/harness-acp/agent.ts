@@ -27,6 +27,8 @@ import { createResponsesModel, ResponsesError } from '@aipoch/agent-harness/resp
 import { createMessagesModel, MessagesError } from '@aipoch/agent-harness/messages'
 import {
   HARNESS_AUTH_METHOD,
+  HARNESS_CHECKPOINT_LOCK_META,
+  HARNESS_CHECKPOINT_LOCK_METHOD,
   HARNESS_CONTEXT_BUDGET,
   HARNESS_EPHEMERAL_SESSION,
   HARNESS_INSTRUCTIONS,
@@ -34,6 +36,7 @@ import {
   HARNESS_TRACE_ENABLED,
   HARNESS_TRACE_READINESS_METHOD,
   HARNESS_OWNER,
+  harnessCheckpointLockOperationSchema,
   harnessOwnerSchema,
   harnessConfigSchema,
   type HarnessConfig
@@ -312,7 +315,18 @@ export function createHarnessAcpAgent(
   const entries = new Map<string, Entry>()
   const opening = new Set<string>()
   const pending = new Set<Promise<unknown>>()
-  const store = createJournalAgentStore({ directory: join(directory, 'checkpoints') })
+  const checkpointLockTraces = new Map<string, { operationId: string; context: acp.AgentContext }>()
+  const store = createJournalAgentStore({
+    directory: join(directory, 'checkpoints'),
+    onLockWait: ({ sessionId, ...event }) => {
+      const trace = checkpointLockTraces.get(sessionId)
+      if (!trace) return undefined
+      return trace.context.notify(HARNESS_CHECKPOINT_LOCK_METHOD, {
+        operationId: trace.operationId,
+        ...event
+      })
+    }
+  })
   const requireEntry = (id: string): Entry => {
     const entry = entries.get(id)
     if (!entry || disposed) throw new Error('Built-in Agent session is unavailable')
@@ -371,6 +385,13 @@ export function createHarnessAcpAgent(
       return closing
     }
     try {
+      if (resume) {
+        const operation = harnessCheckpointLockOperationSchema.safeParse(
+          params._meta?.[HARNESS_CHECKPOINT_LOCK_META]
+        )
+        if (operation.success)
+          checkpointLockTraces.set(id, { operationId: operation.data, context })
+      }
       const ephemeral = params._meta?.[HARNESS_EPHEMERAL_SESSION] === true
       const bindingFile = join(directory, `${id}.json`)
       const rawOwner = params._meta?.[HARNESS_OWNER]
@@ -713,6 +734,7 @@ export function createHarnessAcpAgent(
       }
       throw error
     } finally {
+      checkpointLockTraces.delete(id)
       opening.delete(id)
     }
   }

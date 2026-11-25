@@ -6,6 +6,7 @@ import {
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpContinueNotebookExecutionRequest,
+  AcpCreateSessionRequest,
   AcpCreateSessionResponse,
   AcpSessionAgentTarget,
   ElicitationResponse,
@@ -93,7 +94,8 @@ const useAcpRuntime = (): {
     agentTarget?: AcpSessionAgentTarget,
     memoryEnabled?: boolean,
     literatureContext?: true,
-    setupSessionToken?: string
+    setupSessionToken?: string,
+    sendAttempt?: AcpCreateSessionRequest['sendAttempt']
   ) => Promise<AcpCreateSessionResponse>
   resumeSession: (
     sessionId: AcpResumeSessionRequest['sessionId'],
@@ -107,7 +109,8 @@ const useAcpRuntime = (): {
     providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
     specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
     agentTarget?: AcpSessionAgentTarget,
-    memoryEnabled?: boolean
+    memoryEnabled?: boolean,
+    sendAttempt?: AcpResumeSessionRequest['sendAttempt']
   ) => Promise<AcpCreateSessionResponse>
   continueNotebookExecution?: (
     request: AcpContinueNotebookExecutionRequest
@@ -143,7 +146,8 @@ const useAcpRuntime = (): {
     memoryEnabled?: boolean,
     referencedSessions?: AcpPromptRequest['referencedSessions'],
     currentImages?: AcpPromptRequest['currentImages'],
-    parts?: AcpPromptRequest['parts']
+    parts?: AcpPromptRequest['parts'],
+    sendAttempt?: AcpPromptRequest['sendAttempt']
   ) => Promise<AcpRuntimeState>
   respondToPermission: (
     requestId: string,
@@ -435,7 +439,8 @@ const useAcpRuntime = (): {
       agentTarget?: AcpSessionAgentTarget,
       memoryEnabled = true,
       literatureContext?: true,
-      setupSessionToken?: string
+      setupSessionToken?: string,
+      sendAttempt?: AcpCreateSessionRequest['sendAttempt']
     ) =>
       runValueAction(setIsConnecting, () =>
         window.api.acp.createSession({
@@ -446,6 +451,7 @@ const useAcpRuntime = (): {
           specialistId,
           ...(literatureContext ? { literatureContext } : {}),
           ...(setupSessionToken ? { setupSessionToken } : {}),
+          ...(sendAttempt ? { sendAttempt } : {}),
           ...(agentTarget ? { agentTarget } : {})
         })
       ),
@@ -466,7 +472,8 @@ const useAcpRuntime = (): {
       providerContinuityToken?: AcpResumeSessionRequest['providerContinuityToken'],
       specialistBindingPending?: AcpResumeSessionRequest['specialistBindingPending'],
       agentTarget?: AcpSessionAgentTarget,
-      memoryEnabled = true
+      memoryEnabled = true,
+      sendAttempt?: AcpResumeSessionRequest['sendAttempt']
     ) =>
       runValueAction(
         setIsConnecting,
@@ -483,6 +490,7 @@ const useAcpRuntime = (): {
             providerSessionId,
             providerContinuityToken,
             specialistBindingPending,
+            ...(sendAttempt ? { sendAttempt } : {}),
             ...(agentTarget ? { agentTarget } : {})
           }),
         // The caller owns this Session's error surface; a global error leaks into new chats.
@@ -570,13 +578,15 @@ const useAcpRuntime = (): {
       memoryEnabled = true,
       referencedSessions?: AcpPromptRequest['referencedSessions'],
       currentImages?: AcpPromptRequest['currentImages'],
-      parts?: AcpPromptRequest['parts']
+      parts?: AcpPromptRequest['parts'],
+      sendAttempt?: AcpPromptRequest['sendAttempt']
     ) =>
       runPromptAction(() =>
         window.api.acp.sendPrompt({
           sessionId,
           text,
           memoryEnabled,
+          ...(sendAttempt ? { sendAttempt } : {}),
           attachments,
           // Omit the field entirely when no skills were picked so the request stays minimal.
           ...(forcedSkillIds && forcedSkillIds.length > 0 ? { forcedSkillIds } : {}),

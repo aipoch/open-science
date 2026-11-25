@@ -263,7 +263,10 @@ describe('WorkspacePage draft preservation', () => {
     useSettingsStore.setState({ skills: [], defaultPermissionProfile: 'ask' })
     useSpecialistStore.setState({ items: [], isLoaded: false })
     vi.clearAllMocks()
-    runtime.sendMessage.mockResolvedValue({ sessionId: 'sess-a', messageId: 'm1' })
+    runtime.sendMessage.mockImplementation(async (request) => {
+      request.onPreparationStarted?.()
+      return { sessionId: 'sess-a', messageId: 'm1' }
+    })
     deleteSession.mockReset().mockImplementation(({ sessionId }: { sessionId: string }) => {
       useSessionStore.getState().deleteSession(sessionId)
       return Promise.resolve({ status: 'deleted', runtimeDetached: true })
@@ -1433,10 +1436,7 @@ describe('WorkspacePage draft preservation', () => {
     expect(runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ text: '', annotations: [annotation] })
     )
-    expect(conversationProps.conversation.optimisticMessage).toMatchObject({
-      content: '',
-      annotations: [annotation]
-    })
+    expect(runtime.sendMessage.mock.calls[0][0].composerSnapshot.annotations[0]).toBe(annotation)
     expect(conversationProps.composer.view.annotations).toEqual([annotation])
 
     await act(async () => {
@@ -1502,7 +1502,10 @@ describe('WorkspacePage draft preservation', () => {
   it('restores a failed prepared send only to its original conversation draft', async () => {
     const failedSend = createDeferred<{ sessionId: string; messageId: string } | undefined>()
     const attachment = createAttachment('failed-send-a')
-    runtime.sendMessage.mockReturnValueOnce(failedSend.promise)
+    runtime.sendMessage.mockImplementationOnce((request) => {
+      request.onPreparationStarted?.()
+      return failedSend.promise
+    })
     await renderPage()
 
     await act(async () => {
@@ -1539,7 +1542,10 @@ describe('WorkspacePage draft preservation', () => {
     const failedSend = createDeferred<{ sessionId: string; messageId: string } | undefined>()
     const firstAttachment = createAttachment('failed-send-first')
     const newerAttachment = createAttachment('failed-send-newer')
-    runtime.sendMessage.mockReturnValueOnce(failedSend.promise)
+    runtime.sendMessage.mockImplementationOnce((request) => {
+      request.onPreparationStarted?.()
+      return failedSend.promise
+    })
     await renderPage()
 
     await act(async () => {

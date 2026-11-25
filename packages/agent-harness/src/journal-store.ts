@@ -14,7 +14,12 @@ export type JournalAgentStoreOptions = {
   maxCacheBytes?: number
   /** Successful payload writes, not physical disk blocks. Observer errors cannot affect commits. */
   onWrite?: (event: { kind: 'journal' | 'snapshot'; bytes: number }) => void
+  /** 仅观察发生竞争的锁，观察器失败不会影响存储操作。 */
+  onLockWait?: (event: JournalLockWaitEvent) => void | Promise<void>
 }
+type JournalLockWaitEvent = { sessionId: string; timeoutMs: number } & (
+  { status: 'waiting' } | { status: 'acquired' | 'timed-out' | 'failed'; durationMs: number }
+)
 const arrays = ['messages', 'compactions', 'requests', 'pending', 'inbox'] as const
 type ArrayKey = (typeof arrays)[number]
 type Delta = {
@@ -173,21 +178,50 @@ export function createJournalAgentStore(options: JournalAgentStoreOptions): Agen
       await directory.close()
     }
   }
-  const locked = async <T>(file: string, work: () => Promise<T>): Promise<T> => {
+  const notifyLockWait = (event: JournalLockWaitEvent): void => {
+    try {
+      void Promise.resolve(options.onLockWait?.(event)).catch(() => undefined)
+    } catch {
+      // 诊断观察器不参与锁的生命周期。
+    }
+  }
+  const locked = async <T>(sessionId: string, file: string, work: () => Promise<T>): Promise<T> => {
     await mkdir(options.directory, { recursive: true })
     const started = Date.now()
+    const waitStarted = options.onLockWait ? performance.now() : undefined
+    let contended = false
+    const finishWait = (status: 'acquired' | 'timed-out' | 'failed'): void => {
+      if (!contended || waitStarted === undefined) return
+      notifyLockWait({
+        sessionId,
+        status,
+        timeoutMs: timeout,
+        durationMs: Math.round(performance.now() - waitStarted)
+      })
+    }
     let handle: Awaited<ReturnType<typeof open>> | undefined
     while (!handle) {
       try {
         handle = await open(file, 'wx', 0o600)
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-        if (Date.now() - started >= timeout)
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+          finishWait('failed')
+          throw error
+        }
+        if (!contended) {
+          contended = true
+          if (options.onLockWait)
+            notifyLockWait({ sessionId, status: 'waiting', timeoutMs: timeout })
+        }
+        if (Date.now() - started >= timeout) {
+          finishWait('timed-out')
           throw new Error('Journal-store lock timeout; verify the previous owner before recovery')
+        }
         await new Promise((resolve) => setTimeout(resolve, 10))
       }
     }
     try {
+      finishWait('acquired')
       return await work()
     } finally {
       try {
@@ -319,7 +353,7 @@ export function createJournalAgentStore(options: JournalAgentStoreOptions): Agen
   return {
     async delete(id) {
       const files = paths(id)
-      await locked(files.lock, async () => {
+      await locked(id, files.lock, async () => {
         // Commit the fence first: interrupted deletion and stale CAS writers cannot resurrect data.
         await replace(`${files.journal}.deleted`, '')
         cache.delete(id)
@@ -332,7 +366,7 @@ export function createJournalAgentStore(options: JournalAgentStoreOptions): Agen
       })
     },
     async load(id) {
-      return locked(paths(id).lock, async () => (await restore(id))?.state)
+      return locked(id, paths(id).lock, async () => (await restore(id))?.state)
     },
     async commit(id, expected, value) {
       // Capture before the first await so host mutation cannot change a queued write.
@@ -346,7 +380,7 @@ export function createJournalAgentStore(options: JournalAgentStoreOptions): Agen
       )
         throw new Error('Unsupported journal checkpoint field')
       const files = paths(id)
-      return locked(files.lock, async () => {
+      return locked(id, files.lock, async () => {
         try {
           if ((await optionalRead(`${files.journal}.deleted`)) !== undefined) return false
           const before = await restore(id)

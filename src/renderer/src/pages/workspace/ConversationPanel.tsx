@@ -1103,6 +1103,9 @@ const ConversationPanel = ({
       ? state.failures?.[activeSession.id]
       : undefined
   )
+  const unconfirmedSendStorage = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.unconfirmedSendStorage[activeSession.id] === true : false
+  )
   const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
   const promptOptimizationModel = useSettingsStore((state) => state.promptOptimizationModel)
   const labStateExpired = useSettingsStore((state) => state.lab?.state === 'expired')
@@ -1180,6 +1183,10 @@ const ConversationPanel = ({
       {
         id: 'action',
         message: attachmentNotice && actionError === composerError ? undefined : actionError,
+        summary:
+          operationFailure?.reason === 'session/send-storage-timeout' && actionError
+            ? { title: t('Conversation storage needs attention'), description: actionError }
+            : undefined,
         failure: operationFailure ?? (actionError === composerError ? composerFailure : undefined),
         detail:
           operationDiagnostic?.message === actionError ? operationDiagnostic.detail : undefined,
@@ -1533,10 +1540,12 @@ const ConversationPanel = ({
       available: (notice) =>
         notice.operation === 'reconfigure' ||
         notice.recovery === 'retry-artifact-publication' ||
+        notice.failure.reason === 'session/send-storage-timeout' ||
         Boolean(notice.promptMessageId) ||
         (notice.operation === 'action' && operationDiagnostic?.operation === 'resume'),
       run: async (notice) => {
         if (notice.operation === 'reconfigure') return onReconfigureRetry()
+        if (notice.failure.reason === 'session/send-storage-timeout') return handleSubmit()
         if (notice.recovery === 'retry-artifact-publication' && notice.promptMessageId)
           return transcriptHandlers.retryArtifact(notice.promptMessageId)
         if (notice.promptMessageId) {
@@ -1561,9 +1570,11 @@ const ConversationPanel = ({
           ? specialistSwitchInFlight
           : notice.recovery === 'retry-artifact-publication'
             ? artifactRetryDisabled
-            : notice.promptMessageId
-              ? isImported || !conversation.availability.revise || rootTurnBusy
-              : !canResumeSession || isResuming || isStopping || rootTurnBusy
+            : notice.failure.reason === 'session/send-storage-timeout'
+              ? unconfirmedSendStorage || !effectiveCanSend || rootTurnBusy
+              : notice.promptMessageId
+                ? isImported || !conversation.availability.revise || rootTurnBusy
+                : !canResumeSession || isResuming || isStopping || rootTurnBusy
     },
     'open-provider-settings': {
       run: (notice) => {
@@ -1878,6 +1889,61 @@ const ConversationPanel = ({
     )
   }
 
+  const renderTranscript = (): React.JSX.Element => (
+    <ScheduleCardsProvider
+      projectId={activeSession?.projectId}
+      sessionId={activeSession?.id}
+      messages={activeSession?.messages}
+      activities={sessionActivities}
+    >
+      <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
+        <WorkspaceMessageScroller
+          activeSession={activeSession}
+          sessionImport={sessionImport}
+          onStartResearch={
+            canEditDraft && !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
+              ? startResearchFromTranscript
+              : undefined
+          }
+          onOpenLibraryMention={layout.onOpenLibraryMention}
+          forkSourceContent={forkSourceContent}
+          credentialPending={pendingCredentialRequest !== undefined}
+          visiblePermissionPending={!isImported && pendingPermissions.length > 0}
+          optimisticMessage={optimisticMessage}
+          isResumingSession={isResuming}
+          sendPreparing={view.sendPreparing}
+          notebookReference={notebookReference}
+          onSendEditedMessage={onSendEditedMessage}
+          canBranchInNewSession={canBranchInNewSession}
+          onBranchInNewSession={onBranchFromAgentMessage}
+          pendingElicitations={sessionPendingElicitations}
+          pendingElicitationControl={
+            canRevealElicitation && pendingElicitationRequest
+              ? {
+                  activityId: pendingElicitationRequest.toolCallId,
+                  onReveal: () =>
+                    setElicitationPresentation((current) => ({
+                      key: elicitationPresentationKey,
+                      collapsed: false,
+                      focusRequestId: current.focusRequestId + 1
+                    }))
+                }
+              : undefined
+          }
+          handoffLifecycleSource={workspaceHandoffLifecycleClient}
+          onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
+          reportPresentationRevealing
+          turnOutcomeActions={turnOutcomeActions}
+          annotations={annotations}
+          onAddAnnotation={handleAddTranscriptAnnotation}
+          onUpdateAnnotationNote={handleUpdateTranscriptAnnotation}
+          onRemoveAnnotation={onRemoveAnnotation}
+          onAnnotationError={handleTranscriptAnnotationError}
+        />
+      </WorkspaceMessageEditStateProvider>
+    </ScheduleCardsProvider>
+  )
+
   return (
     <ResizablePanel id="main-content" defaultSize="60%" minSize="30%">
       <ProjectPackageDropZone
@@ -2021,63 +2087,13 @@ const ConversationPanel = ({
                 onRetry={onRetrySessionLoad}
               />
             </div>
+          ) : !importPending && optimisticMessage ? (
+            renderTranscript()
           ) : (
             <SessionSwitchSkeleton />
           )
         ) : (
-          <ScheduleCardsProvider
-            projectId={activeSession?.projectId}
-            sessionId={activeSession?.id}
-            messages={activeSession?.messages}
-            activities={sessionActivities}
-          >
-            <WorkspaceMessageEditStateProvider canEditMessage={canEditMessage}>
-              <WorkspaceMessageScroller
-                activeSession={activeSession}
-                sessionImport={sessionImport}
-                onStartResearch={
-                  canEditDraft &&
-                  !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
-                    ? startResearchFromTranscript
-                    : undefined
-                }
-                onOpenLibraryMention={layout.onOpenLibraryMention}
-                forkSourceContent={forkSourceContent}
-                credentialPending={pendingCredentialRequest !== undefined}
-                visiblePermissionPending={!isImported && pendingPermissions.length > 0}
-                optimisticMessage={optimisticMessage}
-                isResumingSession={isResuming}
-                sendPreparing={view.sendPreparing}
-                notebookReference={notebookReference}
-                onSendEditedMessage={onSendEditedMessage}
-                canBranchInNewSession={canBranchInNewSession}
-                onBranchInNewSession={onBranchFromAgentMessage}
-                pendingElicitations={sessionPendingElicitations}
-                pendingElicitationControl={
-                  canRevealElicitation && pendingElicitationRequest
-                    ? {
-                        activityId: pendingElicitationRequest.toolCallId,
-                        onReveal: () =>
-                          setElicitationPresentation((current) => ({
-                            key: elicitationPresentationKey,
-                            collapsed: false,
-                            focusRequestId: current.focusRequestId + 1
-                          }))
-                      }
-                    : undefined
-                }
-                handoffLifecycleSource={workspaceHandoffLifecycleClient}
-                onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
-                reportPresentationRevealing
-                turnOutcomeActions={turnOutcomeActions}
-                annotations={annotations}
-                onAddAnnotation={handleAddTranscriptAnnotation}
-                onUpdateAnnotationNote={handleUpdateTranscriptAnnotation}
-                onRemoveAnnotation={onRemoveAnnotation}
-                onAnnotationError={handleTranscriptAnnotationError}
-              />
-            </WorkspaceMessageEditStateProvider>
-          </ScheduleCardsProvider>
+          renderTranscript()
         )}
 
         <ComposerDock

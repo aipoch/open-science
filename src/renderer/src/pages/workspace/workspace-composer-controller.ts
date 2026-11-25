@@ -409,7 +409,8 @@ const useWorkspaceComposerController = ({
   )
   const retryMessage = t('Upload interrupted or unavailable. Remove it and select the file again.')
   const projectIdRef = useRef(activeProjectId ?? 'default-project')
-  const { draftsRef, versionsRef, deletedDraftKeysRef } = useWorkspaceComposerDrafts()
+  const { draftsRef, versionsRef, deletedDraftKeysRef, clearDraftRef, restoreFailedSendRef } =
+    useWorkspaceComposerDrafts()
   // Read the parked memory snapshot once at mount; subsequent edits use live controller state.
   const [initialDraft] = useState(
     // eslint-disable-next-line react-hooks/refs
@@ -1523,11 +1524,17 @@ const useWorkspaceComposerController = ({
         includeReadingContext ? activeSession : undefined,
         annotationsRef.current
       )
+      const draftVersion = versionsRef.current[activeDraftKeyRef.current] ?? 0
+      const retry = retrySessionOwnerRef.current
+      const retrySessionOwner =
+        retry?.messageId && retry.draftVersion !== draftVersion
+          ? { sessionId: retry.sessionId, projectId: retry.projectId }
+          : retry
       const snapshot = {
-        retrySessionOwner: retrySessionOwnerRef.current,
+        retrySessionOwner,
         setupSessionToken: setupSessionTokenRef.current,
         draftKey: activeDraftKeyRef.current,
-        version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
+        version: draftVersion,
         doc: docRef.current,
         annotations: [...turnAnnotations],
         attachments,
@@ -1654,7 +1661,7 @@ const useWorkspaceComposerController = ({
     },
     [setAdmissionProjectionState]
   )
-  const clearDraft = useCallback(
+  const clearDraftHere = useCallback(
     (draftKey: string, expectedVersion?: number): boolean => {
       const currentVersion = versionsRef.current[draftKey] ?? 0
       if (expectedVersion !== undefined && currentVersion !== expectedVersion) return false
@@ -1694,6 +1701,16 @@ const useWorkspaceComposerController = ({
       setError
     ]
   )
+  useLayoutEffect(() => {
+    clearDraftRef.current = clearDraftHere
+    return () => {
+      if (clearDraftRef.current === clearDraftHere) clearDraftRef.current = undefined
+    }
+  }, [clearDraftRef, clearDraftHere])
+  const clearDraft = useCallback<WorkspaceComposerController['lifecycle']['clearDraft']>(
+    (...args) => (clearDraftRef.current ?? clearDraftHere)(...args),
+    [clearDraftRef, clearDraftHere]
+  )
   const reportNewerDraftKept = useCallback(
     (snapshot: ComposerSendSnapshot): void => {
       setError(
@@ -1710,7 +1727,7 @@ const useWorkspaceComposerController = ({
     },
     [releaseHistoryResources, setError, t]
   )
-  const restoreFailedSend = useCallback(
+  const restoreFailedSendHere = useCallback(
     (
       snapshot: ComposerSendSnapshot,
       preserveOnConflict = false,
@@ -1721,6 +1738,12 @@ const useWorkspaceComposerController = ({
       if (projection?.draftKey === snapshot.draftKey && projection.version === snapshot.version)
         clearAdmissionProjection()
       const draftKey = boundDraftKey ?? snapshot.draftKey
+      const active =
+        restoreFailedSendRef.current !== undefined && activeDraftKeyRef.current === draftKey
+      const retryOwnerForDraft = (key: string): ComposerDraft['retrySessionOwner'] =>
+        snapshot.retrySessionOwner?.messageId
+          ? { ...snapshot.retrySessionOwner, draftVersion: versionsRef.current[key] ?? 0 }
+          : snapshot.retrySessionOwner
       const restoredReadingForDraft = (key: string): ComposerPdfProseReadingRestore => {
         const scope =
           key !== snapshot.draftKey
@@ -1739,25 +1762,32 @@ const useWorkspaceComposerController = ({
       // Read live draft content: callers may hold this callback from submit time, before the
       // composer was cleared.
       const liveDraft = captureDraftAttachments()
+      const hasNewAttachments = (attachments: UploadedAttachment[]): boolean =>
+        attachments.some(
+          ({ id }) =>
+            !snapshot.retrySessionOwner?.messageId ||
+            !snapshot.attachments.some((attachment) => attachment.id === id)
+        )
       const activeDraftConflicts =
         !docIsEmpty(docRef.current) ||
         annotationsRef.current.length > 0 ||
-        liveDraft.attachments.length > 0 ||
+        hasNewAttachments(liveDraft.attachments) ||
         liveDraft.attachmentTransfers.length > 0 ||
         Boolean(queuedEditRef.current)
-      if (preserveOnConflict && (activeDraftKeyRef.current !== draftKey || activeDraftConflicts)) {
+      if (preserveOnConflict && (!active || activeDraftConflicts)) {
         const retainIfEmpty = (key: string): void => {
           const previous = draftsRef.current[key]
           if (
             !previous ||
             (docIsEmpty(previous.doc) &&
               !previous.annotations.length &&
-              !previous.attachments.length &&
+              !hasNewAttachments(previous.attachments) &&
               !previous.attachmentTransfers.length &&
               !previous.queuedEdit)
           ) {
+            markChanged(key)
             draftsRef.current[key] = {
-              retrySessionOwner: snapshot.retrySessionOwner,
+              retrySessionOwner: retryOwnerForDraft(key),
               restoredPdfProseReading: restoredReadingForDraft(key),
               setupSessionToken: snapshot.setupSessionToken,
               queuedEdit: snapshot.queuedEdit,
@@ -1767,10 +1797,11 @@ const useWorkspaceComposerController = ({
               attachmentTransfers: [],
               automaticReadingEnabled: snapshot.automaticReadingEnabled !== false
             }
-            markChanged(key)
+            const projectId = snapshot.retrySessionOwner?.projectId ?? draftProjectsRef.current[key]
+            if (projectId) writeComposerDraft(projectId, key, draftsRef.current[key])
           }
         }
-        if (activeDraftKeyRef.current !== draftKey) retainIfEmpty(draftKey)
+        if (!active) retainIfEmpty(draftKey)
         else if (boundDraftKey && boundDraftKey !== snapshot.draftKey)
           retainIfEmpty(snapshot.draftKey)
         else if (reportConflict) reportNewerDraftKept(snapshot)
@@ -1787,8 +1818,8 @@ const useWorkspaceComposerController = ({
       clearUndo(draftKey)
       clearPastedTextUndo(draftKey)
       clearHistory(draftKey)
-      if (activeDraftKeyRef.current === draftKey) {
-        retrySessionOwnerRef.current = snapshot.retrySessionOwner
+      if (active) {
+        retrySessionOwnerRef.current = retryOwnerForDraft(draftKey)
         restoredPdfProseReadingRef.current = projectRestoredPdfProseReading(
           restoredReadingForDraft(draftKey),
           pdfProseRegionsScopeRef.current,
@@ -1803,7 +1834,7 @@ const useWorkspaceComposerController = ({
         return true
       }
       draftsRef.current[draftKey] = {
-        retrySessionOwner: snapshot.retrySessionOwner,
+        retrySessionOwner: retryOwnerForDraft(draftKey),
         restoredPdfProseReading: restoredReadingForDraft(draftKey),
         setupSessionToken: snapshot.setupSessionToken,
         queuedEdit: snapshot.queuedEdit,
@@ -1826,6 +1857,7 @@ const useWorkspaceComposerController = ({
       clearPastedTextUndo,
       clearHistory,
       markChanged,
+      restoreFailedSendRef,
       setActiveQueuedEdit,
       setActiveSetupSessionToken,
       releaseHistoryResources,
@@ -1834,6 +1866,19 @@ const useWorkspaceComposerController = ({
       setActiveDoc,
       setActiveAutomaticReadingEnabled
     ]
+  )
+  useLayoutEffect(() => {
+    restoreFailedSendRef.current = restoreFailedSendHere
+    return () => {
+      if (restoreFailedSendRef.current === restoreFailedSendHere)
+        restoreFailedSendRef.current = undefined
+    }
+  }, [restoreFailedSendRef, restoreFailedSendHere])
+  const restoreFailedSend = useCallback<
+    WorkspaceComposerController['lifecycle']['restoreFailedSend']
+  >(
+    (...args) => (restoreFailedSendRef.current ?? restoreFailedSendHere)(...args),
+    [restoreFailedSendRef, restoreFailedSendHere]
   )
 
   const captureRevision = useCallback(

@@ -5,6 +5,8 @@ export const HARNESS_AUTH_METHOD = 'open-science-agent'
 export const HARNESS_INSTRUCTIONS = 'open-science-agent/instructions'
 export const HARNESS_TOOL_LESS = 'open-science-agent/tool-less'
 export const HARNESS_OWNER = 'open-science-agent/owner'
+export const HARNESS_CHECKPOINT_LOCK_META = 'open-science-agent/checkpoint-lock-operation'
+export const HARNESS_CHECKPOINT_LOCK_METHOD = '_open-science-agent/checkpoint-lock'
 export const HARNESS_CONTEXT_BUDGET = 'open-science-agent/context-budget'
 export const HARNESS_EPHEMERAL_SESSION = 'open-science-agent/ephemeral-session'
 export const HARNESS_USER_TEXT_RANGE = 'open-science-agent/user-text-range'
@@ -33,6 +35,20 @@ export const harnessOwnerSchema = z
     sessionId: z.string().min(1).max(512).optional()
   })
   .strict()
+
+export const harnessCheckpointLockOperationSchema = z.uuid()
+const checkpointLockIdentity = {
+  operationId: harnessCheckpointLockOperationSchema,
+  timeoutMs: z.number().int().positive()
+}
+export const harnessCheckpointLockSchema = z.discriminatedUnion('status', [
+  z.strictObject({ ...checkpointLockIdentity, status: z.literal('waiting') }),
+  z.strictObject({
+    ...checkpointLockIdentity,
+    status: z.enum(['acquired', 'timed-out', 'failed']),
+    durationMs: z.number().int().nonnegative()
+  })
+])
 
 // Only the host's revocable loopback credential crosses ACP; never the provider account key.
 export const harnessConfigSchema = z

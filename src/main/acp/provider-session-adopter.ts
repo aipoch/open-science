@@ -1,4 +1,5 @@
 import type { AcpSpecialistResolutionContext } from './runtime-contract'
+import { traceMainSendWait } from '../send-attempt-diagnostics'
 import { recordMainAgentContext } from './main-agent-process-ownership'
 import { HARNESS_OWNER } from '../harness-acp/config'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
@@ -146,21 +147,29 @@ export class AcpProviderSessionAdopter {
       })
       const sessionCapabilities = capability.includeFrameworkMcpServers(setup.mcpServers ?? [])
       diagnostics.phase('start-provider-session')
-      provisionalSession = await request.connection.agent
-        .buildSession({
-          cwd: request.cwd,
-          mcpServers: sessionCapabilities.mcpServers,
-          ...setup.metaArg,
-          ...(startupBackend.framework.id === 'open-science-agent'
-            ? {
-                _meta: {
-                  ...setup.metaArg._meta,
-                  [HARNESS_OWNER]: { projectId: request.projectId, sessionId: stableAppSessionId }
-                }
-              }
-            : {})
-        })
-        .start()
+      provisionalSession = await traceMainSendWait(
+        'acp-session-new',
+        () =>
+          request.connection.agent
+            .buildSession({
+              cwd: request.cwd,
+              mcpServers: sessionCapabilities.mcpServers,
+              ...setup.metaArg,
+              ...(startupBackend.framework.id === 'open-science-agent'
+                ? {
+                    _meta: {
+                      ...setup.metaArg._meta,
+                      [HARNESS_OWNER]: {
+                        projectId: request.projectId,
+                        sessionId: stableAppSessionId
+                      }
+                    }
+                  }
+                : {})
+            })
+            .start(),
+        { detail: 'session/new' }
+      )
       adoptedProviderSessionId = provisionalSession.sessionId
       recordMainAgentContext(request.connection, adoptedProviderSessionId)
 

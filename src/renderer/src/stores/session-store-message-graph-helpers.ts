@@ -62,6 +62,7 @@ export type AppendUserMessageInput = {
 export type AppendPendingUserMessageInput = Omit<AppendUserMessageInput, 'sessionId' | 'isPending'>
 
 export type BranchInNewSessionInput = {
+  messageId?: string
   sourceSessionId: string
   sourceMessageId?: string
   content?: string

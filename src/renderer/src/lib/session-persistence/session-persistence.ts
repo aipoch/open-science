@@ -1,3 +1,4 @@
+import { workspaceMessageSendAttempt } from '../acp/workspace-send-attempt'
 import {
   useDesktopRuntimeRecoveryStore,
   getDesktopRuntimeEpoch,
@@ -1163,6 +1164,7 @@ const mergeSaveSessionOptions = (
       ? next.runtimeWriterToken
       : previous?.runtimeWriterToken
   const expectedRevision = next?.expectedRevision ?? previous?.expectedRevision
+  const sendAttempt = next?.sendAttempt ?? previous?.sendAttempt
   const conversationCommands = [
     ...(previous?.conversationCommands ?? []),
     ...(next?.conversationCommands ?? [])
@@ -1172,23 +1174,54 @@ const mergeSaveSessionOptions = (
   return expectedRevision !== undefined ||
     conflictRebaseFields.length > 0 ||
     runtimeWriterToken ||
+    sendAttempt ||
     conversationCommands.length > 0
     ? {
         ...(expectedRevision !== undefined ? { expectedRevision } : {}),
         ...(runtimeWriterToken ? { runtimeWriterToken } : {}),
+        ...(sendAttempt ? { sendAttempt } : {}),
         ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
         ...(conversationCommands.length > 0 ? { conversationCommands } : {})
       }
     : undefined
 }
 
+const sendAttemptSaveOption = (
+  sessionId: string,
+  commands: NonNullable<SaveSessionOptions['conversationCommands']>
+): Pick<SaveSessionOptions, 'sendAttempt'> => {
+  const prompt = commands.find(
+    (command) =>
+      command.kind === 'prepare-prompt' ||
+      command.kind === 'append-user' ||
+      command.kind === 'start-run' ||
+      command.kind === 'resume-run'
+  )
+  const promptId =
+    prompt?.kind === 'prepare-prompt'
+      ? prompt.promptMessageId
+      : prompt?.kind === 'append-user'
+        ? prompt.message.id
+        : prompt?.kind === 'start-run' || prompt?.kind === 'resume-run'
+          ? prompt.run.promptMessageId
+          : undefined
+  const sendAttempt = workspaceMessageSendAttempt(sessionId, promptId)
+  return sendAttempt ? { sendAttempt } : {}
+}
+
 const withPendingConversationCommands = (
   session: PersistedChatSession,
   options: SaveSessionOptions | undefined
-): SaveSessionOptions | undefined =>
-  mergeSaveSessionOptions(options, {
-    conversationCommands: pendingSessionConversationCommands(session.id)
+): SaveSessionOptions | undefined => {
+  const conversationCommands = pendingSessionConversationCommands(session.id)
+  return mergeSaveSessionOptions(options, {
+    conversationCommands,
+    ...sendAttemptSaveOption(session.id, [
+      ...(options?.conversationCommands ?? []),
+      ...conversationCommands
+    ])
   })
+}
 
 const LATEST_SESSION_SAVE_INTERVAL_MS = 500
 // While a turn is streaming, intermediate flushes only bound crash loss and the terminal commit
@@ -1244,9 +1277,7 @@ const deferExportedSessionSave = (target: string): void => {
   )
 }
 
-// Serializes every renderer-originated Session write through one ordering seam. Store snapshots at
-// the queue tail use latest-wins coalescing; explicit Session and Manifest writes remain barriers, so
-// Artifact finalization cannot be overtaken by an older store snapshot.
+// 同一会话的显式写入分隔快照合并，数据库侧仍负责项目及全局操作的顺序。
 const activePreparationSaveOptions = (
   options: SaveSessionOptions | undefined
 ): SaveSessionOptions | undefined =>
@@ -1266,10 +1297,9 @@ const createOrderedSessionPersistence = (
     ignoreError: (error) => error instanceof SessionPersistenceGenerationChangedError,
     report: reportSessionWriteRecovery
   })
-  let queue: Promise<unknown> = Promise.resolve()
+  const writeTails = new Map<string, Promise<void>>()
   let pendingWriteCount = 0
-  let activeFlushes = 0
-  const deferredSaves = new Set<Promise<unknown>>()
+  const activeFlushes = new Map<string | undefined, number>()
   const acknowledgedRevisions = new Map<string, number>()
   const acknowledgedSessions = new Map<string, PersistedChatSession>()
   const pendingLatestByTarget = new Map<string, PendingLatestSessionSave>()
@@ -1289,7 +1319,13 @@ const createOrderedSessionPersistence = (
         ? STREAMING_SESSION_SAVE_INTERVAL_MS
         : LATEST_SESSION_SAVE_INTERVAL_MS
       const waitMs = latestSessionSaveStartedAt + intervalMs - performance.now()
-      if (waitMs <= 0 || entry.bypassCadence || activeFlushes > 0) break
+      if (
+        waitMs <= 0 ||
+        entry.bypassCadence ||
+        activeFlushes.has(entry.target) ||
+        activeFlushes.has(undefined)
+      )
+        break
       const recheck = await new Promise<boolean>((resolve) => {
         const timeout = setTimeout(() => resolve(false), waitMs)
         entry.releaseCadence = () => {
@@ -1338,8 +1374,9 @@ const createOrderedSessionPersistence = (
     else deferredConversationCommandTargets.delete(target)
   }
 
-  const releasePendingLatestCadence = (): void => {
+  const releasePendingLatestCadence = (target?: string): void => {
     for (const entry of pendingLatestByTarget.values()) {
+      if (target && entry.target !== target) continue
       entry.bypassCadence = true
       entry.releaseCadence?.()
     }
@@ -1366,49 +1403,47 @@ const createOrderedSessionPersistence = (
     }
   }
 
-  // Exported targets wait outside the shared queue. Explicit writes for another Session and its
-  // manifest can still establish their usual durable barrier before starting a new conversation.
+  // 导出暂停和未确认的写入仍占用自己的队列，防止同一会话的后续写入超车。
   const schedule = <Result>(
     target: string,
     task: () => Promise<Result>,
-    epoch = getDesktopRuntimeEpoch()
+    dependsOn?: string
   ): Promise<Result> => {
+    const epoch = getDesktopRuntimeEpoch()
     pendingWriteCount += 1
-    const run = queue.then(async () => {
-      try {
-        assertDesktopRuntimeWrite(epoch)
-        deferExportedSessionSave(target)
-        return { kind: 'completed' as const, value: await trackWrite(target, task) }
-      } catch (error) {
-        if (error instanceof SessionExportSaveDeferred)
-          return { kind: 'deferred' as const, released: error.released }
-        throw error
+    const run = Promise.all([
+      writeTails.get(target),
+      dependsOn === undefined ? undefined : writeTails.get(dependsOn)
+    ]).then(async () => {
+      for (;;) {
+        try {
+          assertDesktopRuntimeWrite(epoch)
+          deferExportedSessionSave(target)
+          return await trackWrite(target, task)
+        } catch (error) {
+          if (!(error instanceof SessionExportSaveDeferred)) throw error
+          await error.released
+        }
       }
     })
-    queue = run.then(
-      () => undefined,
-      () => undefined
-    )
+    const settled = (): void => {
+      pendingWriteCount -= 1
+      if (writeTails.get(target) === tail) writeTails.delete(target)
+    }
+    const tail = run.then(settled, settled)
+    writeTails.set(target, tail)
     return run
-      .then(async (result) => {
-        if (result.kind === 'completed') return result.value
-        const resumed = result.released.then(() => schedule(target, task, epoch))
-        deferredSaves.add(resumed)
-        try {
-          return await resumed
-        } finally {
-          deferredSaves.delete(resumed)
-        }
-      })
-      .finally(() => {
-        pendingWriteCount -= 1
-      })
   }
 
-  const enqueue = <Result>(target: string, task: () => Promise<Result>): Promise<Result> => {
-    releasePendingLatestCadence()
-    pendingLatestByTarget.clear()
-    return schedule(target, task)
+  const enqueue = <Result>(
+    target: string,
+    task: () => Promise<Result>,
+    dependsOn?: string
+  ): Promise<Result> => {
+    releasePendingLatestCadence(target)
+    pendingLatestByTarget.delete(target)
+    if (dependsOn) releasePendingLatestCadence(dependsOn)
+    return schedule(target, task, dependsOn)
   }
 
   const saveSubmittedSession = async (
@@ -1594,20 +1629,21 @@ const createOrderedSessionPersistence = (
       )
     },
     saveManifest: (request) =>
-      recovery.trackManifest(request, () => enqueue('manifest', () => api.saveManifest(request))),
+      recovery.trackManifest(request, () =>
+        enqueue(
+          'manifest',
+          () => api.saveManifest(request),
+          request.lastSessionId ? `session:${request.lastSessionId}` : undefined
+        )
+      ),
     flush: async (target?: string) => {
-      // Runtime/store updates can admit new snapshots while earlier writes are in flight.
-      // Keep cadence disabled until every overlapping flush has finished.
-      activeFlushes += 1
+      activeFlushes.set(target, (activeFlushes.get(target) ?? 0) + 1)
       try {
-        releasePendingLatestCadence()
-        for (;;) {
-          const draining = queue
-          await draining
-          await Promise.allSettled([...deferredSaves])
-          await recovery.whenIdle()
-          if (queue === draining && deferredSaves.size === 0) break
-        }
+        releasePendingLatestCadence(target)
+        do {
+          await Promise.all(target ? [writeTails.get(target)] : [...writeTails.values()])
+          await recovery.whenIdle(target)
+        } while (target ? writeTails.has(target) : writeTails.size > 0)
         const failure = target
           ? failedWritesByTarget.has(target)
             ? { done: false, value: failedWritesByTarget.get(target) }
@@ -1622,7 +1658,9 @@ const createOrderedSessionPersistence = (
         if (deferredTarget) throw new SessionPersistenceDeferredError(deferredTarget)
         recovery.assertSettled(target)
       } finally {
-        activeFlushes -= 1
+        const remaining = activeFlushes.get(target)! - 1
+        if (remaining) activeFlushes.set(target, remaining)
+        else activeFlushes.delete(target)
       }
     }
   }
@@ -2859,7 +2897,8 @@ const createStoreSaver = (
             ? {
                 ...(conflictRebaseFields.length > 0 ? { conflictRebaseFields } : {}),
                 ...(writerOptions ?? {}),
-                ...(conversationCommands.length > 0 ? { conversationCommands } : {})
+                ...(conversationCommands.length > 0 ? { conversationCommands } : {}),
+                ...sendAttemptSaveOption(session.id, conversationCommands)
               }
             : undefined
         let recoveryOptions = saveOptions
@@ -3130,7 +3169,7 @@ const createStoreSaver = (
         if (manifest) persistence.recovery.retainManifest(manifest)
         return Promise.resolve()
       }
-      // Invoke every task now so it takes its place in the shared persistence queue at snapshot time.
+      // 快照生成时立即将写入加入该目标的队列。
       const scheduled = intent
         ? persistence.recovery.trackSession(
             target,

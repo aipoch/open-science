@@ -312,7 +312,10 @@ const ComposerFailureNoticeSlot = ({
       </div>
     ) : null
 
-  if (current.failure.category === 'session') {
+  if (
+    current.failure.category === 'session' &&
+    current.failure.reason !== 'session/send-storage-timeout'
+  ) {
     return (
       <TooltipProvider delayDuration={800}>
         <div

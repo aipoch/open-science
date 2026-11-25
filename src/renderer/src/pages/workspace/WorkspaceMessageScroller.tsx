@@ -789,10 +789,25 @@ const WorkspaceMessageScrollerImpl = ({
     [activeSession, handoffEvents]
   )
   const showTurnOutcomes = turnOutcomeActions !== undefined
-  const fullConversationItems = useMemo(
+  const historyItems = useMemo(
     () => createWorkspaceConversationTimeline(activeSession, handoffEvents, showTurnOutcomes),
     [activeSession, handoffEvents, showTurnOutcomes]
   )
+  const fullConversationItems = useMemo(() => {
+    if (!optimisticMessage || historyItems.some(({ id }) => id === optimisticMessage.id))
+      return historyItems
+    // 临时气泡也进入消息列表，保存后同 ID 的历史行沿用滚动锚点。
+    return [
+      ...historyItems,
+      {
+        id: optimisticMessage.id,
+        type: 'message' as const,
+        createdAt: optimisticMessage.createdAt,
+        sortIndex: optimisticMessage.sortIndex ?? 0,
+        message: optimisticMessage
+      }
+    ]
+  }, [historyItems, optimisticMessage])
   const [expandedTurnState, setExpandedTurnState] = useState<{
     scopeId: string | undefined
     ids: Set<string>
@@ -2027,6 +2042,7 @@ const WorkspaceMessageScrollerImpl = ({
                     ? legacyRuntimeIdentity
                     : runtimeSegment
                   const isHumanUser = isHumanUserMessage(item.message)
+                  const isPendingSend = item.message === optimisticMessage
                   const revisionRootMessageId = isHumanUser
                     ? messageNode?.revisionRootMessageId
                     : undefined
@@ -2048,6 +2064,7 @@ const WorkspaceMessageScrollerImpl = ({
                   }
                   const messageItemProps: EditableWorkspaceMessageItemProps = {
                     message: item.message,
+                    ...(isPendingSend ? { sending: true, showUserActions: false } : {}),
                     contentPaddingClassName: transcriptEntries[entryIndex - 1]?.processHeader
                       ? 'pt-2'
                       : undefined,
@@ -2465,25 +2482,6 @@ const WorkspaceMessageScrollerImpl = ({
                     </MessageScrollerItem>
                   ))
                 : null}
-
-              {optimisticMessage ? (
-                <WorkspaceMessageItem
-                  message={optimisticMessage}
-                  isPackageSession={Boolean(activeSession?.packageOrigin)}
-                  deletedDiscussionSourceId={activeSession?.deletedDiscussionSourceId}
-                  disableScrollAnchor={windowFindOpen}
-                  skipScrollAnchorOnMount={skipScrollAnchorOnMount}
-                  projectId={currentProjectId}
-                  onPreviewArtifact={onPreviewArtifact}
-                  onPreviewArtifactModal={onPreviewArtifactModal}
-                  onPreviewUploadAttachment={onPreviewUploadAttachment}
-                  onOpenSkillMention={onOpenSkillMention}
-                  onOpenLibraryMention={onOpenLibraryMention}
-                  onPreviewMentionArtifact={onPreviewMentionArtifact}
-                  showUserActions={false}
-                  sending
-                />
-              ) : null}
 
               {presentationBarrierIndex < 0 ? trailingContent : null}
 

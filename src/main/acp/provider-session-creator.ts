@@ -1,3 +1,4 @@
+import { traceMainSendWait } from '../send-attempt-diagnostics'
 import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { recordMainAgentContext } from './main-agent-process-ownership'
 import { HARNESS_EPHEMERAL_SESSION, HARNESS_OWNER } from '../harness-acp/config'
@@ -79,7 +80,9 @@ export class AcpProviderSessionCreator {
       const cwd = resolve(request.cwd || this.deps.currentCwd() || this.deps.defaultCwd)
       const projectId = request.projectId?.trim() || this.deps.defaultProjectId
       log.info('createSession: ensureConnected', this.deps.diagnosticContext())
-      const connection = await this.deps.ensureConnected(cwd)
+      const connection = await traceMainSendWait('acp-connect', () =>
+        this.deps.ensureConnected(cwd)
+      )
       this.deps.assertCurrentConnection(connection)
       const startupBackend = this.deps.currentBackend()
       if (requiresTaskRunTracing(request)) {
@@ -120,25 +123,31 @@ export class AcpProviderSessionCreator {
         sessionOptions: startupBackend.session.options,
         specialistSkills: specialist.skills
       })
+      const role = capability.descriptor.role
       const sessionCapabilities = capability.includeFrameworkMcpServers(setup.mcpServers ?? [])
       log.info('createSession: buildSession', this.deps.diagnosticContext())
-      const session = await connection.agent
-        .buildSession({
-          cwd,
-          mcpServers: sessionCapabilities.mcpServers,
-          ...setup.metaArg,
-          ...(startupBackend.framework.id === 'open-science-agent'
-            ? {
-                _meta: {
-                  ...setup.metaArg._meta,
-                  ...(capability.descriptor.role === 'restricted-inference'
-                    ? { [HARNESS_EPHEMERAL_SESSION]: true }
-                    : { [HARNESS_OWNER]: { projectId } })
-                }
-              }
-            : {})
-        })
-        .start()
+      const session = await traceMainSendWait(
+        'acp-session-new',
+        () =>
+          connection.agent
+            .buildSession({
+              cwd,
+              mcpServers: sessionCapabilities.mcpServers,
+              ...setup.metaArg,
+              ...(startupBackend.framework.id === 'open-science-agent'
+                ? {
+                    _meta: {
+                      ...setup.metaArg._meta,
+                      ...(role === 'restricted-inference'
+                        ? { [HARNESS_EPHEMERAL_SESSION]: true }
+                        : { [HARNESS_OWNER]: { projectId } })
+                    }
+                  }
+                : {})
+            })
+            .start(),
+        { detail: 'session/new' }
+      )
       provisionalSession = session
 
       recordMainAgentContext(connection, session.sessionId)

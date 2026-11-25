@@ -6145,6 +6145,8 @@
     "Fork cancelled": "複製をキャンセルしました",
     "Open forked Session": "複製したセッションを開く",
     "Temporarily read-only during fork": "複製中は一時的に読み取り専用です",
+    "Waiting for earlier conversation changes timed out. Try sending again.": "以前の会話の変更が保存されるまでの待機がタイムアウトしました。もう一度送信してください。",
+    "Saving the message before sending timed out. Try sending again.": "送信前のメッセージの保存がタイムアウトしました。もう一度送信してください。",
     "Session storage is not ready.": "セッションストレージの準備ができていません。",
     "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "所有するスキルは既定で同梱されます。注目のスキルは名前で参照されます。その他のスキルのファイルを含めるにはチェックを入れてください。",
     "Unbundled Skills remain referenced": "同梱しないスキルの参照は保持されます",

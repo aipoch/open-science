@@ -1,3 +1,4 @@
+import { traceMainSendWait } from '../send-attempt-diagnostics'
 import { requiresTaskRunTracing, requireTracingFramework } from './task-run-tracing'
 import { SessionPromptAdmissionError } from './runtime-activity-port'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
@@ -777,7 +778,7 @@ class AcpRuntimeCoordinator {
         : undefined)
     const perform = async (): Promise<AcpCreateSessionResponse> => {
       if (admittedRoot) {
-        await admittedRoot.settled
+        await traceMainSendWait('previous-turn', () => admittedRoot.settled)
         if (generation !== this.initializationGeneration || queue.invalidated) {
           throw new Error('ACP session resume was superseded.')
         }
@@ -785,7 +786,7 @@ class AcpRuntimeCoordinator {
       return this.performSessionResume(request, pinnedRuntime)
     }
     const operation = previous
-      ? previous.operation
+      ? traceMainSendWait('previous-resume', () => previous.operation)
           .catch(() => undefined)
           .then(() => {
             if (previous.invalidated || generation !== this.initializationGeneration) {
@@ -816,7 +817,7 @@ class AcpRuntimeCoordinator {
     const skillsGeneration = this.skillsReloadGeneration
     const configurationGeneration = this.configurationGeneration
     const resumeGeneration = this.initializationGeneration
-    await this.waitForInitialization()
+    await traceMainSendWait('runtime-initialization', () => this.waitForInitialization())
     if (admissionCurrent && !admissionCurrent()) {
       throw new Error('Continuation resume admission is no longer active.')
     }
@@ -828,13 +829,16 @@ class AcpRuntimeCoordinator {
     if (retainedProviderId) {
       request = { ...request, providerSessionId: retainedProviderId }
     }
-    await this.pendingSessionAdoptions.get(request.sessionId)?.cleanup?.()
+    const adoption = this.pendingSessionAdoptions.get(request.sessionId)
+    if (adoption?.cleanup) await traceMainSendWait('resume-cleanup', () => adoption.cleanup!())
     const owner = this.findRuntimeForSession(request.sessionId)
     // Consume a timed-out close on its owning runtime even when retrying the same model.
     // Publish the receipt here before resume can fail or state updates can remove the old owner.
     if (owner?.hasPendingSessionWriterRelease(request.sessionId)) {
       const generation = this.initializationGeneration
-      const providerSessionId = await owner.releaseSessionForTransfer(request.sessionId)
+      const providerSessionId = await traceMainSendWait('resume-cleanup', () =>
+        owner.releaseSessionForTransfer(request.sessionId)
+      )
       if (
         generation !== this.initializationGeneration ||
         this.sessionResumeOperations.get(request.sessionId)?.invalidated

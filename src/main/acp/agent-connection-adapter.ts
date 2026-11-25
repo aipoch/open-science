@@ -1,4 +1,6 @@
 import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
+import { HARNESS_CHECKPOINT_LOCK_METHOD, harnessCheckpointLockSchema } from '../harness-acp/config'
+import { recordCheckpointLock } from './checkpoint-lock-diagnostics'
 import { bindMainAgentConnection, spawnMainAgentProcess } from './main-agent-process-ownership'
 import { observeResourceProcess } from '../resource-diagnostics/recorder'
 import * as acp from '@agentclientprotocol/sdk'
@@ -413,6 +415,12 @@ class AcpAgentConnectionAdapter {
         '_claude/sdkMessage',
         (params) => params as Record<string, unknown>,
         (context) => hooks.observeClaudeSdkMessage(context.params)
+      )
+    if (backend.framework.id === DEFAULT_AGENT_FRAMEWORK_ID)
+      client.onNotification(
+        HARNESS_CHECKPOINT_LOCK_METHOD,
+        harnessCheckpointLockSchema,
+        ({ params }) => recordCheckpointLock(connection, params)
       )
     const connection = (
       hooks.toolLess

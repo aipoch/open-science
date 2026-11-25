@@ -72,7 +72,7 @@ export class SessionWriteUnconfirmedError extends Error {
 export class SessionWriteRecovery {
   private readonly writes = new Map<string, RetainedWrite>()
   private readonly attempts = new Map<string, number>()
-  private readonly pending = new Set<Promise<unknown>>()
+  private readonly pending = new Map<Promise<unknown>, string>()
   private readonly listeners = new Set<() => void>()
   private version = 0
   private snapshot: readonly SessionWriteIssue[] = []
@@ -210,15 +210,15 @@ export class SessionWriteRecovery {
     run: () => Promise<Result>
   ): Promise<Result> {
     // Reading identity does not serialize a growing transcript on every streaming tick.
-    return this.observe(this.track(target, intent, undefined, run))
+    return this.observe(target, this.track(target, intent, undefined, run))
   }
 
   trackManifest(request: SaveSessionManifestRequest, run: () => Promise<void>): Promise<void> {
-    return this.observe(this.track('manifest', undefined, request, run))
+    return this.observe('manifest', this.track('manifest', undefined, request, run))
   }
 
-  private observe<Result>(operation: Promise<Result>): Promise<Result> {
-    this.pending.add(operation)
+  private observe<Result>(target: string, operation: Promise<Result>): Promise<Result> {
+    this.pending.set(operation, target)
     const settled = (): void => {
       this.pending.delete(operation)
     }
@@ -226,10 +226,16 @@ export class SessionWriteRecovery {
     return operation
   }
 
-  async whenIdle(): Promise<void> {
+  async whenIdle(target?: string): Promise<void> {
     // Queue completion precedes the outer rejection handler by a few microtasks. A quit/send
     // barrier must also wait until every admitted attempt has published its retained outcome.
-    while (this.pending.size > 0) await Promise.allSettled([...this.pending])
+    for (;;) {
+      const pending = [...this.pending].flatMap(([operation, owner]) =>
+        target === undefined || owner === target ? [operation] : []
+      )
+      if (!pending.length) return
+      await Promise.allSettled(pending)
+    }
   }
 
   private track<Result extends SessionWriteResult>(

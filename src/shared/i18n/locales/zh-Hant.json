@@ -6145,6 +6145,8 @@
     "Fork cancelled": "已取消建立副本",
     "Open forked Session": "開啟工作階段副本",
     "Temporarily read-only during fork": "建立副本期間暫時為唯讀",
+    "Waiting for earlier conversation changes timed out. Try sending again.": "等待先前的工作階段變更儲存逾時。請重試傳送。",
+    "Saving the message before sending timed out. Try sending again.": "傳送前儲存訊息逾時。請重試傳送。",
     "Session storage is not ready.": "工作階段儲存尚未就緒。",
     "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "預設打包此專家擁有的技能。精選技能依名稱參照。勾選其他技能可將其檔案加入套件。",
     "Unbundled Skills remain referenced": "未打包的技能仍保留參照",

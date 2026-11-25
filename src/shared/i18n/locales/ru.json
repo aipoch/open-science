@@ -6605,6 +6605,8 @@
     "Fork cancelled": "Создание ответвления отменено",
     "Open forked Session": "Открыть ответвление сессии",
     "Temporarily read-only during fork": "Временный режим чтения при создании ответвления",
+    "Waiting for earlier conversation changes timed out. Try sending again.": "Истекло время ожидания сохранения предыдущих изменений в диалоге. Попробуйте отправить сообщение ещё раз.",
+    "Saving the message before sending timed out. Try sending again.": "Истекло время сохранения сообщения перед отправкой. Попробуйте отправить его ещё раз.",
     "Session storage is not ready.": "Хранилище сеансов не готово.",
     "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "Принадлежащие специалисту навыки включаются по умолчанию. Рекомендуемые навыки указываются по имени. Выберите другие навыки, чтобы включить их файлы.",
     "Unbundled Skills remain referenced": "Ссылки на невключённые навыки сохраняются",

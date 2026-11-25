@@ -1,3 +1,4 @@
+import { traceMainSendWait } from '../send-attempt-diagnostics'
 import * as acp from '@agentclientprotocol/sdk'
 import type { ClientConnection, SetProviderRequest } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
@@ -105,7 +106,7 @@ class AcpConnectionLifecycleWorkflow {
 
   async ensureConnected(cwd: string): Promise<ClientConnection> {
     const barrier = this.options.reconnectBarrier()
-    if (barrier) await barrier
+    if (barrier) await traceMainSendWait('reconnect-barrier', () => barrier)
 
     const connection = this.options.currentConnection()
     if (connection && this.options.currentStatus() === 'connected') return connection
@@ -157,52 +158,60 @@ class AcpConnectionLifecycleWorkflow {
       log.info('connecting agent', this.options.diagnosticContext(spawnedFramework, generation))
 
       connectionPhase = 'open-candidate'
-      candidate = await this.options.openCandidate(attempt, (framework) => {
-        spawnedFramework = framework
-      })
+      candidate = await traceMainSendWait('acp-spawn', () =>
+        this.options.openCandidate(attempt, (framework) => {
+          spawnedFramework = framework
+        })
+      )
       connectionPhase = 'transfer'
       transferred = candidate.transferTo(attempt)
       candidate = undefined
 
       connectionPhase = 'initialize'
-      const initResult = await transferred.initialize({
-        protocolVersion: acp.PROTOCOL_VERSION,
-        clientInfo: {
-          name: 'open-science',
-          version: this.options.appVersion
-        },
-        clientCapabilities: {
-          session: { configOptions: { boolean: {} } },
-          ...(!this.options.toolLess && {
-            fs: { readTextFile: true, writeTextFile: true },
-            plan: {},
-            elicitation: { form: {} }
-          }),
-          ...(this.options.separateProviderNotices === true &&
-          (spawnedFramework === 'codex' || spawnedFramework === 'claude-code')
-            ? {
-                _meta: {
-                  [PROVIDER_NOTICE_META_KEY]: { version: 1 },
-                  ...(spawnedFramework === 'codex'
-                    ? { jetbrains: { air: { version: 1, capabilities: ['sessionFailure'] } } }
-                    : {})
+      const initResult = await traceMainSendWait('acp-initialize', () =>
+        transferred!.initialize({
+          protocolVersion: acp.PROTOCOL_VERSION,
+          clientInfo: {
+            name: 'open-science',
+            version: this.options.appVersion
+          },
+          clientCapabilities: {
+            session: { configOptions: { boolean: {} } },
+            ...(!this.options.toolLess && {
+              fs: { readTextFile: true, writeTextFile: true },
+              plan: {},
+              elicitation: { form: {} }
+            }),
+            ...(this.options.separateProviderNotices === true &&
+            (spawnedFramework === 'codex' || spawnedFramework === 'claude-code')
+              ? {
+                  _meta: {
+                    [PROVIDER_NOTICE_META_KEY]: { version: 1 },
+                    ...(spawnedFramework === 'codex'
+                      ? { jetbrains: { air: { version: 1, capabilities: ['sessionFailure'] } } }
+                      : {})
+                  }
                 }
-              }
-            : {})
-        }
-      })
+              : {})
+          }
+        })
+      )
       attempt.assertCurrent()
 
       const initializeMaterial = transferred.backendAttempt.consumeInitializeMaterial()
       if (initializeMaterial?.authentication) {
         connectionPhase = 'authenticate'
-        await transferred.authenticate(initializeMaterial.authentication)
+        await traceMainSendWait('acp-authenticate', () =>
+          transferred!.authenticate(initializeMaterial.authentication!)
+        )
         attempt.assertCurrent()
       }
       if (initializeMaterial?.providerConfiguration) {
         connectionPhase = 'provider-configuration'
         try {
-          await transferred.setProvider(initializeMaterial.providerConfiguration)
+          await traceMainSendWait('acp-provider-configuration', () =>
+            transferred!.setProvider(initializeMaterial.providerConfiguration!)
+          )
           attempt.assertCurrent()
         } catch (cause) {
           if (!(cause instanceof acp.RequestError) || cause.code !== -32602) throw cause
@@ -215,7 +224,9 @@ class AcpConnectionLifecycleWorkflow {
           )
           if (!fallback) throw cause
           attempt.assertCurrent()
-          await transferred.setProvider(fallback)
+          await traceMainSendWait('acp-provider-configuration', () =>
+            transferred!.setProvider(fallback)
+          )
           attempt.assertCurrent()
         }
       }
