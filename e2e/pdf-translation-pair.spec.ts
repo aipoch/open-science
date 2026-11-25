@@ -308,6 +308,16 @@ for (const variant of [
                 Type: 'Annot',
                 Subtype: 'Link',
                 Rect: [40, 707, 65, 727],
+                // A visible underline cannot be omitted when the partial link has no target text.
+                AP: {
+                  N: pdf.context.register(
+                    pdf.context.flateStream('0 0 m 25 0 l S', {
+                      Type: 'XObject',
+                      Subtype: 'Form',
+                      BBox: [0, 0, 25, 20]
+                    })
+                  )
+                },
                 Dest: [sheet.ref, 'Fit']
               })
             )
