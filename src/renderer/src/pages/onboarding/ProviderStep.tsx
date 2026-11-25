@@ -251,6 +251,7 @@ const ProviderStep = ({
   const [authStage, setAuthStage] = useState<'detect' | 'install' | 'auth'>()
   const [installError, setInstallError] = useState<{
     cardId: 'openai' | 'anthropic'
+    retryMode?: CodexAuthMode
     failure: OnboardingFailure
   }>()
   const [quickCardId, setQuickCardId] = useState<string>()
@@ -510,7 +511,7 @@ const ProviderStep = ({
           ? 'codex'
           : DEFAULT_AGENT_FRAMEWORK_ID
         if (settings.agentFrameworkId !== target) {
-          if (value.type === 'codex-isolated') {
+          if (isCodexSubscriptionProvider(value.type)) {
             await settings.setAgentFramework(target, { runtimeAlreadyDetected: true })
           } else {
             await settings.setAgentFramework(target)
@@ -781,7 +782,7 @@ const ProviderStep = ({
   }
 
   const prepareQuickRuntime = async (
-    cardId: 'openai' | 'anthropic',
+    target: 'anthropic' | CodexAuthMode,
     signal: AbortSignal,
     prepare: (id: string) => Promise<ClaudeInstallResult>,
     cancel: (id: string) => Promise<void>,
@@ -796,11 +797,14 @@ const ProviderStep = ({
       signal.throwIfAborted()
       if (!result.ok) throw new Error(result.error || failureMessage)
     } catch (error) {
-      if (!signal.aborted)
+      if (!signal.aborted) {
+        const cardId = target === 'anthropic' ? 'anthropic' : 'openai'
         setInstallError({
           cardId,
+          retryMode: target === 'anthropic' ? undefined : target,
           failure: { summary: failureMessage, details: onboardingErrorMessage(error, cardId) }
         })
+      }
       throw error
     } finally {
       if (pendingInstall.current?.id === id) pendingInstall.current = undefined
@@ -830,7 +834,13 @@ const ProviderStep = ({
     }
     const detected = await settings.detectClaude()
     signal.throwIfAborted()
-    if (!detected.found || !detected.path || !isSupportedClaudeCliVersion(detected.version))
+    // detectClaude also refreshes preflight, which checks the ACP adapter alongside the CLI.
+    if (
+      !detected.found ||
+      !detected.path ||
+      !isSupportedClaudeCliVersion(detected.version) ||
+      !useSettingsStore.getState().preflight.claudeReady
+    )
       await install()
     signal.throwIfAborted()
     if (useSettingsStore.getState().agentFrameworkId !== 'claude-code') {
@@ -917,10 +927,10 @@ const ProviderStep = ({
         return
       }
       const settings = useSettingsStore.getState()
-      if (mode === 'codex-isolated') {
+      if (mode === 'codex-isolated' || mode === 'codex-shared') {
         setAuthStage('detect')
         await prepareQuickRuntime(
-          'openai',
+          mode,
           attempt.signal,
           (id) => settings.installCodex('managed', id),
           cancelCodexLogin,
@@ -1022,6 +1032,7 @@ const ProviderStep = ({
   }
 
   if (variant === 'quick') {
+    const retryMode = installError?.retryMode
     const installCard = installError
       ? QUICK_PROVIDER_CARDS.find((card) => card.id === installError.cardId)
       : undefined
@@ -1300,11 +1311,11 @@ const ProviderStep = ({
               className={quickNoticeClass}
               failure={installError.failure}
               retry={
-                installCard.id === 'openai'
+                retryMode
                   ? {
                       label: t('Retry'),
                       disabled: quickBusy,
-                      onClick: () => void chooseQuickProvider(installCard, 'codex-isolated')
+                      onClick: () => void chooseQuickProvider(installCard, retryMode)
                     }
                   : undefined
               }

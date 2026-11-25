@@ -40,6 +40,7 @@ let root: Root
 beforeEach(() => {
   resetOnboardingStores()
   useSettingsStore.setState({
+    preflight: { ...useSettingsStore.getState().preflight, claudeReady: true },
     detectClaude: vi
       .fn()
       .mockResolvedValue({ found: true, path: '/bin/claude', version: '2.1.209' })
@@ -287,6 +288,28 @@ describe('ProviderStep', () => {
     expect(onAdvance).toHaveBeenCalledOnce()
   })
 
+  it('repairs a missing Claude ACP adapter before opening shared sign-in', async () => {
+    const prepare = Promise.withResolvers<{ installId: string; ok: boolean }>()
+    const installClaude = vi.fn(() => prepare.promise)
+    const loginSharedClaude = vi.fn().mockResolvedValue({ ok: true })
+    useSettingsStore.setState((state) => ({
+      preflight: { ...state.preflight, claudeReady: false },
+      installClaude,
+      loginSharedClaude,
+      persistProvider: vi.fn().mockResolvedValue('claude'),
+      setActiveProvider: vi.fn()
+    }))
+    const onAdvance = vi.fn()
+    await renderStep({ variant: 'quick', onAdvance })
+    await clickButton(/Continue with Anthropic/)
+    expect(installClaude).toHaveBeenCalledWith('managed', undefined, expect.any(String))
+    expect(loginSharedClaude).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    await act(async () => prepare.resolve({ installId: 'claude-install', ok: true }))
+    expect(loginSharedClaude).toHaveBeenCalledOnce()
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
   it('keeps the authorizing card open and ignores a cancelled login even after retry', async () => {
     const attempts: Array<(result: ValidateProviderResult) => void> = []
     const cancelSharedClaudeLogin = vi.fn().mockResolvedValue(undefined)
@@ -418,11 +441,42 @@ describe('ProviderStep', () => {
       })
       await renderStep({ variant: 'quick', onAdvance })
       await clickButton(/^Import existing Codex sign-in$/)
-      expect(setAgentFramework).toHaveBeenCalledWith('codex')
+      expect(setAgentFramework).toHaveBeenCalledWith('codex', { runtimeAlreadyDetected: true })
       expect(saveProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'codex-shared' }))
       expect(onAdvance).toHaveBeenCalledOnce()
     }
   )
+
+  it('retries runtime preparation in the original Codex import mode before reading credentials', async () => {
+    const installCodex = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: 'Adapter download interrupted' })
+      .mockResolvedValueOnce({ ok: true })
+    const saveProvider = vi.fn().mockResolvedValue({
+      providerId: 'imported',
+      validation: { ok: true, category: 'ok' }
+    })
+    const loginIsolatedCodex = vi.fn()
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      installCodex,
+      saveProvider,
+      loginIsolatedCodex,
+      setActiveProvider: vi.fn()
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    await clickButton(/^Import existing Codex sign-in$/)
+    expect(installCodex).toHaveBeenCalledWith('managed', expect.any(String))
+    expect(saveProvider).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    await clickButton(/^Retry$/)
+    expect(installCodex).toHaveBeenCalledTimes(2)
+    expect(saveProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'codex-shared', reimportCodexAuthentication: true })
+    )
+    expect(loginIsolatedCodex).not.toHaveBeenCalled()
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
 
   it('keeps isolated Codex sign-in on the card through preparation failure, cancellation and retry', async () => {
     const pending = Promise.withResolvers<{ ok: boolean; installId: string }>()
