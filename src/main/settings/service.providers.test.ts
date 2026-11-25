@@ -534,7 +534,8 @@ describe('SettingsService provider facade', () => {
       configRoot: dir,
       installManagedClaudeImpl: async ({ installId }) => ({
         result: { installId, ok: false, error: 'expected test failure' }
-      })
+      }),
+      probeRegistry: async () => 10
     })
 
     try {

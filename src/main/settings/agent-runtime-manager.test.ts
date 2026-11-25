@@ -32,7 +32,8 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/home', getAppPath: () => '/no-such-app-root', isPackaged: false }
 }))
 
-vi.mock('./environment-check', () => ({
+vi.mock('./environment-check', async (importActual) => ({
+  ...(await importActual<typeof import('./environment-check')>()),
   runEnvironmentCheck: vi.fn(async ({ agentFrameworkId, frameworks }) => ({
     checkedAt: 1,
     platform: 'linux',
@@ -603,6 +604,7 @@ describe('AgentRuntimeManager', () => {
       installManagedCodexImpl: async ({ installId }) => ({
         result: { installId, ok: false, error: 'not configured' }
       }),
+      probeRegistry: async () => 10,
       resolveCodexProxyEnvironment: () => Promise.resolve(undefined),
       ...overrides
     })
@@ -2113,5 +2115,238 @@ console.log('ok');\n`
     ])
 
     await expect(readFile(configPath, 'utf8')).resolves.toBe('{"runtime":"managed"}\n')
+  })
+
+  it('probes registries concurrently and puts the fastest mirror first for all managed agents', async () => {
+    const probeRegistry = vi.fn<NonNullable<ManagerOptions['probeRegistry']>>(async (registry) => {
+      if (registry === 'npmjs') {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        return 25
+      }
+      return 5
+    })
+    const installManagedClaudeImpl: NonNullable<ManagerOptions['installManagedClaudeImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: true },
+        resolvedPath: join(storageRoot, 'installed', 'claude'),
+        version: '2.1.118'
+      })
+    )
+    const installManagedClaudeAcpImpl = vi.fn<
+      NonNullable<ManagerOptions['installManagedClaudeAcpImpl']>
+    >(async () => undefined)
+    const installManagedOpencodeImpl: NonNullable<ManagerOptions['installManagedOpencodeImpl']> =
+      vi.fn(async ({ installId }) => ({
+        result: { installId, ok: true },
+        resolvedPath: join(storageRoot, 'installed', 'opencode'),
+        version: '1.19.0'
+      }))
+    const installManagedCodeBuddyImpl: NonNullable<ManagerOptions['installManagedCodeBuddyImpl']> =
+      vi.fn(async ({ installId }) => ({
+        result: { installId, ok: true },
+        resolvedPath: join(storageRoot, 'installed', 'codebuddy'),
+        version: CODEBUDDY_VERSION
+      }))
+    const installManagedCodexImpl: NonNullable<ManagerOptions['installManagedCodexImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: true },
+        adapterPath: managedAdapterPath,
+        adapterVersion: '1.6.2',
+        codexPath: managedCodexPath,
+        codexVersion: '0.157.1'
+      })
+    )
+    const installManagedPiImpl: NonNullable<ManagerOptions['installManagedPiImpl']> = vi.fn(
+      async ({ installId }) => ({ installId, ok: true })
+    )
+    inventory.claude.set(join(storageRoot, 'installed', 'claude'), '2.1.118')
+    manager = createManager({
+      probeRegistry,
+      installManagedClaudeImpl,
+      installManagedClaudeAcpImpl,
+      installManagedOpencodeImpl,
+      installManagedCodeBuddyImpl,
+      installManagedCodexImpl,
+      installManagedPiImpl
+    })
+
+    await manager.installClaude({ source: 'managed' }, vi.fn())
+    await manager.installOpencode({ source: 'managed' }, vi.fn())
+    await manager.installCodeBuddy({ source: 'managed' }, vi.fn())
+    await manager.installCodex({ source: 'managed' }, vi.fn())
+    await manager.installPi({ source: 'managed' }, vi.fn())
+
+    const expectedRegistries = ['https://registry.npmmirror.com', 'https://registry.npmjs.org']
+    expect(installManagedClaudeImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ registries: expectedRegistries })
+    )
+    expect(installManagedClaudeAcpImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ registries: expectedRegistries })
+    )
+    expect(installManagedOpencodeImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ registries: expectedRegistries })
+    )
+    expect(installManagedCodeBuddyImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ registries: expectedRegistries })
+    )
+    expect(installManagedCodexImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ registries: expectedRegistries })
+    )
+    expect(installManagedPiImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ registries: expectedRegistries })
+    )
+    expect(probeRegistry.mock.calls.map((call) => [call[0], call[1]])).toEqual([
+      ['npmjs', '/@anthropic-ai%2fclaude-code/latest'],
+      ['npmmirror', '/@anthropic-ai%2fclaude-code/latest'],
+      ['npmjs', '/opencode-ai/latest'],
+      ['npmmirror', '/opencode-ai/latest'],
+      ['npmjs', `/@tencent-ai%2fcodebuddy-code/${CODEBUDDY_VERSION}`],
+      ['npmmirror', `/@tencent-ai%2fcodebuddy-code/${CODEBUDDY_VERSION}`],
+      ['npmjs', '/@agentclientprotocol%2fcodex-acp/latest'],
+      ['npmmirror', '/@agentclientprotocol%2fcodex-acp/latest'],
+      ['npmjs', '/@openma%2fpi-acp/0.1.8'],
+      ['npmmirror', '/@openma%2fpi-acp/0.1.8']
+    ])
+  })
+
+  it('keeps the official registry first when it answers faster than npmmirror', async () => {
+    const probeRegistry = vi.fn<NonNullable<ManagerOptions['probeRegistry']>>(async (registry) => {
+      if (registry === 'npmmirror') {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        return 25
+      }
+      return 5
+    })
+    const installManagedOpencodeImpl: NonNullable<ManagerOptions['installManagedOpencodeImpl']> =
+      vi.fn(async ({ installId }) => ({
+        result: { installId, ok: true },
+        resolvedPath: join(storageRoot, 'installed', 'opencode'),
+        version: '1.19.0'
+      }))
+    manager = createManager({ probeRegistry, installManagedOpencodeImpl })
+
+    await manager.installOpencode({ source: 'managed' }, vi.fn())
+
+    expect(installManagedOpencodeImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registries: ['https://registry.npmjs.org', 'https://registry.npmmirror.com']
+      })
+    )
+  })
+
+  it('resolves an installation failure instead of rejecting when disposed during registry probing', async () => {
+    const probeStarted = Promise.withResolvers<void>()
+    let startedCount = 0
+    const probeRegistry = vi.fn<NonNullable<ManagerOptions['probeRegistry']>>(
+      (_registry, _path, signal) =>
+        new Promise<number>((_resolve, reject) => {
+          startedCount += 1
+          if (startedCount === 2) probeStarted.resolve()
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+    )
+    const installManagedOpencodeImpl = vi.fn()
+    manager = createManager({ probeRegistry, installManagedOpencodeImpl })
+
+    const install = manager.installOpencode({ source: 'managed' }, vi.fn())
+    await probeStarted.promise
+
+    await manager.dispose()
+
+    await expect(install).resolves.toMatchObject({
+      ok: false,
+      error: 'Installation cancelled.'
+    })
+    expect(installManagedOpencodeImpl).not.toHaveBeenCalled()
+  })
+
+  it('skips registry probing for failed non-managed Claude installs and honors managedRegistry', async () => {
+    const probeRegistry = vi.fn<NonNullable<ManagerOptions['probeRegistry']>>(async () => 10)
+    const installManagedClaudeImpl: NonNullable<ManagerOptions['installManagedClaudeImpl']> = vi.fn(
+      async ({ installId }) => ({
+        result: { installId, ok: false, error: 'stopped' }
+      })
+    )
+    runInstallWithFallbackSpy.mockResolvedValue({
+      installId: 'install-npm',
+      ok: false,
+      error: 'npm failed'
+    })
+    manager = createManager({ probeRegistry, installManagedClaudeImpl })
+
+    await manager.installClaude({ source: 'npm' }, vi.fn())
+    await manager.installClaude({ source: 'managed', managedRegistry: 'npmmirror' }, vi.fn())
+
+    expect(probeRegistry).not.toHaveBeenCalled()
+    expect(installManagedClaudeImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registries: ['https://registry.npmmirror.com', 'https://registry.npmjs.org']
+      })
+    )
+  })
+
+  it('probes lazily for non-managed Claude installs only when ACP is missing', async () => {
+    const probeRegistry = vi.fn<NonNullable<ManagerOptions['probeRegistry']>>(async (registry) => {
+      if (registry === 'npmjs') {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+        return 25
+      }
+      return 5
+    })
+    const installManagedClaudeAcpImpl = vi.fn<
+      NonNullable<ManagerOptions['installManagedClaudeAcpImpl']>
+    >(async () => undefined)
+    runInstallWithFallbackSpy.mockResolvedValue({ installId: 'install-npm', ok: true })
+    manager = createManager({ probeRegistry, installManagedClaudeAcpImpl })
+
+    await manager.installClaude({ source: 'npm' }, vi.fn())
+
+    expect(probeRegistry).toHaveBeenCalledTimes(2)
+    expect(installManagedClaudeAcpImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registries: ['https://registry.npmmirror.com', 'https://registry.npmjs.org']
+      })
+    )
+
+    probeRegistry.mockClear()
+    installManagedClaudeAcpImpl.mockClear()
+    const {
+      claudeAcpAdapterPath,
+      claudeAcpAdapterRevision,
+      claudeAcpInstallationReceipt,
+      managedClaudeAcpRoot
+    } = await import('../acp/agent-process')
+    const acpRoot = managedClaudeAcpRoot(storageRoot)
+    const acpEntry = join(acpRoot, claudeAcpAdapterPath, 'index.js')
+    const acpLaunch = join(acpRoot, claudeAcpAdapterPath, 'open-science-launch.js')
+    const sdkPkg = join(acpRoot, 'node_modules/@anthropic-ai/claude-agent-sdk/package.json')
+    await mkdir(dirname(acpEntry), { recursive: true })
+    await mkdir(dirname(sdkPkg), { recursive: true })
+    await writeFile(join(acpRoot, claudeAcpInstallationReceipt), claudeAcpAdapterRevision)
+    await writeFile(acpEntry, '')
+    await writeFile(acpLaunch, '')
+    await writeFile(sdkPkg, '{}')
+
+    await manager.installClaude({ source: 'npm' }, vi.fn())
+
+    expect(probeRegistry).not.toHaveBeenCalled()
+    expect(installManagedClaudeAcpImpl).not.toHaveBeenCalled()
+  })
+
+  it('forwards probeRegistry and AbortSignal from checkEnvironment to runEnvironmentCheck', async () => {
+    const { runEnvironmentCheck } = await import('./environment-check')
+    const runEnvMock = vi.mocked(runEnvironmentCheck)
+    runEnvMock.mockClear()
+    const probeRegistry = vi.fn<NonNullable<ManagerOptions['probeRegistry']>>(async () => 12)
+    manager = createManager({ probeRegistry })
+
+    await manager.checkEnvironment()
+
+    expect(runEnvMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deps: { probeRegistry },
+        signal: expect.any(AbortSignal)
+      })
+    )
   })
 })
