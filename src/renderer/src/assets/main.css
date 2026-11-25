@@ -350,7 +350,7 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   font-size: 0.65rem;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  animation: onboarding-ring-gather 3.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: onboarding-ring-gather 3.06s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .onboarding-ring span {
@@ -382,14 +382,14 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   width: 14rem;
   height: 8rem;
   animation-delay: 0.25s;
-  animation-duration: 3.2s;
+  animation-duration: 2.88s;
   border-color: color-mix(in oklab, var(--primary) 30%, transparent);
 }
 .onboarding-ring-convergence {
   width: 9rem;
   height: 5rem;
   animation-delay: 0.5s;
-  animation-duration: 3s;
+  animation-duration: 2.7s;
   border-color: color-mix(in oklab, var(--primary) 42%, transparent);
 }
 

@@ -4,11 +4,35 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import logoUrl from '@/assets/logo-symbol.svg'
+import agents0Url from '@/assets/onboarding/icons/agents-0.svg?url&no-inline'
+import agents1Url from '@/assets/onboarding/icons/agents-1.svg?url&no-inline'
+import agents2Url from '@/assets/onboarding/icons/agents-2.svg?url&no-inline'
+import agents3Url from '@/assets/onboarding/icons/agents-3.svg?url&no-inline'
+import providers0Url from '@/assets/onboarding/icons/providers-0.svg?url&no-inline'
+import providers1Url from '@/assets/onboarding/icons/providers-1.svg?url&no-inline'
+import providers2Url from '@/assets/onboarding/icons/providers-2.svg?url&no-inline'
+import providers3Url from '@/assets/onboarding/icons/providers-3.svg?url&no-inline'
+import providers4Url from '@/assets/onboarding/icons/providers-4.svg?url&no-inline'
+import providers5Url from '@/assets/onboarding/icons/providers-5.svg?url&no-inline'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import welcomeAnimation from '@/assets/onboarding/welcome.json'
 import guideExampleCasesGif from '@/assets/onboarding/guide-example-cases.gif'
 import guideNewProjectGif from '@/assets/onboarding/guide-new-project.gif'
+import welcomeAnimation from '@/assets/onboarding/welcome-optimized.json'
+
+const welcomeAnimationAssetUrls: Record<string, string> = {
+  'providers-0': providers0Url,
+  'providers-1': providers1Url,
+  'providers-2': providers2Url,
+  'providers-3': providers3Url,
+  'providers-4': providers4Url,
+  'providers-5': providers5Url,
+  'agents-0': agents0Url,
+  'agents-1': agents1Url,
+  'agents-2': agents2Url,
+  'agents-3': agents3Url,
+  'agents-4': providers5Url
+}
 
 const FALLBACK_ANIMATION_TIMEOUT_MS = 3_600
 
@@ -79,11 +103,13 @@ const WelcomeAnimation = ({ onComplete }: WelcomeAnimationProps): React.JSX.Elem
         const { default: lottie } = await import('lottie-web')
         if (cancelled) return
         const animationData = structuredClone(welcomeAnimation)
-        animationData.assets = animationData.assets.map((asset) =>
-          asset.id === 'center' || asset.id === 'agents-5'
-            ? { ...asset, p: logoUrl, u: '', e: 0 }
-            : asset
-        )
+        animationData.assets = animationData.assets.map((asset) => {
+          const assetUrl =
+            asset.id === 'center' || asset.id === 'agents-5'
+              ? logoUrl
+              : welcomeAnimationAssetUrls[asset.id]
+          return assetUrl ? { ...asset, p: assetUrl, u: '', e: 0 } : asset
+        })
         animationData.layers = animationData.layers.map((layer) => {
           if (layer.refId === 'agents-5') return { ...layer, cl: 'onboarding-lottie-logo' }
           if (layer.refId !== 'center') return layer
