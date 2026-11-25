@@ -297,6 +297,9 @@ test('new Markdown publications replace the head while edits, restoration and dr
   expect(await inspect()).toMatchObject({ text: edited, selectedVersion: { versionNumber: 4 } })
   await openFile()
   preview = page.getByRole('dialog', { name: `Preview ${name}` })
+  await expect(preview.getByText('Original result.', { exact: true })).toBeVisible()
+  await preview.getByRole('button', { name: 'Next file version' }).click()
+  await expect(preview.getByText('Manually corrected result.', { exact: true })).toBeVisible()
   await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
   await expect(preview.getByRole('separator', { name: 'Resize provenance panel' })).toBeVisible()
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
@@ -345,7 +348,6 @@ test('new Markdown publications replace the head while edits, restoration and dr
     .getByTestId('discard-preview-changes-confirmation')
     .getByRole('button', { name: 'Discard changes', exact: true })
     .click()
-  await preview.getByRole('button', { name: 'Previous file version' }).click()
   await preview.getByRole('button', { name: 'Previous file version' }).click()
   await expect(warning).toContainText('Execution evidence is incomplete for v3')
   await page.setViewportSize({ width: 640, height: 850 })
