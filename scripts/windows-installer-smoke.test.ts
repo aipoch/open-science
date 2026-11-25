@@ -132,6 +132,7 @@ describe('Windows installer smoke plan', () => {
     try {
       await mkdir(installDirectory, { recursive: true })
       await writeFile(uninstaller, '')
+      await writeFile(join(installDirectory, 'debug.log'), 'Chromium runtime log')
       await uninstallAndVerify(installDirectory, {}, { processRoot: root, terminate, run })
       expect(terminated).toEqual([installDirectory, root])
     } finally {
