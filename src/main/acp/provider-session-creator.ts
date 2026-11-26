@@ -183,6 +183,10 @@ export class AcpProviderSessionCreator {
         }
         identityReservation.assertCurrent()
         beforePublish?.()
+        const startsFreshMainContext =
+          provisionedCapability.descriptor.role === 'primary' &&
+          request.specialistId === undefined &&
+          !this.deps.registry.lookup(session.sessionId)
         const { aggregate } = this.deps.registry.publish(identityReservation, session.sessionId, {
           session,
           cwd,
@@ -199,6 +203,7 @@ export class AcpProviderSessionCreator {
         aggregate.setSpecialistId(request.specialistId)
         provisionedCapability.commit(session.sessionId)
         provisionedCapability.registerBridgeMcpSession?.(session.sessionId, session.sessionId)
+        if (startsFreshMainContext) aggregate.confirmFreshMainContext(session)
         provisionalSession = undefined
         identityReservation.release()
         reservation = undefined
