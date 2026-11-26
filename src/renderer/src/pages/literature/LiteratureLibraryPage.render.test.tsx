@@ -442,6 +442,7 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          synthesis: vi.fn(),
           overviewBatch: vi.fn().mockResolvedValue(null),
           studySnapshot: vi.fn(async (request: { expectedSourceKey: string }) => ({
             sourceKey: request.expectedSourceKey,
@@ -2455,7 +2456,8 @@ describe('LiteratureLibraryPage', () => {
     const buttons = within(nav)
       .getAllByRole('button')
       .map((button) => button.getAttribute('aria-label'))
-    expect(buttons.indexOf('Duplicates')).toBe(buttons.indexOf('All references') + 1)
+    expect(buttons.indexOf('Synthesis notes')).toBe(buttons.indexOf('All references') + 1)
+    expect(buttons.indexOf('Duplicates')).toBe(buttons.indexOf('Synthesis notes') + 1)
     expect(buttons.indexOf('Trash')).toBe(buttons.indexOf('Duplicates') + 1)
     expect(buttons.indexOf('Journals')).toBeGreaterThan(buttons.indexOf('Trash'))
     expect(buttons.indexOf('Citation styles')).toBeGreaterThan(buttons.indexOf('Journals'))

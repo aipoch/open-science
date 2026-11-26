@@ -282,6 +282,7 @@ describe('application command composition', () => {
       'literature:supplement-attachment',
       'literature:supplement-attachment-progress',
       'literature:supplements',
+      'literature:synthesis',
       'literature:transact',
       'memory:clear-all',
       'memory:create-category',

@@ -2565,9 +2565,10 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
   ])
 
   const currentState = documentState?.requestKey === resourceRequestKey ? documentState : null
-  const usesLiteratureReader = source === 'literature' && Boolean(props.annotationProps)
+  const needsAnnotationReader =
+    Boolean(props.pdfBookmarkSource) || (source === 'literature' && Boolean(props.annotationProps))
   const singlePage =
-    !usesLiteratureReader &&
+    !needsAnnotationReader &&
     currentState?.status === 'ready' &&
     currentState.document.numPages === 1
   const onReadingPositionChange = props.onReadingPositionChange
@@ -2578,7 +2579,7 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
   const [multiPageKey, setMultiPageKey] = useState<string>()
   if (
     currentState?.status === 'ready' &&
-    (currentState.document.numPages > 1 || usesLiteratureReader) &&
+    (currentState.document.numPages > 1 || needsAnnotationReader) &&
     multiPageKey !== requestKey
   )
     setMultiPageKey(requestKey)

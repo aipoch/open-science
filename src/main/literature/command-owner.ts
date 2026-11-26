@@ -1,4 +1,5 @@
 import { literatureFailure } from '@aipoch/literature-discovery'
+import type { LiteratureSynthesisService } from './synthesis'
 import type { LiteratureOverviewBatch } from './overview-batch'
 import type { LiteratureOverviewService } from './overview'
 import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
@@ -42,6 +43,7 @@ import {
 } from '../../shared/literature-collector'
 
 type LiteratureCommandServices = Readonly<{
+  literatureSynthesis: Pick<LiteratureSynthesisService, 'run'>
   literatureOverviewBatch: Pick<LiteratureOverviewBatch, 'run'>
   literatureOverview: Pick<LiteratureOverviewService, 'run'>
   journalAttributes: Pick<JournalAttributes, 'run'>
@@ -86,6 +88,7 @@ type LiteratureCommandServices = Readonly<{
 }>
 
 export const createLiteratureCommandOwner = ({
+  literatureSynthesis,
   literatureOverview,
   literatureOverviewBatch,
   journalAttributes,
@@ -106,6 +109,7 @@ export const createLiteratureCommandOwner = ({
   literatureCollector,
   contentRepository
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
+  synthesis: (request) => literatureSynthesis.run(request),
   collect: async (request, signal) => {
     try {
       return await literatureCollector.run(request, signal)

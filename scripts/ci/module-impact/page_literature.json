@@ -184,7 +184,12 @@
     "src/renderer/src/pages/literature/detail/LiteratureCitationStatus.tsx",
     "src/renderer/src/pages/literature/detail/useCitationSource.ts",
     "src/renderer/src/pages/literature/detail/CitationLookupError.tsx",
-    "src/renderer/src/pages/literature/detail/CitationLookupLoading.tsx"
+    "src/renderer/src/pages/literature/detail/CitationLookupLoading.tsx",
+    "src/renderer/src/pages/literature/synthesis/LiteratureSynthesisWorkspace.tsx",
+    "src/renderer/src/pages/literature/synthesis/SynthesisCandidates.tsx",
+    "src/renderer/src/pages/literature/synthesis/synthesis-state.ts",
+    "src/renderer/src/pages/literature/synthesis/LiteratureSynthesisWorkspace.test.tsx",
+    "src/renderer/src/pages/literature/synthesis/SynthesisReferenceSearch.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",
@@ -247,7 +252,8 @@
       "src/renderer/src/pages/literature/detail/LiteratureOverview.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.test.tsx",
       "src/renderer/src/pages/literature/detail/citation-graph.test.ts",
-      "src/renderer/src/pages/literature/detail/LiteratureCitationGraph.render.test.tsx"
+      "src/renderer/src/pages/literature/detail/LiteratureCitationGraph.render.test.tsx",
+      "src/renderer/src/pages/literature/synthesis/LiteratureSynthesisWorkspace.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",

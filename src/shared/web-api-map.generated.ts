@@ -134,6 +134,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.supplementAttachment': 'literature:supplement-attachment',
   'literature.supplementAttachmentProgress': 'literature:supplement-attachment-progress',
   'literature.supplements': 'literature:supplements',
+  'literature.synthesis': 'literature:synthesis',
   'literature.transact': 'literature:transact',
   'localFs.getRoots': 'local-fs:get-roots',
   'localFs.grantRoot': 'local-fs:grant-root',

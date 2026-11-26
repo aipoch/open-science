@@ -571,6 +571,7 @@
         "e2e/literature-client-sync.spec.ts",
         "e2e/journal-attributes.spec.ts",
         "e2e/literature-smart-collections.spec.ts",
+        "e2e/literature-synthesis.spec.ts",
         "e2e/session-client-consistency.spec.ts",
         "e2e/runtime-writer-browser.spec.ts",
         "e2e/mermaid-block.spec.ts",

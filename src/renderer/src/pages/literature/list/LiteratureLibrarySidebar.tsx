@@ -46,6 +46,7 @@ type SidebarNavigation = {
   selectProject: (projectId: string) => void
   openDuplicates: () => void
   openJournals: () => void
+  openSynthesisNotes?: () => void
   openCitationStyles: () => void
 }
 
@@ -89,7 +90,8 @@ export function LiteratureLibrarySidebar({
     selectProject,
     openDuplicates,
     openJournals,
-    openCitationStyles
+    openCitationStyles,
+    openSynthesisNotes
   } = navigation
   const { inboxPendingCount, libraryCountRevision, projectItemCounts, duplicateCountRef } = counts
   return (
@@ -242,6 +244,17 @@ export function LiteratureLibrarySidebar({
                       revision={libraryCountRevision}
                       hidden={sidebarCollapsed}
                     />
+                  </button>
+                </LiteratureSidebarHint>
+                <LiteratureSidebarHint label={t('Synthesis notes')} collapsed={sidebarCollapsed}>
+                  <button
+                    type="button"
+                    className={navButtonClassName}
+                    aria-label={t('Synthesis notes')}
+                    onClick={openSynthesisNotes}
+                  >
+                    <GalleryVerticalEnd className="size-4" aria-hidden="true" />
+                    {!sidebarCollapsed ? <span>{t('Synthesis notes')}</span> : null}
                   </button>
                 </LiteratureSidebarHint>
                 <LiteratureSidebarHint label={t('Duplicates')} collapsed={sidebarCollapsed}>

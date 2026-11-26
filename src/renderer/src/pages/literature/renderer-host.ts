@@ -166,6 +166,12 @@ export type LiteratureRendererHost = {
     onReadWithAgent?: (item: LiteraturePreviewItem) => void
     onFocusFallback?: () => void
   }>
+  PdfAnnotationPreviewDialog: ComponentType<{
+    annotation: PdfAnnotation
+    item: LiteraturePreviewItem
+    onClose(): void
+    onError(message: string): void
+  }>
   createBookmarkPreviewItem(
     target: { id: string; kind: 'pdf' } & PdfAnnotation['target']
   ): LiteraturePreviewItem | undefined

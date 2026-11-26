@@ -1,3 +1,6 @@
+import { LiteratureSynthesisService } from '../literature/synthesis'
+import { LiteratureSynthesisStore } from '../literature/synthesis-store'
+import { LiteratureSynthesisSources } from '../literature/synthesis-sources'
 import { LiteratureOverviewBatch } from '../literature/overview-batch'
 import { LiteratureOverviewService, LiteratureOverviewStore } from '../literature/overview'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
@@ -84,6 +87,7 @@ export async function composeResearchCatalog({
   literatureCatalog: LiteratureCatalog
   literatureOverviewBatch: LiteratureOverviewBatch
   literatureOverview: LiteratureOverviewService
+  literatureSynthesis: LiteratureSynthesisService
   journalAttributes: JournalAttributes
   literatureCitationFormatter: LiteratureCitationFormatter
   literatureCitationDocument: LiteratureCitationDocument
@@ -162,6 +166,14 @@ export async function composeResearchCatalog({
     },
     smartCollections,
     journalAttributes
+  )
+  const literatureSynthesis = new LiteratureSynthesisService(
+    new LiteratureSynthesisStore(() => join(resolveDataRoot(), 'literature', 'synthesis-v1.json')),
+    new LiteratureSynthesisSources(
+      () => getProjectDbClient(configRoot),
+      pdfAnnotationRepository,
+      literatureCatalog
+    )
   )
   const overviewRunner = await modules.add(
     new RestrictedInferenceRunner({
@@ -320,6 +332,7 @@ export async function composeResearchCatalog({
     memoryService,
     journalAttributes,
     literatureCatalog,
+    literatureSynthesis,
     literatureOverview,
     literatureOverviewBatch,
     literatureCitationFormatter,

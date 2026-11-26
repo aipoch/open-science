@@ -4072,9 +4072,22 @@ describe('PdfPreviewContent', () => {
     )
   })
 
-  it.each([undefined, 'another-project'])(
-    'reveals a project annotation from its document provider with selected project %s',
-    async (selectedProject) => {
+  it.each([
+    [undefined, 1],
+    [undefined, 2],
+    ['another-project', 1],
+    ['another-project', 2]
+  ] as const)(
+    'reveals a project annotation from its document provider with selected project %s and %s pages',
+    async (selectedProject, pageCount) => {
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: pageCount,
+          getPage: readerGetPage,
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
       useSessionStore.setState({
         selectedSessionId: selectedProject ? 'other-session' : undefined,
         sessions: selectedProject ? [{ id: 'other-session', projectId: selectedProject }] : []
