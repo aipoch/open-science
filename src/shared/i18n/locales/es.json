@@ -3340,6 +3340,7 @@
     "Use None (Main Agent)": "Usar Ninguno (agente principal)",
     "Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open-Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow.": "Utilice un token OAuth de larga duración de <code>claude setup-token</code>. El token está cifrado en el almacenamiento de la aplicación Open-Science y nunca se lee ni se escribe en <code>~/.claude</code>. Consulte <docsLink>la guía de Anthropic sobre setup-token</docsLink> para conocer el flujo completo.",
     "Use all of the Main Agent's skills and connectors, including new ones added later. No need to configure each item.": "Utilice todas las habilidades y los conectores del agente principal, incluidos los que se añadan más adelante. No es necesario configurar cada elemento.",
+    "Quick sign-in uses your shared Claude CLI profile. For a separate profile, use Advanced options.": "El inicio de sesión rápido utiliza su perfil compartido de Claude CLI. Para usar un perfil independiente, abra las opciones avanzadas.",
     "Use an existing Claude profile or sign in with a separate Open-Science profile.": "Utilice un perfil Claude existente o inicie sesión con un perfil Open-Science independiente.",
     "Use your eligible ChatGPT subscription": "Usar una suscripción de ChatGPT compatible",
     "Use your eligible Claude subscription": "Usar una suscripción de Claude compatible",

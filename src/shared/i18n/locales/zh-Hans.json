@@ -3313,6 +3313,7 @@
     "Use None (Main Agent)": "使用「无」（主智能体）",
     "Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open-Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow.": "使用 <code>claude setup-token</code> 生成的长期 OAuth 令牌。该令牌会加密存储在 Open-Science 应用存储中，不会读取或写入 <code>~/.claude</code>。完整流程见 <docsLink>Anthropic 的 setup-token 指南</docsLink>。",
     "Use all of the Main Agent's skills and connectors, including new ones added later. No need to configure each item.": "使用主智能体的全部技能和连接器，包括以后新增的。无需逐项配置。",
+    "Quick sign-in uses your shared Claude CLI profile. For a separate profile, use Advanced options.": "快速登录使用共享的 Claude CLI 配置。如需使用独立配置，请打开“高级选项”。",
     "Use an existing Claude profile or sign in with a separate Open-Science profile.": "使用现有的 Claude 配置，或用单独的 Open-Science 配置登录。",
     "Use your eligible ChatGPT subscription": "使用符合条件的 ChatGPT 订阅",
     "Use your eligible Claude subscription": "使用符合条件的 Claude 订阅",

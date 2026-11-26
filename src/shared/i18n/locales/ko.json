@@ -3231,6 +3231,7 @@
     "Use None (Main Agent)": "없음(메인 에이전트) 사용",
     "Use a long-lived OAuth token from <code>claude setup-token</code>. The token is encrypted in Open-Science app storage and never read from or written to <code>~/.claude</code>. See <docsLink>Anthropic's setup-token guide</docsLink> for the full flow.": "<code>claude setup-token</code>으로 발급한 장기 OAuth 토큰을 사용하세요. 토큰은 Open-Science 앱 저장소에 암호화되어 저장되며 <code>~/.claude</code>에서 읽거나 이 경로에 쓰지 않습니다. 전체 절차는 <docsLink>Anthropic setup-token 가이드</docsLink>를 참고하세요.",
     "Use all of the Main Agent's skills and connectors, including new ones added later. No need to configure each item.": "나중에 추가된 새로운 항목을 포함하여 메인 에이전트의 스킬 및 커넥터를 모두 사용하세요. 각 항목을 구성할 필요가 없습니다.",
+    "Quick sign-in uses your shared Claude CLI profile. For a separate profile, use Advanced options.": "빠른 로그인은 공유 Claude CLI 프로필을 사용합니다. 별도 프로필을 사용하려면 고급 옵션을 여세요.",
     "Use an existing Claude profile or sign in with a separate Open-Science profile.": "기존 Claude 프로필을 사용하거나 별도의 Open-Science 프로필로 로그인하세요.",
     "Use your eligible ChatGPT subscription": "지원되는 ChatGPT 구독 사용",
     "Use your eligible Claude subscription": "지원되는 Claude 구독 사용",

@@ -178,7 +178,8 @@ const QUICK_SUBSCRIPTIONS: Partial<
   },
   anthropic: {
     subscriptionKind: 'claude-subscription',
-    description: 'Use an existing Claude profile or sign in with a separate Open-Science profile.',
+    description:
+      'Quick sign-in uses your shared Claude CLI profile. For a separate profile, use Advanced options.',
     subscriptionLabel: (t) => t('Use your eligible Claude subscription')
   },
   xai: {

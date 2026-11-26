@@ -277,6 +277,9 @@ describe('ProviderStep', () => {
     })
     await renderStep({ variant: 'quick', onAdvance })
     const card = container.querySelector('.onboarding-provider-card-anthropic')!
+    expect(card.textContent).toContain(
+      'Quick sign-in uses your shared Claude CLI profile. For a separate profile, use Advanced options.'
+    )
     expect(card.textContent).toContain('Use your eligible Claude subscription')
     expect(card.querySelector('input')).toBeNull()
     await clickButton(/Continue with Anthropic/)
