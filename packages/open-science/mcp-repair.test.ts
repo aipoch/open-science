@@ -95,7 +95,7 @@ describe('npm MCP repair', () => {
     expect(exec).toHaveBeenCalledOnce()
     expect(exec.mock.calls[0][1].slice(-2)).toEqual(['root', '--global'])
   })
-  it('upgrades the complete npm distribution and verifies the dependency afterward', async () => {
+  it('upgrades the npm distribution despite an active MCP node process', async () => {
     const root = await mkdtemp(join(tmpdir(), 'osci-mcp-repair-'))
     roots.push(root)
     const packageRoot = join(root, 'node_modules', '@aipoch', 'open-science')
@@ -109,12 +109,23 @@ describe('npm MCP repair', () => {
       JSON.stringify({ name: '@aipoch/open-science', version: '1.3.2' })
     )
     const cliPath = join(packageRoot, 'cli.mjs')
+    const profile = join(root, 'profile')
+    await mkdir(join(profile, 'runtime', 'mcp-groups'), { recursive: true })
+    await writeFile(
+      join(profile, 'runtime', 'mcp-groups', 'core-active.json'),
+      JSON.stringify({
+        group: 'core',
+        profile,
+        pid: process.pid,
+        lastSeenAt: new Date().toISOString()
+      })
+    )
     const exec = vi.fn().mockResolvedValue({ stdout: join(root, 'node_modules'), stderr: '' })
     const verifyMcp = vi.fn().mockResolvedValue({ initialize: true, toolsList: true, toolCount: 1 })
     let available = false
     const result = await repairNpmMcp({
       cliPath,
-      profile: join(root, 'profile'),
+      profile,
       checkDependency: async () => ({
         available,
         dependency: MCP_DEPENDENCY_NAME
