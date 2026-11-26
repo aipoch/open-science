@@ -174,6 +174,7 @@ test('expands the selected table across repeated portal lifecycles @pr-mainline-
   app
 }) => {
   await app.completeOnboarding()
+  await expect.poll(() => app.page.evaluate(() => window.api.storage.detectActive())).toEqual([])
   const page = await app.configureFakeAgent()
   await createProject(page)
   await submitPromptViaUi(page, 'Expand distinct tables.')
