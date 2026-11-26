@@ -76,6 +76,16 @@ const installFromManagedSource = async (frameworkName: string): Promise<void> =>
 }
 
 describe('AgentStep', () => {
+  it('keeps the operation bar fixed while the runtime cards scroll', async () => {
+    await renderStep()
+
+    const footer = container.querySelector('[data-slot="card-footer"]')
+    expect(footer).not.toBeNull()
+    expect(footer?.classList.contains('sticky')).toBe(true)
+    expect(footer?.classList.contains('bottom-0')).toBe(true)
+    expect(footer?.classList.contains('z-10')).toBe(true)
+  })
+
   it('keeps an incompatible Claude installation visible and requires an update', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',

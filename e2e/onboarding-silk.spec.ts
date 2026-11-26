@@ -160,6 +160,40 @@ test('keeps the provider tray translucent in both themes and sizes each step to 
   ).toBe('auto')
 })
 
+test('keeps the agent setup actions at the dialog bottom while the runtime list scrolls', async ({
+  app
+}) => {
+  const { page } = app
+  await page.setViewportSize({ width: 620, height: 500 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const dialog = page.getByRole('dialog', { name: 'Open-Science onboarding' })
+  await dialog.getByRole('button', { name: 'Next', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Advanced options' }).click()
+  await dialog.getByRole('button', { name: 'Continue', exact: true }).click()
+  const heading = dialog.getByRole('heading', { name: 'Set up the agent runtime' })
+  await expect(heading).toBeVisible()
+  const footer = dialog.locator('[data-slot="card-footer"]')
+  const scroller = footer.locator('..')
+  const bottomGap = (): Promise<number> =>
+    footer.evaluate((el) =>
+      Math.abs(
+        el.closest('[role="dialog"]')!.getBoundingClientRect().bottom -
+          el.getBoundingClientRect().bottom
+      )
+    )
+  expect(await bottomGap()).toBeLessThanOrEqual(1)
+  await heading.hover()
+  await page.mouse.wheel(0, 220)
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0)
+  expect(await bottomGap()).toBeLessThanOrEqual(1)
+  await expect(footer.getByRole('button', { name: 'Back', exact: true })).toBeInViewport({
+    ratio: 1
+  })
+  await expect(footer.getByRole('button', { name: 'Continue', exact: true })).toBeInViewport({
+    ratio: 1
+  })
+})
+
 test('exposes quick-connect actions on the first tap on touch-only devices', async ({ app }) => {
   const { page } = app
   const cdp = await page.context().newCDPSession(page)
