@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import type { Locator } from 'playwright'
 import sharp from 'sharp'
 import { test } from './fixtures/electron-app'
+import { startWebModel } from './fixtures/web-model'
 
 test.use({ windowMode: 'normal' })
 
@@ -209,6 +210,9 @@ test('opens the full provider picker with the defaults and completes onboarding'
   }
   await dialog.locator('[data-provider-kind="official:cloudflare-ai-gateway"]').click()
   await expect(dialog.locator('#provider-cloudflare-mode')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Continue with free Kilo Gateway' })).toHaveCount(
+    0
+  )
   await dialog.getByRole('button', { name: 'Change provider' }).click()
   await dialog.getByRole('button', { name: 'Continue with free Kilo Gateway', exact: true }).click()
   const settings = await page.evaluate(() => window.api.settings.getSettings())
@@ -220,6 +224,73 @@ test('opens the full provider picker with the defaults and completes onboarding'
   await dialog.getByRole('button', { name: 'Finish', exact: true }).click()
   await dialog.getByRole('button', { name: 'Start exploring', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
+})
+
+test('keeps search and filters pinned above the configured provider and its details', async ({
+  app
+}, info) => {
+  const { page } = app
+  const gateway = await startWebModel('deepseek-flash', () => 'OK')
+  try {
+    await page.evaluate(async (baseUrl) => {
+      const model = 'deepseek-flash'
+      const { providerId } = await window.api.settings.saveValidatedProvider({
+        name: 'DeepSeek',
+        type: 'custom',
+        baseUrl,
+        model,
+        key: 'fixture-key',
+        apiEndpoints: ['chat-completions']
+      })
+      if (!providerId) throw new Error('Fixture provider did not pass validation')
+      await window.api.settings.setActiveProvider({ id: providerId, model })
+    }, gateway.baseUrl)
+    await page.reload()
+    await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' })
+    const dialog = page.getByRole('dialog', { name: 'Open-Science onboarding' })
+    await dialog.getByRole('button', { name: 'Next', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Advanced mode', exact: true }).focus()
+    await page.keyboard.press('Enter')
+
+    const search = dialog.getByRole('searchbox', { name: 'Search providers' })
+    const filters = dialog.getByRole('group', { name: 'Provider category' })
+    const notice = dialog
+      .getByRole('status')
+      .filter({ hasText: 'Already configured: DeepSeek (deepseek-flash)' })
+    const firstCard = dialog.locator('[data-provider-kind]').first()
+    await expect(notice).toBeInViewport()
+    const filterBounds = (await filters.boundingBox())!
+    const noticeBounds = (await notice.boundingBox())!
+    expect(filterBounds.y + filterBounds.height).toBeLessThan(noticeBounds.y)
+    expect(noticeBounds.y + noticeBounds.height).toBeLessThan((await firstCard.boundingBox())!.y)
+    await dialog.screenshot({ path: info.outputPath('configured-provider.png') })
+    await search.hover()
+    await page.mouse.wheel(0, 320)
+    await expect(notice).not.toBeInViewport()
+    const searchTop = (await search.boundingBox())!.y
+    const filterTop = (await filters.boundingBox())!.y
+    const cardTop = (await firstCard.boundingBox())!.y
+    await page.mouse.wheel(0, 240)
+    await expect.poll(async () => (await firstCard.boundingBox())!.y).toBeLessThan(cardTop - 100)
+    expect((await search.boundingBox())!.y).toBeCloseTo(searchTop, 0)
+    expect((await filters.boundingBox())!.y).toBeCloseTo(filterTop, 0)
+    await expect(filters).toBeInViewport()
+    await filters.getByRole('button', { name: /Model vendors/ }).click()
+    await search.fill('DeepSeek')
+    await dialog.locator('[data-provider-kind="official:deepseek"]').click()
+    await expect(notice).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: 'Test & continue' })).toHaveAttribute(
+      'data-variant',
+      'default'
+    )
+    await dialog.screenshot({ path: info.outputPath('provider-details.png') })
+    await dialog.getByRole('button', { name: 'Back', exact: true }).click()
+    await expect(notice).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled()
+  } finally {
+    await gateway.close()
+  }
 })
 
 test('keeps the agent setup actions at the dialog bottom while the runtime list scrolls', async ({

@@ -8,6 +8,7 @@ import { isSupportedClaudeCliVersion } from '../../../../shared/claude-runtime'
 import { describeInstallProgress } from '../settings/claude-install-progress'
 import { Button } from '@/components/ui/button'
 import { ProviderSilkBackground } from '@/components/react-bits/ProviderSilkBackground'
+import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
@@ -252,6 +253,7 @@ const ProviderStep = ({
     (!picker.kind ||
       picker.kind !== currentKindKey ||
       (!!pickedKind && !isProviderKindAvailable(pickedKind, availability)))
+  const showModelContinuation = !picker || showPicker
   const modelHeading = useRef<HTMLHeadingElement>(null)
   const wasShowingPicker = useRef(showPicker)
   useEffect(() => {
@@ -1505,6 +1507,21 @@ const ProviderStep = ({
     )
   }
 
+  const configuredNotice = keepConfiguredProvider && existingProvider && (
+    <InlineNotice
+      level="success"
+      role="status"
+      className="rounded-lg bg-status-success-surface px-3 py-2.5 dark:bg-status-success-dark-surface"
+    >
+      <span className="text-status-success-foreground dark:text-status-success-dark-foreground">
+        {t('Already configured: {{name}} ({{model}}). You can continue with this provider.', {
+          name: existingProvider.name,
+          model: activeModel ?? existingProvider.model ?? t('default model')
+        })}
+      </span>
+    </InlineNotice>
+  )
+
   return (
     <>
       <CardHeader className="gap-1 rounded-t-lg px-6 pt-5 pb-3">
@@ -1516,14 +1533,11 @@ const ProviderStep = ({
             'Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.'
           )}
         </CardDescription>
-        <p className="text-xs leading-5 text-muted-foreground">
-          {keepConfiguredProvider && existingProvider
-            ? t('Already configured: {{name}} ({{model}}). You can continue with this provider.', {
-                name: existingProvider.name,
-                model: activeModel ?? existingProvider.model ?? t('default model')
-              })
-            : t('You can use the free Kilo Gateway model without an API key.')}
-        </p>
+        {showModelContinuation && !keepConfiguredProvider && (
+          <p className="text-xs leading-5 text-muted-foreground">
+            {t('You can use the free Kilo Gateway model without an API key.')}
+          </p>
+        )}
       </CardHeader>
       <Separator className="bg-border-200" />
 
@@ -1531,6 +1545,7 @@ const ProviderStep = ({
         <section aria-label={t('Configure model')}>
           {showPicker ? (
             <ProviderKindPicker
+              stickyControls
               {...availability}
               recommendedKey={defaultProviderKindKey(agentFrameworkId)}
               onSelect={(kind) => {
@@ -1547,9 +1562,12 @@ const ProviderStep = ({
                 setCatalogError(undefined)
                 setValidationMessage(undefined)
               }}
-            />
+            >
+              {configuredNotice}
+            </ProviderKindPicker>
           ) : (
             <>
+              {!picker && configuredNotice && <div className="mb-4">{configuredNotice}</div>}
               {keychainWarning ? (
                 <ErrorNotice inline className="mb-4" tone="amber" description={keychainWarning} />
               ) : null}
@@ -1653,7 +1671,7 @@ const ProviderStep = ({
         {!showPicker && (
           <Button
             type="button"
-            variant="outline"
+            variant={showModelContinuation ? 'outline' : 'default'}
             onClick={() => void handleSaveProvider()}
             disabled={busy || !canContinue}
             className="px-4"
@@ -1670,14 +1688,16 @@ const ProviderStep = ({
             </span>
           </Button>
         )}
-        <Button
-          type="button"
-          onClick={() => void handleContinueWithModel()}
-          disabled={busy || !canContinue}
-          aria-busy={isContinuing}
-        >
-          {keepConfiguredProvider ? t('Continue') : t('Continue with free Kilo Gateway')}
-        </Button>
+        {showModelContinuation && (
+          <Button
+            type="button"
+            onClick={() => void handleContinueWithModel()}
+            disabled={busy || !canContinue}
+            aria-busy={isContinuing}
+          >
+            {keepConfiguredProvider ? t('Continue') : t('Continue with free Kilo Gateway')}
+          </Button>
+        )}
       </CardFooter>
       <ClaudeIsolatedSignInModal
         open={isClaudeSignInOpen}
