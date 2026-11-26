@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -17,6 +18,15 @@ const useEnvironmentReady = (): boolean => {
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+
+  useEffect(() => {
+    // Quick sign-in can select a different runtime before this step opens. Later card clicks
+    // run their own checks, and checkEnvironment already deduplicates in-flight checks.
+    const settings = useSettingsStore.getState()
+    if (settings.environmentCheck?.agentFrameworkId !== settings.agentFrameworkId) {
+      void settings.checkEnvironment()
+    }
+  }, [])
 
   return (
     !isCheckingEnvironment &&
