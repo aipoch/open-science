@@ -1606,7 +1606,12 @@ const uninstallAndVerify = async (
     if (remainingPaths.length > 0) return undefined
     if (!(await pathExists(installDirectory))) return true
     const remainingEntries = await readdir(installDirectory)
-    return remainingEntries.every((entry) => entry === basename(uninstaller)) || undefined
+    // Updater-driven installs can leave Chromium's debug.log in the install directory, and
+    // uninstallers from before the program-cleanup list reserved that name cannot remove it.
+    return (
+      remainingEntries.every((entry) => entry === basename(uninstaller) || entry === 'debug.log') ||
+      undefined
+    )
   }
   try {
     await waitFor('the installed application files to be removed', cleanupCheck)
