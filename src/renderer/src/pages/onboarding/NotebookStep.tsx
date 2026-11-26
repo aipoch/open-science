@@ -59,7 +59,7 @@ const NotebookStep = ({ onBack, onComplete }: NotebookStepProps): React.JSX.Elem
           )}
         />
       </CardContent>
-      <CardFooter className="mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+      <CardFooter className="sticky bottom-0 z-10 mt-auto items-center justify-between gap-4 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
         <p className="text-xs leading-5 text-text-100">
           {completionError ? (
             <span className="text-destructive" role="alert">

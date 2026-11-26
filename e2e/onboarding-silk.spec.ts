@@ -293,9 +293,9 @@ test('keeps search and filters pinned above the configured provider and its deta
   }
 })
 
-test('keeps the agent setup actions at the dialog bottom while the runtime list scrolls', async ({
+test('keeps the agent setup actions and Notebook actions pinned while their runtime lists scroll', async ({
   app
-}) => {
+}, info) => {
   const { page } = app
   await page.setViewportSize({ width: 620, height: 500 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -303,8 +303,6 @@ test('keeps the agent setup actions at the dialog bottom while the runtime list 
   await dialog.getByRole('button', { name: 'Next', exact: true }).click()
   await dialog.getByRole('button', { name: 'Advanced options' }).click()
   await dialog.getByRole('button', { name: 'Continue', exact: true }).click()
-  const heading = dialog.getByRole('heading', { name: 'Set up the agent runtime' })
-  await expect(heading).toBeVisible()
   const footer = dialog.locator('[data-slot="card-footer"]')
   const scroller = footer.locator('..')
   const bottomGap = (): Promise<number> =>
@@ -314,17 +312,34 @@ test('keeps the agent setup actions at the dialog bottom while the runtime list 
           el.getBoundingClientRect().bottom
       )
     )
-  expect(await bottomGap()).toBeLessThanOrEqual(1)
-  await heading.hover()
-  await page.mouse.wheel(0, 220)
-  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0)
-  expect(await bottomGap()).toBeLessThanOrEqual(1)
-  await expect(footer.getByRole('button', { name: 'Back', exact: true })).toBeInViewport({
-    ratio: 1
-  })
-  await expect(footer.getByRole('button', { name: 'Continue', exact: true })).toBeInViewport({
-    ratio: 1
-  })
+  for (const [title, action] of [
+    ['Set up the agent runtime', 'Continue'],
+    ['Notebook runtime (optional)', 'Finish']
+  ] as const) {
+    const heading = dialog.getByRole('heading', { name: title, exact: true })
+    await expect(heading).toBeVisible()
+    await expect
+      .poll(() => scroller.evaluate((el) => el.scrollHeight - el.clientHeight))
+      .toBeGreaterThan(0)
+    await scroller.evaluate((el) => el.scrollTo(0, 0))
+    expect(await bottomGap()).toBeLessThanOrEqual(1)
+    await heading.hover()
+    await page.mouse.wheel(0, 220)
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0)
+    expect(await bottomGap()).toBeLessThanOrEqual(1)
+    const back = footer.getByRole('button', { name: 'Back', exact: true })
+    const next = footer.getByRole('button', { name: action, exact: true })
+    await expect(back).toBeInViewport({ ratio: 1 })
+    await expect(next).toBeInViewport({ ratio: 1 })
+    await back.click({ trial: true })
+    if (action === 'Finish')
+      await dialog.screenshot({ path: info.outputPath('notebook-footer.png') })
+    await next.click()
+    if (action === 'Continue') {
+      await dialog.getByRole('button', { name: 'Continue with free Kilo Gateway' }).click()
+    }
+  }
+  await expect(dialog.getByRole('button', { name: 'Start exploring' })).toBeVisible()
 })
 
 test('exposes quick-connect actions on the first tap on touch-only devices', async ({ app }) => {
