@@ -32,7 +32,6 @@ import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
 import {
   removeNotebookNetworkRule,
-  sharedRuleForId,
   updateNotebookNetworkRule
 } from './notebook-network-rule-operations'
 
@@ -288,7 +287,6 @@ export function NotebookNetworkAccessEditor({
       return
     }
     const base = editor.base
-    const sharedOriginal = editor.id ? sharedRuleForId(base, editor.id) : undefined
     const persist = (next: NotebookNetworkSettings): void => {
       if (JSON.stringify(next) === JSON.stringify(base)) {
         setError('')
@@ -297,7 +295,7 @@ export function NotebookNetworkAccessEditor({
       }
       void commit(next, base)
     }
-    if (strict && !editor.original && !sharedOriginal) {
+    if (strict && !editor.original) {
       let groupId = group
       let groups = [...(base.strictWhitelistGroups ?? [])]
       if (group === '__new__') {
@@ -335,8 +333,12 @@ export function NotebookNetworkAccessEditor({
           : [...remaining, rule],
         strictWhitelistGroups: groups
       })
-    } else if (sharedOriginal && editor.id) {
-      persist(updateNotebookNetworkRule(base, editor.id, target))
+    } else if (editor.original?.sharedWithAgent) {
+      const next = updateNotebookNetworkRule(base, trustedDestinationId(editor.original), target)
+      if (next === 'duplicate') setError(t('This address is already in the list.'))
+      else if (next === 'invalid-address')
+        setError(t('Enter a valid hostname or IP and a port from 1 to 65535.'))
+      else persist(next)
     } else {
       const remaining = (base.trustedPrivateDestinations ?? []).filter(
         (rule) => rule !== editor.original
@@ -456,7 +458,7 @@ export function NotebookNetworkAccessEditor({
             onChange={(event) => setPort(event.target.value)}
           />
         </label>
-        {strict ? (
+        {strict && !editor.original ? (
           <label className="col-span-full space-y-1 text-xs">
             {t('Group')}
             <Select
@@ -479,7 +481,7 @@ export function NotebookNetworkAccessEditor({
             </Select>
           </label>
         ) : null}
-        {strict && group === '__new__' ? (
+        {strict && !editor.original && group === '__new__' ? (
           <label className="col-span-full space-y-1 text-xs">
             {t('Group name')}
             <Input value={newGroup} onChange={(event) => setNewGroup(event.target.value)} />

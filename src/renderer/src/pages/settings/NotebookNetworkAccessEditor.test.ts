@@ -39,6 +39,22 @@ describe('NotebookNetworkAccessEditor shared HTTP rules', () => {
     expect(next.strictWhitelist).toEqual([])
   })
 
+  it('rejects a duplicate destination before normalization can discard the list', () => {
+    const rules = ['a.example', 'b.example', 'c.example'].map((hostname) => ({
+      ...shared,
+      hostname
+    }))
+    const settings = { ...duplicateSettings(), trustedPrivateDestinations: rules }
+    expect(
+      updateNotebookNetworkRule(settings, trustedDestinationId(rules[0]), {
+        hostnamePattern: rules[1].hostname,
+        port: shared.port,
+        protocol: shared.protocol
+      })
+    ).toBe('duplicate')
+    expect(settings.trustedPrivateDestinations).toEqual(rules)
+  })
+
   it('edits the shared identity instead of recreating the strict duplicate', () => {
     const settings = duplicateSettings()
     const next = updateNotebookNetworkRule(settings, trustedDestinationId(shared), {
@@ -47,6 +63,7 @@ describe('NotebookNetworkAccessEditor shared HTTP rules', () => {
       protocol: 'http'
     })
 
+    if (typeof next === 'string') throw new Error(next)
     expect(next.strictWhitelist).toEqual([])
     expect(next.trustedPrivateDestinations).toEqual([
       expect.objectContaining({

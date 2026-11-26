@@ -17,7 +17,7 @@ const sameDestination = (rule: TrustedPrivateDestination, target: NotebookRuleLi
   rule.port === target.port &&
   (rule.protocol ?? 'https') === (target.protocol ?? 'https')
 
-export const sharedRuleForId = (
+const sharedRuleForId = (
   settings: NotebookNetworkSettings,
   ruleId: string
 ): TrustedPrivateDestination | undefined =>
@@ -50,7 +50,7 @@ export const updateNotebookNetworkRule = (
   settings: NotebookNetworkSettings,
   ruleId: string,
   target: NotebookRuleTarget
-): NotebookNetworkSettings => {
+): NotebookNetworkSettings | 'duplicate' | 'invalid-address' => {
   const shared = sharedRuleForId(settings, ruleId)
   if (!shared)
     return {
@@ -59,6 +59,20 @@ export const updateNotebookNetworkRule = (
         rule.id === ruleId ? { ...rule, ...target } : rule
       )
     }
+  if (target.hostnamePattern.startsWith('*.')) return 'invalid-address'
+  if (
+    (settings.trustedPrivateDestinations ?? []).some(
+      (rule) => rule !== shared && sameDestination(rule, target)
+    ) ||
+    (settings.strictWhitelist ?? []).some(
+      (rule) =>
+        !sameDestination(shared, rule) &&
+        rule.hostnamePattern === target.hostnamePattern &&
+        rule.port === target.port &&
+        rule.protocol === target.protocol
+    )
+  )
+    return 'duplicate'
   const withoutSharedFlag = { ...shared }
   delete withoutSharedFlag.sharedWithAgent
   const updated: TrustedPrivateDestination = {
@@ -72,16 +86,14 @@ export const updateNotebookNetworkRule = (
   return {
     ...settings,
     strictWhitelist:
-      target.protocol === 'http'
+      settings.mode !== 'strict' || target.protocol === 'http'
         ? (settings.strictWhitelist ?? []).filter((rule) => !sameDestination(shared, rule))
         : [
             ...(settings.strictWhitelist ?? []).filter((rule) => !sameDestination(shared, rule)),
             { ...target, id: ruleId, origin: 'manual' as const }
           ],
     trustedPrivateDestinations: normalizeTrustedPrivateDestinations(
-      (settings.trustedPrivateDestinations ?? [])
-        .filter((rule) => rule !== shared && !sameDestination(rule, shared))
-        .concat(updated)
+      (settings.trustedPrivateDestinations ?? []).filter((rule) => rule !== shared).concat(updated)
     )
   }
 }
