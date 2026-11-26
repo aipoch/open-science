@@ -297,6 +297,7 @@ describe('application command composition', () => {
       'pdf-annotations:delete',
       'pdf-annotations:import-native',
       'pdf-annotations:list',
+      'pdf-annotations:list-figures',
       'pdf-annotations:reconcile',
       'pdf-annotations:update',
       'pdf-structure:cancel',

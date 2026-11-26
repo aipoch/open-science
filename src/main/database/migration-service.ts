@@ -1,3 +1,4 @@
+import { pdfFiguresMigration } from './migrations/0061-pdf-figures'
 import { sessionSchedulesMigration } from './migrations/0058-session-schedules'
 import {
   imageModelsMigration,
@@ -1083,6 +1084,17 @@ const MIGRATION_MANIFEST = [
       imageModelsMigration.statements,
       imageModelsMigration.verifiers,
       imageModelsMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...pdfFiguresMigration,
+    checksum: checksumMigrationPayload(
+      pdfFiguresMigration.id,
+      pdfFiguresMigration.statements,
+      pdfFiguresMigration.verifiers,
+      pdfFiguresMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'

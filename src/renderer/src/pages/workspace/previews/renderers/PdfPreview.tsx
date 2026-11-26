@@ -12,6 +12,7 @@ import type {
   PdfAnnotationSource,
   PdfNativeAnnotationImportProgress
 } from '../../../../../../shared/pdf-annotations'
+import { PDF_FIGURE_LIMITS } from '../../../../../../shared/pdf-annotations'
 import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
 import { useNativePdfVisibility } from '../../pdf-annotations/use-native-pdf-visibility'
 import { usePdfExport } from '../../pdf-annotations/use-pdf-export'
@@ -157,6 +158,7 @@ import type { PreviewFileRendererProps } from '../preview-types'
 import { useNearViewport } from '../useNearViewport'
 import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
 import { PdfFigurePreviewPanel } from './PdfFigurePreviewPanel'
+import { PdfFigureCollectionDialog } from './PdfFigureCollectionDialog'
 import { PdfFiguresView } from './PdfFiguresView'
 import { buildPdfFigureIndex } from './pdf-figure-index'
 import { createPdfPagePreviewCache, loadPdfFigurePreview } from './pdf-figure-selections'
@@ -214,8 +216,9 @@ type DocumentState =
       sourceIdentity?: PdfTranslationDocumentContext['sourceIdentity']
     }
   | { requestKey: string; status: 'error'; error: unknown }
-type PdfCursorMode = 'select' | 'hand' | 'area' | 'area-annotation' | 'text-annotation'
-type PdfRegionIntent = 'agent' | 'annotation'
+type PdfCursorMode =
+  'select' | 'hand' | 'area' | 'area-annotation' | 'area-collection' | 'text-annotation'
+type PdfRegionIntent = 'agent' | 'annotation' | 'collection'
 type PdfPanGesture = Readonly<{
   pointerId: number
   clientX: number
@@ -575,6 +578,7 @@ const PdfInteractionControls = ({
   areaAgentUnavailableReason,
   annotationUnavailableReason,
   canAnnotateArea,
+  canCollectArea,
   canAnnotateText,
   textMarkStyle,
   onTextMarkStyleChange,
@@ -592,6 +596,7 @@ const PdfInteractionControls = ({
   areaAgentUnavailableReason: string
   annotationUnavailableReason: string
   canAnnotateArea: boolean
+  canCollectArea: boolean
   canAnnotateText: boolean
   textMarkStyle: PdfTextMarkStyle
   onTextMarkStyleChange: (style: PdfTextMarkStyle) => void
@@ -621,6 +626,20 @@ const PdfInteractionControls = ({
     if (!canAnnotateText) clearTimeout(optionsHoverTimer.current)
   }, [canAnnotateText])
   const usesAreaAnnotation = mode === 'area-annotation' || !canSelectArea
+  const areaMode =
+    mode === 'area-collection' ? 'area-collection' : usesAreaAnnotation ? 'area-annotation' : 'area'
+  const areaLabel =
+    areaMode === 'area-collection'
+      ? t('Save area to figure collection')
+      : usesAreaAnnotation
+        ? t('Select area to annotate')
+        : t('Select area for Agent')
+  const areaDescription =
+    areaMode === 'area-collection'
+      ? t('Drag to save an area to the figure collection · Esc to cancel')
+      : usesAreaAnnotation
+        ? t('Drag to annotate an area · Esc to cancel')
+        : t('Drag to send an area to Agent · Esc to cancel')
   const MarkIcon =
     textMarkStyle.kind === 'highlight'
       ? Highlighter
@@ -822,7 +841,7 @@ const PdfInteractionControls = ({
               />
             </SplitButtonContent>
           </SplitButton>
-          {canSelectArea || canAnnotateArea ? (
+          {canSelectArea || canAnnotateArea || canCollectArea ? (
             <SplitButton
               open={areaOpen}
               onOpenChange={(open) => {
@@ -836,26 +855,26 @@ const PdfInteractionControls = ({
                     <SplitButtonPrimary
                       type="button"
                       variant={
-                        mode === 'area' || mode === 'area-annotation' ? 'secondary' : 'ghost'
+                        mode === 'area' || mode === 'area-annotation' || mode === 'area-collection'
+                          ? 'secondary'
+                          : 'ghost'
                       }
                       size="icon-sm"
                       className="pdf-area-action annotation-style-apply size-7 p-0"
-                      disabled={!canAnnotateArea && !canSelectArea}
-                      aria-pressed={mode === 'area' || mode === 'area-annotation'}
-                      aria-label={
-                        mode === 'area-annotation' || !canSelectArea
-                          ? t('Select area to annotate')
-                          : t('Select area for Agent')
+                      disabled={!canAnnotateArea && !canSelectArea && !canCollectArea}
+                      aria-pressed={
+                        mode === 'area' || mode === 'area-annotation' || mode === 'area-collection'
                       }
+                      aria-label={areaLabel}
                       onClick={() => {
                         cancelOptionsHover()
                         setOpenOptions(undefined)
-                        onModeChange(
-                          mode === 'area-annotation' || !canSelectArea ? 'area-annotation' : 'area'
-                        )
+                        onModeChange(areaMode)
                       }}
                     >
-                      {mode === 'area-annotation' || !canSelectArea ? (
+                      {areaMode === 'area-collection' ? (
+                        <Images className="size-3.5" aria-hidden="true" />
+                      ) : usesAreaAnnotation ? (
                         <SquareDashedMousePointer className="size-3.5" aria-hidden="true" />
                       ) : (
                         <Scan className="size-3.5" aria-hidden="true" />
@@ -865,17 +884,15 @@ const PdfInteractionControls = ({
                   {!openOptions && (
                     <PdfToolbarTooltip
                       side="top"
-                      label={
-                        mode === 'area-annotation' || !canSelectArea
-                          ? t('Select area to annotate')
-                          : t('Select area for Agent')
+                      label={areaLabel}
+                      plain={
+                        areaMode === 'area-collection'
+                          ? !canCollectArea
+                          : usesAreaAnnotation
+                            ? !canAnnotateArea
+                            : !canSelectArea
                       }
-                      plain={usesAreaAnnotation ? !canAnnotateArea : !canSelectArea}
-                      description={
-                        mode === 'area-annotation' || !canSelectArea
-                          ? t('Drag to annotate an area · Esc to cancel')
-                          : t('Drag to send an area to Agent · Esc to cancel')
-                      }
+                      description={areaDescription}
                     />
                   )}
                 </Tooltip>
@@ -952,7 +969,18 @@ const PdfInteractionControls = ({
                     label: t('Select area to annotate'),
                     icon: SquareDashedMousePointer,
                     reason: annotationUnavailableReason
-                  }
+                  },
+                  ...(canCollectArea
+                    ? [
+                        {
+                          mode: 'area-collection' as const,
+                          available: true,
+                          label: t('Save area to figure collection'),
+                          icon: Images,
+                          reason: ''
+                        }
+                      ]
+                    : [])
                 ].map(({ mode: actionMode, available, label, icon: Icon, reason }) => (
                   <Tooltip key={actionMode}>
                     <TooltipTrigger asChild>
@@ -1001,16 +1029,17 @@ const PdfInteractionControls = ({
           {children}
         </div>
       </div>
-      {mode === 'area' || mode === 'area-annotation' || mode === 'text-annotation' ? (
+      {mode === 'area' ||
+      mode === 'area-annotation' ||
+      mode === 'area-collection' ||
+      mode === 'text-annotation' ? (
         <div
           role="status"
           className="pointer-events-none absolute bottom-full left-0 z-40 mb-2 max-w-full rounded-md border border-border bg-popover px-3 py-2 text-xs text-muted-foreground shadow-sm"
         >
           {mode === 'text-annotation'
             ? t('Select text to annotate. Press Esc to exit.')
-            : mode === 'area-annotation' || !canSelectArea
-              ? t('Drag to annotate an area · Esc to cancel')
-              : t('Drag to send an area to Agent · Esc to cancel')}
+            : areaDescription}
         </div>
       ) : null}
     </TooltipProvider>
@@ -1370,6 +1399,10 @@ const PdfEvidenceLayer = ({
   const [reveal, setReveal] = useState<Readonly<{ id: string; sequence: number }>>()
   const [preparedAnnotation, setPreparedAnnotation] = useState<PdfAnnotation>()
   const [preparedBookmark, setPreparedBookmark] = useState<BookmarkRevealTarget>()
+  const [figureDraft, setFigureDraft] = useState<{
+    id: string
+    rect: NonNullable<ReturnType<typeof normalizedPdfRect>>
+  }>()
   const [regionDraft, setRegionDraft] = useState<
     Readonly<{
       id: string
@@ -1558,12 +1591,17 @@ const PdfEvidenceLayer = ({
     })
   }, [reveal])
 
-  const draft = start && end ? normalizedPdfRect(start, end) : regionDraft?.rect
+  const draft =
+    start && end ? normalizedPdfRect(start, end) : (regionDraft?.rect ?? figureDraft?.rect)
   const addRegion = (element: HTMLDivElement, rect: NonNullable<typeof draft>): void => {
     const page = element.getBoundingClientRect()
     setStart(undefined)
     setEnd(undefined)
     const text = textInPdfRect(textLayer.current, page, rect, ANNOTATION_LIMITS.quote)
+    if (intent === 'collection' && bookmarkSource?.kind === 'literature-attachment-version') {
+      setFigureDraft({ id: createAnnotationId(), rect })
+      return
+    }
     if (intent === 'annotation' && bookmarkSource) {
       setRegionDraft({
         id: createAnnotationId().replace(/^annotation-/u, 'bookmark-'),
@@ -1646,6 +1684,39 @@ const PdfEvidenceLayer = ({
 
   return (
     <>
+      {figureDraft && bookmarkSource ? (
+        <PdfFigureCollectionDialog
+          capture={() =>
+            canvas.current
+              ? cropPdfCanvasRegion(canvas.current, figureDraft.rect, PDF_FIGURE_LIMITS.imageBytes)
+              : undefined
+          }
+          onSave={({ image, figureNumber, caption, tagIds, note }) =>
+            pdfAnnotations.create(
+              figureDraft.id,
+              {
+                source: bookmarkSource,
+                selector: {
+                  kind: 'region',
+                  pageNumber,
+                  rect: figureDraft.rect,
+                  pageRotation,
+                  coordinateVersion: 1
+                }
+              },
+              'area',
+              'yellow',
+              tagIds,
+              note,
+              { image: { mimeType: 'image/png', data: image.data }, figureNumber, caption }
+            )
+          }
+          onClose={() => {
+            setFigureDraft(undefined)
+          }}
+          onRestoreFocus={onSelected}
+        />
+      ) : null}
       <div ref={highlightLayer} className="pointer-events-none absolute inset-0 z-40">
         {matching.flatMap((annotation) => {
           const boxes =
@@ -1913,9 +1984,9 @@ const PdfEvidenceLayer = ({
       {intent ? (
         <div
           data-pdf-region-selection="true"
-          className="absolute inset-0 z-30 cursor-crosshair touch-none"
+          className="absolute inset-0 z-[41] cursor-crosshair touch-none"
           onPointerDown={(event) => {
-            if (regionDraft || event.button !== 0 || !event.isPrimary) return
+            if (regionDraft || figureDraft || event.button !== 0 || !event.isPrimary) return
             event.currentTarget.setPointerCapture(event.pointerId)
             const point = pointInPage(
               event.clientX,
@@ -2565,7 +2636,10 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
   ])
 
   const currentState = documentState?.requestKey === resourceRequestKey ? documentState : null
-  const usesLiteratureReader = source === 'literature' && Boolean(props.annotationProps)
+  const usesLiteratureReader =
+    source === 'literature' &&
+    (Boolean(props.annotationProps) ||
+      props.pdfBookmarkSource?.kind === 'literature-attachment-version')
   const singlePage =
     !usesLiteratureReader &&
     currentState?.status === 'ready' &&
@@ -2890,11 +2964,14 @@ const PdfReaderContent = ({
   }, [])
   const canSelectArea = Boolean(annotationProps?.onAddAnnotation && pdfEvidenceSource)
   const canAnnotateArea = Boolean(pdfBookmarkSource && pdfAnnotations.available)
+  const canCollectArea =
+    pdfBookmarkSource?.kind === 'literature-attachment-version' && pdfAnnotations.available
   const canAnnotateText =
     canAnnotateArea && Boolean(annotationProps) && !annotationProps?.annotationVersionPending
   if (
     (!canSelectArea && cursorMode === 'area') ||
     (!canAnnotateArea && cursorMode === 'area-annotation') ||
+    (!canCollectArea && cursorMode === 'area-collection') ||
     (!canAnnotateText && cursorMode === 'text-annotation')
   )
     setCursorMode('select')
@@ -4653,6 +4730,7 @@ const PdfReaderContent = ({
             !event.nativeEvent.isComposing &&
             (cursorMode === 'area' ||
               cursorMode === 'area-annotation' ||
+              cursorMode === 'area-collection' ||
               cursorMode === 'text-annotation')
           ) {
             event.preventDefault()
@@ -5179,7 +5257,9 @@ const PdfReaderContent = ({
                                         ? 'agent'
                                         : cursorMode === 'area-annotation'
                                           ? 'annotation'
-                                          : undefined
+                                          : cursorMode === 'area-collection'
+                                            ? 'collection'
+                                            : undefined
                                     }
 
                                     onRegionSelected={finishRegionSelection}
@@ -5334,6 +5414,7 @@ const PdfReaderContent = ({
                               : t('PDF annotations are unavailable for this source.')
                         }
                         canAnnotateArea={canAnnotateArea && effectiveRendition !== 'translated'}
+                        canCollectArea={canCollectArea && effectiveRendition !== 'translated'}
                         canAnnotateText={canAnnotateText && effectiveRendition !== 'translated'}
                         textMarkStyle={textMarkStyle}
                         onTextMarkStyleChange={setTextMarkStyle}

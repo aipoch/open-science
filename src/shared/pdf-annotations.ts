@@ -48,6 +48,38 @@ export const PDF_ANNOTATION_LIMITS = Object.freeze({
   pageSize: 100,
   targetBytes: 65_536
 })
+
+export const PDF_FIGURE_LIMITS = Object.freeze({
+  imageBytes: 2 * 1024 * 1024,
+  figureNumber: 128,
+  caption: 20_000,
+  pageSize: 24,
+  responseBytes: 8 * 1024 * 1024
+})
+export const pdfFigureSchema = z
+  .object({
+    image: z
+      .object({
+        mimeType: z.literal('image/png'),
+        data: z
+          .string()
+          .min(1)
+          .max(4 * Math.ceil(PDF_FIGURE_LIMITS.imageBytes / 3))
+          .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
+          .refine(
+            (data) =>
+              data.startsWith('iVBORw0KGgo') &&
+              (data.length * 3) / 4 - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0) <=
+                PDF_FIGURE_LIMITS.imageBytes
+          )
+      })
+      .strict(),
+    figureNumber: z.string().max(PDF_FIGURE_LIMITS.figureNumber),
+    caption: z.string().max(PDF_FIGURE_LIMITS.caption)
+  })
+  .strict()
+export type PdfFigure = z.infer<typeof pdfFigureSchema>
+
 export const PDF_ANNOTATION_EXTERNAL_SUBTYPE_MAX_LENGTH = 64
 
 const identity = z
@@ -161,6 +193,7 @@ const createSchema = scopeSchema
   .extend({
     id: identity.max(TAG_RESOURCE_ID_MAX_LENGTH),
     target: targetSchema,
+    figure: pdfFigureSchema.optional(),
     createdAt: z.iso.datetime().optional(),
     createdInSessionId: identity.nullable().optional(),
     kind: annotationKindSchema,
@@ -192,6 +225,11 @@ const hasMatchingScope = (value: z.infer<typeof createSchema>): boolean =>
       value.target.source.projectId === value.projectId)
 export const createPdfAnnotationRequestSchema = createSchema
   .refine(hasMatchingScope)
+  .refine(
+    (value) =>
+      !value.figure ||
+      (value.kind === 'area' && !!value.literatureVersionId && (value.origin ?? 'user') === 'user')
+  )
   .refine(hasMatchingKind, {
     message: 'Annotation kind must match its selector.'
   })
@@ -238,6 +276,11 @@ export const deletePdfAnnotationRequestSchema = scopeSchema
 export const pdfAnnotationSchema = createSchema
   .safeExtend({
     createdInSessionId: z.never().optional(),
+    isFigure: z.literal(true).optional(),
+    figureSource: z
+      .custom<PdfAnnotationSource>((value) => sanitizePdfDocumentSource(value) !== undefined)
+      .optional(),
+    sourceTitle: z.string().optional(),
     origin: annotationOriginSchema,
     version: z.literal(1),
     createdAt: z.iso.datetime(),
@@ -262,6 +305,17 @@ export const pdfNativeImportReceiptSchema = z
   })
   .strict()
 export type PdfNativeImportReceipt = z.infer<typeof pdfNativeImportReceiptSchema>
+
+export const listPdfFiguresRequestSchema = z
+  .object({
+    countOnly: z.boolean().optional(),
+    tagIds: tagsSchema.optional(),
+    query: z.string().trim().max(512).optional(),
+    cursor: cursorSchema.optional(),
+    limit: z.number().int().min(1).max(PDF_FIGURE_LIMITS.pageSize).optional()
+  })
+  .strict()
+export type ListPdfFiguresRequest = z.infer<typeof listPdfFiguresRequestSchema>
 
 export const pdfAnnotationListResultSchema = z
   .object({
@@ -421,6 +475,10 @@ export const pdfReconcileRequestSchema = z
 export type PdfReconcileRequest = z.infer<typeof pdfReconcileRequestSchema>
 
 export const pdfAnnotationApplicationCommandContracts = Object.freeze({
+  listFigures: defineApplicationCommandContract(
+    validationCodec(z.tuple([listPdfFiguresRequestSchema])),
+    validationCodec(pdfAnnotationListResultSchema)
+  ),
   reconcile: defineApplicationCommandContract(
     validationCodec(z.tuple([pdfReconcileRequestSchema])),
     validationCodec(pdfSharingPreviewSchema.nullable())

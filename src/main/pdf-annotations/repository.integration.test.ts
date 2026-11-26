@@ -404,6 +404,233 @@ describe('PdfAnnotation persistence', () => {
     expect(await client.pdfAnnotation.count()).toBe(0)
   })
 
+  it('persists figures atomically, keeps normal lists light and filters the cross-paper gallery', async () => {
+    for (const number of [1, 2]) {
+      await client.literatureItem.create({
+        data: { id: `paper-${number}`, itemType: 'journalArticle', title: `Study ${number}` }
+      })
+      await client.literatureAttachment.create({
+        data: { id: `attachment-${number}`, itemId: `paper-${number}` }
+      })
+      await client.contentBlob.create({
+        data: {
+          id: `blob-${number}`,
+          checksum: 'a'.repeat(64),
+          storageKey: `content/${number}`,
+          sizeBytes: 100n,
+          state: 'available'
+        }
+      })
+      await client.literatureAttachmentVersion.create({
+        data: {
+          id: `version-${number}`,
+          attachmentId: `attachment-${number}`,
+          contentBlobId: `blob-${number}`,
+          versionNumber: 1,
+          filename: `paper-${number}.pdf`,
+          contentType: 'application/pdf',
+          sizeBytes: 100n,
+          checksum: 'a'.repeat(64)
+        }
+      })
+    }
+    const figure = {
+      image: {
+        mimeType: 'image/png' as const,
+        data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6FoAAAAASUVORK5CYII='
+      },
+      figureNumber: 'Figure 2',
+      caption: 'Cell morphology'
+    }
+    const input: CreatePdfAnnotationRequest = {
+      id: 'figure-1',
+      literatureVersionId: 'version-1',
+      kind: 'area',
+      note: 'Compare methods',
+      tagIds: ['review'],
+      figure,
+      target: {
+        source: {
+          kind: 'literature-attachment-version',
+          sourceFileId: 'attachment-1',
+          versionId: 'version-1',
+          checksum: 'a'.repeat(64),
+          name: 'paper-1.pdf',
+          path: 'literature-attachment-version:version-1'
+        },
+        selector: {
+          kind: 'region',
+          pageNumber: 3,
+          pageRotation: 90,
+          coordinateVersion: 1,
+          rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }
+        }
+      }
+    }
+    const secondSource = {
+      ...input.target.source,
+      sourceFileId: 'attachment-2',
+      versionId: 'version-2',
+      name: 'paper-2.pdf',
+      path: 'literature-attachment-version:version-2'
+    }
+    await repository.registerVerifiedSource(input.target.source, 100)
+    await repository.registerVerifiedSource(secondSource, 100)
+    await expect(repository.create({ ...input, tagIds: ['missing'] })).rejects.toThrow(
+      'Tag no longer exists'
+    )
+    expect(await client.pdfFigure.count()).toBe(0)
+    const saved = await repository.create(input)
+    expect(saved).toMatchObject({ isFigure: true, figure })
+    expect(await repository.create(input)).toEqual(saved)
+    await expect(
+      repository.create({ ...input, figure: { ...figure, caption: 'Conflicting retry' } })
+    ).rejects.toThrow('different content')
+    expect((await repository.list({ literatureVersionId: 'version-1' })).items[0]).toMatchObject({
+      isFigure: true
+    })
+    expect(
+      (await repository.list({ literatureVersionId: 'version-1' })).items[0].figure
+    ).toBeUndefined()
+    expect(
+      (await repository.list({ literatureVersionId: 'version-1', id: input.id })).items[0].figure
+    ).toEqual(figure)
+    await repository.create({
+      ...input,
+      id: 'figure-2',
+      literatureVersionId: 'version-2',
+      tagIds: ['method'],
+      target: {
+        ...input.target,
+        source: {
+          ...input.target.source,
+          sourceFileId: 'attachment-2',
+          versionId: 'version-2',
+          name: 'paper-2.pdf',
+          path: 'literature-attachment-version:version-2'
+        }
+      }
+    })
+    expect(await client.pdfAnnotationDocument.count()).toBe(1)
+    const projected = (await repository.list({ literatureVersionId: 'version-2', id: input.id }))
+      .items[0]
+    expect(projected.target.source.versionId).toBe('version-2')
+    expect(projected.figureSource?.versionId).toBe('version-1')
+    expect(await repository.listFigures({ countOnly: true })).toEqual({ items: [], total: 2 })
+    const first = await repository.listFigures({ limit: 1 })
+    expect(first).toMatchObject({
+      total: 2,
+      items: [{ id: 'figure-1', sourceTitle: 'Study 1', figure }]
+    })
+    expect(
+      (await repository.listFigures({ cursor: first.nextCursor })).items.map((item) => item.id)
+    ).toEqual(['figure-2'])
+    expect(
+      (await repository.listFigures({ tagIds: ['review'] })).items.map((item) => item.id)
+    ).toEqual(['figure-1'])
+    expect((await repository.listFigures({ tagIds: ['review', 'method'] })).total).toBe(0)
+    expect(
+      (await repository.listFigures({ query: 'Study 2' })).items.map((item) => item.id)
+    ).toEqual(['figure-2'])
+    expect((await repository.listFigures({ query: 'morphology' })).total).toBe(2)
+    await client.$disconnect()
+    client = createProjectDbClient(root)
+    expect((await repository.listFigures({})).total).toBe(2)
+    await client.literatureItem.update({
+      where: { id: 'paper-1' },
+      data: { deletedAt: new Date() }
+    })
+    expect((await repository.listFigures({})).items.map((item) => item.id)).toEqual(['figure-2'])
+    await client.literatureItem.update({ where: { id: 'paper-1' }, data: { deletedAt: null } })
+    expect((await repository.listFigures({})).total).toBe(2)
+    await repository.delete({
+      literatureVersionId: 'version-1',
+      id: 'figure-1',
+      expectedUpdatedAt: saved.updatedAt
+    })
+    expect(await client.pdfFigure.count()).toBe(1)
+    expect(await client.tagAssignment.count({ where: { resourceId: 'figure-1' } })).toBe(0)
+    await repository.create(input)
+    expect((await repository.listFigures({ tagIds: ['review'] })).items[0].figure).toEqual(figure)
+    // A source removal cancels its saved images even when shared annotations still have a route.
+    await client.literatureAttachment.delete({ where: { id: 'attachment-1' } })
+    expect(await client.pdfFigure.count()).toBe(1)
+    expect(await client.pdfAnnotation.count()).toBe(2)
+  })
+
+  it('paginates by serialized image bytes below the Web response limit without dropping results', async () => {
+    await client.literatureItem.create({
+      data: { id: 'paper', itemType: 'journalArticle', title: 'Large figures' }
+    })
+    await client.literatureAttachment.create({ data: { id: 'attachment', itemId: 'paper' } })
+    await client.contentBlob.create({
+      data: {
+        id: 'blob',
+        checksum: 'a'.repeat(64),
+        storageKey: 'content/large',
+        sizeBytes: 100n,
+        state: 'available'
+      }
+    })
+    await client.literatureAttachmentVersion.create({
+      data: {
+        id: 'version',
+        attachmentId: 'attachment',
+        contentBlobId: 'blob',
+        versionNumber: 1,
+        filename: 'paper.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 100n,
+        checksum: 'a'.repeat(64)
+      }
+    })
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6FoAAAAASUVORK5CYII=',
+      'base64'
+    )
+    const data = Buffer.concat([png, Buffer.alloc(2 * 1024 * 1024 - png.length)]).toString('base64')
+    for (let index = 0; index < 4; index++) {
+      await repository.create({
+        id: `large-${index}`,
+        literatureVersionId: 'version',
+        kind: 'area',
+        note: '',
+        tagIds: [],
+        figure: { image: { mimeType: 'image/png', data }, figureNumber: '', caption: '' },
+        target: {
+          source: {
+            kind: 'literature-attachment-version',
+            sourceFileId: 'attachment',
+            versionId: 'version',
+            checksum: 'a'.repeat(64),
+            name: 'paper.pdf',
+            path: 'literature-attachment-version:version'
+          },
+          selector: {
+            kind: 'region',
+            pageNumber: 1,
+            pageRotation: 0,
+            coordinateVersion: 1,
+            rect: { x: 0, y: 0, width: 1, height: 1 }
+          }
+        }
+      })
+    }
+    const first = await repository.listFigures({ limit: 24 })
+    expect(first.total).toBe(4)
+    expect(first.items).toHaveLength(2)
+    expect(Buffer.byteLength(JSON.stringify(first))).toBeLessThan(8 * 1024 * 1024)
+    const second = await repository.listFigures({ cursor: first.nextCursor, limit: 24 })
+    expect(second.items).toHaveLength(2)
+    expect(second.nextCursor).toBeUndefined()
+    expect(new Set([...first.items, ...second.items].map(({ id }) => id)).size).toBe(4)
+    expect(
+      (await repository.list({ literatureVersionId: 'version' })).items.every(
+        (item) => item.isFigure && !item.figure
+      )
+    ).toBe(true)
+  })
+
   it.each(['attachment', 'item'] as const)(
     'cleans %s deletion by managed source identity and preserves Trash, other sources and global Tags',
     async (mode) => {

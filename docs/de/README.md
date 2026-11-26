@@ -167,6 +167,10 @@ Der bisherige Einstellungsreiter „Modell“ heißt jetzt **Lokale Funktionen**
 | Abläufe erweitern         | Wissenschaftliche Datenkonnektoren aktivieren, integrierte Fähigkeiten auswählen oder weitere Fähigkeiten und Spezialisten aus den Marktplätzen installieren.               |
 | Modell wählen             | Einen unterstützten Anbieter, ein eigenes Gateway oder ein unterstütztes Claude- oder Codex-Abonnement nutzen. Die verfügbaren Protokolle hängen vom Agenten-Backend ab.    |
 
+### Gespeicherte Abbildungen
+
+Wählen Sie eine Abbildung oder Tabelle in einer Bibliotheks-PDF aus und speichern Sie den Ausschnitt. Unter **Gespeicherte Abbildungen** können Sie Ausschnitte aus mehreren Arbeiten nach Tag filtern und zur Originalstelle springen.
+
 ## Benchmark-Ergebnisse
 
 AIPOCH hat AIPOCH Open-Science bei Aufgaben vom Auffinden einer Publikation über Fragen zu ihrem Inhalt bis zur Ausführung eines Forschungsplans bewertet. Die folgenden Ergebnisse stammen aus eigenen Testläufen von AIPOCH. Jeder Wert bezieht sich auf eine bestimmte Aufgabe und Bewertungskonfiguration. Die Evaluation umfasst auch die Reproduktion von Rechenergebnissen und die Ableitung von Hypothesen aus Daten.

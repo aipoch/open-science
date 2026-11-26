@@ -207,6 +207,7 @@ export const WEB_INVOKE_CHANNELS = {
   'pdfAnnotations.delete': 'pdf-annotations:delete',
   'pdfAnnotations.importNative': 'pdf-annotations:import-native',
   'pdfAnnotations.list': 'pdf-annotations:list',
+  'pdfAnnotations.listFigures': 'pdf-annotations:list-figures',
   'pdfAnnotations.reconcile': 'pdf-annotations:reconcile',
   'pdfAnnotations.update': 'pdf-annotations:update',
   'pdfStructure.cancel': 'pdf-structure:cancel',

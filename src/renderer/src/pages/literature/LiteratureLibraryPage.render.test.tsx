@@ -2455,7 +2455,8 @@ describe('LiteratureLibraryPage', () => {
     const buttons = within(nav)
       .getAllByRole('button')
       .map((button) => button.getAttribute('aria-label'))
-    expect(buttons.indexOf('Duplicates')).toBe(buttons.indexOf('All references') + 1)
+    expect(buttons.indexOf('Saved figures')).toBe(buttons.indexOf('All references') + 1)
+    expect(buttons.indexOf('Duplicates')).toBe(buttons.indexOf('Saved figures') + 1)
     expect(buttons.indexOf('Trash')).toBe(buttons.indexOf('Duplicates') + 1)
     expect(buttons.indexOf('Journals')).toBeGreaterThan(buttons.indexOf('Trash'))
     expect(buttons.indexOf('Citation styles')).toBeGreaterThan(buttons.indexOf('Journals'))
@@ -3466,6 +3467,80 @@ describe('LiteratureLibraryPage', () => {
     expect(urlLink.getAttribute('target')).toBe('_blank')
     expect(urlLink.getAttribute('rel')).toBe('noreferrer')
     expect(useNavigationStore.getState().pendingLiteratureItemId).toBeUndefined()
+  })
+
+  it('filters saved figures across papers and reopens the selected region in the original version', async () => {
+    const figure = (id: string, pageNumber: number): PdfAnnotation => ({
+      id,
+      literatureVersionId: id,
+      kind: 'area',
+      version: 1,
+      origin: 'user',
+      tagIds: ['tag-favorite'],
+      note: 'Measured values',
+      createdAt: '2026-09-20T00:00:00.000Z',
+      updatedAt: '2026-09-20T00:00:00.000Z',
+      target: {
+        source: {
+          kind: 'literature-attachment-version',
+          sourceFileId: id,
+          versionId: id,
+          name: id + '.pdf',
+          path: 'literature-attachment-version:' + id,
+          checksum: 'a'.repeat(64)
+        },
+        selector: {
+          kind: 'region',
+          coordinateVersion: 1,
+          pageNumber,
+          pageRotation: 0,
+          rect: { x: 0.1, y: 0.2, width: 0.5, height: 0.3 }
+        }
+      },
+      sourceTitle: id,
+      figure: {
+        figureNumber: 'Fig. 1',
+        caption: 'Observed data',
+        image: { mimeType: 'image/png', data: 'iVBORw0KGgo=' }
+      }
+    })
+    const first = figure('Paper A', 2)
+    const second = figure('Paper B', 5)
+    first.tagIds = []
+    const listFigures = vi.fn(async ({ tagIds }) => ({
+      items: tagIds?.length ? [second] : [first, second],
+      total: tagIds?.length ? 1 : 2
+    }))
+    Object.assign(window.api, { pdfAnnotations: { listFigures, onChanged: () => () => {} } })
+    const reveal = vi
+      .spyOn(annotationReveal, 'requestPdfAnnotationReveal')
+      .mockResolvedValue('revealed')
+    try {
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'Saved figures' }))
+      expect(await screen.findByRole('button', { name: /Open Fig. 1 in Paper A/ })).toBeTruthy()
+      fireEvent.change(screen.getByRole('combobox', { name: 'Tags' }), {
+        target: { value: 'tag-favorite' }
+      })
+      await waitFor(() =>
+        expect(listFigures).toHaveBeenCalledWith(
+          expect.objectContaining({ tagIds: ['tag-favorite'] })
+        )
+      )
+      fireEvent.click(await screen.findByRole('button', { name: /Open Fig. 1 in Paper B/ }))
+      expect(screen.queryByRole('button', { name: /Open Fig. 1 in Paper A/ })).toBeNull()
+      expect(
+        within(screen.getByRole('button', { name: 'Saved figures' })).getByText('2')
+      ).toBeTruthy()
+      expect((await screen.findByTestId('literature-pdf-preview')).textContent).toContain(
+        'Paper B.pdf'
+      )
+      await waitFor(() => expect(reveal).toHaveBeenCalledWith(second))
+      fireEvent.click(screen.getByRole('button', { name: 'Close PDF' }))
+      expect(screen.getByRole('combobox', { name: 'Tags' })).toHaveProperty('value', 'tag-favorite')
+    } finally {
+      reveal.mockRestore()
+    }
   })
 
   it('opens the exact tagged PDF version and reveals its annotation after preview mounting', async () => {

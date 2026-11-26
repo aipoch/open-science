@@ -61,7 +61,8 @@ it('upgrades historical permissions without inferring descriptions or changing a
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
-        '0060_image_models'
+        '0060_image_models',
+        '0061_pdf_figures'
       ]
     })
     const after = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(

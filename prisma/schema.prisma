@@ -126,6 +126,7 @@ model PdfAnnotationAlias {
 // They are owned independently from generic Bookmarks. The selector is versioned JSON
 // so future mark kinds and coordinate systems can be added without changing Bookmark semantics.
 model PdfAnnotation {
+  figure             PdfFigure?
   documentId         String
   nativeKey          String?
   nativeBaselineJson String?
@@ -155,6 +156,17 @@ model PdfAnnotation {
   @@index([projectId, sourceKind, sourceFileId, versionId, createdAt, id])
   @@index([sourceKind, sourceFileId, versionId, createdAt, id])
   @@index([documentId, createdAt, id])
+}
+
+// Raster bytes are loaded only by the figure gallery or an explicit annotation lookup.
+model PdfFigure {
+  literatureVersionId String
+  literatureVersion LiteratureAttachmentVersion @relation(fields: [literatureVersionId], references: [id], onDelete: Cascade)
+  annotationId String @id
+  annotation   PdfAnnotation @relation(fields: [annotationId], references: [id], onDelete: Cascade)
+  imageData    String
+  figureNumber String @default("")
+  caption      String @default("")
 }
 
 // Receipt survives individual annotation deletion, so exports can remove only imported originals.
@@ -695,6 +707,7 @@ model LiteratureAttachment {
 }
 
 model LiteratureAttachmentVersion {
+  figures PdfFigure[]
   id             String               @id @default(cuid())
   attachmentId   String
   contentBlobId  String

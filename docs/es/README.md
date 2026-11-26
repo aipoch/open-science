@@ -167,6 +167,10 @@ La antigua pestaña Modelo ahora se llama **Capacidades locales** e incluye extr
 | Ampliar un flujo de trabajo | Active conectores de datos científicos, elija habilidades integradas o instale más habilidades y especialistas desde sus catálogos.                                |
 | Elegir un modelo            | Conecte un proveedor compatible, una pasarela propia o una suscripción compatible de Claude o Codex. Los protocolos disponibles dependen del motor del agente.     |
 
+### Figuras guardadas
+
+Seleccione una figura o tabla en un PDF de la biblioteca para guardarla. En **Figuras guardadas** puede ver figuras de distintos artículos, filtrar por etiqueta y volver a la zona seleccionada.
+
 <a id="rendimiento-en-benchmarks"></a>
 
 ## Resultados de benchmarks

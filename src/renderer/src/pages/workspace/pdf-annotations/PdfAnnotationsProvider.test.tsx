@@ -303,6 +303,7 @@ const installStore = (initial: PdfAnnotation[] = []): Map<string, PdfAnnotation>
   window.api = {
     pdfAnnotations: {
       reconcile: vi.fn().mockResolvedValue(null),
+      listFigures: vi.fn(),
       list: vi.fn(async () => ({ items: [...items.values()], total: items.size })),
       create: vi.fn(async (request) => {
         const { createdAt, ...content } = request
@@ -669,6 +670,64 @@ it('uses the shared Literature version scope for writes and history without a Se
     id: 'a1',
     expectedUpdatedAt: annotation.updatedAt
   })
+})
+
+it('restores the saved image and caption when undoing removal from a reopened PDF', async () => {
+  const source = { ...annotation.target.source, projectId: undefined }
+  const saved: PdfAnnotation = {
+    ...annotation,
+    projectId: undefined,
+    sessionId: undefined,
+    literatureVersionId: 'v1',
+    isFigure: true,
+    kind: 'area',
+    target: {
+      source,
+      selector: {
+        kind: 'region',
+        coordinateVersion: 1,
+        pageRotation: 0,
+        pageNumber: 2,
+        rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }
+      }
+    }
+  }
+  const original = { ...source, versionId: 'original', sourceFileId: 'original-file' }
+  const figure = {
+    figureNumber: 'Table 1',
+    caption: 'Study cohort',
+    image: { mimeType: 'image/png' as const, data: 'iVBORw0KGgo=' }
+  }
+  installStore([saved])
+  window.api.tags = {
+    snapshot: vi.fn().mockResolvedValue({ revision: 1, tags: [], assignments: [] })
+  } as unknown as Window['api']['tags']
+  vi.mocked(window.api.pdfAnnotations.list).mockImplementation(async ({ id }) => ({
+    items: [id ? { ...saved, figure, figureSource: original } : saved],
+    total: 1,
+    source
+  }))
+  await act(async () =>
+    root.render(
+      <PdfAnnotationsProvider literatureVersionId="v1">
+        <Probe />
+      </PdfAnnotationsProvider>
+    )
+  )
+  await act(async () => {
+    await port.remove(saved.id)
+  })
+  await act(async () => {
+    await port.undo(source)
+  })
+  expect(window.api.pdfAnnotations.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      id: saved.id,
+      literatureVersionId: 'original',
+      target: { ...saved.target, source: original },
+      figure
+    })
+  )
 })
 
 describe('Literature reading-order preview', () => {

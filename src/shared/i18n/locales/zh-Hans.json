@@ -8949,6 +8949,20 @@
     "No providers match your search.": "没有匹配的服务商。",
     "{{count}} regions_other": "{{count}} 个区域",
     "Sign in with your CodeBuddy account": "使用 CodeBuddy 账号登录",
-    "Already added": "已添加"
+    "Already added": "已添加",
+    "Saved figures": "已收藏的图表",
+    "All tags": "所有标签",
+    "Saved figures could not be loaded.": "无法加载已收藏的图表。",
+    "Select a region in a library PDF to save a figure or table here.": "在文献库 PDF 中选取一个区域，即可将图或表收藏到这里。",
+    "Open {{figure}} in {{source}}, {{page}}": "在 {{source}} 的 {{page}} 打开 {{figure}}",
+    "Saved figure": "已收藏的图表",
+    "Save to figure collection": "保存到图表收藏夹",
+    "Selected PDF area": "选中的 PDF 区域",
+    "The selected area could not be captured.": "无法截取所选区域。",
+    "Figure number": "图表编号",
+    "Caption": "图注",
+    "Figure could not be saved. Try again.": "无法保存图表，请重试。",
+    "Save area to figure collection": "将区域保存到图表收藏夹",
+    "Drag to save an area to the figure collection · Esc to cancel": "拖动以将区域保存到图表收藏夹 · 按 Esc 取消"
   }
 }

@@ -149,6 +149,19 @@ describe('PDF region image evidence', () => {
     expect(encode).toHaveBeenCalledTimes(3)
     expect(drawImage).toHaveBeenNthCalledWith(3, page, 0, 0, 2000, 1000, 0, 0, 720, 360)
   })
+
+  it('downscales to meet the figure collection byte limit while keeping Agent defaults', () => {
+    const { encode } = drawing()
+    encode.mockReturnValueOnce('data:image/png;base64,AQIDBAUGBwgJCgsM')
+    expect(cropPdfCanvasRegion(canvas(2000, 1000), fullPage, 8)).toMatchObject({
+      data: pngData,
+      byteLength: 8
+    })
+    expect(encode).toHaveBeenCalledTimes(2)
+    encode.mockReturnValue('data:image/png;base64,AQIDBAUGBwgJCgsM')
+    expect(cropPdfCanvasRegion(canvas(2000, 1000), fullPage)).toMatchObject({ byteLength: 12 })
+    expect(cropPdfCanvasRegion(canvas(2000, 1000), fullPage, 8)).toBeUndefined()
+  })
 })
 
 describe('PDF region text evidence', () => {

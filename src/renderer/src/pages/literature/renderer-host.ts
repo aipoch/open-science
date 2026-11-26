@@ -1,4 +1,5 @@
 import { createContext, useContext, type ComponentType } from 'react'
+import type { TagView } from '../../../../shared/tags'
 import type { UploadStagingApi } from '@/lib/upload-transfer'
 import type { OpenScienceAPI } from '../../../../shared/renderer-contract-catalog'
 import type { ReactNode } from 'react'
@@ -118,7 +119,10 @@ export type LiteratureRendererApi = Pick<
   previewResources: Pick<OpenScienceAPI['previewResources'], 'acquire' | 'release'>
   sessions: Pick<OpenScienceAPI['sessions'], 'openRecoveryFolder' | 'filterPdfContextCandidates'>
   projects: Pick<OpenScienceAPI['projects'], 'onDeleted' | 'onDeletionCleanupChanged'>
-  pdfAnnotations: Pick<OpenScienceAPI['pdfAnnotations'], 'onImportProgress'>
+  pdfAnnotations: Pick<
+    OpenScienceAPI['pdfAnnotations'],
+    'onImportProgress' | 'listFigures' | 'onChanged'
+  >
 }
 
 type SelectorStore<State> = {
@@ -140,6 +144,7 @@ export type LiteratureRendererHost = {
   useTagStore: SelectorStore<{
     load(): Promise<void>
     listen(): () => void
+    tags: TagView[]
     revision: number
     status: 'idle' | 'loading' | 'ready' | 'error'
   }>

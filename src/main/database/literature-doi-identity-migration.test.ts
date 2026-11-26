@@ -16,7 +16,7 @@ import { LiteratureCatalog } from '../literature/catalog'
 import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 
 const DOI_MIGRATION_ID = '0053_literature_doi_identity'
-const CURRENT_MIGRATION_ID = '0060_image_models'
+const CURRENT_MIGRATION_ID = '0061_pdf_figures'
 
 describe('DOI identity migration', () => {
   let root: string | undefined
@@ -218,6 +218,7 @@ describe('DOI identity migration', () => {
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
+        '0060_image_models',
         CURRENT_MIGRATION_ID
       ]
     })
@@ -382,6 +383,7 @@ describe('DOI identity migration', () => {
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
+        '0060_image_models',
         CURRENT_MIGRATION_ID
       ]
     })
@@ -475,6 +477,7 @@ describe('DOI identity migration', () => {
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
+        '0060_image_models',
         CURRENT_MIGRATION_ID
       ]
     })
@@ -538,6 +541,7 @@ describe('DOI identity migration', () => {
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
+        '0060_image_models',
         CURRENT_MIGRATION_ID
       ]
     })

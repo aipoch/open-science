@@ -17,7 +17,7 @@ import {
 } from './migration-service'
 
 const migrationId = '0052_literature_personal_note_search'
-const currentMigrationId = '0060_image_models'
+const currentMigrationId = '0061_pdf_figures'
 const historicalManifest = MIGRATION_MANIFEST.filter(({ id }) => id < migrationId)
 let root: string
 let client: PrismaClient
@@ -71,6 +71,7 @@ it('backfills existing personal notes in bounded batches without changing source
       '0057_project_optimization_prompt',
       '0058_session_schedules',
       '0059_session_history',
+      '0060_image_models',
       currentMigrationId
     ]
   })
@@ -171,6 +172,7 @@ it('rolls back the column and ledger when verification fails', async () => {
       '0057_project_optimization_prompt',
       '0058_session_schedules',
       '0059_session_history',
+      '0060_image_models',
       currentMigrationId
     ]
   })
@@ -189,6 +191,7 @@ it('backfills an existing target column when its migration has not been recorded
       '0057_project_optimization_prompt',
       '0058_session_schedules',
       '0059_session_history',
+      '0060_image_models',
       currentMigrationId
     ]
   })

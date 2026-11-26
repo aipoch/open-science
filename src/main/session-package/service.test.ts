@@ -6313,6 +6313,70 @@ it.each(
       note: 'Shared private observation',
       tagIds: []
     })
+    // The library and the session share a PDF document when their bytes match.
+    await source.client.contentBlob.create({
+      data: {
+        id: 'figure-blob',
+        checksum: pdf.checksum,
+        storageKey,
+        sizeBytes: BigInt(bytes.length),
+        state: 'available'
+      }
+    })
+    await source.client.literatureItem.create({
+      data: { id: 'paper', itemType: 'journalArticle', title: 'Paper' }
+    })
+    await source.client.literatureAttachment.create({
+      data: {
+        id: 'attachment',
+        itemId: 'paper',
+        versions: {
+          create: {
+            id: 'library-version',
+            contentBlobId: 'figure-blob',
+            versionNumber: 1,
+            filename: pdf.name,
+            contentType: 'application/pdf',
+            checksum: pdf.checksum,
+            sizeBytes: BigInt(bytes.length)
+          }
+        }
+      }
+    })
+    const libraryPdf = {
+      kind: 'literature-attachment-version' as const,
+      versionId: 'library-version',
+      sourceFileId: 'attachment',
+      checksum: pdf.checksum,
+      name: pdf.name,
+      path: 'literature-attachment-version:library-version'
+    }
+    await notes.registerVerifiedSource(libraryPdf, bytes.length)
+    await notes.create({
+      id: 'saved-figure',
+      literatureVersionId: libraryPdf.versionId,
+      kind: 'area',
+      target: {
+        source: libraryPdf,
+        selector: {
+          kind: 'region',
+          coordinateVersion: 1,
+          pageNumber: 1,
+          pageRotation: 0,
+          rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 }
+        }
+      },
+      note: 'Private gallery note',
+      tagIds: [],
+      figure: {
+        figureNumber: 'Fig. 1',
+        caption: 'Library figure',
+        image: {
+          mimeType: 'image/png',
+          data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a6FoAAAAASUVORK5CYII='
+        }
+      }
+    })
     const exporter = new SessionPackageService({
       storageRoot: source.storageRoot,
       getClient: async () => source.client
