@@ -9,7 +9,8 @@ const presets = [
     baseUrl: 'http://localhost:8080',
     endpointCandidates: ['http://127.0.0.1:9931', 'http://127.0.0.1:8080']
   },
-  { id: 'vllm', label: 'vLLM', baseUrl: 'http://localhost:8000' }
+  { id: 'vllm', label: 'vLLM', baseUrl: 'http://localhost:8000' },
+  { id: 'magpie', label: 'Magpie', baseUrl: 'http://127.0.0.1:3425/v1' }
 ] as const
 
 export type LocalProviderPresetId = (typeof presets)[number]['id']

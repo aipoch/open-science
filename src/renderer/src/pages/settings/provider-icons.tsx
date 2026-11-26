@@ -113,7 +113,7 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   vectrust: vectrustLogo
 }
 
-const LOCAL_LOGO: Record<LocalProviderPresetId, string> = {
+const LOCAL_LOGO: Partial<Record<LocalProviderPresetId, string>> = {
   llamacpp: llamaCppLogo,
   lmstudio: lmStudioLogo,
   ollama: ollamaLogo,
