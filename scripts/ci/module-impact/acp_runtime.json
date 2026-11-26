@@ -89,6 +89,7 @@
     "src/main/acp/opencode-immediate-handoff.integration.test.ts",
     "src/main/acp/opencode-immediate-handoff.test.ts",
     "src/main/acp/opencode-immediate-handoff.ts",
+    "src/main/acp/opencode-session-tools.ts",
     "src/main/acp/opencode-turn-adapter.test.ts",
     "src/main/acp/opencode-turn-adapter.ts",
     "src/main/acp/opencode-turn-usage.test.ts",
