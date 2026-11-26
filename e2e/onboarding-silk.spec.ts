@@ -162,7 +162,7 @@ test('keeps the provider tray translucent in both themes and sizes each step to 
 
 test('opens the full provider picker with the defaults and completes onboarding', async ({
   app
-}) => {
+}, info) => {
   const { page } = app
   // A cancelled subscription can leave a different framework active before using the shortcut.
   await page.evaluate(() => window.api.settings.setAgentFramework({ id: 'codex' }))
@@ -182,7 +182,18 @@ test('opens the full provider picker with the defaults and completes onboarding'
   const action = card.getByRole('button', { name: 'Advanced mode' })
   await card.hover()
   await expect(action).toBeVisible()
+  const tray = card.locator('.onboarding-provider-card-actions')
+  await expect(tray).toHaveCSS('opacity', '1')
+  const bounds = (await tray.boundingBox())!
+  const button = (await action.boundingBox())!
+  expect(Math.abs(button.x + button.width / 2 - (bounds.x + bounds.width / 2))).toBeLessThan(1)
+  const offsetAboveCenter = bounds.y + bounds.height / 2 - (button.y + button.height / 2)
+  expect(offsetAboveCenter).toBeGreaterThan(0)
+  expect(offsetAboveCenter).toBeLessThanOrEqual(8)
   await action.focus()
+  await expect(action).toBeFocused()
+  await expect(tray).toHaveCSS('opacity', '1')
+  await card.screenshot({ path: info.outputPath('advanced-mode-card.png') })
   await action.press('Enter')
 
   await expect(dialog.locator('[aria-current="step"]')).toHaveText('3Model provider')
