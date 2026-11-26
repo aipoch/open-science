@@ -5325,25 +5325,18 @@ describe('PdfPreviewContent', () => {
       root.render(<PdfPreviewContent path="/workspace/search-spacing.pdf" name="search.pdf" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
-    const scroll = container.querySelector<HTMLElement>('[role="region"]')!
-    await act(async () =>
-      scroll.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'f',
-          metaKey: true,
-          bubbles: true,
-          cancelable: true
-        })
-      )
-    )
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Search document"]')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
-        input,
-        'method uses retrieval'
-      )
-      input.dispatchEvent(new Event('input', { bubbles: true }))
+    const layer = await vi.waitFor(() => {
+      const layer = container.querySelector('[data-pdf-text-layer]')
+      expect(layer?.querySelectorAll('span')).toHaveLength(2)
+      return layer!
     })
+    const [first, second] = layer.querySelectorAll('span')
+    const selection = window.getSelection()!
+    selection.setBaseAndExtent(second!.firstChild!, 4, first!.firstChild!, 4)
+    expect(selection.toString()).toBe('methoduses')
+    await act(async () => fireEvent.keyDown(layer, { key: 'f', ctrlKey: true }))
+    const input = screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search document' })
+    expect(input.value).toBe('method uses')
 
     await vi.waitFor(() => expect(input.parentElement?.textContent).toContain('1/1'))
     await vi.waitFor(() => expect(highlights.set).toHaveBeenCalledWith('pdf-search-results', {}))

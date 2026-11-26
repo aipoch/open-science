@@ -333,22 +333,15 @@ const isEditableTarget = (target: EventTarget | null): boolean =>
 
 type PdfFindTerm = { text: string; scope: 'original' | 'translated-pdf' | 'translated-paragraph' }
 
-const selectedFindTerm = (reader: HTMLElement): PdfFindTerm | undefined => {
-  const selection = reader.ownerDocument.getSelection()
-  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return
-  const ancestor = selection.getRangeAt(0).commonAncestorContainer
-  const element = ancestor instanceof Element ? ancestor : ancestor.parentElement
-  const body = element?.closest('[data-pdf-text-layer], [data-translation-text]')
-  if (!body || !reader.contains(body) || body.closest('[inert]')) return
-  const text = selection.toString().trim()
-  if (!text || /[\r\n]/u.test(text)) return
-  if (body.matches('[data-translation-text]')) return { text, scope: 'translated-paragraph' }
-  return { text, scope: body.closest('[data-pdf-translated-page]') ? 'translated-pdf' : 'original' }
-}
-
-const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
+const pdfLayerText = (
+  root: Element,
+  range?: Range
+): { text: string; nodes: Text[]; starts: number[] } => {
   const spans = Array.from(root.querySelectorAll('span')).filter(
-    (span): span is HTMLSpanElement => span.firstChild instanceof Text && Boolean(span.textContent)
+    (span): span is HTMLSpanElement =>
+      span.firstChild instanceof Text &&
+      Boolean(span.textContent) &&
+      (!range || range.intersectsNode(span.firstChild))
   )
   const nodes = spans.map((span) => span.firstChild as Text)
   const starts: number[] = []
@@ -366,8 +359,33 @@ const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
       }
     }
     starts.push(text.length)
-    text += node.data
+    const start = range?.startContainer === node ? range.startOffset : 0
+    const end = range?.endContainer === node ? range.endOffset : node.length
+    text += node.data.slice(start, end)
   }
+  return { text, nodes, starts }
+}
+
+const selectedFindTerm = (reader: HTMLElement): PdfFindTerm | undefined => {
+  const selection = reader.ownerDocument.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return
+  const range = selection.getRangeAt(0)
+  const ancestor = range.commonAncestorContainer
+  const element = ancestor instanceof Element ? ancestor : ancestor.parentElement
+  const body = element?.closest('[data-pdf-text-layer], [data-translation-text]')
+  if (!body || !reader.contains(body) || body.closest('[inert]')) return
+  const text = (
+    body.matches('[data-pdf-text-layer]') && !element?.closest('span')
+      ? pdfLayerText(body, range).text
+      : selection.toString()
+  ).trim()
+  if (!text || /[\r\n]/u.test(text)) return
+  if (body.matches('[data-translation-text]')) return { text, scope: 'translated-paragraph' }
+  return { text, scope: body.closest('[data-pdf-translated-page]') ? 'translated-pdf' : 'original' }
+}
+
+const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
+  const { text, nodes, starts } = pdfLayerText(root)
   const normalizedText = text.toLocaleLowerCase()
   const normalizedQuery = query.toLocaleLowerCase()
   if (!normalizedQuery) return []
