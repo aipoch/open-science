@@ -136,6 +136,7 @@ export type ProjectFilesChangedEvent = {
   projectId: string
   sessionId?: string
   sources: ProjectFileSource[]
+  versionIds?: string[]
   kind: 'upsert' | 'delete' | 'reset'
 }
 

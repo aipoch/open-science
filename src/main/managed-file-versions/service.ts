@@ -22,9 +22,11 @@ import {
   type ArtifactLiteratureManifest
 } from '../../shared/artifact-literature'
 import {
+  CLEANED_VERSION_MESSAGE,
   MANAGED_DIFF_MAX_INPUT_BYTES,
   MANAGED_TEXT_EDIT_MAX_BYTES,
   inspectManagedTextEditEligibility,
+  type ManagedFileVersionDeleteRequest,
   type ManagedFileIdentity,
   type ManagedFileSource,
   type ManagedFileVersionDescriptor,
@@ -471,6 +473,211 @@ class ManagedFileVersionService {
     return this.toAdoptedLegacyArtifact(published)
   }
 
+  async deleteVersions(request: ManagedFileVersionDeleteRequest): Promise<void> {
+    this.assertIdentity(request)
+    if (
+      !request.projectId ||
+      !Array.isArray(request.versionIds) ||
+      request.versionIds.length === 0 ||
+      request.versionIds.some((id) => typeof id !== 'string' || !SAFE_STORAGE_SEGMENT.test(id))
+    ) {
+      operationError('INVALID_REQUEST', 'Select at least one version.')
+    }
+    const client = await this.options.getClient()
+    const versions = await client.$transaction(async (tx) => {
+      const file = await this.loadLogicalFile(tx, request)
+      await this.assertPublicationAllowed(tx, file)
+      const selected: ManagedFileVersionRecord[] = []
+      for (const id of new Set(request.versionIds)) {
+        const version = await this.loadVersion(tx, file, id)
+        if (!version || version.fileId !== file.id)
+          throw new ManagedFileVersionError(
+            'VERSION_NOT_IN_FILE',
+            'Version does not belong to this file.'
+          )
+        if (id === file.currentVersionId)
+          operationError('INVALID_REQUEST', 'The latest version must be retained.')
+        if (
+          ![COMPLETE_STATE[request.source], 'cleaning', 'cleaned'].includes(version.state) ||
+          (request.source === 'artifact' && !isManagedVisibleArtifactVersion(version))
+        )
+          operationError('VERSION_NOT_FOUND', 'Version is not available for cleanup.')
+        const inputReference = await tx.artifactVersionInput.findFirst({
+          where: {
+            sourceKind: request.source === 'artifact' ? 'artifact-version' : 'upload-version',
+            OR:
+              request.source === 'artifact'
+                ? [{ inputFileVersionId: id }, { sourceArtifactVersionId: id }]
+                : [{ inputFileVersionId: id }, { sourceUploadVersionId: id }]
+          },
+          select: { id: true }
+        })
+        if (inputReference)
+          throw new ManagedFileVersionError(
+            'VERSION_IN_USE',
+            'This version is still referenced by artifact provenance.',
+            { versionNumber: version.versionNumber }
+          )
+        if (version.state !== 'cleaned')
+          await this.assertContentBlobCleanupAllowed(tx, request.source, version)
+        selected.push(version)
+      }
+      // Keep durable tombstones so version numbers and provenance references remain stable.
+      // Admission and head validation share the publication transaction's SQLite write lock.
+      // Quarantine blob authority in the same transaction so no new owner can acquire bytes
+      // while a selected version is being scrubbed. Recovery repeats only the filesystem work.
+      for (const version of selected) {
+        if (version.state !== 'cleaned' && version.contentBlobId)
+          await tx.contentBlob.update({
+            where: { id: version.contentBlobId },
+            data: { state: 'quarantined' }
+          })
+      }
+      const ids = selected.filter((version) => version.state !== 'cleaned').map((v) => v.id)
+      if (request.source === 'artifact')
+        await tx.artifactVersion.updateMany({
+          where: { id: { in: ids } },
+          data: { state: 'cleaning' }
+        })
+      else
+        await tx.uploadVersion.updateMany({
+          where: { id: { in: ids } },
+          data: { state: 'cleaning' }
+        })
+      return selected
+    })
+    for (const version of versions) {
+      if (version.state !== 'cleaned')
+        await this.finishVersionCleanup(client, request.source, version)
+    }
+  }
+
+  private async assertContentBlobCleanupAllowed(
+    tx: Prisma.TransactionClient,
+    source: ManagedFileSource,
+    version: Pick<
+      ManagedFileVersionRecord,
+      'id' | 'versionNumber' | 'contentBlobId' | 'contentStorageKey' | 'sizeBytes' | 'checksum'
+    >
+  ): Promise<void> {
+    const blobAtPath = await tx.contentBlob.findUnique({
+      where: { storageKey: version.contentStorageKey }
+    })
+    if (!version.contentBlobId) {
+      if (blobAtPath)
+        throw new ManagedFileVersionError(
+          'VERSION_IN_USE',
+          'This version has content authority owned elsewhere.',
+          { versionNumber: version.versionNumber }
+        )
+      return
+    }
+    const blob = await tx.contentBlob.findUnique({ where: { id: version.contentBlobId } })
+    if (!blob)
+      return operationError('CONTENT_INTEGRITY_FAILED', 'Version content authority does not match.')
+    if (
+      blobAtPath?.id !== blob.id ||
+      blob.storageKey !== version.contentStorageKey ||
+      blob.sizeBytes !== version.sizeBytes ||
+      blob.checksum !== version.checksum
+    )
+      operationError('CONTENT_INTEGRITY_FAILED', 'Version content authority does not match.')
+    const where = { contentBlobId: blob.id }
+    const [artifactOwner, uploadOwner, attachmentOwner, inboxOwner] = await Promise.all([
+      tx.artifactVersion.findFirst({
+        where: { ...where, ...(source === 'artifact' ? { id: { not: version.id } } : {}) },
+        select: { id: true }
+      }),
+      tx.uploadVersion.findFirst({
+        where: { ...where, ...(source === 'upload' ? { id: { not: version.id } } : {}) },
+        select: { id: true }
+      }),
+      tx.literatureAttachmentVersion.findFirst({ where, select: { id: true } }),
+      tx.literatureInboxPdf.findFirst({ where, select: { id: true } })
+    ])
+    if (artifactOwner || uploadOwner || attachmentOwner || inboxOwner)
+      throw new ManagedFileVersionError(
+        'VERSION_IN_USE',
+        'This version shares content with another file.',
+        { versionNumber: version.versionNumber }
+      )
+  }
+
+  private async finishVersionCleanup(
+    client: PrismaClient,
+    source: ManagedFileSource,
+    version: Pick<
+      ManagedFileVersionRecord,
+      | 'id'
+      | 'versionNumber'
+      | 'contentBlobId'
+      | 'contentStorageKey'
+      | 'sizeBytes'
+      | 'checksum'
+      | 'evidenceStorageKey'
+      | 'evidenceJson'
+      | 'evidenceChecksum'
+      | 'executionSnapshotStorageKey'
+      | 'executionSnapshotJson'
+      | 'executionSnapshotChecksum'
+    >
+  ): Promise<void> {
+    const pending = await client.$transaction(async (tx) => {
+      const current =
+        source === 'artifact'
+          ? await tx.artifactVersion.findUnique({ where: { id: version.id } })
+          : await tx.uploadVersion.findUnique({ where: { id: version.id } })
+      if (!current || current.state !== 'cleaning') return false
+      // Recovery can encounter a cleaning row created before blob authority was quarantined.
+      await this.assertContentBlobCleanupAllowed(tx, source, current)
+      if (current.contentBlobId)
+        await tx.contentBlob.update({
+          where: { id: current.contentBlobId },
+          data: { state: 'quarantined' }
+        })
+      return true
+    })
+    if (!pending) return
+    await this.versionFileOperator.removeImmutable(version.contentStorageKey, {
+      sizeBytes: Number(version.sizeBytes),
+      checksum: version.checksum
+    })
+    const sidecars = [
+      {
+        storageKey: version.evidenceStorageKey,
+        content: version.evidenceJson,
+        checksum: version.evidenceChecksum
+      },
+      {
+        storageKey: version.executionSnapshotStorageKey,
+        content: version.executionSnapshotJson,
+        checksum: version.executionSnapshotChecksum
+      }
+    ]
+    for (const sidecar of sidecars) {
+      if (!sidecar.storageKey) continue
+      if (!sidecar.content || !sidecar.checksum)
+        throw new ManagedFileVersionError(
+          'CONTENT_INTEGRITY_FAILED',
+          'Artifact provenance sidecar metadata is incomplete.'
+        )
+      await this.versionFileOperator.removeImmutable(sidecar.storageKey, {
+        sizeBytes: Buffer.byteLength(sidecar.content, 'utf8'),
+        checksum: sidecar.checksum
+      })
+    }
+    if (source === 'artifact')
+      await client.artifactVersion.updateMany({
+        where: { id: version.id, state: 'cleaning' },
+        data: { state: 'cleaned', contentBlobId: null }
+      })
+    else
+      await client.uploadVersion.updateMany({
+        where: { id: version.id, state: 'cleaning' },
+        data: { state: 'cleaned', contentBlobId: null }
+      })
+  }
+
   async inspect(
     request: ManagedFileVersionInspectRequest
   ): Promise<ManagedFileVersionInspectResult> {
@@ -497,6 +704,14 @@ class ManagedFileVersionService {
     ])
     const writeUnavailableReason = await this.writeUnavailableReason(resolved.logicalFile)
     const eligibility = await this.readTextEligibility(resolved)
+    const base =
+      eligibility.editable && resolved.version.basedOnVersionId
+        ? await this.loadVersion(
+            await this.options.getClient(),
+            resolved.logicalFile,
+            resolved.version.basedOnVersionId
+          )
+        : null
     const authorship = await this.loadAuthorship([
       ...page.versions,
       ...previous,
@@ -522,7 +737,9 @@ class ManagedFileVersionService {
       selectedVersion: describe(resolved.version),
       headVersion: describe(head.version),
       canEdit: eligibility.editable && writeUnavailableReason === undefined,
-      canDiff: eligibility.editable && resolved.version.basedOnVersionId !== null,
+      ...((base?.state === 'cleaning' || base?.state === 'cleaned') && { diffBaseCleaned: true }),
+      canDiff:
+        base?.fileId === resolved.logicalFile.id && base.state === COMPLETE_STATE[request.source],
       ...(eligibility.editable ? { text: eligibility.text, textFormat: eligibility.format } : {}),
       ...(writeUnavailableReason
         ? { unavailableReason: writeUnavailableReason }
@@ -766,6 +983,8 @@ class ManagedFileVersionService {
       if (request.source === 'artifact' && !isManagedVisibleArtifactVersion(version)) {
         operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
       }
+      if (version.state === 'cleaned' || version.state === 'cleaning')
+        operationError('VERSION_NOT_FOUND', CLEANED_VERSION_MESSAGE)
       if (version.state !== COMPLETE_STATE[request.source]) {
         operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
       }
@@ -1049,6 +1268,20 @@ class ManagedFileVersionService {
       await new Promise<void>((resolveRecoveryYield) => setImmediate(resolveRecoveryYield))
     }
 
+    // A crash or a temporary filesystem error leaves the cleanup intent retryable.
+    for (const source of ['artifact', 'upload'] as const) {
+      const pending =
+        source === 'artifact'
+          ? await client.artifactVersion.findMany({ where: { state: 'cleaning' } })
+          : await client.uploadVersion.findMany({ where: { state: 'cleaning' } })
+      for (const version of pending) {
+        try {
+          await this.finishVersionCleanup(client, source, version)
+        } catch {
+          result.failed += 1
+        }
+      }
+    }
     await this.cleanupTerminalOperations(client)
     await this.rebuildHeadProjections(client)
     return result

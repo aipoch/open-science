@@ -97,10 +97,11 @@ describe('Project Session defaults migration', () => {
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
-        '0060_image_models'
+        '0060_image_models',
+        '0061_version_cleanup'
       ],
       from: '0026_compute_job_remote_cleanup',
-      to: '0060_image_models'
+      to: '0061_version_cleanup'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ sessionDefaults: string }>>(

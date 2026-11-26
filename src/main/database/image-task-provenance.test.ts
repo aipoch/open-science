@@ -53,7 +53,7 @@ it('preserves existing versions and inbound heads while admitting only explicit 
     })
     const before = await client.artifactVersion.findUniqueOrThrow({ where: { id: 'version' } })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: ['0060_image_models']
+      applied: ['0060_image_models', '0061_version_cleanup']
     })
     expect(await client.artifactVersion.findUniqueOrThrow({ where: { id: 'version' } })).toEqual(
       before

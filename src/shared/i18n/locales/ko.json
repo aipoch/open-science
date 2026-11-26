@@ -257,6 +257,9 @@
     "Wait for the application handoff to finish before transferring research.": "연구 데이터를 전송하기 전에 애플리케이션 인계가 완료될 때까지 기다려 주세요."
   },
   "renderer": {
+    "Cleaned up": "정리됨",
+    "Version {{number}} is in use. Deselect it to continue.": "버전 {{number}}은(는) 사용 중입니다. 계속하려면 이 버전의 선택을 해제하세요.",
+    "The source version was cleaned up and cannot be compared.": "원본 버전이 정리되어 비교할 수 없습니다.",
     "Move preview": "미리보기 이동",
     "Deployment name": "배포 이름",
     "Azure resource name or endpoint": "Azure 리소스 이름 또는 엔드포인트",
@@ -8947,6 +8950,12 @@
     "No providers match your search.": "검색과 일치하는 모델 제공업체가 없습니다.",
     "{{count}} regions_other": "리전 {{count}}개",
     "Sign in with your CodeBuddy account": "CodeBuddy 계정으로 로그인",
-    "Already added": "이미 추가됨"
+    "Already added": "이미 추가됨",
+    "Select versions to delete": "삭제할 버전 선택",
+    "The latest version is retained. Deleted content cannot be restored, and links to these versions in earlier messages will no longer open.": "최신 버전은 유지됩니다. 삭제한 내용은 복원할 수 없으며 이전 메시지에서 해당 버전으로 연결되는 링크를 열 수 없게 됩니다.",
+    "Failed to delete file versions": "파일 버전 삭제 실패",
+    "Selected versions: {{total}} ({{size}} MB)": "선택한 버전 수: {{total}} ({{size}} MB)",
+    "Permanently delete the selected versions?": "선택한 버전을 영구적으로 삭제하시겠습니까?",
+    "Delete selected versions": "선택한 버전 삭제"
   }
 }

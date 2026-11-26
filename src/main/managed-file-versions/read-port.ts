@@ -24,11 +24,18 @@ export type ManagedFileVersionRecord = {
   storedFilename: string | null
   writeOperationId: string | null
   contentStorageKey: string
+  contentBlobId?: string | null
   filename: string
   originalFilename: string | null
   contentType: string | null
   sizeBytes: bigint
   checksum: string
+  evidenceStorageKey?: string | null
+  evidenceJson?: string | null
+  evidenceChecksum?: string | null
+  executionSnapshotStorageKey?: string | null
+  executionSnapshotJson?: string | null
+  executionSnapshotChecksum?: string | null
   createdAt: Date
 }
 

@@ -1,3 +1,4 @@
+import { VersionCleanupDialog } from './VersionCleanupDialog'
 import { PdfExportProvider } from './pdf-annotations/PdfExportProvider'
 import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
@@ -268,6 +269,7 @@ const PreviewFileHeader = ({
   provenanceEntry = 'menu',
   tooltipClassName,
   managedControls,
+  versionCleanupControl,
   managedControlsOnly = false,
   checkingVersion,
   downloadVersionContext,
@@ -289,6 +291,7 @@ const PreviewFileHeader = ({
   onViewInContext?: () => void
   viewInContextDisabled?: boolean
   managedControls?: React.ReactNode
+  versionCleanupControl?: React.ReactNode
   checkingVersion: boolean
   managedControlsOnly?: boolean
   downloadVersionContext?: PreviewDownloadVersionContext
@@ -571,6 +574,7 @@ const PreviewFileHeader = ({
                   {t('Source session deleted')}
                 </span>
               ) : null}
+              {versionCleanupControl}
               {provenanceEntry === 'menu' && managedMenuEntries.length > 0 ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -1557,15 +1561,20 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       return applyVersionItem(nextItem, false, () => finishVersionSelection(false))
     }
 
-    const selectManagedVersion = (versionId: string): void => {
+    const selectManagedVersion = (
+      versionId: string,
+      candidateVersion?: ManagedFileVersionInspectResult['selectedVersion']
+    ): void => {
       if (!managedNavigationInspect || !projectId) return
-      const version = [
-        managedNavigationInspect.selectedVersion,
-        managedNavigationInspect.headVersion,
-        managedNavigationInspect.previousVersion,
-        managedNavigationInspect.nextVersion,
-        ...managedNavigationInspect.versions
-      ].find((candidate) => candidate?.id === versionId)
+      const version =
+        candidateVersion ??
+        [
+          managedNavigationInspect.selectedVersion,
+          managedNavigationInspect.headVersion,
+          managedNavigationInspect.previousVersion,
+          managedNavigationInspect.nextVersion,
+          ...managedNavigationInspect.versions
+        ].find((candidate) => candidate?.id === versionId)
       if (!version) return
       const nextItem = createPreviewFileItemForManagedVersion({
         item: previewItem,
@@ -1961,6 +1970,22 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                 viewInContextDisabled={originSessionArchived}
                 tooltipClassName={tooltipClassName}
                 downloadVersionContext={downloadVersionContext}
+                versionCleanupControl={
+                  mode === 'view' &&
+                  managedNavigationInspect &&
+                  !provenanceFocused && (
+                    <VersionCleanupDialog
+                      key={`${managedNavigationInspect.source}:${managedNavigationInspect.fileId}`}
+                      inspect={managedNavigationInspect}
+                      tooltipClassName={tooltipClassName}
+                      onPreview={(version) => selectManagedVersion(version.id, version)}
+                      onDeleted={() => {
+                        selectManagedVersion(managedNavigationInspect.headVersionId)
+                        managedWorkflow.refreshInspect()
+                      }}
+                    />
+                  )
+                }
                 checkingVersion={!provenanceFocused && managedWorkflow.inspectLoading}
                 managedControlsOnly={mode === 'edit'}
                 managedControls={
@@ -2060,7 +2085,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                               ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
                               : managedControlsInspect.canDiff
                                 ? t('Compare with source version')
-                                : t('No source version to compare')}
+                                : managedControlsInspect.diffBaseCleaned
+                                  ? t('The source version was cleaned up and cannot be compared.')
+                                  : t('No source version to compare')}
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
@@ -2089,6 +2116,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   ) : undefined
                 }
               />
+
               {!provenanceFocused &&
               !managedWorkflow.inspectLoading &&
               managedWorkflow.inspectError ? (

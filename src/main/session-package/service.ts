@@ -1878,6 +1878,11 @@ export class SessionPackageService {
           })
         }
         const requiredFeatures = [
+          ...([...publicRecords.tables.UploadVersion, ...publicRecords.tables.ArtifactVersion].some(
+            (row) => row.state === 'cleaned'
+          )
+            ? (['cleaned-file-versions'] as const)
+            : []),
           ...(publicRecords.logEvidence ? (['log-evidence'] as const) : []),
           ...(hasComputeLogEvidence(publicRecords.logEvidence)
             ? (['compute-log-evidence'] as const)

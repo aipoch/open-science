@@ -1,3 +1,7 @@
+import {
+  versionCleanupMigration,
+  VERSION_CLEANUP_ALLOWED_SUFFIX_CHECKS
+} from './migrations/0061-version-cleanup'
 import { sessionSchedulesMigration } from './migrations/0058-session-schedules'
 import {
   imageModelsMigration,
@@ -1086,6 +1090,18 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...versionCleanupMigration,
+    foreignKeysDuringApply: 'disabled',
+    checksum: checksumMigrationPayload(
+      versionCleanupMigration.id,
+      versionCleanupMigration.statements,
+      versionCleanupMigration.verifiers,
+      versionCleanupMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1225,7 +1241,7 @@ const verifyManagedFileVersionDomain = async (client: PrismaClient): Promise<voi
           AND "parent"."artifactId" = "version"."artifactId"
           AND "parent"."versionNumber" < "version"."versionNumber"
           AND (
-            "parent"."state" = 'finalized'
+            "parent"."state" IN ('finalized', 'cleaning', 'cleaned')
             OR (
               "parent"."state" = 'pending'
               AND "version"."state" IN ('staging', 'pending')
@@ -1248,7 +1264,7 @@ const verifyManagedFileVersionDomain = async (client: PrismaClient): Promise<voi
         SELECT 1 FROM "UploadVersion" AS "parent"
         WHERE "parent"."id" = "version"."basedOnVersionId"
           AND "parent"."uploadFileId" = "version"."uploadFileId"
-          AND "parent"."state" = 'ready'
+          AND "parent"."state" IN ('ready', 'cleaning', 'cleaned')
           AND "parent"."versionNumber" < "version"."versionNumber"
       )
     LIMIT 1
@@ -2106,6 +2122,7 @@ const applyManifestMigration = async (
   // An unledgered current schema can already carry 0028's stronger CHECKs. Accept that exact
   // immutable suffix while verifying older steps, so their ALTERs are not replayed over it.
   const allowedCheckUpgrades = mergeAllowedSuffixChecks(
+    migration.id < versionCleanupMigration.id ? VERSION_CLEANUP_ALLOWED_SUFFIX_CHECKS : {},
     migration.id < imageModelsMigration.id ? IMAGE_MODELS_ALLOWED_SUFFIX_CHECKS : {},
     migration.id < numericAndNullConstraintsMigration.id
       ? NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
@@ -2582,6 +2599,9 @@ const migrateApplicationDatabaseWithManifest = async (
   )
   const adoptedLegacy = appliedCount === 0 && hasExistingApplicationTables
   const allowedSuffixChecks = mergeAllowedSuffixChecks(
+    manifest.some((entry) => entry.id === versionCleanupMigration.id)
+      ? VERSION_CLEANUP_ALLOWED_SUFFIX_CHECKS
+      : {},
     manifest.some((entry) => entry.id === imageModelsMigration.id)
       ? IMAGE_MODELS_ALLOWED_SUFFIX_CHECKS
       : {},

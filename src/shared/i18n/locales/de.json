@@ -258,6 +258,9 @@
     "Wait for the application handoff to finish before transferring research.": "Warten Sie, bis die Anwendungsübergabe abgeschlossen ist, bevor Sie Forschungsdaten übertragen."
   },
   "renderer": {
+    "Cleaned up": "Bereinigt",
+    "Version {{number}} is in use. Deselect it to continue.": "Version {{number}} wird verwendet. Heben Sie die Auswahl dieser Version auf, um fortzufahren.",
+    "The source version was cleaned up and cannot be compared.": "Die Quellversion wurde bereinigt. Ein Vergleich ist nicht möglich.",
     "Move preview": "Vorschau verschieben",
     "Deployment name": "Bereitstellungsname",
     "Azure resource name or endpoint": "Azure-Ressourcenname oder Endpunkt",
@@ -9125,6 +9128,12 @@
     "{{count}} regions_one": "{{count}} Region",
     "{{count}} regions_other": "{{count}} Regionen",
     "Sign in with your CodeBuddy account": "Mit Ihrem CodeBuddy-Konto anmelden",
-    "Already added": "Bereits hinzugefügt"
+    "Already added": "Bereits hinzugefügt",
+    "Select versions to delete": "Zu löschende Versionen auswählen",
+    "The latest version is retained. Deleted content cannot be restored, and links to these versions in earlier messages will no longer open.": "Die neueste Version bleibt erhalten. Gelöschte Inhalte können nicht wiederhergestellt werden. Links zu diesen Versionen in früheren Nachrichten lassen sich anschließend nicht mehr öffnen.",
+    "Failed to delete file versions": "Dateiversionen konnten nicht gelöscht werden",
+    "Selected versions: {{total}} ({{size}} MB)": "Ausgewählte Versionen: {{total}} ({{size}} MB)",
+    "Permanently delete the selected versions?": "Ausgewählte Versionen dauerhaft löschen?",
+    "Delete selected versions": "Ausgewählte Versionen löschen"
   }
 }

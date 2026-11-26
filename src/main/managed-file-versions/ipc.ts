@@ -3,6 +3,7 @@ import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
 import type { ProjectFilesChangedEvent } from '../../shared/project-files'
 import type {
+  ManagedFileVersionDeleteRequest,
   ManagedFileVersionInspectRequest,
   ManagedFileVersionInspectResult,
   ManagedFileVersionIpcResult,
@@ -17,6 +18,7 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 import { ManagedFileVersionError } from './error'
 
 type ManagedFileVersionIpcService = {
+  deleteVersions(request: ManagedFileVersionDeleteRequest): Promise<void>
   inspect(request: ManagedFileVersionInspectRequest): Promise<ManagedFileVersionInspectResult>
   diffText(request: ManagedFileVersionDiffRequest): Promise<ManagedFileVersionDiffResult>
   cancelDiff(requestId: string): boolean
@@ -30,6 +32,9 @@ type ManagedFileVersionHandlerDependencies = {
 }
 
 type ManagedFileVersionHandlers = {
+  deleteVersions(
+    request: ManagedFileVersionDeleteRequest
+  ): Promise<ManagedFileVersionIpcResult<void>>
   inspect(
     request: ManagedFileVersionInspectRequest
   ): Promise<ManagedFileVersionIpcResult<ManagedFileVersionInspectResult>>
@@ -54,7 +59,16 @@ const rendererResult = async <Value>(
     return { ok: true, value: await operation() }
   } catch (error) {
     if (error instanceof ManagedFileVersionError) {
-      return { ok: false, error: { code: error.code, message: error.message } }
+      return {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error.versionNumber !== undefined && {
+            versionNumber: error.versionNumber
+          })
+        }
+      }
     }
     return {
       ok: false,
@@ -70,6 +84,19 @@ const createManagedFileVersionHandlers = (
   service: ManagedFileVersionIpcService,
   dependencies: ManagedFileVersionHandlerDependencies
 ): ManagedFileVersionHandlers => ({
+  deleteVersions: (request) =>
+    rendererResult(async () => {
+      try {
+        await dependencies.withDataRootWrite(() => service.deleteVersions(request))
+      } finally {
+        dependencies.onChanged?.({
+          projectId: request.projectId,
+          sources: [request.source],
+          kind: 'upsert',
+          versionIds: request.versionIds
+        })
+      }
+    }),
   inspect: (request) => rendererResult(() => service.inspect(request)),
   diffText: (request) => rendererResult(() => service.diffText(request)),
   cancelDiff: ({ requestId }) => ({
@@ -103,6 +130,7 @@ const createManagedFileVersionHandlers = (
 })
 
 export type ManagedFileVersionCommandOwner = Readonly<{
+  deleteVersions: ManagedFileVersionHandlers['deleteVersions']
   inspect: ManagedFileVersionHandlers['inspect']
   saveTextEdit: ManagedFileVersionHandlers['saveTextEdit']
   saveBinaryEdit: ManagedFileVersionHandlers['saveBinaryEdit']
@@ -130,6 +158,7 @@ export const createManagedFileVersionCommandOwner = (
     return true
   }
   return {
+    deleteVersions: handlers.deleteVersions,
     inspect: handlers.inspect,
     saveTextEdit: handlers.saveTextEdit,
     saveBinaryEdit: handlers.saveBinaryEdit,
@@ -189,6 +218,10 @@ export const createManagedFileVersionCommandOwner = (
 }
 
 const registerManagedFileVersionIpcHandlers = (owner: ManagedFileVersionCommandOwner): void => {
+  ipcMainHandle(
+    'managed-file-versions:delete-versions',
+    (_event, request: ManagedFileVersionDeleteRequest) => owner.deleteVersions(request)
+  )
   ipcMainHandle(
     'managed-file-versions:inspect',
     (_event, request: ManagedFileVersionInspectRequest) => owner.inspect(request)

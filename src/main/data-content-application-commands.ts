@@ -469,6 +469,10 @@ const dataContentApplicationCommands = Object.freeze({
     'artifacts:resolve-version-descriptors',
     'resolveVersionDescriptors'
   ),
+  managedFileDeleteVersions: managedFileCommand(
+    'managed-file-versions:delete-versions',
+    'deleteVersions'
+  ),
   managedFileInspect: managedFileCommand('managed-file-versions:inspect', 'inspect'),
   managedFileSaveTextEdit: managedFileCommand(
     'managed-file-versions:save-text-edit',
@@ -944,6 +948,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.uploadTransferStatus
   ] as const),
   defineApplicationCommandGroup('managed-file-versions', [
+    dataContentApplicationCommands.managedFileDeleteVersions,
     dataContentApplicationCommands.managedFileInspect,
     dataContentApplicationCommands.managedFileSaveTextEdit,
     dataContentApplicationCommands.managedFileSaveBinaryEdit,
@@ -1766,6 +1771,8 @@ const registerDataContentApplicationCommands = (
         }
         return result
       },
+      'managed-file-versions:delete-versions': ({ args }) =>
+        dependencies.managedFileVersions.deleteVersions(args[0]),
       'managed-file-versions:save-text-edit': ({ args }) =>
         dependencies.managedFileVersions.saveTextEdit(args[0]),
       'managed-file-versions:save-binary-edit': ({ args }) =>

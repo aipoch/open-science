@@ -18,6 +18,7 @@ import type {
   ManagedFileVersionCancelDiffRequest,
   ManagedFileVersionDiffRequest,
   ManagedFileVersionDiffResult,
+  ManagedFileVersionDeleteRequest,
   ManagedFileVersionInspectRequest,
   ManagedFileVersionInspectResult,
   ManagedFileVersionIpcResult,
@@ -146,6 +147,9 @@ export const managedFileVersionsCancelDiffContracts = {
       request: ManagedFileVersionDiffRequest
     ) => Promise<ManagedFileVersionIpcResult<ManagedFileVersionDiffResult>>
   >()('managed-file-versions', ['managed-file-versions:diff-text', ELECTRON]),
+  'managedFileVersions.deleteVersions': callable<
+    (request: ManagedFileVersionDeleteRequest) => Promise<ManagedFileVersionIpcResult<void>>
+  >()('managed-file-versions', ['managed-file-versions:delete-versions', ELECTRON]),
   'managedFileVersions.inspect': callable<
     (
       request: ManagedFileVersionInspectRequest

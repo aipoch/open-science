@@ -504,7 +504,7 @@ class ArtifactProvenanceReadModel {
 
   async getVersionProvenance(
     request: GetArtifactVersionProvenanceRequest,
-    sections?: { execution: boolean; messages: boolean; review: boolean }
+    sections?: { execution: boolean; messages: boolean; review: boolean; includeCleaned?: boolean }
   ): Promise<ArtifactVersionProvenance>
   async getVersionProvenance(
     request: GetArtifactVersionProvenanceRequest,
@@ -518,7 +518,12 @@ class ArtifactProvenanceReadModel {
   ): Promise<ArtifactVersionReproductionProvenance>
   async getVersionProvenance(
     request: GetArtifactVersionProvenanceRequest,
-    sections: { execution: boolean; messages: boolean; review: boolean } = {
+    sections: {
+      execution: boolean
+      messages: boolean
+      review: boolean
+      includeCleaned?: boolean
+    } = {
       execution: true,
       messages: true,
       review: true
@@ -542,7 +547,11 @@ class ArtifactProvenanceReadModel {
           id: versionId,
           artifactId,
           originKind: 'agent_generated',
-          state: { in: ['pending', 'finalized'] },
+          state: {
+            in: sections.includeCleaned
+              ? ['pending', 'finalized', 'cleaned']
+              : ['pending', 'finalized']
+          },
           artifact: { is: { projectId, sessionId: appSessionId } }
         },
         include: {

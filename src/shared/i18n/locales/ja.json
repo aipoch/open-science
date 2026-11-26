@@ -257,6 +257,9 @@
     "Wait for the application handoff to finish before transferring research.": "研究データを転送する前に、アプリケーションの引き継ぎが完了するまでお待ちください。"
   },
   "renderer": {
+    "Cleaned up": "消去済み",
+    "Version {{number}} is in use. Deselect it to continue.": "バージョン {{number}} は使用中です。続行するには選択を解除してください。",
+    "The source version was cleaned up and cannot be compared.": "元のバージョンは消去済みのため、比較できません。",
     "Move preview": "プレビューを移動",
     "Deployment name": "デプロイ名",
     "Azure resource name or endpoint": "Azure リソース名またはエンドポイント",
@@ -8949,6 +8952,12 @@
     "No providers match your search.": "一致するプロバイダーはありません。",
     "{{count}} regions_other": "{{count}} リージョン",
     "Sign in with your CodeBuddy account": "CodeBuddy アカウントでサインイン",
-    "Already added": "追加済み"
+    "Already added": "追加済み",
+    "Select versions to delete": "削除するバージョンを選択",
+    "The latest version is retained. Deleted content cannot be restored, and links to these versions in earlier messages will no longer open.": "最新バージョンは保持されます。削除した内容は復元できず、過去のメッセージ内の該当バージョンへのリンクは開けなくなります。",
+    "Failed to delete file versions": "ファイルのバージョンを削除できませんでした",
+    "Selected versions: {{total}} ({{size}} MB)": "選択したバージョン数：{{total}}（{{size}} MB）",
+    "Permanently delete the selected versions?": "選択したバージョンを完全に削除しますか？",
+    "Delete selected versions": "選択したバージョンを削除"
   }
 }

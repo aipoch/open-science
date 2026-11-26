@@ -203,6 +203,7 @@ const createDependencies = () => {
   }
   const events = { publish: vi.fn() }
   const managedFileVersions = {
+    deleteVersions: vi.fn(async () => ({ ok: true as const, value: undefined })),
     inspect: vi.fn(async () => ({ ok: false })),
     saveTextEdit: vi.fn(async () => ({ ok: false })),
     saveBinaryEdit: vi.fn(async () => ({ ok: false })),
@@ -800,6 +801,7 @@ describe('Data and content application commands', () => {
         'uploads:stage-local-file',
         'uploads:stage-local-path',
         'uploads:transfer-status',
+        'managed-file-versions:delete-versions',
         'managed-file-versions:inspect',
         'managed-file-versions:save-text-edit',
         'managed-file-versions:save-binary-edit',
@@ -1058,6 +1060,11 @@ describe('Data and content application commands', () => {
         args: [request('cancel')],
         owner: deps.reproducibility.cancel,
         passInvocation: true
+      },
+      {
+        key: 'managedFileDeleteVersions',
+        args: [request('delete')],
+        owner: deps.managedFileVersions.deleteVersions
       },
       {
         key: 'managedFileInspect',

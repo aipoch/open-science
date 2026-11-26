@@ -1,3 +1,4 @@
+import { CLEANED_VERSION_MESSAGE } from '../../../../shared/managed-file-versions'
 import { ErrorNotice } from '@/components/error-notice'
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
@@ -22,6 +23,7 @@ import {
   CircleAlert,
   CircleGauge,
   Copy,
+  FileMinus2,
   GitBranch,
   Loader2,
   MessageCircleMore,
@@ -102,7 +104,7 @@ import {
   isUnavailableFileError
 } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
-import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
+import { usePreviewAvailability } from './previews/useUnavailablePreviewProbe'
 import type { SendEditedMessage } from './workspace-edited-message'
 
 type EditAnnotationTarget = {
@@ -111,6 +113,7 @@ type EditAnnotationTarget = {
 }
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
+  cleaned?: boolean
   resolvedProjectId?: string
   resolvedSessionId?: string
 }
@@ -881,7 +884,11 @@ const VisibleArtifactPreview = ({
             String(error).endsWith('ApplicationCommandError: The local service is stopping.'))
         )
           return
-        if (!isUnavailableFileError(error) && !isManagedFilePublicationPendingError(error)) {
+        if (
+          !String(error).includes(CLEANED_VERSION_MESSAGE) &&
+          !isUnavailableFileError(error) &&
+          !isManagedFilePublicationPendingError(error)
+        ) {
           console.error('Failed to read artifact preview', error)
         }
         setPreviewState({ requestKey, preview: undefined })
@@ -929,9 +936,10 @@ const ArtifactCard = ({
     artifact.size ?? null,
     artifact.mtimeMs ?? null
   ])
-  const missing = useUnavailablePreviewProbe({
+  const availability = usePreviewAvailability({
     enabled:
       isNearViewport &&
+      !artifact.cleaned &&
       !publicationPending &&
       Boolean(artifact.resolvedProjectId && artifact.artifactId),
     projectId: artifact.resolvedProjectId,
@@ -944,38 +952,61 @@ const ArtifactCard = ({
     mtimeMs: artifact.mtimeMs
   })
 
+  const cleaned = artifact.cleaned || availability === 'cleaned'
+  const missing = availability === true
   return (
     <GeneratedFileCard
       buttonRef={setElement}
       name={artifactName}
-      sizeLabel={sizeLabel}
-      disabled={publicationPending}
+      versionLabel={
+        typeof artifact.versionNumber === 'number'
+          ? t('Version {{version}}', { version: artifact.versionNumber })
+          : undefined
+      }
+      sizeLabel={cleaned ? undefined : sizeLabel}
+      cleaned={cleaned}
+      disabled={publicationPending || cleaned}
       onClick={() => onPreviewArtifact(artifact)}
-      label={t('Preview generated file {{name}}', { name: artifactName })}
+      label={
+        cleaned
+          ? [
+              artifactName,
+              t('Version {{version}}', { version: artifact.versionNumber }),
+              t('Cleaned up')
+            ].join(' · ')
+          : t('Preview generated file {{name}}', { name: artifactName })
+      }
       title={artifact.path}
       preview={
-        <>
-          <span className={cn('block size-full', missing && 'opacity-40')}>
-            {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
-            {publicationPending ? null : isNearViewport ? (
-              <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
-            ) : (
-              <ArtifactPreview
-                artifact={artifact}
-                projectId={artifact.resolvedProjectId}
-                sessionId={artifact.resolvedSessionId}
-                managedFileId={artifact.artifactId}
-                selectedVersionId={artifact.versionId}
-                isVisible={false}
-              />
-            )}
-          </span>
-          {missing ? (
-            <span className="absolute left-1 top-1 rounded bg-text-000/75 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
-              {t(FILE_MISSING_TAG_KEY)}
+        cleaned ? (
+          <div className="flex size-full items-center justify-center gap-1.5 text-xs text-text-200">
+            <FileMinus2 className="size-4" />
+            {t('Cleaned up')}
+          </div>
+        ) : (
+          <>
+            <span className={cn('block size-full', missing && 'opacity-40')}>
+              {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
+              {publicationPending ? null : isNearViewport ? (
+                <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
+              ) : (
+                <ArtifactPreview
+                  artifact={artifact}
+                  projectId={artifact.resolvedProjectId}
+                  sessionId={artifact.resolvedSessionId}
+                  managedFileId={artifact.artifactId}
+                  selectedVersionId={artifact.versionId}
+                  isVisible={false}
+                />
+              )}
             </span>
-          ) : null}
-        </>
+            {missing ? (
+              <span className="absolute left-1 top-1 rounded bg-text-000/75 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-bg-000 shadow-sm">
+                {t(FILE_MISSING_TAG_KEY)}
+              </span>
+            ) : null}
+          </>
+        )
       }
     />
   )

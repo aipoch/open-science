@@ -259,6 +259,9 @@
     "Wait for the application handoff to finish before transferring research.": "Attendez la fin du transfert de l’application avant de transférer des travaux de recherche."
   },
   "renderer": {
+    "Cleaned up": "Contenu supprimé",
+    "Version {{number}} is in use. Deselect it to continue.": "La version {{number}} est utilisée. Désélectionnez-la pour continuer.",
+    "The source version was cleaned up and cannot be compared.": "Le contenu de la version source a été supprimé. La comparaison est indisponible.",
     "Move preview": "Déplacer l’aperçu",
     "Deployment name": "Nom du déploiement",
     "Azure resource name or endpoint": "Nom de ressource ou point de terminaison Azure",
@@ -9309,6 +9312,12 @@
     "{{count}} regions_many": "{{count}} régions",
     "{{count}} regions_other": "{{count}} régions",
     "Sign in with your CodeBuddy account": "Se connecter avec votre compte CodeBuddy",
-    "Already added": "Déjà ajouté"
+    "Already added": "Déjà ajouté",
+    "Select versions to delete": "Sélectionner les versions à supprimer",
+    "The latest version is retained. Deleted content cannot be restored, and links to these versions in earlier messages will no longer open.": "La version la plus récente est conservée. Le contenu supprimé ne peut pas être restauré et les liens vers ces versions dans les anciens messages ne pourront plus être ouverts.",
+    "Failed to delete file versions": "Échec de la suppression des versions du fichier",
+    "Selected versions: {{total}} ({{size}} MB)": "Versions sélectionnées : {{total}} ({{size}} MB)",
+    "Permanently delete the selected versions?": "Supprimer définitivement les versions sélectionnées ?",
+    "Delete selected versions": "Supprimer les versions sélectionnées"
   }
 }

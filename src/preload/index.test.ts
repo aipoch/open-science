@@ -466,6 +466,7 @@ describe('preload bridge — public surface inventory', () => {
       'logs.openFile',
       'logs.revealInFolder',
       'managedFileVersions.cancelDiff',
+      'managedFileVersions.deleteVersions',
       'managedFileVersions.diffText',
       'managedFileVersions.inspect',
       'managedFileVersions.saveBinaryEdit',

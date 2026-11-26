@@ -1523,6 +1523,24 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(diffButton?.className).not.toContain('disabled:opacity-100')
   })
 
+  it('places version cleanup in the compact header action row', async () => {
+    window.api.managedFileVersions.deleteVersions = vi
+      .fn()
+      .mockResolvedValue({ ok: true, value: undefined })
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedUploadItem} onClose={vi.fn()} />)
+    })
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Select versions to delete"]'
+    )
+    expect(trigger).not.toBeNull()
+    expect(trigger?.closest('[data-testid="preview-card-header"]')).not.toBeNull()
+    expect(trigger?.getAttribute('data-size')).toBe('icon-xs')
+    expect(trigger?.textContent).toBe('')
+    await click(trigger)
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+
   it('keeps read-only diff and version navigation for eligible text when writes are unavailable', async () => {
     window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
       ok: true,

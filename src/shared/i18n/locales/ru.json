@@ -260,6 +260,9 @@
     "Wait for the application handoff to finish before transferring research.": "Дождитесь завершения передачи приложения перед переносом данных исследования."
   },
   "renderer": {
+    "Cleaned up": "Содержимое удалено",
+    "Version {{number}} is in use. Deselect it to continue.": "Версия {{number}} используется. Снимите с неё выделение, чтобы продолжить.",
+    "The source version was cleaned up and cannot be compared.": "Содержимое исходной версии удалено. Сравнение недоступно.",
     "Move preview": "Переместить предпросмотр",
     "Deployment name": "Имя развёртывания",
     "Azure resource name or endpoint": "Имя ресурса или конечная точка Azure",
@@ -9466,6 +9469,12 @@
     "{{count}} regions_many": "{{count}} регионов",
     "{{count}} regions_other": "{{count}} региона",
     "Sign in with your CodeBuddy account": "Войти с аккаунтом CodeBuddy",
-    "Already added": "Уже добавлен"
+    "Already added": "Уже добавлен",
+    "Select versions to delete": "Выбрать версии для удаления",
+    "The latest version is retained. Deleted content cannot be restored, and links to these versions in earlier messages will no longer open.": "Последняя версия сохраняется. Удалённое содержимое нельзя восстановить, а ссылки на эти версии в предыдущих сообщениях больше не будут открываться.",
+    "Failed to delete file versions": "Не удалось удалить версии файла",
+    "Selected versions: {{total}} ({{size}} MB)": "Выбрано версий: {{total}} ({{size}} MB)",
+    "Permanently delete the selected versions?": "Удалить выбранные версии навсегда?",
+    "Delete selected versions": "Удалить выбранные версии"
   }
 }
