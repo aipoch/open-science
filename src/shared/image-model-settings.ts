@@ -54,10 +54,10 @@ export type ImageModelCatalogResult =
   { ok: true; modelIds: string[]; fetchedAt: number } | { ok: false; code: CatalogErrorCode }
 
 export const IMAGE_VENDOR_PRESETS = {
-  minimax: 'minimax-h3/official',
   openai: 'openai/gpt-image-2.6',
-  bailian: 'qwen/image-3.0',
-  volcengine: 'seedream/5.5'
+  minimax: 'minimax-h3/official',
+  volcengine: 'seedream/5.5',
+  bailian: 'qwen/image-3.0'
 } as const satisfies Record<string, ImageModelPresetId>
 export type ImageVendorId = keyof typeof IMAGE_VENDOR_PRESETS
 

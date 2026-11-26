@@ -101,14 +101,19 @@ describe('provider registry', () => {
     }
   )
 
-  it('defines exactly one of baseUrl or regions per vendor, with a non-empty catalog', () => {
+  it('defines a static endpoint and catalog unless the connection supplies both', () => {
     for (const vendor of OFFICIAL_VENDORS) {
       const hasBaseUrl = Boolean(vendor.baseUrl)
       const hasRegions = (vendor.regions?.length ?? 0) > 0
 
+      expect(vendor.reasoningEffort).toBeDefined()
+      if (vendor.requiresConnectionConfiguration) {
+        expect(hasBaseUrl || hasRegions).toBe(false)
+        expect(vendor.models).toHaveLength(0)
+        continue
+      }
       expect(hasBaseUrl).not.toBe(hasRegions) // exactly one is set
       expect(vendor.models.length).toBeGreaterThan(0)
-      expect(vendor.reasoningEffort).toBeDefined()
       for (const region of vendor.regions ?? []) {
         if (!region.modelIds) continue
         expect(region.modelIds.length).toBeGreaterThan(0)
@@ -599,6 +604,11 @@ describe('provider registry', () => {
     expect(getOfficialVendor('glmcodingplan')?.models).toContainEqual(expected)
   })
 
+  it.each(['zhipu', 'glmcodingplan'] as const)('lists GLM-5.4 with vision for %s', (vendor) => {
+    expect(getVendorModelContextWindow(vendor, 'glm-5.4')).toBe(1_000_000)
+    expect(isVendorModelMultimodal(vendor, 'glm-5.4')).toBe(true)
+  })
+
   it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
     expect(vendorHasRegions('glmcodingplan')).toBe(true)
     expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['messages', 'chat-completions'])
@@ -617,7 +627,6 @@ describe('provider registry', () => {
     // Quota-based plan: fixed catalog, no live model-list refresh.
     expect(resolveVendorModelsUrl('glmcodingplan')).toBeUndefined()
 
-    // The coding plan omits the older vision variant but serves the natively multimodal Flash model.
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5v-turbo')).toBe(false)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3')).toBe(false)
@@ -782,7 +791,9 @@ describe('provider registry', () => {
   it('routes Requesty through both APIs after OpenRouter with a curated catalog', () => {
     const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
 
-    expect(OFFICIAL_VENDORS[openRouterIndex + 1]?.id).toBe('requesty')
+    expect(
+      OFFICIAL_VENDORS.slice(openRouterIndex + 1, openRouterIndex + 3).map(({ id }) => id)
+    ).toEqual(['vectrust', 'requesty'])
     expect(resolveVendorApiEndpoints('requesty')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('requesty')).toBe('https://router.requesty.ai')
     expect(resolveVendorChatCompletionsBaseUrl('requesty')).toBe('https://router.requesty.ai/v1')

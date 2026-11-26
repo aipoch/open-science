@@ -211,7 +211,8 @@ describe.skipIf(process.platform === 'win32')('WSL Shell owner memory admission'
         status: 'pressured',
         executionScope: 'wsl:controlled:1',
         source: 'controlled-guest-facts'
-      })
+      }),
+      expect.any(Function)
     )
     expect(h.factory).toHaveBeenCalledTimes(2)
     h.setAvailable(800)

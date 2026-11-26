@@ -34,6 +34,7 @@ vi.mock('./ArtifactProvenancePanel', () => ({
     item: PreviewFileItem
     onClose: () => void
     onVersionChange?: (item: PreviewFileItem) => boolean
+    preserveVersionSelection?: boolean
     initialTab?: 'sources'
     tooltipClassName?: string
   }) => {
@@ -363,6 +364,53 @@ describe('PreviewFileSurface header', () => {
     expect(
       fileName?.parentElement?.previousElementSibling?.querySelector('svg.lucide-file-image')
     ).not.toBeNull()
+  })
+})
+
+describe('PreviewFileSurface image draft provenance', () => {
+  it('keeps draft content while allowing Provenance to inspect another version', async () => {
+    const startingItem = {
+      ...item,
+      selectedVersionId: 'version-2',
+      versionNumber: 2,
+      path: 'artifact-version:project-1/session-1/artifact-1/version-2'
+    }
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface item={startingItem} provenanceEntry="leading" onClose={vi.fn()} />
+      )
+    })
+    await click(container.querySelector('[aria-label="Open Provenance for sin.png"]'))
+
+    const draftVersion = {
+      ...startingItem,
+      selectedVersionId: 'version-2',
+      versionNumber: 2,
+      path: 'artifact-version:project-1/session-1/artifact-1/version-2'
+    }
+    await act(async () => {
+      previewContentSpy.mock.lastCall?.[0].onImageEditorVersionChange?.(draftVersion)
+    })
+
+    expect(provenancePanelSpy.mock.lastCall?.[0]).toEqual(
+      expect.objectContaining({
+        item: expect.objectContaining({ selectedVersionId: 'version-2' }),
+        preserveVersionSelection: true
+      })
+    )
+    expect(provenancePanelSpy.mock.lastCall?.[0]).not.toHaveProperty('lockVersion')
+    expect(previewContentSpy.mock.lastCall?.[0].item.selectedVersionId).toBe('version-2')
+    const selectedVersion = {
+      ...draftVersion,
+      selectedVersionId: 'version-1',
+      versionNumber: 1,
+      path: 'artifact-version:project-1/session-1/artifact-1/version-1'
+    }
+    await act(async () => {
+      expect(provenancePanelSpy.mock.lastCall?.[0].onVersionChange?.(selectedVersion)).toBe(true)
+    })
+
+    expect(previewContentSpy.mock.lastCall?.[0].item.selectedVersionId).toBe('version-2')
   })
 })
 

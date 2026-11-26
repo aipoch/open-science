@@ -48,6 +48,7 @@ export type ReplayReaderApi = {
 }
 
 export type ReplayLoadOptions = { signal?: AbortSignal }
+type ReplayLoadRequest = Omit<LoadSessionRequest, 'projectId'> & { projectId: string }
 
 const checkAbort = (signal?: AbortSignal): void => signal?.throwIfAborted()
 const errorDetail = (error: unknown): string =>
@@ -111,7 +112,7 @@ const readRuns = async (
 }
 
 const versionResource = (
-  request: LoadSessionRequest,
+  request: ReplayLoadRequest,
   version: ArtifactVersionDescriptor
 ): ReplayResource => ({
   id: `artifact-version:${version.versionId}`,
@@ -137,7 +138,7 @@ const versionResource = (
 })
 
 const unavailableResource = (
-  request: LoadSessionRequest,
+  request: ReplayLoadRequest,
   artifact: PersistedArtifact
 ): ReplayResource => ({
   id: artifact.versionId ? `artifact-version:${artifact.versionId}` : `artifact:${artifact.id}`,
@@ -156,7 +157,7 @@ const unavailableResource = (
 
 const readResources = async (
   api: ReplayReaderApi['artifacts'],
-  request: LoadSessionRequest,
+  request: ReplayLoadRequest,
   artifacts: PersistedArtifact[],
   signal?: AbortSignal
 ): Promise<{ resources: ReplayResource[]; issues: ReplayIssue[] }> => {
@@ -285,7 +286,7 @@ const readUploadResources = (session: PersistedChatSession): ReplayResource[] =>
 
 export const loadReplaySource = async (
   api: ReplayReaderApi,
-  request: LoadSessionRequest,
+  request: ReplayLoadRequest,
   { signal }: ReplayLoadOptions = {}
 ): Promise<ReplaySourceData> => {
   checkAbort(signal)
@@ -334,6 +335,6 @@ export const loadReplaySource = async (
 
 export const loadReplayDocument = async (
   api: ReplayReaderApi,
-  request: LoadSessionRequest,
+  request: ReplayLoadRequest,
   options: ReplayLoadOptions = {}
 ): Promise<ReplayDocument> => buildReplayDocument(await loadReplaySource(api, request, options))

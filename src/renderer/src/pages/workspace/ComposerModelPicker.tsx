@@ -19,7 +19,6 @@ import { cn } from '@/lib/utils'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { providerKindKey } from '../settings/provider-form-value'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
-import { isProviderUsableByFramework } from '../../../../shared/settings-runtime'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   buildConfiguredModelCatalog,
@@ -30,7 +29,11 @@ import {
   resolveProviderReasoningEffortProfile
 } from '../../../../shared/provider-reasoning-effort'
 import { resolveReasoningEffortControl } from '../../../../shared/reasoning-effort'
-import { incompatibilityReason, modelUnavailableReason } from './composer-model-picker-utils'
+import {
+  unavailableGroupReason,
+  modelUnavailableReason,
+  requiredSubscriptionFramework
+} from './composer-model-picker-utils'
 
 const triggerClassName =
   'flex h-8 min-w-0 max-w-[220px] shrink items-center gap-1 rounded-md px-2.5 text-sm text-text-300 hover:bg-bg-200 hover:text-text-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
@@ -176,6 +179,9 @@ const ComposerModelPicker = ({
           providerName: selectedProvider.name,
           providerType: selectedProvider.type,
           ...(selectedProvider.vendorId ? { vendorId: selectedProvider.vendorId } : {}),
+          ...(selectedProvider.localPresetId
+            ? { localPresetId: selectedProvider.localPresetId }
+            : {}),
           model: '',
           label: selectedProvider.name
         }
@@ -211,7 +217,11 @@ const ComposerModelPicker = ({
             <>
               {displayCurrent ? (
                 <ProviderKindIcon
-                  kindKey={providerKindKey(displayCurrent.providerType, displayCurrent.vendorId)}
+                  kindKey={providerKindKey(
+                    displayCurrent.providerType,
+                    displayCurrent.vendorId,
+                    displayCurrent.localPresetId
+                  )}
                   className="size-4"
                 />
               ) : null}
@@ -325,7 +335,8 @@ const ComposerModelPicker = ({
                     <ProviderKindIcon
                       kindKey={providerKindKey(
                         displayCurrent.providerType,
-                        displayCurrent.vendorId
+                        displayCurrent.vendorId,
+                        displayCurrent.localPresetId
                       )}
                       className="size-3 shrink-0"
                     />
@@ -357,30 +368,17 @@ const ComposerModelPicker = ({
           <DropdownMenuSubContent className="max-h-[320px] min-w-[15rem] overflow-y-auto p-1">
             {groups.map((group) => {
               const compatible = group.options.some((option) => option.selectable)
-              const endpointCompatible = isProviderUsableByFramework(
-                {
-                  apiEndpoints: group.provider.apiEndpoints,
-                  type: group.provider.type
-                },
-                { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-              )
+              const required = requiredSubscriptionFramework(group.provider, agentFrameworkId, t)
+              const framework = { id: agentFrameworkId, displayName: frameworkName }
               const reason = compatible
                 ? undefined
-                : endpointCompatible && agentFrameworkId === 'codex'
-                  ? t(
-                      'No model from {{provider}} is supported over the Codex Chat Completions bridge.',
-                      { provider: group.provider.name }
-                    )
-                  : incompatibilityReason(
-                      {
-                        apiEndpoints: group.provider.apiEndpoints,
-                        type: group.provider.type,
-                        name: group.provider.name
-                      },
-                      frameworkName,
-                      frameworkEndpoints,
-                      tCommon
-                    )
+                : unavailableGroupReason(
+                    group.options,
+                    group.provider,
+                    framework,
+                    frameworkEndpoints,
+                    t
+                  )
 
               return (
                 <DropdownMenuGroup key={group.provider.id}>
@@ -395,7 +393,7 @@ const ComposerModelPicker = ({
                         const optionReason = modelUnavailableReason(
                           option,
                           group.provider,
-                          frameworkName,
+                          framework,
                           frameworkEndpoints,
                           tCommon
                         )
@@ -440,7 +438,11 @@ const ComposerModelPicker = ({
                           }
                           leading={
                             <ProviderKindIcon
-                              kindKey={providerKindKey(option.providerType, option.vendorId)}
+                              kindKey={providerKindKey(
+                                option.providerType,
+                                option.vendorId,
+                                option.localPresetId
+                              )}
                               className="size-4 shrink-0"
                             />
                           }
@@ -469,7 +471,9 @@ const ComposerModelPicker = ({
                         aria-hidden="true"
                       />
                       <span className="min-w-0 flex-1 truncate">
-                        {t('Unavailable for {{framework}}', { framework: frameworkName })}
+                        {required
+                          ? t('Requires {{framework}}', { framework: required })
+                          : t('Unavailable for {{framework}}', { framework: frameworkName })}
                       </span>
                     </DropdownMenuItem>
                   )}

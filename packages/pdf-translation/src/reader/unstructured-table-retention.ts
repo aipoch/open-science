@@ -1,4 +1,4 @@
-import { parsePdfStructureResult } from '@aipoch/pdf-structure/result'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import { createPdfTranslationSource } from './source.js'
 import { carryNativeCaptionEligibility } from './caption-eligibility.js'
 import { getPdfTranslationTextContent } from './text-content.js'
@@ -6,14 +6,10 @@ import type { applyCachedPdfFigureSources } from './figure-source.js'
 import type { PDFPageProxy } from 'pdfjs-dist'
 import { nativeAlgorithmInkRegions, nativeZeroAdvanceRegions } from './native-source-geometry.js'
 import { nativeInkPageCurrent } from './auxiliary-native-ink.js'
+import { structureRegionsOverlap } from './structure-regions.js'
+import { readPdfStructureEvidence } from './structure-evidence.js'
 
 type Region = { page: number; x: number; y: number; width: number; height: number }
-const overlaps = (a: Region, b: Region): boolean =>
-  a.page === b.page &&
-  a.x < b.x + b.width &&
-  b.x < a.x + a.width &&
-  a.y < b.y + b.height &&
-  b.y < a.y + a.height
 const normalize = (s: string): string => s.replace(/\s/gu, '')
 const recordIssues = [
   'native-fused-tuple-crosses-cell-wall',
@@ -206,32 +202,21 @@ export async function retainUnstructuredTablePages(
   }
   try {
     const candidates: {
-      result: ReturnType<typeof parsePdfStructureResult>
-      element: ReturnType<typeof parsePdfStructureResult>['elements'][number]
+      result: PdfStructureResult
+      element: PdfStructureResult['elements'][number]
       centered: boolean
       records: readonly RecordIssue[]
     }[] = []
-    const allElements: ReturnType<typeof parsePdfStructureResult>['elements'][number][] = []
-    const batches = new Map<string, string>()
-    let cacheBytes = 0,
-      elementCount = 0
-    for (let number = 1; number <= document.numPages; number++) {
-      const cached = await args.readCached({ sourceId: args.sourceId, page: number })
-      if (!current()) return empty
-      if (!cached) continue
-      const result = parsePdfStructureResult(cached, { ...cached, ...identity })
-      if (result.pageCount !== document.numPages || !result.processedPages.includes(number))
-        return empty
-      const serialized = JSON.stringify(result),
-        prior = batches.get(result.extractionId)
-      if (prior !== undefined) {
-        if (prior !== serialized) return empty
-        continue
-      }
-      cacheBytes += serialized.length * 2
-      elementCount += result.elements.length
-      if (cacheBytes > 32 * 1024 ** 2 || elementCount > 512) return empty
-      batches.set(result.extractionId, serialized)
+    const allElements: PdfStructureResult['elements'][number][] = []
+    const results = await readPdfStructureEvidence({
+      document,
+      sourceId: args.sourceId,
+      identity,
+      readCached: args.readCached.bind(args),
+      isCurrent: current
+    })
+    if (!results || !current()) return empty
+    for (const result of results) {
       allElements.push(...result.elements)
       for (const element of result.elements) {
         const codes = element.issues.map((issue) => issue.code),
@@ -326,7 +311,11 @@ export async function retainUnstructuredTablePages(
           zero ??= await nativeZeroAdvanceRegions(page, content, viewport, number)
           if (!current()) return empty
           const ink = zero.get(index)
-          if (ink && ![region, ...element.caption!.regions].some((r) => overlaps(r, ink))) continue
+          if (
+            ink &&
+            ![region, ...element.caption!.regions].some((r) => structureRegionsOverlap(r, ink))
+          )
+            continue
         }
         const style = content.styles[item.fontName],
           [a, b, c, d, x, y] = item.transform
@@ -359,7 +348,7 @@ export async function retainUnstructuredTablePages(
       }
       if (!valid) continue
       const selected = new Set(
-          [...fonts].filter(([, box]) => overlaps(box, region)).map(([i]) => i)
+          [...fonts].filter(([, box]) => structureRegionsOverlap(box, region)).map(([i]) => i)
         ),
         bodyOwners = new Set([...selected].map((i) => owners.get(number + ':' + i)))
       if (selected.size < 9 || bodyOwners.has(undefined)) continue
@@ -431,15 +420,19 @@ export async function retainUnstructuredTablePages(
         )
           valid = false
       }
-      if (!valid || [...fonts].some(([i, b]) => overlaps(b, body) && !selected.has(i))) continue
+      if (
+        !valid ||
+        [...fonts].some(([i, b]) => structureRegionsOverlap(b, body) && !selected.has(i))
+      )
+        continue
       const caption = element.caption!,
         captionRegion = caption.regions[0],
-        captionItems = [...fonts].filter(([, box]) => overlaps(box, captionRegion))
+        captionItems = [...fonts].filter(([, box]) => structureRegionsOverlap(box, captionRegion))
       const captionLiteral = nativeLiteral(captionItems.map(([index]) => index))
       if (
         captionRegion.page !== number ||
         !captionItems.length ||
-        captionItems.some(([i, b]) => selected.has(i) || overlaps(b, body)) ||
+        captionItems.some(([i, b]) => selected.has(i) || structureRegionsOverlap(b, body)) ||
         (normalize(captionLiteral) !== normalize(caption.text) &&
           normalize(
             captionItems.map(([i]) => (content.items[i] as { str: string }).str).join('')
@@ -447,7 +440,9 @@ export async function retainUnstructuredTablePages(
         allElements.some(
           (other) =>
             other !== element &&
-            [...other.regions, ...(other.caption?.regions ?? [])].some((r) => overlaps(r, body))
+            [...other.regions, ...(other.caption?.regions ?? [])].some((r) =>
+              structureRegionsOverlap(r, body)
+            )
         )
       )
         continue

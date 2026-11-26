@@ -305,7 +305,117 @@ test('the mobile session menu keeps its visible 28px touch target and 14px icon'
   expect(icon.height).toBe(14)
   await actions.tap()
   await expect(page.getByRole('menu')).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: /Pin/ })).toBeVisible()
   await page.getByRole('menuitem', { name: /Pin/ }).tap()
   await expect(page.getByTestId('actions')).toHaveText('pin')
   await context.close()
+})
+
+test('film-generating row yields its action slot without ghost clicks, sticky focus, or shortcut overlap', async ({
+  page
+}) => {
+  await page.goto('/row-hit-targets.html?surface=sidebar&film')
+  const row = page.locator('[data-session-id="session-1"]')
+  const mark = row.getByRole('img', { name: 'Research film in progress' })
+  const actions = row.getByRole('button', { name: 'Open actions for Analysis session' })
+  const titleButton = row.locator('[data-slot="session-open-button"]')
+
+  // Resting state: film mark sits in the action slot and the invisible menu button ignores pointer hits.
+  await expect(actions).toHaveCSS('opacity', '0')
+  await expect(actions).toHaveCSS('pointer-events', 'none')
+  const restingMarkBox = (await mark.boundingBox())!
+  const restingActionsBox = (await actions.boundingBox())!
+  expect(restingMarkBox.x).toBeGreaterThanOrEqual(restingActionsBox.x)
+  expect(restingMarkBox.x + restingMarkBox.width).toBeLessThanOrEqual(
+    restingActionsBox.x + restingActionsBox.width
+  )
+
+  // Moving directly onto the resting film mark from outside and clicking immediately must open the
+  // session rather than opening the unrevealed dropdown menu.
+  await page.mouse.move(0, 0)
+  await page.mouse.move(
+    restingMarkBox.x + restingMarkBox.width / 2,
+    restingMarkBox.y + restingMarkBox.height / 2
+  )
+  await page.mouse.click(
+    restingMarkBox.x + restingMarkBox.width / 2,
+    restingMarkBox.y + restingMarkBox.height / 2
+  )
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(page.getByTestId('actions')).toHaveText('session')
+
+  // Moving off the row after a mouse click must let the action button hide and the mark return
+  // (mouse click gives :focus without :focus-visible).
+  await page.mouse.move(400, 400)
+  await expect(actions).toHaveCSS('opacity', '0')
+  await expect(actions).toHaveCSS('pointer-events', 'none')
+  await expect
+    .poll(async () => (await mark.boundingBox())!.x)
+    .toBeGreaterThanOrEqual(restingMarkBox.x - 0.5)
+
+  // Hovering the row slides the mark clear of the actions slot and enables clicking the menu button.
+  const rowBox = (await row.boundingBox())!
+  await page.mouse.move(rowBox.x + 24, rowBox.y + rowBox.height / 2)
+  await expect(actions).toHaveCSS('opacity', '1')
+  await expect(actions).toHaveCSS('pointer-events', 'auto')
+  const hoveredMarkBox = (await mark.boundingBox())!
+  expect(hoveredMarkBox.x + hoveredMarkBox.width).toBeLessThan(restingActionsBox.x)
+
+  await actions.click()
+  await expect(page.getByRole('menu')).toBeVisible()
+  // Clicking outside the menu must dismiss it and let the row return to its resting layout.
+  await page.mouse.click(400, 400)
+  await expect(page.getByRole('menu')).toBeHidden()
+  await expect(actions).toHaveCSS('opacity', '0')
+  await expect(actions).toHaveCSS('pointer-events', 'none')
+  await expect
+    .poll(async () => (await mark.boundingBox())!.x)
+    .toBeGreaterThanOrEqual(restingMarkBox.x - 0.5)
+
+  // Keyboard Escape dismissal still restores focus to the trigger.
+  await page.mouse.move(rowBox.x + 24, rowBox.y + rowBox.height / 2)
+  await expect(actions).toHaveCSS('pointer-events', 'auto')
+  await actions.click()
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toBeHidden()
+  await expect(actions).toBeFocused()
+
+  // Keyboard focus-visible reveals the action button and slides the mark clear without hover.
+  await page.mouse.move(400, 400)
+  await titleButton.focus()
+  await page.keyboard.press('Tab')
+  await expect(actions).toBeFocused()
+  await expect(actions).toHaveCSS('opacity', '1')
+  await expect(actions).toHaveCSS('pointer-events', 'auto')
+  await expect
+    .poll(async () => {
+      const box = (await mark.boundingBox())!
+      return box.x + box.width
+    })
+    .toBeLessThan(restingActionsBox.x)
+
+  // Holding Meta (⌘1 on macOS) must keep the pill and film mark in independent non-overlapping boxes.
+  await page.keyboard.down('Meta')
+  const metaPill = row.locator('kbd')
+  await expect(metaPill).toHaveText('⌘1')
+  const metaPillBox = (await metaPill.boundingBox())!
+  const metaMarkBox = (await mark.boundingBox())!
+  expect(metaMarkBox.x + metaMarkBox.width).toBeLessThanOrEqual(metaPillBox.x)
+  await page.keyboard.up('Meta')
+  await expect(metaPill).toHaveCount(0)
+})
+
+test('film-generating row avoids shortcut overlap for wider Ctrl+1 pill', async ({ page }) => {
+  await page.goto('/row-hit-targets.html?surface=sidebar&film&platform=linux')
+  const row = page.locator('[data-session-id="session-1"]')
+  const mark = row.getByRole('img', { name: 'Research film in progress' })
+  await page.keyboard.down('Control')
+  const ctrlPill = row.locator('kbd')
+  await expect(ctrlPill).toHaveText('Ctrl+1')
+  const ctrlPillBox = (await ctrlPill.boundingBox())!
+  const ctrlMarkBox = (await mark.boundingBox())!
+  expect(ctrlMarkBox.x + ctrlMarkBox.width).toBeLessThanOrEqual(ctrlPillBox.x)
+  await page.keyboard.up('Control')
+  await expect(ctrlPill).toHaveCount(0)
 })

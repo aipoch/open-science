@@ -1,6 +1,10 @@
 import { z } from 'zod'
+import { RequestError } from '@agentclientprotocol/sdk'
+import { createLogger } from '@aipoch/diagnostics/node'
+import { HARNESS_CONTEXT_BUDGET } from '../harness-acp/config'
 import type { AcpProviderModelCallUsage, AcpProviderTurnAdapter } from './provider-turn-adapter'
 
+const log = createLogger('acp:harness')
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const receipt = z
   .array(
@@ -18,9 +22,33 @@ const receipt = z
     })
   )
   .min(1)
+const contextBudget = z.object({
+  protocol: z.enum(['chat-completions', 'messages', 'responses']),
+  contextWindow: count,
+  inputBudget: count
+})
 
 /** Host accounting consumes package receipts; it does not run another model loop. */
 export const harnessTurnAdapter: AcpProviderTurnAdapter = {
+  getPromptError: (response, providerSessionId) => {
+    if (response.stopReason !== 'max_turn_requests') return undefined
+    const budget = contextBudget.safeParse(response._meta?.[HARNESS_CONTEXT_BUDGET])
+    if (!budget.success) return undefined
+    log.warn('Built-in Agent input budget exhausted before dispatch', {
+      providerSessionId,
+      ...budget.data
+    })
+    // Surface the host-side budget stop through the existing context-overflow notice.
+    return new RequestError(
+      -32603,
+      'The selected model context window is too small for this request.',
+      {
+        errorKind: 'provider-error',
+        protocol: budget.data.protocol,
+        code: 'context_length_exceeded'
+      }
+    )
+  },
   begin: () => ({
     finalize: ({ response }) => {
       const parsed = receipt.safeParse(response._meta?.['open-science-agent/requests'])

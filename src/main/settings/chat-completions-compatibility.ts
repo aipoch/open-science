@@ -8,7 +8,9 @@ import type { ServerResponse } from 'node:http'
 import {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   readBoundedResponseText,
-  fetchProviderRequest
+  fetchProviderRequest,
+  withProviderRequestPolicy,
+  type ProviderRequestPolicy
 } from '@aipoch/providers/transport'
 import {
   ProviderLoopbackHttpHost,
@@ -34,6 +36,7 @@ export type ChatCompletionsCompatibilityTarget = Readonly<{
   isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   endpoint: string
   key?: string
+  requestPolicy?: ProviderRequestPolicy
   model: string
   wire: CompatibilityWire
   maxOutputTokens?: number
@@ -103,7 +106,12 @@ export class ChatCompletionsCompatibilityBridge {
     if (this.target.wire === 'messages') headers['anthropic-version'] = '2023-06-01'
     const startedAt = Date.now()
     const allowInsecureHttp = await resolveProviderHttpAccess(this.target, this.target.endpoint)
-    const upstream = await fetchProviderRequest(this.fetchImpl, this.target.endpoint, {
+    const fetchUpstream = withProviderRequestPolicy(
+      this.fetchImpl,
+      this.target.requestPolicy,
+      this.target.key
+    )
+    const upstream = await fetchProviderRequest(fetchUpstream, this.target.endpoint, {
       allowInsecureHttp,
       method: 'POST',
       headers,

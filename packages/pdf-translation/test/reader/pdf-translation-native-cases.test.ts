@@ -310,3 +310,148 @@ it.each([0.5, 2])('recognizes annotated case geometry at scale %s', (scale) => {
   page.items[7].str = 'changed source prose'
   expect(nativeCaseDisplayItems(page).size).toBe(0)
 })
+
+it.each([0, 4])('retains the two aligned rows under a full-size factorial brace (%s)', (shift) => {
+  const lead = 'The expression below gives the two remaining cases.'
+  const after = 'These results yield the required estimate for the interval.'
+  const page: PdfLayoutPage = {
+    page: 1,
+    height: 792,
+    width: 612,
+    rotation: 0,
+    items: [
+      item(lead, 75, 665, 395, 'Body', true),
+      item('=', 170, 620, 8),
+      { ...item('{', 180.8, 637.2, 9, 'Brace'), fontDescent: -2.95 },
+      item('r', 189.8, 627, 5, 'Math'),
+      item('!', 194.8, 627, 3),
+      item('if', 216, 627, 7),
+      item('s', 228, 627, 6, 'Math'),
+      item('=', 237, 627, 8),
+      item('r,', 248, 627, 8, 'Math'),
+      item('0', 189.8, 612, 5),
+      item('if', 216 + shift, 612, 7),
+      item('s < r.', 228, 612, 29, 'Math'),
+      item('(4)', 480, 620, 14, 'Body', true),
+      item(after, 75, 580, 400, 'Body', true)
+    ]
+  }
+  const proof = nativeCaseDisplayItems(page)
+  expect([...proof]).toEqual(shift ? [] : Array.from({ length: 12 }, (_, n) => n + 1))
+  if (shift) return
+  const { units } = groupPdfTranslationPages({ pages: [page] })
+  for (const index of [5, 10])
+    expect(units.find((unit) => unit.items.includes(`1:${index}`))).toMatchObject({
+      sourceOnly: true,
+      preserve: 'formula'
+    })
+  expect(units.filter((unit) => !unit.sourceOnly).map((unit) => unit.source)).toEqual([lead, after])
+})
+
+function numericSetCases(): PdfLayoutPage {
+  const subscript = {
+    ...item('j', 247, 218.5, 3, 'Math'),
+    height: 7,
+    transform: [7, 0, 0, 7, 247, 218.5]
+  }
+  return {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items: [
+      item('An ordinary paragraph introduces these cases.', 50, 261, 280, 'Body', true),
+      item('q', 240, 220, 7, 'Math'),
+      subscript,
+      item('=', 253, 220, 8),
+      item('{', 264, 237, 8, 'Brace'),
+      ...[232, 220, 208].flatMap((y, index) => [
+        item(['6,', '3,', '−5,'][index], 274, y, index === 2 ? 14 : 8, 'Math'),
+        item('if', 300, y, 6),
+        item('j∈P∩Q', 310, y, 41, 'Math'),
+        item(index === 2 ? '.' : ';', 355, y, 3, 'Body', true)
+      ]),
+      item('An ordinary paragraph resumes after the cases.', 50, 181, 290, 'Body', true)
+    ]
+  }
+}
+
+it.each([0.5, 1, 2])(
+  'retains native set-membership cases and all branch values at scale %s',
+  (scale) => {
+    const page = numericSetCases()
+    page.width *= scale
+    page.height *= scale
+    for (const item of page.items) {
+      item.width *= scale
+      item.height *= scale
+      item.transform = item.transform.map((value) => value * scale)
+    }
+    const before = structuredClone(page),
+      end = page.items.length - 1
+    expect([...nativeCaseDisplayItems(page)]).toEqual(
+      Array.from({ length: end - 1 }, (_, n) => n + 1)
+    )
+    const grouped = groupPdfTranslationPages({ pages: [page] })
+    expect(grouped.units.filter((u) => !u.sourceOnly).map((u) => u.source)).toEqual([
+      page.items[0].str,
+      page.items.at(-1)!.str
+    ])
+    expect(grouped.units.flatMap((u) => u.items).toSorted()).toEqual(
+      page.items.map((_, n) => `1:${n}`).toSorted()
+    )
+    expect(page).toEqual(before)
+  }
+)
+
+it.each([
+  'ordinary brace',
+  'unattached subscript',
+  'ordinary condition',
+  'unaligned connector',
+  'ambiguous value',
+  'overlapping native text'
+])('requires a complete set-membership case display: %s', (fault) => {
+  const page = numericSetCases()
+  if (fault === 'ordinary brace') page.items[4].fontAscent = 0.8
+  if (fault === 'unattached subscript') page.items[2].transform[4] -= 8
+  if (fault === 'ordinary condition') page.items[11].str = 'the proof is finished'
+  if (fault === 'unaligned connector') page.items[10].transform[4] += 3
+  if (fault === 'ambiguous value') page.items[9].str = '6,'
+  if (fault === 'overlapping native text') page.items.splice(-1, 0, item('foreign', 290, 226, 40))
+  expect(nativeCaseDisplayItems(page).size).toBe(0)
+})
+
+it('keeps numbered four-row relation cases native only when the condition column aligns', () => {
+  const rail = [
+    ...'\uF8F1\uF8F4\uF8F4\uF8F4\uF8F4\uF8F4\uF8F2\uF8F4\uF8F4\uF8F4\uF8F4\uF8F4\uF8F3'
+  ].map((glyph, n) =>
+    item(
+      glyph,
+      100,
+      [600, 591, 588, 585, 582, 579, 576, 558, 555, 552, 549, 546, 543][n],
+      9,
+      'Brace'
+    )
+  )
+  const conditions = ['x < a,', 'a ≤ x < b,', 'b ≤ x < c,', 'x ≥ c.']
+  const body = [590, 576, 558, 540].flatMap((y, n) => [
+    item(String(n), 109, y, 5, 'Math'),
+    item(conditions[n], 211, y, 49, 'Math', true)
+  ])
+  const page: PdfLayoutPage = {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items: [
+      ...rail,
+      ...body,
+      item('(8)', 310, 571.5, 15, 'Math'),
+      item('The following paragraph is ordinary prose.', 50, 510, 180)
+    ]
+  }
+  expect([...nativeCaseDisplayItems(page)]).toEqual(body.map((_, n) => rail.length + n))
+  page.items[rail.length + 3].transform[4] += 3
+  expect(nativeCaseDisplayItems(page).size).toBe(0)
+})

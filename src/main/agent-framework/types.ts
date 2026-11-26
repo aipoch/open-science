@@ -271,6 +271,7 @@ export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
     providerSessionId: string
     cwd: string
     mcpServers: readonly McpServer[]
+    sessionModel?: string
     skillRuntimeAllowlist?: readonly string[]
   }): Promise<void>
 

@@ -64,7 +64,20 @@ vi.mock('node:child_process', async (original) => {
                 }
                 result = {
                   sessionId: 'fixture',
-                  models: { currentModelId: 'model', availableModels: [{ modelId: 'model' }, { modelId: 'other' }] }
+                  configOptions: [
+                    { id: 'model', type: 'select', currentValue: 'model', options: [
+                      { value: 'model', name: 'Model', _meta: { effortOptions: ['low', 'high'] } },
+                      { value: 'other', name: 'Other' }
+                    ] },
+                    { id: 'effort', category: 'thought_level', type: 'select', options: [
+                      { value: 'low', name: 'Low' }, { value: 'high', name: 'High' }
+                    ] }
+                  ],
+                  models: { currentModelId: 'model', availableModels: [
+                    { modelId: 'model' },
+                    null,
+                    { modelId: 'other', _meta: { effortOptions: ['medium', 'max'] } }
+                  ] }
                 }
                 break
               default:
@@ -89,7 +102,12 @@ it('keeps a login in its site profile, reuses it on restart and clears it on log
   try {
     expect(await run('refresh')).toEqual({ authenticated: false })
     const account = await run('login')
-    expect(account).toEqual({ authenticated: true, model: 'model', models: ['model', 'other'] })
+    expect(account).toEqual({
+      authenticated: true,
+      model: 'model',
+      models: ['model', 'other'],
+      modelReasoningEfforts: { model: ['low', 'high'], other: ['medium', 'max'] }
+    })
     const modePath = join(root, 'codebuddy-cn', 'catalog-mode')
     for (const mode of ['partial', 'error']) {
       await writeFile(modePath, mode)

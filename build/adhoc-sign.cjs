@@ -41,6 +41,48 @@ exports.default = async function adhocSign(context) {
     appPath = path.join(context.appOutDir, found)
   }
 
+  const sparkleKey = process.env.MAC_SPARKLE_PUBLIC_KEY
+  if (sparkleKey) {
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(sparkleKey)) throw new Error('Invalid Sparkle public key')
+    const sdk = process.env.MAC_SPARKLE_SDK
+    if (!sdk) throw new Error('Missing verified Sparkle SDK')
+    const contents = path.join(appPath, 'Contents')
+    execFileSync('ditto', [
+      path.join(sdk, 'Sparkle.framework'),
+      path.join(contents, 'Frameworks/Sparkle.framework')
+    ])
+    fs.copyFileSync(path.join(sdk, 'LICENSE'), path.join(contents, 'Resources/Sparkle-LICENSE'))
+    const plist = path.join(contents, 'Info.plist')
+    for (const [key, type, value] of [
+      ['SUPublicEDKey', '-string', sparkleKey],
+      ['SUEnableAutomaticChecks', '-bool', 'NO'],
+      ['SUAutomaticallyUpdate', '-bool', 'NO']
+    ])
+      execFileSync('/usr/bin/plutil', ['-insert', key, type, value, plist])
+    execFileSync('/usr/bin/xcrun', [
+      'clang',
+      '-Os',
+      '-arch',
+      arch === 'x64' ? 'x86_64' : arch,
+      '-fobjc-arc',
+      '-mmacosx-version-min=12.0',
+      '-I' + path.resolve(path.dirname(process.execPath), '../include/node'),
+      '-F' + sdk,
+      '-framework',
+      'Cocoa',
+      '-framework',
+      'Sparkle',
+      '-bundle',
+      '-undefined',
+      'dynamic_lookup',
+      '-Wl,-rpath,@executable_path/../Frameworks',
+      path.join(__dirname, 'mac-sparkle/driver.m'),
+      '-o',
+      path.join(contents, 'Resources/mac-sparkle.node')
+    ])
+    fs.writeFileSync(path.join(contents, 'Resources/mac-sparkle.pub'), sparkleKey)
+  }
+
   const preserved = await verifyPackagedNativeComponents(
     path.join(appPath, 'Contents/Resources'),
     `darwin-${arch}`

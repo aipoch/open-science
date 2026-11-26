@@ -430,6 +430,7 @@ class ProviderTransportOwner {
                     ...this.providerHttpAccess(provider),
                     baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
                     key: provider.key,
+                    ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
                     model,
                     useApiKeyHeader:
                       provider.vendorId === 'anthropic' ||
@@ -447,6 +448,7 @@ class ProviderTransportOwner {
                     wire,
                     endpoint: endpoint!,
                     key: provider.key,
+                    ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
                     model
                   }
                 ],
@@ -553,7 +555,12 @@ class ProviderTransportOwner {
         const candidate = planned.target
         const model = candidate.effectiveModel ?? candidate.provider.model
         if (!model) continue
-        const key = candidate.provider.key ? { key: candidate.provider.key } : {}
+        const credentials = {
+          ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+          ...(candidate.provider.requestPolicy && {
+            requestPolicy: candidate.provider.requestPolicy
+          })
+        }
         const bridge =
           planned.oauth === 'xai'
             ? this.createXaiOAuthProviderBridge(
@@ -579,7 +586,7 @@ class ProviderTransportOwner {
                         id: planned.id,
                         ...this.providerHttpAccess(candidate.provider),
                         baseUrl: planned.endpoint!,
-                        ...key,
+                        ...credentials,
                         model,
                         ...(candidate.provider.vendorId &&
                         usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
@@ -598,7 +605,7 @@ class ProviderTransportOwner {
                         ...this.providerHttpAccess(candidate.provider),
                         wire: planned.wire,
                         endpoint: planned.endpoint!,
-                        ...key,
+                        ...credentials,
                         model
                       }
                     ],
@@ -611,6 +618,7 @@ class ProviderTransportOwner {
           ...candidate.provider,
           agentProviderId: piModelId(candidate.providerId, model),
           baseUrl: connection.baseUrl,
+          requestPolicy: undefined,
           chatCompletionsBaseUrl: undefined,
           responsesBaseUrl: undefined,
           model,
@@ -673,6 +681,7 @@ class ProviderTransportOwner {
             wire: transport.wire,
             ...this.providerHttpAccess(provider),
             endpoint: codeBuddyCompatibilityEndpoint(provider, transport.wire),
+            ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
             ...(provider.key ? { key: provider.key } : {}),
             model,
             ...(transport.wire === 'messages' && maxOutputTokens !== undefined
@@ -717,6 +726,7 @@ class ProviderTransportOwner {
                       wire: 'chat-completions',
                       endpoint,
                       ...(provider.key ? { key: provider.key } : {}),
+                      ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
                       model,
                       adaptRequest: adaptCodeBuddyChatCompletionsRequest
                     }
@@ -741,6 +751,7 @@ class ProviderTransportOwner {
       const routedProvider = Object.freeze({
         ...provider,
         baseUrl: connection.baseUrl,
+        requestPolicy: undefined,
         chatCompletionsBaseUrl: `${connection.baseUrl}/v1`,
         model,
         key: connection.token,
@@ -825,6 +836,7 @@ class ProviderTransportOwner {
         provider: Object.freeze({
           ...input.activeTarget.provider,
           baseUrl: connection.baseUrl,
+          requestPolicy: undefined,
           chatCompletionsBaseUrl: `${connection.baseUrl}/v1`,
           responsesBaseUrl: `${connection.baseUrl}/v1`,
           model: activeModel,
@@ -897,6 +909,9 @@ class ProviderTransportOwner {
                         endpoint: resolveChatCompletionsUrl(candidate.provider)!,
                         adaptStream: bufferChatCompletionsToolNames,
                         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                        ...(candidate.provider.requestPolicy && {
+                          requestPolicy: candidate.provider.requestPolicy
+                        }),
                         model
                       }
                     ],
@@ -910,6 +925,9 @@ class ProviderTransportOwner {
                         ...this.providerHttpAccess(candidate.provider),
                         baseUrl: normalizeMessagesRootUrl(candidate.provider.baseUrl ?? ''),
                         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
+                        ...(candidate.provider.requestPolicy && {
+                          requestPolicy: candidate.provider.requestPolicy
+                        }),
                         model,
                         ...(candidate.provider.vendorId &&
                         usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
@@ -930,6 +948,7 @@ class ProviderTransportOwner {
           ...candidate.provider,
           agentProviderId: opencodeTransportProviderId(candidate.providerId, model),
           baseUrl: connection.baseUrl,
+          requestPolicy: undefined,
           ...(transport.kind === 'opencode-openai'
             ? { chatCompletionsBaseUrl: `${connection.baseUrl}/v1` }
             : { chatCompletionsBaseUrl: undefined }),
@@ -1234,6 +1253,9 @@ class ProviderTransportOwner {
         ...this.providerHttpAccess(candidate.provider),
         key: candidate.provider.key,
         vendorId: candidate.provider.vendorId,
+        ...(candidate.provider.requestPolicy && {
+          requestPolicy: candidate.provider.requestPolicy
+        }),
         reasoningEffortTransport: candidate.provider.reasoningEffortTransport,
         model: candidate.effectiveModel ?? candidate.provider.model,
         reasoningEffort: effort,

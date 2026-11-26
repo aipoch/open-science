@@ -113,5 +113,17 @@
       [19361, 0, "||u.paused"]
     ],
     "pauseApi": true
+  },
+  {
+    "commit": "b56498ec9",
+    "sha256": "e25f0c13440e4c4f566e0a43b79e800e1f3c722c9fcccaabc33dd3bf90bb79ac",
+    "edits": [
+      [
+        18548,
+        14,
+        "let height=p.getBoundingClientRect().height;if(T()){/* The synchronous spacer correction can resize this observed content. Re-arm only after that self-resize, retaining same-frame scroll correction without a notification loop. */if(p.getBoundingClientRect().height!==height){L.unobserve(p);window.cancelAnimationFrame(m);m=window.requestAnimationFrame(()=>L.observe(p));}return;}"
+      ]
+    ],
+    "currentDeclarations": true
   }
 ]

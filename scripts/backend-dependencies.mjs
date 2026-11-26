@@ -121,6 +121,7 @@ export function desktopBackendDependencies(dependencies, metafiles, allowed = ne
 // locates them by path for another process. Everything else is bundled. The closure is
 // computed so a package that stays on disk never depends on one that was bundled.
 const desktopExternalRoots = [
+  '@modelcontextprotocol/sdk',
   // Connector providers are resolved by subpath at runtime, so esbuild cannot record these
   // dynamic requires in its external import graph. Keep the published package staged.
   '@aipoch/connector-builtins',
@@ -277,6 +278,8 @@ export function createDesktopDependencyFilter(manifest) {
     'web-tree-sitter@0.26.13': /^debug\/web-tree-sitter\.(?:js|cjs|wasm)(?:\.map)?$/,
     'styled-exceljs@0.21.6':
       /^dist\/xlsx\.(?:extendscript|(?:full|core|mini)\.min)\.(?:js(?:\.map)?|map)$/,
+    // Packaged Node loads legacy/build/pdf.mjs and its relative pdf.worker.mjs.
+    'pdfjs-dist@5.4.624': /^legacy\/build\/pdf(?:\.worker)?\.min\.mjs$/,
     '@embedpdf/pdfium@2.15.1': /^dist\/index\.browser\.js(?:\.map)?$/,
     'pako@0.2.9': /^dist\/[^/]+\.js(?:\.map)?$/,
     'pako@1.0.11': /^dist\/[^/]+\.js(?:\.map)?$/

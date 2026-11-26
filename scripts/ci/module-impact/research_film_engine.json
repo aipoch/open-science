@@ -2,6 +2,7 @@
   "ownerPaths": [
     "packages/research-film/LICENSE",
     "packages/research-film/README.md",
+    "packages/research-film/browser/playback-clock.ts",
     "packages/research-film/package.json",
     "packages/research-film/resources/authoring/KIT.md",
     "packages/research-film/resources/authoring/README.md",
@@ -78,6 +79,8 @@
     "packages/research-film/src/player-session.test.ts",
     "packages/research-film/src/ports.ts",
     "packages/research-film/src/progress.ts",
+    "packages/research-film/src/remote-speech.test.ts",
+    "packages/research-film/src/remote-speech.ts",
     "packages/research-film/src/replay-case.ts",
     "packages/research-film/src/replay-player.ts",
     "packages/research-film/src/replay-workbench.test.ts",
@@ -112,7 +115,8 @@
     "packages/research-film/src/index.ts",
     "packages/research-film/src/contracts.ts",
     "packages/research-film/src/export-mp4.ts",
-    "packages/research-film/src/resources.ts"
+    "packages/research-film/src/resources.ts",
+    "packages/research-film/src/remote-speech.ts"
   ],
   "consumerModules": [
     "research_video",
@@ -143,6 +147,7 @@
       "packages/research-film/src/player-session.test.ts",
       "packages/research-film/src/replay-workbench.test.ts",
       "packages/research-film/src/replay.test.ts",
+      "packages/research-film/src/remote-speech.test.ts",
       "packages/research-film/src/runtime.test.ts",
       "packages/research-film/src/script-review.test.ts",
       "packages/research-film/src/session-app-bundle.test.ts",

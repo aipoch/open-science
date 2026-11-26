@@ -29,6 +29,10 @@ export type OfficialVendorId =
   | 'openrouter'
   | 'requesty'
   | 'kilo'
+  | 'cloudflare-ai-gateway'
+  | 'aws-bedrock'
+  | 'microsoft-foundry'
+  | 'vectrust'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -77,10 +81,13 @@ export type OfficialVendor = {
   readonly id: OfficialVendorId
   // Human-readable name shown in the provider-type picker and composer group headings.
   readonly label: string
+  readonly cloudProvider?: true
   // Which chat APIs this vendor serves; drives per-framework availability. Absent ⇒ ['messages']
   // for legacy Anthropic-compatible vendor entries. A dual-endpoint vendor lists both, e.g.
   // ['messages', 'chat-completions'].
   readonly apiEndpoints?: readonly ModelProtocol[]
+  // The application's connection form supplies both the endpoint and model.
+  readonly requiresConnectionConfiguration?: true
   // Whether Anthropic Messages authenticates with `x-api-key` instead of `Authorization: Bearer`.
   // Absent keeps the existing bearer behavior used by the other compatible vendors.
   readonly messagesApiKeyHeader?: boolean

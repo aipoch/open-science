@@ -15,6 +15,7 @@ import type { InstallGate, UpdateStrategy } from './strategy'
 import type { NativeTranslator } from '../locale/main-process-messages'
 
 export type CreateStrategyOptions = UpdateInstallationHooks & {
+  macSparkle?: ElectronUpdaterDeps['macSparkle']
   downloadPreference?: ElectronUpdaterDeps['downloadPreference']
   // Whether this is a packaged (installed) build. Defaults to app.isPackaged; injectable for tests.
   isPackaged?: boolean

@@ -730,6 +730,7 @@ const installFullscreenDialogAdapter = (): (() => void) => {
   }
 
   const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Tab' && event.key !== 'Escape') return
     // A portaled link confirmation is the active layer and owns Tab/Escape until it closes.
     if (document.querySelector('[data-streamdown="link-safety-panel"][data-state="open"]')) {
       return
@@ -744,7 +745,6 @@ const installFullscreenDialogAdapter = (): (() => void) => {
       return
     }
 
-    if (event.key !== 'Escape') return
     const closeButton = findFullscreenCloseButton(overlay)
     if (!closeButton) return
 

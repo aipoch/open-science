@@ -1262,6 +1262,21 @@ export class SessionProjectionRepository {
     await client.$transaction(writes)
   }
 
+  async findArtifactSessions(
+    artifactId: string
+  ): Promise<Array<{ projectId: string; sessionId: string }>> {
+    const client = await this.client()
+    const refs = await client.sessionArtifactRef.findMany({
+      where: {
+        artifactId,
+        session: { deletedAtMs: null, project: { deletedAt: null } }
+      },
+      orderBy: [{ session: { updatedAtMs: 'desc' } }, { sessionId: 'asc' }],
+      select: { sessionId: true, session: { select: { projectId: true } } }
+    })
+    return refs.map(({ sessionId, session }) => ({ sessionId, projectId: session.projectId }))
+  }
+
   async list(): Promise<SessionSummary[]> {
     const client = await this.client()
     return (

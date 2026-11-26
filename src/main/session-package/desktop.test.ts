@@ -1286,7 +1286,7 @@ it('rejects an import snapshot before reading the archive when temporary space i
   expect(statfs).toHaveBeenCalledTimes(1)
   expect(list).not.toHaveBeenCalled()
   expect(read).not.toHaveBeenCalled()
-  expect(String(capacity.mock.calls[0][0])).toContain('open-science-package-dialog-')
+  expect(String(capacity.mock.calls[0][0])).toContain('session-package-temp')
   expect(desktop.operations.snapshot?.state).toBe('failed')
   expect(vi.mocked(dialog.showMessageBox)).not.toHaveBeenCalled()
   await desktop.close()
@@ -2510,6 +2510,8 @@ it.each(['minimal', 'full', 'headless', 'forwarded'] as const)(
       })
     }
     const exportTo = vi.spyOn(service, 'exportTo')
+    const review =
+      Promise.withResolvers<import('../../shared/session-package').PackageOperationSnapshot>()
     const release = vi.fn()
     const reserveExport = vi.fn(async () => release)
     const destination = join(fixture.storageRoot, 'private.science')
@@ -2521,7 +2523,12 @@ it.each(['minimal', 'full', 'headless', 'forwarded'] as const)(
       afterImport: async () => undefined,
       reserveExport,
       onOperationChanged: (snapshot) => {
-        if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection')
+        if (snapshot.sensitiveExportReview) review.resolve(snapshot)
+        if (
+          snapshot.kind === 'export' &&
+          snapshot.state === 'awaiting-selection' &&
+          snapshot.progress.phase === 'selecting'
+        )
           queueMicrotask(() =>
             desktop.respond({
               action: 'select',
@@ -2538,35 +2545,40 @@ it.each(['minimal', 'full', 'headless', 'forwarded'] as const)(
       expect(() =>
         desktop.respond({ action: 'export-with-sensitive-content', operationId: 'missing' })
       ).toThrow()
-      await expect(
-        desktop.export(request, undefined, mode === 'headless' ? destination : undefined)
-      ).rejects.toThrow('Sensitive content detected')
-      const failed = desktop.operations.snapshot!
-      expect(failed.sensitiveContent).toHaveLength(1)
-      expect(selectFiles).toHaveBeenCalledTimes(mode === 'headless' || mode === 'forwarded' ? 0 : 1)
-      expect(dialog.showSaveDialog).toHaveBeenCalledTimes(
-        mode === 'headless' || mode === 'forwarded' ? 0 : 1
+      const exporting = desktop.export(
+        request,
+        undefined,
+        mode === 'headless' ? destination : undefined
       )
+      const pending = await Promise.race([
+        review.promise,
+        exporting.then(() => {
+          throw new Error('Export ended before review.')
+        })
+      ])
+      expect(pending.sensitiveContent?.length).toBeGreaterThan(0)
+      await expect(stat(destination)).rejects.toMatchObject({ code: 'ENOENT' })
       expect(() =>
-        desktop.respond({ action: 'export-with-sensitive-content', operationId: 'stale' })
+        desktop.respond(
+          { action: 'export-with-sensitive-content', operationId: 'stale' },
+          'desktop'
+        )
       ).toThrow()
-      await expect(
-        desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
-      ).resolves.toMatchObject({ state: 'succeeded' })
-      expect(exportTo.mock.calls[1][2]).toMatchObject({ allowSensitiveContent: true })
+      vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({
+        response: 1,
+        checkboxChecked: false
+      })
+      await desktop.respond(
+        { action: 'export-with-sensitive-content', operationId: pending.id },
+        'desktop'
+      )
+      await expect(exporting).resolves.toMatchObject({ saved: true, filePath: destination })
+      expect(desktop.operations.snapshot).toMatchObject({ id: pending.id, state: 'succeeded' })
+      expect(exportTo).toHaveBeenCalledOnce()
       expect(selectFiles).toHaveBeenCalledTimes(mode === 'headless' ? 0 : 1)
       expect(dialog.showSaveDialog).toHaveBeenCalledTimes(mode === 'headless' ? 0 : 1)
-      if (mode === 'minimal' || mode === 'full') {
-        const selection = await exportTo.mock.calls[1][2]!.selectFiles!(
-          [],
-          new AbortController().signal,
-          { retainedFiles: [], metadataBytes: 0 },
-          ''
-        )
-        expect(selection).toEqual(await selectFiles.mock.results[0].value)
-      }
-      expect(reserveExport).toHaveBeenCalledTimes(2)
-      expect(release).toHaveBeenCalledTimes(2)
+      expect(reserveExport).toHaveBeenCalledOnce()
+      expect(release).toHaveBeenCalledOnce()
       const expanded = join(fixture.storageRoot, 'expanded')
       await mkdir(expanded)
       await extractTar({ file: destination, cwd: expanded })
@@ -2586,12 +2598,11 @@ it.each(['minimal', 'full', 'headless', 'forwarded'] as const)(
         'Authorization: Bearer synthetic-private-value'
       )
       expect(() =>
-        desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
+        desktop.respond(
+          { action: 'export-with-sensitive-content', operationId: pending.id },
+          'desktop'
+        )
       ).toThrow()
-      await expect(
-        desktop.export(request, undefined, mode === 'headless' ? destination : undefined)
-      ).rejects.toThrow('Sensitive content detected')
-      expect(exportTo.mock.calls[2][2]).not.toHaveProperty('allowSensitiveContent')
     } finally {
       await desktop.close()
       await service.close()
@@ -2945,7 +2956,7 @@ it.each(['retry', 'discard'] as const)(
   }
 )
 
-it('exports and uploads directly to an organization case without saving locally, including sensitive-content retry', async () => {
+it('uploads the reviewed sensitive package directly to an organization case', async () => {
   const fixture = await createProvenanceTestFixture()
   fixtures.push(fixture)
   initDataRoot(fixture.storageRoot)
@@ -3031,7 +3042,11 @@ it('exports and uploads directly to an organization case without saving locally,
     afterImport: async () => undefined,
     onOperationChanged: (snapshot) => {
       phases.push(`${snapshot.state}:${snapshot.progress.phase}`)
-      if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection') {
+      if (
+        snapshot.kind === 'export' &&
+        snapshot.state === 'awaiting-selection' &&
+        snapshot.progress.phase === 'selecting'
+      ) {
         expect(snapshot.sessionTitle).toBe('Sensitive upload session')
         queueMicrotask(() =>
           desktop.respond({
@@ -3051,18 +3066,20 @@ it('exports and uploads directly to an organization case without saving locally,
   const unregister = desktop.registerOrgCaseUploader(uploader)
 
   try {
-    await expect(
-      desktop.export({ projectId: 'project-1', sessionId: 'session-1' })
-    ).rejects.toThrow('Sensitive content detected')
+    const exporting = desktop.export({ projectId: 'project-1', sessionId: 'session-1' })
+    await expect.poll(() => desktop.operations.snapshot?.sensitiveExportReview).toBeDefined()
     expect(uploader).not.toHaveBeenCalled()
     expect(dialog.showSaveDialog).not.toHaveBeenCalled()
 
-    const failed = desktop.operations.snapshot!
-    expect(failed.sensitiveContent).toHaveLength(1)
-
-    await expect(
-      desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
-    ).resolves.toMatchObject({
+    const pending = desktop.operations.snapshot!
+    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 1, checkboxChecked: false })
+    await desktop.respond(
+      { action: 'export-with-sensitive-content', operationId: pending.id },
+      'desktop'
+    )
+    await expect(exporting).resolves.toMatchObject({ saved: true })
+    expect(desktop.operations.snapshot).toMatchObject({
+      id: pending.id,
       state: 'succeeded',
       exportDestination: 'org-case',
       result: {

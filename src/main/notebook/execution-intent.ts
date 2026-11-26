@@ -1,16 +1,19 @@
 import { randomUUID } from 'node:crypto'
 
-import { NotebookExecutionAdmissionError } from './execution-admission'
+import { NotebookExecutionAdmissionError, type NotebookMemoryRecheck } from './execution-admission'
 import type { notebookExecutionIntentReference } from './execution-model-contract'
+
+export const ABANDONED_NOTEBOOK_PREPARATION = 'user-execution-preparation-not-committed'
 
 export type NotebookExecutionIntentScope = Readonly<{
   projectId: string
   sessionId: string
   messageBranchId?: string
   promptMessageId?: string
+  continuedFromRefusalId?: string
 }>
 export type NotebookExecutionContinuation = NotebookExecutionIntentScope &
-  Readonly<{ refusalId: string }>
+  Readonly<{ refusalId: string; kind?: 'memory' }>
 export type NotebookExecutionIntentDeletion =
   { projectId: string } | { sessionIds: readonly string[] }
 
@@ -18,7 +21,13 @@ export type NotebookExecutionIntentDeletion =
 // Concrete transports and derived Attempts retain the same immutable reference.
 export class NotebookExecutionIntent {
   declare readonly [notebookExecutionIntentReference]: true
-  private refusal?: Readonly<{ id: string; reason: string }>
+  private refusal?: Readonly<{
+    id: string
+    reason: string
+    blockedAt: number
+    recheckMemory?: NotebookMemoryRecheck
+  }>
+  private continuationClaimed = false
   private userPreparationPending = false
   private userMemoryRecheck?: () => void
   private readonly branches = new Map<
@@ -30,6 +39,26 @@ export class NotebookExecutionIntent {
 
   get refusalId(): string | undefined {
     return this.refusal?.id
+  }
+
+  get refusalAt(): number | undefined {
+    return this.refusal?.blockedAt
+  }
+
+  get refusalReason(): string | undefined {
+    return this.refusal?.reason
+  }
+
+  get recheckMemory(): NotebookMemoryRecheck | undefined {
+    return this.refusal?.recheckMemory
+  }
+
+  get hasClaimedContinuation(): boolean {
+    return this.continuationClaimed
+  }
+
+  claimContinuation(): void {
+    this.continuationClaimed = true
   }
 
   // A missing origin can inherit only when its admitted conversation contains this grant.
@@ -49,8 +78,13 @@ export class NotebookExecutionIntent {
     return stopped
   }
 
-  block(reason: string): string {
-    this.refusal ??= Object.freeze({ id: randomUUID(), reason })
+  block(reason: string, recheckMemory?: NotebookMemoryRecheck): string {
+    this.refusal ??= Object.freeze({
+      id: randomUUID(),
+      reason,
+      blockedAt: Date.now(),
+      recheckMemory
+    })
     return this.refusal.id
   }
 
@@ -75,7 +109,7 @@ export class NotebookExecutionIntent {
     this.userMemoryRecheck = undefined
     if (!this.userPreparationPending) return
     this.userPreparationPending = false
-    this.block('user-execution-preparation-not-committed')
+    this.block(ABANDONED_NOTEBOOK_PREPARATION)
   }
 
   assertExecutable(): void {
@@ -157,9 +191,19 @@ export const markNotebookExecutionIntent = (
 export const notebookExecutionCredential = (request: object): string | undefined =>
   (request as { [credentialKey]?: string })[credentialKey]
 
+export type NotebookTaskContinuationOperation = Readonly<{
+  projectId: string
+  refusalId: string
+  task: { branchId: string; promptMessageId: string }
+  assertCurrent(): void
+}>
+
 type NotebookUserOperation = Readonly<{
   refusalId?: string
   projectId?: string
+  desktopContinuation?: true
+  admissionSignal?: AbortSignal
+  task?: NotebookTaskContinuationOperation['task']
   assertCurrent(): void
 }>
 const userOperationKey = Symbol('Trusted Notebook user operation')
@@ -246,7 +290,8 @@ export class NotebookExecutionIntentOwner {
               projectId,
               sessionId,
               refusalId: intent.refusalId,
-              messageBranchId: intent.scope.messageBranchId
+              messageBranchId: intent.scope.messageBranchId,
+              ...(intent.recheckMemory ? { kind: 'memory' as const } : {})
             }
           ]
         : []
@@ -315,7 +360,8 @@ export class NotebookExecutionIntentOwner {
           projectId,
           sessionId,
           refusalId: intent.refusalId,
-          messageBranchId: intent.scope.messageBranchId
+          messageBranchId: intent.scope.messageBranchId,
+          ...(intent.recheckMemory ? { kind: 'memory' as const } : {})
         }
       ]
     })

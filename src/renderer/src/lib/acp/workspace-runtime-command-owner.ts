@@ -113,7 +113,7 @@ type SendWorkspaceMessageIntent = {
   requireExistingSession?: boolean
   turnIntent?: 'plan-first'
   // One human click; consumed only by fresh prompt dispatch and never persisted.
-  notebookContinuation?: { refusalId: string; messageBranchId?: string }
+  notebookContinuation?: { refusalId: string; messageBranchId?: string; kind?: 'memory' }
   attachments?: UploadedAttachment[]
   annotations?: annotationProtocol.Annotation[]
   cwd?: string
@@ -256,7 +256,8 @@ const rejectPreparedPrompt = async (
   rejected:
     ((error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void) | undefined,
   providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined,
-  rawError?: unknown
+  rawError?: unknown,
+  showConversationError = true
 ): Promise<void> => {
   if (preparingSessionAttempts.get(sessionId)?.cancelled) return
   if (preparation && !ownsWorkspacePromptPreparation(preparation)) return
@@ -271,7 +272,8 @@ const rejectPreparedPrompt = async (
   if (attempt) attempt.rollback = cleanup
   if (preparation) withdrawWorkspacePrompt(preparation)
   markPendingSessionRetryable(sessionId)
-  reportWorkspaceOperationError(sessionId, message, { providerTarget, rawError })
+  if (showConversationError)
+    reportWorkspaceOperationError(sessionId, message, { providerTarget, rawError })
   rejected?.(message, sessionId, restoredAttachments)
   void cleanup?.then(({ failure }) => {
     if (failure !== undefined) console.warn('Unsent prompt rollback failed', failure)
@@ -314,6 +316,16 @@ const notebookBranchMatches = (
   )
 }
 
+export class NotebookContinuationBranchError extends Error {
+  constructor() {
+    super(
+      i18next.t(
+        'Return to the conversation branch where Notebook execution stopped before continuing.'
+      )
+    )
+  }
+}
+
 const ownsPrompt = (sessionId: string, messageId: string): boolean => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
   return session?.status === 'running' && session.activeRun?.promptMessageId === messageId
@@ -335,7 +347,7 @@ type PromptDispatch = {
     contextReset?: boolean
   }
   turnIntent?: SendWorkspaceMessageIntent['turnIntent']
-  notebookContinuation?: { refusalId: string; projectId: string }
+  notebookContinuation?: { refusalId: string; projectId: string; kind?: 'memory' }
   accepted?: () => void
   onPromptAccepted?: SendWorkspaceMessageIntent['onPromptAccepted']
   preparation?: WorkspacePromptPreparation
@@ -371,8 +383,9 @@ const dispatchPrompt = (
   void admission.then((accepted) => {
     if (accepted) request.onPromptAccepted?.()
   })
+  const memoryRecheck = request.notebookContinuation?.kind === 'memory'
   const unsubscribe = useSessionStore.subscribe(() => {
-    if (!request.preparation) return
+    if (!request.preparation || memoryRecheck) return
     const session = useSessionStore
       .getState()
       .sessions.find((candidate) => candidate.id === request.sessionId)
@@ -421,7 +434,8 @@ const dispatchPrompt = (
           i18next.t('Notebook continuation is unavailable. Update the application before retrying.')
         )
       result = runtime.continueNotebookExecution({
-        ...request.notebookContinuation,
+        projectId: request.notebookContinuation.projectId,
+        refusalId: request.notebookContinuation.refusalId,
         sessionId: request.sessionId,
         text: preparedAnnotations.promptText,
         attachments: request.attachments,
@@ -473,7 +487,9 @@ const dispatchPrompt = (
           message,
           request.preparation,
           request.rejected,
-          request.providerTarget
+          request.providerTarget,
+          error,
+          !memoryRecheck
         )
       }
       resolveAdmission(false)
@@ -1649,11 +1665,7 @@ const performSendWorkspaceMessage = async (
     }
     if (!notebookBranchMatches(sessionId, input.notebookContinuation?.messageBranchId)) {
       await rollbackWorkspacePrompt(promptPreparation)
-      throw new Error(
-        i18next.t(
-          'Return to the conversation branch where Notebook execution stopped before continuing.'
-        )
-      )
+      throw new NotebookContinuationBranchError()
     }
     if (input.truncateFromMessageId) {
       useSessionStore
@@ -1768,7 +1780,11 @@ const performSendWorkspaceMessage = async (
         turnIntent: input.turnIntent,
         notebookContinuation:
           input.notebookContinuation && projectId
-            ? { refusalId: input.notebookContinuation.refusalId, projectId }
+            ? {
+                refusalId: input.notebookContinuation.refusalId,
+                kind: input.notebookContinuation.kind,
+                projectId
+              }
             : undefined,
         onPromptAccepted: input.onPromptAccepted,
         accepted: () => prepared.acceptPrompt(appended.messageId),
@@ -1790,8 +1806,9 @@ const performSendWorkspaceMessage = async (
         rejected: input.onPreparationRejected
       })
       if (attempt) attempt.promptAdmission = admission
-      if (lifecycle.awaitPromptAdmission && !(await admission))
-        return attempt?.cancelled && attempt.dispatched ? appended : undefined
+      const memoryRecheck = input.notebookContinuation?.kind === 'memory'
+      if ((lifecycle.awaitPromptAdmission || memoryRecheck) && !(await admission))
+        return !memoryRecheck && attempt?.cancelled && attempt.dispatched ? appended : undefined
     } catch (error) {
       if (ownsWorkspacePromptPreparation(promptPreparation)) {
         await rejectPreparedPrompt(
@@ -1929,11 +1946,7 @@ const sendWorkspaceMessage = async (
   const sessionId = input.sessionId
   const previousSession = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
   if (!notebookBranchMatches(sessionId, input.notebookContinuation?.messageBranchId)) {
-    throw new Error(
-      i18next.t(
-        'Return to the conversation branch where Notebook execution stopped before continuing.'
-      )
-    )
+    throw new NotebookContinuationBranchError()
   }
   if (
     input.notebookContinuation &&

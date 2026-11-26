@@ -9,7 +9,11 @@ import { pipeline } from 'node:stream/promises'
 
 import { createLogger, errorLogFields, type Logger } from '@aipoch/diagnostics/node'
 import { normalizeMessagesRootUrl } from '@aipoch/providers/protocol'
-import { fetchProviderRequest } from '@aipoch/providers/transport'
+import {
+  fetchProviderRequest,
+  withProviderRequestPolicy,
+  type ProviderRequestPolicy
+} from '@aipoch/providers/transport'
 import {
   copyProviderResponseHeaders,
   PROVIDER_HOP_BY_HOP_HEADERS,
@@ -52,6 +56,7 @@ export type MessagesBridgeTarget = Readonly<{
   isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   baseUrl: string
   key?: string
+  requestPolicy?: ProviderRequestPolicy
   model: string
   backgroundModel?: string
   useApiKeyHeader?: boolean
@@ -211,7 +216,10 @@ export class MessagesBridge {
     let upstream: Response
     try {
       upstream = await fetchProviderRequest(
-        withProviderConnectionMarker(this.fetchImpl, response),
+        withProviderConnectionMarker(
+          withProviderRequestPolicy(this.fetchImpl, target.requestPolicy, target.key),
+          response
+        ),
         upstreamUrl,
         {
           allowInsecureHttp,

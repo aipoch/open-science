@@ -4554,6 +4554,199 @@ it.each([
   }
 })
 
+it('excludes local Plan and AskUser ownership and receipts from the archive and resulting Fork', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  initDataRoot(target.storageRoot)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  const scope = { projectId: 'project-1', sessionId: 'session-1' }
+  const sourceSessions = new SessionRepository(source.storageRoot)
+  const document = {
+    schema_version: 1 as const,
+    task_summary: 'Compare groups.',
+    phases: [
+      {
+        name: 'Analysis',
+        delegations: [
+          {
+            name: 'Comparison',
+            steps: [{ title: 'Compare groups', description: 'Compute group means.' }]
+          }
+        ]
+      }
+    ],
+    desired_outputs: ['Group means'],
+    feasibility: { confidence: 'high' as const, rationale: 'The two groups are available.' }
+  }
+  const content = JSON.stringify(document, null, 2)
+  await source.compatibilityRepository.writePendingFile({
+    projectId: scope.projectId,
+    sessionId: 'artifact-session-1',
+    runId: 'artifact-run-1',
+    filename: 'plan.json',
+    mimeType: 'application/json',
+    source: { kind: 'inline', content, encoding: 'utf8' }
+  })
+  const version = await source.repository.createVersion(
+    createArtifactVersionRequest({
+      filename: 'plan.json',
+      contentType: 'application/json',
+      promptMessageId: 'plan-prompt'
+    })
+  )
+  await sourceSessions.saveSession({
+    id: scope.sessionId,
+    projectId: scope.projectId,
+    title: 'Plan outcome',
+    cwd: '',
+    status: 'idle',
+    messages: [
+      {
+        id: 'plan-prompt',
+        role: 'user',
+        content: 'Compare groups.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ],
+    activities: [
+      {
+        id: 'question-tool',
+        kind: 'tool',
+        title: 'Choose a statistic',
+        status: 'completed',
+        promptMessageId: 'plan-prompt',
+        sortIndex: 0,
+        eventIds: [],
+        createdAt: 2,
+        updatedAt: 2,
+        elicitation: {
+          message: 'Choose a statistic',
+          fields: [{ id: 'method', label: 'Statistic', kind: 'text' }],
+          state: 'answered',
+          answers: [{ fieldId: 'method', value: 'Median' }],
+          taskRequestId: 'local-question-id',
+          taskRunId: 'local-question-run',
+          taskResponse: {
+            action: 'accept',
+            source: 'user_relay',
+            reviewedRevision: 1,
+            checksum: 'a'.repeat(64)
+          }
+        }
+      }
+    ],
+    createdAt: 1,
+    updatedAt: 2,
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [],
+        questionRequests: [
+          {
+            requestId: 'child-question',
+            canonicalDigest: 'b'.repeat(64),
+            sourceFrameId: 'child-frame',
+            sourceAttemptId: 'child-attempt',
+            sourceRuntimeSegmentId: 'child-runtime',
+            sourceMessageBranchId: 'child-branch',
+            rootOriginMessageId: 'plan-prompt',
+            rootBranchId: 'root-branch',
+            sourceName: 'Statistics',
+            questions: [
+              {
+                question: 'Which statistic?',
+                options: [{ label: 'Median' }, { label: 'Mean' }]
+              }
+            ],
+            askedAt: 1,
+            status: 'confirmed',
+            draftAnswers: [],
+            draftQuestionIndex: 0,
+            answers: [{ questionIndex: 0, value: 'Median' }],
+            respondedAt: 2,
+            continuationAttemptId: 'continued-child-attempt',
+            taskResponse: { source: 'known_context', reviewedRevision: 1, checksum: 'c'.repeat(64) }
+          }
+        ]
+      },
+      plan: {
+        artifactId: version.artifactId,
+        artifactVersionId: version.versionId,
+        artifactChecksum: sha256(content),
+        document,
+        approval: 'approved',
+        originatingPromptMessageId: 'plan-prompt',
+        originatingTaskRunId: 'local-plan-run',
+        stepStatuses: {},
+        externalResponse: {
+          source: 'user_relay',
+          action: 'approved',
+          reviewedRevision: 0,
+          commandId: 'local-plan-receipt',
+          promptMessageId: 'plan-prompt',
+          handedOff: true
+        }
+      }
+    }
+  })
+  const saved = await sourceSessions.loadSession(scope.projectId, scope.sessionId)
+  expect(saved?.runtimeContext).toMatchObject({
+    plan: {
+      originatingTaskRunId: 'local-plan-run',
+      externalResponse: { commandId: 'local-plan-receipt' }
+    },
+    delegatedWork: { questionRequests: [{ taskResponse: { source: 'known_context' } }] }
+  })
+  expect(saved?.activities?.[0].elicitation?.taskRunId).toBe('local-question-run')
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  const archive = join(source.storageRoot, 'plan.science')
+  try {
+    await exporter.exportTo(scope, archive)
+    const expanded = join(source.storageRoot, 'plan-expanded')
+    await readPackageArchive(archive, expanded, new AbortController().signal)
+    const stored = await readFile(join(expanded, 'session.json'), 'utf8')
+    expect(stored).not.toContain('local-plan-receipt')
+    expect(stored).not.toContain('externalResponse')
+    expect(stored).not.toContain('local-question-id')
+    expect(stored).not.toContain('local-question-run')
+    expect(stored).not.toContain('local-plan-run')
+    expect(stored).not.toContain('taskResponse')
+    expect(stored).not.toContain('c'.repeat(64))
+    expect(stored).toContain('Which statistic?')
+    const imported = await importer.importFrom(archive)
+    const forked = await importer.fork(imported)
+    const forkedSession = await new SessionRepository(target.storageRoot).loadSession(
+      forked.projectId,
+      forked.sessionId
+    )
+    expect(forkedSession).toBeDefined()
+    expect(JSON.stringify(forkedSession)).not.toContain('local-plan-receipt')
+    expect(JSON.stringify(forkedSession)).not.toContain('local-question-id')
+    expect(JSON.stringify(forkedSession)).not.toContain('local-question-run')
+    expect(JSON.stringify(forkedSession)).not.toContain('local-plan-run')
+    expect(JSON.stringify(forkedSession)).not.toContain('taskResponse')
+    expect(forkedSession?.activities?.[0].elicitation?.answers).toEqual([
+      { fieldId: 'method', value: 'Median' }
+    ])
+  } finally {
+    await exporter.close()
+    await importer.close()
+  }
+})
+
 it('drops an undelivered Side Chat relay instead of blocking Session export', async () => {
   const source = await createProvenanceTestFixture()
   initDataRoot(source.storageRoot)

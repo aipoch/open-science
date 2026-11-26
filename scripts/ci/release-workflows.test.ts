@@ -1200,7 +1200,7 @@ describe('website mirror publication intent', () => {
     expect(dispatch.inputs.bootstrap_linux_arm64).toMatchObject({ default: false, type: 'boolean' })
     expect(publication.env?.BOOTSTRAP_LINUX_ARM64).toBe('${{ inputs.bootstrap_linux_arm64 }}')
     expect(publication.env?.MODE).toBe('${{ inputs.mode }}')
-    expect(publication.if).toBe('${{ !inputs.dry_run }}')
+    expect(publication.if).toBe('${{ !inputs.dry_run && !inputs.windows_delta_repair }}')
     expect(publication.run).toBe('node scripts/publish-update-channel.mjs')
   })
 })

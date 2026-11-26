@@ -1,4 +1,5 @@
 {
+  "build/mac-sparkle/driver.m": ["src/main/update/mac-sparkle.ts"],
   "packages/open-science/installation-startup.cjs": ["packages/open-science/launch-log.mjs"],
   "scripts/check-skill-package-boundary.mjs": [
     "src/main/skills/package-boundary.architecture.test.ts"

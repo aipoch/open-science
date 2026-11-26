@@ -197,7 +197,7 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
   for (const width of [320, 375, 390, 414, 768]) {
     await page.setViewportSize({ width, height: 800 })
 
-    await expect(page.getByRole('button', { name: 'Search' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeVisible()
     await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
     const updates = page.getByRole('region', { name: 'Session updates' })
     const cardGrid = updates.locator(':scope > div')

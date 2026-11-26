@@ -40,6 +40,19 @@ const localizeProviderResourceMessage = (message: string, t: TFunction): string 
   if (message.includes('Provider configuration changed. Your draft has not been saved.'))
     return t('Provider configuration changed. Your draft has not been saved.')
   switch (message) {
+    // CodeBuddy account validation can succeed while the selected framework cannot use the account.
+    case 'Switch the agent framework to CodeBuddy to use this subscription.':
+      return t('Switch the agent framework to {{framework}} to use this subscription.', {
+        framework: 'CodeBuddy'
+      })
+    case 'Enter a valid provider endpoint.':
+      return t('Enter a valid provider endpoint.')
+    case 'Cloudflare Account ID and Gateway ID are required.':
+      return t('Cloudflare Account ID and Gateway ID are required.')
+    case 'The provider returned an unexpected response. Check the API settings before retrying.':
+      return t(
+        'The provider returned an unexpected response. Check the API settings before retrying.'
+      )
     case 'The provider changed while loading models. Try again.':
       return t('The provider changed while loading models. Try again.')
     case 'Remote model URLs must use HTTPS. HTTP is only allowed for localhost or loopback addresses.':

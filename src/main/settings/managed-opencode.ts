@@ -9,17 +9,21 @@ import { chmod, cp, lstat, mkdir, open, readdir, rename, rm, writeFile } from 'n
 import { arch as osArch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { ClaudeInstallEvent } from '../../shared/settings'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
   defaultFetchTarball,
+  describeManagedInstallError,
   downloadAndVerify,
   extractFileFromTgz,
   type FetchJson,
   type FetchTarball,
   type ManagedInstallOutcome
 } from './managed-claude'
+
+const log = createLogger('managed-opencode')
 
 // App-managed OpenCode installer. opencode ships per-platform native packages
 // (`opencode-<os>-<arch>[-musl]`) as optionalDependencies of the `opencode-ai` wrapper, with the binary
@@ -407,7 +411,7 @@ export type InstallManagedOpencodeOptions = {
   installId: string
   onEvent: (event: ClaudeInstallEvent) => void
   dataRoot: string
-  registries?: string[]
+  registries?: readonly string[]
   version?: string
   platform?: OpencodePlatform
   fetchJson?: FetchJson
@@ -598,7 +602,8 @@ export const installManagedOpencode = async ({
     await mkdir(scratch, { recursive: true })
     await ensureOpencodeRuntimeOwnerMarker(scratch)
   } catch (error) {
-    lastError = error instanceof Error ? error.message : String(error)
+    lastError = describeManagedInstallError(error)
+    log.warn('failed to prepare OpenCode staging directory', { installId, error: lastError })
     onEvent({
       kind: 'log',
       installId,
@@ -672,7 +677,12 @@ export const installManagedOpencode = async ({
 
         throw new Error(first.error)
       } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error)
+        lastError = describeManagedInstallError(error)
+        log.warn('managed OpenCode registry attempt failed', {
+          installId,
+          registry,
+          error: lastError
+        })
         onEvent({
           kind: 'log',
           installId,

@@ -1,5 +1,5 @@
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import type { PrismaClient } from '@prisma/client'
+import { PrismaClient } from '@prisma/client'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -95,6 +95,63 @@ describe('PdfAnnotation persistence', () => {
       ).id
     ).toBe(created.id)
     expect(await client.pdfAnnotation.count()).toBe(1)
+  })
+
+  it('checks each distinct document once per list page, retaining scope, tags and cursor order', async () => {
+    for (let n = 0; n < 8; n++) await repository.create({ ...request, id: `note-${n}` })
+    const observed = new PrismaClient({
+      datasources: { db: { url: `file:${join(root, 'open-science.db')}?connection_limit=1` } },
+      log: [{ emit: 'event', level: 'query' }]
+    })
+    let queries = 0
+    observed.$on('query', () => {
+      queries++
+    })
+    const reader = new PdfAnnotationRepository(async () => observed)
+    try {
+      await reader.list({ ...scope, limit: 1 })
+      const one = queries
+      queries = 0
+      const first = await reader.list({ ...scope, limit: 6 })
+      expect(queries).toBe(one)
+      expect(first.nextCursor).toBeDefined()
+      const second = await reader.list({ ...scope, limit: 6, cursor: first.nextCursor })
+      const items = [...first.items, ...second.items]
+      expect(items.map((item) => item.id)).toEqual(Array.from({ length: 8 }, (_, n) => `note-${n}`))
+      for (const item of items) {
+        expect(item.tagIds).toEqual(['review'])
+        expect(item.target.source).toEqual(request.target.source)
+      }
+      const otherSource = {
+        ...request.target.source,
+        sourceFileId: 'file-2',
+        versionId: 'version-2',
+        path: 'upload-version:version-2',
+        checksum: 'b'.repeat(64)
+      }
+      await repository.create({
+        ...request,
+        id: 'other-note',
+        target: { ...request.target, source: otherSource }
+      })
+      queries = 0
+      const mixed = await reader.list(scope)
+      expect(queries).toBeGreaterThan(one)
+      expect(mixed.items.find((item) => item.id === 'other-note')?.target.source).toEqual(
+        otherSource
+      )
+      expect(
+        mixed.items.filter((item) => item.target.source.versionId === 'version-1')
+      ).toHaveLength(8)
+      // A prior listing must not authorize the next transaction after a deletion.
+      await client.project.update({
+        where: { id: scope.projectId },
+        data: { deletedAt: new Date() }
+      })
+      await expect(reader.list(scope)).rejects.toThrow('Project not available')
+    } finally {
+      await observed.$disconnect()
+    }
   })
 
   it('preserves creation provenance when a different Session restores or retries a shared note', async () => {
@@ -413,8 +470,66 @@ describe('PdfAnnotation persistence', () => {
           }
         }
       }
-      const global = await repository.create(input)
+      const global = await repository.create({ ...input, createdAt: '2026-09-19T00:00:00.000Z' })
       expect((await repository.list({ literatureVersionId: 'version-1' })).items).toEqual([global])
+      const later = await repository.create({
+        ...input,
+        id: 'document-note-a',
+        kind: 'document-note',
+        target: { ...input.target, selector: { kind: 'document-note', coordinateVersion: 1 } }
+      })
+      const preview = await repository.list({
+        literatureVersionId: 'version-1',
+        readingOrderPreview: true,
+        limit: 1
+      })
+      expect(preview.items).toEqual([later])
+      expect(preview.total).toBe(2)
+      expect(preview.nextCursor).toBeUndefined()
+      const region = {
+        kind: 'region',
+        pageNumber: 1,
+        pageRotation: 0,
+        coordinateVersion: 1,
+        rect: { x: 0.1, y: 0.2, width: 0.4, height: 0.03 }
+      } as const
+      const area = await repository.create({
+        ...input,
+        id: 'same-y-area',
+        kind: 'area',
+        createdAt: global.createdAt,
+        target: { ...input.target, selector: region }
+      })
+      const top = await repository.create({
+        ...input,
+        id: 'page-note-top',
+        kind: 'page-note',
+        target: {
+          ...input.target,
+          selector: { kind: 'page-note', pageNumber: 1, pageRotation: 0, coordinateVersion: 1 }
+        }
+      })
+      const last = await repository.create({
+        ...input,
+        id: 'area-next-page',
+        kind: 'area',
+        createdAt: '2020-01-01T00:00:00.000Z',
+        target: { ...input.target, selector: { ...region, pageNumber: 2 } }
+      })
+      expect(
+        (await repository.list({ literatureVersionId: 'version-1', readingOrderPreview: true }))
+          .items
+      ).toEqual([later, top, global, area, last])
+      expect(
+        (
+          await repository.list({
+            literatureVersionId: 'another-version',
+            readingOrderPreview: true
+          })
+        ).items
+      ).toEqual([])
+      for (const note of [later, area, top, last])
+        await repository.delete({ literatureVersionId: 'version-1', id: note.id })
       expect(
         (await repository.list({ literatureVersionId: 'another-version', id: global.id })).items
       ).toEqual([])

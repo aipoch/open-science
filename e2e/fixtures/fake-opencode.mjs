@@ -46,6 +46,8 @@ const VERSION = '1.0.0'
 const WSL_SETUP_DIAGNOSTICS_PROMPT = 'Verify WSL setup diagnostic tools.'
 const WSL_SETUP_UNAVAILABLE_PROMPT = 'Verify WSL setup tools are unavailable.'
 const PERMISSION_PROMPT = 'Request fixture permission.'
+const MEMORY_DENIAL_PROMPT = '请把测试用的周报格式保存到项目记忆里。'
+const PARTIAL_MEMORY_PROMPT = '请先读取记忆分类，再把测试用的周报格式保存到项目记忆里。'
 const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
 const MEMORY_RECALL_PROMPT = 'Verify automatic memory recall.'
 const MEMORY_RECALL_ENTRY = 'Keep every response concise and welcoming.'
@@ -179,6 +181,7 @@ const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 
 const sessionRoutes = new Map()
 const sessionCancellationResolvers = new Map()
+const notebookMemoryContinuationGates = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
@@ -3208,6 +3211,73 @@ if (process.argv.includes('--version')) {
           reply = await verifyComputeMonitor(context.params.sessionId)
         } else if (prompt.includes('Read Compute stop feedback.')) {
           reply = await verifyComputeMonitor(context.params.sessionId, true)
+        } else if (prompt.includes('Continue the blocked Notebook work. Keep completed results')) {
+          const sessionId = context.params.sessionId
+          const gate = notebookMemoryContinuationGates.get(sessionId)
+          if (!gate) {
+            await delay(8000)
+            reply = 'The Notebook continuation reached the original session.'
+          } else {
+            await waitForReleaseFile(gate.proceed, 120_000)
+            reply = await withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+              if (gate.outcome === 'reply') {
+                toolResult(
+                  'notebook_state',
+                  await client.callTool({ name: 'notebook_state', arguments: {} })
+                )
+                return 'Notebook status checked. Which dataset should I use?'
+              }
+              const result = await client.callTool(
+                {
+                  name: 'repl_execute',
+                  arguments: { code: 'return { marker: "memory-continuation-new-cell" }' }
+                },
+                undefined,
+                { timeout: 120_000 }
+              )
+              if (gate.outcome === 'pressured') {
+                if (
+                  !result.isError ||
+                  !JSON.stringify(result.content).includes('NOTEBOOK_MEMORY_PRESSURE')
+                )
+                  throw new Error(
+                    `Expected a fresh Notebook memory refusal: ${JSON.stringify(result)}`
+                  )
+                return 'Memory pressure prevented the continuation cell from running.'
+              }
+              const value = controlResultValue(toolResult('repl_execute', result))
+              if (value.marker !== 'memory-continuation-new-cell')
+                throw new Error('The new Notebook continuation cell did not run.')
+              return 'The new Notebook continuation cell ran.'
+            })
+            if (gate.outcome === 'execute') await waitForReleaseFile(gate.finish, 120_000)
+          }
+        } else if (prompt.includes('Verify Notebook history before a memory continuation.')) {
+          const run = await executeControlCode(
+            context.params.sessionId,
+            'return { marker: "memory-continuation-history" }'
+          )
+          if (controlResultValue(run).marker !== 'memory-continuation-history')
+            throw new Error('The historical Notebook cell did not run.')
+          reply = 'The historical Notebook cell ran.'
+        } else if (prompt.includes('Verify a Notebook memory refusal.')) {
+          if (prompt.includes('Continuation fixture: '))
+            notebookMemoryContinuationGates.set(
+              context.params.sessionId,
+              releaseGateFromPrompt(prompt, 'Continuation fixture: ')
+            )
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const refused = await client.callTool({
+              name: 'repl_execute',
+              arguments: { code: 'return { marker: "memory-refusal-must-not-run" }' }
+            })
+            if (
+              !refused.isError ||
+              !JSON.stringify(refused.content).includes('NOTEBOOK_MEMORY_PRESSURE')
+            )
+              throw new Error(`Expected a real Notebook memory refusal: ${JSON.stringify(refused)}`)
+          })
+          reply = 'The original Notebook request was refused.'
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
           reply = await verifyNotebookLifecycle(context.params.sessionId)
         } else if (prompt.includes(PERFORMANCE_NOTEBOOK_LIFECYCLE_PROMPT)) {
@@ -3832,6 +3902,91 @@ if (process.argv.includes('--version')) {
             throw new Error(`Delegated answers did not reach the continuation: ${prompt}`)
           } else {
             reply = 'Delegated answer continuation completed.'
+          }
+        } else if (
+          prompt.includes(MEMORY_DENIAL_PROMPT) &&
+          prompt.includes('Do not retry the denied operations or use another tool or route')
+        ) {
+          reply = '保存记忆的授权被拒绝，这次没有保存。'
+        } else if (
+          prompt.includes(MEMORY_DENIAL_PROMPT) ||
+          prompt.includes(PARTIAL_MEMORY_PROMPT)
+        ) {
+          const partialReply = prompt.includes('测试情形：只回复已读部分。')
+          if (partialReply) {
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'agent_message_chunk',
+                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+                content: { type: 'text', text: '我会先读取记忆分类。' }
+              }
+            })
+          }
+          if (prompt.includes(PARTIAL_MEMORY_PROMPT)) {
+            const categories = await withMcpClient(
+              context.params.sessionId,
+              'open-science-notebook',
+              async (client) =>
+                toolResult(
+                  'list_memory_categories',
+                  await client.callTool({ name: 'list_memory_categories', arguments: {} })
+                )
+            )
+            await context.client.notify(acp.methods.client.session.update, {
+              sessionId: context.params.sessionId,
+              update: {
+                sessionUpdate: 'tool_call',
+                toolCallId: makeToolCallId('memory-categories'),
+                title: 'mcp__open_science_notebook__list_memory_categories',
+                kind: 'other',
+                status: 'completed',
+                rawOutput: categories
+              }
+            })
+          }
+          const input = {
+            content: '周报按本周进展、当前阻塞、下周计划三个小节组织。',
+            analysis: {
+              scope: 'project',
+              durability: 'cross-session',
+              evidence: 'user-stated',
+              subject: '周报格式',
+              reason: '用户要求后续会话沿用该格式。'
+            }
+          }
+          const permission = await context.client.request(
+            acp.methods.client.session.requestPermission,
+            {
+              sessionId: context.params.sessionId,
+              toolCall: {
+                toolCallId: makeToolCallId('save-memory'),
+                title: 'mcp__open_science_notebook__remember_memory',
+                kind: 'other',
+                status: 'pending',
+                rawInput: input
+              },
+              options: [
+                { kind: 'allow_once', name: 'Allow once', optionId: 'allow-once' },
+                { kind: 'reject_once', name: 'Deny', optionId: 'deny-once' }
+              ]
+            }
+          )
+          if (
+            permission.outcome.outcome === 'selected' &&
+            permission.outcome.optionId === 'allow-once'
+          ) {
+            await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) =>
+              toolResult(
+                'remember_memory',
+                await client.callTool({ name: 'remember_memory', arguments: input })
+              )
+            )
+            reply = '已保存周报格式。'
+          } else if (partialReply) {
+            reply = '已读取记忆分类。'
+          } else {
+            return { stopReason: 'cancelled' }
           }
         } else if (prompt.includes(PERMISSION_PROMPT)) {
           const permission = await context.client.request(

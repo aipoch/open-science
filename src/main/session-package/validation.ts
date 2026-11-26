@@ -1,6 +1,6 @@
 import { imageTaskEvidenceMatches } from '../../shared/image-task'
 import { validateResearchFilms } from './research-films'
-import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -31,36 +31,55 @@ import { validatePackageWebEvidence } from './web-evidence'
 // A validation database contains only the current schema until package rows are published into it.
 // Build that immutable seed once per process, then copy it into each isolated validation directory.
 // This keeps every validation independent while avoiding a full migration walk for every import.
-let validationDatabaseSeed: Promise<string> | undefined
+const validationDatabaseSeeds = new Map<string, Promise<string>>()
 const validationDatabaseSeedRoots = new Set<string>()
 
 process.once('exit', () => {
   for (const root of validationDatabaseSeedRoots) rmSync(root, { recursive: true, force: true })
 })
 
-const getValidationDatabaseSeed = (): Promise<string> => {
-  if (!validationDatabaseSeed) {
-    const pending = (async () => {
-      const root = await mkdtemp(join(tmpdir(), 'open-science-package-validation-seed-'))
-      validationDatabaseSeedRoots.add(root)
-      const client = createProjectDbClient(root)
+const getValidationDatabaseSeed = (temporaryRoot: string): Promise<string> => {
+  const existing = validationDatabaseSeeds.get(temporaryRoot)
+  if (existing) return existing
+  const prune = async (): Promise<void> => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000
+    const entries = await readdir(temporaryRoot, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith('open-science-package-validation-seed-'))
+        continue
+      const root = join(temporaryRoot, entry.name)
+      if (validationDatabaseSeedRoots.has(root)) continue
       try {
-        await migrateApplicationDatabase(client)
-        await client.$disconnect()
-        return join(root, 'open-science.db')
-      } catch (error) {
-        await client.$disconnect().catch(() => undefined)
-        validationDatabaseSeedRoots.delete(root)
-        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
-        throw error
+        if ((await stat(root)).mtimeMs < cutoff)
+          await rm(root, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 })
+      } catch {
+        // A racing process or unreadable entry must not block validation.
       }
-    })()
-    validationDatabaseSeed = pending
-    pending.catch(() => {
-      if (validationDatabaseSeed === pending) validationDatabaseSeed = undefined
-    })
+    }
   }
-  return validationDatabaseSeed
+  const pending = (async () => {
+    await mkdir(temporaryRoot, { recursive: true, mode: 0o700 })
+    await prune()
+    const root = await mkdtemp(join(temporaryRoot, 'open-science-package-validation-seed-'))
+    validationDatabaseSeedRoots.add(root)
+    const client = createProjectDbClient(root)
+    try {
+      await migrateApplicationDatabase(client)
+      await client.$disconnect()
+      return join(root, 'open-science.db')
+    } catch (error) {
+      await client.$disconnect().catch(() => undefined)
+      validationDatabaseSeedRoots.delete(root)
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      throw error
+    }
+  })()
+  validationDatabaseSeeds.set(temporaryRoot, pending)
+  pending.catch(() => {
+    if (validationDatabaseSeeds.get(temporaryRoot) === pending)
+      validationDatabaseSeeds.delete(temporaryRoot)
+  })
+  return pending
 }
 
 export const assertPortablePackageStorageKey = (key: string): void => {
@@ -262,7 +281,7 @@ export const validatePackageRecords = async (
       if (records.imageTasks?.length) throw new Error('Image task source Version is missing.')
       return
     }
-    await copyFile(await getValidationDatabaseSeed(), join(root, 'open-science.db'))
+    await copyFile(await getValidationDatabaseSeed(temporaryRoot), join(root, 'open-science.db'))
     client = createProjectDbClient(root)
     reportValidation(0.6)
     const projectIds = new Set([manifest.source.projectId])

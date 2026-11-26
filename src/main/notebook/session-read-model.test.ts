@@ -150,6 +150,40 @@ describe('NotebookSessionReadModel', () => {
     await expect(readModel.runEvidence('project', 'session', 'absent')).resolves.toBeNull()
   })
 
+  it('transfers figure descriptors first and only the selected capture on demand', async () => {
+    const root = await createRoot()
+    const session = makeSession(root)
+    const { projectId, sessionId, lane } = session
+    const request = { projectId, sessionId, workspaceCwd: session.cwd }
+    const repository = new NotebookRunRepository(root)
+    await repository.loadOrCreate({ ...request, lane })
+    const outputs: NotebookRunRecord['outputs'] = [
+      { type: 'display', data: { 'image/png': 'RklSU1Q=', 'text/plain': 'chart' } },
+      { type: 'display', data: { 'image/png': 'U0VDT05E' } }
+    ]
+    await repository.appendRun({ projectId, sessionId, lane, run: makeRun({ outputs }) })
+    const model = makeReadModel(root, session)
+    const projected = await model.state(
+      session,
+      ['run-1'],
+      undefined,
+      undefined,
+      100,
+      undefined,
+      true
+    )
+    expect(projected.runs[0].outputs).toEqual([
+      { type: 'display', data: { 'text/plain': 'chart' }, deferredImageTypes: ['image/png'] },
+      { type: 'display', data: {}, deferredImageTypes: ['image/png'] }
+    ])
+    const figure = { ...request, runId: 'run-1', outputIndex: 1, mimeType: 'image/png' }
+    expect(await model.runFigure(projectId, sessionId, figure, session)).toBe('U0VDT05E')
+    expect(
+      await model.runFigure(projectId, sessionId, { ...figure, outputIndex: 2 }, session)
+    ).toBeNull()
+    expect((await model.state(session, ['run-1'])).runs[0].outputs).toEqual(outputs)
+  })
+
   it('reuses the foreground summary populated during live kernel loading', async () => {
     const root = await createRoot()
     const session = makeSession(root)
@@ -778,3 +812,54 @@ it.each(['live', 'imported'])(
     expect(ids.sort()).toEqual(['large-0', 'large-1', 'large-2'])
   }
 )
+
+it('recovers an old Shell receipt from disk after a timeout and a fresh read model', async () => {
+  const storageRoot = await createRoot()
+  const session = makeSession(storageRoot)
+  const { projectId, sessionId, lane } = session
+  const writer = new NotebookRunRepository(storageRoot)
+  await writer.loadOrCreate({ projectId, sessionId, lane, workspaceCwd: storageRoot })
+  const stdout = JSON.stringify({ data: 'x'.repeat(18000), _handoff: { orderId: 'saved-order' } })
+  await writer.appendRun({
+    projectId,
+    sessionId,
+    lane,
+    run: makeRun({
+      runId: 'outline',
+      kernelKind: 'bash',
+      text: { stdout, stderr: '', traceback: '', plain: [] }
+    })
+  })
+  for (let index = 0; index < 12; index++) {
+    await writer.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: makeRun({
+        runId: `later-${index}`,
+        startedAt: index + 2,
+        kernelKind: 'bash',
+        status: index === 11 ? 'timeout' : 'completed'
+      })
+    })
+  }
+  // Reopen the repository without any original interpreter or in-memory run cache.
+  const reader = new NotebookRunRepository(storageRoot)
+  const model = makeReadModel(storageRoot, undefined, reader)
+  const recovered = await model.importedState(
+    { projectId, sessionId, workspaceCwd: storageRoot },
+    ['outline'],
+    undefined,
+    undefined,
+    10
+  )
+  expect(recovered.runs.find((run) => run.runId === 'outline')?.text.stdout).toBe(stdout)
+  const foreign = await model.importedState(
+    { projectId, sessionId: 'other-session', workspaceCwd: storageRoot },
+    ['outline'],
+    undefined,
+    undefined,
+    10
+  )
+  expect(foreign.runs).toEqual([])
+})

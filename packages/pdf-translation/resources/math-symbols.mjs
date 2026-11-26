@@ -53,7 +53,8 @@ export const nativeMathSymbolText = (object, fontName, expectsPlanckSymbol = fal
 // and digit slots belong to unrelated symbols and are deliberately excluded.
 export const nativeMathAlphabet = (object, fontName) =>
   /^(?:[A-Z]{6}\+)?(?:CMSY|MSBM)(?:5|6|7|8|9|10|12)$/u.test(fontName) &&
-  /^(?:[\p{Sm}]\s*)?[A-Z]$/u.test(object.text.trim()) &&
+  (/^(?:[\p{Sm}]\s*)?[A-Z]$/u.test(object.text.trim()) ||
+    (/^(?:[A-Z]{6}\+)?CMSY/u.test(fontName) && /^\|[A-Z]\|$/u.test(object.text.trim()))) &&
   object.bounds[2] > object.bounds[0] &&
   object.bounds[3] > object.bounds[1]
 

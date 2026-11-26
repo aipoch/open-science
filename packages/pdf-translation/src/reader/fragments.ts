@@ -83,6 +83,27 @@ export function pdfTranslationLayoutFragments(
       Math.abs(a.y - b.y) * page.height <= 0.1 &&
       Math.abs(a.height - b.height) * page.height <= 0.1 &&
       Math.abs(b.x - a.x - a.width) * page.width <= 0.25
+    // A short last line ending in a citation is not a narrower column. Only
+    // borrow its empty right margin under a multi-line, flush-left prose run.
+    const citationTail =
+      !unit.sourceOnly &&
+      !unit.figure &&
+      !unit.preserve &&
+      !unit.referenceBoundary &&
+      fragment === unit.fragments.at(-1) &&
+      unit.fragments.length >= 3 &&
+      /\[\d{1,4}(?:,\s*\d{1,4})+\]\.$/u.test(unit.source) &&
+      previous.items.length >= 2 &&
+      fragment.items.length === 1 &&
+      unit.source.endsWith(fragment.items[0].text.trim()) &&
+      a.height >= b.height * 1.8 &&
+      b.width < a.width &&
+      Math.abs(a.x - b.x) * page.width <= 0.5 &&
+      gap >= 0 &&
+      gap <= 2 &&
+      !source.originalRegions?.some(
+        (region) => region.pageNumber === fragment.pageNumber && intersects(rect, region.rect)
+      )
     if (
       (splitCaptionPanelRow ||
         (b.y > a.y &&
@@ -92,7 +113,8 @@ export function pdfTranslationLayoutFragments(
           gap <= 2 &&
           // A paragraph can narrow beside a figure. Keep that change in footprint
           // instead of filling its bounding rectangle across the neighboring graphic.
-          (overlap >= Math.max(a.width, b.width) * 0.8 ||
+          (citationTail ||
+            overlap >= Math.max(a.width, b.width) * 0.8 ||
             (isPdfTranslationCaption(unit.source) &&
               fragment === unit.fragments.at(-1) &&
               Math.abs(a.x - b.x) * page.width <= 1 &&
@@ -131,9 +153,35 @@ export function pdfTranslationLayoutFragments(
       { rect, pageNumber } = fragment,
       page = source.pages[pageNumber - 1],
       right = rect.x + rect.width
+    // A short final line of a split paragraph can use the preceding line's
+    // column width. Require adjacent prose and a shared left boundary or a
+    // modest indent, then apply the same neighbor and native-paint checks.
+    const previousUnit = source.units[source.units.indexOf(unit) - 1],
+      previousLine = previousUnit?.fragments.at(-1),
+      previousRect = previousLine?.rect,
+      gap = previousRect ? (rect.y - previousRect.y - previousRect.height) * page.height : Infinity,
+      continuation =
+        shortLine &&
+        /^[a-z]{2,} /u.test(unit.source) &&
+        previousUnit &&
+        !previousUnit.sourceOnly &&
+        !/[.!?。！？]$/u.test(previousUnit.source.trimEnd()) &&
+        (previousUnit.source.match(/\p{L}{2,}/gu)?.length ?? 0) >= 8 &&
+        previousLine?.pageNumber === pageNumber &&
+        previousRect &&
+        gap >= -2 &&
+        gap <= 2 &&
+        Math.abs(previousRect.x - rect.x) * page.width <= 48 &&
+        previousRect.width >= rect.width * 1.5
+    const localMargin = right + Math.min(24, rect.height * page.height * 2) / page.width
     let end = Math.min(
       1 - 2 / page.width,
-      right + Math.min(24, rect.height * page.height * 2) / page.width
+      continuation
+        ? Math.max(
+            localMargin,
+            Math.min(right + 96 / page.width, previousRect.x + previousRect.width)
+          )
+        : localMargin
     )
     for (const other of source.units) {
       if (other === unit) continue

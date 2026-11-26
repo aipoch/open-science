@@ -6,6 +6,7 @@ import { ScheduleCardsProvider } from './schedules/ScheduleMessageCard'
 import { ResearchVideoButton } from '../../components/research-video-button'
 import type { TFunction } from 'i18next'
 import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
+import { NotebookMemoryContinuationNotice } from './NotebookMemoryNoticeBridge'
 import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
 import {
@@ -111,7 +112,15 @@ import {
   WandSparkles,
   X
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   DelegatedWorkUnavailableReason,
@@ -227,6 +236,29 @@ const composerCancelButtonClassName = cn(
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-000 hover:bg-bg-300 focus-visible:keyboard-focus',
   composerInteractiveTransitionClassName
 )
+const ComposerDock = ({
+  pending,
+  isNewConversation,
+  children
+}: {
+  pending: boolean
+  isNewConversation: boolean
+  children: React.ReactNode
+}): React.JSX.Element => (
+  <div
+    data-testid="conversation-composer-dock"
+    data-placement={isNewConversation ? 'start' : 'bottom'}
+    aria-hidden={pending || undefined}
+    className={cn(
+      'relative shrink-0',
+      pending && 'h-24 md:h-20',
+      isNewConversation && 'min-h-0 flex-1 overflow-y-auto'
+    )}
+  >
+    {pending ? null : children}
+  </div>
+)
+
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
 const attachmentChipClassName =
   'flex h-9 min-w-0 max-w-[220px] items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 text-text-000'
@@ -897,7 +929,12 @@ const ConversationPanel = ({
     activeSession !== undefined &&
     (backgroundTasks.summary.activeCount > 0 || backgroundTasks.summary.totalTasks > 0)
   const [backgroundTasksExpanded, setBackgroundTasksExpanded] = useState(false)
-  const isImported = Boolean(activeSession?.packageOrigin)
+  const isImported = !!activeSession && isImportedSession(activeSession)
+  const historyLoading = activeSession?.contentLoaded === false && !activeSession.historyPage
+  // Commit navigation before mounting a ready (including cached) imported transcript.
+  const readyImportId = isImported && !historyLoading ? activeSession.id : null
+  const deferredImportId = useDeferredValue(readyImportId, null)
+  const importPending = isImported && (historyLoading || readyImportId !== deferredImportId)
   const pendingInteractionFactsBySession = useSessionPendingInteractions()
   const pendingInteractionFacts =
     activeSession && !isImported
@@ -1976,8 +2013,7 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        {isNewConversation ? null : activeSession?.contentLoaded === false &&
-          !activeSession.historyPage ? (
+        {isNewConversation ? null : historyLoading || importPending ? (
           sessionLoadError ? (
             <div className="flex min-h-0 flex-1 items-center justify-center p-6">
               <SessionPersistenceAlert
@@ -2047,10 +2083,9 @@ const ConversationPanel = ({
           </ScheduleCardsProvider>
         )}
 
-        <div
-          data-testid="conversation-composer-dock"
-          data-placement={isNewConversation ? 'start' : 'bottom'}
-          className={cn('relative shrink-0', isNewConversation && 'min-h-0 flex-1 overflow-y-auto')}
+        <ComposerDock
+          pending={importPending || (isImported && !activeSession?.packageOrigin)}
+          isNewConversation={isNewConversation}
         >
           <div
             aria-hidden="true"
@@ -2076,6 +2111,7 @@ const ConversationPanel = ({
                 />
               )}
               <div className="px-1 md:px-3">
+                <NotebookMemoryContinuationNotice session={activeSession} />
                 <ComposerNoticeSlot
                   draftConflict={
                     composerError === DISCUSSION_DRAFT_CONFLICT
@@ -2341,6 +2377,7 @@ const ConversationPanel = ({
                           elicitation={pendingElicitation}
                           request={pendingElicitationRequest}
                           onRespond={onRespondToElicitation}
+                          hasModelConfiguration={modelConfiguration !== undefined}
                         />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
@@ -3915,7 +3952,7 @@ const ConversationPanel = ({
               ) : null}
             </div>
           </div>
-        </div>
+        </ComposerDock>
 
         {/* Remount on each open so editable report state resets, then stay mounted for Radix's exit. */}
         <ReportErrorDialog

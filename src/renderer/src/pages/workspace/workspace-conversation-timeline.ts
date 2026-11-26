@@ -42,8 +42,18 @@ type ConversationTurnOutcomeItem = {
   outcome: Extract<TurnOutcome, { kind: 'failed' }>
 }
 
+type ConversationPermissionDenialItem = {
+  id: string
+  type: 'permission-denial'
+  createdAt: number
+  sortIndex: number
+}
+
 type WorkspaceConversationTimelineItem =
-  GroupedConversationItem | ConversationTurnCompletionItem | ConversationTurnOutcomeItem
+  | GroupedConversationItem
+  | ConversationTurnCompletionItem
+  | ConversationTurnOutcomeItem
+  | ConversationPermissionDenialItem
 
 type CurrentTurnOutcomeItem = {
   promptMessageId: string
@@ -209,7 +219,9 @@ const createWorkspaceConversationTimeline = (
   const legacyOutcome =
     latestPrompt &&
     !latestPrompt.turnOutcome &&
-    (session.status === 'error' || session.resumeRecovery)
+    (session.status === 'error' ||
+      session.resumeRecovery ||
+      session.runtimeTranscriptLastRun?.promptMessageId === latestPrompt.id)
       ? resolveTurnOutcome(session, latestPrompt.id)
       : undefined
   // Older files can omit responseToMessageId. Only the latest eligible legacy turn can
@@ -226,11 +238,34 @@ const createWorkspaceConversationTimeline = (
   const activePromptMessageId = openPromptMessageId(session)
   const resolveActivityPrompt = createActivityPromptResolver(session)
   const lastItemIndexByPromptId = new Map<string, number>()
+  const unansweredDeclines = new Set<string>()
   groupedItems.forEach((item, index) => {
     const promptId =
       resolveTimelineItemPrompt(item, resolveActivityPrompt) ??
       (legacyResponseIds.has(item.id) ? latestPrompt?.id : undefined)
     if (promptId) lastItemIndexByPromptId.set(promptId, index)
+    if (!includeTurnOutcomes || !promptId) return
+
+    if (
+      item.type === 'message' &&
+      item.message.role === 'agent' &&
+      item.message.status === 'complete' &&
+      (item.message.content.trim() ||
+        item.message.images?.length ||
+        item.message.artifactIds?.length)
+    ) {
+      unansweredDeclines.delete(promptId)
+    } else if (
+      item.type === 'activity-group'
+        ? item.activities.some(
+            (activity) =>
+              activity.toolDisposition === 'declined' &&
+              resolveActivityPrompt(activity) === promptId
+          )
+        : 'activity' in item && item.activity.toolDisposition === 'declined'
+    ) {
+      unansweredDeclines.add(promptId)
+    }
   })
   const itemIndexById = new Map(groupedItems.map((item, index) => [item.id, index]))
   const completionsByItemIndex = new Map<number, ConversationTurnCompletionItem[]>()
@@ -265,18 +300,32 @@ const createWorkspaceConversationTimeline = (
   }
 
   const outcomesByItemIndex = new Map<number, ConversationTurnOutcomeItem[]>()
+  const denialsByItemIndex = new Map<number, ConversationPermissionDenialItem>()
   for (const message of includeTurnOutcomes ? session.messages : []) {
     if (!eligiblePrompt(message)) continue
+    const outcome =
+      message.turnOutcome ?? (message.id === latestPrompt?.id ? legacyOutcome : undefined)
+    const itemIndex = lastItemIndexByPromptId.get(message.id)
+    if (!outcome || itemIndex === undefined) continue
+    if (
+      !session.packageOrigin &&
+      message.id !== activePromptMessageId &&
+      unansweredDeclines.has(message.id) &&
+      !isInheritedForkTurn(session, message.id)
+    ) {
+      denialsByItemIndex.set(itemIndex, {
+        id: `permission-denial-${message.id}`,
+        type: 'permission-denial',
+        createdAt: outcome.settledAt,
+        sortIndex: (message.sortIndex ?? itemIndex) + 0.5
+      })
+    }
     // The latest visible outcome is actionable beside the composer. It becomes historical only
     // after Main admits another prompt and that new durable anchor becomes latestPrompt.
     if (message.id === currentOutcomePromptMessageId) continue
-    const outcome =
-      message.turnOutcome ?? (message.id === latestPrompt?.id ? legacyOutcome : undefined)
     // Historical interruption/cancellation has no presentation value. Keep its durable outcome and
     // transcript records, but only failed turns get compact historical details/actions.
-    if (!outcome || outcome.kind !== 'failed') continue
-    const itemIndex = lastItemIndexByPromptId.get(message.id)
-    if (itemIndex === undefined) continue
+    if (outcome.kind !== 'failed') continue
     const outcomeItem: ConversationTurnOutcomeItem = {
       id: `turn-outcome-${message.id}`,
       type: 'turn-outcome',
@@ -290,25 +339,29 @@ const createWorkspaceConversationTimeline = (
     else outcomesByItemIndex.set(itemIndex, [outcomeItem])
   }
 
-  return groupedItems.flatMap((item, index) => [
-    item,
-    ...(completionsByItemIndex
-      .get(index)
-      ?.toSorted(
-        (left, right) =>
-          left.createdAt - right.createdAt ||
-          left.sortIndex - right.sortIndex ||
-          left.id.localeCompare(right.id)
-      ) ?? []),
-    ...(outcomesByItemIndex
-      .get(index)
-      ?.toSorted(
-        (left, right) =>
-          left.createdAt - right.createdAt ||
-          left.sortIndex - right.sortIndex ||
-          left.id.localeCompare(right.id)
-      ) ?? [])
-  ])
+  return groupedItems.flatMap((item, index) => {
+    const denial = denialsByItemIndex.get(index)
+    return [
+      item,
+      ...(denial ? [denial] : []),
+      ...(completionsByItemIndex
+        .get(index)
+        ?.toSorted(
+          (left, right) =>
+            left.createdAt - right.createdAt ||
+            left.sortIndex - right.sortIndex ||
+            left.id.localeCompare(right.id)
+        ) ?? []),
+      ...(outcomesByItemIndex
+        .get(index)
+        ?.toSorted(
+          (left, right) =>
+            left.createdAt - right.createdAt ||
+            left.sortIndex - right.sortIndex ||
+            left.id.localeCompare(right.id)
+        ) ?? [])
+    ]
+  })
 }
 
 type CollapsedTurnProcess = {
@@ -330,7 +383,12 @@ const resolveCollapsibleTurnProcesses = (
   const resolveActivityPrompt = createActivityPromptResolver(session)
   const byPrompt = new Map<string, WorkspaceConversationTimelineItem[]>()
   for (const item of timeline) {
-    if (item.type === 'turn-completion' || item.type === 'turn-outcome') continue
+    if (
+      item.type === 'turn-completion' ||
+      item.type === 'turn-outcome' ||
+      item.type === 'permission-denial'
+    )
+      continue
     const promptId = resolveTimelineItemPrompt(item, resolveActivityPrompt)
     if (
       !promptId ||
@@ -373,7 +431,8 @@ const resolveCollapsibleTurnProcesses = (
         row !== terminalReply &&
         (row.type === 'message'
           ? row.message.role === 'agent'
-          : row.type === 'activity-group' ||
+          : (row.type === 'activity-group' &&
+              !row.activities.some((activity) => activity.toolDisposition === 'declined')) ||
             row.type === 'activity' ||
             row.type === 'compaction-activity')
     )

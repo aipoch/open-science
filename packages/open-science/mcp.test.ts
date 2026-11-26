@@ -1,6 +1,10 @@
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { registerMcpGroup } from './agent-mcp-readiness.mjs'
 import { createResearchMcpServer } from './mcp.mjs'
 import { OpenScienceApiError, OpenScienceClient } from './index.mjs'
 
@@ -25,8 +29,174 @@ async function harness(connect: ReturnType<typeof vi.fn>): Promise<{
   return { server, client }
 }
 
+async function groupedHarness(
+  connect: ReturnType<typeof vi.fn>,
+  group: 'core' | 'research' | 'literature',
+  options: { configRoot?: string; version?: string } = {}
+): Promise<{ server: ReturnType<typeof createResearchMcpServer>; client: Client }> {
+  const server = createResearchMcpServer({
+    configRoot: options.configRoot ?? '/test-profile',
+    version: options.version ?? '1.0.3',
+    connect,
+    group
+  })
+  const client = new Client({ name: 'test-agent', version: '1.0.0' })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  await client.connect(clientTransport)
+  cleanup.push(async () => {
+    await client.close()
+    await server.close()
+  })
+  return { server, client }
+}
+
+it.each([
+  ['core', 'doctor', 'get_setup_status', 'list_projects'],
+  ['research', 'list_projects', 'get_run', 'search_literature'],
+  ['literature', 'search_literature', 'get_literature_item', 'list_projects']
+] as const)(
+  'exposes only the %s MCP group tools',
+  async (group, expected, alsoExpected, excluded) => {
+    const { client } = await groupedHarness(vi.fn(), group)
+    const { tools } = await client.listTools()
+    const names = tools.map((tool) => tool.name)
+    expect(names).toContain(expected)
+    expect(names).toContain(alsoExpected)
+    expect(names).not.toContain(excluded)
+  }
+)
+
+it('blocks Research calls before service work when Core is not registered', async () => {
+  const connect = vi.fn()
+  const { client } = await groupedHarness(connect, 'research')
+  const result = await client.callTool({ name: 'list_projects' })
+  expect(result.isError).toBe(true)
+  expect(result.structuredContent).toMatchObject({
+    error: {
+      code: 'mcp_dependency_unavailable',
+      group: 'research',
+      dependency: 'core',
+      status: 'missing'
+    }
+  })
+  expect(connect).not.toHaveBeenCalled()
+})
+
+it('keeps grouped capability discovery available while a dependency is missing', async () => {
+  const connect = vi.fn()
+  const { client } = await groupedHarness(connect, 'core')
+  const result = await client.callTool({ name: 'list_capabilities' })
+  expect(result.isError).not.toBe(true)
+  expect(result.structuredContent).toMatchObject({
+    result: {
+      groups: {
+        discovery: expect.arrayContaining([expect.objectContaining({ name: 'list_capabilities' })])
+      },
+      mcp: { groups: { core: { status: 'missing' } } }
+    }
+  })
+  expect(connect).not.toHaveBeenCalled()
+})
+
+it('keeps grouped capability details available when the group needs reconnecting', async () => {
+  const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-discovery-reconnect-'))
+  const entry = await registerMcpGroup({
+    configRoot: profile,
+    group: 'core',
+    version: 'old-version',
+    capabilityNames: ['core'],
+    processId: 'stale-core',
+    now: () => new Date().toISOString()
+  })
+  await entry?.setState('connected')
+  const connect = vi.fn()
+  const { client } = await groupedHarness(connect, 'core', { configRoot: profile })
+  const result = await client.callTool({
+    name: 'describe_capability',
+    arguments: { name: 'doctor' }
+  })
+  expect(result.isError).not.toBe(true)
+  expect(result.structuredContent).toMatchObject({
+    result: { name: 'doctor', mcpGroup: 'core', inputSchema: expect.any(Object) }
+  })
+  expect(connect).not.toHaveBeenCalled()
+  await entry?.close()
+  await rm(profile, { recursive: true, force: true })
+})
+
+it.each([
+  ['version drift', 'old-version', ['list_capabilities'], 'version_mismatch'],
+  ['capability drift', '1.0.3', ['old-capability'], 'unconfirmed']
+] as const)('reports %s in grouped discovery', async (_label, version, capabilityNames, status) => {
+  const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-discovery-drift-'))
+  const entry = await registerMcpGroup({
+    configRoot: profile,
+    group: 'core',
+    version,
+    capabilityNames,
+    processId: `stale-${status}`,
+    now: () => new Date().toISOString()
+  })
+  await entry?.setState('connected')
+  const connect = vi.fn()
+  const { client } = await groupedHarness(connect, 'core', { configRoot: profile })
+  const result = await client.callTool({ name: 'list_capabilities' })
+  expect(result.isError).not.toBe(true)
+  expect(result.structuredContent).toMatchObject({
+    result: { mcp: { groups: { core: { status } } } }
+  })
+  await entry?.close()
+  await rm(profile, { recursive: true, force: true })
+})
+
+it.each([
+  ['profile mismatch', 'profile_mismatch'],
+  ['version mismatch', 'version_mismatch'],
+  ['expired heartbeat', 'unconfirmed']
+] as const)('blocks Core calls for %s before service work', async (_label, status) => {
+  const profile = await mkdtemp(join(tmpdir(), 'osci-mcp-boundary-'))
+  const entry = await registerMcpGroup({
+    configRoot: profile,
+    group: 'core',
+    version: status === 'version_mismatch' ? 'old-version' : '1.0.3',
+    capabilityNames: ['core'],
+    processId: `stale-${status}`,
+    now:
+      status === 'unconfirmed' ? () => '2026-11-23T00:00:00.000Z' : () => new Date().toISOString()
+  })
+  await entry?.setState('connected')
+  if (status === 'profile_mismatch') {
+    const [name] = await readdir(join(profile, 'runtime', 'mcp-groups'))
+    const path = join(profile, 'runtime', 'mcp-groups', name)
+    const value = JSON.parse(await readFile(path, 'utf8'))
+    await writeFile(path, JSON.stringify({ ...value, profile: '/stale/profile' }))
+  }
+  const connect = vi.fn()
+  const { client } = await groupedHarness(connect, 'core', { configRoot: profile })
+  const result = await client.callTool({ name: 'doctor' })
+  expect(result.isError).toBe(true)
+  expect(result.structuredContent).toMatchObject({
+    error: {
+      code: 'mcp_dependency_unavailable',
+      group: 'core',
+      status,
+      owner: 'deployment',
+      next: [
+        {
+          action: 'connect_mcp_group',
+          group: 'core',
+          args: ['mcp', '--group', 'core', '--profile', profile]
+        }
+      ]
+    }
+  })
+  expect(connect).not.toHaveBeenCalled()
+  await entry?.close()
+  await rm(profile, { recursive: true, force: true })
+})
+
 const cases = [
-  ['doctor', {}, '/api/v1/doctor', 'GET', undefined],
   ['list_runtimes', {}, '/api/v1/runtimes', 'GET', undefined],
   ['list_projects', {}, '/api/v1/projects', 'GET', undefined],
   [
@@ -38,10 +208,10 @@ const cases = [
   ],
   [
     'update_project',
-    { projectId: 'p/1', agentContext: null },
+    { projectId: 'p/1', expectedUpdatedAt: 4, agentContext: null },
     '/api/v1/projects/p%2F1',
     'PATCH',
-    { agentContext: null }
+    { expectedUpdatedAt: 4, agentContext: '' }
   ],
   ['list_sessions', { projectId: 'p/1' }, '/api/v1/sessions?project=p%2F1', 'GET', undefined],
   ['get_session', { sessionId: 's/1' }, '/api/v1/sessions/s%2F1', 'GET', undefined],
@@ -59,25 +229,6 @@ const cases = [
     'PATCH',
     { expectedRevision: 4, memoryEnabled: false }
   ],
-  [
-    'start_run',
-    {
-      projectId: 'p1',
-      sessionId: 's1',
-      prompt: 'Continue',
-      turnIntent: 'plan-first',
-      agentConfiguration: { model: null }
-    },
-    '/api/v1/runs',
-    'POST',
-    {
-      project: 'p1',
-      sessionId: 's1',
-      prompt: 'Continue',
-      turnIntent: 'plan-first',
-      agentConfiguration: { model: null }
-    }
-  ],
   ['get_run', { runId: 'r/1' }, '/api/v1/runs/r%2F1', 'GET', undefined],
   ['cancel_run', { runId: 'r/1' }, '/api/v1/runs/r%2F1/cancel', 'POST', undefined],
   ['get_plan', { sessionId: 's/1' }, '/api/v1/sessions/s%2F1/plan', 'GET', undefined],
@@ -85,18 +236,41 @@ const cases = [
     'respond_plan',
     {
       sessionId: 's/1',
-      response: { decision: 'approved', artifactVersionId: 'v1', expectedRevision: 3 }
+      decision: 'approved',
+      artifactVersionId: 'v1',
+      expectedRevision: 3,
+      expectedBranchId: 'b1',
+      source: 'user_relay'
     },
     '/api/v1/sessions/s%2F1/plan/respond',
     'POST',
-    { decision: 'approved', artifactVersionId: 'v1', expectedRevision: 3 }
+    {
+      decision: 'approved',
+      artifactVersionId: 'v1',
+      expectedRevision: 3,
+      expectedBranchId: 'b1',
+      source: 'user_relay'
+    }
   ],
   [
     'respond_plan',
-    { sessionId: 's/1', response: { feedback: 'Add controls' } },
+    {
+      sessionId: 's/1',
+      feedback: 'Add controls',
+      artifactVersionId: 'v1',
+      expectedRevision: 3,
+      expectedBranchId: 'b1',
+      source: 'user_relay'
+    },
     '/api/v1/sessions/s%2F1/plan/respond',
     'POST',
-    { feedback: 'Add controls' }
+    {
+      feedback: 'Add controls',
+      artifactVersionId: 'v1',
+      expectedRevision: 3,
+      expectedBranchId: 'b1',
+      source: 'user_relay'
+    }
   ],
   ['list_artifacts', { sessionId: 's/1' }, '/api/v1/sessions/s%2F1/artifacts', 'GET', undefined]
 ] as const
@@ -180,28 +354,33 @@ describe('research MCP tools', () => {
     const connect = vi.fn()
     const { client } = await harness(connect)
     const { tools } = await client.listTools()
-    expect(tools.map((tool) => tool.name).sort()).toEqual(
-      [
-        ...new Set(
-          [...cases, ...rpcCases, ...writeRpcCases, ['create_literature_item']].map(
-            ([name]) => name
-          )
-        )
-      ].sort()
+    expect(tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        ...[...cases, ...rpcCases, ...writeRpcCases].map(([name]) => name),
+        'create_literature_item',
+        'doctor',
+        'list_capabilities',
+        'describe_capability',
+        'get_agent_guide'
+      ])
     )
     for (const tool of tools) {
       expect(tool.name).toMatch(/^[a-z]+(?:_[a-z]+)*$/)
       expect(tool.description!.length).toBeGreaterThan(30)
       expect(tool.inputSchema.additionalProperties).toBe(false)
-      expect(tool.outputSchema).toBeDefined()
+      expect(tool.outputSchema).toMatchObject({ type: 'object' })
+      expect(tool.outputSchema).not.toHaveProperty('$schema')
       expect(typeof tool.annotations?.readOnlyHint).toBe('boolean')
     }
     expect(connect).not.toHaveBeenCalled()
   })
 
   it.each(cases)('%s preserves the SDK HTTP contract', async (name, args, path, method, body) => {
-    const fetch = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
-      Response.json({ data: { example: 'result' } })
+    const artifactList = name === 'list_artifacts'
+    const fetch = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async (url) =>
+      url.endsWith('/api/bootstrap')
+        ? Response.json({ taskCapabilities: ['task-interactions'] })
+        : Response.json({ data: artifactList ? [{ id: 'version-1' }] : { example: 'result' } })
     )
     const sdk = new OpenScienceClient({
       baseUrl: 'http://127.0.0.1:44100',
@@ -212,11 +391,13 @@ describe('research MCP tools', () => {
     const { client } = await harness(connect)
     const response = await client.callTool({ name, arguments: args })
     expect(response.isError).not.toBe(true)
-    expect(response.structuredContent).toEqual({ result: { example: 'result' } })
+    expect(response.structuredContent).toEqual({
+      result: artifactList ? [{ downloadId: 'version-1' }] : { example: 'result' }
+    })
     expect(response.content).toEqual([
       { type: 'text', text: JSON.stringify(response.structuredContent) }
     ])
-    const sentBody = fetch.mock.calls[0]?.[1]?.body
+    const sentBody = fetch.mock.calls.find(([url]) => url.endsWith(path))?.[1]?.body
     expect(sentBody === undefined ? undefined : JSON.parse(sentBody as string)).toEqual(body)
     expect(connect).toHaveBeenCalledWith({
       configRoot: '/test-profile',
@@ -345,22 +526,22 @@ describe('research MCP tools', () => {
     ['get_session', {}],
     ['get_session', { sessionId: 's1', arbitrary: true }],
     ['update_session_configuration', { sessionId: 's1', expectedRevision: -1 }],
-    ['respond_plan', { sessionId: 's1', response: { decision: 'approved' } }],
+    ['respond_plan', { sessionId: 's1', decision: 'approved' }],
     [
       'respond_plan',
       {
         sessionId: 's1',
-        response: {
-          decision: 'rejected',
-          artifactVersionId: 'v1',
-          expectedRevision: 2,
-          feedback: 'ambiguous'
-        }
+        decision: 'rejected',
+        artifactVersionId: 'v1',
+        expectedRevision: 2,
+        expectedBranchId: 'b1',
+        source: 'user_relay',
+        feedback: 'ambiguous'
       }
     ],
     ['start_run', { projectId: 'p1', prompt: ' ' }],
     ['start_run', { projectId: 'p1', prompt: 'Go', permissionProfile: 'unknown' }],
-    ['search_literature', { limit: 21 }],
+    ['search_literature', { limit: 101 }],
     ['format_references', { itemIds: [], styleId: 'apa' }],
     ['import_literature', { mode: 'commit' }],
     ['import_literature', { mode: 'preview', content: 'x', projectId: 'p1' }],
@@ -391,9 +572,19 @@ describe('research MCP tools', () => {
     const { client } = await harness(connect)
     const call = (): ReturnType<Client['callTool']> =>
       client.callTool({ name: 'create_project', arguments: { name: 'Research' } })
-    expect(JSON.stringify(await call())).toContain('open-science start')
+    expect((await call()).structuredContent).toMatchObject({
+      error: {
+        code: 'daemon_unavailable',
+        next: [
+          { executable: 'open-science', argv: ['start', '--no-open', '--profile', '/test-profile'] }
+        ]
+      }
+    })
     const failedWrite = await call()
     expect(failedWrite.isError).toBe(true)
+    expect(failedWrite.structuredContent).toMatchObject({
+      error: { completionStatus: 'unconfirmed', retryable: false }
+    })
     expect(JSON.stringify(failedWrite)).not.toContain('SECRET')
     expect(createProject).toHaveBeenCalledTimes(1)
     expect((await call()).structuredContent).toEqual({ result: { id: 'p1' } })
@@ -416,7 +607,7 @@ describe('research MCP tools', () => {
     }
   )
 
-  it('preserves the unattended capability check without submitting unsupported runs', async () => {
+  it('requires durable submission support before submitting any Run', async () => {
     const fetch = vi.fn<(url: string) => Promise<Response>>(async () =>
       Response.json({ taskCapabilities: [] })
     )
@@ -424,12 +615,47 @@ describe('research MCP tools', () => {
     const { client } = await harness(vi.fn(async () => sdk))
     const response = await client.callTool({
       name: 'start_run',
-      arguments: { projectId: 'p1', prompt: 'Go', permissionPrompts: 'none' }
+      arguments: { requestId: 'original-study', projectId: 'p1', prompt: 'Go' }
     })
     expect(response.isError).toBe(true)
-    expect(JSON.stringify(response)).toContain('unsupported_capability')
+    expect(response.structuredContent).toMatchObject({
+      error: {
+        code: 'unsupported_capability',
+        retryable: false,
+        next: [{ action: 'update_service' }]
+      }
+    })
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(fetch.mock.calls[0][0]).toContain('/api/bootstrap')
+  })
+
+  it('forwards per-Run tracing through the shared durable submission adapter', async () => {
+    const submitRun = vi.fn(async (requestId: string, request: Record<string, unknown>) => ({
+      requestId,
+      status: 'accepted',
+      runId: 'run-traced',
+      createdAt: 1,
+      request
+    }))
+    const { client } = await harness(vi.fn(async () => ({ submitRun })))
+    const response = await client.callTool({
+      name: 'start_run',
+      arguments: {
+        requestId: 'traced-study',
+        projectId: 'p1',
+        prompt: 'Trace this run.',
+        otelTraces: true
+      }
+    })
+    expect(response.isError).not.toBe(true)
+    expect(submitRun).toHaveBeenCalledWith(
+      'traced-study',
+      { project: 'p1', prompt: 'Trace this run.', otelTraces: true },
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    expect(response.structuredContent).toMatchObject({
+      result: { requestId: 'traced-study', status: 'accepted', runId: 'run-traced' }
+    })
   })
 
   it('aborts pending calls on disconnect without cancelling persisted runs', async () => {

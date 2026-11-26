@@ -4,6 +4,7 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import { cn, formatByteSize } from '@/lib/utils'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 import { useSessionStore } from '@/stores/session-store'
@@ -244,7 +245,9 @@ const TurnTokenUsage = ({
   const frameworkName = framework?.displayName
   const providerId = resolveSessionProviderId(runtimeIdentity?.backendId)
   const provider = providers?.find((candidate) => candidate.id === providerId)
-  const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
+  const kindKey = provider
+    ? providerKindKey(provider.type, provider.vendorId, provider.localPresetId)
+    : undefined
   const model = runtimeIdentity?.model?.trim()
   const accessibleLabel = usage
     ? t('Token usage for this response')
@@ -873,6 +876,7 @@ const VisibleArtifactPreview = ({
         // An in-flight thumbnail can settle after unmount or after desktop shutdown starts.
         if (
           canceled ||
+          useDesktopRuntimeRecoveryStore.getState().closing ||
           (error instanceof Error &&
             String(error).endsWith('ApplicationCommandError: The local service is stopping.'))
         )

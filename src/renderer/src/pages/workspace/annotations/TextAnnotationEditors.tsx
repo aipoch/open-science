@@ -359,6 +359,7 @@ const AnnotationDraftEditor = ({
   onAdd,
   annotationBlockedByHistoricalVersion = false,
   triggerActions,
+  alternateContent,
   onDismissSelection,
   bookmark,
   initialDestination = 'agent',
@@ -376,6 +377,7 @@ const AnnotationDraftEditor = ({
   onAdd: () => void
   annotationBlockedByHistoricalVersion?: boolean
   onDismissSelection?: () => void
+  alternateContent?: React.ReactNode
   triggerActions?: readonly AnnotationTriggerAction[]
   bookmark?: BookmarkDraftAction
   initialDestination?: 'agent' | 'bookmark'
@@ -448,7 +450,8 @@ const AnnotationDraftEditor = ({
         onDismiss={onDismissSelection}
         actionMenuLabel={triggerActions ? t('Selection actions') : undefined}
       />
-      {blockedOpen ? (
+      {alternateContent}
+      {blockedOpen && !alternateContent ? (
         <PopoverContent
           role="alert"
           align="start"
@@ -467,7 +470,8 @@ const AnnotationDraftEditor = ({
             </span>
           </div>
         </PopoverContent>
-      ) : (
+      ) : null}
+      {!blockedOpen && !alternateContent ? (
         <PopoverContent
           align="start"
           side="bottom"
@@ -659,7 +663,7 @@ const AnnotationDraftEditor = ({
             </>
           )}
         </PopoverContent>
-      )}
+      ) : null}
     </Popover>
   )
 }

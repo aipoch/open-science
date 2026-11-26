@@ -109,7 +109,7 @@ const configureUnavailableRegistries = async (
   }
   useSettingsStore.setState({
     agentFrameworkId: selected,
-    codex: { version: '1.6.2', nativeVersion: '0.157.1' },
+    codex: { version: '2.6.0', nativeVersion: '0.166.0' },
     environmentCheck,
     agentFrameworks: frameworks.map(({ id, label }) => ({
       id,

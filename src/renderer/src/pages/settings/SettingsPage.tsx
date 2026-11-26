@@ -1,3 +1,8 @@
+import {
+  sameConfiguredProviderConnection,
+  sameProviderCredentialScope,
+  supportsConfiguredProviderModelList
+} from '@aipoch/providers'
 import { modelCatalogErrorMessage } from './model-catalog-feedback'
 import type { RefreshProviderModelsResult } from '../../../../shared/settings'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
@@ -104,6 +109,7 @@ import type { MemoryView } from '@/lib/settings-navigation'
 import type { TagsView } from '@/lib/settings-navigation'
 import type { CredentialsView } from '@/lib/settings-navigation'
 import { ProviderForm } from './ProviderForm'
+import { ProviderKindPicker } from './ProviderKindPicker'
 import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
@@ -111,10 +117,15 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerFormLocalModels,
+  providerFormManualModels,
+  providerFormModel,
+  cloudModelFormRows,
   providerFormTokenLimits,
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
+import { providerModelFormRow, mergeLocalModels } from './provider-model-form'
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
 import { localizeProviderResourceMessage } from './validation-message'
 import { ProviderTestResultCard } from './ProviderTestResultCard'
@@ -254,6 +265,25 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     reasoningEffortTransport: provider.reasoningEffortTransport ?? 'reasoning-effort',
     vendorId: provider.vendorId,
     region: provider.region,
+    cloudflare: provider.cloudflare,
+    manualConnection: provider.manualConnection,
+    localPresetId: provider.localPresetId,
+    manualModels:
+      provider.type === 'official' && supportsConfiguredProviderModelList(provider.vendorId)
+        ? (provider.manualModels?.map(providerModelFormRow) ?? cloudModelFormRows(provider))
+        : undefined,
+    localModels: provider.localPresetId
+      ? (provider.localModels?.map(providerModelFormRow) ??
+        (provider.model
+          ? [
+              providerModelFormRow({
+                id: provider.model,
+                contextWindow: provider.contextWindow,
+                reasoningEffortPreset: provider.reasoningEffortPreset
+              })
+            ]
+          : []))
+      : undefined,
     catalogParameters: provider.catalogParameters
   })
 
@@ -266,7 +296,9 @@ const toUpsertRequest = (
   codexTransport: value.codexTransport,
   name: value.name,
   baseUrl: value.baseUrl,
-  model: value.model,
+  model: providerFormModel(value),
+  localModels: providerFormLocalModels(value),
+  manualModels: providerFormManualModels(value),
   ...providerFormTokenLimits(value),
   apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,
@@ -274,6 +306,9 @@ const toUpsertRequest = (
   reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,
   vendorId: value.vendorId,
   region: value.region,
+  cloudflare: value.cloudflare,
+  manualConnection: value.manualConnection,
+  localPresetId: value.type === 'custom' ? (value.localPresetId ?? null) : undefined,
   catalogParameters: value.catalogParameters,
   key: value.key || undefined
 })
@@ -1066,9 +1101,23 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     }
   }))
 
-  // Only create/edit locations open a provider form.
+  // Add provider first shows the kind picker; the form opens once a kind is chosen, or for an edit.
+  const isProviderPickerOpen =
+    activePanel === 'model' && modelView.kind === 'create' && !modelView.providerKindKey
   const isProviderFormOpen =
-    activePanel === 'model' && (modelView.kind === 'create' || modelView.kind === 'edit')
+    activePanel === 'model' &&
+    ((modelView.kind === 'create' && Boolean(modelView.providerKindKey)) ||
+      modelView.kind === 'edit')
+  // Kinds offered when adding a provider; the picker and the form's type dropdown share them.
+  const createKindAvailability = {
+    codeBuddyProviders:
+      agentFrameworkId === 'codebuddy' && isDesktopRenderer()
+        ? providers.map((provider) => provider.id)
+        : undefined,
+    showCodexSubscriptions:
+      agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent',
+    showClaudeIsolated: agentFrameworkId === 'claude-code'
+  }
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
   // reflected in the form; undefined until the provider is found (or when creating).
   const editingProvider =
@@ -1078,7 +1127,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const providerEditTargetMissing = modelView.kind === 'edit' && editingProvider === undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
   const credentialSource =
-    editingProvider?.type === formValue.type && editingProvider.vendorId === formValue.vendorId
+    editingProvider && sameProviderCredentialScope(editingProvider, formValue)
       ? editingProvider
       : undefined
   const regionalCredential =
@@ -1101,15 +1150,22 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   // Seed the form value when entering a create/edit sub-view (adjust-state-during-render, keyed on the
   // sub-view so typing isn't clobbered by background store updates; edit guards until the provider
-  // loads). A create pre-selects the official vendor matching the active agent framework. Also
-  // clears any stale status message on entry.
-  const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
+  // loads). A create is seeded from the kind chosen in the picker. Also clears any stale status
+  // message on entry.
+  const modelViewKey =
+    modelView.kind === 'edit'
+      ? `edit:${modelView.providerId}`
+      : modelView.kind === 'create'
+        ? `create:${modelView.providerKindKey ?? ''}`
+        : modelView.kind
   const catalogSignature = JSON.stringify([
     modelViewKey,
     editingProvider && (editingProvider.configRevision ?? 0),
     formValue.type,
     formValue.vendorId,
     formValue.region,
+    formValue.localPresetId,
+    formValue.localPresetId ? formValue.baseUrl : undefined,
     parameters,
     formValue.key
   ])
@@ -1123,9 +1179,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const [seededModelView, setSeededModelView] = useState<string | undefined>(modelViewKey)
   if (open && modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
-    if (modelView.kind === 'create') {
+    if (modelView.kind === 'create' && modelView.providerKindKey) {
       const initial = createEmptyProviderFormValue(
-        providerKindPatch(defaultProviderKindKey(agentFrameworkId))
+        providerKindPatch(
+          modelView.providerKindKey,
+          customApiEndpoint,
+          activeFramework?.supportedApiTypes
+        )
       )
       setFormValue(initial)
       setProviderDraftBaseline(initial)
@@ -1145,9 +1205,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const catalogNeedsSave = Boolean(visibleCatalogPreview?.draftToken)
   const providerFormDirty =
     catalogNeedsSave ||
+    !sameConfiguredProviderConnection(providerDraftBaseline, formValue) ||
     Object.entries({ ...providerDraftBaseline, ...formValue }).some(
       ([key, value]) =>
         key !== 'providerFormTouched' &&
+        key !== 'cloudflare' &&
+        key !== 'manualConnection' &&
         (key === 'catalogParameters'
           ? parameters !== catalogParameterKey(providerDraftBaseline.catalogParameters)
           : value !== providerDraftBaseline[key as keyof ProviderFormValue])
@@ -1190,6 +1253,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setBusyProviderId(undefined)
     setPostSaveValidationFailed(false)
     navigate({ panel: 'model', view: { kind: 'create' } })
+  }
+
+  const selectProviderKind = (providerKindKey: string): void =>
+    navigate({ panel: 'model', view: { kind: 'create', providerKindKey } })
+
+  // Return to the picker the user came from, keeping history linear; otherwise open a fresh one.
+  const navigateModel = (view: ModelView): void => {
+    const route: SettingsRoute = { panel: 'model', view }
+    const returningToPicker =
+      view.kind === modelView.kind &&
+      ((view.kind === 'create' && !view.providerKindKey) ||
+        (view.kind === 'image-service-create' && !view.vendorId))
+    if (returningToPicker && JSON.stringify(history[historyIndex - 1]) === JSON.stringify(route))
+      goBack()
+    else navigate(route)
   }
 
   const openEdit = (provider: ProviderView): void => {
@@ -1311,8 +1389,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     if (!canRunProviderOperation) return
     const generation = ++catalogOperationGeneration.current
     setIsRefreshingModels(true)
+    const localPresetId = formValue.localPresetId
     const refreshSavedProvider =
-      modelView.kind === 'edit' && Boolean(editingProvider?.id) && !providerFormDirty
+      !localPresetId &&
+      modelView.kind === 'edit' &&
+      Boolean(editingProvider?.id) &&
+      !providerFormDirty
     try {
       const savedTarget = editingProvider
         ? {
@@ -1332,7 +1414,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             }
       )
       if (generation !== catalogOperationGeneration.current) return
-      if (refreshSavedProvider && result.ok && !result.refreshFailed) {
+      if (localPresetId && result.ok) {
+        setFormValue((current) => {
+          if (
+            current.localPresetId !== localPresetId ||
+            current.baseUrl !== formValue.baseUrl ||
+            current.key !== formValue.key
+          )
+            return current
+          const localModels = mergeLocalModels(current.localModels ?? [], result.models ?? [])
+          return localModels === current.localModels ? current : { ...current, localModels }
+        })
+        setCatalogPreview(undefined)
+      } else if (refreshSavedProvider && result.ok && !result.refreshFailed) {
         setCatalogPreview(undefined)
       } else {
         setCatalogPreview({
@@ -2115,29 +2209,28 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           isRefreshingModels={isRefreshingModels}
                           disabled={isSaving}
                           encryptionAvailable={encryptionAvailable}
-                          codeBuddyProviders={
-                            agentFrameworkId === 'codebuddy' &&
-                            modelView.kind === 'create' &&
-                            isDesktopRenderer()
-                              ? providers.map((p) => p.id)
-                              : undefined
-                          }
-                          showCodexSubscriptions={
-                            (agentFrameworkId === 'codex' ||
-                              agentFrameworkId === 'open-science-agent') &&
+                          {...(modelView.kind === 'create' ? createKindAvailability : {})}
+                          onChangeProviderKind={
                             modelView.kind === 'create'
-                          }
-                          showClaudeIsolated={
-                            agentFrameworkId === 'claude-code' && modelView.kind === 'create'
+                              ? () => navigateModel({ kind: 'create' })
+                              : undefined
                           }
                           defaultCustomApiEndpoint={customApiEndpoint}
                           framework={activeFramework}
                         />
                       </div>
+                    ) : isProviderPickerOpen ? (
+                      <div className="p-5">
+                        <ProviderKindPicker
+                          {...createKindAvailability}
+                          recommendedKey={defaultProviderKindKey(agentFrameworkId)}
+                          onSelect={selectProviderKind}
+                        />
+                      </div>
                     ) : (
                       <ModelPanel
                         view={modelView}
-                        navigate={(view) => navigate({ panel: 'model', view })}
+                        navigate={navigateModel}
                         local={modelView.kind === 'local-models'}
                         onChange={(local) =>
                           navigate({

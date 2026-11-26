@@ -355,7 +355,7 @@ const createDeferred = <Value,>(): {
   return { promise, resolve }
 }
 
-const installIntersectionObserver = (): (() => void) => {
+const installIntersectionObserver = (): ((isIntersecting?: boolean) => void) => {
   const observers = new Set<{
     callback: IntersectionObserverCallback
     elements: Set<Element>
@@ -374,12 +374,10 @@ const installIntersectionObserver = (): (() => void) => {
       }
     }
   )
-  return () => {
+  return (isIntersecting = true) => {
     for (const { callback, elements } of observers) {
       callback(
-        [...elements].map(
-          (target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry
-        ),
+        [...elements].map((target) => ({ target, isIntersecting }) as IntersectionObserverEntry),
         {} as IntersectionObserver
       )
     }
@@ -794,107 +792,168 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(agentRow?.getAttribute('data-scroll-anchor')).toBeNull()
   })
 
-  it('keeps more than one targeted batch of near-viewport historical figures stable while rows stay collapsed', async () => {
-    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
-    const notebookReference: NotebookSessionReference = {
-      sessionId: 'session-1',
-      projectId: 'default',
-      workspaceCwd: '/workspace',
-      notebookSessionRoot: '/workspace/.notebook',
-      dataRoot: '/workspace/data',
-      runtimeRoot: '/workspace/runtime',
-      runJsonPath: '/workspace/run.json'
-    }
-    const historicalRuns: NotebookRunRecord[] = Array.from({ length: 21 }, (_, index) => ({
-      runId: `historical-run-${index + 1}`,
-      executionInvocationId: `invocation-${index + 1}`,
-      cellId: `cell-${index + 1}`,
-      source: 'agent',
-      kernelKind: 'r',
-      script: `plot(${index + 1})`,
-      status: 'completed',
-      startedAt: index + 1,
-      endedAt: index + 2,
-      text: { stdout: '', stderr: '', traceback: '', plain: [] },
-      outputs: [{ type: 'display', data: { 'image/png': 'QUJD' } }],
-      artifacts: [],
-      workingFiles: []
-    }))
-    const makeNotebookState = (runs: NotebookRunRecord[]): NotebookSessionState => ({
-      id: 'notebook-1',
-      sessionId: notebookReference.sessionId,
-      cwd: notebookReference.workspaceCwd,
-      notebookSessionRoot: notebookReference.notebookSessionRoot,
-      dataRoot: notebookReference.dataRoot,
-      runtimeRoot: notebookReference.runtimeRoot,
-      kernelStatus: 'idle',
-      runJsonPath: notebookReference.runJsonPath,
-      cells: [],
-      runCount: 101,
-      agentSummaries: [],
-      latestRunEnvironments: {},
-      runs,
-      recentRuns: runs,
-      environments: []
-    })
-    const loadNotebookState = vi.fn(
-      async (request: { runIds?: string[] }): Promise<NotebookSessionState> =>
-        makeNotebookState(
-          historicalRuns.filter((run) => request.runIds?.includes(run.runId) === true)
-        )
-    )
-    window.api = {
-      ...window.api,
-      notebook: {
-        state: loadNotebookState,
-        onChanged: vi.fn(() => vi.fn())
+  it.each([true, false])(
+    'loads notebook figures for historical tool rows (terminal receipt: %s)',
+    async (terminalReceipt) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const notebookReference: NotebookSessionReference = {
+        sessionId: 'session-1',
+        projectId: 'default',
+        workspaceCwd: '/workspace',
+        notebookSessionRoot: '/workspace/.notebook',
+        dataRoot: '/workspace/data',
+        runtimeRoot: '/workspace/runtime',
+        runJsonPath: '/workspace/run.json'
       }
-    } as unknown as Window['api']
-    const activities = historicalRuns.map((run, index) =>
-      createActivity({
-        id: `notebook-tool-${index + 1}`,
+      const historicalRuns: NotebookRunRecord[] = Array.from({ length: 21 }, (_, index) => ({
+        runId: `historical-run-${index + 1}`,
+        executionInvocationId: `invocation-${index + 1}`,
+        cellId: `cell-${index + 1}`,
+        source: 'agent',
+        kernelKind: 'r',
+        script: `plot(${index + 1})`,
         status: 'completed',
-        providerToolName: 'mcp__open-science-notebook__notebook_execute',
-        executionInvocationId: run.executionInvocationId,
-        rawInput: { code: run.script, kernelKind: run.kernelKind },
-        rawOutput: { runId: run.runId, status: run.status }
+        startedAt: index + 1,
+        endedAt: index + 2,
+        text: { stdout: '', stderr: '', traceback: '', plain: [] },
+        outputs: [{ type: 'display', data: {}, deferredImageTypes: ['image/png'] }],
+        artifacts: [],
+        workingFiles: []
+      }))
+      const makeNotebookState = (runs: NotebookRunRecord[]): NotebookSessionState => ({
+        id: 'notebook-1',
+        sessionId: notebookReference.sessionId,
+        cwd: notebookReference.workspaceCwd,
+        notebookSessionRoot: notebookReference.notebookSessionRoot,
+        dataRoot: notebookReference.dataRoot,
+        runtimeRoot: notebookReference.runtimeRoot,
+        kernelStatus: 'idle',
+        runJsonPath: notebookReference.runJsonPath,
+        cells: [],
+        runCount: 101,
+        agentSummaries: [],
+        latestRunEnvironments: {},
+        runs,
+        recentRuns: runs,
+        environments: []
       })
-    )
-
-    root = createRoot(container)
-    const renderSession = async (session: ChatSession): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <WorkspaceMessageScroller
-            activeSession={session}
-            notebookReference={notebookReference}
-            onSendEditedMessage={vi.fn()}
-          />
-        )
-      })
-    }
-    await renderSession(createSession({ status: 'idle', activities: [] }))
-    expect(loadNotebookState).not.toHaveBeenCalled()
-    await renderSession(createSession({ status: 'idle', activities }))
-
-    for (const header of container.querySelectorAll<HTMLButtonElement>(
-      '[data-testid="tool-group-header"][aria-expanded="false"]'
-    )) {
-      await act(async () => header.click())
-    }
-    await waitFor(() => {
-      const targetedRunIds = loadNotebookState.mock.calls.flatMap(
-        ([request]) => request.runIds ?? []
+      const loadNotebookState = vi.fn(
+        async (request: { runIds?: string[] }): Promise<NotebookSessionState> =>
+          makeNotebookState(
+            historicalRuns.filter((run) => request.runIds?.includes(run.runId) === true)
+          )
       )
-      expect(new Set(targetedRunIds)).toEqual(new Set(historicalRuns.map((run) => run.runId)))
-    })
-    await waitFor(() =>
-      expect(
-        container.querySelectorAll('[data-testid="notebook-tool-figure-button"]')
-      ).toHaveLength(21)
-    )
-    expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
-  })
+      const deferredFigure = createDeferred<string>()
+      const runFigure = vi.fn(() => deferredFigure.promise)
+      window.api = {
+        ...window.api,
+        notebook: {
+          runFigure,
+          state: loadNotebookState,
+          onChanged: vi.fn(() => vi.fn())
+        }
+      } as unknown as Window['api']
+      const activities = historicalRuns.map((run, index) =>
+        createActivity({
+          id: `notebook-tool-${index + 1}`,
+          status: 'completed',
+          providerToolName: 'mcp__open-science-notebook__notebook_execute',
+          executionInvocationId: run.executionInvocationId,
+          rawInput: { code: run.script, kernelKind: run.kernelKind },
+          rawOutput: {
+            runId: run.runId,
+            status: run.status,
+            ...(terminalReceipt ? { executionInvocationId: run.executionInvocationId } : {})
+          }
+        })
+      )
+
+      root = createRoot(container)
+      const renderSession = async (session: ChatSession): Promise<void> => {
+        await act(async () => {
+          root.render(
+            <WorkspaceMessageScroller
+              activeSession={session}
+              notebookReference={notebookReference}
+              onSendEditedMessage={vi.fn()}
+            />
+          )
+        })
+      }
+      await renderSession(createSession({ status: 'idle', activities: [] }))
+      expect(loadNotebookState).not.toHaveBeenCalled()
+      await renderSession(createSession({ status: 'idle', activities }))
+
+      for (const header of container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="tool-group-header"][aria-expanded="false"]'
+      )) {
+        await act(async () => header.click())
+      }
+      if (terminalReceipt) {
+        const setNearViewport = installIntersectionObserver()
+        expect(loadNotebookState).not.toHaveBeenCalled()
+        expect(runFigure).not.toHaveBeenCalled()
+        const chip = container.querySelector<HTMLButtonElement>('[data-testid="tool-chip"]')!
+        loadNotebookState.mockRejectedValueOnce(new Error('Temporarily unavailable'))
+        await act(async () => chip.click())
+        const retry = Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent === 'Retry'
+        )
+        expect(retry).toBeDefined()
+        await act(async () => retry!.click())
+        await waitFor(() =>
+          expect(
+            container.querySelector('[data-testid="notebook-tool-figure-button"]')
+          ).not.toBeNull()
+        )
+        expect(loadNotebookState.mock.calls.map(([request]) => request.runIds)).toEqual([
+          [historicalRuns[0].runId],
+          [historicalRuns[0].runId]
+        ])
+        expect(runFigure).not.toHaveBeenCalled()
+        await act(async () => setNearViewport(true))
+        expect(runFigure).toHaveBeenCalledOnce()
+        await act(async () => setNearViewport(false))
+        await act(async () => setNearViewport(true))
+        await act(async () => deferredFigure.resolve('QUJD'))
+        expect(
+          container.querySelector('[data-testid="notebook-tool-figure-image"]')?.getAttribute('src')
+        ).toBe('data:image/png;base64,QUJD')
+        expect(runFigure).toHaveBeenCalledOnce()
+        const figure = container.querySelector<HTMLButtonElement>(
+          '[data-testid="notebook-tool-figure-button"]'
+        )!
+        await act(async () => figure.click())
+        expect(runFigure).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            runId: historicalRuns[0].runId,
+            outputIndex: 0,
+            mimeType: 'image/png'
+          })
+        )
+        expect(
+          document.body
+            .querySelector('[data-testid="notebook-figure-preview-image"]')
+            ?.getAttribute('src')
+        ).toBe('data:image/png;base64,QUJD')
+        await act(async () => chip.click())
+        expect(container.querySelector('[data-testid="notebook-tool-figure-button"]')).toBeNull()
+        return
+      }
+      await waitFor(() => {
+        const targetedRunIds = loadNotebookState.mock.calls.flatMap(
+          ([request]) => request.runIds ?? []
+        )
+        expect(new Set(targetedRunIds)).toEqual(new Set(historicalRuns.map((run) => run.runId)))
+      })
+      await waitFor(() =>
+        expect(
+          container.querySelectorAll('[data-testid="notebook-tool-figure-button"]')
+        ).toHaveLength(0)
+      )
+      expect(container.querySelector('[data-testid="tool-details"]')).toBeNull()
+    }
+  )
 
   it('renders later tools in real time while the assistant reply is still pacing', async () => {
     vi.useFakeTimers()

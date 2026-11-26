@@ -30,11 +30,13 @@ const serializeProvisioner = (provisioner: RuntimeProvisioner): RuntimeProvision
   }
   const serializeLanguage = (
     language: NotebookLanguage,
-    run: () => Promise<void>
+    run: () => Promise<void>,
+    signal?: AbortSignal
   ): Promise<void> => {
     retain(language)
     return serialize(async () => {
       try {
+        signal?.throwIfAborted()
         await run()
       } finally {
         release(language)
@@ -44,12 +46,17 @@ const serializeProvisioner = (provisioner: RuntimeProvisioner): RuntimeProvision
 
   const wrapped: RuntimeProvisioner = {
     status: () => provisioner.status(),
-    provisionPython: (onProgress) =>
-      serializeLanguage('python', () => provisioner.provisionPython(onProgress)),
-    provisionR: (onProgress) => serializeLanguage('r', () => provisioner.provisionR(onProgress)),
+    provisionPython: (onProgress, signal) =>
+      serializeLanguage('python', () => provisioner.provisionPython(onProgress, signal), signal),
+    provisionR: (onProgress, signal) =>
+      serializeLanguage('r', () => provisioner.provisionR(onProgress, signal), signal),
     upgradeIfNeeded: (onProgress) => serialize(() => provisioner.upgradeIfNeeded(onProgress)),
     repair: (language, onProgress, options) =>
-      serializeLanguage(language, () => provisioner.repair(language, onProgress, options)),
+      serializeLanguage(
+        language,
+        () => provisioner.repair(language, onProgress, options),
+        options?.signal
+      ),
     restoreRelocatedEnvs: (onProgress) =>
       serialize(() => provisioner.restoreRelocatedEnvs(onProgress)),
     // Cancellation must interrupt immediately rather than wait behind the operation it is aborting.

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  resolveInstallRegistries,
   runEnvironmentCheck,
   verifyStorageAccess,
   type EnvironmentCheckDeps
@@ -370,7 +371,7 @@ describe('runEnvironmentCheck', () => {
 
   it('uses diagnostic message when runtime detection provides one', async () => {
     const diagnosticMessage =
-      'Native Codex 0.157.1 is installed at /Applications/ChatGPT.app/Contents/Resources/codex, but the Codex ACP adapter required by Open-Science is missing.'
+      'Native Codex 0.166.0 is installed at /Applications/ChatGPT.app/Contents/Resources/codex, but the Codex ACP adapter required by Open-Science is missing.'
 
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
@@ -426,7 +427,7 @@ describe('runEnvironmentCheck', () => {
             codexComponents: {
               nativeCliFound: true,
               nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
-              nativeCliVersion: '0.157.1',
+              nativeCliVersion: '0.166.0',
               adapterFound: false,
               adapterPath: undefined,
               adapterVersion: undefined
@@ -445,7 +446,7 @@ describe('runEnvironmentCheck', () => {
       id: 'agent',
       label: 'Codex native CLI',
       status: 'passed',
-      summary: 'Codex CLI 0.157.1 is installed.',
+      summary: 'Codex CLI 0.166.0 is installed.',
       detail: '/Applications/ChatGPT.app/Contents/Resources/codex'
     })
 
@@ -458,7 +459,7 @@ describe('runEnvironmentCheck', () => {
     })
   })
 
-  it.each([undefined, '0.153.4', '0.157.1-alpha.1'])(
+  it.each([undefined, '0.153.4', '0.166.0-alpha.1'])(
     'requires repair when a paired native CLI version is unsupported (%s)',
     async (nativeVersion) => {
       // Regression (spec P2): a paired external adapter can set nativeCliFound=true without a version
@@ -479,7 +480,7 @@ describe('runEnvironmentCheck', () => {
                 nativeCliVersion: nativeVersion,
                 adapterFound: true,
                 adapterPath: '/opt/tools/codex-acp',
-                adapterVersion: '1.6.2'
+                adapterVersion: '2.6.0'
               }
             }
           }
@@ -490,7 +491,7 @@ describe('runEnvironmentCheck', () => {
 
       const nativeCheck = result.checks.find((check) => check.label === 'Codex native CLI')
       expect(nativeCheck?.status).toBe('failed')
-      expect(nativeCheck?.summary).toContain('0.157.1 or later')
+      expect(nativeCheck?.summary).toContain('0.166.0 or later')
       expect(result.ready).toBe(false)
     }
   )
@@ -506,14 +507,14 @@ describe('runEnvironmentCheck', () => {
           runtime: {
             found: true,
             path: '/usr/local/bin/codex-acp',
-            version: '1.6.2',
+            version: '2.6.0',
             codexComponents: {
               nativeCliFound: true,
               nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
-              nativeCliVersion: '0.157.1',
+              nativeCliVersion: '0.166.0',
               adapterFound: true,
               adapterPath: '/usr/local/bin/codex-acp',
-              adapterVersion: '1.6.2'
+              adapterVersion: '2.6.0'
             }
           }
         }
@@ -527,12 +528,12 @@ describe('runEnvironmentCheck', () => {
 
     expect(nativeCheck).toMatchObject({
       status: 'passed',
-      summary: 'Codex CLI 0.157.1 is installed.'
+      summary: 'Codex CLI 0.166.0 is installed.'
     })
 
     expect(adapterCheck).toMatchObject({
       status: 'passed',
-      summary: 'Codex ACP adapter 1.6.2 is ready.'
+      summary: 'Codex ACP adapter 2.6.0 is ready.'
     })
   })
 
@@ -548,7 +549,7 @@ describe('runEnvironmentCheck', () => {
             found: false,
             codexComponents: {
               nativeCliFound: true,
-              nativeCliVersion: '0.157.1',
+              nativeCliVersion: '0.166.0',
               adapterFound: true,
               adapterPath: '/data/codex-acp',
               adapterVersion: '1.1.4',
@@ -563,7 +564,7 @@ describe('runEnvironmentCheck', () => {
 
     expect(result.checks.find((check) => check.label === 'Codex ACP adapter')).toMatchObject({
       status: 'failed',
-      summary: 'Codex ACP adapter 1.1.4 must be updated to 1.6.2 or later.'
+      summary: 'Codex ACP adapter 1.1.4 must be updated to 2.6.0 or later.'
     })
     expect(result.ready).toBe(false)
   })
@@ -600,5 +601,190 @@ describe('runEnvironmentCheck', () => {
     expect(nativeCheck?.status).toBe('warning')
     expect(adapterCheck?.status).toBe('warning')
     expect(result.ready).toBe(true) // Non-selected framework doesn't block
+  })
+})
+
+describe('resolveInstallRegistries', () => {
+  it('orders the first reachable registry first with the other as fallback', async () => {
+    const probeRegistry = vi.fn(async (registry: 'npmjs' | 'npmmirror') => {
+      if (registry === 'npmjs') {
+        await new Promise((resolve) => setTimeout(resolve, 35))
+        return 35
+      }
+      return 5
+    })
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'opencode',
+      probeRegistry
+    })
+
+    expect(probeRegistry).toHaveBeenCalledTimes(2)
+    expect(probeRegistry).toHaveBeenCalledWith(
+      'npmjs',
+      '/opencode-ai/latest',
+      expect.any(AbortSignal)
+    )
+    expect(probeRegistry).toHaveBeenCalledWith(
+      'npmmirror',
+      '/opencode-ai/latest',
+      expect.any(AbortSignal)
+    )
+    expect(registries).toEqual(['https://registry.npmmirror.com', 'https://registry.npmjs.org'])
+  })
+
+  it('picks the first successful registry immediately and aborts a stalled sibling probe', async () => {
+    let npmjsSignal: AbortSignal | undefined
+    const probeRegistry = vi.fn(
+      (registry: 'npmjs' | 'npmmirror', _path?: string, signal?: AbortSignal) => {
+        if (registry === 'npmjs') {
+          npmjsSignal = signal
+          return new Promise<number>(() => undefined)
+        }
+        return Promise.resolve(25)
+      }
+    )
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'opencode',
+      probeRegistry
+    })
+
+    expect(registries).toEqual(['https://registry.npmmirror.com', 'https://registry.npmjs.org'])
+    expect(npmjsSignal?.aborted).toBe(true)
+  })
+
+  it('keeps waiting for the second registry when the first rejects early', async () => {
+    let mirrorSignal: AbortSignal | undefined
+    const probeRegistry = vi.fn(
+      async (registry: 'npmjs' | 'npmmirror', _path?: string, signal?: AbortSignal) => {
+        if (registry === 'npmjs') throw new Error('HTTP 502')
+        mirrorSignal = signal
+        await new Promise((resolve) => setTimeout(resolve, 15))
+        expect(signal?.aborted).toBe(false)
+        return 15
+      }
+    )
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'opencode',
+      probeRegistry
+    })
+
+    expect(registries).toEqual(['https://registry.npmmirror.com', 'https://registry.npmjs.org'])
+    expect(mirrorSignal?.aborted).toBe(true)
+  })
+
+  it('falls back to the remaining reachable registry when the mirror fails', async () => {
+    const probeRegistry = vi.fn(async (registry: 'npmjs' | 'npmmirror') => {
+      if (registry === 'npmmirror') throw new Error('HTTP 502')
+      return 180
+    })
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'codex',
+      probeRegistry
+    })
+
+    expect(registries).toEqual(['https://registry.npmjs.org', 'https://registry.npmmirror.com'])
+  })
+
+  it('falls back to default registry order when both probes fail', async () => {
+    const probeRegistry = vi.fn().mockRejectedValue(new Error('offline'))
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'pi',
+      probeRegistry
+    })
+
+    expect(registries).toEqual(['https://registry.npmjs.org', 'https://registry.npmmirror.com'])
+  })
+
+  it.each([
+    ['npmmirror', ['https://registry.npmmirror.com', 'https://registry.npmjs.org']],
+    ['npmjs', ['https://registry.npmjs.org', 'https://registry.npmmirror.com']]
+  ] as const)(
+    'honors an explicit %s preferredRegistry without probing',
+    async (preferredRegistry, expected) => {
+      const probeRegistry = vi.fn()
+
+      const registries = await resolveInstallRegistries({
+        agentFrameworkId: 'claude-code',
+        preferredRegistry,
+        probeRegistry
+      })
+
+      expect(probeRegistry).not.toHaveBeenCalled()
+      expect(registries).toEqual(expected)
+    }
+  )
+
+  it('ignores an untrusted preferredRegistry value and probes normally', async () => {
+    const probeRegistry = vi.fn(async (registry: 'npmjs' | 'npmmirror') => {
+      if (registry === 'npmjs') {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return 20
+      }
+      return 5
+    })
+
+    const registries = await resolveInstallRegistries({
+      agentFrameworkId: 'claude-code',
+      preferredRegistry: 'toString' as never,
+      probeRegistry
+    })
+
+    expect(probeRegistry).toHaveBeenCalledTimes(2)
+    expect(registries).toEqual(['https://registry.npmmirror.com', 'https://registry.npmjs.org'])
+  })
+
+  it('rejects immediately when signal is already aborted before probing', async () => {
+    const controller = new AbortController()
+    controller.abort(new Error('already cancelled'))
+    const probeRegistry = vi.fn()
+
+    await expect(
+      resolveInstallRegistries({
+        agentFrameworkId: 'opencode',
+        probeRegistry,
+        signal: controller.signal
+      })
+    ).rejects.toThrow('already cancelled')
+    expect(probeRegistry).not.toHaveBeenCalled()
+  })
+
+  it('propagates caller abort cancellation', async () => {
+    const controller = new AbortController()
+    const probeRegistry = vi.fn(
+      (_registry: 'npmjs' | 'npmmirror', _path?: string, signal?: AbortSignal) =>
+        new Promise<number>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+    )
+
+    const pending = resolveInstallRegistries({
+      agentFrameworkId: 'opencode',
+      probeRegistry,
+      signal: controller.signal
+    })
+    controller.abort(new Error('cancelled'))
+
+    await expect(pending).rejects.toThrow('cancelled')
+  })
+
+  it('rejects when caller aborts concurrently with an uncooperative probe resolving', async () => {
+    const controller = new AbortController()
+    const probeRegistry = vi.fn(async () => {
+      controller.abort(new Error('late cancel'))
+      return 10
+    })
+
+    await expect(
+      resolveInstallRegistries({
+        agentFrameworkId: 'opencode',
+        probeRegistry,
+        signal: controller.signal
+      })
+    ).rejects.toThrow('late cancel')
   })
 })

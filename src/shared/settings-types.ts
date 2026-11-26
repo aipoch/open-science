@@ -1,3 +1,5 @@
+import type { LocalProviderModel } from './local-provider-preset'
+import type { ProviderModel } from './configured-provider-model'
 import type { CatalogSnapshot, CatalogStatus, CatalogErrorCode } from '@aipoch/providers'
 import type { CodeBuddyAuthMode } from './codebuddy-subscription'
 import type {
@@ -13,8 +15,12 @@ import type {
 } from '@aipoch/skills/document'
 import {
   type ModelProtocol,
+  type ModelReasoningEffort,
   type OfficialVendorId,
-  type CustomReasoningEffortTransport
+  type CustomReasoningEffortTransport,
+  type CloudflareGateway,
+  type LocalProviderPresetId,
+  type ManualProviderConnection
 } from '@aipoch/providers'
 import { type ReasoningEffort } from './model-preference-contract'
 import type { LabModelCapabilities, LabView } from './lab'
@@ -166,8 +172,12 @@ export type ProviderView = {
   // Set for official-vendor providers: which vendor and (where applicable) which regional endpoint.
   vendorId?: OfficialVendorId
   region?: string
-  // Models selectable for this provider in the composer: the vendor catalog for official providers,
-  // or the single configured model for custom. Derived from the registry in main.
+  cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
+  localPresetId?: LocalProviderPresetId
+  localModels?: readonly LocalProviderModel[]
+  manualModels?: readonly ProviderModel[]
+  // Models selectable in the composer, projected by main from the provider configuration.
   models: string[]
   // Per-model protocol sets for app-managed providers whose catalog is heterogeneous (Lab). Absent
   // means the provider-level apiEndpoints apply to every model.
@@ -179,6 +189,8 @@ export type ProviderView = {
   labServerUrl?: string
   // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
   modelCapabilities?: Record<string, LabModelCapabilities>
+  // Per-model reasoning levels advertised by CodeBuddy's ACP catalog.
+  modelReasoningEfforts?: Record<string, ModelReasoningEffort[]>
   // A short, non-secret hint like "sk-…abcd" for display only.
   maskedKey?: string
   // Non-secret account label returned by the provider during subscription sign-in.
@@ -489,9 +501,10 @@ export type ProviderDraft = {
   name?: string
   baseUrl?: string
   model?: string
-  // Custom model token limits. `null` explicitly clears a saved override; omitted leaves it unchanged
-  // on partial edits. A provider with no context override resolves to 200k at runtime.
+  // Optional window for a custom gateway or manually configured official model. Null clears it.
+  // A partial edit retains the saved window only while the manual model and route still match.
   contextWindow?: number | null
+  // Custom model limits. Null clears an override; omission preserves it on partial edits.
   maxInputTokens?: number | null
   maxOutputTokens?: number | null
   supportsImageInput?: boolean
@@ -506,6 +519,11 @@ export type ProviderDraft = {
   // catalog then come from the registry rather than the draft's baseUrl.
   vendorId?: OfficialVendorId
   region?: string
+  cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
+  localPresetId?: LocalProviderPresetId | null
+  localModels?: readonly LocalProviderModel[]
+  manualModels?: readonly ProviderModel[]
   key?: string
 }
 

@@ -252,6 +252,20 @@ export function pdfGenerationFailure(error: unknown): PdfGenerationFailure {
 }
 
 /** Local rendering input. The main process owns all cache destinations. */
+export const pdfTranslationLinkLocationSchema = z
+  .object({
+    pageNumber: z.number().int().min(1).max(500),
+    index: z.number().int().nonnegative(),
+    rect: z.tuple([
+      z.number().finite(),
+      z.number().finite(),
+      z.number().finite(),
+      z.number().finite()
+    ])
+  })
+  .strict()
+export type PdfTranslationLinkLocation = z.infer<typeof pdfTranslationLinkLocationSchema>
+
 export type PdfTranslationPdfRequest = Readonly<{
   id: string
   /** Content-first, single-column pagination; original crops retain figures and unsupported glyphs. */
@@ -265,6 +279,9 @@ export type PdfTranslationPdfRequest = Readonly<{
   preserveUnsupported?: boolean
   /** Leave unmatched source objects untouched instead of rejecting the entire PDF. Requires preserveUnsupported. */
   preserveUnmatched?: boolean
+  allowLinkOmission?: boolean
+  /** Source links whose moved hit areas failed preview verification. */
+  dropLinks?: readonly PdfTranslationLinkLocation[]
   /** Reuse only this saved edition; permission and content checks remain main-owned. */
   cache?: Readonly<{
     source: PdfTranslationCheckpointRequest
@@ -313,6 +330,7 @@ export type PdfTranslationPdfResult = Readonly<{
   /** A generated candidate is published only after renderer verification. */
   cacheToken?: string
   cacheHit?: boolean
+  omittedLinks?: readonly PdfTranslationLinkLocation[]
   layoutFailures: readonly (PdfTranslationLayoutFailure & { unitIndex: number })[]
 }>
 export const pdfTranslationReflowLayoutSchema = z

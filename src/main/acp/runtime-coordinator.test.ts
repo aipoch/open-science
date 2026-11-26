@@ -1,3 +1,4 @@
+import { taskRunTracing } from './task-run-tracing'
 import { SessionPromptAdmissionError } from './runtime-activity-port'
 import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
@@ -2672,6 +2673,13 @@ describe('AcpRuntimeCoordinator', () => {
     }
 
     await expect(coordinator.resumeSession(request)).rejects.toThrow('pending marker clear failed')
+    const checkAttachedTracing = vi.fn().mockRejectedValue(new Error('Open-Science Agent required'))
+    created[0].runtime.assertAttachedTracingReady = checkAttachedTracing
+    await expect(
+      coordinator.resumeSession({ ...request, [taskRunTracing]: true } as typeof request)
+    ).rejects.toThrow('Open-Science Agent required')
+    expect(checkAttachedTracing).toHaveBeenCalledWith(request.sessionId)
+    expect(observer).toHaveBeenCalledTimes(1)
     await expect(coordinator.resumeSession(request)).resolves.toMatchObject({
       sessionId: 'session-1'
     })

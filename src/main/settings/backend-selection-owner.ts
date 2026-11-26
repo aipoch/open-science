@@ -3,7 +3,10 @@ import { type ReasoningEffort } from '../../shared/model-preference-contract'
 import { resolveReasoningEffortValue } from '../../shared/reasoning-effort'
 import { type ResolvedReasoningEffort } from '@aipoch/providers'
 
-import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/failure/messages'
+import {
+  EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE
+} from '../../shared/failure/messages'
 import { DEFAULT_REASONING_EFFORT } from '../../shared/settings-runtime'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import type { ExplicitAgentBackendTarget } from './backend-target'
@@ -89,7 +92,11 @@ class BackendSelectionOwner {
     return Object.freeze({
       settings,
       frameworkId: target.frameworkId,
-      providerId: this.requireProviderId(settings, target.providerId),
+      providerId: this.requireProviderId(
+        settings,
+        target.providerId,
+        EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE
+      ),
       modelSelection,
       reasoningEffort: target.reasoningEffort,
       resolvedReasoningEffort: target.resolvedReasoningEffort
@@ -137,9 +144,13 @@ class BackendSelectionOwner {
       : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
   }
 
-  private requireProviderId(settings: StoredSettings, providerId: string | undefined): string {
+  private requireProviderId(
+    settings: StoredSettings,
+    providerId: string | undefined,
+    unavailableMessage = NO_ACTIVE_PROVIDER_MESSAGE
+  ): string {
     if (!providerId || !settings.providers.some((provider) => provider.id === providerId)) {
-      throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
+      throw new Error(unavailableMessage)
     }
     return providerId
   }

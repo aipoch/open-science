@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, writeFile, readFile, mkdir, symlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { JSDOM } from 'jsdom'
 import { unzipSync } from 'fflate'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildResearchVideoPlayer, readVideoSourceFile } from './build-player.js'
@@ -56,14 +57,31 @@ describe('research video source boundaries', () => {
       outputDirectory: join(root, 'output')
     }
     const result = await buildResearchVideoPlayer(options)
+    const html = await readFile(result.playerPath, 'utf8')
+    const player = new JSDOM(html, {
+      runScripts: 'dangerously',
+      url: 'https://film.invalid/?render',
+      beforeParse(window) {
+        Object.defineProperty(window.HTMLCanvasElement.prototype, 'getContext', {
+          value: () => ({})
+        })
+        Object.defineProperty(window.document, 'fonts', { value: { ready: Promise.resolve() } })
+        Object.defineProperty(window.HTMLImageElement.prototype, 'complete', { value: true })
+      }
+    })
+    try {
+      expect(await player.window.__ready).toMatchObject({ duration: result.duration })
+      const clock = new player.window.ResearchVideoPlaybackClock({ currentTime: 2 }, 5, () => {})
+      expect(clock.time).toBe(2)
+    } finally {
+      player.window.close()
+    }
     const archive = unzipSync(await readFile(result.sourcePath))
     expect(Buffer.from(archive['engine/js/stage.js'])).toEqual(
       await readFile(join(engineDirectory, 'js/stage.js'))
     )
     expect(Buffer.from(archive['subjects/landmark.json']).toString()).toBe(drawing)
-    expect(await readFile(result.playerPath, 'utf8')).toContain(
-      `"subjects":{"landmark":${drawing}}`
-    )
+    expect(html).toContain(`"subjects":{"landmark":${drawing}}`)
     expect(Buffer.from(archive['video.json'])).toEqual(await readFile(options.specPath))
     expect(JSON.parse(Buffer.from(archive['manifest.json']).toString()).files).toContainEqual({
       path: 'engine/js/stage.js',

@@ -142,7 +142,7 @@ it.skipIf(process.platform !== 'win32').each([
       })
       if (failed) {
         expect(failed.status, failed.stderr).toBe('failed')
-        expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1.')
+        expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1')
       }
       if (protectedMode && !crashAdmission) {
         descendantPid = Number(await readFile(join(root, 'descendant.pid'), 'utf8'))

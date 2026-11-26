@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import {
   observeProviderFailure,
+  safeNetworkErrorCode,
   type ProviderFailureObserver
 } from './provider-failure-observation'
 
@@ -106,16 +107,6 @@ const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000
 const MAX_REPLAY_ERROR_BODY_BYTES = 256 * 1024
 const responseLimit = (value: number | undefined, fallback: number): number =>
   Math.max(1, Math.floor(value ?? fallback))
-const SAFE_NETWORK_ERROR_CODES = new Set([
-  'EAI_AGAIN',
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'ESOCKETTIMEDOUT',
-  'ETIMEDOUT'
-])
-
 type ProviderErrorSnapshot = Readonly<{
   body: Buffer
   headers: Record<string, string>
@@ -130,26 +121,6 @@ class NativeResponsesTimeoutError extends Error {
     super(message)
     this.name = 'TimeoutError'
   }
-}
-
-const safeRead = (value: object, key: string): unknown => {
-  try {
-    return (value as Record<string, unknown>)[key]
-  } catch {
-    return undefined
-  }
-}
-
-const safeNetworkErrorCode = (error: unknown): string | undefined => {
-  if (typeof error !== 'object' || error === null) return undefined
-  const directCode = safeRead(error, 'code')
-  if (typeof directCode === 'string' && SAFE_NETWORK_ERROR_CODES.has(directCode)) return directCode
-  const cause = safeRead(error, 'cause')
-  if (typeof cause !== 'object' || cause === null) return undefined
-  const causeCode = safeRead(cause, 'code')
-  return typeof causeCode === 'string' && SAFE_NETWORK_ERROR_CODES.has(causeCode)
-    ? causeCode
-    : undefined
 }
 
 const upstreamResponseType = (contentType: string): 'event-stream' | 'json' | 'binary' => {

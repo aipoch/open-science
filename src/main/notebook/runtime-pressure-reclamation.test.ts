@@ -77,7 +77,7 @@ it('shares execution samples with the idle owner and retains history after press
   runtime.noteSessionActivity('one')
   await vi.waitFor(() => expect(isSessionBusy.mock.calls.length).toBeGreaterThan(beforeIdle))
   now.mockReturnValue(time + 5 * 60_000)
-  availableBytes = 5
+  availableBytes = 2
   exporting = true
   await policy.getState({ force: true })
   runtime.noteSessionActivity('other-session')
@@ -171,7 +171,7 @@ it('ends a rejected call without waiting for pressure cleanup or retrying after 
     runtime.noteSessionActivity('idle')
     await vi.waitFor(() => expect(isSessionBusy).toHaveBeenCalled())
     now.mockReturnValue(time + 5 * 60_000)
-    availableBytes = 5
+    availableBytes = 2
     await policy.getState({ force: true })
     await vi.waitFor(() => expect(cleanupStarted).toBe(true))
     await expect(

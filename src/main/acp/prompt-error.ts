@@ -1,6 +1,6 @@
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import { isLocalModelHttpDenial } from '../settings/provider-http-access'
-import { readHarnessErrorDiagnostics } from '../../shared/failure/contract'
+import { type FailureFacts, readHarnessErrorDiagnostics } from '../../shared/failure/contract'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 
@@ -9,7 +9,8 @@ import {
   MODEL_HTTP_DESTINATION_NOT_ALLOWED,
   CALL_STACK_LIMIT_MESSAGE,
   PROVIDER_CONNECTION_FAILED_PREFIX,
-  PROVIDER_RESOURCE_NOT_FOUND_PREFIX
+  PROVIDER_RESOURCE_NOT_FOUND_PREFIX,
+  upstreamHttpErrorPrefix
 } from '../../shared/failure/messages'
 
 // Turns an agent prompt failure into user-visible text. Agents (opencode) relay an upstream provider
@@ -216,6 +217,44 @@ const isClaudeProviderApiError = (error: unknown): boolean =>
     classifyFailure({ origin: 'agent-runtime', text: error.message }).reason ===
       'service/response-interrupted')
 
+// After retrying, codex-acp 1.6.2 flattens the response and appends the local route URL.
+const codexServiceFailure = (
+  error: unknown,
+  context: PromptErrorContext
+): FailureFacts | undefined => {
+  if (!(error instanceof Error) || error.name !== 'RequestError' || errorCode(error) !== -32603)
+    return undefined
+  const data = (error as { data?: { codexErrorInfo?: unknown; message?: unknown } }).data
+  const model = context.model
+  const provider = context.providerName
+  // The native high-demand variant omits the original HTTP status.
+  if (
+    data?.codexErrorInfo === 'internalServerError' &&
+    data.message === 'We’re currently experiencing high demand, which may cause temporary errors.'
+  )
+    return { origin: 'provider', code: 'overloaded_error', model, provider, text: data.message }
+  if (data?.codexErrorInfo !== 'other' || typeof data.message !== 'string') return undefined
+  const match =
+    /^unexpected status (5\d{2}) [^:\r\n]+: (.*), url: http:\/\/127\.0\.0\.1:\d+\/v1\/responses$/s.exec(
+      data.message
+    )
+  if (!match) return undefined
+  const status = Number(match[1])
+  const detail = match[2]
+  if (status === 502 && detail === PROVIDER_CONNECTION_FAILED_PREFIX)
+    return { origin: 'provider', status, model, adapterCode: 'network', text: detail }
+  const prefix = upstreamHttpErrorPrefix(status)
+  if (!detail.startsWith(prefix)) return undefined
+  return {
+    origin: 'provider',
+    status,
+    model,
+    provider,
+    responseMessage: safeProviderErrorDetail(detail.slice(prefix.length)),
+    text: `HTTP ${status}`
+  }
+}
+
 const connectionFailureDetail = (message: string): string | undefined =>
   message.match(/\(([A-Za-z][A-Za-z0-9_-]{0,63})\)\s*$/)?.[1]
 
@@ -226,15 +265,20 @@ export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}
   const raw = rawErrorMessage(error)
   const detail = extractUpstreamDetail(raw)
 
+  const codexFailure = codexServiceFailure(error, ctx)
   if (
-    isClaudeProviderApiError(error) &&
-    classifyFailure({ origin: 'agent-runtime', text: raw }).reason === 'service/connection-failed'
+    codexFailure?.adapterCode === 'network' ||
+    (isClaudeProviderApiError(error) &&
+      classifyFailure({ origin: 'agent-runtime', text: raw }).reason ===
+        'service/connection-failed')
   ) {
     const modelPart = ctx.model ? ` for model "${ctx.model}"` : ''
     const connectionDetail = connectionFailureDetail(raw)
 
     return `${PROVIDER_CONNECTION_FAILED_PREFIX}${modelPart}. Check the base URL in Settings → Model and your proxy, VPN, or firewall, then retry.${connectionDetail ? ` Connection detail: ${connectionDetail}.` : ''}`
   }
+
+  if (codexFailure) return codexFailure.responseMessage ?? codexFailure.text ?? raw
 
   if (isProviderNotFound(error, raw, detail)) {
     const providerText = safeProviderErrorDetail(detail?.text ?? stripWrapperPrefixes(raw))
@@ -331,7 +375,7 @@ export const isOpenCodeContextOverflow = (error: unknown): boolean => {
 export const collectPromptFailureFacts = (
   error: unknown,
   context: PromptErrorContext = {}
-): import('../../shared/failure/contract').FailureFacts => {
+): FailureFacts => {
   const record = (value: unknown): Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, unknown>)
@@ -385,6 +429,8 @@ export const collectPromptFailureFacts = (
       ...(provider ? { provider } : {})
     }
   }
+  const codexFailure = codexServiceFailure(error, context)
+  if (codexFailure) return codexFailure
   const text = rawErrorMessage(error)
   const upstream = extractUpstreamDetail(text)
   if (upstream?.localDenialId)
@@ -435,7 +481,11 @@ export const collectPromptFailureFacts = (
     top.code === -32603 &&
     !data.service &&
     !data.errorName &&
-    !codexKind &&
+    (!codexKind ||
+      (codexKind === 'other' &&
+        /^Internal error:\s*\{/i.test(text) &&
+        upstream?.type === 'upstream_error' &&
+        upstream.status !== undefined)) &&
     (!data.errorKind || data.errorKind === 'unknown')
   const bareEnvelope = untaggedRequest && /^Internal error:\s*\{/i.test(text)
   const summarizedUpstream =
@@ -494,7 +544,7 @@ export const collectPromptFailureFacts = (
                 (!isProviderErrorKind(error) && data.errorKind !== 'unknown'
                   ? data.errorKind
                   : undefined) ??
-                codexKind ??
+                (typedUpstreamStatus && codexKind === 'other' ? undefined : codexKind) ??
                 (origin === 'provider' ? undefined : top.code))
   const provider =
     (responseMessage && context.providerName) ||
