@@ -50,7 +50,8 @@ test('does not re-anchor a historical turn when the reply row replaces the loade
   await expect(
     reopenedConversation.locator('[data-slot="message-scroller-item"][data-scroll-anchor="true"]')
   ).toHaveCount(7)
-  await page.waitForTimeout(1500)
+  await expect(reopenedConversation.getByText(AGENT_REPLY, { exact: true })).toHaveCount(7)
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
 
   // The viewport top must sit near the NEW turn's anchor, not a historical one.
   const anchors = reopenedConversation.locator(

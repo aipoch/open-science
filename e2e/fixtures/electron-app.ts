@@ -343,6 +343,7 @@ const CLEANUP_GRACEFUL_TIMEOUT_MS =
 const CLEANUP_FORCED_TIMEOUT_MS =
   process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 const CLEANUP_REAP_RETRY_DELAY_MS = 100
+const CLEANUP_REAP_ATTEMPTS = 5
 
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
@@ -2442,13 +2443,13 @@ class ElectronAppHarness implements ElectronApp {
                 await application.close()
               },
               forceClose: async () => {
-                let result = await terminateProcessTree(child)
-                if (!result.reaped) {
-                  await new Promise((resolve) => setTimeout(resolve, CLEANUP_REAP_RETRY_DELAY_MS))
-                  result = await terminateProcessTree(child)
+                for (let attempt = 0; attempt < CLEANUP_REAP_ATTEMPTS; attempt += 1) {
+                  const result = await terminateProcessTree(child)
+                  if (result.reaped) return
+                  if (attempt + 1 < CLEANUP_REAP_ATTEMPTS)
+                    await new Promise((resolve) => setTimeout(resolve, CLEANUP_REAP_RETRY_DELAY_MS))
                 }
-                if (!result.reaped)
-                  throw new Error('Electron E2E forced close did not reap the process tree.')
+                throw new Error('Electron E2E forced close did not reap the process tree.')
               }
             },
             {

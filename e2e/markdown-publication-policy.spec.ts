@@ -363,6 +363,7 @@ test('legacy Markdown v3 opens from an old message card as current after restart
   app
 }, testInfo) => {
   await app.completeOnboarding()
+  await expect.poll(() => app.page.evaluate(() => window.api.storage.detectActive())).toEqual([])
   let page = await app.configureFakeAgent()
   const projectId = await createProject(page, 'Legacy Markdown publication')
   const publish = async (): Promise<{ artifactId: string; versionId: string }> => {
@@ -425,6 +426,14 @@ test('legacy Markdown v3 opens from an old message card as current after restart
     await page.getByRole('button', { name: `Open full screen preview of ${name}` }).click()
     const preview = page.getByRole('dialog', { name: `Preview ${name}` })
     await expect(preview.getByText('Original result.', { exact: true })).toBeVisible()
+    await expect
+      .poll(async () =>
+        page.evaluate(async (request) => {
+          const result = await window.api.managedFileVersions.inspect(request)
+          return result.ok ? result.value.headVersionId : undefined
+        }, identity)
+      )
+      .toBe(third.versionId)
     await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
     await expect(page.getByTestId('artifact-provenance')).toContainText(
       'Execution evidence is incomplete for v3'
