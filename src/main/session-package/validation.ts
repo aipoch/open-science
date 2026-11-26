@@ -108,6 +108,14 @@ export const validatePackageRecords = async (
   onProgress?: (progress: PackageProgress) => void,
   destination = false
 ): Promise<void> => {
+  const versions = [...records.tables.ArtifactVersion, ...records.tables.UploadVersion]
+  if (versions.some((row) => row.state === 'cleaning'))
+    throw new Error('Session package contains unfinished version cleanup.')
+  if (
+    versions.some((row) => row.state === 'cleaned') !==
+    Boolean(manifest.requiredFeatures?.includes('cleaned-file-versions'))
+  )
+    throw new Error('Invalid cleaned version feature declaration.')
   if (records.webEvidence) validatePackageWebEvidence(records.webEvidence)
   if (
     Boolean(records.webEvidence?.requiredCapabilities?.includes('web-result-v2')) !==
@@ -179,6 +187,18 @@ export const validatePackageRecords = async (
   }
   for (const table of ['ArtifactVersion', 'UploadVersion'] as const) {
     for (const row of records.tables[table]) {
+      if (row.state === 'cleaned') {
+        for (const key of [
+          row.contentStorageKey,
+          row.evidenceStorageKey,
+          row.executionSnapshotStorageKey
+        ]) {
+          if (typeof key !== 'string') continue
+          assertPortablePackageStorageKey(key)
+          if (files.has(key)) throw new Error('Session package contains a cleaned version payload.')
+        }
+        continue
+      }
       if (excluded.has(String(row.contentStorageKey))) continue
       const entry = files.get(String(row.contentStorageKey))
       if (entry?.checksum !== row.checksum || entry.sizeBytes !== Number(row.sizeBytes))
@@ -297,7 +317,8 @@ export const validatePackageRecords = async (
         sourceVersion[artifactSource ? 'artifactId' : 'uploadFileId'] !== sourceFile.id ||
         sourceFile.projectId !== source.projectId ||
         sourceFile.sessionId !== source.sourceSessionId ||
-        sourceVersion.state !== (artifactSource ? 'finalized' : 'ready')
+        (sourceVersion.state !== 'cleaned' &&
+          sourceVersion.state !== (artifactSource ? 'finalized' : 'ready'))
       )
         throw new Error('Image task source Version ownership does not match.')
       if (task.result) {
@@ -311,7 +332,7 @@ export const validatePackageRecords = async (
           lineage.sessionId !== task.sessionId ||
           output.artifactId !== result.artifactId ||
           output.artifactRunId !== task.id ||
-          output.state !== 'finalized' ||
+          (output.state !== 'finalized' && output.state !== 'cleaned') ||
           output.checksum !== result.checksum ||
           Number(output.sizeBytes) !== result.size ||
           output.versionNumber !== result.versionNumber ||
@@ -338,7 +359,12 @@ export const validatePackageRecords = async (
         versionId: String(version.id)
       }
       if (version.originKind === 'agent_generated') {
-        const result = await repository.getVersionProvenance(identity)
+        const result = await repository.getVersionProvenance(identity, {
+          execution: true,
+          messages: true,
+          review: true,
+          includeCleaned: version.state === 'cleaned'
+        })
         const task = tasksById.get(String(version.artifactRunId))
         if (
           task &&
@@ -347,6 +373,7 @@ export const validatePackageRecords = async (
           throw new Error('Image task output does not match its source Version.')
         if (
           result.contentStatus.state !== 'available' &&
+          version.state !== 'cleaned' &&
           !excluded.has(String(version.contentStorageKey))
         )
           throw new Error('Session package Artifact content is unavailable.')

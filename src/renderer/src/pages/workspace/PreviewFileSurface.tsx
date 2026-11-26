@@ -2085,7 +2085,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                               ? t('Stop comparing {{name}}', { name: resolvedPreviewItem.name })
                               : managedControlsInspect.canDiff
                                 ? t('Compare with source version')
-                                : t('No source version to compare')}
+                                : managedControlsInspect.diffBaseCleaned
+                                  ? t('The source version was cleaned up and cannot be compared.')
+                                  : t('No source version to compare')}
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>

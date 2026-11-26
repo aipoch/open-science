@@ -22,6 +22,7 @@ import {
   type ArtifactLiteratureManifest
 } from '../../shared/artifact-literature'
 import {
+  CLEANED_VERSION_MESSAGE,
   MANAGED_DIFF_MAX_INPUT_BYTES,
   MANAGED_TEXT_EDIT_MAX_BYTES,
   inspectManagedTextEditEligibility,
@@ -512,9 +513,10 @@ class ManagedFileVersionService {
           select: { id: true }
         })
         if (inputReference)
-          operationError(
+          throw new ManagedFileVersionError(
             'VERSION_IN_USE',
-            'This version is still referenced by artifact provenance and cannot be cleaned up.'
+            'This version is still referenced by artifact provenance.',
+            { versionNumber: version.versionNumber }
           )
         if (version.state !== 'cleaned')
           await this.assertContentBlobCleanupAllowed(tx, request.source, version)
@@ -555,7 +557,7 @@ class ManagedFileVersionService {
     source: ManagedFileSource,
     version: Pick<
       ManagedFileVersionRecord,
-      'id' | 'contentBlobId' | 'contentStorageKey' | 'sizeBytes' | 'checksum'
+      'id' | 'versionNumber' | 'contentBlobId' | 'contentStorageKey' | 'sizeBytes' | 'checksum'
     >
   ): Promise<void> {
     const blobAtPath = await tx.contentBlob.findUnique({
@@ -563,7 +565,11 @@ class ManagedFileVersionService {
     })
     if (!version.contentBlobId) {
       if (blobAtPath)
-        operationError('VERSION_IN_USE', 'This version has content authority owned elsewhere.')
+        throw new ManagedFileVersionError(
+          'VERSION_IN_USE',
+          'This version has content authority owned elsewhere.',
+          { versionNumber: version.versionNumber }
+        )
       return
     }
     const blob = await tx.contentBlob.findUnique({ where: { id: version.contentBlobId } })
@@ -590,7 +596,11 @@ class ManagedFileVersionService {
       tx.literatureInboxPdf.findFirst({ where, select: { id: true } })
     ])
     if (artifactOwner || uploadOwner || attachmentOwner || inboxOwner)
-      operationError('VERSION_IN_USE', 'This version shares content with another file.')
+      throw new ManagedFileVersionError(
+        'VERSION_IN_USE',
+        'This version shares content with another file.',
+        { versionNumber: version.versionNumber }
+      )
   }
 
   private async finishVersionCleanup(
@@ -599,6 +609,7 @@ class ManagedFileVersionService {
     version: Pick<
       ManagedFileVersionRecord,
       | 'id'
+      | 'versionNumber'
       | 'contentBlobId'
       | 'contentStorageKey'
       | 'sizeBytes'
@@ -693,6 +704,14 @@ class ManagedFileVersionService {
     ])
     const writeUnavailableReason = await this.writeUnavailableReason(resolved.logicalFile)
     const eligibility = await this.readTextEligibility(resolved)
+    const base =
+      eligibility.editable && resolved.version.basedOnVersionId
+        ? await this.loadVersion(
+            await this.options.getClient(),
+            resolved.logicalFile,
+            resolved.version.basedOnVersionId
+          )
+        : null
     const authorship = await this.loadAuthorship([
       ...page.versions,
       ...previous,
@@ -718,7 +737,9 @@ class ManagedFileVersionService {
       selectedVersion: describe(resolved.version),
       headVersion: describe(head.version),
       canEdit: eligibility.editable && writeUnavailableReason === undefined,
-      canDiff: eligibility.editable && resolved.version.basedOnVersionId !== null,
+      ...((base?.state === 'cleaning' || base?.state === 'cleaned') && { diffBaseCleaned: true }),
+      canDiff:
+        base?.fileId === resolved.logicalFile.id && base.state === COMPLETE_STATE[request.source],
       ...(eligibility.editable ? { text: eligibility.text, textFormat: eligibility.format } : {}),
       ...(writeUnavailableReason
         ? { unavailableReason: writeUnavailableReason }
@@ -962,6 +983,8 @@ class ManagedFileVersionService {
       if (request.source === 'artifact' && !isManagedVisibleArtifactVersion(version)) {
         operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
       }
+      if (version.state === 'cleaned' || version.state === 'cleaning')
+        operationError('VERSION_NOT_FOUND', CLEANED_VERSION_MESSAGE)
       if (version.state !== COMPLETE_STATE[request.source]) {
         operationError('VERSION_NOT_FOUND', 'Managed file version is not published.')
       }

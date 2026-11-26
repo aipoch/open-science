@@ -256,6 +256,9 @@
     "Wait for the application handoff to finish before transferring research.": "Espere a que finalice la transferencia de la aplicación antes de transferir datos de investigación."
   },
   "renderer": {
+    "Cleaned up": "Contenido eliminado",
+    "Version {{number}} is in use. Deselect it to continue.": "La versión {{number}} está en uso. Desmarque esa versión para continuar.",
+    "The source version was cleaned up and cannot be compared.": "Se eliminó el contenido de la versión de origen. No se puede comparar.",
     "The update did not finish. Reopen your file or link after updating.": "La actualización no se completó. Vuelva a abrir el archivo o el enlace después de actualizar.",
     "View updates": "Ver actualizaciones",
     "Could not confirm that all subagents stopped.": "No se pudo confirmar que todos los subagentes se hayan detenido.",

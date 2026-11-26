@@ -296,6 +296,7 @@ export const packageInventoryEntrySchema = z
   .strict()
 
 const packageFeatureSchema = z.enum([
+  'cleaned-file-versions',
   'literature',
   'ro-crate',
   'content-dedupe',

@@ -1,3 +1,4 @@
+import { CLEANED_VERSION_MESSAGE } from '../../../../../shared/managed-file-versions'
 import { useEffect, useState } from 'react'
 
 import type { PreviewFileSource } from '@/stores/preview-workbench-contract'
@@ -7,11 +8,11 @@ import { isUnavailableFileError } from './preview-errors'
 
 type UnavailableProbeResult = {
   requestKey: string
-  unavailable: boolean
+  unavailable: boolean | 'cleaned'
 }
 
 // Probes one managed file only while its card is near the viewport and caches by file revision.
-const useUnavailablePreviewProbe = ({
+const usePreviewAvailability = ({
   enabled,
   projectId,
   sessionId,
@@ -31,8 +32,10 @@ const useUnavailablePreviewProbe = ({
   source: PreviewFileSource
   size?: number
   mtimeMs?: number
-}): boolean => {
+}): boolean | 'cleaned' => {
+  const [revision, setRevision] = useState(0)
   const requestKey = JSON.stringify([
+    revision,
     projectId ?? null,
     sessionId ?? null,
     source,
@@ -42,6 +45,17 @@ const useUnavailablePreviewProbe = ({
     size ?? null,
     mtimeMs ?? null
   ])
+  useEffect(() => {
+    if (!selectedVersionId) return
+    return window.api.projectFiles?.onChanged?.((event) => {
+      if (
+        event.projectId === projectId &&
+        event.sources.includes(source === 'upload' ? 'upload' : 'artifact') &&
+        event.versionIds?.includes(selectedVersionId)
+      )
+        setRevision((value) => value + 1)
+    })
+  }, [projectId, selectedVersionId, source])
   const [result, setResult] = useState<UnavailableProbeResult | null>(null)
   const hasCurrentResult = result?.requestKey === requestKey
 
@@ -65,7 +79,12 @@ const useUnavailablePreviewProbe = ({
       },
       (error: unknown) => {
         if (!canceled) {
-          setResult({ requestKey, unavailable: isUnavailableFileError(error) })
+          setResult({
+            requestKey,
+            unavailable: String(error).includes(CLEANED_VERSION_MESSAGE)
+              ? 'cleaned'
+              : isUnavailableFileError(error)
+          })
         }
       }
     )
@@ -88,4 +107,6 @@ const useUnavailablePreviewProbe = ({
   return hasCurrentResult ? result.unavailable : false
 }
 
-export { useUnavailablePreviewProbe }
+const useUnavailablePreviewProbe = (input: Parameters<typeof usePreviewAvailability>[0]): boolean =>
+  Boolean(usePreviewAvailability(input))
+export { usePreviewAvailability, useUnavailablePreviewProbe }

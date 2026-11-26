@@ -1432,7 +1432,7 @@ class ArtifactProvenanceRepository {
 
   async getVersionProvenance(
     request: GetArtifactVersionProvenanceRequest,
-    sections?: { execution: boolean; messages: boolean; review: boolean }
+    sections?: { execution: boolean; messages: boolean; review: boolean; includeCleaned?: boolean }
   ): Promise<ArtifactVersionProvenance> {
     return this.readModel.getVersionProvenance(request, sections)
   }
@@ -1501,7 +1501,7 @@ class ArtifactProvenanceRepository {
       where: {
         id: { in: versionIds },
         originKind: 'agent_generated',
-        state: 'finalized',
+        state: { in: ['finalized', 'cleaning', 'cleaned'] },
         artifact: { is: { projectId } }
       },
       include: { artifact: true }
@@ -2000,7 +2000,7 @@ class ArtifactProvenanceRepository {
     void fileUrl
     return {
       ...relocatableFile,
-      state: version.state as 'pending' | 'finalized',
+      state: version.state as ArtifactVersionDescriptor['state'],
       messageId: version.messageId ?? undefined,
       originKind: version.originKind as 'agent_generated' | 'user_edit' | 'legacy',
       basedOnVersionId: version.basedOnVersionId ?? undefined

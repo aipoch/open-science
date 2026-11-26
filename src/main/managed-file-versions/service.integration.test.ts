@@ -426,7 +426,7 @@ describe('ManagedFileVersionService (SQLite + filesystem)', () => {
         fileId: fixture.fileId,
         versionIds: [version.id]
       })
-    ).rejects.toMatchObject({ code: 'VERSION_IN_USE' })
+    ).rejects.toMatchObject({ code: 'VERSION_IN_USE', versionNumber: version.versionNumber })
     expect(
       await client.artifactVersion.findUniqueOrThrow({ where: { id: version.id } })
     ).toMatchObject({ state: 'finalized', contentBlobId })

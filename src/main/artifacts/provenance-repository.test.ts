@@ -1873,6 +1873,10 @@ describe('artifact provenance repository', () => {
       data: { state: 'finalized' }
     })
 
+    await client.artifactVersion.update({
+      where: { id: first.versionId },
+      data: { state: 'cleaned' }
+    })
     const resolved = await repository.resolveVersionDescriptors({
       projectId: 'project-1',
       appSessionId: 'branched-session',
@@ -1895,6 +1899,7 @@ describe('artifact provenance repository', () => {
         id: first.versionId,
         versionId: first.versionId,
         artifactId: first.artifactId,
+        state: 'cleaned',
         name: 'first.txt'
       })
     ])

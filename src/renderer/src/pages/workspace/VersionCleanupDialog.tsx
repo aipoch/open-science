@@ -28,7 +28,7 @@ export function VersionCleanupDialog({
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<'load' | 'delete'>()
+  const [error, setError] = useState<'load' | 'delete' | number>()
   const [reload, setReload] = useState(0)
   const { source, projectId, fileId } = inspect
   const prepareHistoryLoad = (): void => {
@@ -86,7 +86,14 @@ export function VersionCleanupDialog({
         fileId,
         versionIds: [...selected]
       })
-      if (!result.ok) throw new Error(result.error.message)
+      if (!result.ok) {
+        if (result.error.code === 'VERSION_IN_USE' && result.error.versionNumber !== undefined) {
+          setConfirm(false)
+          setError(result.error.versionNumber)
+          return
+        }
+        throw new Error(result.error.message)
+      }
       setOpen(false)
       onDeleted()
     } catch {
@@ -142,9 +149,11 @@ export function VersionCleanupDialog({
           {error && (
             <ErrorNotice
               title={
-                error === 'load'
-                  ? t('Could not load version history.')
-                  : t('Failed to delete file versions')
+                typeof error === 'number'
+                  ? t('Version {{number}} is in use. Deselect it to continue.', { number: error })
+                  : error === 'load'
+                    ? t('Could not load version history.')
+                    : t('Failed to delete file versions')
               }
               primaryButton={
                 error === 'load'

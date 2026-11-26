@@ -219,8 +219,8 @@ export const captureNativeRecords = async (
   if (versions.length !== artifactIds.size || uploadVersions.length !== uploadIds.size)
     throw new Error('Session package references a missing immutable Version.')
   if (
-    versions.some((row) => row.state === 'staging') ||
-    uploadVersions.some((row) => row.state !== 'ready')
+    versions.some((row) => row.state === 'staging' || row.state === 'cleaning') ||
+    uploadVersions.some((row) => row.state !== 'ready' && row.state !== 'cleaned')
   )
     throw new Error('Wait for file writes to finish before exporting.')
   const lineages = await client.artifactLineage.findMany({
@@ -351,12 +351,17 @@ export const parseNativeRecords = (value: unknown): PackageRecords => {
 export const nativeStorageKeys = (records: PackageRecords): string[] => [
   ...researchFilmStorageKeys(packageFilms(records)),
   ...new Set(
-    Object.values(records.tables).flatMap((rows) =>
-      rows.flatMap((row) =>
-        Object.entries(row).flatMap(([key, value]) =>
-          /(?:StorageKey|storageKey)$/.test(key) && typeof value === 'string' ? [value] : []
+    Object.entries(records.tables).flatMap(([table, rows]) =>
+      rows
+        .filter(
+          (row) =>
+            !(['ArtifactVersion', 'UploadVersion'].includes(table) && row.state === 'cleaned')
         )
-      )
+        .flatMap((row) =>
+          Object.entries(row).flatMap(([key, value]) =>
+            /(?:StorageKey|storageKey)$/.test(key) && typeof value === 'string' ? [value] : []
+          )
+        )
     )
   )
 ]
@@ -964,7 +969,7 @@ export const prepareNativeImport = async (
       const json = canonicalJson(value)
       row[jsonKey] = json
       row[hashKey] = sha256(json)
-      if (typeof row[storageKey] === 'string')
+      if (row.state !== 'cleaned' && typeof row[storageKey] === 'string')
         await writeFile(resolveStorageKey(destinationRoot, row[storageKey]), json)
     }
   }

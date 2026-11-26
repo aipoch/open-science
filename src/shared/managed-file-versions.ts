@@ -78,11 +78,14 @@ type ManagedFileVersionInspectResult = {
   previousVersion?: ManagedFileVersionDescriptor
   nextVersion?: ManagedFileVersionDescriptor
   canEdit: boolean
+  diffBaseCleaned?: boolean
   canDiff: boolean
   unavailableReason?: ManagedTextEditUnavailableReason | 'PROJECT_NOT_WRITABLE' | 'FILE_DELETED'
   text?: string
   textFormat?: ManagedTextFormat
 }
+
+export const CLEANED_VERSION_MESSAGE = 'Managed file version content was cleaned up.'
 
 type ManagedFileVersionErrorCode =
   | ManagedTextEditUnavailableReason
@@ -112,6 +115,7 @@ type ManagedFileVersionErrorCode =
 type ManagedFileVersionErrorShape = {
   code: ManagedFileVersionErrorCode
   message: string
+  versionNumber?: number
 }
 
 type ManagedFileVersionIpcResult<Value> =

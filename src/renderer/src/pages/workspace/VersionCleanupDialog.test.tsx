@@ -36,7 +36,13 @@ it('loads earlier versions, protects the latest, and deletes only checked versio
     .fn()
     .mockResolvedValueOnce({ ok: true, value: { ...inspect, nextCursor: 'earlier' } })
     .mockResolvedValueOnce({ ok: true, value: { ...inspect, versions: [version('v1', 1)] } })
-  const deleteVersions = vi.fn(async () => ({ ok: true, value: undefined }))
+  const deleteVersions = vi
+    .fn()
+    .mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'VERSION_IN_USE', versionNumber: 2, message: 'in use' }
+    })
+    .mockResolvedValue({ ok: true, value: undefined })
   window.api = {
     managedFileVersions: { inspect: inspectApi, deleteVersions }
   } as unknown as Window['api']
@@ -48,9 +54,18 @@ it('loads earlier versions, protects the latest, and deletes only checked versio
   fireEvent.click(trigger)
   await screen.findByRole('checkbox', { name: 'Version 1' })
   expect(screen.queryByRole('checkbox', { name: 'Version 3' })).toBeNull()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Version 2' }))
   fireEvent.click(screen.getByRole('checkbox', { name: 'Version 1' }))
   fireEvent.click(screen.getByText('Delete selected versions'))
   expect(deleteVersions).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByText('Delete selected versions'))
+  await screen.findByText('Version 2 is in use. Deselect it to continue.')
+  expect(onDeleted).not.toHaveBeenCalled()
+  expect((screen.getByRole('checkbox', { name: 'Version 1' }) as HTMLInputElement).checked).toBe(
+    true
+  )
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Version 2' }))
+  fireEvent.click(screen.getByText('Delete selected versions'))
   fireEvent.click(screen.getByText('Delete selected versions'))
   await waitFor(() => expect(onDeleted).toHaveBeenCalledOnce())
   expect(deleteVersions).toHaveBeenCalledWith({

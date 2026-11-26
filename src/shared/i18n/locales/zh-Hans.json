@@ -254,6 +254,9 @@
     "Wait for the application handoff to finish before transferring research.": "请等待应用交接完成后再传输研究内容。"
   },
   "renderer": {
+    "Cleaned up": "已清理",
+    "Version {{number}} is in use. Deselect it to continue.": "版本 {{number}} 正被引用。请取消勾选该版本后继续。",
+    "The source version was cleaned up and cannot be compared.": "源版本已清理，无法比较。",
     "The update did not finish. Reopen your file or link after updating.": "更新未完成。请在更新后重新打开文件或链接。",
     "View updates": "查看更新",
     "Could not confirm that all subagents stopped.": "未能确认所有子智能体都已停止。",

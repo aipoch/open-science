@@ -59,7 +59,16 @@ const rendererResult = async <Value>(
     return { ok: true, value: await operation() }
   } catch (error) {
     if (error instanceof ManagedFileVersionError) {
-      return { ok: false, error: { code: error.code, message: error.message } }
+      return {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error.versionNumber !== undefined && {
+            versionNumber: error.versionNumber
+          })
+        }
+      }
     }
     return {
       ok: false,
@@ -83,7 +92,8 @@ const createManagedFileVersionHandlers = (
         dependencies.onChanged?.({
           projectId: request.projectId,
           sources: [request.source],
-          kind: 'upsert'
+          kind: 'upsert',
+          versionIds: request.versionIds
         })
       }
     }),

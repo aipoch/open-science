@@ -43,7 +43,7 @@ class ArtifactProvenanceDependencyReader {
         const output = row.artifactVersion
         const commonValid =
           output.artifact.projectId === request.projectId &&
-          (output.state === 'pending' || output.state === 'finalized') &&
+          ['pending', 'finalized', 'cleaning', 'cleaned'].includes(output.state) &&
           row.sourceProjectId === request.projectId &&
           Number.isSafeInteger(row.ordinal) &&
           row.ordinal >= 0 &&

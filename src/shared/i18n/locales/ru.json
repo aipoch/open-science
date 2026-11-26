@@ -257,6 +257,9 @@
     "Wait for the application handoff to finish before transferring research.": "Дождитесь завершения передачи приложения перед переносом данных исследования."
   },
   "renderer": {
+    "Cleaned up": "Содержимое удалено",
+    "Version {{number}} is in use. Deselect it to continue.": "Версия {{number}} используется. Снимите с неё выделение, чтобы продолжить.",
+    "The source version was cleaned up and cannot be compared.": "Содержимое исходной версии удалено. Сравнение недоступно.",
     "The update did not finish. Reopen your file or link after updating.": "Обновление не завершилось. После обновления снова откройте файл или ссылку.",
     "View updates": "Посмотреть обновления",
     "Could not confirm that all subagents stopped.": "Не удалось подтвердить остановку всех субагентов.",

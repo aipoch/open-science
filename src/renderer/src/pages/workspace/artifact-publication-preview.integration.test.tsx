@@ -235,6 +235,15 @@ describe('native Artifact publication and transcript preview', () => {
           )
         })
       }
+      let notify: Parameters<typeof window.api.projectFiles.onChanged>[0] | undefined
+      window.api.projectFiles = {
+        onChanged: (listener) => {
+          notify = listener
+          return () => {
+            notify = undefined
+          }
+        }
+      } as typeof window.api.projectFiles
       await renderArtifact(artifact)
       await act(async () => {
         await Promise.allSettled(attempts)
@@ -284,6 +293,25 @@ describe('native Artifact publication and transcript preview', () => {
             'Publication succeeded, so the mounted thumbnail must recover.'
           ).not.toBeNull()
         )
+        // A mounted published card keeps its identity when a cleanup event invalidates its preview.
+        await fixture.client.artifactVersion.update({
+          where: { id: version.versionId },
+          data: { state: 'cleaned' }
+        })
+        await act(async () => {
+          notify?.({
+            projectId: 'project-1',
+            sources: ['artifact'],
+            kind: 'upsert',
+            versionIds: [version.versionId]
+          })
+        })
+        await waitFor(() => expect(container.textContent).toContain('Cleaned up'))
+        expect(container.querySelector('button[aria-label*="Cleaned up"]')).toHaveProperty(
+          'disabled',
+          true
+        )
+        expect(container.querySelector('img')).toBeNull()
         return
       }
 

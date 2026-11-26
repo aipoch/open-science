@@ -254,6 +254,9 @@
     "Wait for the application handoff to finish before transferring research.": "研究データを転送する前に、アプリケーションの引き継ぎが完了するまでお待ちください。"
   },
   "renderer": {
+    "Cleaned up": "消去済み",
+    "Version {{number}} is in use. Deselect it to continue.": "バージョン {{number}} は使用中です。続行するには選択を解除してください。",
+    "The source version was cleaned up and cannot be compared.": "元のバージョンは消去済みのため、比較できません。",
     "The update did not finish. Reopen your file or link after updating.": "アップデートが完了しませんでした。アップデート後にファイルまたはリンクをもう一度開いてください。",
     "View updates": "アップデートを確認",
     "Could not confirm that all subagents stopped.": "すべてのサブエージェントが停止したか確認できませんでした。",

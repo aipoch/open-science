@@ -17,6 +17,7 @@ export function GeneratedFileCard({
   title,
   preview,
   disabled,
+  cleaned,
   buttonRef,
   onClick
 }: {
@@ -26,6 +27,7 @@ export function GeneratedFileCard({
   label: string
   title?: string
   preview: ReactNode
+  cleaned?: boolean
   disabled?: boolean
   buttonRef?: Ref<HTMLButtonElement>
   onClick: React.MouseEventHandler<HTMLButtonElement>
@@ -34,7 +36,11 @@ export function GeneratedFileCard({
     <button
       ref={buttonRef}
       type="button"
-      className={cn('group flex min-w-0 flex-col', artifactCardClassName)}
+      className={cn(
+        'group flex min-w-0 flex-col',
+        artifactCardClassName,
+        cleaned && 'disabled:opacity-100'
+      )}
       disabled={disabled}
       onClick={onClick}
       aria-label={label}
@@ -42,13 +48,15 @@ export function GeneratedFileCard({
     >
       <div className="relative h-[56px] w-full overflow-hidden bg-bg-200">
         {preview}
-        <span
-          data-slot="generated-artifact-open-icon"
-          className="absolute right-1 top-1 flex size-7 items-center justify-center rounded-md bg-bg-000/90 text-text-100 opacity-0 shadow-sm transition-[opacity,background-color,color] duration-150 hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
-          aria-hidden="true"
-        >
-          <ArrowUpRight className="size-4" strokeWidth={1.75} />
-        </span>
+        {!cleaned && (
+          <span
+            data-slot="generated-artifact-open-icon"
+            className="absolute right-1 top-1 flex size-7 items-center justify-center rounded-md bg-bg-000/90 text-text-100 opacity-0 shadow-sm transition-[opacity,background-color,color] duration-150 hover:bg-bg-300 hover:text-text-000 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+            aria-hidden="true"
+          >
+            <ArrowUpRight className="size-4" strokeWidth={1.75} />
+          </span>
+        )}
       </div>
       <div className="flex min-w-0 flex-1 items-center px-1.5">
         <ExtensionPreservingFileName name={name} className="flex-1 text-[12px] leading-5" compact />

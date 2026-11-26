@@ -218,7 +218,7 @@ export type { ArtifactVersionIdentity } from './artifact-version-locator'
 // Lineage crosses IPC and is persisted in renderer state, so it deliberately excludes root-bound
 // path/fileUrl fields. File access goes through the opaque Artifact Version locator above.
 export type ArtifactVersionDescriptor = Omit<ArtifactVersionFile, 'path' | 'fileUrl'> & {
-  state: 'pending' | 'finalized'
+  state: 'pending' | 'finalized' | 'cleaning' | 'cleaned'
   messageId?: string
   // Presence only: the full immutable manifest stays behind the Version provenance read.
   hasLiterature?: boolean

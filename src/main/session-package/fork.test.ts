@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { BookmarkRepository } from '../bookmarks/repository'
 import { SessionPackageDesktop } from './desktop'
@@ -232,6 +233,111 @@ it('forks all branches with fresh identities, independent files, replay and no S
   await rm(version.path)
   expect(await readFile(copiedPath)).toEqual(copiedBytes)
   await service.close()
+})
+
+it('round-trips cleaned Artifact and Upload versions through .science import and Fork', async () => {
+  const { fixture, service } = await setup()
+  const source = { projectId: 'project-1', sessionId: 'session-1' }
+  const files = new ManagedFileVersionService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const generated = await fixture.repository.writeAppGeneratedVersion({
+    ...createArtifactVersionRequest({ filename: 'notes.md' }),
+    filename: 'notes.md',
+    content: 'original',
+    contentType: 'text/markdown'
+  })
+  await fixture.client.artifactVersion.update({
+    where: { id: generated.versionId },
+    data: { state: 'finalized', managedVisibleAt: new Date() }
+  })
+  await fixture.client.artifactLineage.update({
+    where: { id: generated.artifactId },
+    data: { currentVersionId: generated.versionId }
+  })
+  const artifact = { fileId: generated.artifactId, versionId: generated.versionId }
+  const uploadKey = 'uploads/project-1/session-1/notes-upload/versions/upload-v1/content'
+  const uploadBytes = Buffer.from('upload')
+  await mkdir(join(fixture.storageRoot, uploadKey, '..'), { recursive: true })
+  await writeFile(join(fixture.storageRoot, uploadKey), uploadBytes)
+  await fixture.client.uploadFile.create({
+    data: { ...source, id: 'notes-upload', filename: 'upload.md', originalFilename: 'upload.md' }
+  })
+  await fixture.client.uploadVersion.create({
+    data: {
+      id: 'upload-v1',
+      uploadFileId: 'notes-upload',
+      versionNumber: 1,
+      state: 'ready',
+      filename: 'upload.md',
+      originalFilename: 'upload.md',
+      contentStorageKey: uploadKey,
+      sizeBytes: BigInt(uploadBytes.length),
+      checksum: createHash('sha256').update(uploadBytes).digest('hex')
+    }
+  })
+  await fixture.client.uploadFile.update({
+    where: { id: 'notes-upload' },
+    data: { currentVersionId: 'upload-v1' }
+  })
+  for (const [kind, id, base] of [
+    ['artifact', artifact.fileId, artifact.versionId],
+    ['upload', 'notes-upload', 'upload-v1']
+  ] as const) {
+    const identity = { projectId: source.projectId, source: kind, fileId: id }
+    await files.saveTextEdit({
+      ...identity,
+      basedOnVersionId: base,
+      expectedHeadVersionId: base,
+      operationId: 'edit-' + kind,
+      content: 'retained'
+    })
+    await files.deleteVersions({ ...identity, versionIds: [base] })
+    expect(await files.inspect(identity)).toMatchObject({
+      text: 'retained',
+      canDiff: false,
+      diffBaseCleaned: true
+    })
+  }
+  try {
+    const archive = join(fixture.storageRoot, 'cleaned.science')
+    await service.exportTo(source, archive)
+    for (const copy of [await service.importFrom(archive), await service.fork(source)]) {
+      const origin = await service.readOrigin(copy)
+      expect(origin.sourceManifest.requiredFeatures).toContain('cleaned-file-versions')
+      const copied = await fixture.client.artifactVersion.findUniqueOrThrow({
+        where: { id: origin.identities[artifact.versionId] }
+      })
+      const upload = await fixture.client.uploadVersion.findUniqueOrThrow({
+        where: { id: origin.identities['upload-v1'] }
+      })
+      for (const row of [copied, upload]) {
+        expect(row.state).toBe('cleaned')
+        await expect(stat(join(fixture.storageRoot, row.contentStorageKey))).rejects.toMatchObject({
+          code: 'ENOENT'
+        })
+      }
+      for (const [kind, fileId, base] of [
+        ['artifact', artifact.fileId, copied.id],
+        ['upload', 'notes-upload', upload.id]
+      ] as const) {
+        expect(
+          await files.inspect({
+            projectId: copy.projectId,
+            source: kind,
+            fileId: origin.identities[fileId]
+          })
+        ).toMatchObject({
+          text: 'retained',
+          canDiff: false,
+          headVersion: { basedOnVersionId: base, versionNumber: 2 }
+        })
+      }
+    }
+  } finally {
+    await service.close()
+  }
 })
 
 it('preserves pending Artifact evidence through repeated forks and database startup', async () => {

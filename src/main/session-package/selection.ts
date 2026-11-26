@@ -57,28 +57,30 @@ export const selectablePackageFiles = (
         }))
     ) ?? []),
     ...(['ArtifactVersion', 'UploadVersion'] as const).flatMap((table) =>
-      records.tables[table].map((row) => ({
-        storageKey: String(row.contentStorageKey),
-        filename: String(row.filename),
-        sizeBytes: Number(row.sizeBytes),
-        checksum: String(row.checksum),
-        groupId: String(row.artifactId ?? row.uploadFileId),
-        source:
-          table === 'ArtifactVersion'
-            ? ('artifact' as const)
-            : records.literature?.attachments.some((entry) => entry.versionId === row.id)
-              ? ('literature' as const)
-              : ('upload' as const),
-        versionNumber: Number(row.versionNumber),
-        dependentFiles: [
-          ...new Set([
-            ...(inputUsers.get(row.id) ?? []),
-            ...(descendants.get(row.id) ?? []),
-            ...(reviews.get(row.id) ?? []),
-            ...(runs.get(row.id) ?? [])
-          ])
-        ]
-      }))
+      records.tables[table]
+        .filter((row) => row.state !== 'cleaned')
+        .map((row) => ({
+          storageKey: String(row.contentStorageKey),
+          filename: String(row.filename),
+          sizeBytes: Number(row.sizeBytes),
+          checksum: String(row.checksum),
+          groupId: String(row.artifactId ?? row.uploadFileId),
+          source:
+            table === 'ArtifactVersion'
+              ? ('artifact' as const)
+              : records.literature?.attachments.some((entry) => entry.versionId === row.id)
+                ? ('literature' as const)
+                : ('upload' as const),
+          versionNumber: Number(row.versionNumber),
+          dependentFiles: [
+            ...new Set([
+              ...(inputUsers.get(row.id) ?? []),
+              ...(descendants.get(row.id) ?? []),
+              ...(reviews.get(row.id) ?? []),
+              ...(runs.get(row.id) ?? [])
+            ])
+          ]
+        }))
     )
   ]
 }

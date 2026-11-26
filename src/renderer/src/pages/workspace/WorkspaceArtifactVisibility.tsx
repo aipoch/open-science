@@ -10,6 +10,7 @@ import { resolveProjectId } from '../../../../shared/project-scope'
 import { resolveTurnTerminalAgentMessageIds } from './workspace-conversation-items'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number] & {
+  cleaned?: boolean
   resolvedProjectId?: string
   resolvedSessionId?: string
 }
@@ -96,6 +97,7 @@ const toResolvedMessageArtifact = (descriptor: ArtifactVersionDescriptor): Messa
   artifactId: descriptor.artifactId,
   versionId: descriptor.versionId,
   versionNumber: descriptor.versionNumber,
+  cleaned: descriptor.state === 'cleaned' || descriptor.state === 'cleaning',
   isPublished: descriptor.isPublished === true,
   kind: 'managed-file',
   path: createArtifactVersionLocator({
