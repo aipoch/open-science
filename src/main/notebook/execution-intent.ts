@@ -29,6 +29,7 @@ export class NotebookExecutionIntent {
   }>
   private continuationClaimed = false
   private userPreparationPending = false
+  private freshUserRetryAllowed = false
   private userMemoryRecheck?: () => void
   private readonly branches = new Map<
     string,
@@ -47,6 +48,10 @@ export class NotebookExecutionIntent {
 
   get refusalReason(): string | undefined {
     return this.refusal?.reason
+  }
+
+  get canRetryAbandonedPreparation(): boolean {
+    return this.freshUserRetryAllowed && this.refusalReason === ABANDONED_NOTEBOOK_PREPARATION
   }
 
   get recheckMemory(): NotebookMemoryRecheck | undefined {
@@ -105,10 +110,12 @@ export class NotebookExecutionIntent {
     this.userPreparationPending = false
   }
 
-  abandonUserExecution(): void {
+  abandonUserExecution(options?: { allowFreshUserRetry?: boolean }): void {
     this.userMemoryRecheck = undefined
     if (!this.userPreparationPending) return
     this.userPreparationPending = false
+    this.freshUserRetryAllowed =
+      options?.allowFreshUserRetry === true && !this.refusal && !this.scope.continuedFromRefusalId
     this.block(ABANDONED_NOTEBOOK_PREPARATION)
   }
 

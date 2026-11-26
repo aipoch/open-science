@@ -7826,6 +7826,8 @@
     "The input is too long": "入力内容が長すぎます",
     "Shorten the conversation or remove some attachments, then retry.": "会話を短くするか、一部の添付ファイルを削除してから、再試行してください。",
     "Check your credentials, model and account settings, then retry.": "認証情報、モデル、アカウントの設定を確認してから再試行してください。",
+    "Notebook tools are temporarily unavailable": "Notebook ツールは一時的に利用できません",
+    "Retry to send this request with Notebook.": "再試行して、このリクエストを Notebook で送信してください。",
     "The model service is temporarily unavailable": "モデルサービスは一時的に利用できません",
     "The request could not finish. Wait a moment, then retry.": "リクエストを完了できませんでした。しばらく待ってから再試行してください。",
     "The local environment needs attention": "ローカル環境の確認が必要です",

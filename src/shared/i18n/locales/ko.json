@@ -7824,6 +7824,8 @@
     "The input is too long": "입력 내용이 너무 깁니다",
     "Shorten the conversation or remove some attachments, then retry.": "대화 내용을 줄이거나 일부 첨부 파일을 제거한 후 다시 시도하세요.",
     "Check your credentials, model and account settings, then retry.": "자격 증명, 모델 및 계정 설정을 확인한 후 다시 시도하세요.",
+    "Notebook tools are temporarily unavailable": "Notebook 도구를 일시적으로 사용할 수 없습니다",
+    "Retry to send this request with Notebook.": "이 요청을 Notebook으로 보내려면 다시 시도하세요.",
     "The model service is temporarily unavailable": "모델 서비스를 일시적으로 사용할 수 없습니다",
     "The request could not finish. Wait a moment, then retry.": "요청을 완료하지 못했습니다. 잠시 후 다시 시도하세요.",
     "The local environment needs attention": "로컬 환경을 확인해야 합니다",

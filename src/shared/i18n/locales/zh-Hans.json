@@ -7826,6 +7826,8 @@
     "The input is too long": "输入内容过长",
     "Shorten the conversation or remove some attachments, then retry.": "请缩短对话内容或移除部分附件，然后重试。",
     "Check your credentials, model and account settings, then retry.": "请检查凭据、模型和账户设置，然后重试。",
+    "Notebook tools are temporarily unavailable": "Notebook 工具暂时不可用",
+    "Retry to send this request with Notebook.": "请重试以使用 Notebook 发送此请求。",
     "The model service is temporarily unavailable": "模型服务暂时不可用",
     "The request could not finish. Wait a moment, then retry.": "请求未能完成。请稍候重试。",
     "The local environment needs attention": "本地环境需要处理",

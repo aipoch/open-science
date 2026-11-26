@@ -1511,18 +1511,10 @@ class AcpRuntime {
     identity: AcpConnectionResourceAttempt,
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ): Promise<AcpAgentConnectionCandidate> {
-    const requestPermission = (
-      params: acp.RequestPermissionRequest
-    ): Promise<acp.RequestPermissionResponse> => this.clientInteractions.requestPermission(params)
     const hooks: AcpAgentConnectionHooks = {
       toolLess: this.sessionEnvironment.role() === 'restricted-inference',
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
-      requestPermission: (params) => {
-        const api = this.backendGeneration.openCodeUsageApi()
-        return api && api.version !== 2 && this.framework.id === 'opencode'
-          ? this.openCodeNotebook.requestPermission(params, requestPermission)
-          : requestPermission(params)
-      },
+      requestPermission: (params) => this.clientInteractions.requestPermission(params),
       captureUserStop: (providerSessionId) => {
         const appSessionId = this.sessionRegistry.resolveAppSessionId(providerSessionId)
         const scope = this.sessionInteractions.current(appSessionId)
@@ -1538,9 +1530,7 @@ class AcpRuntime {
       filesystem: {
         resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
         protectedReadRoots: () => this.protectedReadRoots(),
-        listGrantedRoots: () => this.options.grantedRoots?.list?.() ?? Promise.resolve([]),
-        consumeNotebookDraftWrite: ({ sessionId, path }) =>
-          this.openCodeNotebook.consumeDraftWrite(sessionId, path)
+        listGrantedRoots: () => this.options.grantedRoots?.list?.() ?? Promise.resolve([])
       },
       onBackendResolved: (framework) => {
         onFrameworkResolved(framework)
@@ -2384,9 +2374,7 @@ class AcpRuntime {
 
   private openCodeNotebookScope(providerSessionId: string): OpenCodeNotebookScope | undefined {
     const api = this.backendGeneration.openCodeUsageApi()
-    const directoryFor = this.options.notebook?.dataDirectory
-    if (!api || api.version === 2 || !directoryFor || this.sessionEnvironment.role() !== 'primary')
-      return
+    if (!api || api.version === 2 || this.sessionEnvironment.role() !== 'primary') return
     const id = this.sessionRegistry.resolveAppSessionId(providerSessionId)
     const entry = this.sessionRegistry.lookup(id)
     const snapshot = entry?.aggregate.snapshot()
@@ -2394,13 +2382,11 @@ class AcpRuntime {
       !entry?.attachment ||
       entry.attachment.providerSessionId !== providerSessionId ||
       snapshot?.frameworkId !== 'opencode' ||
-      !snapshot.projectId ||
       !this.sessionCapabilities.mcpServerNamesFor(id).includes(NOTEBOOK_MCP_SERVER_NAME)
     )
       return
     return {
       api,
-      directory: directoryFor(snapshot.projectId, id),
       session: entry.attachment.session,
       revision: entry.aggregate.specialistBindingRevision(),
       servers: this.sessionCapabilities.mcpServersFor(id),
@@ -2410,10 +2396,9 @@ class AcpRuntime {
 
   // Looks up the workspace root bound to a session for filesystem operations.
   private resolveSessionCwd(sessionId: string): string {
-    const entry = this.sessionRegistry.lookup(this.sessionRegistry.resolveAppSessionId(sessionId))
-    const sessionCwd = entry?.aggregate.snapshot().cwd
+    const sessionCwd = this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd
 
-    if (entry?.attachment?.providerSessionId !== sessionId || !sessionCwd) {
+    if (!this.activeSessionFor(sessionId) || !sessionCwd) {
       throw new Error(`Unknown ACP session: ${sessionId}`)
     }
 

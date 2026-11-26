@@ -1,22 +1,15 @@
-import type {
-  ActiveSession,
-  McpServer,
-  RequestPermissionRequest,
-  RequestPermissionResponse
-} from '@agentclientprotocol/sdk'
-import { createLogger } from '@aipoch/diagnostics/node'
-import { isAbsolute, resolve, sep } from 'node:path'
+import type { ActiveSession, McpServer } from '@agentclientprotocol/sdk'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
+import {
+  NOTEBOOK_TOOLS_UNAVAILABLE_CODE,
+  NOTEBOOK_TOOLS_UNAVAILABLE_MESSAGE
+} from '../../shared/failure/messages'
 import { canonicalAppMcpServerName } from '../agent-framework/app-mcp-names'
 import { NOTEBOOK_MCP_SERVER_NAME } from '../notebook/mcp-server'
 import { isRecord } from '../value-guards'
 import type { AcpOpenCodeUsageApi } from './backend-generation-owner'
-import { isNotebookDraftFile, type NotebookDraftWrite } from './filesystem'
 import type { AcpNotebookConnectionVerifier } from './provider-session-resumer'
-import type {
-  AcpSessionInteractionScope,
-  AcpPromptSessionInteractionScope
-} from './session-interaction-owner'
-import { isPathInsideWorkspace } from './workspace-path'
+import type { AcpSessionInteractionScope } from './session-interaction-owner'
 
 const log = createLogger('acp')
 const NOTEBOOK_PREPARATION_TIMEOUT_MS = 10_000
@@ -26,55 +19,11 @@ type SessionToolsInput = {
   providerSessionId: string
   cwd: string
   notebook: McpServer
-  notebookDirectory: string
-  checkDirectory: boolean
-  checkTools: boolean
   providerRefreshed: boolean
   signal?: AbortSignal
 }
 
-const configureNotebookDirectory = async (
-  request: (path: string, method?: string, body?: unknown) => Promise<unknown>,
-  providerSessionId: string,
-  notebookDirectory: string
-): Promise<void> => {
-  // OpenCode path rules support wildcards. Use Notebook tools for paths that cannot be matched literally.
-  const directory = notebookDirectory.split(sep).join('/')
-  if (/[\\*?]/u.test(directory)) return
-  const path = '/session/' + encodeURIComponent(providerSessionId)
-  const session = await request(path)
-  if (
-    !isRecord(session) ||
-    session.id !== providerSessionId ||
-    (session.permission !== undefined && !Array.isArray(session.permission))
-  ) {
-    throw new Error('OpenCode returned an invalid session permission list.')
-  }
-  const rules: unknown[] = session.permission ?? []
-  const rule = { permission: 'external_directory', pattern: directory + '/*', action: 'ask' }
-  const matches = (item: unknown): boolean =>
-    isRecord(item) &&
-    item.permission === rule.permission &&
-    item.pattern === rule.pattern &&
-    item.action === rule.action
-  if (!rules.some(matches)) {
-    const updated = await request(path, 'PATCH', { permission: [...rules, rule] })
-    if (
-      !isRecord(updated) ||
-      !Array.isArray(updated.permission) ||
-      !updated.permission.some(matches)
-    ) {
-      throw new Error('OpenCode could not apply the Notebook directory permission.')
-    }
-  }
-}
-
-type OpenCodeNotebookReadiness = { directoryReady: boolean; toolsReady: boolean }
-
-/** Verifies OpenCode 1.x Notebook tools and configures per-request checks for session drafts. */
-const prepareOpenCodeSessionTools = async (
-  input: SessionToolsInput
-): Promise<OpenCodeNotebookReadiness> => {
+const prepareOpenCodeSessionTools = async (input: SessionToolsInput): Promise<void> => {
   const timeout = AbortSignal.timeout(NOTEBOOK_PREPARATION_TIMEOUT_MS)
   const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout
   const request = async (path: string, method = 'GET', body?: unknown): Promise<unknown> => {
@@ -92,22 +41,8 @@ const prepareOpenCodeSessionTools = async (
     return response.json()
   }
 
-  let directoryReady = true
-  if (input.checkDirectory) {
-    try {
-      await configureNotebookDirectory(request, input.providerSessionId, input.notebookDirectory)
-    } catch {
-      input.signal?.throwIfAborted()
-      directoryReady = false
-      log.warn('OpenCode Notebook directory permission unavailable', {
-        sessionId: input.providerSessionId
-      })
-    }
-  }
-
   const server = input.notebook
-  if (!input.checkTools || ('type' in server && server.type === 'acp'))
-    return { directoryReady, toolsReady: true }
+  if ('type' in server && server.type === 'acp') return
 
   const statusFor = (result: unknown): string | undefined => {
     if (isRecord(result)) {
@@ -129,7 +64,7 @@ const prepareOpenCodeSessionTools = async (
       log.warn('OpenCode Notebook MCP status unavailable', { sessionId: input.providerSessionId })
     }
   }
-  if (status === 'connected') return { directoryReady, toolsReady: true }
+  if (status === 'connected') return
   const config =
     'type' in server
       ? {
@@ -145,34 +80,27 @@ const prepareOpenCodeSessionTools = async (
   const attempts = status === 'failed' ? 1 : 2
   for (let attempt = 0; attempt < attempts; attempt++) {
     const registered = statusFor(await request('/mcp', 'POST', { name: server.name, config }))
-    if (registered === 'connected') return { directoryReady, toolsReady: true }
+    if (registered === 'connected') return
     if (registered === undefined)
       throw new Error('OpenCode did not report a status for the registered Notebook MCP server.')
     if (registered !== 'failed') break
   }
 
-  // Keep native file tools available and check Notebook again on the next turn.
-  log.warn('OpenCode Notebook MCP discovery failed', { sessionId: input.providerSessionId })
-  return { directoryReady, toolsReady: false }
+  throw new Error('OpenCode Notebook MCP discovery did not become ready.')
 }
 
 export type OpenCodeNotebookScope = {
   api: AcpOpenCodeUsageApi
-  directory: string
   session: ActiveSession
   revision: number
   servers: readonly McpServer[]
   interaction?: AcpSessionInteractionScope
 }
 
-type ReadinessCheck = { revision: number; readiness?: OpenCodeNotebookReadiness }
+type ReadinessCheck = { revision: number; ready: boolean }
 
 export class AcpOpenCodeNotebook {
   private readonly checks = new WeakMap<ActiveSession, ReadinessCheck>()
-  private readonly approvedWrites = new WeakMap<
-    AcpPromptSessionInteractionScope,
-    Map<string, OpenCodeNotebookScope>
-  >()
 
   constructor(
     private readonly resolveScope: (providerSessionId: string) => OpenCodeNotebookScope | undefined
@@ -186,85 +114,37 @@ export class AcpOpenCodeNotebook {
     const scope = this.resolveScope(input.providerSessionId)
     if (!scope) return
     const cached = this.checks.get(scope.session)
-    const previous = cached?.revision === scope.revision ? cached.readiness : undefined
-    const checkDirectory = !previous?.directoryReady
-    const checkTools = input.providerRefreshed || !previous?.toolsReady
-    if (!checkDirectory && !checkTools) return
+    if (!input.providerRefreshed && cached?.revision === scope.revision && cached.ready) return
     const notebook = (input.mcpServers ?? scope.servers).find(
       ({ name }) => canonicalAppMcpServerName(name) === NOTEBOOK_MCP_SERVER_NAME
     )
-    if (!notebook) return
-    const check: ReadinessCheck = { revision: scope.revision }
+    const check: ReadinessCheck = { revision: scope.revision, ready: false }
     this.checks.set(scope.session, check)
-    const readiness = await prepareOpenCodeSessionTools({
-      api: scope.api,
-      cwd: input.cwd,
-      providerSessionId: input.providerSessionId,
-      notebook,
-      notebookDirectory: scope.directory,
-      checkDirectory,
-      checkTools,
-      providerRefreshed: input.providerRefreshed,
-      signal: input.signal ?? scope.interaction?.signal
-    })
-    input.signal?.throwIfAborted()
+    const signal = input.signal ?? scope.interaction?.signal
+    try {
+      if (!notebook) throw new Error('The OpenCode session configuration omits Notebook.')
+      await prepareOpenCodeSessionTools({
+        api: scope.api,
+        cwd: input.cwd,
+        providerSessionId: input.providerSessionId,
+        notebook,
+        providerRefreshed: input.providerRefreshed,
+        signal
+      })
+    } catch (error) {
+      signal?.throwIfAborted()
+      log.warn('OpenCode Notebook MCP preparation failed', {
+        sessionId: input.providerSessionId,
+        ...diagnosticErrorFields(error)
+      })
+      throw Object.assign(new Error(NOTEBOOK_TOOLS_UNAVAILABLE_MESSAGE, { cause: error }), {
+        code: NOTEBOOK_TOOLS_UNAVAILABLE_CODE
+      })
+    }
+    signal?.throwIfAborted()
     if (this.checks.get(scope.session) !== check || !this.isCurrent(input.providerSessionId, scope))
       throw new Error('OpenCode session changed during tool discovery.')
-    check.readiness = readiness
-  }
-
-  async requestPermission(
-    params: RequestPermissionRequest,
-    request: (params: RequestPermissionRequest) => Promise<RequestPermissionResponse>
-  ): Promise<RequestPermissionResponse> {
-    const { rawInput, kind } = params.toolCall
-    if (!isRecord(rawInput) || typeof rawInput.filepath !== 'string') return request(params)
-
-    // OpenCode 1.x requests directory access before edit approval. Only edit approval grants write access.
-    const directoryAccess = kind === 'other' && typeof rawInput.parentDir === 'string'
-    const edit = kind === 'edit' && typeof rawInput.diff === 'string'
-    if (!directoryAccess && !edit) return request(params)
-
-    const scope = this.resolveScope(params.sessionId)
-    const filePath = rawInput.filepath
-    if (edit && (!scope || !isPathInsideWorkspace(scope.directory, filePath)))
-      return request(params)
-    const cancelled = { outcome: { outcome: 'cancelled' as const } }
-    if (!scope || !isAbsolute(filePath)) return cancelled
-    const canAccess = async (): Promise<boolean> =>
-      (await isNotebookDraftFile(scope.directory, filePath)) &&
-      this.isCurrent(params.sessionId, scope)
-    if (!(await canAccess())) return cancelled
-    const options = params.options.filter((option) => option.kind !== 'allow_always')
-    const decision = await request({ ...params, options })
-    if (decision.outcome.outcome !== 'selected') return decision
-    const optionId = decision.outcome.optionId
-    if (!options.some((option) => option.optionId === optionId && option.kind === 'allow_once'))
-      return decision
-    if (!(await canAccess())) return cancelled
-    if (edit) {
-      const turn = scope.interaction
-      if (turn?.kind !== 'prompt' || turn.signal.aborted) return cancelled
-      const paths = this.approvedWrites.get(turn) ?? new Map<string, OpenCodeNotebookScope>()
-      paths.set(resolve(filePath), scope)
-      this.approvedWrites.set(turn, paths)
-    }
-    return decision
-  }
-
-  /** Consumes a single write approval for this draft in the current turn. */
-  consumeDraftWrite(providerSessionId: string, path: string): NotebookDraftWrite | undefined {
-    if (!isAbsolute(path)) return
-    const scope = this.resolveScope(providerSessionId)
-    const turn = scope?.interaction
-    if (!scope || turn?.kind !== 'prompt' || turn.signal.aborted) return
-    const paths = this.approvedWrites.get(turn)
-    const key = resolve(path)
-    const grant = paths?.get(key)
-    if (!grant) return
-    paths?.delete(key)
-    if (!this.isCurrent(providerSessionId, grant)) return undefined
-    return { root: grant.directory, signal: turn.signal }
+    check.ready = true
   }
 
   private isCurrent(providerSessionId: string, scope: OpenCodeNotebookScope): boolean {
@@ -273,7 +153,6 @@ export class AcpOpenCodeNotebook {
       current?.session === scope.session &&
       current.api === scope.api &&
       current.revision === scope.revision &&
-      current.directory === scope.directory &&
       current.interaction === scope.interaction &&
       !scope.interaction?.signal.aborted
     )

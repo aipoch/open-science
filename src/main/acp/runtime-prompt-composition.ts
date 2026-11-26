@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import { NOTEBOOK_TOOLS_UNAVAILABLE_CODE } from '../../shared/failure/messages'
 import { isDelegationSettlementPrompt } from '../../shared/task-continuation'
 import {
   markTrustedNotebookBindingPermissionPrompts,
@@ -323,7 +324,11 @@ const composeAcpRuntimePromptOwners = (
       } catch (error) {
         // A cancelled/failed preparation must not leave an executable current intent for a
         // later generic reconnect. Retired credentials are never restored.
-        intent.abandonUserExecution()
+        const discoveryFailed =
+          error instanceof Error &&
+          'code' in error &&
+          error.code === NOTEBOOK_TOOLS_UNAVAILABLE_CODE
+        intent.abandonUserExecution({ allowFreshUserRetry: discoveryFailed })
         refresh?.release()
         throw error
       }
@@ -610,8 +615,9 @@ const composeAcpRuntimePromptOwners = (
             // A late turn can rebind the old intent, but the decision cannot grant execution twice.
             current?.claimContinuation()
           }
-          // Ordinary chat may explain the refusal. An explicit continuation creates a new intent.
-          if (current?.refusalId && !operation.refusalId) intent = current
+          // A failed discovery leaves the old intent blocked. A fresh user turn can try again.
+          const freshRetry = humanTurn && current?.canRetryAbandonedPreparation
+          if (current?.refusalId && !operation.refusalId && !freshRetry) intent = current
           else {
             intent = notebook.createExecutionIntent({
               ...scope,

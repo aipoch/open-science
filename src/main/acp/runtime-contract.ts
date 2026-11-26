@@ -380,7 +380,6 @@ export type AcpRuntimeUploadOptions = {
 }
 
 export type AcpRuntimeNotebookOptions = {
-  dataDirectory?: (projectId: string, appSessionId: string) => string
   bindTaskRuntime?: import('../notebook/runtime-service').NotebookRuntimeService['bindTaskRuntime']
   createExecutionIntent?: (scope: NotebookExecutionIntentScope) => NotebookExecutionIntent
   currentExecutionIntent?: (

@@ -8307,6 +8307,8 @@
     "The input is too long": "Введённые данные слишком длинные",
     "Shorten the conversation or remove some attachments, then retry.": "Сократите диалог или удалите часть вложений, затем повторите попытку.",
     "Check your credentials, model and account settings, then retry.": "Проверьте учётные данные, настройки модели и аккаунта, затем повторите попытку.",
+    "Notebook tools are temporarily unavailable": "Инструменты Notebook временно недоступны",
+    "Retry to send this request with Notebook.": "Попробуйте снова отправить этот запрос с помощью Notebook.",
     "The model service is temporarily unavailable": "Сервис модели временно недоступен",
     "The request could not finish. Wait a moment, then retry.": "Не удалось завершить запрос. Подождите немного и повторите попытку.",
     "The local environment needs attention": "Необходимо проверить локальное окружение",

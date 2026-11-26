@@ -12,7 +12,6 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { isPathInsideWorkspace } from './workspace-path'
 
 type GrantedRoot = Pick<GrantedLocalRoot, 'path' | 'access'>
-type NotebookDraftWrite = Readonly<{ root: string; signal: AbortSignal }>
 
 // Resolve the existing portion of a path so a symlink inside an authorized root cannot escape
 // that root. Writes may target a new file, so walk up to the nearest existing parent first.
@@ -40,16 +39,17 @@ const resolvePhysicalPath = async (candidatePath: string): Promise<string> => {
 }
 
 const assertAuthorizedPath = async (
-  workspaceRoot: string | undefined,
+  workspaceRoot: string,
   candidatePath: string,
   grantedRoots: readonly GrantedRoot[],
   requiredAccess: GrantedLocalRoot['access']
 ): Promise<{ path: string; physicalPath: string }> => {
   const path = resolve(candidatePath)
   const physicalPath = await resolvePhysicalPath(path)
-  if (workspaceRoot !== undefined) {
-    const physicalWorkspaceRoot = await resolvePhysicalPath(resolve(workspaceRoot))
-    if (isPathInsideWorkspace(physicalWorkspaceRoot, physicalPath)) return { path, physicalPath }
+  const physicalWorkspaceRoot = await resolvePhysicalPath(resolve(workspaceRoot))
+
+  if (isPathInsideWorkspace(physicalWorkspaceRoot, physicalPath)) {
+    return { path, physicalPath }
   }
 
   for (const root of grantedRoots) {
@@ -220,19 +220,12 @@ const readWorkspaceTextFile = async (
 const writeWorkspaceTextFile = async (
   workspaceRoot: string,
   params: WriteTextFileRequest,
-  grantedRoots: readonly GrantedRoot[] = [],
-  draftWrite?: NotebookDraftWrite
+  grantedRoots: readonly GrantedRoot[] = []
 ): Promise<WriteTextFileResponse> => {
-  // Draft approvals authorize updates to existing files only.
-  const root = draftWrite ? undefined : workspaceRoot
-  const grants: readonly GrantedRoot[] = draftWrite
-    ? [{ path: draftWrite.root, access: 'rw' }]
-    : grantedRoots
-  if (!draftWrite) {
-    const authorized = await assertAuthorizedPath(root, params.path, grants, 'rw')
-    await mkdir(dirname(authorized.physicalPath), { recursive: true })
-  }
-  const reopened = await assertAuthorizedPath(root, params.path, grants, 'rw')
+  const authorized = await assertAuthorizedPath(workspaceRoot, params.path, grantedRoots, 'rw')
+
+  await mkdir(dirname(authorized.physicalPath), { recursive: true })
+  const reopened = await assertAuthorizedPath(workspaceRoot, params.path, grantedRoots, 'rw')
   const existing = await lstat(reopened.physicalPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return undefined
     throw error
@@ -240,15 +233,9 @@ const writeWorkspaceTextFile = async (
   if (existing?.isSymbolicLink()) {
     throw new Error(`Cannot authorize a symbolic link: ${params.path}`)
   }
-  if (draftWrite && !existing?.isFile())
-    throw new Error('The approved Notebook draft is unavailable.')
-  const flags =
-    constants.O_WRONLY | (existing || draftWrite ? 0 : constants.O_CREAT | constants.O_EXCL)
+  const flags = constants.O_WRONLY | (existing ? 0 : constants.O_CREAT | constants.O_EXCL)
   const file = await openAuthorizedFile(reopened.physicalPath, flags, 0o666)
   try {
-    if (draftWrite && !(await file.stat()).isFile())
-      throw new Error('The approved Notebook draft is unavailable.')
-    draftWrite?.signal.throwIfAborted()
     await file.truncate(0)
     await file.writeFile(params.content, 'utf8')
   } finally {
@@ -258,22 +245,4 @@ const writeWorkspaceTextFile = async (
   return {}
 }
 
-// The provider runs native reads. Check the target file when handling a directory request.
-const isNotebookDraftFile = async (root: string, filePath: string): Promise<boolean> => {
-  if (!isPathInsideWorkspace(root, filePath)) return false
-  try {
-    const physicalPath = await realpath(filePath)
-    const physicalRoot = await realpath(root)
-    return (
-      isPathInsideWorkspace(root, physicalRoot) &&
-      isPathInsideWorkspace(physicalRoot, root) &&
-      isPathInsideWorkspace(root, physicalPath) &&
-      (await lstat(physicalPath)).isFile()
-    )
-  } catch {
-    return false
-  }
-}
-
-export { isNotebookDraftFile, readWorkspaceTextFile, writeWorkspaceTextFile }
-export type { NotebookDraftWrite }
+export { readWorkspaceTextFile, writeWorkspaceTextFile }

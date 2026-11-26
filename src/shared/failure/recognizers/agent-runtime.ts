@@ -5,6 +5,8 @@ import {
   CLAUDE_ACP_MISSING_MESSAGE,
   EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE,
+  NOTEBOOK_TOOLS_UNAVAILABLE_CODE,
+  NOTEBOOK_TOOLS_UNAVAILABLE_MESSAGE,
   unwrapIpcErrorDetail
 } from '../messages'
 import type { Recognizer } from '../contract'
@@ -25,6 +27,15 @@ export const recognizeAgentRuntime: Recognizer = ({ text = '', code, origin }) =
   if (code === 'specialist-reconfigure-failed')
     return { category: 'internal', reason: 'internal/reconfigure', diagnostics: {} }
   const message = text.trim()
+  if (
+    (origin === 'agent-runtime' && code === NOTEBOOK_TOOLS_UNAVAILABLE_CODE) ||
+    unwrapIpcErrorDetail(message) === NOTEBOOK_TOOLS_UNAVAILABLE_MESSAGE
+  )
+    return {
+      category: 'environment',
+      reason: 'environment/notebook-tools-unavailable',
+      diagnostics: {}
+    }
   if (
     origin === 'operation' &&
     code === 'resume-operation' &&

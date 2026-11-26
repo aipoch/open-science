@@ -2,6 +2,10 @@ export const CALL_STACK_LIMIT_MESSAGE = 'Maximum call stack size exceeded'
 
 export const INTERRUPTED_TURN_ERROR = 'This turn was interrupted. Resume to continue.'
 
+export const NOTEBOOK_TOOLS_UNAVAILABLE_CODE = 'notebook-tools-unavailable'
+export const NOTEBOOK_TOOLS_UNAVAILABLE_MESSAGE =
+  'Notebook tools are temporarily unavailable. Retry to continue.'
+
 export { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../claude-runtime'
 export const RESUME_WORKSPACE_MISSING_MESSAGE =
   'Session workspace is missing; start a new conversation.'
