@@ -343,7 +343,10 @@ const CLEANUP_GRACEFUL_TIMEOUT_MS =
 const CLEANUP_FORCED_TIMEOUT_MS =
   process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 const CLEANUP_REAP_RETRY_DELAY_MS = 100
-const CLEANUP_REAP_ATTEMPTS = 5
+// POSIX process-tree termination can spend up to 4 seconds per attempt (3 seconds graceful plus
+// 1 second SIGKILL confirmation). Two attempts stay within the Linux and macOS forced-cleanup budgets;
+// Windows taskkill needs the wider retry window because its completion is asynchronous on hosted CI.
+const CLEANUP_REAP_ATTEMPTS = process.platform === 'win32' ? 5 : 2
 
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
