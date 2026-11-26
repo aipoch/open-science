@@ -2409,6 +2409,17 @@ describe('PdfPreviewContent', () => {
           .getByRole('button', { name: 'View translated PDF' })
           .getAttribute('aria-pressed')
       ).toBe('true')
+      if (kind === 'artifact') {
+        const paragraph = translationSidebar.querySelector('[data-translation-text]')!
+        window.getSelection()!.selectAllChildren(paragraph)
+        await act(async () => fireEvent.keyDown(paragraph, { key: 'f', metaKey: true }))
+        const input = within(translationSidebar).getByRole<HTMLInputElement>('textbox', {
+          name: 'Search translation'
+        })
+        expect(input.value).toBe('细胞')
+        window.getSelection()!.removeAllRanges()
+        await act(async () => fireEvent.keyDown(input, { key: 'Escape' }))
+      }
       vi.mocked(Element.prototype.scrollIntoView).mockClear()
       await act(async () =>
         within(translationSidebar)
@@ -2501,6 +2512,22 @@ describe('PdfPreviewContent', () => {
           row.querySelector('[data-pdf-translated-page] [data-pdf-text-layer]')?.textContent
         ).toContain('细胞')
       )
+      if (kind === 'artifact') {
+        const originalText = row.querySelector('[data-pdf-text-layer] span')!
+        const translatedSpan = row.querySelector(
+          '[data-pdf-translated-page] [data-pdf-text-layer] span'
+        )!
+        // Keyboard selection may be in the other column from the last pointer interaction.
+        await act(async () => fireEvent.pointerDown(originalText))
+        window.getSelection()!.selectAllChildren(translatedSpan)
+        await act(async () => fireEvent.keyDown(translatedSpan, { key: 'f', ctrlKey: true }))
+        expect(
+          screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search document' }).value
+        ).toBe('细胞')
+        expect(screen.getByRole('button', { name: 'Search in Translation' })).toBeTruthy()
+        window.getSelection()!.removeAllRanges()
+        await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close search' })))
+      }
       await openReadingView()
       await act(async () => {
         fireEvent.click(
@@ -3126,7 +3153,20 @@ describe('PdfPreviewContent', () => {
     expect(paragraph.getAttribute('aria-expanded')).toBe('true')
     expect(document.activeElement).toBe(paragraph)
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
-    await act(async () => paragraph.click())
+    const text = container.querySelector<HTMLElement>('[data-translation-text]')!
+    const node = text.firstChild!
+    window.getSelection()!.setBaseAndExtent(node, 0, node, 'Translated'.length)
+    await act(async () => fireEvent.keyDown(text, { key: 'f', metaKey: true }))
+    const searchInput = screen.getByRole<HTMLInputElement>('textbox', {
+      name: 'Search translation'
+    })
+    expect(searchInput.value).toBe('Translated')
+    await waitFor(() => expect(document.activeElement).toBe(searchInput))
+    window.getSelection()!.removeAllRanges()
+    await act(async () => {
+      paragraph.focus()
+      paragraph.click()
+    })
     expect(paragraph.getAttribute('aria-expanded')).toBe('false')
     expect(document.activeElement).toBe(paragraph)
     await act(async () =>
@@ -5187,6 +5227,62 @@ describe('PdfPreviewContent', () => {
     })
     document.body.dispatchEvent(outsideShortcut)
     expect(outsideShortcut.defaultPrevented).toBe(false)
+  })
+
+  it('finds selected PDF text and preserves a typed query on repeated Ctrl+F', async () => {
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/workspace/selected.pdf" name="selected.pdf" />)
+    })
+    const span = await waitFor(() => {
+      const text = container.querySelector('[data-pdf-text-layer] span')
+      expect(text?.textContent?.trim()).toBeTruthy()
+      return text!
+    })
+    const selection = window.getSelection()!
+    selection.selectAllChildren(span)
+    const term = selection.toString().trim()
+    await act(async () => fireEvent.keyDown(span, { key: 'f', ctrlKey: true }))
+    const input = screen.getByRole('searchbox', { name: 'Search document' }) as HTMLInputElement
+    expect(input.value).toBe(term)
+    await waitFor(() => expect(input.parentElement?.textContent).toContain('1/1'))
+    await act(async () => fireEvent.change(input, { target: { value: 'custom' } }))
+    selection.selectAllChildren(span)
+    await act(async () => fireEvent.keyDown(input, { key: 'f', ctrlKey: true }))
+    expect(input.value).toBe('custom')
+    const multiline = document.createTextNode('First line\nsecond line')
+    span.append(multiline)
+    selection.selectAllChildren(multiline)
+    await act(async () => fireEvent.keyDown(span, { key: 'f', ctrlKey: true }))
+    expect(input.value).toBe('custom')
+    multiline.remove()
+    selection.selectAllChildren(screen.getByRole('button', { name: 'Next match' }))
+    await act(async () => fireEvent.keyDown(span, { key: 'f', metaKey: true }))
+    expect(input.value).toBe('custom')
+    selection.removeAllRanges()
+  })
+
+  it('ignores a selection owned by another PDF reader', async () => {
+    await act(async () => {
+      root.render(
+        <>
+          <PdfPreviewContent path="/workspace/first.pdf" name="first.pdf" />
+          <PdfPreviewContent path="/workspace/second.pdf" name="second.pdf" />
+        </>
+      )
+    })
+    const first = screen.getByRole('region', { name: 'first.pdf scrollable preview' })
+    const second = screen.getByRole('region', { name: 'second.pdf scrollable preview' })
+    const span = await waitFor(() => {
+      const text = first.querySelector('[data-pdf-text-layer] span')
+      expect(text?.textContent?.trim()).toBeTruthy()
+      return text!
+    })
+    window.getSelection()!.selectAllChildren(span)
+    await act(async () => fireEvent.keyDown(second, { key: 'f', ctrlKey: true }))
+    expect(screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search document' }).value).toBe(
+      ''
+    )
+    window.getSelection()!.removeAllRanges()
   })
 
   it('preserves word gaps and line endings while searching PDF text items', async () => {

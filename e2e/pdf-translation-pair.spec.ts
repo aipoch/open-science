@@ -1581,8 +1581,22 @@ for (const variant of [
       await panel.getByRole('button', { name: 'Close translation', exact: true }).click()
       await selectRendition(page, 'Translation')
       await scroll.focus()
+      const translatedWord = first
+        .locator('[data-pdf-translated-page] .textLayer span')
+        .filter({
+          hasText: '细胞'
+        })
+        .first()
+      await expect(translatedWord).toBeVisible()
+      await translatedWord.evaluate((span) => {
+        const node = span.firstChild!
+        const start = node.textContent!.indexOf('细胞')
+        window.getSelection()!.setBaseAndExtent(node, start, node, start + 2)
+      })
       await page.keyboard.press('ControlOrMeta+f')
-      await page.getByRole('searchbox', { name: 'Search document', exact: true }).fill('细胞')
+      await expect(
+        page.getByRole('searchbox', { name: 'Search document', exact: true })
+      ).toHaveValue('细胞')
       await expect(
         page.getByRole('button', { name: 'Search in Translation', exact: true })
       ).toBeVisible()

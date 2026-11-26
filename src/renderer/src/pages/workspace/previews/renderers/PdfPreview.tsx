@@ -331,6 +331,21 @@ const isEditableTarget = (target: EventTarget | null): boolean =>
   target instanceof HTMLTextAreaElement ||
   (target instanceof HTMLElement && target.isContentEditable)
 
+type PdfFindTerm = { text: string; scope: 'original' | 'translated-pdf' | 'translated-paragraph' }
+
+const selectedFindTerm = (reader: HTMLElement): PdfFindTerm | undefined => {
+  const selection = reader.ownerDocument.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return
+  const ancestor = selection.getRangeAt(0).commonAncestorContainer
+  const element = ancestor instanceof Element ? ancestor : ancestor.parentElement
+  const body = element?.closest('[data-pdf-text-layer], [data-translation-text]')
+  if (!body || !reader.contains(body) || body.closest('[inert]')) return
+  const text = selection.toString().trim()
+  if (!text || /[\r\n]/u.test(text)) return
+  if (body.matches('[data-translation-text]')) return { text, scope: 'translated-paragraph' }
+  return { text, scope: body.closest('[data-pdf-translated-page]') ? 'translated-pdf' : 'original' }
+}
+
 const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
   const spans = Array.from(root.querySelectorAll('span')).filter(
     (span): span is HTMLSpanElement => span.firstChild instanceof Text && Boolean(span.textContent)
@@ -1058,6 +1073,7 @@ const PdfSearchControls = ({
         <Search className="ml-1 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
         <Input
           autoFocus
+          data-pdf-document-search
           type="search"
           data-preview-escape-boundary
           value={query}
@@ -3977,13 +3993,16 @@ const PdfReaderContent = ({
     setSelectedSearchIndex(nextIndex)
     revealSearchMatch(nextMatch)
   }
-  const closeSearch = (): void => {
-    setSearchOpen(false)
-    setSearchQuery('')
+  const changeSearchQuery = (query: string): void => {
+    setSearchQuery(query)
     setSearchResults([])
     setSearchResultCount(0)
     setSearchIncomplete(false)
     setSelectedSearchIndex(0)
+  }
+  const closeSearch = (): void => {
+    setSearchOpen(false)
+    changeSearchQuery('')
     searchTextCacheRef.current.clear()
     updatePdfSearchHighlights(scrollRef.current, '', undefined)
     scrollRef.current?.focus()
@@ -4066,19 +4085,25 @@ const PdfReaderContent = ({
       }
     })
   }
-  const openDocumentSearch = (): void => {
+  const openDocumentSearch = (term?: PdfFindTerm): void => {
+    const translated = term
+      ? term.scope !== 'original'
+      : effectiveRendition === 'translated' || focusedTranslation
     if (
-      !pairedDocument &&
       currentTranslation &&
-      (effectiveRendition === 'translated' || focusedTranslation)
+      translated &&
+      (!pairedDocument || term?.scope === 'translated-paragraph')
     ) {
+      if (term) setTranslationQuery(term.text)
       openTranslationSearch()
       return
     }
-    setSearchTranslated(
-      Boolean(pairedDocument && (effectiveRendition === 'translated' || focusedTranslation))
-    )
+    if (term && term.text !== searchQuery) changeSearchQuery(term.text)
+    setSearchTranslated(Boolean(pairedDocument && translated))
     setSearchOpen(true)
+    if (searchOpen) {
+      readerRef.current?.querySelector<HTMLInputElement>('[data-pdf-document-search]')?.focus()
+    }
   }
   const selectTranslation = useCallback(
     (unit: PdfTranslationUnit, fragmentIndex: number): void => {
@@ -4667,7 +4692,14 @@ const PdfReaderContent = ({
           if (primaryModifier && event.key.toLowerCase() === 'f') {
             event.preventDefault()
             event.stopPropagation()
-            openDocumentSearch()
+            if (
+              event.target instanceof HTMLInputElement &&
+              event.target.matches('[data-pdf-document-search], [data-translation-search]')
+            )
+              return
+            openDocumentSearch(
+              isEditableTarget(event.target) ? undefined : selectedFindTerm(event.currentTarget)
+            )
             return
           }
           if (currentTranslation && (effectiveRendition === 'translated' || focusedTranslation))
@@ -5301,13 +5333,7 @@ const PdfReaderContent = ({
                         current={searchResultCount > 0 ? selectedSearchIndex + 1 : 0}
                         total={searchResultCount}
                         incomplete={searchIncomplete}
-                        onQueryChange={(query) => {
-                          setSearchQuery(query)
-                          setSearchResults([])
-                          setSearchResultCount(0)
-                          setSearchIncomplete(false)
-                          setSelectedSearchIndex(0)
-                        }}
+                        onQueryChange={changeSearchQuery}
                         onFindAgain={findAgain}
                         onClose={closeSearch}
                       />
