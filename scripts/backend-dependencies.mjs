@@ -278,6 +278,8 @@ export function createDesktopDependencyFilter(manifest) {
     'web-tree-sitter@0.26.13': /^debug\/web-tree-sitter\.(?:js|cjs|wasm)(?:\.map)?$/,
     'styled-exceljs@0.21.6':
       /^dist\/xlsx\.(?:extendscript|(?:full|core|mini)\.min)\.(?:js(?:\.map)?|map)$/,
+    // Packaged Node loads legacy/build/pdf.mjs and its relative pdf.worker.mjs.
+    'pdfjs-dist@5.4.624': /^legacy\/build\/pdf(?:\.worker)?\.min\.mjs$/,
     '@embedpdf/pdfium@2.15.1': /^dist\/index\.browser\.js(?:\.map)?$/,
     'pako@0.2.9': /^dist\/[^/]+\.js(?:\.map)?$/,
     'pako@1.0.11': /^dist\/[^/]+\.js(?:\.map)?$/

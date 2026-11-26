@@ -123,6 +123,7 @@ it('cancels queued exports and holds the shared partition until teardown complet
         )
       )
     )
+    electron.executeJavaScript.mockResolvedValueOnce(undefined)
     const firstExport = start('first', first)
     await cleaning.promise
 
@@ -143,7 +144,9 @@ it('cancels queued exports and holds the shared partition until teardown complet
     expect(electron.protocol.unhandle).toHaveBeenCalledWith('https')
 
     cleaned.resolve()
-    expect(await firstExport).toEqual(new Error('Invalid research video stage'))
+    expect(await firstExport).toEqual(
+      new Error('The research film player did not initialize. Regenerate the film and try again.')
+    )
     expect(await secondExport).toEqual(new Error('Invalid research video stage'))
     expect(electron.BrowserWindow).toHaveBeenCalledTimes(2)
     expect(electron.fromPartition).toHaveBeenCalledOnce()

@@ -452,12 +452,12 @@ export const RuntimeUpdateDialog = ({
                           ))}
                         </ul>
                       ) : null}
-                      {!status.error && !knownInstallationBlocker ? (
+                      {!status.error || knownInstallationBlocker ? (
                         <ManualUpdateFailure manual={manual} status={status} />
                       ) : null}
                     </ErrorNotice>
                   ) : null}
-                  {status.error || checkFailed ? (
+                  {(status.error || checkFailed) && !knownInstallationBlocker ? (
                     <ErrorNotice
                       className="mt-3"
                       role="alert"

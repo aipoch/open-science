@@ -50,7 +50,7 @@ const app = (folder, zip, v) => {
     join(bundle, 'Contents/MacOS', field('CFBundleExecutable')),
     join(bundle, 'Contents/Resources/mac-sparkle.node')
   ])
-    command('lipo', ['-verify_arch', arch === 'x64' ? 'x86_64' : arch, binary])
+    command('lipo', [binary, '-verify_arch', arch === 'x64' ? 'x86_64' : arch])
   command('codesign', ['--verify', '--deep', '--strict', bundle])
   return { bundle, build }
 }

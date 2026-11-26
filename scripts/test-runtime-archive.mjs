@@ -206,5 +206,5 @@ console.log('PASS bundled Node and native dependencies');
     console.log(result.stdout)
   }
 } finally {
-  await rm(temporary, { recursive: true, force: true })
+  await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 }

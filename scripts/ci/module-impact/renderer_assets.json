@@ -46,6 +46,7 @@
     "src/renderer/src/assets/provider-icons/cloudflare.svg",
     "src/renderer/src/assets/provider-icons/llamacpp.svg",
     "src/renderer/src/assets/provider-icons/lmstudio.svg",
+    "src/renderer/src/assets/provider-icons/magpie.png",
     "src/renderer/src/assets/provider-icons/ollama.svg",
     "src/renderer/src/assets/provider-icons/provider-icon-credits.txt",
     "src/renderer/src/assets/provider-icons/vectrust.png",

@@ -27,6 +27,7 @@ type Runtime = {
   redo: Change[]
   queue: Promise<unknown>
   pending: number
+  initialPageEpoch: number
 }
 const HISTORY_LIMIT = 100
 const historyKey = (runtime: Runtime, source: PdfAnnotationSource): string => {
@@ -62,6 +63,7 @@ type ScopeState = Readonly<{
   sourceGroups?: PdfAnnotationSource[][]
   loading: boolean
   loadError?: string
+  initialReadingPage?: PdfAnnotationPort['initialReadingPage']
   pending: number
   undoSources: readonly string[]
   redoSources: readonly string[]
@@ -109,7 +111,8 @@ const PdfAnnotationsProvider = ({
         undo: [],
         redo: [],
         queue: Promise.resolve(),
-        pending: 0
+        pending: 0,
+        initialPageEpoch: 0
       }
     return ref as React.RefObject<Runtime>
   }, [scopeKey])
@@ -138,6 +141,15 @@ const PdfAnnotationsProvider = ({
       current.active = false
     }
   }, [runtime])
+
+  const invalidateInitialPage = useCallback((): void => {
+    runtime.current.initialPageEpoch++
+    setState((current) =>
+      current.key === scopeKey && current.initialReadingPage
+        ? { ...current, initialReadingPage: undefined }
+        : current
+    )
+  }, [runtime, scopeKey])
 
   const publish = useCallback(
     (annotationsChanged = false): void => {
@@ -168,6 +180,7 @@ const PdfAnnotationsProvider = ({
     runtime.current.overlays = new Map()
     if (!scopeKey || !loadAnnotations) return
     const load = async (): Promise<void> => {
+      const initialPageEpoch = runtime.current.initialPageEpoch
       let cursor: { createdAt: string; id: string } | undefined
       const loaded = new Map<string, PdfAnnotation>()
       let snapshotTags: TagView[] | undefined
@@ -193,6 +206,48 @@ const PdfAnnotationsProvider = ({
         source ??=
           result.source ?? (sourceFileId && versionId ? result.items[0]?.target.source : undefined)
         for (const item of result.items) loaded.set(item.id, item)
+        if (
+          !cursor &&
+          literatureVersionId &&
+          result.source &&
+          result.nextCursor &&
+          result.total >= 1_000 &&
+          runtime.current.items.size === 0 &&
+          !result.reconciliationSources?.length &&
+          initialPageEpoch === runtime.current.initialPageEpoch
+        ) {
+          const first = await window.api.pdfAnnotations
+            .list({
+              literatureVersionId,
+              readingOrderPreview: true,
+              limit: PDF_ANNOTATION_LIMITS.pageSize
+            })
+            .catch(() => undefined)
+          if (!active) return
+          const previewSource = first?.source
+          if (
+            first &&
+            previewSource &&
+            first.items.length === PDF_ANNOTATION_LIMITS.pageSize &&
+            first.total === result.total &&
+            sourceKey(previewSource) === sourceKey(result.source) &&
+            first.items.every(
+              ({ target }) => sourceKey(target.source) === sourceKey(previewSource)
+            ) &&
+            initialPageEpoch === runtime.current.initialPageEpoch
+          ) {
+            const initialReadingPage = { source: previewSource, items: first.items }
+            setState((previous) =>
+              active &&
+              initialPageEpoch === runtime.current.initialPageEpoch &&
+              previous.key === scopeKey &&
+              previous.loading &&
+              previous.annotations.length === 0
+                ? { ...previous, initialReadingPage }
+                : previous
+            )
+          }
+        }
         cursor = result.nextCursor
       } while (cursor)
       for (const [id, overlay] of runtime.current.overlays) {
@@ -264,6 +319,7 @@ const PdfAnnotationsProvider = ({
       if (!active) return
       setState((current) => ({
         ...current,
+        initialReadingPage: undefined,
         loading: false,
         loadError: error instanceof Error ? error.message : 'PDF annotations could not be loaded.'
       }))
@@ -271,17 +327,27 @@ const PdfAnnotationsProvider = ({
     return () => {
       active = false
     }
-  }, [loadAttempt, scope, runtime, scopeKey, loadAnnotations, sourceFileId, versionId])
+  }, [
+    loadAttempt,
+    scope,
+    runtime,
+    scopeKey,
+    loadAnnotations,
+    sourceFileId,
+    versionId,
+    literatureVersionId
+  ])
 
   const retryLoad = useCallback(() => {
     if (!runtime.current.active) return
+    invalidateInitialPage()
     setState((current) => ({
       ...current,
       loading: Boolean(scopeKey) && loadAnnotations,
       loadError: undefined
     }))
     setLoadAttempt((attempt) => attempt + 1)
-  }, [scopeKey, loadAnnotations, runtime])
+  }, [scopeKey, loadAnnotations, runtime, invalidateInitialPage])
 
   useEffect(() => {
     if (!loadAnnotations || !scopeKey) return
@@ -289,6 +355,7 @@ const PdfAnnotationsProvider = ({
     let active = true
     let queued = false
     const refresh = (): void => {
+      invalidateInitialPage()
       if (queued) return
       queued = true
       void runtime.current.queue.finally(() => {
@@ -305,6 +372,7 @@ const PdfAnnotationsProvider = ({
       const removed = new Set(knownTags.filter((tag) => !ids.has(tag.id)).map((tag) => tag.id))
       knownTags = next.tags
       if (!removed.size) return
+      invalidateInitialPage()
       void runtime.current.queue.then(() => {
         if (!active) return
         let changed = false
@@ -329,9 +397,15 @@ const PdfAnnotationsProvider = ({
         other.projectId !== scope.projectId
       )
         return
+      invalidateInitialPage()
       const reconcile = async (): Promise<void> => {
         if (!active) return
-        if (event.id && runtime.current.items.get(event.id)?.updatedAt === event.updatedAt) return
+        if (
+          event.id &&
+          event.updatedAt &&
+          runtime.current.items.get(event.id)?.updatedAt === event.updatedAt
+        )
+          return
         if (!event.id) {
           refresh()
           return
@@ -346,7 +420,11 @@ const PdfAnnotationsProvider = ({
         if (!active) return
         const previous = runtime.current.items.get(event.id)
         const next = result.items[0]
-        if (!previous && !next) return
+        if (!previous && !next) {
+          // A deleted row may already be in the in-flight pagination, not the published index.
+          runtime.current.overlays.set(event.id, null)
+          return
+        }
         if (
           previous?.updatedAt === next?.updatedAt &&
           previous?.tagIds.join('\u0000') === next?.tagIds.join('\u0000')
@@ -391,6 +469,7 @@ const PdfAnnotationsProvider = ({
     versionId,
     literatureVersionId,
     publish,
+    invalidateInitialPage,
     runtime
   ])
 
@@ -399,6 +478,7 @@ const PdfAnnotationsProvider = ({
     <T,>(operation: () => Promise<T>): Promise<T> => {
       if (!scopeKey || !writable || !runtime.current.active)
         return Promise.reject(unavailableError())
+      invalidateInitialPage()
       runtime.current.pending += 1
       publish()
       const task = runtime.current.queue
@@ -413,7 +493,7 @@ const PdfAnnotationsProvider = ({
       runtime.current.queue = task.catch(() => {})
       return task
     },
-    [scopeKey, writable, runtime, publish]
+    [scopeKey, writable, runtime, publish, invalidateInitialPage]
   )
 
   const commit = useCallback(
@@ -605,6 +685,8 @@ const PdfAnnotationsProvider = ({
       scoped: Boolean(scopeKey),
       sessionId,
       source: state.key === scopeKey ? state.source : undefined,
+      initialReadingPage:
+        state.key === scopeKey && state.loading ? state.initialReadingPage : undefined,
       available: Boolean(scopeKey) && writable && !state.readOnly,
       snapshotTags: state.snapshotTags,
       isSnapshot: (id) => !!state.readonlyIds?.includes(id),

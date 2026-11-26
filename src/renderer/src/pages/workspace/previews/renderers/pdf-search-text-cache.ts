@@ -2,6 +2,7 @@
 export class PdfSearchTextCache {
   private readonly entries = new Map<number, Promise<string>>()
   private bytes = 0
+  private retainedPages = 0
   private generation = 0
   constructor(private readonly maxBytes = 16 * 1024 * 1024) {}
 
@@ -9,6 +10,18 @@ export class PdfSearchTextCache {
     this.generation++
     this.entries.clear()
     this.bytes = 0
+    this.retainedPages = 0
+  }
+
+  // Only shorten type-ahead delay for cheap scans that cannot trigger PDF.js reads.
+  // Pending promises and pages that exceed the retention budget must not qualify.
+  canScanQuickly(pageCount: number): boolean {
+    return (
+      pageCount > 0 &&
+      pageCount <= 128 &&
+      this.retainedPages === pageCount &&
+      this.bytes <= 256 * 1024
+    )
   }
 
   get(page: number, load: () => Promise<string>): Promise<string> {
@@ -20,8 +33,10 @@ export class PdfSearchTextCache {
         const normalized = text.toLocaleLowerCase()
         if (generation === this.generation && this.entries.get(page) === pending) {
           const size = normalized.length * 2
-          if (this.bytes + size <= this.maxBytes) this.bytes += size
-          else this.entries.delete(page)
+          if (this.bytes + size <= this.maxBytes) {
+            this.bytes += size
+            this.retainedPages++
+          } else this.entries.delete(page)
         }
         return normalized
       },

@@ -354,7 +354,7 @@ export const runReviewAssessment = async (
     })
     reviewerSession = built.session
     const backend = acpRuntime.captureBackend?.()
-    // Codex bridge Sessions intentionally advertise a catalog-only model (currently gpt-5.4) so
+    // Codex bridge Sessions intentionally advertise a catalog-only model so
     // Codex enables classic function tools. The bridge rewrites requests to the configured upstream
     // model, which is retained as the context model. Persisting the catalog alias here makes Review
     // attribution claim GPT ran the audit even when the actual Reviewer was GLM or another provider.

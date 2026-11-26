@@ -2,6 +2,46 @@ import { expect, it } from 'vitest'
 import { createPdfTranslationSource, type PdfTranslationFragment } from '../../src/reader/source.js'
 import { pdfTranslationLayoutFragments } from '../../src/reader/fragments.js'
 
+it.each(['free', 'neighbor', 'figure', 'other-column'] as const)(
+  'merges a final short citation line only in free same-column space (%s)',
+  (mode) => {
+    const f = (
+      index: number,
+      x: number,
+      y: number,
+      w: number,
+      text: string
+    ): PdfTranslationFragment => ({
+      pageNumber: 1,
+      rect: { x, y, width: w, height: 0.015 },
+      items: [{ index, text }]
+    })
+    const tail = f(2, mode === 'other-column' ? 0.65 : 0.1, 0.132, 0.12, 'details [12, 17].'),
+      neighbor = f(3, 0.4, 0.132, 0.06, 'aside')
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'tail',
+      fingerprint: 'tail',
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          id: 'body',
+          source: 'Consecutive lines provide more details [12, 17].',
+          fragments: [
+            f(0, 0.1, 0.1, 0.4, 'Consecutive lines'),
+            f(1, 0.1, 0.116, 0.4, 'provide more'),
+            tail
+          ]
+        },
+        ...(mode === 'neighbor' ? [{ id: 'aside', source: 'aside', fragments: [neighbor] }] : [])
+      ],
+      originalRegions: mode === 'figure' ? [{ pageNumber: 1, rect: neighbor.rect }] : []
+    })
+    const merged = pdfTranslationLayoutFragments(source.units[0], source)
+    expect(merged).toHaveLength(mode === 'free' ? 1 : 2)
+    expect(merged.flatMap((f) => f.items.map((i) => i.index))).toEqual([0, 1, 2])
+  }
+)
+
 it.each([
   { text: 'Page 2 of 10', gap: 40, extra: 24 },
   { text: 'POD2', gap: 40, extra: 24 },

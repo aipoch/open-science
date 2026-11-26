@@ -7,7 +7,10 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { PdfAnnotation } from '../../../../../../shared/pdf-annotations'
+import type {
+  PdfAnnotation,
+  PdfAnnotationListResult
+} from '../../../../../../shared/pdf-annotations'
 import type { PdfBookmarkSource } from '../../../../../../shared/pdf-bookmarks'
 import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
 import { PdfNotebookView } from './PdfNotebookView'
@@ -194,6 +197,65 @@ describe('PdfNotebookView', () => {
     expect(
       container.querySelector('[data-annotation-id]')?.getAttribute('data-annotation-id')
     ).toBe('note-204')
+  })
+
+  it('keeps the initial reading page read-only and out of filtering and export', async () => {
+    const literature = { ...source, projectId: undefined }
+    const first = {
+      ...bookmark('bookmark-1', 'First in reading order', 'highlight'),
+      target: { ...bookmark('bookmark-1', '', 'highlight').target, source: literature }
+    }
+    const prefix = Array.from({ length: 100 }, (_, index) => ({ ...first, id: `early-${index}` }))
+    const outside = {
+      ...first,
+      id: 'outside',
+      note: 'Only in the complete list',
+      createdAt: '2026-09-21T00:00:00.000Z'
+    }
+    const summary = { source: literature, total: 1_000 }
+    let resolveTail!: (result: PdfAnnotationListResult) => void
+    const tail = new Promise<PdfAnnotationListResult>((resolve) => (resolveTail = resolve))
+    vi.mocked(window.api.pdfAnnotations.list)
+      .mockResolvedValueOnce({
+        ...summary,
+        items: [prefix[0]],
+        nextCursor: { id: prefix[0].id, createdAt: prefix[0].createdAt }
+      })
+      .mockResolvedValueOnce({ ...summary, items: prefix })
+      .mockReturnValueOnce(tail)
+    await act(async () =>
+      root.render(
+        <PdfAnnotationsProvider literatureVersionId={literature.versionId}>
+          <PdfNotebookView active source={literature} />
+        </PdfAnnotationsProvider>
+      )
+    )
+    expect(container.querySelectorAll('[data-annotation-id]')).toHaveLength(100)
+    expect(container.querySelector('[data-pdf-notes-initial-page]')?.hasAttribute('inert')).toBe(
+      true
+    )
+    expect(
+      (getByRole(container, 'button', { name: 'Export notes' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    await act(async () =>
+      fireEvent.click(getByRole(container, 'button', { name: 'Search & filter' }))
+    )
+    await act(async () =>
+      fireEvent.change(getByRole(container, 'searchbox', { name: 'Search annotations' }), {
+        target: { value: 'Only in the complete list' }
+      })
+    )
+    expect(container.querySelector('[data-annotation-id]')).toBeNull()
+    expect(container.textContent).not.toContain('No matching annotations.')
+    await act(async () => resolveTail({ ...summary, items: [...prefix.slice(1), outside] }))
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-annotation-id]')).toHaveLength(1)
+      expect(container.querySelector('[data-annotation-id="outside"]')).not.toBeNull()
+    })
+    expect(
+      (getByRole(container, 'button', { name: 'Export filtered notes' }) as HTMLButtonElement)
+        .disabled
+    ).toBe(false)
   })
 
   it('groups sidebar notes by page, follows the current page, and preserves editing across layouts', async () => {
