@@ -560,7 +560,17 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['run', '--jsonl'])).toThrow('--jsonl requires run --wait.')
     expect(() => parseCliArgs(['run', '--timeout-ms', '0', '--wait'])).toThrow('Invalid timeout: 0')
     expect(() => parseCliArgs(['run', '--timeout-ms', '1000'])).toThrow(
-      '--timeout-ms requires start, run --wait, run wait or session export/import/fork.'
+      '--timeout-ms requires start, run --wait, run wait, session export/import/fork, or artifacts list/download.'
+    )
+    expect(
+      parseCliArgs(['artifacts', 'list', 'session-1', '--timeout-ms', '120000']).options.timeoutMs
+    ).toBe(120_000)
+    expect(
+      parseCliArgs(['artifacts', 'download', 'artifact-1', '--timeout-ms', '600000']).options
+        .timeoutMs
+    ).toBe(600_000)
+    expect(() => parseCliArgs(['artifacts', 'list', 'session-1', '--timeout-ms', '0'])).toThrow(
+      'Invalid timeout: 0'
     )
     expect(() => parseCliArgs(['run', '--cancel-on-timeout', '--wait'])).toThrow(
       '--cancel-on-timeout requires --timeout-ms.'
@@ -1212,6 +1222,57 @@ describe('task CLI', () => {
     expect(JSON.parse(log.mock.calls.at(-1)![0])).toEqual([
       { downloadId: 'artifact-1', name: 'report.md' }
     ])
+  })
+
+  it('uses the Artifact request budget for listing and download preflight, with CLI overrides', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'open-science-artifact-timeout-'))
+    try {
+      const client = {
+        listArtifacts: vi.fn().mockResolvedValue([{ id: 'artifact-1', name: 'report.md' }]),
+        downloadArtifact: vi.fn().mockResolvedValue(new Response('report'))
+      }
+      const deps = { connect: vi.fn().mockResolvedValue(client), log: vi.fn() }
+      await runTaskCommand(parseCliArgs(['artifacts', 'list', 'session-1', '--json']), deps)
+      expect(client.listArtifacts).toHaveBeenLastCalledWith(
+        'session-1',
+        expect.objectContaining({ timeoutMs: 300_000 })
+      )
+
+      await runTaskCommand(
+        parseCliArgs(['artifacts', 'list', 'session-1', '--timeout-ms', '120000', '--json']),
+        deps
+      )
+      expect(client.listArtifacts).toHaveBeenLastCalledWith(
+        'session-1',
+        expect.objectContaining({ timeoutMs: 120_000 })
+      )
+
+      await runTaskCommand(
+        parseCliArgs([
+          'artifacts',
+          'download',
+          'artifact-1',
+          '--session',
+          'session-1',
+          '--output',
+          join(directory, 'report.md'),
+          '--timeout-ms',
+          '600000',
+          '--json'
+        ]),
+        deps
+      )
+      expect(client.listArtifacts).toHaveBeenLastCalledWith(
+        'session-1',
+        expect.objectContaining({ timeoutMs: 600_000 })
+      )
+      expect(client.downloadArtifact).toHaveBeenCalledWith(
+        'artifact-1',
+        expect.objectContaining({ timeoutMs: 600_000 })
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('routes read-only literature commands and scopes their options', async () => {
