@@ -68,8 +68,9 @@ export function createDesktopUpdateIntegration(options: {
   client(): DesktopRuntimeClient
   currentVersion: string
   allowedProcessIds(): number[]
-  // Only while the backend is running: its owned children must pass admission so the cleanup gate
-  // can stop them. Handoff/recovery after stop deliberately receive no such exemption.
+  updateAllowedProcessIds?(): number[]
+  // Only update-owned entries are admitted here. Windows MCP registry entries remain admitted
+  // through handoff so the installer can close their installation-root processes.
   ownedRuntimeProcessIds?(client: DesktopRuntimeClient, signal?: AbortSignal): Promise<number[]>
   verifyArtifact(status: UpdateStatus, signal?: AbortSignal): Promise<InstallationManifest>
   // True when the downloaded channel lacks supervised-replacement acceptance. Such installs keep
@@ -103,6 +104,11 @@ export function createDesktopUpdateIntegration(options: {
   let cancellation = new AbortController()
   let cancelRequested = false
   let waitForHelpers: ReturnType<typeof captureInstallationHelperExit> | undefined
+  const updateAllowedProcessIds = options.updateAllowedProcessIds
+    ? (): number[] => [
+        ...new Set([...options.allowedProcessIds(), ...options.updateAllowedProcessIds!()])
+      ]
+    : options.allowedProcessIds
   const checkCancellation = (): void => {
     if (cancelRequested)
       throw new UpdateLifecycleError('user-cancelled', 'Installation was cancelled before handoff.')
@@ -113,7 +119,7 @@ export function createDesktopUpdateIntegration(options: {
   ): Promise<number[]> => {
     try {
       return [
-        ...options.allowedProcessIds(),
+        ...updateAllowedProcessIds(),
         ...(options.ownedRuntimeProcessIds
           ? await boundedRead(
               (readSignal) => options.ownedRuntimeProcessIds!(client, readSignal),
@@ -165,7 +171,7 @@ export function createDesktopUpdateIntegration(options: {
     try {
       // The exited Runtime and its remaining helpers no longer receive an occupancy exemption.
       await inspectInstallationAvailability(
-        { ...options.location, allowedProcessIds: options.allowedProcessIds },
+        { ...options.location, allowedProcessIds: updateAllowedProcessIds },
         signal
       )
       signal.throwIfAborted()
@@ -246,7 +252,7 @@ export function createDesktopUpdateIntegration(options: {
         old.operationId,
         {
           version: options.currentVersion,
-          allowedProcessIds: options.allowedProcessIds
+          allowedProcessIds: updateAllowedProcessIds
         }
       )
       let result: 'unchanged' | 'verified' | 'incomplete'
@@ -682,7 +688,7 @@ export function createDesktopUpdateIntegration(options: {
           record.operationId,
           'handoff',
           undefined,
-          { allowedProcessIds: options.allowedProcessIds(), signal: cancellation.signal }
+          { allowedProcessIds: updateAllowedProcessIds(), signal: cancellation.signal }
         )
         options.onHandoff()
         publish()
@@ -777,7 +783,7 @@ export function createDesktopUpdateIntegration(options: {
               {
                 ...options.location,
                 ...(record.phase === 'stopping' ? { runtime: record.runtime } : {}),
-                allowedProcessIds: options.allowedProcessIds()
+                allowedProcessIds: updateAllowedProcessIds()
               },
               checking
             )

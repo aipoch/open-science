@@ -69,7 +69,7 @@ function setup(
   preparation: Partial<
     Pick<
       Parameters<typeof createDesktopUpdateIntegration>[0],
-      'flushRenderer' | 'allowedProcessIds' | 'ownedRuntimeProcessIds'
+      'flushRenderer' | 'allowedProcessIds' | 'updateAllowedProcessIds' | 'ownedRuntimeProcessIds'
     >
   > = {}
 ): {
@@ -476,6 +476,28 @@ describe('legacy install for uncertified channels', () => {
     })
     expect(owned).toHaveBeenCalledOnce()
     expect(onHandoff).not.toHaveBeenCalled()
+  })
+
+  it('keeps fresh MCP adapter ownership through the update handoff', async () => {
+    const owned = vi.fn(async () => [789])
+    const mcp = vi.fn(() => [456])
+    const desktop = (): number[] => [process.pid]
+    const { hooks, stop } = setup('desktop', undefined, legacy, {
+      allowedProcessIds: desktop,
+      updateAllowedProcessIds: mcp,
+      ownedRuntimeProcessIds: owned
+    })
+    state.availability.mockImplementation(async (options) => {
+      expect(await options.allowedProcessIds()).toEqual([process.pid, 456, 789])
+    })
+    await hooks.prepareInstall!(status, {})
+    await hooks.installGate!({})
+    state.availability.mockImplementation(async (options) => {
+      expect(options.allowedProcessIds()).toEqual([process.pid, 456])
+    })
+    await hooks.beforeInstallHandoff!(status)
+    expect(mcp).toHaveBeenCalled()
+    expect(stop).toHaveBeenCalledOnce()
   })
 
   it('does not classify failed ownership inspection as an unrelated application', async () => {

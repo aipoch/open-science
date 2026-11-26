@@ -7,7 +7,8 @@ import { randomUUID } from 'node:crypto'
 import {
   inspectOwnedCrashpadProcesses,
   inspectOwnedLinuxAppImageLauncher,
-  inspectOwnedLinuxZygoteProcesses
+  inspectOwnedLinuxZygoteProcesses,
+  inspectMcpGroupProcessIds
 } from './update/installation-occupancy'
 import type { ChildProcess } from 'node:child_process'
 import {
@@ -1711,6 +1712,9 @@ async function startDesktop(): Promise<void> {
     client: () => client!,
     currentVersion: app.getVersion(),
     allowedProcessIds: allowedInstallationProcessIds,
+    ...(process.platform === 'win32'
+      ? { updateAllowedProcessIds: () => inspectMcpGroupProcessIds([configRoot, profilePath]) }
+      : {}),
     ...(process.platform === 'win32'
       ? {
           ownedRuntimeProcessIds: async (runtime, signal): Promise<number[]> => {

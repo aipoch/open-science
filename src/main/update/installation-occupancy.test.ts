@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   inspectOwnedCrashpadProcesses,
   inspectOwnedLinuxZygoteProcesses,
   inspectOwnedLinuxAppImageLauncher,
+  inspectMcpGroupProcessIds,
   inspectInstallationProcesses,
   inspectInstallationProcessesAsync,
   inspectProcessNames,
@@ -77,6 +78,50 @@ describe('cold Windows resource scans', () => {
   beforeEach(() => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     mocks.windows.listWindowsProcesses.mockReturnValue([])
+  })
+
+  it('returns fresh MCP adapter PIDs for the selected profile only', () => {
+    const profile = join(process.cwd(), 'mcp-profile')
+    const directory = join(resolve(profile), 'runtime', 'mcp-groups')
+    const entries = new Map([
+      [
+        join(directory, 'core-current.json'),
+        JSON.stringify({
+          group: 'core',
+          profile: resolve(profile),
+          pid: 1234,
+          lastSeenAt: '2026-11-27T00:00:15.000Z'
+        })
+      ],
+      [
+        join(directory, 'research-stale.json'),
+        JSON.stringify({
+          group: 'research',
+          profile: resolve(profile),
+          pid: 2345,
+          lastSeenAt: '2026-11-27T00:00:00.000Z'
+        })
+      ],
+      [
+        join(directory, 'literature-other-profile.json'),
+        JSON.stringify({
+          group: 'literature',
+          profile: resolve('other-profile'),
+          pid: 3456,
+          lastSeenAt: '2026-11-27T00:00:15.000Z'
+        })
+      ]
+    ])
+    mocks.readdir.mockImplementation((path: string) =>
+      path === directory
+        ? [...entries.keys()].map((value) => value.slice(directory.length + 1))
+        : []
+    )
+    mocks.readFile.mockImplementation((path: string) => entries.get(path) ?? '')
+
+    expect(inspectMcpGroupProcessIds([profile], Date.parse('2026-11-27T00:00:15.000Z'))).toEqual([
+      1234
+    ])
   })
 
   it('allows a 70-second cold scan within a bounded, cancellable subprocess', async () => {
