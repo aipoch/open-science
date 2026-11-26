@@ -338,7 +338,8 @@ const isCodexCredentialStoreAssignment = (line: string): boolean =>
 // cannot observe or mutate the user's global Codex CLI credential.
 const serializeCodexCredentialStore = (
   existingConfigToml: string,
-  credentialStore: 'file' | 'ephemeral'
+  credentialStore: 'file' | 'ephemeral',
+  unloadIdleThreads = false
 ): string => {
   const lines = existingConfigToml.split(/\r?\n/)
   const result: string[] = []
@@ -347,6 +348,14 @@ const serializeCodexCredentialStore = (
   for (const line of lines) {
     if (/^\s*\[/.test(line)) inTopLevel = false
     if (inTopLevel && isCodexCredentialStoreAssignment(line)) continue
+    if (
+      inTopLevel &&
+      unloadIdleThreads &&
+      /^\s*(?:thread_unload_delay_secs|"thread_unload_delay_secs"|'thread_unload_delay_secs')\s*=/.test(
+        line
+      )
+    )
+      continue
     result.push(line)
   }
 
@@ -367,15 +376,13 @@ const serializeCodexCredentialStore = (
     0,
     credentialStore === 'file'
       ? CODEX_FILE_CREDENTIAL_STORE
-      : 'cli_auth_credentials_store = "ephemeral"'
+      : 'cli_auth_credentials_store = "ephemeral"',
+    ...(unloadIdleThreads ? ['thread_unload_delay_secs = 0'] : [])
   )
   result.push('')
 
   return result.join('\n')
 }
-
-const serializeCodexFileCredentialStore = (existingConfigToml: string): string =>
-  serializeCodexCredentialStore(existingConfigToml, 'file')
 
 // Persisted pre-brand markers remain technical compatibility identities. Match only complete
 // known marker lines; ordinary comments and user TOML values keep their original spelling.
@@ -641,8 +648,10 @@ const ensureCodexAuthConfigHome = async (
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
 
-  const nextConfigToml = serializeCodexFileCredentialStore(
-    serializeCodexSubscriptionTransport(existingConfigToml, transport)
+  const nextConfigToml = serializeCodexCredentialStore(
+    serializeCodexSubscriptionTransport(existingConfigToml, transport),
+    'file',
+    true
   )
   if (nextConfigToml !== existingConfigToml) {
     await writePrivateFileAtomically(configPath, nextConfigToml)

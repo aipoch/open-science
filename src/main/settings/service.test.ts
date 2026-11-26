@@ -1302,6 +1302,7 @@ describe('SettingsService: providers', () => {
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       [
         'cli_auth_credentials_store = "file"',
+        'thread_unload_delay_secs = 0',
         '# Open-Science: begin imported Codex route selection',
         'model_provider = "subscription-route"',
         '# Open-Science: end imported Codex route selection',
@@ -2033,7 +2034,7 @@ describe('SettingsService: providers', () => {
     expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
     expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
     await expect(readFile(appConfigPath, 'utf8')).resolves.toBe(
-      'cli_auth_credentials_store = "file"\n'
+      'cli_auth_credentials_store = "file"\nthread_unload_delay_secs = 0\n'
     )
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeUndefined()
@@ -3742,7 +3743,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.NO_PROXY).toContain('127.0.0.1')
     expect(backend.proxyEnvironmentMode).toBe('replace')
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
-      'cli_auth_credentials_store = "file"\n'
+      'cli_auth_credentials_store = "file"\nthread_unload_delay_secs = 0\n'
     )
     expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'

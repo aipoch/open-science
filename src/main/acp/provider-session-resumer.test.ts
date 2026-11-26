@@ -705,6 +705,55 @@ describe('AcpProviderSessionResumer', () => {
     expect(harness.adopt).not.toHaveBeenCalled()
   })
 
+  it.each([codexResponsesBackend, codexResponsesCompatibilityBackend, codexBridgeBackend])(
+    'retries only a confirmed Codex writer handoff on $modelRoute',
+    async (initialBackend) => {
+      const threadId = '12345678-1234-4234-8234-123456789abc'
+      const harness = createHarness({
+        initialBackend: { ...initialBackend, providerContinuityToken: 'same-provider' },
+        providerSessionId: threadId
+      })
+      const busy = acp.RequestError.invalidRequest({ reason: 'thread_active_writer', threadId })
+      const request = {
+        providerSessionId: threadId,
+        providerContinuityToken: 'same-provider',
+        previousBackendId: initialBackend.backendId,
+        previousFrameworkId: 'codex' as const
+      }
+      harness.request.mockRejectedValueOnce(busy)
+      await expect(harness.resume(request)).rejects.toBe(busy)
+      expect(harness.request).toHaveBeenCalledTimes(1)
+
+      harness.request.mockRejectedValueOnce(busy)
+      await expect(
+        harness.resume(request, { providerSessionId: threadId, writerReleased: true })
+      ).resolves.toMatchObject({ sessionId: 'stable-app-session' })
+      expect(harness.request).toHaveBeenCalledTimes(3)
+      expect(harness.attachSession).toHaveBeenCalledOnce()
+      expect(harness.adopt).not.toHaveBeenCalled()
+    }
+  )
+
+  it('abandons a Codex handoff retry when the resume times out', async () => {
+    const threadId = '12345678-1234-4234-8234-123456789abc'
+    const harness = createHarness({
+      initialBackend: codexResponsesBackend,
+      providerSessionId: threadId
+    })
+    const rejected = Promise.withResolvers<void>()
+    harness.request.mockImplementationOnce(async () => {
+      rejected.resolve()
+      throw acp.RequestError.invalidRequest({ reason: 'thread_active_writer', threadId })
+    })
+    const result = harness.resume({}, { providerSessionId: threadId, writerReleased: true })
+    const failure = expect(result).rejects.toThrow('timed out')
+    await rejected.promise
+    harness.fireTimeout()
+    await failure
+    expect(harness.request).toHaveBeenCalledOnce()
+    expect(harness.attachSession).not.toHaveBeenCalled()
+  })
+
   it('does not trust an unconfirmed writer transfer', async () => {
     const transfer = { providerSessionId: 'provider-session', writerReleased: false }
     const cleanupFailure = new Error('historical cleanup debt')

@@ -16,6 +16,7 @@ import type {
 import { canonicalAppMcpServerName } from '../agent-framework/app-mcp-names'
 import type { ShellRuntimeAgentContract } from '../notebook/shell-runtime'
 import { resolve } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import type {
   AcpCreateSessionResponse,
   AcpResumeSessionRequest,
@@ -63,6 +64,19 @@ type SessionAttachmentResponse = {
 
 type ClientContextSessionAttacher = {
   attachSession: (response: SessionAttachmentResponse) => ActiveSession
+}
+
+const isCodexWriterConflict = (error: unknown, threadId: string): boolean => {
+  if (!(error instanceof acp.RequestError) || error.code !== -32600) return false
+  const data = error.data
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'reason' in data &&
+    data.reason === 'thread_active_writer' &&
+    'threadId' in data &&
+    data.threadId === threadId
+  )
 }
 
 type ResumeEvent = AcpRuntimeEventInput
@@ -899,24 +913,44 @@ export class AcpProviderSessionResumer {
 
       let resumeResponse: unknown
       try {
-        resumeResponse = await connection.agent.request(
-          acp.methods.agent.session.resume,
-          {
-            sessionId: providerSessionId,
-            cwd,
-            mcpServers: sessionCapabilities.mcpServers,
-            ...specialistProjection.setup.metaArg,
-            ...(backend.framework.id === 'open-science-agent'
-              ? {
-                  _meta: {
-                    ...specialistProjection.setup.metaArg._meta,
-                    [HARNESS_OWNER]: { projectId, sessionId: request.sessionId }
+        const resumeThread = () =>
+          connection.agent.request(
+            acp.methods.agent.session.resume,
+            {
+              sessionId: providerSessionId,
+              cwd,
+              mcpServers: sessionCapabilities.mcpServers,
+              ...specialistProjection.setup.metaArg,
+              ...(backend.framework.id === 'open-science-agent'
+                ? {
+                    _meta: {
+                      ...specialistProjection.setup.metaArg._meta,
+                      [HARNESS_OWNER]: { projectId, sessionId: request.sessionId }
+                    }
                   }
-                }
-              : {})
-          },
-          { cancellationSignal }
-        )
+                : {})
+            },
+            { cancellationSignal }
+          )
+        // ACP close acknowledges unsubscribe. Even with immediate unloading, the old app-server
+        // can still be releasing its writer. Only retry our confirmed handoff of this exact thread.
+        for (let attempt = 0; ; attempt++) {
+          try {
+            resumeResponse = await resumeThread()
+            break
+          } catch (error) {
+            if (
+              !releasedWriter ||
+              backend.framework.id !== 'codex' ||
+              !isCodexWriterConflict(error, providerSessionId) ||
+              attempt >= 5
+            )
+              throw error
+            await delay(100 * 2 ** attempt, undefined, { signal: cancellationSignal })
+            this.deps.assertCurrentConnection(connection)
+            identity.assertCurrent()
+          }
+        }
       } catch (error) {
         const failure = this.policy.classifyFailure(error, {
           currentFrameworkId: backend.framework.id,
