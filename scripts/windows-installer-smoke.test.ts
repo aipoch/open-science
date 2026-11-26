@@ -139,6 +139,45 @@ describe('Windows installer smoke plan', () => {
     }
   })
 
+  it.each([
+    ['1.3.4', 'file', true],
+    ['1.3.5', 'file', false],
+    [undefined, 'file', false],
+    ['1.3.4', 'directory', false]
+  ] as const)(
+    'checks debug.log after rollback to %s (%s)',
+    async (rollbackVersion, kind, allowed) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-uninstall-residue-'))
+      try {
+        await writeFile(join(root, 'Uninstall open-science.exe'), '')
+        const log = join(root, 'debug.log')
+        if (kind === 'file') await writeFile(log, '')
+        else await mkdir(log)
+        const result = uninstallAndVerify(
+          root,
+          {},
+          {
+            rollbackVersion,
+            terminate: async () => {},
+            run: async () => {
+              // Let the real cleanup poll inspect the directory once before its deadline.
+              vi.spyOn(Date, 'now')
+                .mockReturnValueOnce(0)
+                .mockReturnValueOnce(0)
+                .mockReturnValue(60_000)
+              return { code: 0 }
+            }
+          }
+        )
+        if (allowed) await expect(result).resolves.toBeUndefined()
+        else await expect(result).rejects.toThrow(/Install directory entries: .*debug\.log/)
+      } finally {
+        vi.restoreAllMocks()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.skipIf(process.platform !== 'win32')(
     'passes the exact cleanup directory through actual PowerShell parsing',
     async () => {
