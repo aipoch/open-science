@@ -234,6 +234,34 @@ it('shows selected paragraph tooltips above the translation sidebar', async () =
   }
 })
 
+it('dismisses translation search before the sidebar and returns keyboard focus', () => {
+  const onOuterEscape = vi.fn()
+  const change = vi.fn()
+  render(
+    <div onKeyDown={onOuterEscape}>
+      <PdfTranslationSidebar
+        translation={translation}
+        query="match"
+        onQueryChange={change}
+        onSelect={() => undefined}
+        onCollapse={() => undefined}
+      />
+    </div>
+  )
+  const input = screen.getByRole('textbox', { name: 'Search translation' })
+  fireEvent.keyDown(input, { key: 'Escape', isComposing: true })
+  expect(screen.getByRole('textbox', { name: 'Search translation' })).toBe(input)
+  expect(change).not.toHaveBeenCalled()
+  onOuterEscape.mockClear()
+  fireEvent.keyDown(input, { key: 'Escape' })
+  expect(onOuterEscape).not.toHaveBeenCalled()
+  expect(change).toHaveBeenCalledWith('')
+  expect(screen.queryByRole('textbox', { name: 'Search translation' })).toBeNull()
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Search translation' }))
+  fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+  expect(onOuterEscape).toHaveBeenCalledOnce()
+})
+
 it('keeps the translation list open when only the selected paragraph is collapsed', () => {
   const scrollIntoView = HTMLElement.prototype.scrollIntoView
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
@@ -412,8 +440,8 @@ it('offers separate layout and translation retries for a retained passage', asyn
     ).toBe(true)
     view.rerender(<PdfTranslationSidebar {...props} unchangedLayoutUnitIds={['accepted']} />)
     expect(
-      screen.getByRole<HTMLButtonElement>('button', { name: 'Layout unchanged' }).disabled
-    ).toBe(true)
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Retry PDF layout' }).disabled
+    ).toBe(false)
     expect(
       screen.queryByText('Retrying did not change this passage. You can read its translation here.')
     ).toBeNull()
@@ -422,8 +450,8 @@ it('offers separate layout and translation retries for a retained passage', asyn
       'Retrying did not change this passage.'
     )
     fireEvent.blur(warning)
-    fireEvent.click(screen.getByRole('button', { name: 'Layout unchanged' }))
-    expect(onRetryLayout).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry PDF layout' }))
+    expect(onRetryLayout).toHaveBeenCalledTimes(2)
     expect(
       screen.getByRole<HTMLButtonElement>('button', { name: 'Retranslate this paragraph' }).disabled
     ).toBe(false)
@@ -471,6 +499,22 @@ it('filters retained passages together with search and can restore the full list
   expect(
     screen.getByRole('button', { name: 'Filter translations' }).getAttribute('aria-pressed')
   ).toBe('false')
+})
+
+it('opens the review body when controlled search opens from a collapsed sidebar', () => {
+  const props = {
+    translation,
+    query: '',
+    onQueryChange: vi.fn(),
+    onSelect: vi.fn(),
+    onCollapse: vi.fn(),
+    selectedId: undefined,
+    collapsed: true,
+    searchOpen: true,
+    onSearchOpenChange: vi.fn()
+  }
+  const view = render(<PdfTranslationSidebar {...props} />)
+  expect(view.getByRole('textbox', { name: 'Search translation' })).toBeTruthy()
 })
 
 it.each(['1 Translated', '0 Failed', '1 Not in PDF'])(
@@ -694,31 +738,35 @@ it.each([
   }
 )
 
-it('keeps persisted layout failure details in a focusable tip beside the readable translation', async () => {
+it('shows the saved layout reason inline when opening an unplaced paragraph', async () => {
   const previousScroll = HTMLElement.prototype.scrollIntoView
   HTMLElement.prototype.scrollIntoView = vi.fn()
   try {
-    render(
-      <PdfTranslationSidebar
-        translation={translation}
-        retainedUnitIds={['accepted']}
-        unfilledUnitIds={['accepted']}
-        layoutFailures={{
-          accepted: { code: 'overflow', phase: 'planning', pageNumbers: [1, 2], fragmentCount: 2 }
-        }}
-        selectedId="accepted"
-        query=""
-        onQueryChange={() => undefined}
-        onSelect={() => undefined}
-        onCollapse={() => undefined}
-      />
-    )
+    const props = {
+      translation,
+      retainedUnitIds: ['accepted'],
+      unfilledUnitIds: ['accepted'],
+      layoutFailures: {
+        accepted: {
+          code: 'overflow' as const,
+          phase: 'planning' as const,
+          pageNumbers: [1, 2],
+          fragmentCount: 2
+        }
+      },
+      query: '',
+      onQueryChange: vi.fn(),
+      onSelect: vi.fn(),
+      onCollapse: vi.fn()
+    }
+    const view = render(<PdfTranslationSidebar {...props} />)
+    const reason = 'The translated text does not fit its original region.'
     expect(
       screen.queryByText(
         'This passage is translated, but its original layout was retained in the PDF.'
       )
     ).toBeNull()
-    expect(screen.queryByText('The translated text does not fit its original region.')).toBeNull()
+    expect(screen.queryByText(reason)).toBeNull()
     const warning = screen.getByRole('img', { name: 'Text kept in original layout' })
     expect(warning.tabIndex).toBe(0)
     fireEvent.focus(warning)
@@ -726,7 +774,14 @@ it('keeps persisted layout failure details in a focusable tip beside the readabl
     expect(tip.textContent).toContain(
       'This passage is translated, but its original layout was retained in the PDF.'
     )
-    expect(tip.textContent).toContain('The translated text does not fit its original region.')
+    expect(tip.textContent).toContain(reason)
+    fireEvent.blur(warning)
+    fireEvent.click(screen.getByRole('button', { name: '1 Not in PDF' }))
+    fireEvent.click(screen.getByRole('button', { name: /Page 1 · #1/ }))
+    expect(props.onSelect).toHaveBeenCalledWith(translation.units[0], 0)
+    view.rerender(<PdfTranslationSidebar {...props} selectedId="accepted" />)
+    const details = screen.getByText(reason).closest('[data-layout-failure]') as HTMLElement
+    expect(within(details).getByText('Source pages: 1, 2')).toBeTruthy()
     expect(screen.getAllByText('完整段落跨页。').length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: 'Locate paragraph on page 2' })).toBeTruthy()
   } finally {
@@ -889,6 +944,11 @@ it('keeps every long-document row reachable while mounting only the selected par
     expect(trigger.textContent).toContain('#768')
     fireEvent.click(trigger)
     expect(props.onSelect).toHaveBeenLastCalledWith(last, 0)
+    view.rerender(<PdfTranslationSidebar {...props} query="#768" />)
+    expect([...view.container.querySelectorAll('[data-translation-row]')]).toEqual([
+      rowElements[767]
+    ])
+    expect(trigger.textContent).toContain('#768')
     view.rerender(<PdfTranslationSidebar {...props} />)
     expect(view.container.querySelectorAll('[data-translation-row]')).toHaveLength(768)
   } finally {

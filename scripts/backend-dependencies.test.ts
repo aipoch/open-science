@@ -329,6 +329,8 @@ describe('desktop-only dependency contents', () => {
         ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.js', 'dist/cpexcel.js'],
         ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.map', 'xlsx.js'],
         ['styled-exceljs', '0.21.6', 'dist/xlsx.extendscript.js', 'dist/xlsx.zahl.mjs'],
+        ['pdfjs-dist', '5.4.624', 'legacy/build/pdf.min.mjs', 'legacy/build/pdf.mjs'],
+        ['pdfjs-dist', '5.4.624', 'legacy/build/pdf.worker.min.mjs', 'legacy/build/pdf.worker.mjs'],
         ['@embedpdf/pdfium', '2.15.1', 'dist/index.browser.js', 'dist/pdfium.wasm'],
         ['pako', '1.0.11', 'dist/pako.js', 'lib/inflate.js'],
         ['pako', '0.2.9', 'dist/pako.min.js', 'index.js']
@@ -354,7 +356,7 @@ describe('desktop-only dependency contents', () => {
     }
   )
 
-  it('runs spreadsheet, molecule, parser, PDFium and tokenizer operations from filtered packages', async () => {
+  it('runs spreadsheet, molecule, parser, PDF and tokenizer operations from filtered packages', async () => {
     await mkdir('node_modules/.cache', { recursive: true })
     const root = await mkdtemp(join(process.cwd(), 'node_modules/.cache/desktop-variants-'))
     try {
@@ -362,6 +364,7 @@ describe('desktop-only dependency contents', () => {
         'styled-exceljs',
         'openchemlib',
         'web-tree-sitter',
+        'pdfjs-dist',
         '@embedpdf/pdfium',
         'tiktoken',
         '@anthropic-ai/tokenizer'
@@ -429,7 +432,35 @@ describe('desktop-only dependency contents', () => {
         const document = pdf.FPDF_CreateNewDocument();
         const page = pdf.FPDFPage_New(document, 0, 200, 100);
         assert.equal(pdf.FPDF_GetPageCount(document), 1);
-        pdf.FPDF_ClosePage(page); pdf.FPDF_CloseDocument(document);
+        const writer = pdf.PDFiumExt_OpenFileWriter();
+        let bytes;
+        try {
+          assert.ok(pdf.FPDF_SaveAsCopy(document, writer, 2));
+          const size = pdf.PDFiumExt_GetFileWriterSize(writer);
+          assert.ok(size > 0);
+          const pointer = pdf.pdfium.wasmExports.malloc(size);
+          try {
+            pdf.PDFiumExt_GetFileWriterData(writer, pointer, size);
+            bytes = pdf.pdfium.HEAPU8.slice(pointer, pointer + size);
+          } finally {
+            pdf.pdfium.wasmExports.free(pointer);
+          }
+        } finally {
+          pdf.PDFiumExt_CloseFileWriter(writer);
+          pdf.FPDF_ClosePage(page);
+          pdf.FPDF_CloseDocument(document);
+          pdf.FPDF_DestroyLibrary();
+        }
+        const {getDocument} = await import('pdfjs-dist/legacy/build/pdf.mjs');
+        const parsed = await getDocument({data: bytes}).promise;
+        try {
+          assert.equal(parsed.numPages, 1);
+          const parsedPage = await parsed.getPage(1);
+          assert.equal(parsedPage.getViewport({scale: 1}).width, 200);
+          assert.deepEqual((await parsedPage.getTextContent()).items, []);
+        } finally {
+          await parsed.destroy();
+        }
         for (const tokenizer of [require('tiktoken'), await import('tiktoken')]) {
           const encoder = tokenizer.get_encoding('cl100k_base');
           assert.equal(new TextDecoder().decode(encoder.decode(encoder.encode('Scientific 科学'))), 'Scientific 科学');

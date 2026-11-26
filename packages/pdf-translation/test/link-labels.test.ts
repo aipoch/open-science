@@ -12,6 +12,26 @@ import {
   translatedPdfDatedReportFootnote,
   translatedPdfBracketedReference
 } from '../resources/link-labels.mjs'
+
+it('maps complete multi-number bracketed citation groups after translation', () => {
+  const source = 'See [13, 17, 22–24].'
+  const translation = '参见[13, 17, 22–24]。'
+  expect(translatedPdfLinkFragment(source, translation, '13, 17, 22–24', 5)).toEqual({
+    start: 3,
+    text: '13, 17, 22–24'
+  })
+  expect(
+    translatedPdfLinkFragment(
+      'See [25, 26] and [25, 26].',
+      '参见[25, 26]以及[25, 26]。',
+      '25, 26',
+      5
+    )
+  ).toEqual({
+    start: 3,
+    text: '25, 26'
+  })
+})
 import { PdfTranslationWriter } from '../src/writer.js'
 import { TestCallerRegistry } from './support/callers.js'
 
@@ -73,6 +93,26 @@ it('maps complete keyword labels through their original thesaurus action', () =>
   expect(
     translatedPdfLinkLabel(source, translation.replace('84002', '84001'), label, offset, uri)
   ).toBeNull()
+})
+
+it('binds an S-panel identifier to its ordered figure reference, not a shared prefix', () => {
+  const s = 'Figure S1A and Figure S1; see Figure S1 again.',
+    t = '见图 S1A 和图 S1；再次见图 S1。'
+  expect(translatedPdfLinkFragment(s, t, 'S1', s.lastIndexOf('S1'))).toEqual({
+    start: t.lastIndexOf('S1'),
+    text: 'S1'
+  })
+  for (const changed of ['图 S1、图 S1、图 S1A', '图 S1A、图 S1', '图 S1A、图 S1、图 S12'])
+    expect(translatedPdfLinkFragment(s, changed, 'S1', s.lastIndexOf('S1'))).toBeNull()
+})
+
+it('maps punctuation, but never reordered numbers, inside a closed citation group', () => {
+  const source = 'See [5, 36].'
+  expect(translatedPdfLinkFragment(source, '参见[5，36]。', '5, 36', 5)).toEqual({
+    start: 3,
+    text: '5，36'
+  })
+  expect(translatedPdfLinkFragment(source, '参见[36，5]。', '5, 36', 5)).toBeNull()
 })
 
 it.each(

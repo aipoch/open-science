@@ -383,6 +383,9 @@ export function pdfTranslationMissingCitationIdentities(
 }
 
 function ordinaryAcademicHeading(source: string): string | undefined {
+  // PDF letter spacing can split this heading into runs such as RE FER EN CES.
+  // Fold whitespace only for the complete known heading, not arbitrary names.
+  if (source.replace(/\s+/gu, '').toLowerCase() === 'references') return 'References'
   const heading = source
     .trim()
     .replace(/\s+/gu, ' ')
