@@ -10,6 +10,13 @@ export function requiresTaskRunTracing(request: object): boolean {
   return (request as { [taskRunTracing]?: true })[taskRunTracing] === true
 }
 
+export const taskRunTraceMetadata = Symbol('Task Run trace metadata')
+export function taskRunTraceMetadataOf(
+  request: object
+): Readonly<Record<string, string>> | undefined {
+  return (request as { [taskRunTraceMetadata]?: Record<string, string> })[taskRunTraceMetadata]
+}
+
 export function requireTracingFramework(frameworkId: AgentFrameworkId): void {
   if (frameworkId !== 'open-science-agent')
     throw new TaskRunTracingError(

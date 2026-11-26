@@ -219,7 +219,11 @@ export type StartTaskRunRequest = {
   enabledComputeHostIds?: string[]
 }
 
-export type SubmitTaskRunRequest = StartTaskRunRequest & { otelTraces?: true }
+export type SubmitTaskRunRequest = StartTaskRunRequest & {
+  otelTraces?: true
+  /** Filterable trace metadata for this Run. Requires otelTraces. */
+  traceMetadata?: Record<string, string>
+}
 
 export type TaskRunAttention =
   | { kind: 'plan-approval'; plan: ActivePlanProjection }

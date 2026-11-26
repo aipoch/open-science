@@ -11,6 +11,7 @@ import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { wsl2BuildDefines } from './scripts/wsl2-build-flags.mjs'
+import { gitCommitBuildDefine } from './scripts/git-commit-define.mjs'
 
 // Supported packages are built on native runners because they carry platform-native dependencies,
 // so the build host is also the package target. Keep non-Windows bundles disabled independently of
@@ -33,6 +34,7 @@ export default defineConfig(({ command }) => ({
     define: {
       __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
       ...windowsSigningBuildDefines(process.env),
+      ...gitCommitBuildDefine(),
       ...wsl2BuildDefines(process.platform, command === 'serve', process.env)
     },
     build: {

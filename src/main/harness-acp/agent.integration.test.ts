@@ -29,6 +29,7 @@ import {
   HARNESS_OWNER,
   HARNESS_TOOL_LESS,
   HARNESS_TRACE_ENABLED,
+  HARNESS_TRACE_METADATA,
   HARNESS_TRACE_READINESS_METHOD,
   HARNESS_USER_TEXT_RANGE
 } from './config'
@@ -597,6 +598,74 @@ it('exports only authorized project or individual Run turns in a shared helper',
   expect(new Set(received.map((span) => attributes(span.attributes)['session.id']))).toEqual(
     new Set([sessions[0].sessionId, sessions[1].sessionId])
   )
+})
+
+it('exports release, run metadata and invalid tool arguments', async () => {
+  vi.stubEnv('OPEN_SCIENCE_APPLICATION_VERSION', '9.9.9')
+  cleanup.push(async () => vi.unstubAllEnvs())
+  const endpoint = 'https://trace-run-metadata.example/v1/traces'
+  const tracing = createHarnessTracing(endpoint)!
+  cleanup.push(async () => tracing.dispose())
+  expect(await tracing.ready).toBe(true)
+  const received: ExportedSpan[] = []
+  const fetchLocal = globalThis.fetch
+  const send = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    if (String(url) !== endpoint) return fetchLocal(url, init)
+    const batch = JSON.parse(String(init?.body)) as TraceExport
+    received.push(
+      ...batch.resourceSpans.flatMap((resource) =>
+        resource.scopeSpans.flatMap((scope) => scope.spans)
+      )
+    )
+    return new Response('{}')
+  })
+  cleanup.push(async () => send.mockRestore())
+  const managed = await mcpServer()
+  let step = 0
+  const model = await modelServer((body, response) => {
+    if (step++ === 0)
+      finish(response, '', body.tools![0].function.name, { value: 'not-an-integer' })
+    else finish(response, 'done')
+  })
+  const f = await fixture(model.endpoint, undefined, true, 32768, undefined, undefined, tracing)
+  const { sessionId } = await f.connection.agent.request(acp.methods.agent.session.new, {
+    cwd: f.directory,
+    mcpServers: [managed.config],
+    _meta: {
+      [HARNESS_OWNER]: { projectId: 'traced-project' }
+    }
+  })
+  const result = await f.connection.agent.request(acp.methods.agent.session.prompt, {
+    sessionId,
+    prompt: [
+      {
+        type: 'text',
+        text: 'run the tool',
+        _meta: {
+          [HARNESS_TRACE_ENABLED]: true,
+          [HARNESS_TRACE_METADATA]: { experiment: 'baseline', trial: '1', 'Bad-Key': 'ignored' }
+        }
+      }
+    ]
+  })
+  expect(result.stopReason).toBe('end_turn')
+  expect(managed.calls).toEqual([])
+  await vi.waitFor(() => expect(received).toHaveLength(4))
+  const turn = received.find((span) => span.name === 'harness.turn')!
+  expect(attributes(turn.attributes)).toMatchObject({
+    'langfuse.release': '9.9.9',
+    'langfuse.trace.metadata.experiment': 'baseline',
+    'langfuse.trace.metadata.trial': '1',
+    'harness.tool.execution_count': '0',
+    'harness.tool.invalid_argument_count': '1'
+  })
+  expect(attributes(turn.attributes)['langfuse.trace.metadata.Bad-Key']).toBeUndefined()
+  const tool = received.find((span) => span.name === 'harness.tool')!
+  expect(tool.parentSpanId).toBe(turn.spanId)
+  expect(attributes(tool.attributes)).toMatchObject({
+    'harness.outcome': 'invalid_arguments',
+    'gen_ai.tool.name': 'mcp__managed__append'
+  })
 })
 
 it('exports correlated OTLP metadata and completes ACP turns when the receiver fails', async () => {

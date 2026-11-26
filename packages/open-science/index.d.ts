@@ -388,6 +388,9 @@ export type AgentConfiguration = {
   model?: string
   reasoningEffort: ReasoningEffort
 }
+/** Filterable trace metadata: at most 8 keys matching [a-z][a-z0-9_]{0,31}; values up to 128 characters. */
+export type RunTraceMetadata = Record<string, string>
+
 export type RunRequest = {
   project: string
   prompt: string
@@ -403,6 +406,8 @@ export type RunRequest = {
   interactionMode?: TaskInteractionMode
   /** Export Open-Science Agent traces; requires a durable local submission. */
   otelTraces?: true
+  /** Filterable trace metadata for this Run; requires otelTraces. */
+  traceMetadata?: RunTraceMetadata
   autoReviewEnabled?: boolean
   specialist?: string
   delegationPolicy?: DelegationPolicy
@@ -1205,7 +1210,10 @@ export class OpenScienceClient {
     request: RunRequest & { otelTraces: true },
     options: RequestOptions & { requestId: string }
   ): Promise<Run>
-  startRun(request: RunRequest & { otelTraces?: never }, options?: RequestOptions): Promise<Run>
+  startRun(
+    request: RunRequest & { otelTraces?: never; traceMetadata?: never },
+    options?: RequestOptions
+  ): Promise<Run>
   getRun(runId: string, options?: RequestOptions): Promise<Run>
   /** Explicitly cancels the server run and waits for finalization. */
   cancelRun(runId: string, options?: RequestOptions): Promise<Run>

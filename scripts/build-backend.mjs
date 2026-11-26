@@ -13,6 +13,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { wsl2BuildDefines } from './wsl2-build-flags.mjs'
+import { gitCommitBuildDefine } from './git-commit-define.mjs'
 
 // Bundled code may keep a guarded require of an optional package that is not installed (for
 // example ws and bufferutil). Only names the bundled package itself marks optional qualify.
@@ -88,6 +89,7 @@ export async function createBackendBuilder({
           'import.meta.url': '__entryUrl',
           __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
           ...windowsSigningBuildDefines(process.env),
+          ...gitCommitBuildDefine(),
           ...wsl2BuildDefines(process.platform, development, process.env)
         },
         banner: {

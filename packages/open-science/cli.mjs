@@ -148,6 +148,7 @@ Options:
   --permission-prompts none  Deny unresolved human interactions instead of waiting (run only)
   --interaction-mode relay|delegate  Handle routine approvals in this task (default: relay)
   --otel-traces          Export Open-Science Agent traces for this Run
+  --trace-metadata <key=value>  Add filterable trace metadata (repeatable; requires --otel-traces)
   --request-id <id>      Stable submission identity for lookup and safe retries
   --wait                 Observe the Run until completion or attention (default: 10s, max: 30s)
   --return-on-attention  Accepted for older scripts; --wait now returns on attention
@@ -352,6 +353,9 @@ const assertPositionalLimit = (command, subcommand, positionals) => {
   )
 }
 
+const MAX_TRACE_METADATA_KEYS = 8
+const MAX_TRACE_METADATA_VALUE_LENGTH = 128
+
 export const parseCliArgs = (argv) => {
   const args = [...argv]
   const requestedCommand = args.shift()
@@ -444,7 +448,15 @@ export const parseCliArgs = (argv) => {
       options.autoReviewEnabled = false
     } else if (arg === '--cancel-on-timeout') options.cancelOnTimeout = true
     else if (arg === '--otel-traces') options.otelTraces = true
-    else if (arg === '--clear-agent-context') options.clearAgentContext = true
+    else if (arg === '--trace-metadata') {
+      const value = args.shift()
+      const separator = value?.indexOf('=') ?? -1
+      if (separator < 1) throw new CliUsageError('--trace-metadata requires key=value.')
+      const key = value.slice(0, separator)
+      if (options.traceMetadata?.[key] !== undefined)
+        throw new CliUsageError(`--trace-metadata ${key} was specified more than once.`)
+      options.traceMetadata = { ...options.traceMetadata, [key]: value.slice(separator + 1) }
+    } else if (arg === '--clear-agent-context') options.clearAgentContext = true
     else if (arg === '--skill') {
       const value = args.shift()
       if (!value) throw new CliUsageError('--skill requires a value.')
@@ -501,6 +513,20 @@ export const parseCliArgs = (argv) => {
   }
   if (options.otelTraces && (command !== 'run' || subcommand)) {
     throw new CliUsageError('--otel-traces requires starting a run.')
+  }
+  if (options.traceMetadata !== undefined) {
+    if (!options.otelTraces) throw new CliUsageError('--trace-metadata requires --otel-traces.')
+    const entries = Object.entries(options.traceMetadata)
+    if (entries.length > MAX_TRACE_METADATA_KEYS)
+      throw new CliUsageError(`Use at most ${MAX_TRACE_METADATA_KEYS} --trace-metadata options.`)
+    for (const [key, value] of entries) {
+      if (!/^[a-z][a-z0-9_]{0,31}$/.test(key))
+        throw new CliUsageError(`--trace-metadata key "${key}" must match [a-z][a-z0-9_]{0,31}.`)
+      if (value.length > MAX_TRACE_METADATA_VALUE_LENGTH)
+        throw new CliUsageError(
+          `--trace-metadata value for ${key} must be at most ${MAX_TRACE_METADATA_VALUE_LENGTH} characters.`
+        )
+    }
   }
   if (options.permissionPrompts === 'none' && options.planFirst) {
     throw new CliUsageError('--plan-first cannot be combined with --permission-prompts none.')
@@ -2420,6 +2446,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
               ...(options.planFirst ? { turnIntent: 'plan-first' } : {}),
               ...(options.interactionMode ? { interactionMode: options.interactionMode } : {}),
               ...(options.otelTraces ? { otelTraces: true } : {}),
+              ...(options.traceMetadata ? { traceMetadata: options.traceMetadata } : {}),
               ...(options.autoReviewEnabled !== undefined
                 ? { autoReviewEnabled: options.autoReviewEnabled }
                 : {}),

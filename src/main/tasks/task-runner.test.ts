@@ -419,6 +419,29 @@ describe('TaskRunner', () => {
       const ordinary = await runner.startRun(input)
       await runner.waitForRun(ordinary.id)
       expect(prompt.mock.calls[1][0]).not.toHaveProperty('otelTraces')
+      expect(prompt.mock.calls[1][0]).not.toHaveProperty('traceMetadata')
+      for (const traceMetadata of [
+        { Bad: 'key' },
+        { experiment: 1 },
+        { experiment: 'x'.repeat(129) },
+        {}
+      ])
+        await expect(
+          runner.startRun(
+            { ...traced, traceMetadata } as unknown as typeof traced,
+            'invalid-metadata'
+          )
+        ).rejects.toMatchObject({ code: 'invalid_request' })
+      await expect(
+        runner.startRun({ ...input, traceMetadata: { experiment: 'a' } }, 'metadata-without-otel')
+      ).rejects.toMatchObject({ code: 'invalid_request' })
+      const annotated = await runner.startRun(
+        { ...traced, traceMetadata: { experiment: 'baseline', trial: '1' } },
+        'trace-metadata'
+      )
+      await runner.waitForRun(annotated.id)
+      expect(prompt.mock.calls[2][0].traceMetadata).toEqual({ experiment: 'baseline', trial: '1' })
+      expect(saved.mock.calls.every(([value]) => !('traceMetadata' in value))).toBe(true)
     }
   )
 

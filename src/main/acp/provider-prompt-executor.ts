@@ -10,7 +10,7 @@ import { setTimeout as wait } from 'node:timers/promises'
 import { toAcpTurnTokenUsage } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { requireTracingFramework } from './task-run-tracing'
-import { HARNESS_TRACE_ENABLED } from '../harness-acp/config'
+import { HARNESS_TRACE_ENABLED, HARNESS_TRACE_METADATA } from '../harness-acp/config'
 import type { AcpBackendGenerationOwner } from './backend-generation-owner'
 import { createClaudeTranscriptReader } from './claude-transcript-reader'
 import { createClaudeCodeTurnAdapter } from './claude-turn-adapter'
@@ -37,6 +37,7 @@ type ProviderPromptExecutionInput = Readonly<{
   isUserStopped?: () => boolean
   beforeDispatch: () => Promise<'active' | 'cancelled'>
   authorizeHarnessTracing?: true | (() => Promise<boolean>)
+  traceMetadata?: Readonly<Record<string, string>>
   signal?: AbortSignal
   cancellationCheckpoint?: () => Promise<'active' | 'cancelled'>
   captureStop: (response: PromptResponse) => boolean
@@ -83,7 +84,8 @@ const NOOP_PROBE: AcpProviderTurnProbe = Object.freeze({
 async function authorizeHarnessPrompt(
   content: ProviderPromptExecutionInput['content'],
   authorize: ProviderPromptExecutionInput['authorizeHarnessTracing'],
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  traceMetadata?: ProviderPromptExecutionInput['traceMetadata']
 ): Promise<ProviderPromptExecutionInput['content']> {
   let enabled = authorize === true
   if (typeof authorize === 'function' && !signal?.aborted) {
@@ -105,11 +107,18 @@ async function authorizeHarnessPrompt(
   }
   const first: ContentBlock | undefined =
     typeof content === 'string' ? { type: 'text', text: content } : content[0]
-  if (!first || (!enabled && !Object.hasOwn(first._meta ?? {}, HARNESS_TRACE_ENABLED)))
+  if (
+    !first ||
+    (!enabled &&
+      !Object.hasOwn(first._meta ?? {}, HARNESS_TRACE_ENABLED) &&
+      !Object.hasOwn(first._meta ?? {}, HARNESS_TRACE_METADATA))
+  )
     return content
   const meta: Record<string, unknown> = { ...first._meta }
   delete meta[HARNESS_TRACE_ENABLED]
+  delete meta[HARNESS_TRACE_METADATA]
   if (enabled) meta[HARNESS_TRACE_ENABLED] = true
+  if (enabled && traceMetadata) meta[HARNESS_TRACE_METADATA] = traceMetadata
   return [{ ...first, _meta: meta }, ...(typeof content === 'string' ? [] : content.slice(1))]
 }
 
@@ -304,7 +313,12 @@ class AcpProviderPromptExecutor {
       let content = input.content
       if (input.authorizeHarnessTracing === true) requireTracingFramework(input.frameworkId)
       if (input.frameworkId === 'open-science-agent') {
-        content = await authorizeHarnessPrompt(content, input.authorizeHarnessTracing, input.signal)
+        content = await authorizeHarnessPrompt(
+          content,
+          input.authorizeHarnessTracing,
+          input.signal,
+          input.traceMetadata
+        )
         // Stop aborts the lookup before ACP confirms whether it cancelled the prompt.
         const cancelled =
           input.signal?.aborted && (await input.cancellationCheckpoint?.()) !== 'active'

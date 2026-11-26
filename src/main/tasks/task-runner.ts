@@ -1,4 +1,4 @@
-import { TaskRunTracingError } from './task-control-ports'
+import { TaskRunTracingError, traceMetadataError } from './task-control-ports'
 import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { constants } from 'node:fs'
 import { access, realpath, stat } from 'node:fs/promises'
@@ -227,6 +227,7 @@ type TaskAgentResumeSessionRequest = {
 
 type TaskAgentPromptRequest = {
   otelTraces?: true
+  traceMetadata?: Record<string, string>
   permissionPrompts?: 'none'
   sessionId: string
   taskRunId?: string
@@ -1385,6 +1386,10 @@ class TaskRunner {
         'invalid_request',
         'otelTraces must be true and requires a local durable Run submission.'
       )
+    }
+    if (request.traceMetadata !== undefined) {
+      const error = traceMetadataError(request.traceMetadata, request.otelTraces === true)
+      if (error) throw new TaskRunnerError('invalid_request', error)
     }
     if (typeof request.project !== 'string' || !request.project.trim()) {
       throw new TaskRunnerError('invalid_request', 'Project is required.')
@@ -2565,6 +2570,7 @@ class TaskRunner {
           sessionId: session.id,
           taskRunId: run.id,
           ...(request.otelTraces ? { otelTraces: true } : {}),
+          ...(request.traceMetadata ? { traceMetadata: request.traceMetadata } : {}),
           promptMessageId,
           provenanceContext,
           text: prompt,

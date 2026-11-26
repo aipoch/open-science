@@ -760,6 +760,13 @@ After dispatch, delivery failures follow the exporter's usual asynchronous diagn
 continues. With the SDK, pass `otelTraces: true` to `submitRun(requestId, request)` or
 `startRun(request, { requestId })`.
 
+Add `--trace-metadata key=value` (repeatable, requires `--otel-traces`) to attach filterable
+metadata to the Run's trace, for example `--trace-metadata experiment=baseline
+--trace-metadata case=csv-chart --trace-metadata trial=1`. Keys match `[a-z][a-z0-9_]{0,31}`, at
+most 8 keys, values up to 128 characters. They are exported as `langfuse.trace.metadata.<key>` on
+the turn span. Requires the `run-trace-metadata` backend capability. With the SDK, pass
+`traceMetadata: { experiment, case, trial }` alongside `otelTraces: true`.
+
 ### Execution controls
 
 The run command exposes five provider-neutral controls:
