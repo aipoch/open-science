@@ -2,6 +2,12 @@ import { z } from 'zod'
 import { useCaseSourceSchema } from './use-cases'
 import { PROJECT_NAME_MAX_LENGTH } from './projects'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
+import { packageWebOmissionSchema, type PackageWebOmission } from './session-package-web'
+import {
+  orgCaseUploadMetadataSchema,
+  orgCaseUploadedSummarySchema,
+  type OrgCaseUploadedSummary
+} from './org-cases'
 
 export type SensitiveContentEvidence = {
   location: string
@@ -18,6 +24,11 @@ export type SensitiveContentEvidence = {
 }
 
 const identity = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/)
+export const sessionPackageRequestSchema = z
+  .object({ projectId: identity, sessionId: identity })
+  .strict()
+export type SessionPackageRequest = z.infer<typeof sessionPackageRequestSchema>
+
 const checksum = z.string().regex(/^[a-f0-9]{64}$/)
 export const PACKAGE_RO_CRATE_METADATA = 'ro-crate-metadata.json'
 export const PACKAGE_MAX_FILE_BYTES = 32 * 1024 ** 3
@@ -77,6 +88,7 @@ export type PackageFileSelection = {
 }
 
 export type PackageSelectionSummary = {
+  webOmissions?: PackageWebOmission[]
   pdfNotesAvailable?: boolean
   researchFilms?: { count: number; sizeBytes: number }
   retainedFiles: Array<PackageExcludedFile & { checksum?: string }>
@@ -138,6 +150,7 @@ export type PackageProgress = {
     | 'validating'
     | 'compressing'
     | 'saving'
+    | 'uploading'
     | 'importing'
     | 'choosing-location'
     | 'confirming'
@@ -159,10 +172,80 @@ export type BrowserPackageTransfer = {
   totalBytes: number
 }
 
+const agentPackageSourcePathSchema = z
+  .string()
+  .min(1)
+  .max(32768)
+  .regex(/\.science$/i)
+const agentPackageOperationReferenceSchema = z
+  .object({
+    correlationId: z.uuid(),
+    sourcePath: agentPackageSourcePathSchema.optional(),
+    destinationPath: agentPackageSourcePathSchema.optional()
+  })
+  .strict()
+export type AgentPackageOperationReference = z.infer<typeof agentPackageOperationReferenceSchema>
+
+const agentPackageFailureSchema = z.enum([
+  'destination-conflict',
+  'requires-user',
+  'content-changed',
+  'export-review-expired',
+  'invalid-archive',
+  'source-unavailable',
+  'requires-update',
+  'import-unconfirmed',
+  'fork-waiting-approval',
+  'fork-notebook-refused'
+])
+
+const packageFileDigestSchema = z
+  .object({ sizeBytes: z.number().int().nonnegative(), checksum })
+  .strict()
+export type PackageFileDigest = z.infer<typeof packageFileDigestSchema>
+const sensitiveExportBindingSchema = z.strictObject({
+  destinationPath: agentPackageSourcePathSchema,
+  expiresAt: z.number().int().positive(),
+  sizeBytes: packageFileDigestSchema.shape.sizeBytes,
+  sha256: checksum
+})
+const sensitiveExportDecision = z.enum(['approved', 'rejected'])
+const sensitiveExportDecisionSchema = sensitiveExportBindingSchema.extend({
+  source: z.enum(['user_relay', 'desktop']),
+  decision: sensitiveExportDecision
+})
+export type SensitiveExportDecision = z.infer<typeof sensitiveExportDecisionSchema>
+const sensitiveExportReviewSchema = z
+  .object({
+    expiresAt: z.number().int().positive(),
+    destination: z.string().max(32768).optional(),
+    fileDigest: packageFileDigestSchema,
+    agentDetails: z
+      .strictObject({
+        fileScope: z.strictObject({
+          fileCount: z.number().int().nonnegative(),
+          includesSessionHistory: z.literal(true)
+        }),
+        findings: z
+          .array(
+            z.strictObject({
+              source: z.enum(['session_metadata', 'package_metadata', 'research_file']),
+              rule: z.enum(['field', 'assignment', 'url', 'token'])
+            })
+          )
+          .max(20)
+      })
+      .optional()
+  })
+  .strict()
+
 export type PackageOperationSnapshot = {
   id: string
   kind: 'export' | 'import' | 'fork'
   session?: SessionPackageRequest
+  sessionTitle?: string
+  exportDestination?: 'local' | 'org-case'
+  agent?: AgentPackageOperationReference & { failure?: z.infer<typeof agentPackageFailureSchema> }
   importTarget?: SessionPackageImportRequest
   presentationRevision?: number
   importRequestId?: string
@@ -179,63 +262,111 @@ export type PackageOperationSnapshot = {
   summary?: PackageSelectionSummary
   result?: {
     filePath?: string
+    fileDigest?: PackageFileDigest
+    webOmissions?: PackageWebOmission[]
+    uploadedCase?: OrgCaseUploadedSummary
     imported?: SessionPackageRequest
+    packageSummary?: SessionPackageSummary
     recovery?: SessionPackageRequest & { operationId: string; outcome: 'committed' | 'unconfirmed' }
   }
   error?: string
   sensitiveContent?: SensitiveContentEvidence[]
+  sensitiveExportReview?: z.infer<typeof sensitiveExportReviewSchema>
+  sensitiveExportDecision?: SensitiveExportDecision
   cleanupPending?: boolean
   transferBytesPerSecond?: number
   ioBytesPerSecond?: number
+  exportBlocked?: boolean
 }
 
-export const packageOperationRequestSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('snapshot') }).strict(),
-  z.object({ action: z.literal('cancel'), operationId: identity }).strict(),
-  z
-    .object({
-      action: z.literal('cancel-browser-transfer'),
-      operationId: identity,
-      transferId: identity
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal('select-project'),
-      operationId: identity,
-      target: sessionPackageImportRequestSchema.refine(
-        (target) => Boolean(target.projectId || target.projectName),
-        'Choose an import destination.'
-      )
-    })
-    .strict(),
-  z.object({ action: z.literal('confirm-import'), operationId: identity }).strict(),
-  z
-    .object({ action: z.literal('discard-import'), operationId: identity, requestId: identity })
-    .strict(),
-  z.object({ action: z.literal('next-import'), operationId: identity }).strict(),
-  z.object({ action: z.literal('dismiss-queue-warning'), operationId: identity }).strict(),
-  z.object({ action: z.literal('retry-import'), operationId: identity }).strict(),
-  z.object({ action: z.literal('export-with-sensitive-content'), operationId: identity }).strict(),
-  z.object({ action: z.literal('reveal'), operationId: identity }).strict(),
-  z.object({ action: z.literal('retry-cleanup'), operationId: identity }).strict(),
-  z
-    .object({
-      action: z.literal('set-speed'),
-      operationId: identity,
-      bytesPerSecond: transferRateSchema.nullable()
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal('select'),
-      operationId: identity,
-      excludedStorageKeys: z.array(z.string().max(2048)).max(10000),
-      includePdfNotes: z.boolean().optional(),
-      includeResearchFilms: z.boolean().optional()
-    })
-    .strict()
-])
+export const packageOperationRequestSchema = z
+  .discriminatedUnion('action', [
+    z.object({ action: z.literal('snapshot') }).strict(),
+    agentPackageOperationReferenceSchema
+      .extend({
+        action: z.literal('agent-export'),
+        session: sessionPackageRequestSchema,
+        destinationPath: agentPackageSourcePathSchema
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal('agent-import'),
+        correlationId: z.uuid(),
+        sourcePath: agentPackageSourcePathSchema,
+        target: sessionPackageImportRequestSchema
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal('agent-fork'),
+        correlationId: z.uuid(),
+        session: sessionPackageRequestSchema
+      })
+      .strict(),
+    z.object({ action: z.literal('cancel'), operationId: identity }).strict(),
+    z
+      .object({
+        action: z.literal('cancel-browser-transfer'),
+        operationId: identity,
+        transferId: identity
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal('select-project'),
+        operationId: identity,
+        target: sessionPackageImportRequestSchema.refine(
+          (target) => Boolean(target.projectId || target.projectName),
+          'Choose an import destination.'
+        )
+      })
+      .strict(),
+    z.object({ action: z.literal('confirm-import'), operationId: identity }).strict(),
+    z
+      .object({ action: z.literal('discard-import'), operationId: identity, requestId: identity })
+      .strict(),
+    z.object({ action: z.literal('next-import'), operationId: identity }).strict(),
+    z.object({ action: z.literal('dismiss-queue-warning'), operationId: identity }).strict(),
+    z.object({ action: z.literal('retry-import'), operationId: identity }).strict(),
+    z
+      .object({ action: z.literal('export-with-sensitive-content'), operationId: identity })
+      .strict(),
+    sensitiveExportBindingSchema.extend({
+      action: z.literal('respond-export-review'),
+      operationId: z.uuid(),
+      source: z.literal('user_relay'),
+      decision: sensitiveExportDecision
+    }),
+    z.object({ action: z.literal('reveal'), operationId: identity }).strict(),
+    z.object({ action: z.literal('retry-cleanup'), operationId: identity }).strict(),
+    z
+      .object({
+        action: z.literal('set-speed'),
+        operationId: identity,
+        bytesPerSecond: transferRateSchema.nullable()
+      })
+      .strict(),
+    z
+      .object({
+        action: z.literal('select'),
+        operationId: identity,
+        excludedStorageKeys: z.array(z.string().max(2048)).max(10000),
+        includePdfNotes: z.boolean().optional(),
+        includeResearchFilms: z.boolean().optional(),
+        destination: z.enum(['local', 'org-case']).optional(),
+        orgCase: orgCaseUploadMetadataSchema.optional()
+      })
+      .strict()
+  ])
+  .refine(
+    (request) =>
+      request.action !== 'select' ||
+      (request.destination === 'org-case'
+        ? request.orgCase !== undefined
+        : request.orgCase === undefined),
+    'Organization case metadata is required only for organization uploads.'
+  )
 export type PackageOperationRequest = z.infer<typeof packageOperationRequestSchema>
 
 export const packageOriginSchema = z
@@ -249,11 +380,6 @@ export const packageOriginSchema = z
   })
   .strict()
 export type SessionPackageOrigin = z.infer<typeof packageOriginSchema>
-
-export const sessionPackageRequestSchema = z
-  .object({ projectId: identity, sessionId: identity })
-  .strict()
-export type SessionPackageRequest = z.infer<typeof sessionPackageRequestSchema>
 
 export const packageInventoryEntrySchema = z
   .object({
@@ -275,7 +401,10 @@ const packageFeatureSchema = z.enum([
   'content-dedupe',
   'research-film',
   'log-evidence',
-  'compute-log-evidence'
+  'compute-log-evidence',
+  'web-evidence-v2',
+  'web-restricted-result-v1',
+  'web-search-operations-v1'
 ])
 
 export const sessionPackageManifestSchema = z
@@ -321,10 +450,19 @@ export const sessionPackagePreviewSchema = z
     messageCount: z.number().int().nonnegative(),
     fileCount: z.number().int().nonnegative(),
     totalBytes: z.number().int().nonnegative(),
-    omissions: sessionPackageManifestSchema.shape.omissions
+    omissions: sessionPackageManifestSchema.shape.omissions,
+    webOmissions: z.array(packageWebOmissionSchema).max(100).optional()
   })
   .strict()
 export type SessionPackagePreview = z.infer<typeof sessionPackagePreviewSchema>
+
+const sessionPackageSummarySchema = sessionPackagePreviewSchema
+  .omit({ omissions: true, webOmissions: true })
+  .extend({
+    omissionCount: z.number().int().nonnegative(),
+    externalOmissionCount: z.number().int().nonnegative()
+  })
+export type SessionPackageSummary = z.infer<typeof sessionPackageSummarySchema>
 
 export const sessionPackageReceiptSchema = packageOriginSchema
   .extend({
@@ -352,7 +490,11 @@ export const sessionPackageReceiptSchema = packageOriginSchema
 export type SessionPackageReceipt = z.infer<typeof sessionPackageReceiptSchema>
 
 const exportResultSchema = z
-  .object({ saved: z.boolean(), filePath: z.string().optional() })
+  .object({
+    saved: z.boolean(),
+    filePath: z.string().optional(),
+    uploadedCase: orgCaseUploadedSummarySchema.optional()
+  })
   .strict()
 export type SessionPackageExportResult = z.infer<typeof exportResultSchema>
 export type SessionPackageImportResult = SessionPackageRequest | null
@@ -361,6 +503,11 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
     id: identity,
     kind: z.enum(['export', 'import', 'fork']),
     session: sessionPackageRequestSchema.optional(),
+    sessionTitle: z.string().max(1000).optional(),
+    exportDestination: z.enum(['local', 'org-case']).optional(),
+    agent: agentPackageOperationReferenceSchema
+      .extend({ failure: agentPackageFailureSchema.optional() })
+      .optional(),
     importTarget: sessionPackageImportRequestSchema.optional(),
     presentationRevision: z.number().int().nonnegative().optional(),
     importRequestId: identity.optional(),
@@ -419,6 +566,7 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
           'validating',
           'compressing',
           'saving',
+          'uploading',
           'importing',
           'choosing-location',
           'confirming',
@@ -451,6 +599,7 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .optional(),
     summary: z
       .object({
+        webOmissions: z.array(packageWebOmissionSchema).max(100).optional(),
         retainedFiles: z
           .array(packageExcludedFileSchema.extend({ checksum: checksum.optional() }))
           .max(10000),
@@ -469,7 +618,11 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
     result: z
       .object({
         filePath: z.string().optional(),
+        fileDigest: packageFileDigestSchema.optional(),
+        webOmissions: z.array(packageWebOmissionSchema).max(100).optional(),
+        uploadedCase: orgCaseUploadedSummarySchema.optional(),
         imported: sessionPackageRequestSchema.optional(),
+        packageSummary: sessionPackageSummarySchema.optional(),
         recovery: sessionPackageRequestSchema
           .extend({ operationId: identity, outcome: z.enum(['committed', 'unconfirmed']) })
           .optional()
@@ -477,6 +630,8 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .strict()
       .optional(),
     error: z.string().optional(),
+    sensitiveExportReview: sensitiveExportReviewSchema.optional(),
+    sensitiveExportDecision: sensitiveExportDecisionSchema.optional(),
     sensitiveContent: z
       .array(
         z
@@ -515,7 +670,8 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .optional(),
     cleanupPending: z.boolean().optional(),
     transferBytesPerSecond: transferRateSchema.optional(),
-    ioBytesPerSecond: z.number().nonnegative().optional()
+    ioBytesPerSecond: z.number().nonnegative().optional(),
+    exportBlocked: z.boolean().optional()
   })
   .strict()
 export const sessionPackageCommandContracts = {

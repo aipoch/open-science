@@ -52,3 +52,29 @@ export {
   type AgentArtifactVersionProvenance,
   type ArtifactVersionWithNullableAgentProvenance
 }
+
+// Independent image tasks have a real Session/branch owner, but no chat prompt or runtime segment.
+const requireGeneratedArtifactVersion = <T extends ArtifactVersionWithNullableAgentProvenance>(
+  version: T
+): T & Omit<AgentArtifactVersionProvenance, 'promptMessageId' | 'runtimeSegmentId'> => {
+  if (version.promptMessageId || version.runtimeSegmentId)
+    return requireAgentArtifactVersion(version)
+  const evidence = version.evidenceJson ? JSON.parse(version.evidenceJson) : undefined
+  if (
+    version.originKind !== 'agent_generated' ||
+    !version.artifactRunId ||
+    !version.rootFrameId ||
+    !version.agentFrameId ||
+    !version.messageBranchId ||
+    !version.evidenceStorageKey ||
+    !version.evidenceChecksum ||
+    version.evidenceSchemaVersion !== 1 ||
+    typeof evidence?.image_task_id !== 'string' ||
+    evidence.image_task_id !== version.artifactRunId ||
+    evidence?.producer?.kind !== 'connector' ||
+    evidence.producer.connector_id !== 'image-model'
+  )
+    throw new Error('Artifact Version does not contain complete image task provenance.')
+  return version as T & Omit<AgentArtifactVersionProvenance, 'promptMessageId' | 'runtimeSegmentId'>
+}
+export { requireGeneratedArtifactVersion }

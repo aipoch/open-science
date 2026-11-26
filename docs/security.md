@@ -119,6 +119,31 @@ is not an automatic upload of the local PDF. Remote jobs transfer the scripts an
 needed for the job. In the Web UI, uploaded files first go to the machine running Open-Science,
 which can be different from the machine running the browser.
 
+Built-in web search sends the search query and its filters to Exa, a third-party search service,
+without an account. Reading a public page contacts that page's host, which receives the requested
+URL. With a Lab account, Lab model requests go to the Lab server the user signs in to, and sharing
+an organization case uploads the selected session package to that server.
+
+Adding Kilo Gateway without an API key sends an anonymous catalog refresh to Kilo so the eligible
+free models can be listed; no account identity is included. Image and model requests made through a
+Kilo connection afterwards go to Kilo like any other provider connection. Checking an official
+image service's model catalog (OpenAI, MiniMax, Bailian, or Volcengine Ark) sends that connection's
+credentials to the provider to list its image models; run it only for connections you configured.
+
+Choosing an external agent framework downloads its runtime from an npm registry — the default
+registry, with a documented mirror fallback — through the app's managed installer, which verifies
+the download before use. The managed Claude and OpenCode installers resolve the runtime's latest
+published version, while the managed Codex and CodeBuddy installers use pinned versions and the Pi
+installer installs its checked-in lockfile dependencies; pinned and lockfile-managed runtimes
+update only with an app release. The built-in Agent performs no such download.
+
+Enabling Agent tracing for a project exports trace spans for the built-in Agent's turns, model
+requests, and tool executions to an OTLP/HTTP receiver configured in the app's launch settings or
+environment file — the app provides no receiver of its own. Generic collectors and Langfuse
+authentication are supported. The receiver sees whatever the enabled capture switches include, up to
+full request bodies and tool previews, so point tracing only at a receiver you control and review
+the switches before enabling it on shared machines.
+
 Custom remote model endpoints require HTTPS. HTTP is supported for `localhost`, IPv4 loopback, and
 IPv6 loopback; private-network addresses alone do not establish an encrypted connection. Existing
 remote HTTP configurations remain editable but cannot supply a running model until corrected.

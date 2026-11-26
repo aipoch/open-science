@@ -50,12 +50,17 @@ type ApplicationStartupProjection = Readonly<{
   }>
 }>
 
+const openRuntimeSettings = (): void => useSettingsStore.getState().openSettingsToPanel('runtimes')
+
 // Owns application initialization order while projecting only the startup state and commands the
 // presentation and event-binding modules need.
 const useApplicationStartup = (): ApplicationStartupProjection => {
   const sessions = useSessionPersistence()
   const quitPersistence = useQuitPersistenceFlush()
-  useDeepLinkNavigation({ isHydrated: sessions.isHydrated, isReady: sessions.isReady })
+  useDeepLinkNavigation(
+    { isHydrated: sessions.isHydrated, isReady: sessions.isReady },
+    openRuntimeSettings
+  )
 
   const loadProjects = useProjectStore((state) => state.loadProjects)
   const loadDeletionCleanup = useProjectStore((state) => state.loadDeletionCleanup)

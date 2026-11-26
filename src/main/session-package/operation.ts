@@ -1,5 +1,8 @@
+import type { OrgCaseUploadMetadata } from '../../shared/org-cases'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import type { PackageFileSelection } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
+import { withImageTaskSnapshot } from '../image-model/stored-tasks'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
   startDiagnosticOperation,
@@ -15,6 +18,7 @@ import {
   packageImportPercent
 } from '../../shared/session-package'
 import type {
+  AgentPackageOperationReference,
   BrowserPackageTransfer,
   PackageOperationRequest,
   PackageOperationSnapshot,
@@ -23,8 +27,11 @@ import type {
   PackageSelectionSummary,
   SessionPackageRequest,
   SessionPackageImportRequest,
-  SensitiveContentEvidence
+  SensitiveContentEvidence,
+  SensitiveExportDecision
 } from '../../shared/session-package'
+
+export class PackageExportBlockedError extends Error {}
 
 // One native package operation owns cancellation and presentation, independently of renderer lifetime.
 export class SessionPackageOperation {
@@ -40,6 +47,7 @@ export class SessionPackageOperation {
   private importQueueFull = false
   private browserTransfers: BrowserPackageTransfer[] = []
   private selection?: (selection: PackageFileSelection) => void
+  private selectedUploadTarget?: OrgCaseUploadMetadata
   private lastProgressAt = 0
   private completion: Promise<unknown> = Promise.resolve()
   async close(): Promise<void> {
@@ -159,7 +167,13 @@ export class SessionPackageOperation {
       completedBytes: current.progress.completedBytes,
       totalBytes: current.progress.totalBytes,
       completedFiles: current.progress.completedFiles,
-      totalFiles: current.progress.totalFiles
+      totalFiles: current.progress.totalFiles,
+      ...(current.sensitiveExportDecision
+        ? {
+            reviewDecision: current.sensitiveExportDecision.decision,
+            reviewSource: current.sensitiveExportDecision.source
+          }
+        : {})
     }
   }
 
@@ -284,10 +298,15 @@ export class SessionPackageOperation {
     return pending
   }
 
+  get uploadTarget(): OrgCaseUploadMetadata | undefined {
+    return this.selectedUploadTarget ? { ...this.selectedUploadTarget } : undefined
+  }
+
   selectFiles = (
     files: PackageSelectableFile[],
     budgetSignal?: AbortSignal,
-    summary?: PackageSelectionSummary
+    summary?: PackageSelectionSummary,
+    sessionTitle?: string
   ): Promise<PackageFileSelection> => {
     const signal =
       this.controller &&
@@ -311,6 +330,7 @@ export class SessionPackageOperation {
       state: 'awaiting-selection',
       files,
       summary,
+      ...(sessionTitle !== undefined ? { sessionTitle: sessionTitle.slice(0, 1000) } : {}),
       progress: { phase: 'selecting' }
     }
     this.publish()
@@ -320,6 +340,10 @@ export class SessionPackageOperation {
   respond(request: PackageOperationRequest): PackageOperationSnapshot | null {
     if (request.action === 'snapshot') return this.snapshot
     if (
+      request.action === 'agent-export' ||
+      request.action === 'agent-import' ||
+      request.action === 'agent-fork' ||
+      request.action === 'respond-export-review' ||
       [
         'reveal',
         'retry-cleanup',
@@ -387,7 +411,18 @@ export class SessionPackageOperation {
         )
       if (files.some((file) => file.requiredForEvidence && keys.has(file.storageKey)))
         throw new Error('Invalid package selection.')
-      this.current = { ...this.current, state: 'running', files: undefined, summary: undefined }
+      if ((request.destination === 'org-case') !== Boolean(request.orgCase))
+        throw new Error('Invalid package selection.')
+      this.selectedUploadTarget =
+        request.destination === 'org-case' && request.orgCase ? { ...request.orgCase } : undefined
+      this.current = {
+        ...this.current,
+        state: 'running',
+        files: undefined,
+        summary: undefined,
+        sessionTitle: undefined,
+        exportDestination: request.destination ?? 'local'
+      }
       this.selection({
         excludedStorageKeys: [...keys],
         includePdfNotes: request.includePdfNotes === true,
@@ -408,6 +443,53 @@ export class SessionPackageOperation {
     if (!this.current) return
     this.current = { ...this.current, sensitiveContent: evidence.slice(0, 20) }
     this.publish()
+  }
+
+  requestSensitiveExportReview(
+    review: NonNullable<PackageOperationSnapshot['sensitiveExportReview']>,
+    evidence: SensitiveContentEvidence[]
+  ): void {
+    if (!this.current || !this.controller) throw new Error('No active export operation.')
+    this.current = {
+      ...this.current,
+      state: 'awaiting-selection',
+      progress: { phase: 'confirming' },
+      sensitiveExportReview: review,
+      sensitiveContent: evidence.slice(0, 20),
+      presentationRevision: (this.current.presentationRevision ?? 0) + 1
+    }
+    this.publish()
+  }
+
+  finishSensitiveExportReview(
+    decision?: Pick<SensitiveExportDecision, 'source' | 'decision'>
+  ): void {
+    const review = this.current?.sensitiveExportReview
+    if (!this.current || !review || !this.controller) return
+    const destinationPath = this.current.agent?.destinationPath
+    this.current = {
+      ...this.current,
+      sensitiveExportReview: undefined,
+      sensitiveContent: undefined,
+      ...(decision && destinationPath
+        ? {
+            sensitiveExportDecision: {
+              ...decision,
+              destinationPath,
+              expiresAt: review.expiresAt,
+              sizeBytes: review.fileDigest.sizeBytes,
+              sha256: review.fileDigest.checksum
+            }
+          }
+        : {}),
+      ...(this.current.state === 'awaiting-selection' ? { state: 'running' as const } : {})
+    }
+    this.publish()
+  }
+
+  setAgentFailure(failure: NonNullable<PackageOperationSnapshot['agent']>['failure']): void {
+    if (this.current?.agent)
+      this.current = { ...this.current, agent: { ...this.current.agent, failure } }
   }
 
   async retryCleanup(
@@ -462,15 +544,24 @@ export class SessionPackageOperation {
     work: (signal: AbortSignal) => Promise<T>,
     importTarget?: PackageOperationSnapshot['importTarget'],
     requiresRecovery?: () => boolean,
-    downloadSlug?: string
+    downloadSlug?: string,
+    exportDestination?: PackageOperationSnapshot['exportDestination'],
+    agent?: AgentPackageOperationReference
   ): Promise<T> {
-    if (this.controller) throw new Error('A Session package operation is already in progress.')
+    if (this.controller)
+      throw new ApplicationCommandError(
+        'session-package-busy',
+        'A Session package operation is already in progress.'
+      )
+    this.selectedUploadTarget = undefined
     const controller = new AbortController()
     this.controller = controller
     this.current = {
       id: randomUUID(),
       kind,
       session,
+      ...(exportDestination ? { exportDestination } : {}),
+      ...(agent ? { agent } : {}),
       importTarget,
       state: 'running',
       ...(downloadSlug ? { useCaseDownload: { slug: downloadSlug, completedBytes: 0 } } : {}),
@@ -486,12 +577,15 @@ export class SessionPackageOperation {
       settled = resolve
     })
     try {
-      const result = await work(controller.signal)
+      const result = await (kind === 'export' || kind === 'fork'
+        ? withImageTaskSnapshot(() => work(controller.signal))
+        : work(controller.signal))
       this.current = {
         ...this.current!,
         state: 'succeeded',
         files: undefined,
         summary: undefined,
+        sessionTitle: undefined,
         importPreview: undefined
       }
       this.diagnostic.complete(this.diagnosticFields())
@@ -505,6 +599,7 @@ export class SessionPackageOperation {
         state: controller.signal.aborted && !recoveryRequired ? 'cancelled' : 'failed',
         files: undefined,
         summary: undefined,
+        sessionTitle: undefined,
         importPreview: undefined,
         error:
           controller.signal.aborted && !recoveryRequired
@@ -512,6 +607,11 @@ export class SessionPackageOperation {
             : error instanceof Error
               ? error.message
               : String(error),
+        ...(kind === 'export' &&
+        error instanceof PackageExportBlockedError &&
+        !controller.signal.aborted
+          ? { exportBlocked: true as const }
+          : {}),
         ...(sensitiveContent ? { sensitiveContent } : {})
       }
       if (controller.signal.aborted) this.diagnostic.cancel(this.diagnosticFields())
@@ -521,6 +621,7 @@ export class SessionPackageOperation {
       this.diagnostic = undefined
       this.diagnosticSnapshot = undefined
       this.selection = undefined
+      this.selectedUploadTarget = undefined
       this.importResponse = undefined
       this.controller = undefined
       this.publish()

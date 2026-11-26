@@ -98,11 +98,13 @@ type NetworkApprovalSession = Readonly<{
 export const activeSandboxNetworkApprovals = (
   session: NetworkApprovalSession
 ): readonly SandboxNetworkApproval[] => {
+  const approvals = session.runtimeContext?.networkApprovals
+  if (!approvals?.length) return []
   const graph = session.conversationGraph
   const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
   if (!graph || !frame) return []
   const messages = resolveActiveConversationMessages(graph)
-  return (session.runtimeContext?.networkApprovals ?? []).filter(
+  return approvals.filter(
     (approval) =>
       requiresNetworkException(
         normalizeNetworkHostname(approval.hostname) ?? approval.hostname,

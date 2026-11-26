@@ -1,5 +1,6 @@
+import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { recordMainAgentContext } from './main-agent-process-ownership'
-import { HARNESS_OWNER } from '../harness-acp/config'
+import { HARNESS_EPHEMERAL_SESSION, HARNESS_OWNER } from '../harness-acp/config'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import type {
@@ -81,6 +82,10 @@ export class AcpProviderSessionCreator {
       const connection = await this.deps.ensureConnected(cwd)
       this.deps.assertCurrentConnection(connection)
       const startupBackend = this.deps.currentBackend()
+      if (requiresTaskRunTracing(request)) {
+        await assertTaskRunTracingReady(startupBackend.framework.id, connection)
+        this.deps.assertCurrentConnection(connection)
+      }
       const startupGeneration = this.deps.registry.startupGeneration
       const specialist = await this.resolveSpecialist(request.specialistId, startupBackend)
       const projectContextAppend = await this.resolveProjectAgentContext(projectId)
@@ -123,7 +128,14 @@ export class AcpProviderSessionCreator {
           mcpServers: sessionCapabilities.mcpServers,
           ...setup.metaArg,
           ...(startupBackend.framework.id === 'open-science-agent'
-            ? { _meta: { ...setup.metaArg._meta, [HARNESS_OWNER]: { projectId } } }
+            ? {
+                _meta: {
+                  ...setup.metaArg._meta,
+                  ...(capability.descriptor.role === 'restricted-inference'
+                    ? { [HARNESS_EPHEMERAL_SESSION]: true }
+                    : { [HARNESS_OWNER]: { projectId } })
+                }
+              }
             : {})
         })
         .start()

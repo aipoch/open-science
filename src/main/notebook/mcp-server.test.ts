@@ -71,6 +71,7 @@ import {
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { HostViewImageError } from './host-view-image-service'
 import { NotebookRunRepository } from './repository'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import {
   NotebookRuntimeService,
   type NotebookExecutionRequest,
@@ -583,7 +584,7 @@ describe('notebook MCP server config', () => {
     expect(names(true)).not.toEqual(expect.arrayContaining(['wsl_setup_activate']))
   })
 
-  it('publishes remember_memory with a root object output schema', async () => {
+  it('publishes object output schemas compatible with the default MCP dialect', async () => {
     const environment = {
       endpoint: 'http://127.0.0.1:4567',
       token: 'secret-token',
@@ -600,9 +601,11 @@ describe('notebook MCP server config', () => {
 
     try {
       const { tools } = await client.listTools()
-      const rememberTool = tools.find(({ name }) => name === 'remember_memory')
-
-      expect(rememberTool?.outputSchema).toEqual(expect.objectContaining({ type: 'object' }))
+      for (const name of ['list_authorized_directories', 'remember_memory']) {
+        const schema = tools.find((tool) => tool.name === name)?.outputSchema
+        expect(schema).toMatchObject({ type: 'object' })
+        expect(schema).not.toHaveProperty('$schema')
+      }
     } finally {
       await client.close()
       await server.close()
@@ -1113,6 +1116,47 @@ describe('notebook_execute tool', () => {
     }
   })
 
+  it.each([
+    ['NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION: Execution was stopped.', 'Continue Notebook work'],
+    [
+      'Notebook execution declined: this code requires one-time approval.',
+      'Wait for the user to authorize a different action.'
+    ],
+    ['Notebook runtime selection declined.', 'Wait for the user to authorize a different action.']
+  ])(
+    'does not suggest retry for a stopped or declined Notebook action: %s',
+    async (error, guidance) => {
+      const server = createNotebookMcpServer({
+        endpoint: 'http://127.0.0.1:4567',
+        token: 'test-token',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        workspaceCwd: '/workspace'
+      })
+      const client = new ModelContextProtocolClient({ name: 'notebook-stop', version: '1.0.0' })
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      const fetchRpc = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(JSON.stringify({ error }), { status: 500 }))
+      try {
+        await server.connect(serverTransport)
+        await client.connect(clientTransport)
+        const result = await client.callTool({
+          name: 'notebook_execute',
+          arguments: { code: 'print(42)' }
+        })
+        expect(result.isError).toBe(true)
+        const text = (result.content as { text: string }[])[0]!.text
+        expect(text).toContain(guidance)
+        expect(text).not.toMatch(/retrying once|retry once/i)
+      } finally {
+        fetchRpc.mockRestore()
+        await client.close()
+        await server.close()
+      }
+    }
+  )
+
   it('reports failed foreground cells and failed background Runs as tool errors', async () => {
     const server = createNotebookMcpServer({
       endpoint: 'http://127.0.0.1:4567',
@@ -1123,28 +1167,35 @@ describe('notebook_execute tool', () => {
     })
     const client = new ModelContextProtocolClient({ name: 'run-failure', version: '1.0.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
-    const results = [
-      { runId: 'run-1', kernelKind: 'python', status: 'failed', text: { traceback: 'boom' } },
-      { receipt: {}, run: { runId: 'run-2', kernelKind: 'python', status: 'failed' } },
-      {
-        receipt: {},
-        run: { runId: 'run-3', kernelKind: 'bash', status: 'completed', exitCode: 2 }
-      },
-      { runId: 'run-4', kernelKind: 'python', status: 'completed' }
-    ]
-    const fetchRpc = vi
-      .spyOn(globalThis, 'fetch')
-      .mockImplementation(async () => new Response(JSON.stringify({ result: results.shift() })))
+    const query = { action: 'query', runId: 'run-1' }
+    const cases = [
+      ['notebook_execute', { code: 'raise' }, { status: 'failed' }, true],
+      ['notebook_execute', { language: 'r', code: 'x' }, { status: 'timeout' }, true],
+      ['repl_execute', { code: 'x' }, { status: 'failed' }, true],
+      ['bash_execute', { command: 'x' }, { status: 'timeout', exitCode: null }, true],
+      [
+        'bash_execute',
+        { command: 'x' },
+        { status: 'failed', exitCode: null, errorCode: 'shell-cleanup-incomplete' },
+        true
+      ],
+      ['background_run', query, { run: { status: 'failed' } }, true],
+      ['background_run', query, { run: { status: 'interrupted' } }, true],
+      ['background_run', query, { run: { status: 'timeout' } }, true],
+      ['background_run', query, { run: { status: 'completed', exitCode: 2 } }, true],
+      ['background_run', query, { run: { status: 'cancelled' } }, false],
+      ['notebook_execute', { code: 'ok' }, { status: 'completed' }, false],
+      ['repl_execute', { code: 'x', background: true }, { status: 'failed', runId: 'run-1' }, false]
+    ] as const
+    const fetchRpc = vi.spyOn(globalThis, 'fetch')
     try {
       await server.connect(serverTransport)
       await client.connect(clientTransport)
-      const call = (name: string, args: Record<string, unknown>): Promise<unknown> =>
-        client.callTool({ name, arguments: args }).then((result) => result.isError)
-
-      expect(await call('notebook_execute', { code: 'raise' })).toBe(true)
-      expect(await call('background_run', { action: 'query', runId: 'run-2' })).toBe(true)
-      expect(await call('background_run', { action: 'query', runId: 'run-3' })).toBe(true)
-      expect(await call('notebook_execute', { code: 'ok' })).not.toBe(true)
+      for (const [name, args, result, failed] of cases) {
+        fetchRpc.mockResolvedValueOnce(new Response(JSON.stringify({ result })))
+        const response = await client.callTool({ name, arguments: args })
+        expect(response.isError === true, JSON.stringify({ name, result })).toBe(failed)
+      }
     } finally {
       fetchRpc.mockRestore()
       await client.close()
@@ -1165,7 +1216,7 @@ describe('notebook_execute tool', () => {
     })
     expect(tool?.description).toMatch(/save the returned runId/i)
     expect(tool?.description).toContain('dependency-point query guidance')
-    expect(tool?.description).toContain('explicitly cancel')
+    expect(tool?.description).toContain('cancel with background_run')
     const receipt = {
       runId: 'run-1',
       executionType: 'python-notebook-run',
@@ -1869,6 +1920,7 @@ describe('repl_execute tool', () => {
     const root = await mkdtemp(join(tmpdir(), 'image-failure-mcp-'))
     const stderr = 'existing diagnostic\n'.repeat(500)
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -1900,7 +1952,9 @@ describe('repl_execute tool', () => {
     const connection = await rpc.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     const mcp = createNotebookMcpServer({
       ...connection,
@@ -1953,6 +2007,7 @@ describe('repl_execute tool', () => {
       }
     }
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -1974,7 +2029,9 @@ describe('repl_execute tool', () => {
     const connection = await rpc.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     const mcp = createNotebookMcpServer({
       ...connection,
@@ -1994,11 +2051,12 @@ describe('repl_execute tool', () => {
       const text = (response.content as Array<{ type: string; text?: string }>).find(
         (item) => item.type === 'text'
       )!.text!
-      expect(JSON.parse(text).recovery).toMatchObject(recovery)
-      expect(JSON.parse(text).recovery.guidance).toContain('no extra restart')
-      expect(
-        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)?.recovery
-      ).toEqual(recovery)
+      const run = (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)!
+      const result = JSON.parse(text)
+      expect(response.isError).toBe(true)
+      expect(result).toMatchObject({ runId: run.runId, status: 'failed', recovery })
+      expect(result.recovery.guidance).toContain('no extra restart')
+      expect(run.recovery).toEqual(recovery)
     } finally {
       await client.close()
       await mcp.close()
@@ -2047,6 +2105,7 @@ describe('repl_execute tool', () => {
       return execution
     })
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'default-project',
@@ -2089,7 +2148,9 @@ describe('repl_execute tool', () => {
     const connection = await rpcServer.issueSessionConnection(
       'session-1',
       'default-project',
-      'root-frame-session-1'
+      'root-frame-session-1',
+      true,
+      service.createExecutionIntent({ projectId: 'default-project', sessionId: 'session-1' })
     )
     const mcpServer = createNotebookMcpServer({
       endpoint: connection.endpoint,
@@ -2246,7 +2307,7 @@ describe('bash_execute tool', () => {
     })
     expect(() => schema.parse({})).toThrow()
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['command', 'background', 'timeoutMs'])
-    expect(tool?.description).toContain('explicitly cancel')
+    expect(tool?.description).toContain('cancel with background_run')
     expect(tool?.description).toContain('nohup')
 
     const receipt = {
@@ -2269,10 +2330,8 @@ describe('bash_execute tool', () => {
 
   it('describes shell continuity and the boundaries that reset its state', () => {
     expect(tool?.description).toBe(BASH_EXECUTE_DOC)
-    expect(tool?.description).toContain('retain variables, exports, functions, and cwd')
-    expect(tool?.description).toContain('earlier commands are never replayed')
-    expect(tool?.description).toContain('resets state')
-    expect(tool?.description).toContain('idle reclamation resets state')
+    expect(tool?.description).toContain('share variables, exports, functions and cwd')
+    expect(tool?.description).toContain('idle reclamation reset state without replay')
   })
 
   it.each(['5.1', '7.6'] as const)(
@@ -2293,10 +2352,10 @@ describe('bash_execute tool', () => {
       expect(windowsDoc).toContain('unhandled cmdlet failure')
       expect(windowsDoc).toContain('native programs must emit UTF-8')
       expect(windowsDoc).toContain('write_artifact_file')
-      expect(windowsDoc).toContain('Do NOT copy a generated notebook output into the workspace')
+      expect(windowsDoc).toContain('Do not copy them via Shell')
       // Aligned with the relative-path artifact flow: point at the saved relative filename, not the
       // old "generated file's absolute local path" wording.
-      expect(windowsDoc).toContain('same relative filename you saved with')
+      expect(windowsDoc).toContain('Publish Notebook files by relative filename')
       expect(windowsDoc).not.toContain("generated file's absolute local path")
     }
   )
@@ -3151,13 +3210,19 @@ describe('manage_environments tool', () => {
 })
 
 describe('compactNotebookExecutionResult', () => {
-  it.each([false, true, undefined])(
-    'preserves dispatch evidence without inferring legacy state: %s',
-    (kernelDispatched) => {
+  it.each([
+    [false, false],
+    [true, false],
+    [true, true],
+    [undefined, undefined]
+  ])(
+    'preserves dispatch and execution evidence without inferring legacy state: %s, %s',
+    (kernelDispatched, executionStarted) => {
       const run = {
         runId: 'failed-run',
         status: 'timeout',
         kernelDispatched,
+        executionStarted,
         stderr: 'kernel stopped'
       }
       const foreground = compactNotebookExecutionResult(run)
@@ -3170,6 +3235,9 @@ describe('compactNotebookExecutionResult', () => {
         )
         if (kernelDispatched === undefined) expect(received).not.toHaveProperty('kernelDispatched')
         else expect(received.kernelDispatched).toBe(kernelDispatched)
+        if (run.executionStarted === undefined)
+          expect(received).not.toHaveProperty('executionStarted')
+        else expect(received.executionStarted).toBe(run.executionStarted)
         expect(received.runId).toBe('failed-run')
         expect(received.status).toBe('timeout')
       }
@@ -3183,7 +3251,9 @@ describe('compactNotebookExecutionResult', () => {
       status: 'failed',
       recovery,
       stdout: 'x'.repeat(100_000),
-      stderr: 'cleanup failed',
+      stderr: 'first diagnostic\n' + '\0'.repeat(12000) + '\nfinal cause',
+      errorCode: 'shell-cleanup-incomplete',
+      executionStarted: false,
       exitCode: null
     }
     const foreground = compactNotebookExecutionResult(run) as Record<string, unknown>
@@ -3193,7 +3263,14 @@ describe('compactNotebookExecutionResult', () => {
     expect(background.recovery).toEqual(foreground.recovery)
     for (const result of [foreground, background]) {
       const serialized = serializeNotebookToolResult(result, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
-      expect(JSON.parse(serialized).recovery).toEqual(foreground.recovery)
+      expect(serialized.length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+      const parsed = JSON.parse(serialized)
+      expect(parsed).toMatchObject({
+        recovery: foreground.recovery,
+        errorCode: run.errorCode,
+        executionStarted: false
+      })
+      expect(parsed.stderr).toMatch(/^first diagnostic[\s\S]*final cause$/u)
     }
     expect(foreground.truncated).toBe(true)
   })
@@ -3657,10 +3734,25 @@ describe('compactNotebookStateResult', () => {
     expect(parsed.recentRuns[1].recovery.guidance).toContain('not started')
   })
 
-  it('applies the state projection and smaller global budget to notebook_state', () => {
+  it('requests only the recent runs used by the notebook_state projection', async () => {
     const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_state')
-    expect(tool?.mapResult).toBe(compactNotebookStateResult)
+    expect(tool?.mapResult?.({ runs: [] }, {})).toEqual(compactNotebookStateResult({ runs: [] }))
     expect(tool?.resultLimitChars).toBe(NOTEBOOK_MCP_STATE_RESULT_LIMIT)
+    await callNotebookRpc(
+      {
+        endpoint: 'http://localhost',
+        token: 'token',
+        sessionId: 'session',
+        workspaceCwd: '/work',
+        projectId: 'project'
+      },
+      tool!.method,
+      {},
+      async (_endpoint, init) => {
+        expect(JSON.parse(String(init.body)).params.historyLimit).toBe(10)
+        return Response.json({ result: {} })
+      }
+    )
   })
 
   it('returns bounded recent metadata without duplicating the complete run history', () => {
@@ -3925,5 +4017,130 @@ describe('manual kernel termination feedback', () => {
           )
       )
     ).rejects.toThrow('Use smaller batches')
+  })
+})
+
+describe('saved Shell workflow output recovery', () => {
+  const stateTool = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'notebook_state')!
+  const shellTool = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'bash_execute')!
+  const handoff = { orderId: 'synthetic-order', workflowRunId: 'synthetic-run', cacheReady: true }
+  const stdout = JSON.stringify({
+    data: { outline: '提纲'.repeat(4500), stream: { outline: '提纲'.repeat(4500) } },
+    _handoff: handoff
+  })
+
+  it('preserves a trailing handoff through the actual Shell projection and final serializer', () => {
+    const raw = { runId: 'outline-run', status: 'completed', stdout, stderr: '\0'.repeat(10000) }
+    const projected = shellTool.mapResult!(raw, {})
+    const reply = JSON.parse(
+      serializeNotebookToolResult(projected, NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+    )
+    expect(reply.stdoutHandoff).toEqual(handoff)
+    expect(reply.truncated).toBe(true)
+    expect(raw.stdout).toBe(stdout)
+    const fallback = JSON.parse(
+      serializeNotebookToolResult(
+        { ...(projected as object), extra: 'x'.repeat(50000) },
+        NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT
+      )
+    )
+    expect(fallback.stdoutHandoff).toEqual(handoff)
+    expect(JSON.stringify(fallback).length).toBeLessThanOrEqual(NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT)
+  })
+
+  it('pages original stdout after reset without repeating the generation', () => {
+    const state = {
+      kernelStatus: 'idle',
+      runs: [
+        { runId: 'outline-run', status: 'completed', text: { stdout } },
+        { runId: 'timeout-run', status: 'timeout', text: { stdout: '' } }
+      ]
+    }
+    let offset = 0
+    let recovered = ''
+    for (;;) {
+      const reply = JSON.parse(
+        serializeNotebookToolResult(
+          stateTool.mapResult!(state, {
+            runIds: ['outline-run'],
+            outputStream: 'stdout',
+            outputOffset: offset
+          }),
+          NOTEBOOK_MCP_STATE_RESULT_LIMIT
+        )
+      )
+      recovered += reply.text
+      expect(reply.captureTruncated).toBe(false)
+      if (reply.nextOffset === null) break
+      expect(reply.nextOffset).toBeGreaterThan(offset)
+      offset = reply.nextOffset
+    }
+    expect(recovered).toBe(stdout)
+    expect(JSON.parse(recovered)._handoff).toEqual(handoff)
+    expect(() =>
+      stateTool.mapResult!(state, { runIds: ['foreign-run'], outputStream: 'stdout' })
+    ).toThrow('unavailable')
+    expect(() => stateTool.mapResult!(state, { outputStream: 'stdout' })).toThrow('exactly one')
+    expect(() =>
+      stateTool.mapResult!(state, {
+        runIds: ['outline-run'],
+        outputStream: 'stdout',
+        outputOffset: stdout.length + 1
+      })
+    ).toThrow('offset')
+  })
+
+  it('forwards the targeted run through the strict RPC boundary without page-only fields', async () => {
+    const { resolveNotebookLocalRpcHandler } = await import('./local-rpc-notebook-adapter')
+    const input = {
+      runIds: ['old-run'],
+      outputStream: 'stdout',
+      outputOffset: 8000,
+      outputLimit: 1000
+    }
+    const raw = await callNotebookRpc(
+      {
+        endpoint: 'http://localhost',
+        token: 'token',
+        sessionId: 'bound-session',
+        projectId: 'project',
+        workspaceCwd: '/work'
+      },
+      'state',
+      input,
+      async (_endpoint, init) => {
+        const params = JSON.parse(String(init.body)).params
+        const state = vi.fn(async (request: unknown) => request)
+        const handler = resolveNotebookLocalRpcHandler({ state } as never, 'state', params)
+        await handler(params)
+        expect(state).toHaveBeenCalledWith(
+          expect.objectContaining({ sessionId: 'bound-session', runIds: ['old-run'] })
+        )
+        expect(params).not.toHaveProperty('outputOffset')
+        expect(params).not.toHaveProperty('outputStream')
+        return Response.json({ result: { runs: [{ runId: 'old-run', text: { stdout } }] } })
+      }
+    )
+    const result = stateTool.mapResult!(raw, input) as { text: string }
+    expect(result.text).toBe(stdout.slice(8000, 9000))
+  })
+
+  it('bounds escaped output pages and reports capture loss without fabricating metadata', () => {
+    const raw = { runId: 'r', truncated: true, text: { stdout: '\0'.repeat(4000) } }
+    const reply = stateTool.mapResult!(
+      { runs: [raw] },
+      { runIds: ['r'], outputStream: 'stdout' }
+    ) as { text: string; nextOffset: number; captureTruncated: boolean }
+    expect(reply.captureTruncated).toBe(true)
+    expect(reply.nextOffset).toBe(reply.text.length)
+    expect(serializeNotebookToolResult(reply, NOTEBOOK_MCP_STATE_RESULT_LIMIT)).not.toContain(
+      'preview truncated'
+    )
+    for (const text of [
+      '{ "_handoff":',
+      JSON.stringify({ _handoff: { value: 'x'.repeat(3000) } })
+    ]) {
+      expect(shellTool.mapResult!({ stdout: text }, {})).not.toHaveProperty('stdoutHandoff')
+    }
   })
 })

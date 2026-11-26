@@ -94,7 +94,8 @@ describe('registerUpdateIpcHandlers', () => {
       'update:check',
       'update:download',
       'update:cancel',
-      'update:apply'
+      'update:apply',
+      'update:open-process-manager'
     ])
 
     expect(handlers.get('update:get-app-info')?.()).toEqual({
@@ -103,6 +104,8 @@ describe('registerUpdateIpcHandlers', () => {
       copyright: APP.copyright
     })
     expect(handlers.get('update:get-status')?.()).toBe(status)
+    await expect(handlers.get('update:recheck')?.()).resolves.toBe(status)
+    await expect(handlers.get('update:recover')?.()).resolves.toBe(status)
     await expect(handlers.get('update:get-installer')?.({}, '/untrusted')).resolves.toBeNull()
     await expect(handlers.get('update:reveal-installer')?.({}, '/untrusted')).resolves.toBe(
       'unavailable'
@@ -113,11 +116,37 @@ describe('registerUpdateIpcHandlers', () => {
     await expect(handlers.get('update:download')?.()).resolves.toBe(status)
     await expect(handlers.get('update:cancel')?.()).resolves.toBe(status)
     await expect(handlers.get('update:apply')?.()).resolves.toBe(status)
+    expect(handlers.get('update:open-process-manager')?.()).toBe(false)
 
     expect(strategy.check).toHaveBeenCalledTimes(1)
     expect(strategy.download).toHaveBeenCalledTimes(1)
     expect(strategy.cancel).toHaveBeenCalledTimes(1)
     expect(strategy.apply).toHaveBeenCalledTimes(1)
+  })
+
+  it('delegates optional strategy recovery methods when available', async () => {
+    const strategy = {
+      ...createStrategy(),
+      recheck: vi.fn().mockResolvedValue(status),
+      recover: vi.fn().mockResolvedValue(status)
+    } satisfies UpdateStrategy
+
+    registerUpdateIpcHandlers(strategy)
+
+    await expect(handlers.get('update:recheck')?.()).resolves.toBe(status)
+    await expect(handlers.get('update:recover')?.()).resolves.toBe(status)
+    expect(strategy.recheck).toHaveBeenCalledOnce()
+    expect(strategy.recover).toHaveBeenCalledOnce()
+  })
+
+  it('uses the desktop opener supplied by the direct Electron entrypoint', async () => {
+    const strategy = createStrategy()
+    const openProcessManager = vi.fn(async () => true)
+
+    registerUpdateIpcHandlers(strategy, undefined, undefined, openProcessManager)
+
+    await expect(handlers.get('update:open-process-manager')?.()).resolves.toBe(true)
+    expect(openProcessManager).toHaveBeenCalledOnce()
   })
 })
 

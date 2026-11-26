@@ -42,6 +42,18 @@ An experimental interface must be explicitly identified in its owning documentat
 with its limitations and versioning expectations. Existing stable interfaces cannot be relabeled
 experimental to bypass this policy. Nightly and other prerelease builds are not stable contracts.
 
+## Updating from an affected 1.3.0 client
+
+An affected 1.3.0 client can report its own launch-log `node` process as `foreign-process`.
+A fixed target package cannot change the updater already running in that client. For the first
+upgrade, fully stop Open-Science and its background service, then install the downloaded package
+manually. Merely reopening the old version creates the same unregistered reader again. Existing
+profiles and research data do not require migration or deletion for this workaround.
+
+The next fix release must include this transition limitation in its release notes. New helper
+registration uses the existing installation records and lifetime locks; it does not adopt old,
+unregistered running readers or exempt unrelated Node processes.
+
 ## Historical data and upgrade direction
 
 The 1.0 transition retains the existing upgrade and import paths for historical 0.x profiles and

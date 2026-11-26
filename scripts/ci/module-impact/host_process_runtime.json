@@ -896,9 +896,15 @@
       "src/main/desktop-runtime-transport-diagnostics.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/notebook/resource-release.integration.test.ts",
+      "src/main/notebook/resource-release.windows.integration.test.ts",
+      "src/main/notebook/memory-admission.windows.integration.test.ts",
+      "src/main/notebook/python-lifecycle.windows.integration.test.ts",
+      "src/main/composition/session-package-lifecycle.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "The Windows native ChildProcess facade uses EventEmitter to avoid retaining exited process listeners, expanding the trusted host boundary; retain complete validation until that boundary is reviewed on main."
 }

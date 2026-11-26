@@ -1,3 +1,4 @@
+import type { CatalogRequestOptions } from '../protocols/catalog'
 import type { ModelProtocol } from '../protocols/types'
 import type { ReasoningCapability } from '../protocols/types'
 
@@ -27,6 +28,11 @@ export type OfficialVendorId =
   | 'opencode'
   | 'openrouter'
   | 'requesty'
+  | 'kilo'
+  | 'cloudflare-ai-gateway'
+  | 'aws-bedrock'
+  | 'microsoft-foundry'
+  | 'vectrust'
 
 // A selectable endpoint for vendors that publish more than one host — e.g. a Global vs. China region
 // (MiniMax) or a separate overseas/domestic console (GLM's Z.AI vs. BigModel). Each carries its own
@@ -45,6 +51,7 @@ export type VendorRegion = {
   readonly apiKeyUrl?: string
   // Full URL of the vendor's model-list endpoint for this region; falls back to the vendor-level one.
   readonly modelsListUrl?: string
+  readonly modelsList?: CatalogRequestOptions | false
   // An authoritative curated subset when this region serves fewer models than the vendor catalog.
   readonly modelIds?: readonly string[]
 }
@@ -54,6 +61,8 @@ export type OfficialModel = {
   // Advertised context-window size for this exact model, in tokens.
   readonly contextWindow: number
   readonly maxOutputTokens?: number
+  // This bundled model has been verified to support keyless requests.
+  readonly supportsAnonymousAccess?: boolean
   // Optional exact protocol override for mixed-protocol vendor catalogs. Absent means the model uses
   // the vendor-level endpoint set.
   readonly apiEndpoint?: ModelProtocol
@@ -61,14 +70,24 @@ export type OfficialModel = {
   readonly reasoningEffort?: ReasoningCapability
 }
 
+export type ImageGenerationProviderDefinition = Readonly<{
+  regions: readonly Readonly<{ id: string; baseUrl: string }>[]
+  models: readonly Readonly<{ id: string; label: string }>[]
+  modelsList?: CatalogRequestOptions
+}>
+
 export type OfficialVendor = {
+  readonly imageGeneration?: ImageGenerationProviderDefinition
   readonly id: OfficialVendorId
   // Human-readable name shown in the provider-type picker and composer group headings.
   readonly label: string
+  readonly cloudProvider?: true
   // Which chat APIs this vendor serves; drives per-framework availability. Absent ⇒ ['messages']
   // for legacy Anthropic-compatible vendor entries. A dual-endpoint vendor lists both, e.g.
   // ['messages', 'chat-completions'].
   readonly apiEndpoints?: readonly ModelProtocol[]
+  // The application's connection form supplies both the endpoint and model.
+  readonly requiresConnectionConfiguration?: true
   // Whether Anthropic Messages authenticates with `x-api-key` instead of `Authorization: Bearer`.
   // Absent keeps the existing bearer behavior used by the other compatible vendors.
   readonly messagesApiKeyHeader?: boolean
@@ -105,9 +124,12 @@ export type OfficialVendor = {
   readonly chatCompletionsBaseUrl?: string
   readonly responsesBaseUrl?: string
   readonly regions?: readonly VendorRegion[]
+  // Free model requests may omit the authentication header when this is enabled.
+  readonly supportsAnonymousAccess?: boolean
   // Page where the user obtains an API key. For multi-region vendors a per-region url takes priority.
   readonly apiKeyUrl?: string
   // Full URL of a live model-list endpoint (OpenAI-style `{ data: [{ id }] }`). Set only for vendors
   // that actually expose one, so the "refresh from vendor" affordance is hidden for those that don't.
   readonly modelsListUrl?: string
+  readonly modelsList?: CatalogRequestOptions | false
 }

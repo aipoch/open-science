@@ -38,26 +38,15 @@ const session = {
   title: 'Imported session'
 } as NonNullable<Awaited<ReturnType<Owners['sessionRepository']['loadSession']>>>
 const order: string[] = []
-const releasePersistence = vi.fn((): void => {
-  order.push('release:persistence')
-})
-const releaseExport = vi.fn((): void => {
-  order.push('release:archive')
-})
 const releaseImport = vi.fn((): void => {
   order.push('release:import')
 })
 const service = {
-  assertExportIdle: vi.fn<SessionPackageService['assertExportIdle']>(),
   exportTo: vi.fn<SessionPackageService['exportTo']>(),
   importFrom: vi.fn<SessionPackageService['importFrom']>()
 }
 const archive = {
-  reserveSessionExport: vi.fn<Owners['archiveCoordinator']['reserveSessionExport']>(),
   reserveProjectImport: vi.fn<Owners['archiveCoordinator']['reserveProjectImport']>()
-}
-const persistence = {
-  reserveSessionExport: vi.fn<Owners['sessionPersistenceCoordinator']['reserveSessionExport']>()
 }
 const publish = vi.fn<Owners['applicationEvents']['publish']>()
 const getProject = vi.fn<Owners['projectRepository']['get']>()
@@ -86,27 +75,8 @@ beforeEach(async (): Promise<void> => {
   await writeFile(join(root, 'input.science'), 'package')
   native.save.mockResolvedValue({ canceled: false, filePath: join(root, 'output.science') })
   native.open.mockResolvedValue({ canceled: false, filePaths: [join(root, 'input.science')] })
-  releasePersistence.mockImplementation((): void => {
-    order.push('release:persistence')
-  })
-  releaseExport.mockImplementation((): void => {
-    order.push('release:archive')
-  })
   releaseImport.mockImplementation((): void => {
     order.push('release:import')
-  })
-  persistence.reserveSessionExport.mockImplementation(async (): Promise<() => void> => {
-    order.push('reserve:persistence')
-    return releasePersistence
-  })
-  service.assertExportIdle.mockImplementation(async (): Promise<void> => {
-    order.push('assert:idle')
-  })
-  archive.reserveSessionExport.mockImplementation(async (...args): Promise<() => void> => {
-    order.push('reserve:archive')
-    await args[2]()
-    order.push('admitted:archive')
-    return releaseExport
   })
   archive.reserveProjectImport.mockImplementation(async (): Promise<() => void> => {
     order.push('reserve:import')
@@ -142,7 +112,6 @@ beforeEach(async (): Promise<void> => {
     sessionPackageService: service as unknown as SessionPackageService,
     translate: englishNativeTranslator,
     archiveCoordinator: archive,
-    sessionPersistenceCoordinator: persistence,
     applicationEvents: { publish },
     projectRepository: { get: getProject },
     sessionRepository: { loadSession },
@@ -156,22 +125,8 @@ afterEach(async (): Promise<void> => {
 })
 
 describe('Session package desktop composition baseline', () => {
-  it.each(['export', 'fork'] as const)(
-    'does not publish %s when terminal preflight rejects persistence reservation',
-    async (kind) => {
-      persistence.reserveSessionExport.mockRejectedValueOnce(
-        new Error('retained terminal write failed')
-      )
-      const fork = vi.fn<SessionPackageService['fork']>()
-      Object.assign(service, { fork })
-      await expect(desktop[kind](identity)).rejects.toThrow()
-      expect(service.exportTo).not.toHaveBeenCalled()
-      expect(fork).not.toHaveBeenCalled()
-      expect(releasePersistence).not.toHaveBeenCalled()
-      expect(releaseExport).not.toHaveBeenCalled()
-    }
-  )
-
+  // Source reservations now belong to the service. Their failure/close coverage uses real owners
+  // in composition/session-package-lifecycle.integration.test.ts rather than this service substitute.
   it('reads handoff, migration-copy and migration-pending gates after construction', async (): Promise<void> => {
     for (const gate of ['handoff', 'migration-copy', 'migration-pending']) {
       vi.clearAllMocks()
@@ -189,7 +144,6 @@ describe('Session package desktop composition baseline', () => {
           nonInteractive: true
         })
       ).rejects.toThrow('application handoff')
-      expect(archive.reserveSessionExport).not.toHaveBeenCalled()
       expect(archive.reserveProjectImport).not.toHaveBeenCalled()
       expect(service.exportTo).not.toHaveBeenCalled()
       expect(service.importFrom).not.toHaveBeenCalled()
@@ -211,31 +165,6 @@ describe('Session package desktop composition baseline', () => {
       expect(releaseImport).toHaveBeenCalledOnce()
     }
   })
-
-  it.each(['persistence', 'idle', 'archive-after-callback'] as const)(
-    'releases only the acquired persistence reservation when %s rejects export admission',
-    async (failure): Promise<void> => {
-      const error = new Error(`rejected at ${failure}`)
-      if (failure === 'persistence') persistence.reserveSessionExport.mockRejectedValueOnce(error)
-      else if (failure === 'idle') service.assertExportIdle.mockRejectedValueOnce(error)
-      else
-        archive.reserveSessionExport.mockImplementationOnce(async (...args): Promise<never> => {
-          await args[2]()
-          throw error
-        })
-      await expect(desktop.export(identity)).rejects.toBe(error)
-      expect(persistence.reserveSessionExport).toHaveBeenCalledExactlyOnceWith(
-        identity.projectId,
-        identity.sessionId
-      )
-      expect(service.assertExportIdle).toHaveBeenCalledTimes(failure === 'persistence' ? 0 : 1)
-      expect(releasePersistence).toHaveBeenCalledTimes(failure === 'persistence' ? 0 : 1)
-      expect(releaseExport).not.toHaveBeenCalled()
-      expect(service.exportTo).not.toHaveBeenCalled()
-      expect(desktop.operations.snapshot?.state).toBe('failed')
-      expect(desktop.operations.active).toBe(false)
-    }
-  )
 
   it('transfers explicit paths without dialogs or renderer confirmation', async (): Promise<void> => {
     service.exportTo.mockImplementationOnce(async (_request, path, options) => {
@@ -263,28 +192,15 @@ describe('Session package desktop composition baseline', () => {
     expect(operationEvents().map(({ state }) => state)).not.toContain('awaiting-selection')
   })
 
-  it('exports through archive → persistence → idle, publishes operations, then releases in order', async (): Promise<void> => {
+  it('publishes service export operations and staged bytes', async (): Promise<void> => {
     const pending = desktop.export(identity)
     const operationId = await selection()
-    expect(order).toEqual([
-      'reserve:archive',
-      'reserve:persistence',
-      'assert:idle',
-      'admitted:archive',
-      'service:export'
-    ])
-    expect(service.assertExportIdle).toHaveBeenCalledExactlyOnceWith(identity)
-    const signal = archive.reserveSessionExport.mock.calls[0][3]
-    expect(signal).toBeInstanceOf(AbortSignal)
-    expect(service.exportTo.mock.calls[0][2]?.signal).toBe(signal)
-    expect(releasePersistence).not.toHaveBeenCalled()
+    expect(order).toEqual(['service:export'])
+    expect(service.exportTo.mock.calls[0][2]?.signal).toBeInstanceOf(AbortSignal)
     await desktop.respond({ action: 'select', operationId, excludedStorageKeys: [] })
     const destination = join(root, 'output.science')
     await expect(pending).resolves.toEqual({ saved: true, filePath: destination })
     expect(await readFile(destination, 'utf8')).toBe('package')
-    expect(order.slice(-2)).toEqual(['release:persistence', 'release:archive'])
-    expect(releasePersistence).toHaveBeenCalledOnce()
-    expect(releaseExport).toHaveBeenCalledOnce()
     expect(operationEvents().map(({ state }) => state)).toContain('awaiting-selection')
     expect(operationEvents().at(-1)).toEqual(desktop.operations.snapshot)
     expect(await desktop.respond({ action: 'snapshot' })).toMatchObject({
@@ -369,20 +285,18 @@ describe('Session package desktop composition baseline', () => {
     expect(operationEvents().at(-1)).toEqual(desktop.operations.snapshot)
   })
 
-  it('close cancels an active export selection, joins it, and releases both reservations once', async (): Promise<void> => {
+  it('close cancels and joins an active service export selection', async (): Promise<void> => {
     const pending = desktop.export(identity)
     const rejected = expect(pending).rejects.toThrow()
     await selection()
     expect(desktop.hasActiveTransfer()).toBe(true)
     await desktop.close()
     await rejected
-    expect(archive.reserveSessionExport.mock.calls[0][3]?.aborted).toBe(true)
-    expect(order.slice(-2)).toEqual(['release:persistence', 'release:archive'])
+    expect(service.exportTo.mock.calls[0][2]?.signal?.aborted).toBe(true)
     expect(desktop.operations.snapshot?.state).toBe('cancelled')
     expect(desktop.operations.active).toBe(false)
     await desktop.close()
-    expect(releasePersistence).toHaveBeenCalledOnce()
-    expect(releaseExport).toHaveBeenCalledOnce()
+    expect(service.exportTo).toHaveBeenCalledOnce()
     expect(native.save).not.toHaveBeenCalled()
   })
 })

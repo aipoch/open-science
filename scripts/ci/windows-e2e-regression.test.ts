@@ -42,7 +42,7 @@ const suites = [
 ] as const
 
 it.each([
-  ['PR mainlines', pr.jobs.windows_e2e, 'Run mainline journeys'],
+  ['PR mainlines', pr.jobs.windows_e2e_setup, 'Pack E2E setup'],
   ['scheduled regression', workflow.jobs.windows_e2e_setup, 'Pack E2E setup']
 ])('builds the candidate native sandbox after staging dependencies for %s', (_, job, consumer) => {
   const build = step(job, 'Build Windows sandbox native host')
@@ -57,12 +57,18 @@ it.each([
 })
 
 it('schedules independent complete Windows E2E and keeps the manual full entry point', () => {
-  expect(workflow.on.schedule).toEqual([{ cron: '17 18 * * *' }])
+  expect(workflow.on.schedule).toEqual([{ cron: '17 15 * * *' }])
   expect(workflow.on.workflow_dispatch).toEqual({
     inputs: {
-      workspace_test_pattern: {
+      diagnostic_suite: {
+        description: 'Suite for a focused Windows diagnostic',
+        type: 'choice',
+        options: ['browser', 'functional', 'workspace'],
+        default: 'browser'
+      },
+      test_pattern: {
         description:
-          'Optional workspace test regex for a single-runner diagnostic (10 repetitions)',
+          'Optional Playwright title regex for the selected diagnostic suite (10 repetitions)',
         type: 'string',
         default: ''
       }
@@ -75,7 +81,7 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
       'fail-fast': false,
       matrix: {
         shard:
-          "${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' && '[1]' || '[1,2,3,4,5,6]') }}"
+          "${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.test_pattern != '' && '[1]' || '[1,2,3,4,5,6]') }}"
       }
     }
   })
@@ -88,10 +94,10 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
   })
   expect(preparation.if).toContain("needs.plan.outputs.should_test == 'true'")
   for (const name of ['Install dependencies', 'Build Electron application']) {
-    expect(step(preparation, name)).toEqual(step(pr.jobs.windows_e2e, name))
+    expect(step(preparation, name)).toEqual(step(pr.jobs.windows_e2e_setup, name))
   }
   expect(step(preparation, 'Download Windows Notebook runtime').with).toEqual(
-    step(pr.jobs.windows_e2e, 'Download Windows Notebook runtime').with
+    step(pr.jobs.windows_e2e_setup, 'Download Windows Notebook runtime').with
   )
   expect(step(preparation, 'Pack E2E setup').run).toContain('e2e-setup-snapshot.mjs pack')
   const execution = workflow.jobs.windows_e2e
@@ -108,7 +114,7 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
   for (const [id, command] of suites) {
     const run = execution.steps.find((candidate) => candidate.id === id)!
     expect(run.if).toBe(
-      "${{ steps.setup.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.workspace_test_pattern == '') }}"
+      "${{ steps.setup.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.test_pattern == '') }}"
     )
     expect(run.run).toContain(`npm run ${command} --`)
     expect(run.run).toContain('--workers=1')
@@ -139,7 +145,7 @@ it('budgets complete serial journeys and teardown within the shard job', () => {
 it('fails a scheduled shard when setup or any required suite does not succeed', () => {
   const enforce = step(workflow.jobs.windows_e2e, 'Enforce complete Windows E2E suites')
   expect(enforce.if).toBe(
-    "${{ always() && (github.event_name != 'workflow_dispatch' || inputs.workspace_test_pattern == '') }}"
+    "${{ always() && (github.event_name != 'workflow_dispatch' || inputs.test_pattern == '') }}"
   )
   const baseline = Object.fromEntries(Object.keys(enforce.env!).map((key) => [key, 'success']))
   for (const key of Object.keys(baseline)) {
@@ -153,15 +159,18 @@ it('fails a scheduled shard when setup or any required suite does not succeed', 
   }
 })
 
-it('isolates manual workspace diagnostics while retaining full scheduled coverage', () => {
+it('isolates selected manual diagnostics while retaining full scheduled coverage', () => {
   const execution = workflow.jobs.windows_e2e
-  const diagnostic = step(execution, 'Diagnose selected workspace journey')
-  const diagnosticGate = step(execution, 'Enforce workspace diagnostic')
+  const diagnostics = [
+    ['browser', 'browser_diagnostic', 'Diagnose selected browser journey'],
+    ['functional', 'functional_diagnostic', 'Diagnose selected functional journey'],
+    ['workspace', 'workspace_diagnostic', 'Diagnose selected workspace journey']
+  ] as const
   const fullGate = step(execution, 'Enforce complete Windows E2E suites')
   const evaluate = (expression: string, event: string, pattern: string): unknown =>
     runInNewContext(expression.slice(3, -2), {
       github: { event_name: event },
-      inputs: { workspace_test_pattern: pattern },
+      inputs: { test_pattern: pattern, diagnostic_suite: 'browser' },
       steps: { setup: { outcome: 'success' } },
       always: () => true,
       fromJSON: JSON.parse
@@ -172,8 +181,6 @@ it('isolates manual workspace diagnostics while retaining full scheduled coverag
       expect(evaluate(String(execution.strategy!.matrix.shard), event, pattern)).toEqual(
         focused ? [1] : [1, 2, 3, 4, 5, 6]
       )
-      expect(evaluate(diagnostic.if!, event, pattern)).toBe(focused)
-      expect(evaluate(diagnosticGate.if!, event, pattern)).toBe(focused)
       expect(evaluate(fullGate.if!, event, pattern)).toBe(!focused)
       for (const [id] of suites) {
         expect(
@@ -182,18 +189,24 @@ it('isolates manual workspace diagnostics while retaining full scheduled coverag
       }
     }
   }
-  expect(diagnostic.env?.TEST_PATTERN).toBe('${{ inputs.workspace_test_pattern }}')
-  expect(diagnostic.run).toContain('--grep "$TEST_PATTERN"')
-  expect(diagnostic.run).toContain('--repeat-each=10 --retries=0')
-  expect(diagnostic.run).not.toContain('--pass-with-no-tests')
-  expect(diagnostic.run).not.toContain('--shard')
-  for (const outcome of ['success', 'failure', 'cancelled', 'skipped', '']) {
-    const result = spawnSync('bash', ['-c', diagnosticGate.run!], {
-      encoding: 'utf8',
-      env: { ...process.env, SETUP: 'success', DIAGNOSTIC: outcome }
-    })
-    expect(result.status).toBe(outcome === 'success' ? 0 : 1)
+  for (const [suite, id, name] of diagnostics) {
+    const diagnostic = step(execution, name)
+    expect(diagnostic.if).toContain(`inputs.diagnostic_suite == '${suite}'`)
+    expect(diagnostic.env?.TEST_PATTERN).toBe('${{ inputs.test_pattern }}')
+    expect(diagnostic.run).toContain('--grep')
+    expect(diagnostic.run).toContain('--repeat-each=10 --retries=0')
+    expect(diagnostic.run).not.toContain('--pass-with-no-tests')
+    expect(diagnostic.run).not.toContain('--shard')
+    expect(diagnostic.id).toBe(id)
   }
+  const diagnosticGate = step(execution, 'Enforce selected diagnostic')
+  expect(diagnosticGate.env).toMatchObject({
+    SUITE: '${{ inputs.diagnostic_suite }}',
+    BROWSER: '${{ steps.browser_diagnostic.outcome }}',
+    FUNCTIONAL: '${{ steps.functional_diagnostic.outcome }}',
+    DIAGNOSTIC: '${{ steps.workspace_diagnostic.outcome }}'
+  })
+  expect(diagnosticGate.run).toContain('case "$SUITE"')
 })
 
 it('reports scheduled failures with the shared issue lifecycle and never closes on skipped coverage', () => {

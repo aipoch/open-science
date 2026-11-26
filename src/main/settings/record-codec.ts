@@ -1,3 +1,17 @@
+import { decodeProviderModels } from '../../shared/configured-provider-model'
+import { decodeLocalProviderModels } from '../../shared/local-provider-preset'
+import { codeBuddySiteForId } from '../../shared/codebuddy-subscription'
+import { z } from 'zod'
+import {
+  imageServiceSchema,
+  imageServiceMatchesProvider,
+  imageModelBindingSchema
+} from '../../shared/image-model-service-policy'
+import {
+  decodeModelCatalog,
+  decodeModelCatalogStatus,
+  decodeCatalogParameters
+} from '../../shared/provider-model-catalog-codec'
 import {
   isAgentFrameworkId,
   AGENT_MODEL_ROUTE_VALUES,
@@ -11,7 +25,18 @@ import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/
 import { createLogger } from '@aipoch/diagnostics/node'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
 import type { PackageMirror } from '../../shared/mirror'
-import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
+import {
+  type ModelProtocol,
+  type ModelReasoningEffort,
+  configuredProviderConnectionKind,
+  isLocalProviderPresetId,
+  isOfficialVendorId,
+  recoverConfiguredProviderModels,
+  resolveConfiguredProviderConnection,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList
+} from '@aipoch/providers'
+import type { LabModelCapabilities } from '../../shared/lab'
 import {
   isCustomReasoningEffortTransport,
   isReasoningEffortPresetSetting
@@ -37,7 +62,9 @@ import type {
   StoredComputeGrant,
   StoredConnectors,
   StoredCustomMcpServer,
-  StoredProvider
+  StoredProvider,
+  StoredImageService,
+  StoredSettings
 } from './types'
 
 const log = createLogger('settings.repository')
@@ -49,7 +76,9 @@ const PROVIDER_TYPES = new Set<ProviderType>([
   'official',
   'codex-shared',
   'codex-isolated',
-  'xai-subscription'
+  'codebuddy-subscription',
+  'xai-subscription',
+  'lab'
 ])
 
 const VALIDATION_CATEGORIES = new Set<ValidationCategory>([
@@ -184,6 +213,7 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     characterCount(name) > PROVIDER_RESOURCE_LIMITS.nameCharacters
   )
     return undefined
+  if (type === 'codebuddy-subscription' && !codeBuddySiteForId(id)) return undefined
   if (!PROVIDER_TYPES.has(type)) {
     log.warn('dropping stored provider with unknown type', { id, type })
     return undefined
@@ -200,7 +230,31 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   )
     provider.configRevision = value.configRevision
   const baseUrl = asString(value.baseUrl)
+  const labServerUrl = asString(value.labServerUrl)
+  const labCatalogToken = asString(value.labCatalogToken)
   const model = asString(value.model)
+  if (type === 'official' && vendorId && configuredProviderConnectionKind(vendorId)) {
+    const connection = resolveConfiguredProviderConnection(vendorId, value)
+    if (!connection) return undefined
+
+    const manualModels = supportsConfiguredProviderModelList(vendorId)
+      ? decodeProviderModels(value.manualModels)
+      : undefined
+    const modelId = model?.trim()
+    const recovered = recoverConfiguredProviderModels(
+      vendorId,
+      connection,
+      modelId && characterCount(modelId) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+        ? modelId
+        : undefined,
+      manualModels
+    )
+    if (!recovered || characterCount(recovered.model) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
+      return undefined
+    if (connection.cloudflare) provider.cloudflare = connection.cloudflare
+    if (connection.manualConnection) provider.manualConnection = connection.manualConnection
+    Object.assign(provider, recovered)
+  }
   const positiveWholeNumber = (candidate: unknown): number | undefined => {
     const number = asNumber(candidate)
     return isPositiveWholeTokenLimit(number) ? number : undefined
@@ -243,6 +297,99 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     }
   }
 
+  let modelReasoningEfforts: Record<string, ModelReasoningEffort[]> | undefined
+  if (isRecord(value.modelReasoningEfforts)) {
+    const allowed = new Set<ModelReasoningEffort>([
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra'
+    ])
+    const entries: Array<[string, ModelReasoningEffort[]]> = []
+    for (const [modelId, rawEfforts] of Object.entries(value.modelReasoningEfforts)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        !Array.isArray(rawEfforts)
+      )
+        continue
+      const efforts = [
+        ...new Set(
+          rawEfforts.filter(
+            (entry): entry is ModelReasoningEffort =>
+              typeof entry === 'string' && allowed.has(entry as ModelReasoningEffort)
+          )
+        )
+      ]
+      if (efforts.length > 0) entries.push([modelId, efforts])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelReasoningEfforts = Object.fromEntries(entries)
+  }
+
+  // Per-model protocol declarations for app-managed heterogeneous catalogs (Lab). Only known
+  // protocol ids and bounded keys/values are retained.
+  let modelProtocols: Record<string, ModelProtocol[]> | undefined
+  if (isRecord(value.modelProtocols)) {
+    const entries: Array<[string, ModelProtocol[]]> = []
+    for (const [modelId, rawProtocols] of Object.entries(value.modelProtocols)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        !Array.isArray(rawProtocols)
+      )
+        continue
+      const protocols = [
+        ...new Set(
+          rawProtocols
+            .map(decodeStoredModelProtocol)
+            .filter((entry): entry is ModelProtocol => entry !== undefined)
+        )
+      ]
+      if (protocols.length > 0) entries.push([modelId, protocols])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelProtocols = Object.fromEntries(entries)
+  }
+
+  let modelStreaming: Record<string, boolean> | undefined
+  if (isRecord(value.modelStreaming)) {
+    const entries: Array<[string, boolean]> = []
+    for (const [modelId, rawStreaming] of Object.entries(value.modelStreaming)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        typeof rawStreaming !== 'boolean'
+      )
+        continue
+      entries.push([modelId, rawStreaming])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelStreaming = Object.fromEntries(entries)
+  }
+
+  // Raw per-model capability documents are stored alongside the model catalog and narrowed by
+  // readLabModelCapabilities at consumption time. Key/value bounds prevent wildly malformed files.
+  let modelCapabilities: Record<string, LabModelCapabilities> | undefined
+  if (isRecord(value.modelCapabilities)) {
+    const entries: Array<[string, LabModelCapabilities]> = []
+    for (const [modelId, rawCapabilities] of Object.entries(value.modelCapabilities)) {
+      if (
+        !modelId ||
+        characterCount(modelId) > PROVIDER_RESOURCE_LIMITS.modelIdCharacters ||
+        !isRecord(rawCapabilities)
+      )
+        continue
+      entries.push([modelId, rawCapabilities])
+      if (entries.length >= PROVIDER_RESOURCE_LIMITS.fetchedModels) break
+    }
+    if (entries.length > 0) modelCapabilities = Object.fromEntries(entries)
+  }
+
   // Migrate the removed scalar apiType to the explicit endpoint array.
   const rawEndpoints = Array.isArray(value.apiEndpoints) ? value.apiEndpoints : []
   const knownEndpoints = rawEndpoints
@@ -260,13 +407,42 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
 
   if (baseUrl && characterCount(baseUrl) <= PROVIDER_RESOURCE_LIMITS.baseUrlCharacters)
     provider.baseUrl = baseUrl
-  if (model && characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters)
+  if (
+    labServerUrl &&
+    characterCount(labServerUrl) <= PROVIDER_RESOURCE_LIMITS.baseUrlCharacters &&
+    type === 'lab'
+  )
+    provider.labServerUrl = labServerUrl
+  if (labCatalogToken && labCatalogToken.length <= 128 && type === 'lab')
+    provider.labCatalogToken = labCatalogToken
+  if (
+    !provider.model &&
+    model &&
+    characterCount(model) <= PROVIDER_RESOURCE_LIMITS.modelIdCharacters
+  )
     provider.model = model
   if (type === 'custom') {
-    if (contextWindow !== undefined) provider.contextWindow = contextWindow
+    if (isLocalProviderPresetId(value.localPresetId)) {
+      provider.localPresetId = value.localPresetId
+      const models = decodeLocalProviderModels(value.localModels)
+      if (models) {
+        provider.localModels = models
+        provider.model = selectConfiguredModelId(
+          provider.model,
+          models.map(({ id }) => id)
+        )
+      }
+    }
     if (maxInputTokens !== undefined) provider.maxInputTokens = maxInputTokens
     if (maxOutputTokens !== undefined) provider.maxOutputTokens = maxOutputTokens
   }
+  if (
+    contextWindow !== undefined &&
+    !provider.manualModels &&
+    (type === 'custom' ||
+      ((provider.cloudflare || provider.manualConnection) && provider.model === model?.trim()))
+  )
+    provider.contextWindow = contextWindow
   if (supportsImageInput !== undefined) provider.supportsImageInput = supportsImageInput
   if (reasoningEffortPreset !== undefined && type === 'custom') {
     provider.reasoningEffortPreset = reasoningEffortPreset
@@ -275,9 +451,22 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
     provider.reasoningEffortTransport = reasoningEffortTransport
   }
   if (apiEndpoints.length > 0) provider.apiEndpoints = apiEndpoints
+  if (modelProtocols) provider.modelProtocols = modelProtocols
+  if (modelCapabilities) provider.modelCapabilities = modelCapabilities
+  if (modelReasoningEfforts) provider.modelReasoningEfforts = modelReasoningEfforts
+  if (modelStreaming) provider.modelStreaming = modelStreaming
   if (vendorId) provider.vendorId = vendorId
   if (region) provider.region = region
   if (fetchedModels && fetchedModels.length > 0) provider.fetchedModels = fetchedModels
+  const modelCatalog = decodeModelCatalog(value.modelCatalog)
+  const modelCatalogStatus = decodeModelCatalogStatus(value.modelCatalogStatus)
+  const catalogParameters = decodeCatalogParameters(value.catalogParameters)
+  // Keep absent catalog fields absent so repeated saves do not appear to change the provider.
+  if (modelCatalog !== undefined) provider.modelCatalog = modelCatalog
+  if (modelCatalogStatus !== undefined) provider.modelCatalogStatus = modelCatalogStatus
+  if (catalogParameters !== undefined) provider.catalogParameters = catalogParameters
+  if (type === 'codebuddy-subscription' && value.codeBuddyAuthMode === 'shared')
+    provider.codeBuddyAuthMode = 'shared'
   if (keyRef) provider.keyRef = keyRef
   if (keyMask) provider.keyMask = keyMask
   if (accountEmail && type === 'xai-subscription') provider.accountEmail = accountEmail
@@ -289,7 +478,10 @@ export const sanitizeProvider = (value: unknown): StoredProvider | undefined => 
   if (lastValidatedTarget) provider.lastValidatedTarget = lastValidatedTarget
   if (lastValidationFailure) provider.lastValidationFailure = lastValidationFailure
   if (expiresAt !== undefined) provider.expiresAt = expiresAt
-  if (disconnectedAt !== undefined && type === 'claude-shared') {
+  if (
+    disconnectedAt !== undefined &&
+    (type === 'claude-shared' || provider.codeBuddyAuthMode === 'shared')
+  ) {
     provider.disconnectedAt = disconnectedAt
   }
   if (
@@ -414,8 +606,6 @@ export const sanitizeConnectors = (value: unknown): StoredConnectors | undefined
   }
   const contactEmail = asString(value.contactEmail)
   const ncbiApiKeyRef = asString(value.ncbiApiKeyRef)
-  const semanticScholarApiKeyRef = asString(value.semanticScholarApiKeyRef)
-  if (semanticScholarApiKeyRef) connectors.semanticScholarApiKeyRef = semanticScholarApiKeyRef
   const openAlexApiKeyRef = asString(value.openAlexApiKeyRef)
   if (contactEmail) connectors.contactEmail = contactEmail
   if (ncbiApiKeyRef) connectors.ncbiApiKeyRef = ncbiApiKeyRef
@@ -491,5 +681,46 @@ export const encodeProviderProtocolsForStorage = (value: unknown): unknown => {
           }
         }
       : {})
+  }
+}
+
+const storedService = imageServiceSchema
+  .safeExtend({
+    keyRef: z.string().min(1).max(32768).optional(),
+    keyMask: z.string().max(128).optional()
+  })
+  .refine(
+    (service) =>
+      !service.providerId || (service.keyRef === undefined && service.keyMask === undefined)
+  )
+export const sanitizeImageSettings = (
+  value: { imageServices?: unknown; imageModel?: unknown },
+  providers: StoredProvider[]
+): Pick<StoredSettings, 'imageServices' | 'imageModel'> => {
+  const services: StoredImageService[] = []
+  if (Array.isArray(value.imageServices)) {
+    for (const candidate of value.imageServices.slice(0, 16)) {
+      const parsed = storedService.safeParse(candidate)
+      if (
+        parsed.success &&
+        !services.some((entry) => entry.id === parsed.data.id) &&
+        imageServiceMatchesProvider(parsed.data, providers)
+      )
+        services.push(parsed.data)
+    }
+  }
+  const binding = imageModelBindingSchema.safeParse(value.imageModel).data
+  const imageModel =
+    binding &&
+    services.some(
+      (service) =>
+        service.id === binding.serviceId &&
+        service.models.some((model) => model.id === binding.modelId)
+    )
+      ? binding
+      : undefined
+  return {
+    ...(services.length ? { imageServices: services } : {}),
+    ...(imageModel ? { imageModel } : {})
   }
 }

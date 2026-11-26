@@ -210,6 +210,19 @@ async function elfFiles(directory) {
   }
   return files
 }
+// GNU runtimes never load these optional musl variants. Preserve their certified
+// bytes, but use the same narrow exclusion for Debian scanning and RPM auto-requires.
+const dormantMuslDirectories = (arch) => [
+  `backend/node_modules/@napi-rs/canvas-linux-${arch}-musl/`,
+  `backend/node_modules/@img/sharp-linuxmusl-${arch}/`,
+  `backend/node_modules/@img/sharp-libvips-linuxmusl-${arch}/`
+]
+export async function runtimeElfFiles(root, arch) {
+  const dormant = dormantMuslDirectories(arch).map((directory) => join(root, directory))
+  return (await elfFiles(root)).filter(
+    (file) => !dormant.some((directory) => file.startsWith(directory))
+  )
+}
 export function rpmSpec(metadata, bundledSonames) {
   const identity = packageIdentity(metadata)
   const nodeArch = identity.target === 'linux-x64-gnu' ? 'x64' : 'arm64'
@@ -218,9 +231,13 @@ export function rpmSpec(metadata, bundledSonames) {
 %global __os_install_post %{nil}
 %global debug_package %{nil}
 %global __provides_exclude_from ^/opt/open-science-cli/.*$
-# Bundled JavaScript uses private Node. Canvas selects its GNU addon on these GNU targets;
-# retain the original dormant musl addon bytes without requiring a foreign libc.
-%global __requires_exclude_from ^/opt/open-science-cli/.*[.](js|mjs|cjs)$|^/opt/open-science-cli/backend/node_modules/@napi-rs/canvas-linux-${nodeArch}-musl/
+# Bundled JavaScript uses private Node. Canvas and Sharp select their GNU addons;
+# retain dormant musl addons and libvips without requiring a foreign libc.
+%global __requires_exclude_from ^/opt/open-science-cli/.*[.](js|mjs|cjs)$|${dormantMuslDirectories(
+    nodeArch
+  )
+    .map((directory) => `^${packageRoot}/${directory}`)
+    .join('|')}
 ${escaped.length ? `%global __requires_exclude ^(${escaped.join('|')})(\\(.*\\))?$\n` : ''}Name: open-science-cli
 Version: ${identity.version}
 Release: 1
@@ -296,16 +313,7 @@ export async function buildPackage(format, prepared, output) {
         identity.version +
         '/docs/standalone-runtime.md\n'
     )
-    const dormantCanvas =
-      join(
-        tree,
-        packageRoot,
-        'backend/node_modules/@napi-rs',
-        `canvas-linux-${process.arch}-musl`
-      ) + '/'
-    const elfs = (await elfFiles(join(tree, packageRoot))).filter(
-      (file) => !file.startsWith(dormantCanvas)
-    )
+    const elfs = await runtimeElfFiles(join(tree, packageRoot), process.arch)
     assert.ok(elfs.length, 'No native payload')
     let filename
     if (format === 'deb') {

@@ -16,6 +16,7 @@ const fixture = vi.hoisted(() => ({
   approvalAvailable: vi.fn(() => false),
   proxyEnvironment: undefined as Record<string, string> | undefined,
   applyProxy: vi.fn(async () => {}),
+  initializeLab: vi.fn(async () => {}),
   network: {
     status: vi.fn<NotebookNetworkSandboxOwner['status']>(),
     installWindows: vi.fn(async () => ({ cancelled: false })),
@@ -73,6 +74,7 @@ vi.mock('../settings/service', () => ({
       fixture.settingsOptions = options
     }
     dispose = fixture.serviceDispose
+    initializeLab = fixture.initializeLab
     getNotebookNetwork = async (): Promise<NetworkSettings> => ({
       allowedDomains: [],
       disabledOpenScienceDomainGroups: [],
@@ -121,6 +123,7 @@ beforeEach(() => {
   fixture.approvalAvailable.mockReset().mockReturnValue(false)
   fixture.proxyEnvironment = undefined
   fixture.applyProxy.mockReset().mockResolvedValue(undefined)
+  fixture.initializeLab.mockReset().mockResolvedValue(undefined)
   fixture.network.status.mockReset()
   fixture.network.updateParentProxy.mockReset().mockResolvedValue(undefined)
   fixture.handles.length = 0
@@ -158,6 +161,14 @@ const bootstrap = async (): ReturnType<typeof composeSettingsBootstrap> => {
     } as never
   })
 }
+
+it('starts restoring Lab sign-in without blocking settings bootstrap', async () => {
+  fixture.initializeLab.mockReturnValue(new Promise<void>(() => {}))
+
+  await bootstrap()
+
+  expect(fixture.initializeLab).toHaveBeenCalledOnce()
+})
 
 it('binds a new conversation Shell without waiting for a pending protection probe', async () => {
   let release!: (ready: boolean) => void

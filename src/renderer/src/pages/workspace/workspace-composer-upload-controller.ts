@@ -13,7 +13,10 @@ import type { SessionPdfContextSource } from '../../../../shared/session-pdf-con
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
 
 import { stageUploadFile as stageComposerFile, type UploadStagingApi } from '@/lib/upload-transfer'
-import { planComposerAttachmentIntake } from './composer-attachment-intake'
+import {
+  attachmentStagingGuidance,
+  planComposerAttachmentIntake
+} from './composer-attachment-intake'
 import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import {
   insertPastedTextNodeAtLogicalOffset,
@@ -76,6 +79,7 @@ type WorkspaceComposerUploadController = {
     attachments: UploadedAttachment[]
     transfers: ComposerUploadTransfer[]
     error: string | null
+    attachmentNotice?: { title: string; description?: string }
     errorDetail?: string
     errorProviderValidations?: ProviderValidationSnapshot
     isUploading: boolean
@@ -165,14 +169,24 @@ export const useWorkspaceComposerUploadController = ({
   )
   const { t } = useTranslation()
   const [error, setErrorText] = useState<string | null>(null)
+  const [attachmentNotice, setAttachmentNotice] = useState<{
+    title: string
+    description?: string
+  }>()
   const [errorDetail, setErrorDetail] = useState<string>()
   const [errorProviderValidations, setErrorProviderValidations] =
     useState<ProviderValidationSnapshot>()
-  const setError = useCallback((message: string | null, detail?: string): void => {
-    setErrorText(message)
-    setErrorDetail(detail)
-    setErrorProviderValidations(message === null ? undefined : captureProviderValidationSnapshot())
-  }, [])
+  const setError = useCallback(
+    (message: string | null, detail?: string, notice?: typeof attachmentNotice): void => {
+      setAttachmentNotice(notice)
+      setErrorText(message)
+      setErrorDetail(detail)
+      setErrorProviderValidations(
+        message === null ? undefined : captureProviderValidationSnapshot()
+      )
+    },
+    []
+  )
   const attachmentsRef = useRef(attachments)
   const transfersRef = useRef<ComposerUploadTransfer[]>(initialDraft.attachmentTransfers)
   const controllersRef = useRef<Record<string, AbortController>>({})
@@ -275,13 +289,21 @@ export const useWorkspaceComposerUploadController = ({
     [draftsRef, uploads]
   )
   const deleteAttachmentFiles = useCallback(
-    (items: UploadedAttachment[]): void => {
+    (items: UploadedAttachment[], removedFromDraft?: string): void => {
       if (items.length === 0) return
       void Promise.all(items.map((item) => uploads.deleteUpload({ path: item.path }))).catch(
-        (deleteError) => setError(asText(deleteError))
+        (deleteError) => {
+          const message =
+            removedFromDraft && removedFromDraft === activeDraftKeyRef.current
+              ? t(
+                  'Attachment removed from the draft. Cleanup of the temporary copy could not be confirmed.'
+                )
+              : t('Cleanup of temporary attachment files could not be confirmed.')
+          setError(message, asText(deleteError), { title: message })
+        }
       )
     },
-    [uploads, setError]
+    [uploads, setError, t, activeDraftKeyRef]
   )
   const currentSnapshot = useCallback(
     (caret?: ComposerCaretPosition): ComposerHistorySnapshot => {
@@ -645,7 +667,7 @@ export const useWorkspaceComposerUploadController = ({
   )
 
   const restorePastedTextInline = useCallback(
-    (draftKey: string, pastedTextId: string): void => {
+    (draftKey: string, pastedTextId: string): boolean => {
       let caret: ComposerCaretPosition | undefined
       updateDraftDoc(draftKey, (current) => {
         const restored = restorePastedTextNode(current, pastedTextId)
@@ -653,6 +675,7 @@ export const useWorkspaceComposerUploadController = ({
         return restored?.doc ?? current
       })
       if (activeDraftKeyRef.current === draftKey && caret) requestCaret(caret)
+      return Boolean(caret)
     },
     [activeDraftKeyRef, requestCaret, updateDraftDoc]
   )
@@ -708,22 +731,28 @@ export const useWorkspaceComposerUploadController = ({
             if (controller.signal.aborted) {
               updateTransfer({ remove: true })
             } else {
-              const message = t('Could not attach the file. Check available storage and try again.')
+              const detail = asText(uploadError)
+              const message =
+                attachmentStagingGuidance(uploadError, detail, t) ??
+                (transfer.pastedTextId
+                  ? t('Could not attach the pasted text.')
+                  : t('Could not attach the file. Try again.'))
+              let description: string | undefined
               if (transfer.pastedTextId) {
                 updateTransfer({ remove: true })
                 reconcileFailedPastedTextUndo(draftKey, transfer.pastedTextId, transfer.transferId)
-                restorePastedTextInline(draftKey, transfer.pastedTextId)
+                if (restorePastedTextInline(draftKey, transfer.pastedTextId))
+                  description = t('Your pasted text is back in the draft. You can edit or send it.')
               } else {
                 updateTransfer({
                   status: 'error',
                   error: message,
-                  errorDetail: asText(uploadError)
+                  errorDetail: detail
                 })
               }
               if (transfer.pastedTextId) delete transferFilesRef.current[transfer.transferId]
               if (activeDraftKeyRef.current === draftKey) {
-                setError(message)
-                setErrorDetail(asText(uploadError))
+                setError(message, detail, { title: message, description })
               }
             }
           } finally {
@@ -808,8 +837,8 @@ export const useWorkspaceComposerUploadController = ({
         setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
         return
       }
-      const intake = planComposerAttachmentIntake(files, attachments.length + transfers.length)
-      setError(intake.error)
+      const intake = planComposerAttachmentIntake(files, attachments.length + transfers.length, t)
+      setError(intake.error, undefined, intake.error ? { title: intake.error } : undefined)
       if (intake.accepted.length === 0) return
       const draftKey = activeDraftKeyRef.current
       clearPastedTextUndo(draftKey)
@@ -846,6 +875,7 @@ export const useWorkspaceComposerUploadController = ({
       transfers.length,
       captureUndo,
       updateActiveTransfers,
+      t,
       setError
     ]
   )
@@ -868,11 +898,9 @@ export const useWorkspaceComposerUploadController = ({
       if (cleanup) {
         cleanup.attachments = cleanup.attachments.filter((item) => item.id !== attachment.id)
       }
-      void uploads
-        .deleteUpload({ path: attachment.path })
-        .catch((deleteError) => setError(asText(deleteError)))
+      deleteAttachmentFiles([attachment], draftKey)
     },
-    [updateActiveAttachments, updateActiveTransfers, uploads, setError]
+    [updateActiveAttachments, updateActiveTransfers, uploads, deleteAttachmentFiles]
   )
 
   const reconcileRemovedPastedTextUploads = useCallback(
@@ -915,10 +943,10 @@ export const useWorkspaceComposerUploadController = ({
       const intake = canStageAttachments
         ? planComposerAttachmentIntake(
             records.map(({ file }) => file),
-            Math.max(0, attachments.length + transfers.length - releasedSlots)
+            Math.max(0, attachments.length + transfers.length - releasedSlots),
+            t
           )
         : { accepted: [], error: null }
-      setError(intake.error)
       const acceptedFiles = new Set(intake.accepted)
       const pending: Array<{ file: File; transfer: ComposerUploadTransfer }> = []
       let stagedDoc = nextDoc
@@ -947,6 +975,18 @@ export const useWorkspaceComposerUploadController = ({
         pending.push({ file, transfer })
       }
       setActiveDoc(stagedDoc)
+      setError(
+        intake.error,
+        undefined,
+        intake.error
+          ? {
+              title: intake.error,
+              description: restoredCaret
+                ? t('Your pasted text is back in the draft. You can edit or send it.')
+                : undefined
+            }
+          : undefined
+      )
       if (restoredCaret) requestCaret(restoredCaret)
       if (pending.length === 0) return
       for (const item of pending) transferFilesRef.current[item.transfer.transferId] = item.file
@@ -969,6 +1009,7 @@ export const useWorkspaceComposerUploadController = ({
       transfers.length,
       captureUndo,
       updateActiveTransfers,
+      t,
       setError
     ]
   )
@@ -1345,9 +1386,7 @@ export const useWorkspaceComposerUploadController = ({
       if (cleanup) {
         cleanup.attachments = cleanup.attachments.filter((item) => item.id !== attachment.id)
       }
-      void uploads.deleteUpload({ path: attachment.path }).catch((deleteError) => {
-        setError(asText(deleteError))
-      })
+      deleteAttachmentFiles([attachment], activeDraftKeyRef.current)
     },
     [
       activeDraftKeyRef,
@@ -1357,8 +1396,7 @@ export const useWorkspaceComposerUploadController = ({
       markChanged,
       removePastedText,
       updateActiveAttachments,
-      uploads,
-      setError
+      deleteAttachmentFiles
     ]
   )
 
@@ -1441,6 +1479,7 @@ export const useWorkspaceComposerUploadController = ({
       transfers,
       error,
       errorDetail,
+      attachmentNotice,
       errorProviderValidations,
       isUploading: transfers.some(unfinishedComposerUpload)
     },

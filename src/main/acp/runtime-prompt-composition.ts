@@ -4,6 +4,11 @@ import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import { isDelegationSettlementPrompt } from '../../shared/task-continuation'
+import {
+  markTrustedNotebookBindingPermissionPrompts,
+  taskNotebookRuntimeSelection
+} from '../notebook/runtime-binding-admission'
 import type { AgentFramework } from '../agent-framework/types'
 import type { NotebookWorkingFile } from './artifact-publication-continuation'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
@@ -17,6 +22,15 @@ import {
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
+import {
+  NotebookExecutionIntent,
+  markNotebookExecutionIntent,
+  notebookExecutionIntent,
+  notebookUserOperation
+} from '../notebook/execution-intent'
+import type { AcpProviderSessionResumer } from './provider-session-resumer'
+import { shellRuntimeAgentContract } from '../notebook/shell-runtime'
+import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
 
 type AcpRuntimePromptReloadHost = Readonly<{
   prepareContinuationReplay: AcpPromptTurnWorkflowOptions['prepareContinuationReplay']
@@ -25,7 +39,12 @@ type AcpRuntimePromptReloadHost = Readonly<{
 }>
 
 type AcpRuntimePromptHost = Readonly<{
-  prepareOpenCodeTools?: (providerSessionId: string, cwd: string) => Promise<void>
+  prepareOpenCodeTools?: (
+    providerSessionId: string,
+    cwd: string,
+    servers?: readonly acp.McpServer[]
+  ) => Promise<void>
+  refreshNotebookConnection?: AcpProviderSessionResumer['refreshNotebookConnection']
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
@@ -224,21 +243,90 @@ const composeAcpRuntimePromptOwners = (
     providerSessionId: string
     cwd: string
     skillRuntimeAllowlist?: readonly string[]
+    request?: AcpPromptRequest
+    signal?: AbortSignal
+    assertCurrent?: () => void
   }): Promise<void> => {
     session.sessionUpdateProjector.clearAssistantOutput(input.appSessionId)
-    if (input.framework.id === 'opencode') {
-      await host.prepareOpenCodeTools?.(input.providerSessionId, input.cwd)
+    const prepareFramework = async (): Promise<void> => {
+      if (!input.framework.beforePromptDispatch) return
+      const connection = base.connectionResources.connection
+      if (!connection) throw new Error('ACP connection is not available.')
+      const { codeBuddySharedSite } = base.backendGeneration.current.adapter
+      await input.framework.beforePromptDispatch({
+        ...(codeBuddySharedSite && { codeBuddySharedSite }),
+        connection,
+        providerSessionId: input.providerSessionId,
+        cwd: input.cwd,
+        mcpServers: base.sessionCapabilities.mcpServersFor(input.appSessionId),
+        ...(base.backendGeneration.current.session.model
+          ? { sessionModel: base.backendGeneration.current.session.model }
+          : {}),
+        ...(input.skillRuntimeAllowlist
+          ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist }
+          : {})
+      })
     }
-    if (!input.framework.beforePromptDispatch) return
-    const connection = base.connectionResources.connection
-    if (!connection) throw new Error('ACP connection is not available.')
-    await input.framework.beforePromptDispatch({
-      connection,
-      providerSessionId: input.providerSessionId,
-      cwd: input.cwd,
-      mcpServers: base.sessionCapabilities.mcpServersFor(input.appSessionId),
-      ...(input.skillRuntimeAllowlist ? { skillRuntimeAllowlist: input.skillRuntimeAllowlist } : {})
-    })
+    const verifyOpenCodeTools = async (servers?: readonly acp.McpServer[]): Promise<void> => {
+      if (input.framework.id === 'opencode')
+        await host.prepareOpenCodeTools?.(input.providerSessionId, input.cwd, servers)
+    }
+    const intent = input.request && notebookExecutionIntent(input.request)
+    // A distinct Provider dispatch has its own credential even when it inherits the same stopped
+    // intent. A late callback from its predecessor must never stop a newer explanatory branch.
+    if (intent) {
+      let refresh:
+        | Awaited<ReturnType<typeof base.sessionCapabilities.prepareNotebookConnectionRefresh>>
+        | undefined
+      try {
+        refresh = await base.sessionCapabilities.prepareNotebookConnectionRefresh({
+          appSessionId: input.appSessionId,
+          projectId: projectId(input.appSessionId),
+          cwd: input.cwd,
+          executionIntent: intent
+        })
+        const assertCurrent = (): void => {
+          input.signal?.throwIfAborted()
+          input.assertCurrent?.()
+          if (input.request) notebookUserOperation(input.request)?.assertCurrent()
+        }
+        assertCurrent()
+        if (refresh.providerRefreshRequired) {
+          if (!host.refreshNotebookConnection)
+            throw new Error('Notebook provider refresh is unavailable.')
+          const shellRuntime = base.sessionCapabilities.shellRuntimeBindingFor(input.appSessionId)
+          await host.refreshNotebookConnection({
+            sessionId: input.appSessionId,
+            cwd: input.cwd,
+            mcpServers: refresh.mcpServers,
+            skillRuntimeAllowlist: input.skillRuntimeAllowlist,
+            ...(shellRuntime
+              ? { shellRuntimeAgentContract: shellRuntimeAgentContract(shellRuntime) }
+              : {}),
+            signal: input.signal,
+            assertCurrent
+          })
+        } else {
+          // CodeBuddy selects its process-global native Session and validates its shared login.
+          // Keep the framework hook; only the generic Notebook-driven resume is unnecessary.
+          await prepareFramework()
+        }
+        assertCurrent()
+        // 新凭据提交前，按本轮待启用的配置校验工具，避免重新注册已经退役的连接。
+        await verifyOpenCodeTools(refresh.mcpServers)
+        assertCurrent()
+        refresh.commit()
+      } catch (error) {
+        // A cancelled/failed preparation must not leave an executable current intent for a
+        // later generic reconnect. Retired credentials are never restored.
+        intent.abandonUserExecution()
+        refresh?.release()
+        throw error
+      }
+      return
+    }
+    await prepareFramework()
+    await verifyOpenCodeTools()
   }
   const contextCompactionWorkflow = new AcpContextCompactionWorkflow({
     sessions: { activeSession, currentFramework },
@@ -332,6 +420,7 @@ const composeAcpRuntimePromptOwners = (
     permission: session.permissionContext,
     environment: {
       authorizedDirectories: options.authorizedDirectories,
+      connection: () => base.connectionResources.connection,
       connectionGeneration: () => base.connectionResources.epoch,
       backend: () => base.backendGeneration.current,
       tooling: () => session.sessionEnvironment.toolingAvailability(),
@@ -382,7 +471,237 @@ const composeAcpRuntimePromptOwners = (
           ...(attribution ? { attribution } : {}),
           text
         }),
-      beforePromptDispatch: beforeFrameworkPromptDispatch
+      beforePromptDispatch: beforeFrameworkPromptDispatch,
+      prepareTaskNotebookRuntime: async (request, workspaceCwd, signal) => {
+        const target = taskNotebookRuntimeSelection(request)
+        if (!target) return
+        const bind = options.notebook?.bindTaskRuntime
+        const { rootFrameId, agentFrameId, messageBranchId, runtimeSegmentId, promptMessageId } =
+          request.provenanceContext ?? {}
+        if (
+          !bind ||
+          !rootFrameId ||
+          !agentFrameId ||
+          !messageBranchId ||
+          !runtimeSegmentId ||
+          !promptMessageId
+        )
+          throw new Error('Notebook runtime selection is unavailable for this Task branch.')
+        notebookExecutionIntent(request)?.assertExecutable()
+        await bind(
+          markTrustedNotebookBindingPermissionPrompts(
+            {
+              ...target,
+              projectId: projectId(request.sessionId),
+              sessionId: request.sessionId,
+              workspaceCwd,
+              provenanceContext: {
+                rootFrameId,
+                agentFrameId,
+                messageBranchId,
+                runtimeSegmentId,
+                promptMessageId
+              }
+            },
+            request.permissionPrompts
+          ),
+          signal
+        )
+      },
+      commitNotebookDispatch: (appSessionId) =>
+        base.sessionCapabilities.commitNotebookDispatch(appSessionId),
+      prepareNotebookIntent: (request, mode, signal) => {
+        const notebook = options.notebook
+        if (!notebook) return
+        const scope = {
+          projectId: projectId(request.sessionId),
+          sessionId: request.sessionId,
+          messageBranchId: request.provenanceContext?.messageBranchId,
+          promptMessageId: request.provenanceContext?.promptMessageId
+        }
+        const lookupCurrent = (): NotebookExecutionIntent | undefined =>
+          notebook.currentExecutionIntent
+            ? notebook.currentExecutionIntent(scope)
+            : base.sessionCapabilities.notebookExecutionIntentFor(request.sessionId)
+        const current = lookupCurrent()
+        // Lightweight runtime adapters without a Notebook authority port keep their existing
+        // presentation-only contract. Production root and child capabilities always carry one.
+        if (!notebook.createExecutionIntent && !current && !notebookExecutionIntent(request)) return
+        const operation = notebookUserOperation(request)
+        let intent = notebookExecutionIntent(request)
+        const humanTurn =
+          mode.kind === 'user' &&
+          mode.runtimeReviewOwner !== 'task' &&
+          !operation?.task &&
+          !request.continuation &&
+          !request.suppressUserMessage
+        const taskContinuation =
+          mode.kind === 'user' &&
+          mode.runtimeReviewOwner === 'task' &&
+          !request.continuation &&
+          !request.suppressUserMessage &&
+          operation?.task &&
+          operation.refusalId
+        const remember = (intent: NotebookExecutionIntent): void => {
+          markNotebookExecutionIntent(request, intent)
+          const promptId = request.provenanceContext?.promptMessageId
+          if (promptId) notebook.rememberExecutionIntent?.(scope, promptId, intent)
+        }
+        if ((humanTurn || taskContinuation) && operation && notebook.createExecutionIntent) {
+          operation.assertCurrent()
+          if (operation.projectId && operation.projectId !== scope.projectId)
+            throw new Error('Notebook continuation does not belong to this Project.')
+          if (
+            operation.refusalId &&
+            (current?.refusalId !== operation.refusalId ||
+              current.scope.messageBranchId !== scope.messageBranchId ||
+              current.hasClaimedContinuation)
+          )
+            throw new Error('The Notebook refusal changed. Refresh it before continuing execution.')
+          if (
+            humanTurn &&
+            operation.desktopContinuation &&
+            operation.refusalId &&
+            current?.recheckMemory
+          ) {
+            const createIntent = notebook.createExecutionIntent
+            const admissionSignal = operation.admissionSignal
+              ? AbortSignal.any([signal, operation.admissionSignal])
+              : signal
+            const assertCurrent = (): void => {
+              admissionSignal.throwIfAborted()
+              operation.assertCurrent()
+              if (lookupCurrent() !== current || current.hasClaimedContinuation)
+                throw new Error(
+                  'The Notebook refusal changed. Refresh it before continuing execution.'
+                )
+            }
+            return current.recheckMemory(admissionSignal).then(() => {
+              assertCurrent()
+              return {
+                signal: admissionSignal,
+                assertCurrent,
+                commit: () => {
+                  assertCurrent()
+                  const continuation = createIntent({
+                    ...scope,
+                    continuedFromRefusalId: operation.refusalId
+                  })
+                  continuation.prepareUserExecution(operation.assertCurrent)
+                  current.claimContinuation()
+                  remember(continuation)
+                }
+              }
+            })
+          }
+          if (taskContinuation && operation.task) {
+            const { branchId, promptMessageId } = operation.task
+            if (
+              branchId !== scope.messageBranchId ||
+              !request.provenanceContext?.messageAncestry?.includes(promptMessageId) ||
+              (current?.scope.promptMessageId !== promptMessageId &&
+                notebook.resolveExecutionIntent?.(scope, promptMessageId) !== current)
+            )
+              throw new Error('The original Notebook stop is no longer in this Task branch.')
+            // A late turn can rebind the old intent, but the decision cannot grant execution twice.
+            current?.claimContinuation()
+          }
+          // Ordinary chat may explain the refusal. An explicit continuation creates a new intent.
+          if (current?.refusalId && !operation.refusalId) intent = current
+          else {
+            intent = notebook.createExecutionIntent({
+              ...scope,
+              ...(operation.refusalId ? { continuedFromRefusalId: operation.refusalId } : {})
+            })
+            intent.prepareUserExecution(operation.refusalId ? operation.assertCurrent : undefined)
+          }
+        } else if (!intent) {
+          const origin =
+            request.provenanceContext?.originMessageId ?? request.provenanceContext?.promptMessageId
+          intent = origin ? notebook.resolveExecutionIntent?.(scope, origin) : undefined
+          if (
+            !intent &&
+            mode.kind === 'application' &&
+            mode.attribution.feature === 'schedule' &&
+            !request.provenanceContext?.originMessageId &&
+            request.provenanceContext?.promptMessageId
+          ) {
+            // A trusted scheduled wake keeps the Session's existing execution context, including
+            // refusals. Its first context remains pending until the ordinary prompt preparation.
+            intent = current?.forDescendant(request.provenanceContext)
+            if (!intent && notebook.createExecutionIntent) {
+              intent = notebook.createExecutionIntent(scope)
+              intent.prepareUserExecution()
+            }
+          }
+        }
+        if (!intent) {
+          intent = new NotebookExecutionIntent(scope)
+          intent.block('originating-execution-context-unavailable')
+        }
+        remember(intent)
+        return undefined
+      },
+      observeNotebookExecutionLoop: ({
+        appSessionId,
+        providerSessionId,
+        request,
+        signal,
+        assertCurrent
+      }) => {
+        const intent = notebookExecutionIntent(request)
+        const credential = base.sessionCapabilities.notebookCredentialFor(appSessionId)
+        const connection = base.connectionResources.connection
+        const provider = activeSession(appSessionId)
+        if (!intent || !credential || !connection || provider?.sessionId !== providerSessionId)
+          return () => undefined
+        const isCurrent = (): boolean => {
+          if (
+            signal.aborted ||
+            base.connectionResources.connection !== connection ||
+            activeSession(appSessionId) !== provider
+          )
+            return false
+          try {
+            assertCurrent()
+            return base.sessionCapabilities.notebookCredentialFor(appSessionId) === credential
+          } catch {
+            return false
+          }
+        }
+        let stopObservation: (() => void) | undefined
+        const release = intent.observeViolations(credential, () => {
+          if (!isCurrent()) return
+          log.warn('Notebook Agent repeated a stopped execution', {
+            sessionId: appSessionId,
+            providerSessionId
+          })
+          stopObservation = requestPlanReviewProviderStop({
+            notify: () =>
+              connection.agent.notify(acp.methods.agent.session.cancel, {
+                sessionId: providerSessionId
+              }),
+            isCurrent,
+            onUnconfirmed: (reason) => {
+              session.publication.pushEvent({
+                kind: 'system',
+                level: 'error',
+                sessionId: appSessionId,
+                title: 'Notebook Agent stop was not confirmed',
+                text: `Execution remains blocked (${reason}). Repair the Agent runtime before continuing. Already dispatched Notebook work keeps its original owner.`
+              })
+            }
+          })
+        })
+        const onUserCancellation = (): void => release.acceptUserCancellation()
+        signal.addEventListener('abort', onUserCancellation, { once: true })
+        return () => {
+          release()
+          stopObservation?.()
+          // The logical interaction can still be draining already dispatched Notebook work.
+          // Its real user cancellation remains effective after the Provider has stopped.
+        }
+      }
     },
     artifacts: {
       open: openArtifact,
@@ -435,6 +754,7 @@ const composeAcpRuntimePromptOwners = (
     },
     currentCwd: () => base.snapshotOwner.cwd,
     resolveProjectId: projectId,
+    resolveProjectTracing: options.resolveProjectTracing,
     prepareContinuationReplay: host.reload.prepareContinuationReplay,
     disconnectForReload: host.reload.disconnect,
     resumeAfterReload: host.reload.resume,
@@ -487,6 +807,9 @@ const composeAcpRuntimePromptOwners = (
                 ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
                 ...(delegatedMessageId ? { delegatedMessageId } : {}),
                 ...(applicationPrompt ? { applicationPrompt } : {}),
+                ...(continuationAdmission && isDelegationSettlementPrompt(request)
+                  ? { delegationSettlement: true }
+                  : {}),
                 ...(approvedHandoffContinuation ? { approvedHandoffContinuation } : {})
               },
               continuationAdmission

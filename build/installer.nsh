@@ -32,6 +32,16 @@
 !include "${BUILD_RESOURCES_DIR}\windows-app-running.nsh"
 
 !macro customUnInstall
+  # Remove the launcher and its PATH entry before deleting the installed executable. Updates keep
+  # the launcher so the replacement install can refresh it in customInstall.
+  ${ifNot} ${isUpdated}
+    ClearErrors
+    ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --uninstall-cli' $R0
+    ${if} $R0 != 0
+      DetailPrint "Open-Science CLI launcher cleanup returned $R0; the uninstall will be retried."
+      Abort
+    ${endif}
+  ${endif}
   # Cleanup can fail after removing some program files. Keep retry's lifecycle helper in the
   # uninstaller itself, so its availability never depends on a partly removed installation.
   # The native helper replaces one powershell.exe launch (0.6-1.2 s each) per cleanup step.
@@ -59,6 +69,16 @@
     MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely remove its owned Notebook isolation resources. The uninstall was stopped so the cleanup can be retried." /SD IDOK
     Abort
     notebookSandboxCleanupComplete:
+    !ifdef APP_INSTALLER_STORE_FILE
+      ${if} $installMode == CurrentUser
+        ${GetParent} "$LOCALAPPDATA\${APP_INSTALLER_STORE_FILE}" $0
+        nsExec::ExecToLog '"$PLUGINSDIR\windows-uninstall-helper.exe" prepared-updates --cache "$0" --executable "$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
+        Pop $0
+        ${if} $0 != 0
+          DetailPrint "Open-Science prepared update cleanup returned $0"
+        ${endif}
+      ${endif}
+    !endif
     # A second installation may now own the scheme. Never remove its association.
     ReadRegStr $0 HKCU "Software\Classes\open-science\shell\open\command" ""
     ${if} $0 == '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
@@ -69,6 +89,40 @@
 !macroend
 
 !ifndef BUILD_UNINSTALLER
+!ifdef APP_64
+# Entered before the installer mutex, app-running check, uninstaller or registry writes.
+# The caller creates an empty private directory and publishes it only after a successful exit.
+!macro preInit
+  ${GetParameters} $0
+  ${If} $0 == "--open-science-stage"
+    SetSilent silent
+    SetErrorLevel 2
+    ReadEnvStr $1 OPEN_SCIENCE_UPDATE_STAGING
+    StrCmp $1 "" stage_finished
+    System::Call 'kernel32::CreateDirectoryW(w "$1\payload", p 0) i.r0'
+    StrCmp $0 "0" stage_finished
+    InitPluginsDir
+    ClearErrors
+    !ifdef COMPRESS
+      SetCompress off
+    !endif
+    File /oname=$PLUGINSDIR\app-64.${COMPRESSION_METHOD} "${APP_64}"
+    !ifdef COMPRESS
+      SetCompress "${COMPRESS}"
+    !endif
+    File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\x64\7za.exe"
+    IfErrors stage_finished
+    nsExec::ExecToStack '"$PLUGINSDIR\7za.exe" x -y -bd -bso0 -bsp0 -bse1 "-o$1\payload" "$PLUGINSDIR\app-64.${COMPRESSION_METHOD}"'
+    Pop $0
+    Pop $1
+    StrCmp $0 "0" 0 stage_finished
+    SetErrorLevel 0
+    stage_finished:
+    Quit
+  ${EndIf}
+!macroend
+!endif
+
 !macro customCopyUninstaller
   # Old binaries cannot accept new deletion exclusions. Use the current signed uninstaller for
   # both the first attempt and recovery, retaining upstream registration/shortcut handling.
@@ -303,7 +357,7 @@ FunctionEnd
 
 !macro customInit
   Call initializeUpdateReceipts
-  # Keep the explicit override empty so diagnostics.ps1 uses its ordinary-user LocalAppData fallback.
+  # Keep the explicit override empty so the native diagnostics helper uses its ordinary-user LocalAppData fallback.
   # Initializing the NSIS variable also keeps makensis warning-as-error builds clean.
   StrCpy $installDiagnosticDirectory ""
   # Cache both registered locations before either uninstall pass deletes their registry data.
@@ -386,6 +440,9 @@ FunctionEnd
 # These callbacks cover cancellation or an installer failure before the post-uninstall hooks run.
 # The normal path restores each directory immediately after its matching old-uninstaller pass.
 !macro customHeader
+  !ifdef APP_64
+    VIAddVersionKey /LANG=1033 "PrivateBuild" "Open-Science stage-v1 ${APP_64_UNPACKED_SIZE}"
+  !endif
   !insertmacro defineUpdateReceiptFunctions
   # NSIS extracts the new uninstaller after the application package. Probe the same write access
   # its File command will request before uninstalling the old app, and again before extraction.
@@ -475,6 +532,14 @@ FunctionEnd
   ${if} ${Errors}
     DetailPrint "Open-Science protocol registration failed."
     !insertmacro quitFailedUpdate
+  ${endif}
+  # Register the bundled ordinary Node CLI during installation so silent WinGet installs are
+  # immediately usable from a fresh terminal. The launcher owner keeps its PATH journal and
+  # refuses to overwrite an unmanaged command.
+  ClearErrors
+  ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --install-cli' $R0
+  ${if} $R0 != 0
+    DetailPrint "Open-Science CLI launcher installation returned $R0; the desktop app remains installed."
   ${endif}
   Push "installed"
   Call writeUpdateReceipt

@@ -16,10 +16,7 @@ import {
 type Owners = {
   sessionPackageService: SessionPackageService
   translate: NativeTranslator
-  archiveCoordinator: Pick<ArchiveCoordinator, 'reserveSessionExport' | 'reserveProjectImport'>
-  sessionPersistenceCoordinator: {
-    reserveSessionExport: (projectId: string, sessionId: string) => Promise<() => void>
-  }
+  archiveCoordinator: Pick<ArchiveCoordinator, 'reserveProjectImport'>
   applicationEvents: ApplicationEventPublisher
   projectRepository: Pick<ProjectRepository, 'get'>
   sessionRepository: Pick<SessionRepository, 'loadSession'>
@@ -35,7 +32,6 @@ export const createSessionPackageDesktop = ({
   sessionPackageService,
   translate,
   archiveCoordinator,
-  sessionPersistenceCoordinator,
   applicationEvents,
   projectRepository,
   sessionRepository,
@@ -51,30 +47,6 @@ export const createSessionPackageDesktop = ({
     assertCanStart: () => {
       if (isPackageHandoffHeld() || isMigrationInProgress() || isMigrationPending())
         throw new Error('Wait for the application handoff to finish before transferring research.')
-    },
-    reserveExport: async (request, signal) => {
-      let releasePersistence: (() => void) | undefined
-      try {
-        const releaseAdmission = await archiveCoordinator.reserveSessionExport(
-          request.projectId,
-          request.sessionId,
-          async () => {
-            releasePersistence = await sessionPersistenceCoordinator.reserveSessionExport(
-              request.projectId,
-              request.sessionId
-            )
-            await sessionPackageService.assertExportIdle(request)
-          },
-          signal
-        )
-        return () => {
-          releasePersistence?.()
-          releaseAdmission()
-        }
-      } catch (error) {
-        releasePersistence?.()
-        throw error
-      }
     },
     reserveImport: (projectId, signal) =>
       archiveCoordinator.reserveProjectImport(projectId, signal),

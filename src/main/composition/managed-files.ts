@@ -1,3 +1,4 @@
+import type { ArtifactProducerInputScope } from '../managed-file-versions/read-port'
 import { openComputeOutputPreview } from '../compute/job-output-preview'
 import { PptxAgentHandler } from '../pptx-edit/agent-handler'
 import { PptxDraftReview } from '../pptx-edit/draft-review'
@@ -41,6 +42,7 @@ export function composeManagedFiles({
   sessionRepository,
   notebookNetworkSandbox,
   getNotebookInputRegistry,
+  captureImageGenerationPreviewScope,
   readLiteratureItems
 }: {
   grantedRootsRepositoryRef: { current?: GrantedLocalRootsRepository }
@@ -52,6 +54,12 @@ export function composeManagedFiles({
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
   notebookNetworkSandbox: NotebookNetworkSandboxOwner
   getNotebookInputRegistry: () => NotebookInputRegistry
+  captureImageGenerationPreviewScope?: (request: {
+    projectId: string
+    sessionId: string
+    artifactId: string
+    versionId: string
+  }) => ArtifactProducerInputScope | undefined
   readLiteratureItems: ReadArtifactLiteratureItems
 }): {
   artifactRepository: ReturnType<typeof createDefaultArtifactRepository>
@@ -86,7 +94,9 @@ export function composeManagedFiles({
 } {
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
   const artifactRepository = createDefaultArtifactRepository()
-  const notebookRepository = new NotebookRunRepository(resolveDataRoot())
+  const notebookRepository = new NotebookRunRepository(resolveDataRoot(), () =>
+    sessionRepository.deletedSessionScopes()
+  )
   const notebookDependencyAnalyzer = createNotebookDependencyAnalyzer({
     storageRoot: resolveDataRoot(),
     repository: notebookRepository
@@ -181,11 +191,32 @@ export function composeManagedFiles({
     openLiterature: (reference) => literatureAttachmentAuthority.openReference(reference),
     openLatestManagedFile: (source, request) =>
       managedFileVersionService.openLatest({ source, ...request }),
-    openManagedFileVersion: (source, request) =>
-      managedFileVersionService.openVersion(
-        { source, projectId: request.projectId, fileId: request.fileId },
-        request.versionId
-      ),
+    openManagedFileVersion: async (source, request) => {
+      try {
+        return await managedFileVersionService.openVersion(
+          { source, projectId: request.projectId, fileId: request.fileId },
+          request.versionId
+        )
+      } catch (error) {
+        const scope =
+          source === 'artifact' && request.imageGenerationSessionId
+            ? captureImageGenerationPreviewScope?.({
+                projectId: request.projectId,
+                sessionId: request.imageGenerationSessionId,
+                artifactId: request.fileId,
+                versionId: request.versionId
+              })
+            : undefined
+        if (!scope) throw error
+        const lease = await managedFileVersionService.openProducerVersion(
+          request.projectId,
+          request.versionId,
+          scope
+        )
+        if (!lease) throw error
+        return lease
+      }
+    },
     openNotebookInput: (request) => getNotebookInputRegistry().openPreviewKey(request.path)
   })
   const managedPreviewOwners = createManagedPreviewOwnerRegistry(previewResources)

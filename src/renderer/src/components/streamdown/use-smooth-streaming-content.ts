@@ -34,10 +34,23 @@ const graphemeSegmenter =
     ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
     : undefined
 
-const splitGraphemes = (value: string): string[] =>
-  graphemeSegmenter
-    ? Array.from(graphemeSegmenter.segment(value), ({ segment }) => segment)
-    : Array.from(value)
+const appendGraphemes = (pending: string[], text: string): void => {
+  if (!graphemeSegmenter || !/[^\t\n -~]/u.test(text)) {
+    for (const character of text) pending.push(character)
+    return
+  }
+  for (const { segment } of graphemeSegmenter.segment(text)) pending.push(segment)
+}
+
+// Closing a stream only needs a threshold decision. Avoid materializing the entire unseen tail.
+const exceedsCatchUpThreshold = (text: string): boolean => {
+  if (text.length <= CATCH_UP_GRAPHEMES) return false
+  const segments = (graphemeSegmenter?.segment(text) ?? text)[Symbol.iterator]()
+  for (let count = 0; count <= CATCH_UP_GRAPHEMES; count++) {
+    if (segments.next().done) return false
+  }
+  return true
+}
 
 const shouldAnimateStreamingContent = (): boolean => {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false
@@ -81,7 +94,9 @@ const useSmoothStreamingContent = (
   // let the effect enqueue only appended content as the presentation state advances.
   const initialPendingRef = useRef<string[] | null>(null)
   if (initialPendingRef.current === null) {
-    initialPendingRef.current = animateOnMount ? splitGraphemes(content) : []
+    const initial: string[] = []
+    if (animateOnMount) appendGraphemes(initial, content)
+    initialPendingRef.current = initial
   }
   // Initialization above and all subsequent writes guarantee an array for effect callbacks.
   const pendingGraphemesRef = initialPendingRef as RefObject<string[]>
@@ -129,7 +144,7 @@ const useSmoothStreamingContent = (
     if (
       sourceWasOpen &&
       !sourceOpen &&
-      splitGraphemes(content.slice(visibleContentRef.current.length)).length > CATCH_UP_GRAPHEMES
+      exceedsCatchUpThreshold(content.slice(visibleContentRef.current.length))
     ) {
       resetPending()
       commit(content)
@@ -143,7 +158,7 @@ const useSmoothStreamingContent = (
     }
 
     if (content.startsWith(previousTarget)) {
-      const appended = splitGraphemes(content.slice(previousTarget.length))
+      const appended = content.slice(previousTarget.length)
       if (
         bufferingStartedAtRef.current === undefined &&
         pendingGraphemesRef.current.length > pendingIndexRef.current
@@ -156,9 +171,7 @@ const useSmoothStreamingContent = (
           resetPending()
           bufferingStartedAtRef.current = now
         }
-        // Provider/durable updates can contain hundreds of thousands of graphemes. A
-        // spread call exceeds V8's argument limit and escapes the Markdown boundary.
-        for (const grapheme of appended) pendingGraphemesRef.current.push(grapheme)
+        appendGraphemes(pendingGraphemesRef.current, appended)
         lastTargetUpdateAtRef.current = now
       }
     } else {

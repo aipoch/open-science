@@ -60,8 +60,11 @@ export type CreateArtifactVersionRequest = {
   messageBranchId: string
   messageBranchAncestry?: string[]
   messageAncestry?: string[]
-  runtimeSegmentId: string
-  promptMessageId: string
+  runtimeSegmentId: string | null
+  promptMessageId: string | null
+  imageTaskId?: string
+  /** Existing artifact lineage to append to when an operation edits a saved artifact version. */
+  lineageId?: string
   agentName?: string
   notebookSessionId?: string
   producerRunId?: string
@@ -139,6 +142,7 @@ export type ReplayArtifactVersionRequest = {
 
 export type ArtifactRpcMethod =
   | 'artifactSaveVersion'
+  | 'imageGenerate'
   | 'artifactReserveWrite'
   | 'artifactReleaseWrite'
   | 'artifactCreateVersion'
@@ -162,7 +166,7 @@ export type ArtifactRpcCapabilityBinding = {
   agentName?: string
   notebookSessionId?: string
   sourceScope?: ArtifactWriteSourceScope
-  allowedMethods?: ArtifactRpcMethod[]
+  allowedMethods?: readonly ArtifactRpcMethod[]
 }
 
 export type ArtifactVersionFile = ArtifactFile & {
@@ -196,6 +200,9 @@ export type GetArtifactLineageRequest = {
   artifactId: string
   versionId?: string
   cursor?: string
+  imageSourceKind?: 'artifact-version' | 'upload-version'
+  imageCursor?: string
+  imageInputOnly?: boolean
 }
 
 export type GetArtifactVersionProvenanceRequest = GetArtifactLineageRequest & {
@@ -221,6 +228,20 @@ export type ArtifactVersionDescriptor = Omit<ArtifactVersionFile, 'path' | 'file
   basedOnVersionId?: string
 }
 
+export type ImageVersionDependency = {
+  output: ArtifactVersionDescriptor
+  input: {
+    sourceKind: 'artifact-version' | 'upload-version'
+    projectId: string
+    sourceSessionId: string
+    sourceFileId: string
+    sourceVersionId: string
+    versionNumber: number
+    name: string
+    mimeType: 'image/png' | 'image/jpeg' | 'image/webp'
+  }
+}
+
 export type ArtifactLineageProvenance = {
   artifactId: string
   filename: string
@@ -231,6 +252,8 @@ export type ArtifactLineageProvenance = {
     deletedAt?: string
   }
   versions: ArtifactVersionDescriptor[]
+  imageDependencies?: ImageVersionDependency[]
+  nextImageCursor?: string
   nextCursor?: string
   selectedVersion?: ArtifactVersionDescriptor
   headVersion?: ArtifactVersionDescriptor
@@ -464,9 +487,10 @@ export type ArtifactVersionEvidence = {
     root_frame_id: string
     agent_frame_id: string
     message_branch_id: string
-    runtime_segment_id: string
-    prompt_message_id: string
+    runtime_segment_id?: string
+    prompt_message_id?: string
   }
+  image_task_id?: string
   is_user_upload: false
   reproduction_code?: string
   execution_snapshot_checksum?: string

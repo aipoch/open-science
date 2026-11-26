@@ -1,6 +1,11 @@
 import { PdfReconciliationDialog } from '../../pdf-annotations/PdfReconciliationDialog'
 import { pdfAnnotationSourceKey } from '../../pdf-annotations/pdf-annotation-index'
-import type { PdfAnnotation, PdfAnnotationSource } from '../../../../../../shared/pdf-annotations'
+import {
+  comparePdfAnnotationReadingPosition,
+  pdfAnnotationReadingPosition,
+  type PdfAnnotation,
+  type PdfAnnotationSource
+} from '../../../../../../shared/pdf-annotations'
 import type { TagView } from '../../../../../../shared/tags'
 import { useTagStore } from '@/stores/tag-store'
 import { ResourceTagMenu, TagSelection } from '../../../settings/ResourceTagControls'
@@ -342,7 +347,7 @@ const PdfAnnotationTagControls = ({
 }
 
 const PdfNotebookView = ({
-  source,
+  source: resolvedSource,
   active,
   onOpenPdf,
   sourceLoading = false,
@@ -366,7 +371,15 @@ const PdfNotebookView = ({
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const annotationPort = usePdfAnnotations()
-  const { loading, loadError, retryLoad, available, create, update, remove } = annotationPort
+  const {
+    loading,
+    loadError,
+    retryLoad,
+    available: writable,
+    create,
+    update,
+    remove
+  } = annotationPort
   const [scope, setScope] = useState<'all' | 'page'>('all')
   const [editingPage, setEditingPage] = useState(currentPage)
   const [query, setQuery] = useState('')
@@ -397,6 +410,26 @@ const PdfNotebookView = ({
   const [exportFormat, setExportFormat] = useState<'markdown' | 'csv'>('markdown')
   const [pendingId, setPendingId] = useState<string>()
   const [error, setError] = useState<string>()
+  const page = annotationPort.initialReadingPage
+  const initialPage =
+    active &&
+    !sidebar &&
+    !filtersOpen &&
+    !query.trim() &&
+    !debouncedQuery.trim() &&
+    sort === 'page' &&
+    filter === 'all' &&
+    kindFilter === 'all' &&
+    colorFilter === 'all' &&
+    !editingId &&
+    !newNoteKind &&
+    page &&
+    (!resolvedSource ||
+      pdfAnnotationSourceKey(resolvedSource) === pdfAnnotationSourceKey(page.source))
+      ? page
+      : undefined
+  const source = resolvedSource ?? (active && !sidebar ? page?.source : undefined)
+  const available = writable && Boolean(resolvedSource) && !page
 
   const scopedPage = editingId || newNoteKind ? editingPage : currentPage
   const effectiveSort = sidebar ? 'page' : sort
@@ -450,33 +483,18 @@ const PdfNotebookView = ({
       ),
     [scoped, hasQuery, tagNames]
   )
-  const ordered = useMemo(
-    () =>
-      [...scoped].sort((left, right) => {
-        if (effectiveSort !== 'page')
-          return (
-            (effectiveSort === 'newest' ? -1 : 1) *
-            (left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
-          )
-        const leftPage =
-          left.target.selector.kind === 'document-note' ? 0 : left.target.selector.pageNumber
-        const rightPage =
-          right.target.selector.kind === 'document-note' ? 0 : right.target.selector.pageNumber
-        const top = (item: PdfAnnotation): number =>
-          item.target.selector.kind === 'text'
-            ? (item.target.selector.quads[0]?.y ?? 0)
-            : item.target.selector.kind === 'region'
-              ? item.target.selector.rect.y
-              : 0
-        return (
-          leftPage - rightPage ||
-          top(left) - top(right) ||
-          left.createdAt.localeCompare(right.createdAt) ||
-          left.id.localeCompare(right.id)
-        )
-      }),
-    [scoped, effectiveSort]
-  )
+  const ordered = useMemo(() => {
+    if (effectiveSort === 'page')
+      return scoped
+        .map((item) => ({ item, position: pdfAnnotationReadingPosition(item) }))
+        .sort((left, right) => comparePdfAnnotationReadingPosition(left.position, right.position))
+        .map(({ item }) => item)
+    return [...scoped].sort(
+      (left, right) =>
+        (effectiveSort === 'newest' ? -1 : 1) *
+        (left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+    )
+  }, [scoped, effectiveSort])
   const filtered = useMemo(
     () =>
       ordered.filter((annotation) => {
@@ -496,14 +514,15 @@ const PdfNotebookView = ({
     : undefined
   // Bound initial React/DOM work without dropping any notes from search or export.
   const visible = useMemo(() => {
+    if (initialPage) return initialPage.items
     const batch = filtered.slice(0, renderLimit)
     return editedAnnotation && !batch.includes(editedAnnotation)
       ? [editedAnnotation, ...batch]
       : batch
-  }, [editedAnnotation, filtered, renderLimit])
+  }, [editedAnnotation, filtered, renderLimit, initialPage])
 
   useEffect(() => {
-    if (!active || !source) return
+    if (!active || !source || initialPage) return
     return subscribeBookmarkReveal((target) => {
       if (
         listRef.current
@@ -539,7 +558,7 @@ const PdfNotebookView = ({
       card.focus({ preventScroll: true })
       return true
     })
-  }, [active, source, visible, all, ordered, changeQuery])
+  }, [active, source, visible, all, ordered, changeQuery, initialPage])
 
   const reveal = async (bookmark: PdfAnnotation): Promise<void> => {
     setPendingId(bookmark.id)
@@ -599,7 +618,7 @@ const PdfNotebookView = ({
   }
 
   const exportNotes = (): void => {
-    if (!source || filtered.length === 0) return
+    if (loading || !source || filtered.length === 0) return
     const rows = filtered.map((bookmark) => {
       const selector = bookmark.target.selector
       const page =
@@ -877,7 +896,7 @@ const PdfNotebookView = ({
                           ? t('Export filtered notes')
                           : t('Export notes')
                       }
-                      disabled={filtered.length === 0}
+                      disabled={loading || filtered.length === 0}
                       onClick={exportNotes}
                     >
                       <Download className="size-3.5" aria-hidden="true" />
@@ -1090,9 +1109,13 @@ const PdfNotebookView = ({
           className="shrink-0 space-y-1.5 border-b border-border/70 bg-bg-000/70 px-3 py-2"
         >
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              {filtered.length} / {all.length} {t('Annotations')} {t('in this PDF')}
-            </span>
+            {loading ? (
+              <span>{t('Loading annotations…')}</span>
+            ) : (
+              <span>
+                {filtered.length} / {all.length} {t('Annotations')} {t('in this PDF')}
+              </span>
+            )}
             {activeFilterCount > 0 ? (
               <Button
                 type="button"
@@ -1209,7 +1232,12 @@ const PdfNotebookView = ({
         </p>
       ) : null}
       <div className={cn('min-h-0 flex-1 overflow-y-auto', sidebar ? 'px-3 py-2' : 'p-4')}>
-        {loading && all.length === 0 ? (
+        {initialPage ? (
+          <span role="status" className="sr-only">
+            {t('Loading annotations…')}
+          </span>
+        ) : null}
+        {loading && all.length === 0 && !initialPage ? (
           <div className="flex min-h-full items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             {t('Loading annotations…')}
@@ -1236,7 +1264,13 @@ const PdfNotebookView = ({
             ) : null}
           </div>
         ) : (
-          <ol ref={listRef} className={cn('mx-auto grid max-w-3xl', sidebar ? 'gap-0' : 'gap-2')}>
+          <ol
+            ref={listRef}
+            data-pdf-notes-initial-page={initialPage ? true : undefined}
+            aria-busy={initialPage ? true : undefined}
+            inert={Boolean(initialPage)}
+            className={cn('mx-auto grid max-w-3xl', sidebar ? 'gap-0' : 'gap-2')}
+          >
             {visible.map((bookmark, index) => {
               const color = bookmark.color ?? 'yellow'
               const palette = annotationColorClasses(color)

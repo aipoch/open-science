@@ -10,7 +10,7 @@ export type SpeechReply =
   | Extract<ResearchVideoWorkerMessage, { kind: 'speech-result' | 'speech-duration' }>
   | (Extract<ResearchVideoWorkerMessage, { kind: 'error' }> & { lane: number })
 
-const SPEECH_REQUEST_TIMEOUT_MS = 180_000
+const SPEECH_REQUEST_TIMEOUT_MS = 6 * 60_000
 const SPEECH_EXIT_TIMEOUT_MS = 5_000
 
 export class ResearchVideoSpeechCleanupError extends Error {

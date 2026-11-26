@@ -1,8 +1,15 @@
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import {
   pendingWorkspaceElicitations,
   useWorkspaceElicitationFailures
 } from '@/lib/acp/useWorkspaceElicitation'
 import { applyWorkspaceRuntimeEvent } from '@/lib/acp/workspace-events'
+import type { ElicitationResponse } from '../../../../shared/elicitation'
+import {
+  EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE
+} from '../../../../shared/failure/messages'
+import { getResumeFailureMessage } from '@/lib/acp/workspace-runtime-prompt-preparation-owner'
 import {
   reportWorkspaceOperationError,
   clearWorkspaceOperationError,
@@ -12,14 +19,20 @@ import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotat
 import { parseSideChatAnnotationText, type Annotation } from '../../../../shared/annotations'
 import { SideChatPanel } from './SideChatPanel'
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useState } from 'react'
+import {
+  ImageComposerBridgeProvider,
+  useImageComposerTarget
+} from './image-edit/image-composer-bridge'
+import { imageEditorScope } from './image-edit/image-editor-state'
 import { createRoot, type Root } from 'react-dom/client'
 import type { PropsWithChildren } from 'react'
+import { fireEvent, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { forkSessionMock, scrollerProps } = vi.hoisted(() => ({
   forkSessionMock: vi.fn(async () => undefined),
-  scrollerProps: { turnOutcomeActions: undefined as unknown }
+  scrollerProps: { turnOutcomeActions: undefined as unknown, onStartResearch: undefined as unknown }
 }))
 vi.mock('@/lib/session-fork', () => ({
   forkSession: forkSessionMock,
@@ -27,6 +40,10 @@ vi.mock('@/lib/session-fork', () => ({
 }))
 
 import { ConversationPanel } from './ConversationPanel'
+import { NotebookMemoryNoticeBridge } from './NotebookMemoryNoticeBridge'
+import type { NotebookMemoryRejectedEvent } from '../../../../shared/notebook-memory'
+import type { NotebookChangedEvent } from '../../../../shared/notebook'
+import type { ReplayRunIndex } from '../../../../shared/replay'
 import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
 import { AcpDurableContinuationContextOwner } from '../../../../main/acp/durable-continuation-context-owner'
@@ -256,6 +273,7 @@ vi.mock('./WorkspaceMessageScroller', () => ({
     onStartResearch?: (prompt: string) => void
   }): React.JSX.Element => {
     scrollerProps.turnOutcomeActions = turnOutcomeActions
+    scrollerProps.onStartResearch = onStartResearch
     return (
       <>
         {forkSourceContent}
@@ -724,6 +742,7 @@ const createPanelDefaults = (): PanelProps => ({
     }
   },
   conversation: {
+    runtimeInteractionInFlight: false,
     optimisticMessage: undefined,
     planProjectionRecoveryError: false,
     availability: {
@@ -981,6 +1000,37 @@ const dispatchDrag = (
     target.dispatchEvent(event)
   })
 }
+
+describe('ConversationPanel Web tool cancellation', () => {
+  const activeSession: ChatSession = {
+    id: 'web-session',
+    projectId: 'web-project',
+    title: 'Read web page',
+    cwd: '/workspace',
+    status: 'idle',
+    messages: [],
+    conversationGraph: createLinearConversationGraph({
+      sessionId: 'web-session',
+      messages: [],
+      frameworkId: 'open-science-agent',
+      createdAt: 1,
+      updatedAt: 1
+    }),
+    createdAt: 1,
+    updatedAt: 1
+  }
+  it('retains Stop after remount when the runtime still owns the turn', async () => {
+    const cancel = vi.fn(async () => undefined)
+    renderPanel({
+      view: { activeSession },
+      conversation: { runtimeInteractionInFlight: true, actions: { cancel } }
+    })
+    const stop = container.querySelector<HTMLButtonElement>('[aria-label="Cancel run"]')!
+    expect(stop).not.toBeNull()
+    await act(async () => stop.click())
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+})
 
 describe('ConversationPanel header spacing', () => {
   it('opens Model settings for an unavailable Subagent configuration', () => {
@@ -1556,6 +1606,53 @@ describe('ConversationPanel composer errors', () => {
     }
   )
 
+  it('keeps the message viewport and its research action stable under the image editor', () => {
+    const activeSession: ChatSession = {
+      id: 'image-session',
+      cwd: '/workspace',
+      projectId: 'project-a',
+      title: 'Image session',
+      status: 'idle',
+      messages: planOriginMessages(),
+      createdAt: 1,
+      updatedAt: 2
+    }
+    function Editor(): React.JSX.Element {
+      const [viewport, attach] = useState<HTMLDivElement | null>(null)
+      useImageComposerTarget(imageEditorScope(activeSession)!, viewport)
+      return <div ref={attach} />
+    }
+    const props = mergePanelProps(createPanelDefaults(), {
+      view: { activeSession, canEditDraft: true }
+    })
+    const panel = <PanelHarness {...props} />
+    const render = (editing: boolean): void => {
+      act(() =>
+        root.render(
+          <ImageComposerBridgeProvider>
+            {panel}
+            {editing && <Editor />}
+          </ImageComposerBridgeProvider>
+        )
+      )
+    }
+    render(false)
+    const form = getComposerForm()
+    const research = scrollerProps.onStartResearch
+    expect(research).toEqual(expect.any(Function))
+    render(true)
+    const host = container.querySelector('[data-testid="conversation-image-composer"]')!
+    expect(host.hasAttribute('hidden')).toBe(false)
+    expect(host.classList.contains('absolute')).toBe(true)
+    expect(form.hasAttribute('inert')).toBe(true)
+    expect(form.classList.contains('invisible')).toBe(true)
+    expect(form.classList.contains('hidden')).toBe(false)
+    expect(scrollerProps.onStartResearch).toBe(research)
+    render(false)
+    expect(getComposerForm()).toBe(form)
+    expect(form.hasAttribute('inert')).toBe(false)
+  })
+
   it('keeps Turn Outcome actions stable across draft edits but never calls stale handlers', () => {
     const firstRequest = vi.fn()
     const nextRequest = vi.fn()
@@ -1902,6 +1999,7 @@ beforeEach(() => {
   window.api = {
     notebook: {
       state: vi.fn().mockResolvedValue({ runs: [] }),
+      backgroundTasks: vi.fn().mockResolvedValue({ runs: [] }),
       onChanged: vi.fn(() => vi.fn()),
       cancelBackgroundRun: vi.fn()
     }
@@ -1927,6 +2025,212 @@ afterEach(() => {
   vi.unstubAllGlobals()
   container.remove()
 })
+
+const notebookContinuationScenarios = [
+  'reply only',
+  'background run',
+  'completed without code-start evidence',
+  'missing run detail',
+  'settled without admission',
+  'successful Shell exit'
+] as const
+
+it.each(notebookContinuationScenarios)(
+  'shows the admitted Notebook continuation outcome for %s',
+  async (scenario) => {
+    const session: ChatSession = {
+      id: `memory-continuation-${scenario}`,
+      projectId: 'project-a',
+      title: 'Notebook continuation',
+      cwd: '/workspace',
+      status: 'idle',
+      messages: [
+        {
+          id: 'refused-prompt',
+          role: 'user',
+          content: 'Run the Notebook.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+          turnOutcome: { kind: 'completed', settledAt: 2 }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    }
+    const prompt: ChatSession['messages'][number] = {
+      id: 'continuation-prompt',
+      role: 'user',
+      content: 'Continue.',
+      status: 'complete',
+      eventIds: [],
+      createdAt: 3,
+      updatedAt: 3
+    }
+    const branchId = `message-branch-${session.id}`
+    const admission = {
+      executionId: 'continuation-execution',
+      promptMessageId: prompt.id,
+      rootFrameId: `root-frame-${session.id}`,
+      agentFrameId: `root-frame-${session.id}`,
+      messageBranchId: branchId,
+      promptRuntimeSegmentId: `runtime-segment-${session.id}`,
+      runtimeSegmentId: `runtime-segment-${session.id}`
+    }
+    const run: ReplayRunIndex = {
+      ...admission,
+      runId: 'background',
+      cellId: 'cell',
+      status: 'queued',
+      startedAt: 3,
+      kernelKind: 'repl',
+      source: 'agent'
+    }
+    const unrelated: ReplayRunIndex[] = [
+      { ...run, runId: 'old', status: 'completed', promptMessageId: 'refused-prompt' },
+      { ...run, runId: 'other-branch', status: 'completed', messageBranchId: 'other-branch' }
+    ]
+    let currentRun: ReplayRunIndex & {
+      executionStarted?: boolean
+      kernelDispatched?: boolean
+      exitCode?: number
+    } =
+      scenario === 'completed without code-start evidence'
+        ? { ...run, status: 'completed', kernelDispatched: true }
+        : run
+    const publish = (next: ChatSession): void => {
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...next,
+            conversationGraph: createLinearConversationGraph({ ...next, sessionId: next.id })
+          }
+        ]
+      })
+    }
+    const MemoryConversation = (): React.JSX.Element => {
+      const activeSession = useSessionStore((state) => state.sessions[0])
+      const defaults = createPanelDefaults()
+      return <PanelHarness {...defaults} view={{ ...defaults.view, activeSession }} />
+    }
+    let rejectMemory!: (event: NotebookMemoryRejectedEvent) => void
+    window.api.notebook.onMemoryRejected = (listener) => {
+      rejectMemory = listener
+      return () => undefined
+    }
+    const notebookListeners = new Set<(event: NotebookChangedEvent) => void>()
+    window.api.notebook.onChanged = (listener) => {
+      notebookListeners.add(listener)
+      return () => notebookListeners.delete(listener)
+    }
+    const notifyNotebookChanged = (): void => {
+      for (const listener of notebookListeners)
+        listener({
+          projectId: session.projectId,
+          sessionId: session.id,
+          workspaceCwd: session.cwd,
+          dataRoot: '/data',
+          runtimeRoot: '/workspace/runtime',
+          notebookSessionRoot: '/workspace/notebook',
+          runJsonPath: '/workspace/runs.json'
+        })
+    }
+    window.api.notebook.runIndex = async () =>
+      scenario === 'reply only' ? unrelated : [...unrelated, currentRun]
+    window.api.notebook.state = vi.fn(async () => ({
+      runs: [
+        ...unrelated.map((row) => ({ ...row, executionStarted: true })),
+        ...(scenario === 'missing run detail' ? [] : [currentRun])
+      ]
+    })) as unknown as typeof window.api.notebook.state
+    const sendMessage = vi.fn(async () => {
+      publish({ ...session, messages: [...session.messages, prompt] })
+      return { sessionId: session.id, messageId: prompt.id }
+    })
+    publish(session)
+    await act(async () =>
+      root.render(
+        <>
+          <NotebookMemoryNoticeBridge projectId={session.projectId} sendMessage={sendMessage} />
+          <MemoryConversation />
+        </>
+      )
+    )
+    await act(async () =>
+      rejectMemory({
+        projectId: session.projectId,
+        sessionId: session.id,
+        messageBranchId: branchId,
+        source: 'agent',
+        refusalId: `continuation-outcome-${scenario}`,
+        memory: {
+          status: 'pressured',
+          reason: 'windows-physical-low',
+          source: 'windows-performance-info',
+          executionScope: 'windows:host',
+          checkedAt: 1
+        }
+      })
+    )
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Check and continue' }))
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText('Continuing Notebook work…')).toBeTruthy()
+
+    const admitted: ChatSession = {
+      ...session,
+      messages: [...session.messages, prompt],
+      runtimeSessionAdmissions: scenario === 'settled without admission' ? [] : [admission]
+    }
+    await act(async () => publish(admitted))
+    expect(screen.getByText('Continuing Notebook work…')).toBeTruthy()
+    expect(screen.queryByText('Notebook execution started')).toBeNull()
+
+    const settled: ChatSession = {
+      ...admitted,
+      messages: [
+        ...session.messages,
+        { ...prompt, turnOutcome: { kind: 'completed', settledAt: 4 } }
+      ]
+    }
+    await act(async () => publish(settled))
+    const unconfirmed = 'Memory check passed. Notebook execution could not be confirmed.'
+    if (scenario === 'background run' || scenario === 'successful Shell exit') {
+      expect(screen.getByText('Continuing Notebook work…')).toBeTruthy()
+      expect(screen.queryByText('Notebook execution started')).toBeNull()
+      await act(async () => {
+        currentRun = { ...run, status: 'running' }
+        notifyNotebookChanged()
+      })
+      expect(screen.getByText('Continuing Notebook work…')).toBeTruthy()
+      expect(screen.queryByText('Notebook execution started')).toBeNull()
+      await act(async () => {
+        currentRun =
+          scenario === 'background run'
+            ? { ...run, status: 'completed', executionStarted: true }
+            : { ...run, status: 'completed', kernelKind: 'bash', exitCode: 0 }
+        notifyNotebookChanged()
+      })
+      expect(screen.getByText('Notebook execution started')).toBeTruthy()
+      await act(async () =>
+        publish({
+          ...settled,
+          runtimeSessionAdmissions: [admission, { ...admission, executionId: 'replacement' }]
+        })
+      )
+      expect(screen.queryByText('Notebook execution started')).toBeNull()
+      expect(screen.getByText(unconfirmed)).toBeTruthy()
+    } else if (scenario === 'reply only') {
+      expect(screen.getByText('Memory check passed. Notebook did not run this turn.')).toBeTruthy()
+    } else {
+      expect(screen.getByText(unconfirmed)).toBeTruthy()
+    }
+    expect(screen.queryByText('Continuing Notebook work…')).toBeNull()
+    expect(sendMessage).toHaveBeenCalledOnce()
+  }
+)
 
 describe('ConversationPanel context reset notice', () => {
   const session: ChatSession = {
@@ -3750,6 +4054,62 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent).not.toContain('Choose a foreign option')
   })
 
+  it.each([true, false])('ignores a question owned by another branch (live: %s)', (live) => {
+    const original = materializeSessionConversationGraph({
+      id: 'question-branch',
+      cwd: '/workspace',
+      projectId: 'project',
+      title: 'Branch question',
+      status: 'waiting-for-user',
+      messages: [planOriginMessages()[0]],
+      createdAt: 1,
+      updatedAt: 2,
+      activities: [
+        {
+          id: 'ask',
+          kind: 'tool',
+          title: 'Other branch',
+          status: 'in_progress',
+          promptMessageId: planOriginMessages()[0].id,
+          sortIndex: 1,
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1,
+          elicitation: {
+            message: 'Other branch question',
+            fields: [],
+            state: 'pending',
+            durable: { kind: 'agent-user-choice', requestId: 'ask' }
+          }
+        }
+      ]
+    })
+    const graph = original.conversationGraph!
+    const sibling = { ...graph.branches[0], id: 'other-branch' }
+    const activeSession = hydrateSession({
+      ...original,
+      conversationGraph: {
+        ...graph,
+        branches: [...graph.branches, sibling],
+        frames: graph.frames.map((frame) => ({ ...frame, activeBranchId: sibling.id }))
+      }
+    })
+    const request = {
+      requestId: 'ask',
+      toolCallId: 'ask',
+      sessionId: original.id,
+      message: 'Other branch question',
+      fields: [],
+      durable: { kind: 'agent-user-choice' as const, requestId: 'ask' }
+    }
+    renderPanel({ view: { activeSession }, elicitation: { requests: live ? [request] : [] } })
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="ordinary-composer-form"]')?.hasAttribute('inert')
+    ).toBe(false)
+    expect(pendingWorkspaceElicitations(activeSession)).toEqual([])
+  })
+
   it('does not block the composer for an orphaned non-durable Ask-User activity', () => {
     const activeSession: ChatSession = {
       id: 'session-orphaned-choice',
@@ -3798,6 +4158,148 @@ describe('ConversationPanel composer intake', () => {
     expect(getComposerForm().hidden).toBe(false)
     expect(container.textContent).not.toContain('Waiting for a response')
   })
+
+  it.each([NO_ACTIVE_PROVIDER_MESSAGE, EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE])(
+    'shows the current question recovery even when older questions still appear to be waiting (%s)',
+    async (providerError) => {
+      const prompts = ['old-wait', 'old-error', 'current']
+      let stored: PersistedChatSession = materializeSessionConversationGraph({
+        id: 'saved-ask-user-recovery',
+        projectId: 'project-a',
+        title: 'Saved Ask User recovery',
+        cwd: '/workspace',
+        status: 'waiting-for-user',
+        runtimeTranscriptOwner: 'main',
+        messages: [
+          ...prompts.map((key, index) => ({
+            id: key,
+            role: 'user' as const,
+            content: 'Choose an option.',
+            status: 'complete' as const,
+            eventIds: [],
+            createdAt: index * 3 + 1,
+            updatedAt: index * 3 + 1
+          })),
+          {
+            id: 'steering',
+            role: 'user',
+            responseToMessageId: 'current',
+            content: 'Focus on the latest results.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 10,
+            updatedAt: 10
+          }
+        ],
+        activities: prompts.map((key, index) => ({
+          id: key + '-question',
+          kind: 'tool' as const,
+          title: 'Choose an option',
+          status: 'completed' as const,
+          eventIds: [],
+          promptMessageId: key,
+          sortIndex: index * 3 + 2,
+          createdAt: index * 3 + 2,
+          updatedAt: index * 3 + 3,
+          elicitation: {
+            message: 'Choose an option.',
+            fields: [],
+            state: 'declined' as const,
+            respondedAt: index * 3 + 3,
+            continuationPending: true as const,
+            continuationRecovery:
+              key === 'old-wait'
+                ? undefined
+                : {
+                    error:
+                      key === 'old-error'
+                        ? 'Previous question failed'
+                        : `Error invoking remote method 'acp:resume-session': ApplicationCommandError: ${providerError}`
+                  },
+            durable: {
+              kind: 'agent-user-choice' as const,
+              requestId: key + '-request',
+              promptMessageId: key
+            }
+          }
+        })),
+        createdAt: 1,
+        updatedAt: 10
+      })
+      const owner = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => structuredClone(stored),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          stored = mutate(structuredClone(stored))
+          return structuredClone(stored)
+        }
+      })
+      const respond = vi.fn(async ({ action, request, requestId }: ElicitationResponse) => {
+        if (!request) throw new Error('Missing question request')
+        await owner.prepareElicitation({
+          projectId: stored.projectId,
+          sessionId: stored.id,
+          toolCallId: request.toolCallId,
+          requestId,
+          action
+        })
+      })
+      const activeSession = hydrateSession(stored)
+      expect(pendingWorkspaceElicitations(activeSession).map(({ requestId }) => requestId)).toEqual(
+        ['current-request']
+      )
+
+      renderPanel({
+        view: { activeSession },
+        elicitation: { requests: pendingWorkspaceElicitations(activeSession), respond },
+        agentControls: {
+          modelUnavailable: true,
+          modelConfiguration: {
+            providerId: 'removed',
+            model: 'old-model',
+            reasoningEffort: 'default'
+          }
+        }
+      })
+
+      expect(
+        container.querySelector('[data-testid="elicitation-continuation-progress"]')
+      ).toBeNull()
+      const recovery = container.querySelector('[data-testid="elicitation-recovery"]')
+      expect(recovery?.textContent).toContain('Session model unavailable')
+      expect(recovery?.textContent).toContain('Your response was saved.')
+      expect(recovery?.textContent).toContain(
+        'Select “End this wait”, then choose an available model in the message composer.'
+      )
+      expect(recovery?.textContent).toContain(providerError)
+      expect(recovery?.textContent).not.toContain('Previous question failed')
+      expect(recovery?.querySelector('[data-testid="mock-model-picker"]')).toBeNull()
+      expect(recovery?.textContent).not.toContain('Retry continuation')
+
+      await act(async () =>
+        [...(recovery?.querySelectorAll('button') ?? [])]
+          .find((button) => button.textContent === 'End this wait')!
+          .click()
+      )
+
+      expect(respond).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'current-request', action: 'cancel' })
+      )
+      expect(stored.status).toBe('idle')
+      expect(stored.activities?.[0].elicitation?.continuationPending).toBe(true)
+      expect(stored.activities?.[1].elicitation?.continuationRecovery?.error).toBe(
+        'Previous question failed'
+      )
+
+      // Even when a legacy status says "waiting", recorded older questions do not block the composer.
+      const settled = hydrateSession({ ...stored, status: 'waiting-for-user' })
+      renderPanel({ view: { activeSession: settled }, elicitation: { requests: [], respond } })
+      expect(pendingWorkspaceElicitations(settled)).toEqual([])
+      expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+      const composer = container.querySelector('[data-testid="ordinary-composer-form"]')
+      expect(composer?.hasAttribute('inert')).toBe(false)
+      expect(composer?.querySelector('[data-testid="mock-model-picker"]')).not.toBeNull()
+    }
+  )
 
   it('retains the saved-question recovery exit after navigating away during a failed recovery write', async () => {
     const session: ChatSession = {
@@ -4096,7 +4598,7 @@ describe('ConversationPanel composer intake', () => {
       // pending question; the event consumer must deliver it to that surface.
       renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
       expect(container.textContent).toContain(
-        authenticationRequired ? 'Model configuration needs attention' : failure
+        authenticationRequired ? 'Model provider credentials need attention' : failure
       )
       renderPanel({
         view: {
@@ -4116,7 +4618,7 @@ describe('ConversationPanel composer intake', () => {
             .querySelector('[data-testid="ordinary-composer-form"]')
             ?.hasAttribute('inert') ?? true
         ).toBe(true)
-        expect(container.textContent).toContain('Model configuration needs attention')
+        expect(container.textContent).toContain('Model provider credentials need attention')
         expect(
           [...container.querySelectorAll('button')].some(
             (button) => button.textContent === 'Model settings'
@@ -4377,8 +4879,12 @@ describe('ConversationPanel composer intake', () => {
       errorDetail: 'disk full'
     }
     renderPanel({
+      view: { actionError: failed.error },
       composer: {
         view: {
+          error: failed.error,
+          errorDetail: failed.errorDetail,
+          attachmentNotice: { title: failed.error },
           transfers: [
             failed,
             { ...failed, transferId: 'restored', name: 'restored.csv', canRetry: false }
@@ -4390,9 +4896,15 @@ describe('ConversationPanel composer intake', () => {
     const retry = container.querySelector<HTMLButtonElement>(
       '[aria-label="Retry attachment failed.csv"]'
     )
+    expect(
+      container.querySelector('[data-notice-operation="attachment"] h2')?.textContent
+    ).toContain(failed.error)
+    expect(container.querySelector('[data-notice-operation="action"]')).toBeNull()
     expect(retry).not.toBeNull()
     expect(container.querySelector('[aria-label="Retry attachment restored.csv"]')).toBeNull()
-    expect(container.querySelector('[title="disk full"]')).not.toBeNull()
+    expect(container.querySelector('[title$="disk full"]')?.getAttribute('title')).toBe(
+      'Upload failed\ndisk full'
+    )
     act(() => retry?.click())
     expect(retryTransfer).toHaveBeenCalledExactlyOnceWith(failed)
   })
@@ -5671,6 +6183,87 @@ describe('ConversationPanel composer intake', () => {
     expect(container.textContent?.match(/"items"/g)).toHaveLength(2)
   })
 
+  it('keeps a restored Side chat error without source metadata in Details', () => {
+    const error = 'Upstream returned a private diagnostic'
+    renderSidePanel({
+      sideChat: {
+        view: {
+          generation: 1,
+          parentSessionId: 'session-existing',
+          projectId: 'project-a',
+          sideSessionId: 'side-1',
+          entries: [],
+          draft: '',
+          running: false,
+          error
+        }
+      }
+    })
+    const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+    expect(notice?.querySelector('h2')?.textContent).toBe('Request failed')
+    expect(notice?.querySelector('details pre')?.textContent).toContain(error)
+  })
+
+  it.each([
+    ['Invalid credentials', 'configuration/auth-failed', 'Model provider error', 401, undefined],
+    [
+      "Unsupported parameter: 'temperature'",
+      'configuration/request-invalid',
+      'Request parameters need attention',
+      400,
+      undefined
+    ],
+    [
+      'Maximum call stack size exceeded',
+      'service/provider-error',
+      'Model request failed',
+      400,
+      'responses'
+    ]
+  ] as const)(
+    'shows the provider detail %s above the composer',
+    (message, reason, title, status, protocol) => {
+      renderSidePanel({
+        sideChat: {
+          view: {
+            generation: 1,
+            parentSessionId: 'session-existing',
+            projectId: 'project-a',
+            sideSessionId: 'side-1',
+            entries: [],
+            draft: 'my follow-up',
+            running: false,
+            error: message,
+            errorDetails: {
+              message,
+              failure: {
+                category: protocol ? 'service' : 'configuration',
+                reason,
+                ...(protocol ? {} : { responseMessage: message }),
+                diagnostics: {
+                  ...(protocol ? { protocol, providerExcerpt: message } : {}),
+                  status,
+                  provider: 'Test provider',
+                  model: 'test-model'
+                }
+              }
+            }
+          }
+        }
+      })
+      const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+      expect(notice?.textContent).toContain(title)
+      expect(notice?.textContent).toContain(message)
+      expect(notice?.textContent).toContain(`status: ${status}`)
+      expect(notice?.textContent).toContain('provider: Test provider')
+      expect(notice?.textContent).toContain('model: test-model')
+      expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
+        'side-chat-composer'
+      )
+      expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('my follow-up')
+    }
+  )
+
   it('paces only the live Side chat turn and keeps its tool behind visible text', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
@@ -5738,8 +6331,12 @@ describe('ConversationPanel composer intake', () => {
 
     expect(container.textContent).toContain('Historical answer')
     expect(container.textContent).not.toContain('Flow')
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+    const notice = container.querySelector('[data-testid="composer-notice-slot"]')
+    expect(notice?.querySelector('[role="alert"]')?.textContent).toContain(
       'Could not save Side chat: Disk full'
+    )
+    expect(notice?.parentElement?.nextElementSibling?.getAttribute('data-testid')).toBe(
+      'side-chat-composer'
     )
     expect(container.querySelectorAll('.agent-markdown-streaming')).toHaveLength(1)
 
@@ -6799,9 +7396,13 @@ describe('ConversationPanel interrupted Session recovery', () => {
     }
   })
 
-  it.each(['cancelled', 'connection-lost', 'app-restart'] as const)(
+  it.each([
+    ['cancelled', 'This turn was interrupted. Resume to continue.'],
+    ['connection-lost', 'Connection lost — Resume to reconnect and continue.'],
+    ['app-restart', 'Session was interrupted before the app closed.']
+  ] as const)(
     'retains the original Resume action after routed user messages and %s',
-    async (cause) => {
+    async (cause, expectedMessage) => {
       const onResumeSession = vi.fn().mockResolvedValue(undefined)
       const prompt = planOriginMessages()[0]
       const activeSession: ChatSession = {
@@ -6810,6 +7411,10 @@ describe('ConversationPanel interrupted Session recovery', () => {
         title: 'Interrupted session with steering',
         cwd: '/workspace',
         status: cause === 'cancelled' ? 'idle' : 'error',
+        error:
+          cause === 'cancelled'
+            ? 'Stale provider error'
+            : 'This turn was interrupted. Resume to continue.',
         resumeRecovery: { kind: 'resume-required', promptMessageId: prompt.id, cause },
         messages: [
           {
@@ -6842,6 +7447,13 @@ describe('ConversationPanel interrupted Session recovery', () => {
       )
       expect(resumeButton).not.toBeNull()
       expect(resumeButton?.disabled).toBe(false)
+      const banner = container.querySelector('[data-slot="session-recovery-notice"]')
+      expect(banner?.querySelector('[role="status"]')?.textContent).toBe(expectedMessage)
+      if (cause === 'cancelled') {
+        expect(banner?.querySelectorAll('button')).toHaveLength(1)
+        expect(resumeButton?.textContent).toBe('Resume')
+        expect(container.querySelector('[aria-label="Send message"]')).not.toBeNull()
+      }
       await act(async () => resumeButton?.click())
       expect(onResumeSession).toHaveBeenCalledTimes(1)
     }
@@ -9041,9 +9653,30 @@ describe('ConversationPanel fix loop lock', () => {
 
     const retry = container.querySelector('[aria-label="Stop subagents"]') as HTMLButtonElement
     expect(retry.disabled).toBe(false)
-    const stopAlert = container.querySelector('[role="alert"]') as HTMLElement
-    expect(stopAlert.textContent).toContain('detached cascade unavailable')
+    const stopAlert = container.querySelector(
+      '[data-notice-operation="stop"] [role="status"]'
+    ) as HTMLElement
+    expect(stopAlert.textContent).toContain('Could not confirm that all subagents stopped.')
     expect(stopAlert.classList.contains('sr-only')).toBe(false)
+    const graph = detachedChildSession.conversationGraph!
+    renderPanel({
+      view: {
+        activeSession: {
+          ...detachedChildSession,
+          conversationGraph: {
+            ...graph,
+            frames: graph.frames.map((frame) =>
+              frame.id === graph.rootFrameId ? { ...frame, activeBranchId: 'sibling' } : frame
+            ),
+            branches: [
+              ...graph.branches,
+              { id: 'sibling', agentFrameId: graph.rootFrameId, createdAt: 3, updatedAt: 3 }
+            ]
+          }
+        }
+      }
+    })
+    expect(container.querySelector('[data-notice-operation="stop"]')).toBeNull()
   })
 
   it('uses the same disabled gate for mouse and Enter while branch Stop is pending', () => {
@@ -9091,7 +9724,7 @@ describe('ConversationPanel fix loop lock', () => {
         })
     )
     const runningSession: ChatSession = {
-      ...idleSession,
+      ...detachedChildSession,
       status: 'running',
       activeRun: { promptMessageId: 'msg-1', startedAt: Date.now() }
     }
@@ -9144,6 +9777,18 @@ describe('ConversationPanel fix loop lock', () => {
     expect(retry.disabled).toBe(false)
     expect(queue.disabled).toBe(false)
     expect(container.textContent).toContain('cascade unavailable')
+    renderPanel({
+      view: {
+        activeSession: {
+          ...runningSession,
+          status: 'idle',
+          activeRun: undefined,
+          resumeRecovery: { kind: 'resume-required', cause: 'cancelled', promptMessageId: 'msg-1' }
+        }
+      }
+    })
+    expect(container.querySelector('[data-notice-operation="stop"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Resume session"]')).not.toBeNull()
   })
 
   it('does not carry a pending Stop state or its failure into another Session', async () => {
@@ -9871,6 +10516,46 @@ describe('ConversationPanel unified failure notices', () => {
     expect(action('report')).toBeNull()
   })
 
+  it('routes a Lab model configuration failure to the Lab settings panel', () => {
+    const openSettingsToPanel = vi.fn()
+    useSettingsStore.setState({
+      openSettingsToPanel,
+      providers: [
+        {
+          id: 'builtin-lab',
+          type: 'lab',
+          name: 'Lab',
+          models: ['lab:research-default'],
+          supportsImageInput: false,
+          hasKey: false,
+          needsKey: false,
+          lastValidatedAt: 10
+        }
+      ]
+    })
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          failure: {
+            category: 'configuration',
+            reason: 'configuration/model-unavailable',
+            diagnostics: {}
+          }
+        }
+      },
+      agentControls: {
+        modelConfiguration: {
+          providerId: 'builtin-lab',
+          model: 'lab:research-default',
+          reasoningEffort: 'default'
+        }
+      }
+    })
+    act(() => action('open-provider-settings')?.click())
+    expect(openSettingsToPanel).toHaveBeenCalledWith('lab')
+  })
+
   it('retries a service failure through the existing revision command and preserves the current draft', async () => {
     const revise = vi.fn().mockResolvedValue({ ok: true, disposition: 'sent' })
     const resume = vi.fn()
@@ -9938,6 +10623,77 @@ describe('ConversationPanel unified failure notices', () => {
     expect(slot()?.dataset.noticeCategory).toBe('session')
   })
 
+  it('preserves provider interruption details while resuming the existing session', async () => {
+    const resume = vi.fn().mockResolvedValue(undefined)
+    const revise = vi.fn()
+    const failure = {
+      category: 'service' as const,
+      reason: 'service/response-interrupted' as const,
+      diagnostics: {
+        protocol: 'chat-completions' as const,
+        phase: 'stream',
+        requestId: 'cut-stream'
+      }
+    }
+    renderPanel({
+      view: {
+        activeSession: {
+          ...errorSession,
+          status: 'idle',
+          failure,
+          resumeRecovery: { kind: 'resume-required', cause: 'connection-lost' },
+          messages: [
+            {
+              ...planOriginMessages()[0],
+              turnOutcome: {
+                kind: 'interrupted',
+                settledAt: 2,
+                cause: 'connection-lost',
+                recovery: 'resume',
+                failure
+              }
+            }
+          ]
+        }
+      },
+      conversation: { actions: { resume, revise } }
+    })
+    expect(slot()?.textContent).toContain('The model response was interrupted')
+    expect(slot()?.textContent).toContain('This turn was interrupted. Resume to continue.')
+    expect(slot()?.querySelector('pre')?.textContent).toContain('cut-stream')
+    expect(slot()?.querySelector('[aria-label="Dismiss error"]')).toBeNull()
+    expect(action('retry')).toBeNull()
+    await act(async () => action('resume')?.click())
+    expect(resume).toHaveBeenCalledOnce()
+    expect(revise).not.toHaveBeenCalled()
+  })
+
+  it('directs resume failures for a missing saved provider to the conversation model picker', () => {
+    const activeSession = { ...errorSession, status: 'idle' as const, error: undefined }
+    const raw = new Error(
+      `Error invoking remote method 'acp:resume-session': ApplicationCommandError: ${EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE}`
+    )
+    const message = getResumeFailureMessage(raw)
+    expect(message).toBe(EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE)
+
+    act(() =>
+      reportWorkspaceOperationError(activeSession.id, message, {
+        operation: 'resume',
+        rawError: raw
+      })
+    )
+    renderPanel({ view: { activeSession, actionError: message } })
+
+    expect(slot()?.querySelector('h2')?.textContent).toBe('Session model unavailable')
+    expect(slot()?.textContent).toContain(
+      "Choose an available model in this conversation's model picker, then try again."
+    )
+    expect(action('open-provider-settings')).toBeNull()
+    expect(action('retry')).toBeNull()
+    expect(slot()?.querySelector('pre')?.textContent).toContain(raw.message)
+    act(() => clearWorkspaceOperationError(activeSession.id))
+  })
+
   it.each([false, true])(
     'keeps full operation diagnostics, copy retry and optional export (%s)',
     async (canExport) => {
@@ -9988,8 +10744,9 @@ describe('ConversationPanel unified failure notices', () => {
 it.each(['legacy', 'turn'] as const)(
   'keeps an imported %s failure out of the live error area',
   (surface) => {
-    const error =
-      'Internal error: stream disconnected before completion: Transport error: network error: error decoding response body'
+    const response =
+      'stream disconnected before completion: Transport error: network error: error decoding response body'
+    const error = 'Internal error: ' + response
     const activeSession: ChatSession = {
       id: 'imported-session',
       projectId: 'project-a',
@@ -10034,7 +10791,8 @@ it.each(['legacy', 'turn'] as const)(
     )
     if (surface === 'turn') {
       expect(history?.open).toBe(false)
-      expect(history?.textContent).toContain(error)
+      expect(history?.querySelector('pre')?.textContent).toBe('Info: ' + response)
+      expect(history?.textContent).not.toContain('Internal error:')
       act(() => history?.querySelector('summary')?.click())
       expect(history?.open).toBe(true)
     } else {
@@ -10061,7 +10819,7 @@ it.each(['legacy', 'turn'] as const)(
 it('offers Fork to continue while leaving the imported conversation read-only', async () => {
   forkSessionMock.mockClear()
   const activeSession: ChatSession = {
-    id: 'imported-session',
+    id: 'import-session',
     projectId: 'project-a',
     title: 'Imported research',
     cwd: '',
@@ -10077,6 +10835,13 @@ it('offers Fork to continue while leaving the imported conversation read-only', 
       manifestChecksum: 'a'.repeat(64)
     }
   }
+  renderPanel({
+    view: { activeSession: { ...activeSession, contentLoaded: false, packageOrigin: undefined } }
+  })
+  expect(container.querySelector('[data-testid="session-switch-skeleton"]')).not.toBeNull()
+  expect(
+    container.querySelector('[data-testid="conversation-composer-dock"]')?.childElementCount
+  ).toBe(0)
   renderPanel({ view: { activeSession } })
   const button = [...container.querySelectorAll('button')].find((button) =>
     button.textContent?.includes('Fork to continue')
@@ -10552,7 +11317,9 @@ describe('prompt optimization admission', () => {
 })
 
 const selectAdditionalNotice = (index = 0): void => {
-  const slot = container.querySelector('[data-testid="composer-notice-slot"]')
-  act(() => slot?.querySelector<HTMLButtonElement>('[aria-expanded="false"]')?.click())
+  const slot = [...container.querySelectorAll('[data-testid="composer-notice-slot"]')].find(
+    (notice) => notice.querySelector('button[aria-expanded="false"]')
+  )
+  act(() => slot?.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')?.click())
   act(() => slot?.querySelectorAll<HTMLButtonElement>('[data-select-notice]')[index]?.click())
 }

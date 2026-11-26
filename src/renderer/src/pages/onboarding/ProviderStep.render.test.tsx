@@ -6,10 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resolveVendorModelApiEndpoints } from '@aipoch/providers'
 import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
-import type { ValidateProviderResult, XaiOAuthLoginResult } from '../../../../shared/settings'
+import type {
+  ProviderView,
+  ValidateProviderResult,
+  XaiOAuthLoginResult
+} from '../../../../shared/settings'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ProviderStep } from './ProviderStep'
+import { useProviderStepOperation } from './use-provider-step-operation'
 import {
   clickButton,
   codexReadyState,
@@ -28,7 +33,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
-  resetOnboardingStores()
+  resetOnboardingStores('claude-code')
   stubWindowApi()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -59,8 +64,15 @@ const Harness = ({
   const [value, setValue] = useState<ProviderFormValue>(
     () => initialValue ?? createEmptyProviderFormValue()
   )
+  const operation = useProviderStepOperation()
   return (
-    <ProviderStep formValue={value} setFormValue={setValue} onBack={onBack} onAdvance={onAdvance} />
+    <ProviderStep
+      operation={operation}
+      formValue={value}
+      setFormValue={setValue}
+      onBack={onBack}
+      onAdvance={onAdvance}
+    />
   )
 }
 
@@ -151,6 +163,46 @@ describe('ProviderStep', () => {
     expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
       '/v1/chat/completions'
     )
+  })
+
+  it('reuses an active validated provider configured before Web onboarding', async () => {
+    const onAdvance = vi.fn()
+    const addOnboardingKiloProvider = vi.fn()
+    const provider: ProviderView = {
+      id: 'provider-1',
+      type: 'custom',
+      name: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-pro',
+      apiEndpoints: ['chat-completions'],
+      models: ['deepseek-v4-pro'],
+      supportsImageInput: false,
+      hasKey: true,
+      needsKey: false,
+      lastValidatedAt: 1
+    }
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['chat-completions', 'messages'],
+          supportsSkills: true
+        }
+      ],
+      activeProviderId: provider.id,
+      providers: [provider],
+      addOnboardingKiloProvider
+    })
+
+    await renderStep({ onAdvance })
+
+    expect(container.textContent).toContain('Already configured: DeepSeek (deepseek-v4-pro)')
+    await clickButton(/use configured provider/i)
+
+    expect(onAdvance).toHaveBeenCalledOnce()
+    expect(addOnboardingKiloProvider).not.toHaveBeenCalled()
   })
 
   it('preserves a manually chosen API format when revisiting an otherwise blank draft', async () => {

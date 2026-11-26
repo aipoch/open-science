@@ -3,9 +3,12 @@ import type { EnvironmentLease, NotebookRuntimeRepairPolicy } from '@aipoch/envi
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
+  DEFAULT_ENV_VERSION,
   defaultDiscoveryDeps,
   discoverInterpreters,
+  pythonReady,
   rscriptFor,
+  rReady,
   windowsCondaPrefixForR
 } from '@aipoch/environment'
 import { type DiscoveredInterpreter } from '@aipoch/environment/contracts'
@@ -66,6 +69,48 @@ type AdmissionGate = {
   release: () => void
 }
 
+type DiscoveryOptions = Readonly<{
+  fresh?: boolean
+}>
+
+type DiscoveryCacheEntry = Readonly<{
+  key: string
+  promise: Promise<DiscoveredInterpreter[]>
+  expiresAt: number
+}>
+
+const DISCOVERY_CACHE_TTL_MS = 5_000
+
+const sortedRecordEntries = (record: Record<string, boolean>): [string, boolean][] =>
+  Object.entries(record).sort(([left], [right]) => left.localeCompare(right))
+
+const discoveryCacheKey = (
+  dataRoot: string,
+  platform: NodeJS.Platform | undefined,
+  language: NotebookLanguage,
+  manualInterpreters: string[],
+  enablement: RuntimeEnablement | undefined,
+  defaultRuntimeReady: boolean
+): string =>
+  JSON.stringify({
+    dataRoot,
+    platform: platform ?? process.platform,
+    language,
+    manualInterpreters,
+    defaultRuntimeReady,
+    enablement: enablement
+      ? {
+          enabled: sortedRecordEntries(enablement.enabled),
+          installAuthorized: sortedRecordEntries(enablement.installAuthorized),
+          installLibraries: enablement.installLibraries
+            ? Object.entries(enablement.installLibraries).sort(([left], [right]) =>
+                left.localeCompare(right)
+              )
+            : undefined
+        }
+      : undefined
+  })
+
 const admissionGate = (): AdmissionGate => {
   let release!: () => void
   const promise = new Promise<void>((resolve) => {
@@ -88,8 +133,40 @@ export class NotebookRuntimeBindingOwner {
   private readonly sessionWriteGates = new Map<string, AdmissionGate>()
   private readonly allWriteDrainWaiters = new Set<() => void>()
   private readonly sessionWriteDrainWaiters = new Map<string, Set<() => void>>()
+  private readonly discoveryCache = new Map<string, DiscoveryCacheEntry>()
 
   constructor(private readonly options: NotebookRuntimeBindingOwnerOptions) {}
+
+  invalidateDiscovery(language?: NotebookLanguage): void {
+    if (!language) {
+      this.discoveryCache.clear()
+      return
+    }
+    this.discoveryCache.delete(`${language}:all`)
+    this.discoveryCache.delete(`${language}:enabled`)
+  }
+
+  hasSessionTeardownConflict(sessionIds: readonly string[]): boolean {
+    return (
+      Boolean(this.globalWriteGate) ||
+      sessionIds.some((id) => this.sessionWriteGates.has(id) || this.activeWritesBySession.has(id))
+    )
+  }
+
+  // Manual release must report a conflict immediately rather than queueing an unseen stop behind
+  // another binding mutation or teardown. These are the same gates used by normal writes.
+  tryHoldSessionTeardown(sessionIds: readonly string[]): () => void {
+    const ids = [...new Set(sessionIds)]
+    if (this.hasSessionTeardownConflict(ids))
+      throw new Error('Notebook runtime binding is changing. Refresh before releasing resources.')
+    const gate = admissionGate()
+    for (const id of ids) this.sessionWriteGates.set(id, gate)
+    return () => {
+      for (const id of ids)
+        if (this.sessionWriteGates.get(id) === gate) this.sessionWriteGates.delete(id)
+      gate.release()
+    }
+  }
 
   /**
    * Admits one complete binding write, including session creation and durable persistence. The lease
@@ -281,7 +358,7 @@ export class NotebookRuntimeBindingOwner {
           lease = await this.options.acquireEnvironmentBindingLease(binding.envName)
           // Discovery may have completed before a synchronous removal. Validate again under the
           // shared lease and retain it through durable commit and live publication.
-          target = await this.resolveBindingTarget(language, runtimeId)
+          target = await this.resolveBindingTarget(language, runtimeId, { fresh: true })
           binding = target.binding
         }
         const existing = session.runtimeBinding(language)
@@ -304,7 +381,7 @@ export class NotebookRuntimeBindingOwner {
         await beforeChange?.(binding)
         // Consent is tied to the exact discovered target, including ownership and execution route.
         // Re-discover after a waiting approval, before publishing or persisting a new binding.
-        const refreshed = await this.resolveBindingTarget(language, runtimeId)
+        const refreshed = await this.resolveBindingTarget(language, runtimeId, { fresh: true })
         if (
           !this.sameTarget(binding, refreshed.binding) ||
           (target.runnable && !refreshed.runnable) ||
@@ -491,7 +568,12 @@ export class NotebookRuntimeBindingOwner {
   ): Promise<NotebookSessionRuntimeBinding> {
     const environment = defaultEnvironment(language)
     const settings = await this.runtimeSettingsSnapshot(language)
-    const discovered = await this.discover(language, settings?.manualInterpreters ?? [])
+    const discovered = await this.discover(
+      language,
+      settings?.manualInterpreters ?? [],
+      undefined,
+      { fresh: true }
+    )
     const match = discovered.find(
       (env) =>
         env.provenance === 'app-managed' &&
@@ -521,6 +603,7 @@ export class NotebookRuntimeBindingOwner {
     // aggregate would otherwise remain unavailable even after the replacement interpreter appears.
     if (Object.values(persisted).some((binding) => binding?.source === 'managed')) {
       await this.options.waitForEnvironmentStartup?.()
+      this.invalidateDiscovery()
     }
     let migratedHistoricalBinding = false
     for (const language of ['python', 'r'] as const) {
@@ -618,22 +701,56 @@ export class NotebookRuntimeBindingOwner {
   private async discover(
     language: NotebookLanguage,
     manualInterpreters: string[],
+    enablement?: RuntimeEnablement,
+    options: DiscoveryOptions = {}
+  ): Promise<DiscoveredInterpreter[]> {
+    const key = discoveryCacheKey(
+      this.options.dataRoot,
+      this.options.platform,
+      language,
+      manualInterpreters,
+      enablement,
+      language === 'r'
+        ? rReady(getRuntimeRoot(this.options.dataRoot), DEFAULT_ENV_VERSION, this.options.platform)
+        : pythonReady(
+            getRuntimeRoot(this.options.dataRoot),
+            DEFAULT_ENV_VERSION,
+            this.options.platform
+          )
+    )
+    const cacheGroup = `${language}:${enablement === undefined ? 'all' : 'enabled'}`
+    if (!options.fresh) {
+      const cached = this.discoveryCache.get(cacheGroup)
+      if (cached?.key === key && cached.expiresAt > Date.now()) return cached.promise
+    }
+    const pending = this.discoverUncached(language, manualInterpreters, enablement).catch(() => {
+      if (this.discoveryCache.get(cacheGroup)?.promise === pending)
+        this.discoveryCache.delete(cacheGroup)
+      return []
+    })
+    this.discoveryCache.set(cacheGroup, {
+      key,
+      promise: pending,
+      expiresAt: Date.now() + DISCOVERY_CACHE_TTL_MS
+    })
+    return pending
+  }
+
+  private async discoverUncached(
+    language: NotebookLanguage,
+    manualInterpreters: string[],
     enablement?: RuntimeEnablement
   ): Promise<DiscoveredInterpreter[]> {
-    try {
-      const injected = this.options.discoverRuntimes
-      return injected
-        ? await injected(language)
-        : discoverInterpreters(
-            language,
-            defaultDiscoveryDeps(getRuntimeRoot(this.options.dataRoot), () => manualInterpreters, {
-              platform: this.options.platform
-            }),
-            enablement
-          )
-    } catch {
-      return []
-    }
+    const injected = this.options.discoverRuntimes
+    return injected
+      ? await injected(language)
+      : discoverInterpreters(
+          language,
+          defaultDiscoveryDeps(getRuntimeRoot(this.options.dataRoot), () => manualInterpreters, {
+            platform: this.options.platform
+          }),
+          enablement
+        )
   }
 
   private async listEnabledInterpreters(
@@ -650,7 +767,8 @@ export class NotebookRuntimeBindingOwner {
 
   async resolveBindingTarget(
     language: NotebookLanguage,
-    runtimeId: string
+    runtimeId: string,
+    options: DiscoveryOptions = {}
   ): Promise<{
     binding: NotebookSessionRuntimeBinding
     runnable: boolean
@@ -660,7 +778,8 @@ export class NotebookRuntimeBindingOwner {
     const discovered = await this.discover(
       language,
       settings?.manualInterpreters ?? [],
-      settings?.runtimeEnablement
+      settings?.runtimeEnablement,
+      options
     )
     const match = discovered.find(
       (env) =>
@@ -670,9 +789,9 @@ export class NotebookRuntimeBindingOwner {
     )
     if (!match) {
       throw new Error(
-        `"${runtimeId}" is not an enabled ${language} runtime. Use list_notebook_runtimes to see the ` +
-          'available runtimes, or enable it in Settings → Runtimes first (disabled and unknown ' +
-          'runtimes are refused).'
+        `"${runtimeId}" is not an enabled ${language} runtime. ` +
+          `Use the exact runtimeId from list_notebook_runtimes for ${language}. ` +
+          'Enable the selected runtime in Settings → Runtimes if needed.'
       )
     }
     const candidate = this.toInternalBinding(match)

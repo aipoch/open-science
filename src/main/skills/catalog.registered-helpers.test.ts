@@ -19,6 +19,7 @@ import * as environment from '@aipoch/environment'
 import type { UserSkillRepository } from './user-skill-repository'
 import { NotebookHelperModuleHost } from '../notebook/helper-module-host'
 import { NotebookKernelExecutor } from '../notebook/kernel-executor'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService, type NotebookExecutionRequest } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
 import { SettingsRepository } from '../settings/repository'
@@ -184,6 +185,7 @@ describe('SkillCatalogModule registered helper projection', () => {
 
     const executions: NotebookExecutionRequest[] = []
     const notebook = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: storageRoot,
       dataRoot: storageRoot,
       projectId: 'project-1',

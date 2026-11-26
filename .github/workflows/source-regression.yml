@@ -4,7 +4,7 @@ name: Source Regression
 # Scheduled failures open or refresh a tracking issue labelled ci-scheduled-failure.
 on:
   schedule:
-    - cron: '37 5,17 * * *' # UTC; 01:37 and 13:37 Asia/Singapore
+    - cron: '37 2,14 * * *' # UTC; 10:37 and 22:37 Asia/Singapore
   workflow_dispatch:
     inputs:
       mode:
@@ -41,8 +41,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: source-regression-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  # GitHub can delay the twice-daily schedule enough for runs to overlap. Scheduled runs use their
+  # own group so both coverage rounds can run, while manual diagnostics still replace old manual runs.
+  group: source-regression-${{ github.event_name }}-${{ github.event_name == 'schedule' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   static_impact:
@@ -216,7 +218,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace.json
-        run: npm run test:e2e:workspace -- --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests --global-timeout=1500000
+        run: npm run test:e2e:workspace -- --fully-parallel --workers=1 --shard=${{ matrix.shard }}/2 --fail-on-flaky-tests --global-timeout=1500000
       - name: Test workspace message images
         id: workspace_images
         if: ${{ matrix.group == 'workspace-images' }}
@@ -408,7 +410,7 @@ jobs:
     name: Complete installed package verification (Ubuntu)
     if: ${{ github.event_name == 'schedule' || inputs.mode == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -429,7 +431,12 @@ jobs:
     if: ${{ always() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Validation runs may overlap, but updates to the shared tracking issue must be serialized.
+    concurrency:
+      group: source-regression-report
+      cancel-in-progress: false
     permissions:
+      actions: read
       contents: read
       issues: write
     steps:
@@ -456,5 +463,6 @@ jobs:
               runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
               headSha: context.sha,
               conclusion: process.env.CONCLUSION,
+              ignoreStaleRuns: true,
               log: core.info
             })

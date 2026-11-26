@@ -7,6 +7,7 @@ import { createSkillRuntimeAcpServerConfig } from '../skills/runtime-mcp-server'
 import { SCHEDULE_MCP_NAME, scheduleToolInputs } from '../../shared/session-schedules'
 import type { ScheduleMcp } from '../schedules/mcp'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
+import { NotebookExecutionIntent } from '../notebook/execution-intent'
 import {
   claudeCodeFramework,
   codeBuddyFramework,
@@ -22,6 +23,8 @@ import {
   policyAllowsSessionCapability,
   type SessionCapabilityProvision
 } from './session-capability-owner'
+
+const imageEditPreset = 'openai/gpt-image-2.6'
 
 const createOwner = (
   overrides: ConstructorParameters<typeof AcpSessionCapabilityOwner>[0] = {}
@@ -45,6 +48,328 @@ const createOwner = (
   })
 
 describe('ACP session capability owner', () => {
+  it('refreshes only Notebook credentials while preserving other capabilities and the namespace', async () => {
+    let sequence = 0
+    const notebook = {
+      projectId: 'project',
+      mcpEntryPath: '/app/main.js',
+      getRpcConnection: vi.fn(async () => ({
+        endpoint: 'http://127.0.0.1:1',
+        token: `notebook-${++sequence}`
+      }))
+    }
+    const owner = createOwner({ notebook })
+    const provision = await owner.provision({
+      stableAppSessionId: 'session',
+      sessionCwd: '/workspace',
+      projectId: 'project',
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+    })
+    provision.commit('session')
+    const before = owner.mcpServersFor('session')
+    const intent = new NotebookExecutionIntent({ projectId: 'project', sessionId: 'session' })
+    const refresh = await owner.prepareNotebookConnectionRefresh({
+      appSessionId: 'session',
+      projectId: 'project',
+      cwd: '/workspace',
+      executionIntent: intent
+    })
+    const retained = before.filter(({ name }) => !name.includes('notebook'))
+    expect(retained.length).toBeGreaterThan(0)
+    for (const server of retained)
+      expect(refresh.mcpServers.find(({ name }) => name === server.name)).toBe(server)
+    expect(JSON.stringify(refresh.mcpServers)).toContain('notebook-2')
+    expect(notebook.getRpcConnection).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sessionId: 'session',
+        executionIntent: intent
+      })
+    )
+    refresh.commit()
+    expect(owner.mcpServersFor('session')).toEqual(refresh.mcpServers)
+    expect(owner.notebookExecutionIntentFor('session')).toBe(intent)
+  })
+  it.each(['discarded', 'url failure', 'activation failure'] as const)(
+    'keeps the committed Notebook HTTP route after refresh is %s',
+    async (outcome) => {
+      const host = new AgentMcpHttpHost()
+      const releases = [vi.fn(), vi.fn()]
+      const activate = vi.fn()
+      let sequence = 0
+      const owner = createOwner({
+        artifacts: undefined,
+        notebook: {
+          projectId: 'project',
+          mcpEntryPath: '/app/main.js',
+          getRpcConnection: async () => ({
+            release: releases[sequence],
+            token: `notebook-${++sequence}`,
+            endpoint: 'http://127.0.0.1:1',
+            deferExecution: () => activate
+          })
+        },
+        mcpHttpHost: host
+      })
+      const status = async (
+        servers:
+          | SessionCapabilityProvision['mcpServers']
+          | readonly SessionCapabilityProvision['mcpServers'][number][]
+      ): Promise<number> => {
+        const server = servers.find(({ name }) => name.includes('notebook'))
+        if (!server || !('url' in server)) throw new Error('Expected the Notebook HTTP server')
+        const response = await fetch(server.url, {
+          method: 'POST',
+          headers: {
+            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+            accept: 'application/json, text/event-stream',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+        })
+        await response.text()
+        return response.status
+      }
+      try {
+        const provision = await owner.provision({
+          stableAppSessionId: 'session',
+          sessionCwd: '/workspace',
+          projectId: 'project',
+          framework: harnessFramework,
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+        })
+        provision.commit('session')
+        const before = owner.mcpServersFor('session')
+        expect(await status(before)).toBe(200)
+
+        const failure = new Error('Refresh failed')
+        const request = {
+          appSessionId: 'session',
+          projectId: 'project',
+          cwd: '/workspace',
+          executionIntent: new NotebookExecutionIntent({
+            projectId: 'project',
+            sessionId: 'session'
+          })
+        }
+        if (outcome === 'url failure') {
+          vi.spyOn(host, 'urlFor').mockImplementationOnce(() => {
+            throw failure
+          })
+          await expect(owner.prepareNotebookConnectionRefresh(request)).rejects.toBe(failure)
+        } else {
+          const refresh = await owner.prepareNotebookConnectionRefresh(request)
+          expect(await status(refresh.mcpServers)).toBe(200)
+          if (outcome === 'activation failure') {
+            activate.mockImplementationOnce(() => {
+              throw failure
+            })
+            expect(() => refresh.commit()).toThrow(failure)
+          }
+          refresh.release()
+          expect(await status(refresh.mcpServers)).toBe(404)
+        }
+
+        expect(owner.mcpServersFor('session')).toBe(before)
+        expect(owner.notebookCredentialFor('session')).toBe('notebook-1')
+        expect(await status(before)).toBe(200)
+        expect(releases[0]).not.toHaveBeenCalled()
+        expect(releases[1]).toHaveBeenCalledOnce()
+        expect(activate).toHaveBeenCalledTimes(outcome === 'activation failure' ? 1 : 0)
+      } finally {
+        owner.revokeSession('session')
+        await host.close()
+      }
+    }
+  )
+
+  it.each(['startup', 'registration', 'url'] as const)(
+    'releases a failed Notebook refresh after HTTP %s failure without changing other capabilities',
+    async (failurePoint) => {
+      const failure = new Error(`Notebook HTTP ${failurePoint} failed`)
+      let fail = false
+      const host = {
+        ensureStarted: vi.fn(async () => {
+          if (fail && failurePoint === 'startup') throw failure
+          return { endpoint: 'http://127.0.0.1:5', token: 'host' }
+        }),
+        registerNotebook: vi.fn(() => {
+          if (fail && failurePoint === 'registration') throw failure
+        }),
+        registerSkillImport: vi.fn(),
+        registerReceiptScope: vi.fn(),
+        urlFor: vi.fn((kind: string, id: string) => {
+          if (fail && failurePoint === 'url') throw failure
+          return `http://127.0.0.1:5/${kind}/${id}`
+        }),
+        unregister: vi.fn()
+      } as unknown as AgentMcpHttpHost
+      const releases = [vi.fn(), vi.fn(), vi.fn()]
+      const activate = vi.fn()
+      const getNotebookConnection = vi.fn(async () => {
+        const index = getNotebookConnection.mock.calls.length - 1
+        return {
+          endpoint: 'http://127.0.0.1:1',
+          token: `notebook-${index + 1}`,
+          release: releases[index],
+          deferExecution: () => activate
+        }
+      })
+      const skillRelease = vi.fn()
+      const getSkillConnection = vi.fn(async () => ({
+        endpoint: 'http://127.0.0.1:2',
+        token: 'skill',
+        release: skillRelease
+      }))
+      const owner = createOwner({
+        artifacts: undefined,
+        notebook: {
+          projectId: 'project',
+          mcpEntryPath: '/app/main.js',
+          getRpcConnection: getNotebookConnection
+        },
+        skillImport: { mcpEntryPath: '/app/main.js', getRpcConnection: getSkillConnection },
+        mcpHttpHost: host
+      })
+      const provision = await owner.provision({
+        stableAppSessionId: 'session',
+        sessionCwd: '/workspace',
+        projectId: 'project',
+        framework: harnessFramework,
+        nativeMcpEnabled: true,
+        bridgeMcpAliasesEnabled: false,
+        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+      })
+      provision.commit('session')
+      const before = owner.mcpServersFor('session')
+      const request = {
+        appSessionId: 'session',
+        projectId: 'project',
+        cwd: '/workspace',
+        executionIntent: new NotebookExecutionIntent({ projectId: 'project', sessionId: 'session' })
+      }
+
+      fail = true
+      await expect(owner.prepareNotebookConnectionRefresh(request)).rejects.toBe(failure)
+      expect(releases[1]).toHaveBeenCalledOnce()
+      expect(releases[0]).not.toHaveBeenCalled()
+      expect(activate).not.toHaveBeenCalled()
+      expect(owner.mcpServersFor('session')).toBe(before)
+      expect(owner.notebookCredentialFor('session')).toBe('notebook-1')
+      expect(getSkillConnection).toHaveBeenCalledOnce()
+      expect(skillRelease).not.toHaveBeenCalled()
+      expect(host.unregister).not.toHaveBeenCalled()
+
+      fail = false
+      const refresh = await owner.prepareNotebookConnectionRefresh(request)
+      refresh.commit()
+      expect(owner.notebookCredentialFor('session')).toBe('notebook-3')
+      expect(releases[0]).toHaveBeenCalledOnce()
+      expect(releases[1]).toHaveBeenCalledOnce()
+      expect(releases[2]).not.toHaveBeenCalled()
+      expect(activate).toHaveBeenCalledOnce()
+      expect(getSkillConnection).toHaveBeenCalledOnce()
+      expect(skillRelease).not.toHaveBeenCalled()
+      for (const server of before.filter(({ name }) => !name.includes('notebook')))
+        expect(refresh.mcpServers.find(({ name }) => name === server.name)).toBe(server)
+    }
+  )
+
+  it('binds Web authority to committed primary host routes and revokes it', async () => {
+    const host = new AgentMcpHttpHost()
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      web: { handlerFor: () => ({ fetchPage: vi.fn() }) },
+      mcpHttpHost: host
+    })
+    try {
+      for (const [id, policy] of [
+        ['primary', CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY],
+        ['reviewer', REVIEWER_SESSION_CAPABILITY_POLICY],
+        ['side', SIDE_CHAT_SESSION_CAPABILITY_POLICY]
+      ] as const) {
+        const provision = await owner.provision({
+          stableAppSessionId: id,
+          framework: harnessFramework,
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          policy,
+          sessionCwd: '/workspace',
+          projectId: 'project'
+        })
+        expect(owner.webToolOperationFor(id, 'open-science-web/web_fetch')).toBeUndefined()
+        provision.commit(id)
+        expect(owner.webToolOperationFor(id, 'open-science-web/web_fetch')).toBe(
+          id === 'primary' ? 'fetch' : undefined
+        )
+        expect(owner.webToolOperationFor('other', 'open-science-web/web_fetch')).toBeUndefined()
+        expect(owner.webToolOperationFor(id, 'external/web_fetch')).toBeUndefined()
+        owner.revokeSession(id)
+        expect(owner.webToolOperationFor(id, 'open-science-web/web_fetch')).toBeUndefined()
+      }
+    } finally {
+      await host.close()
+    }
+  })
+
+  it('rejects stale Web URLs and restores the exact committed route on rollback', async () => {
+    const host = new AgentMcpHttpHost()
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      web: { handlerFor: () => ({ fetchPage: vi.fn() }) },
+      mcpHttpHost: host
+    })
+    const request = {
+      stableAppSessionId: 'web-session',
+      framework: harnessFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    }
+    try {
+      const first = await owner.provision(request)
+      first.commit('web-session')
+      const oldUrl = host.urlFor('web', 'web-session')
+      const { token } = await host.ensureStarted()
+      const status = async (url: string): Promise<number> =>
+        (
+          await fetch(url, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${token}`,
+              'content-type': 'application/json',
+              accept: 'application/json, text/event-stream'
+            },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+          })
+        ).status
+      expect(await status(oldUrl)).toBe(200)
+      const second = await owner.provision(request)
+      const newUrl = host.urlFor('web', 'web-session')
+      expect(newUrl).not.toBe(oldUrl)
+      expect(owner.webToolOperationFor('web-session', 'open-science-web/web_fetch')).toBeUndefined()
+      expect(await status(oldUrl)).toBe(404)
+      await second.release({ ownsStableIdentity: true })
+      expect(host.urlFor('web', 'web-session')).toBe(oldUrl)
+      expect(await status(oldUrl)).toBe(200)
+      expect(await status(newUrl)).toBe(404)
+      expect(owner.webToolOperationFor('web-session', 'open-science-web/web_fetch')).toBe('fetch')
+    } finally {
+      owner.revokeSession('web-session')
+      await host.close()
+    }
+  })
+
   it('admits Schedule identities only for a committed primary provision', async () => {
     const host = {
       ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
@@ -86,65 +411,97 @@ describe('ACP session capability owner', () => {
     }
   })
 
-  it('restores the committed Schedule URL after replacement provisioning rolls back', async () => {
-    const host = new AgentMcpHttpHost()
-    const owner = createOwner({
-      artifacts: undefined,
-      notebook: undefined,
-      skillImport: undefined,
-      schedules: {
-        server: () => new McpServer({ name: SCHEDULE_MCP_NAME, version: '1' })
-      } as unknown as ScheduleMcp,
-      mcpHttpHost: host
-    })
-    const provision = (): Promise<SessionCapabilityProvision> =>
-      owner.provision({
-        stableAppSessionId: 'session-1',
-        framework: codexFramework,
-        nativeMcpEnabled: true,
-        bridgeMcpAliasesEnabled: false,
-        policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
-        sessionCwd: '/workspace',
-        projectId: 'project-1'
+  it.each([false, true])(
+    'restores the committed Schedule URL after replacement provisioning rolls back (Notebook refresh: %s)',
+    async (refreshNotebook) => {
+      const host = new AgentMcpHttpHost()
+      let notebookSequence = 0
+      const owner = createOwner({
+        artifacts: undefined,
+        notebook: refreshNotebook
+          ? {
+              projectId: 'project-1',
+              mcpEntryPath: '/app/main.js',
+              getRpcConnection: async () => ({
+                endpoint: 'http://127.0.0.1:1',
+                token: `notebook-${++notebookSequence}`
+              })
+            }
+          : undefined,
+        skillImport: undefined,
+        schedules: {
+          server: () => new McpServer({ name: SCHEDULE_MCP_NAME, version: '1' })
+        } as unknown as ScheduleMcp,
+        mcpHttpHost: host
       })
-    const status = async (candidate: Awaited<ReturnType<typeof provision>>): Promise<number> => {
-      const server = candidate.mcpServers.find((server) => server.name === SCHEDULE_MCP_NAME)
-      if (!server || !('url' in server)) throw new Error('Expected the Schedule HTTP server')
-      const response = await fetch(server.url, {
-        method: 'POST',
-        headers: {
-          ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
-          accept: 'application/json, text/event-stream',
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'initialize',
-          params: {
-            protocolVersion: '2025-03-26',
-            capabilities: {},
-            clientInfo: { name: 'schedule-test', version: '1' }
-          }
+      const provision = (): Promise<SessionCapabilityProvision> =>
+        owner.provision({
+          stableAppSessionId: 'session-1',
+          framework: codexFramework,
+          nativeMcpEnabled: true,
+          bridgeMcpAliasesEnabled: false,
+          policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+          sessionCwd: '/workspace',
+          projectId: 'project-1'
         })
-      })
-      await response.text()
-      return response.status
+      const status = async (candidate: Awaited<ReturnType<typeof provision>>): Promise<number> => {
+        const server = candidate.mcpServers.find((server) => server.name === SCHEDULE_MCP_NAME)
+        if (!server || !('url' in server)) throw new Error('Expected the Schedule HTTP server')
+        const response = await fetch(server.url, {
+          method: 'POST',
+          headers: {
+            ...Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
+            accept: 'application/json, text/event-stream',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2025-03-26',
+              capabilities: {},
+              clientInfo: { name: 'schedule-test', version: '1' }
+            }
+          })
+        })
+        await response.text()
+        return response.status
+      }
+      try {
+        const committed = await provision()
+        committed.commit('session-1')
+        expect(await status(committed)).toBe(200)
+        if (refreshNotebook) {
+          expect(owner.notebookCredentialFor('session-1')).toBe('notebook-1')
+          const intent = new NotebookExecutionIntent({
+            projectId: 'project-1',
+            sessionId: 'session-1'
+          })
+          const refreshed = await owner.prepareNotebookConnectionRefresh({
+            appSessionId: 'session-1',
+            projectId: 'project-1',
+            cwd: '/workspace',
+            executionIntent: intent
+          })
+          refreshed.commit()
+          expect(owner.notebookCredentialFor('session-1')).toBe('notebook-2')
+          expect(owner.notebookExecutionIntentFor('session-1')).toBe(intent)
+          expect(JSON.stringify(owner.mcpServersFor('session-1'))).toContain('notebook-2')
+          expect(await status(committed)).toBe(200)
+        }
+        const replacement = await provision()
+        expect(await status(replacement)).toBe(200)
+        await replacement.release({ ownsStableIdentity: true })
+        expect(await status(committed)).toBe(200)
+        expect(await status(replacement)).toBe(404)
+        if (refreshNotebook) expect(owner.notebookCredentialFor('session-1')).toBe('notebook-2')
+      } finally {
+        owner.revokeSession('session-1')
+        await host.close()
+      }
     }
-    try {
-      const committed = await provision()
-      committed.commit('session-1')
-      expect(await status(committed)).toBe(200)
-      const replacement = await provision()
-      expect(await status(replacement)).toBe(200)
-      await replacement.release({ ownsStableIdentity: true })
-      expect(await status(committed)).toBe(200)
-      expect(await status(replacement)).toBe(404)
-    } finally {
-      owner.revokeSession('session-1')
-      await host.close()
-    }
-  })
+  )
 
   it('releases provisional and committed HTTP Skill loaders without revoking a successor', async () => {
     const releases: ReturnType<typeof vi.fn>[] = []
@@ -356,6 +713,7 @@ describe('ACP session capability owner', () => {
 
   it('binds first-turn Literature routing to the provider Session after session/new', async () => {
     const registerLiterature = vi.fn()
+    const isEnabled = vi.fn(async () => false)
     const handlerFor = vi.fn(() => ({ readDocument: vi.fn() }))
     const host = {
       ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
@@ -370,7 +728,7 @@ describe('ACP session capability owner', () => {
       notebook: undefined,
       skillImport: undefined,
       literature: {
-        isEnabled: vi.fn(async () => false),
+        isEnabled,
         handlerFor
       },
       mcpHttpHost: host
@@ -390,6 +748,69 @@ describe('ACP session capability owner', () => {
     expect(provision.descriptor.capabilities).toContain('literature')
     expect(handlerFor).toHaveBeenLastCalledWith('session-1', 'project-1')
     expect(registerLiterature).toHaveBeenCalledTimes(2)
+    expect(isEnabled).not.toHaveBeenCalled()
+  })
+
+  it('does not read persistent Literature authority through a provisional routing alias', async () => {
+    const isEnabled = vi.fn(async () => false)
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerLiterature: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      literature: { isEnabled, handlerFor: () => ({ readDocument: vi.fn() }) },
+      mcpHttpHost: host
+    })
+
+    await owner.provision({
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+
+    expect(isEnabled).not.toHaveBeenCalled()
+  })
+
+  it('reads persistent Literature authority with the stable App Session ID', async () => {
+    const isEnabled = vi.fn(async () => true)
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerLiterature: vi.fn(),
+      urlFor: vi.fn((kind: string, routingId: string) => `http://127.0.0.1:5/${kind}/${routingId}`),
+      unregister: vi.fn(),
+      clear: vi.fn(),
+      close: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: undefined,
+      notebook: undefined,
+      skillImport: undefined,
+      literature: { isEnabled, handlerFor: () => ({ readDocument: vi.fn() }) },
+      mcpHttpHost: host
+    })
+
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-1',
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project-1'
+    })
+
+    expect(isEnabled).toHaveBeenCalledExactlyOnceWith('session-1', 'project-1')
+    expect(provision.descriptor.capabilities).toContain('literature')
   })
 
   it('keeps concurrent first-turn Literature routes distinct within one millisecond', async () => {
@@ -619,6 +1040,191 @@ describe('ACP session capability owner', () => {
       name: 'OPEN_SCIENCE_ARTIFACT_CURRENT_RUN_FILE',
       value: '/data/delegated/executions/attempt-1.json'
     })
+  })
+
+  it('mounts image tools only when an image model is configured', async () => {
+    const request = {
+      stableAppSessionId: 'session-images',
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    } as const
+    const disabled = await createOwner().provision(request)
+    expect(disabled.mcpServers.map((server) => server.name)).not.toContain('open-science-images')
+
+    const enabled = await createOwner({
+      artifacts: {
+        dataRoot: '/data',
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        imageMcp: { getPresetId: async () => imageEditPreset }
+      }
+    }).provision(request)
+    expect(enabled.mcpServers.map((server) => server.name)).toContain('open-science-images')
+    expect(enabled.descriptor.capabilities).toContain('images')
+    const image = enabled.mcpServers.find((server) => server.name === 'open-science-images')
+    expect(image && 'env' in image ? image.env : []).toContainEqual({
+      name: 'OPEN_SCIENCE_IMAGE_PRESET_ID',
+      value: imageEditPreset
+    })
+  })
+
+  it('refreshes image guidance availability when configuration changes without skill import', async () => {
+    let presetId: string | undefined
+    const owner = createOwner({
+      skillImport: undefined,
+      artifacts: {
+        dataRoot: '/data',
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        imageMcp: { getPresetId: async () => presetId }
+      }
+    })
+    const input = {
+      framework: claudeCodeFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY
+    }
+    for (const value of [undefined, imageEditPreset, undefined]) {
+      presetId = value
+      await owner.refreshDynamicAvailability()
+      expect(owner.toolingAvailability(input).images).toBe(Boolean(value))
+      expect(owner.toolingAvailability({ ...input, nativeMcpEnabled: false }).images).toBe(false)
+      expect(
+        owner.toolingAvailability({
+          ...input,
+          policy: { role: 'side-chat', delegation: 'denied' }
+        }).images
+      ).toBe(false)
+    }
+    owner.dispose()
+  })
+
+  it('keeps image bridge tools aligned with mounting, role and capability replacement', async () => {
+    let configured = true
+    const registerBridgeMcpSession = vi.fn()
+    const unregisterBridgeMcpSession = vi.fn()
+    const owner = createOwner({
+      registerBridgeMcpSession,
+      unregisterBridgeMcpSession,
+      artifacts: {
+        dataRoot: '/data',
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        imageMcp: { getPresetId: async () => (configured ? imageEditPreset : undefined) }
+      }
+    })
+    const request = {
+      stableAppSessionId: 'session-images',
+      framework: codexFramework,
+      nativeMcpEnabled: false,
+      bridgeMcpAliasesEnabled: true,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    }
+    try {
+      const primary = await owner.provision(request)
+      primary.commit('session-images')
+      primary.registerBridgeMcpSession?.('session-images', 'provider-1')
+      expect(primary.descriptor.capabilities).toContain('images')
+      expect(
+        owner
+          .piPermissionCapabilitiesFor('session-images')
+          ?.allowedToolIdentities.has('open-science-images/generate_image')
+      ).toBe(true)
+      expect(
+        primary.bridgeMcpTools
+          ?.filter(({ namespace }) => namespace === 'mcp__open_science_images')
+          .map(({ name }) => name)
+      ).toEqual(['generate_image', 'edit_image'])
+      for (const role of ['reviewer', 'side-chat', 'restricted-inference'] as const) {
+        const restricted = await owner.provision({
+          ...request,
+          stableAppSessionId: role,
+          policy: { role, delegation: 'denied' }
+        })
+        expect(restricted.descriptor.capabilities).not.toContain('images')
+        expect(
+          restricted.bridgeMcpTools?.some(
+            ({ namespace }) => namespace === 'mcp__open_science_images'
+          )
+        ).toBe(false)
+        expect(restricted.bridgeMcpNamespaces).toContain('mcp__open_science_images')
+        await restricted.release({ ownsStableIdentity: true })
+      }
+      configured = false
+      const replacement = await owner.provision(request)
+      replacement.commit('session-images')
+      replacement.registerBridgeMcpSession?.('session-images', 'provider-2')
+      expect(replacement.descriptor.capabilities).not.toContain('images')
+      expect(
+        owner
+          .piPermissionCapabilitiesFor('session-images')
+          ?.allowedToolIdentities.has('open-science-images/generate_image')
+      ).toBe(false)
+      expect(
+        replacement.bridgeMcpTools?.some(
+          ({ namespace }) => namespace === 'mcp__open_science_images'
+        )
+      ).toBe(false)
+      expect(registerBridgeMcpSession).toHaveBeenLastCalledWith(
+        'provider-2',
+        replacement.bridgeMcpTools,
+        expect.arrayContaining(['mcp__open_science_images'])
+      )
+      expect(unregisterBridgeMcpSession).toHaveBeenCalledWith('provider-1')
+      owner.revokeSession('session-images')
+      expect(unregisterBridgeMcpSession).toHaveBeenCalledWith('provider-2')
+    } finally {
+      owner.dispose()
+    }
+  })
+
+  it('registers the image server on the HTTP MCP host', async () => {
+    const registerImage = vi.fn()
+    const host = {
+      ensureStarted: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:5', token: 'host' })),
+      registerArtifact: vi.fn(),
+      registerImage,
+      urlFor: vi.fn((kind: string, id: string) => `http://127.0.0.1:5/${kind}/${id}`),
+      registerReceiptScope: vi.fn()
+    } as unknown as AgentMcpHttpHost
+    const owner = createOwner({
+      artifacts: {
+        dataRoot: '/data',
+        projectId: 'project',
+        mcpEntryPath: '/app/main.js',
+        imageMcp: { getPresetId: async () => imageEditPreset }
+      },
+      notebook: undefined,
+      skillImport: undefined,
+      mcpHttpHost: host
+    })
+    const provision = await owner.provision({
+      stableAppSessionId: 'session-image-http',
+      framework: harnessFramework,
+      nativeMcpEnabled: true,
+      bridgeMcpAliasesEnabled: false,
+      policy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      sessionCwd: '/workspace',
+      projectId: 'project'
+    })
+    expect(provision.mcpServers.map((server) => server.name)).toContain('open-science-images')
+    expect(registerImage).toHaveBeenCalledWith(
+      'session-image-http',
+      expect.objectContaining({ presetId: imageEditPreset })
+    )
+    provision.commit('session-image-http')
+    expect(host.registerReceiptScope).toHaveBeenCalledWith(
+      'session-image-http',
+      JSON.stringify(['project', 'session-image-http', 'image']),
+      'image'
+    )
   })
 
   it.each([

@@ -2,6 +2,46 @@ import { expect, it } from 'vitest'
 import { createPdfTranslationSource, type PdfTranslationFragment } from '../../src/reader/source.js'
 import { pdfTranslationLayoutFragments } from '../../src/reader/fragments.js'
 
+it.each(['free', 'neighbor', 'figure', 'other-column'] as const)(
+  'merges a final short citation line only in free same-column space (%s)',
+  (mode) => {
+    const f = (
+      index: number,
+      x: number,
+      y: number,
+      w: number,
+      text: string
+    ): PdfTranslationFragment => ({
+      pageNumber: 1,
+      rect: { x, y, width: w, height: 0.015 },
+      items: [{ index, text }]
+    })
+    const tail = f(2, mode === 'other-column' ? 0.65 : 0.1, 0.132, 0.12, 'details [12, 17].'),
+      neighbor = f(3, 0.4, 0.132, 0.06, 'aside')
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'tail',
+      fingerprint: 'tail',
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          id: 'body',
+          source: 'Consecutive lines provide more details [12, 17].',
+          fragments: [
+            f(0, 0.1, 0.1, 0.4, 'Consecutive lines'),
+            f(1, 0.1, 0.116, 0.4, 'provide more'),
+            tail
+          ]
+        },
+        ...(mode === 'neighbor' ? [{ id: 'aside', source: 'aside', fragments: [neighbor] }] : [])
+      ],
+      originalRegions: mode === 'figure' ? [{ pageNumber: 1, rect: neighbor.rect }] : []
+    })
+    const merged = pdfTranslationLayoutFragments(source.units[0], source)
+    expect(merged).toHaveLength(mode === 'free' ? 1 : 2)
+    expect(merged.flatMap((f) => f.items.map((i) => i.index))).toEqual([0, 1, 2])
+  }
+)
+
 it.each([
   { text: 'Page 2 of 10', gap: 40, extra: 24 },
   { text: 'POD2', gap: 40, extra: 24 },
@@ -52,6 +92,64 @@ it.each([
     expect(JSON.stringify(source)).toBe(before)
   }
 )
+
+it.each([
+  { stop: '', distance: 1, expectedRight: 209 },
+  { stop: '.', distance: 1, expectedRight: 144 },
+  { stop: '', distance: 6, expectedRight: 144 }
+])('borrows the verified column of a short continuation: $stop / $distance', (test) => {
+  const lead = 'The observations give enough evidence for the final condition' + test.stop
+  const source = createPdfTranslationSource({
+    resourceRequestKey: 'column-continuation',
+    fingerprint: 'column-continuation',
+    pages: [{ width: 600, height: 800 }],
+    units: [
+      {
+        id: 'lead',
+        source: lead,
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 60 / 600, y: 80 / 800, width: 240 / 600, height: 12 / 800 },
+            items: [{ index: 0, text: lead }]
+          }
+        ]
+      },
+      {
+        id: 'continuation',
+        source: 'to be true',
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 60 / 600, y: (92 + test.distance) / 800, width: 60 / 600, height: 12 / 800 },
+            items: [{ index: 1, text: 'to be true' }]
+          }
+        ]
+      },
+      {
+        id: 'sidebar',
+        source: 'Independent note',
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: {
+              x: 211 / 600,
+              y: (92 + test.distance) / 800,
+              width: 80 / 600,
+              height: 12 / 800
+            },
+            items: [{ index: 2, text: 'Independent note' }]
+          }
+        ]
+      }
+    ]
+  })
+  const unit = source.units[1]
+  const [prepared] = pdfTranslationLayoutFragments(unit, source)
+  expect((prepared.rect.x + prepared.rect.width) * 600).toBeCloseTo(test.expectedRight)
+  expect(prepared.items).toEqual(unit.fragments[0].items)
+  expect(unit.fragments[0].rect.width).toBe(60 / 600)
+})
 
 it('stops at the page edge and keeps neighboring rows outside the borrowed area', () => {
   const source = createPdfTranslationSource({
@@ -375,5 +473,43 @@ it.each(['native caption', 'foreign formula', 'not a caption', 'nonadjacent part
     ).toBe(mode === 'native caption')
     expect(prepared.flatMap((f) => f.items.flatMap((i) => i.index))).toEqual([0, 1, 2, 3, 4])
     expect(JSON.stringify(source)).toBe(original)
+  }
+)
+
+it.each([false, true])(
+  'merges adjacent rows only when the union misses an earlier fragment of the same unit: %s',
+  (blocksUnion) => {
+    const fragment = (
+      x: number,
+      y: number,
+      width: number,
+      index: number,
+      text: string
+    ): PdfTranslationFragment => ({
+      pageNumber: 1,
+      rect: { x: x / 600, y: y / 800, width: width / 600, height: 10 / 800 },
+      items: [{ index, text }]
+    })
+    const source = createPdfTranslationSource({
+      resourceRequestKey: 'same-unit-rows',
+      fingerprint: 'same-unit-rows',
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          id: 'body',
+          source: 'x belongs to a class. Its representative is unique.',
+          fragments: [
+            fragment(blocksUnion ? 60 : 40, 80, 15, 0, 'x'),
+            fragment(80, 80, 180, 1, 'belongs to a class.'),
+            fragment(60, 91, 200, 2, 'Its representative is unique.')
+          ]
+        }
+      ]
+    })
+    const unit = source.units[0]
+    const prepared = pdfTranslationLayoutFragments(unit, source)
+    expect(prepared.flatMap((row) => row.items.map((item) => item.index))).toEqual([0, 1, 2])
+    if (blocksUnion) expect(prepared).toEqual(unit.fragments)
+    else expect(prepared).toHaveLength(2)
   }
 )

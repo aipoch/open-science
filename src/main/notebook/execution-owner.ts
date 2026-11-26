@@ -1,9 +1,17 @@
+import { notebookExecutionIntent, notebookExecutionCredential } from './execution-intent'
 import { createHash } from 'node:crypto'
 import { resourceActivity } from '../resource-diagnostics/activity'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import {
+  NotebookExecutionAdmissionError,
+  notebookExecutionAdmission,
+  withNotebookExecutionAdmission,
+  prepareNotebookExecution,
+  guardNotebookExecutionAdmission
+} from './execution-admission'
 import {
   markTrustedNotebookBindingPermissionPrompts,
   readTrustedNotebookBindingPermissionPrompts
@@ -24,6 +32,7 @@ import {
 import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import type {
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
@@ -80,8 +89,12 @@ type NotebookControlResult = Pick<
   | 'truncated'
   | 'workingFiles'
   | 'fileEvidence'
+  | 'executionStarted'
+  | 'kernelDispatched'
   | 'recovery'
 > & {
+  runId?: string
+  executionInvocationId?: string
   status: Exclude<NotebookRunStatus, 'queued' | 'running'>
   viewImages?: readonly TransientViewImage[]
   viewImageError?: 'evidence-unavailable'
@@ -164,6 +177,7 @@ type NotebookExecutionOwnerOptions = {
   prepareRuntimeSelection?: (
     session: NotebookSessionAggregate,
     language: NotebookLanguage,
+    request: RunNotebookCellRequest,
     signal?: AbortSignal
   ) => Promise<void>
   helperModules: Pick<
@@ -185,6 +199,9 @@ const errorToExecutionResult = (error: unknown, cwd: string): NotebookSessionExe
   return {
     status: 'failed',
     kernelDispatched: false,
+    ...(error instanceof NotebookExecutionAdmissionError
+      ? { executionStarted: false, recovery: error.recovery }
+      : {}),
     stdout: '',
     stderr: message,
     traceback: message,
@@ -309,7 +326,11 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
     throw new Error(`REPL Run ${run.runId} has no terminal foreground result.`)
   }
   return {
+    runId: run.runId,
+    executionInvocationId: run.executionInvocationId,
     status: run.status,
+    kernelDispatched: run.kernelDispatched,
+    executionStarted: run.executionStarted,
     stdout: run.text.stdout,
     stderr: run.text.stderr,
     traceback: run.text.traceback,
@@ -322,18 +343,19 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
 }
 
 const publicShellResult = (
-  run: Pick<
-    NotebookRunRecord,
-    'text' | 'exitCode' | 'truncated' | 'shellRuntimeStatus' | 'shellErrorCode' | 'recovery'
-  >
+  run: NotebookRunRecord,
+  live?: Pick<NotebookShellResult, 'stdout' | 'stderr' | 'truncated'>
 ): NotebookShellResult => ({
-  stdout: run.text.stdout,
-  stderr: run.text.stderr,
+  stdout: live?.stdout ?? run.text.stdout,
+  stderr: live?.stderr ?? run.text.stderr,
   exitCode: run.exitCode ?? null,
+  ...(run.exitCode == null ? { status: run.status } : {}),
+  executionStarted: run.executionStarted,
+  kernelDispatched: run.kernelDispatched,
   ...(run.shellRuntimeStatus ? { runtimeStatus: run.shellRuntimeStatus } : {}),
   ...(run.shellErrorCode ? { errorCode: run.shellErrorCode } : {}),
   ...(run.recovery ? { recovery: run.recovery } : {}),
-  ...(run.truncated ? { truncated: true } : {})
+  ...((live ? live.truncated : run.truncated) ? { truncated: true } : {})
 })
 
 type ShellQueueWaiter = {
@@ -621,10 +643,14 @@ class NotebookExecutionOwner {
     // Snapshot caller-owned inputs before the first queue/preparation/persistence wait.
     // The host-owned input lease stays live so resolver access reaches the completed run.
     const { registeredInputFiles, ...submittedRequest } = request
-    const executionRequest = markTrustedNotebookBindingPermissionPrompts(
+    const frozenRequest = markTrustedNotebookBindingPermissionPrompts(
       { ...structuredClone(submittedRequest), registeredInputFiles },
       readTrustedNotebookBindingPermissionPrompts(request)
     )
+    const executionAdmission = notebookExecutionAdmission(request)
+    const executionRequest = executionAdmission
+      ? withNotebookExecutionAdmission(frozenRequest, executionAdmission)
+      : frozenRequest
     const executionHelperIds = helperModuleIds?.slice()
     return session.withCellExecution(executionRequest.cellId, async (cell) => {
       const submissionFingerprint = dataRunFingerprint(
@@ -718,7 +744,7 @@ class NotebookExecutionOwner {
     onAdmitted?: (run: NotebookRunRecord) => void
   ): Promise<{ run: NotebookRunRecord; dependencyProjection: NotebookDependencyProjection }> {
     if ((request.source ?? 'agent') === 'agent') {
-      await this.options.prepareRuntimeSelection?.(session, cell.language, signal)
+      await this.options.prepareRuntimeSelection?.(session, cell.language, request, signal)
     }
     const admittedAt = Date.now()
     const executionCount = session.nextExecutionCount()
@@ -730,11 +756,8 @@ class NotebookExecutionOwner {
     )
     const { environment, processKey } = admission.route
     const { binding, resolvedInterpreter } = admission
-    const kernelStatusBefore = session.kernelStatus(processKey)
     const kernelWasTerminatedAtAdmission =
-      session.isKernelTerminated(processKey) ||
-      kernelStatusBefore === 'terminated' ||
-      session.hasDurableKernelTermination(processKey)
+      session.isKernelTerminated(processKey) || session.kernelStatus(processKey) === 'terminated'
     const kernelEpoch = session.kernelEpoch(
       processKey,
       kernelWasTerminatedAtAdmission,
@@ -827,15 +850,29 @@ class NotebookExecutionOwner {
           const cwdBefore = session.cwd
           const kernelStatusBefore = session.kernelStatus(processKey)
           const kernelWasTerminated =
-            session.isKernelTerminated(processKey) ||
-            session.kernelStatus(processKey) === 'terminated' ||
-            session.hasDurableKernelTermination(processKey)
+            session.isKernelTerminated(processKey) || kernelStatusBefore === 'terminated'
+          // A failed idle write leaves durable termination behind even if this epoch is live.
+          const durableTerminationPending = session.hasDurableKernelTermination(processKey)
           const kernelEpoch = session.kernelEpoch(
             processKey,
             kernelWasTerminated,
             notebookInterpreterIdentity(resolvedInterpreter)
           )
           const kernelEpochId = kernelEpoch.id
+          const executionAdmission = guardNotebookExecutionAdmission(
+            notebookExecutionAdmission(request),
+            signal,
+            () => {
+              if (
+                session.currentKernelEpochId(processKey) !== kernelEpochId ||
+                !isDeepStrictEqual(session.runtimeBinding(cell.language), binding)
+              ) {
+                throw new Error(
+                  'Notebook runtime changed before dispatch. Retry against the current runtime.'
+                )
+              }
+            }
+          )
           const executionRun = {
             ...durableAdmission.run,
             inputFiles: queuedRun.inputFiles,
@@ -861,7 +898,7 @@ class NotebookExecutionOwner {
               this.options.dataExecutionAdmission.runShared(
                 session,
                 admission,
-                async (rejection) => {
+                async (rejection): Promise<NotebookSessionExecutionResult> => {
                   if (rejection !== undefined) {
                     executedOnLiveKernel = false
                     return errorToExecutionResult(rejection, cwdBefore)
@@ -895,6 +932,13 @@ class NotebookExecutionOwner {
                     signal,
                     readTrustedNotebookBindingPermissionPrompts(request)
                   )
+                  try {
+                    await prepareNotebookExecution(request, 'dispatch')
+                  } catch (error) {
+                    if (error instanceof NotebookExecutionAdmissionError)
+                      return errorToExecutionResult(error, cwdBefore)
+                    throw error
+                  }
                   signal?.throwIfAborted()
                   if (
                     session.currentKernelEpochId(processKey) !== kernelEpochId ||
@@ -907,7 +951,9 @@ class NotebookExecutionOwner {
                   reachedExecutor = true
                   let executionResult = await session
                     .execute({
+                      executionAdmission,
                       runId,
+                      kernelEpochId,
                       code: durableAdmission.run.script,
                       ...(helperPlan.injections.length
                         ? { helperModules: helperPlan.injections }
@@ -937,6 +983,8 @@ class NotebookExecutionOwner {
                     })
                     .catch((error: unknown) => {
                       if (error instanceof NotebookExecutionStopError) throw error
+                      if (error instanceof NotebookExecutionAdmissionError)
+                        return errorToExecutionResult(error, cwdBefore)
                       executedOnLiveKernel = false
                       const fallback =
                         session.consumeForceStopped(processKey) || signal?.aborted
@@ -1013,7 +1061,11 @@ class NotebookExecutionOwner {
                 !session.isKernelTerminated(processKey) &&
                 (executedOnLiveKernel || !reachedExecutor)
               ) {
-                if (!reachedExecutor && kernelWasTerminated) {
+                if (
+                  !reachedExecutor &&
+                  (kernelWasTerminated ||
+                    (kernelStatusBefore === undefined && durableTerminationPending))
+                ) {
                   session.markKernelTerminated(processKey)
                   session.setKernelStatus(processKey, 'terminated')
                 } else if (!reachedExecutor && kernelStatusBefore === 'error') {
@@ -1026,7 +1078,9 @@ class NotebookExecutionOwner {
           })
           const run = terminalized.run
           if (
-            kernelWasTerminated &&
+            reachedExecutor &&
+            terminalized.result?.kernelDispatched !== false &&
+            (kernelWasTerminated || durableTerminationPending) &&
             session.currentKernelEpochId(processKey) === kernelEpochId &&
             session.kernelStatus(processKey) === 'idle' &&
             !session.isKernelTerminated(processKey)
@@ -1329,7 +1383,8 @@ class NotebookExecutionOwner {
     await session.drainExecutorLifecycle()
     const replStatusBefore = session.kernelStatus('repl')
     const replWasTerminated =
-      replStatusBefore === 'terminated' || session.hasDurableKernelTermination('repl')
+      session.isKernelTerminated('repl') || replStatusBefore === 'terminated'
+    const durableTerminationPending = session.hasDurableKernelTermination('repl')
     const epoch = session.kernelEpoch('repl', replWasTerminated)
     // The queued record describes admission. Persist the actual dispatch epoch in the existing
     // queued -> running transition, before any process receives this invocation.
@@ -1337,6 +1392,14 @@ class NotebookExecutionOwner {
     const runId = queuedRun.runId
     const kernelEpochId = epoch.id
     const replEpochId = blockedMutation ? undefined : kernelEpochId
+    const executionAdmission = guardNotebookExecutionAdmission(
+      notebookExecutionAdmission(request),
+      signal,
+      () => {
+        if (session.currentKernelEpochId('repl') !== kernelEpochId)
+          throw new Error('Notebook REPL epoch retired before dispatch.')
+      }
+    )
     let executedOnLiveKernel = !blockedMutation
     let reachedExecutor = false
     const terminalized = await this.options.runTerminalization.runAdmitted({
@@ -1372,37 +1435,43 @@ class NotebookExecutionOwner {
                 signal,
                 readTrustedNotebookBindingPermissionPrompts(request)
               )
+              await prepareNotebookExecution(request, 'dispatch')
               signal?.throwIfAborted()
               if (session.currentKernelEpochId('repl') !== epoch.id) {
                 throw new Error('Notebook REPL epoch retired before dispatch.')
               }
               if (mcpRpc) session.retainControlInvocationConnection(runId, mcpRpc)
-              const releaseControlInvocation = mcpRpc?.beginControlInvocation?.({
-                rootExecutionId: request.rootExecutionId,
-                turnId: runId,
-                controlInvocationGeneration,
-                toolInvocationId: runId,
-                executionMode: request.background ? 'background' : 'foreground',
-                ...(request.provenanceContext
-                  ? {
-                      originatingTurnId: request.provenanceContext.promptMessageId,
-                      originatingUserMessageId:
-                        request.provenanceContext.originMessageId ??
-                        request.provenanceContext.promptMessageId
-                    }
-                  : {}),
-                attachmentIds:
-                  request.registeredInputFiles
-                    ?.filter((input) => input.sourceKind === 'upload-version')
-                    .map((input) => input.sourceFileId) ?? [],
-                artifactIds:
-                  request.registeredInputFiles
-                    ?.filter((input) => input.sourceKind === 'artifact-version')
-                    .map((input) => input.sourceFileId) ?? []
-              })
+              const releaseControlInvocation = mcpRpc?.beginControlInvocation?.(
+                {
+                  rootExecutionId: request.rootExecutionId,
+                  turnId: runId,
+                  controlInvocationGeneration,
+                  toolInvocationId: runId,
+                  executionMode: request.background ? 'background' : 'foreground',
+                  ...(request.provenanceContext
+                    ? {
+                        originatingTurnId: request.provenanceContext.promptMessageId,
+                        originatingUserMessageId:
+                          request.provenanceContext.originMessageId ??
+                          request.provenanceContext.promptMessageId
+                      }
+                    : {}),
+                  attachmentIds:
+                    request.registeredInputFiles
+                      ?.filter((input) => input.sourceKind === 'upload-version')
+                      .map((input) => input.sourceFileId) ?? [],
+                  artifactIds:
+                    request.registeredInputFiles
+                      ?.filter((input) => input.sourceKind === 'artifact-version')
+                      .map((input) => input.sourceFileId) ?? []
+                },
+                notebookExecutionIntent(request),
+                notebookExecutionCredential(request)
+              )
               reachedExecutor = true
               return session
                 .execute({
+                  executionAdmission,
                   runId,
                   kernelEpochId,
                   code: request.code,
@@ -1424,7 +1493,8 @@ class NotebookExecutionOwner {
                   projectId: session.projectId,
                   workspaceCwd: request.workspaceCwd,
                   inputRunLeaseId: request.inputRunLeaseId,
-                  controlInvocationId: runId
+                  controlInvocationId: runId,
+                  controlInvocationNonce: releaseControlInvocation?.nonce
                 })
                 .finally(() => releaseControlInvocation?.())
             })()
@@ -1446,6 +1516,8 @@ class NotebookExecutionOwner {
               outputs: []
             }
           }
+          if (error instanceof NotebookExecutionAdmissionError)
+            return errorToExecutionResult(error, session.cwd)
           executedOnLiveKernel = false
           return errorToExecutionResult(error, session.cwd)
         }),
@@ -1456,7 +1528,10 @@ class NotebookExecutionOwner {
           session.kernelStatus('repl') === 'running' &&
           !session.isKernelTerminated('repl')
         ) {
-          if (!reachedExecutor && replWasTerminated) {
+          if (
+            !reachedExecutor &&
+            (replWasTerminated || (replStatusBefore === undefined && durableTerminationPending))
+          ) {
             session.markKernelTerminated('repl')
             session.setKernelStatus('repl', 'terminated')
           } else if (!reachedExecutor && replStatusBefore === 'error') {
@@ -1471,7 +1546,9 @@ class NotebookExecutionOwner {
     // Clear durable termination only after the recovered Run commits; ordinary activity is volatile.
     if (
       terminalized.dispatched &&
-      replWasTerminated &&
+      reachedExecutor &&
+      terminalized.result?.kernelDispatched !== false &&
+      (replWasTerminated || durableTerminationPending) &&
       session.currentKernelEpochId('repl') === replEpochId &&
       session.kernelStatus('repl') === 'idle' &&
       !session.isKernelTerminated('repl')
@@ -1483,7 +1560,11 @@ class NotebookExecutionOwner {
     if (!result) return controlResultFromRun(terminalized.run)
 
     return {
+      runId: terminalized.run.runId,
+      executionInvocationId: terminalized.run.executionInvocationId,
       status: result.status,
+      executionStarted: result.executionStarted,
+      kernelDispatched: result.kernelDispatched,
       stdout: result.stdout,
       stderr: result.stderr,
       traceback: result.traceback,
@@ -1518,7 +1599,7 @@ class NotebookExecutionOwner {
       inputRoot,
       protectedDirs,
       environment: {},
-      timeoutMs: request.timeoutMs ?? 120_000,
+      timeoutMs: request.timeoutMs ?? NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS,
       platform
     }
     const replayExisting = (existing: NotebookRunRecord): NotebookShellResult => {
@@ -1527,7 +1608,14 @@ class NotebookExecutionOwner {
       const fingerprint = shellRunFingerprint(
         session,
         request,
-        { ...frozenShellContext, environment: existing.frozenShellContext?.environment ?? {} },
+        {
+          ...frozenShellContext,
+          // Runs admitted with the previous default froze 120 seconds in the submission hash.
+          ...(request.timeoutMs === undefined && existing.frozenShellContext?.timeoutMs === 120_000
+            ? { timeoutMs: 120_000 }
+            : {}),
+          environment: existing.frozenShellContext?.environment ?? {}
+        },
         runtimeBinding
       )
       if (existing.submissionFingerprint !== fingerprint) {
@@ -1691,6 +1779,11 @@ class NotebookExecutionOwner {
         // Recheck admission after async lookup - shutdown or revocation could have happened
         this.assertShellAdmissionAvailable(session)
         const shellProcessRequest = {
+          executionAdmission: guardNotebookExecutionAdmission(
+            notebookExecutionAdmission(request),
+            lifecycleSignal,
+            () => this.assertShellAdmissionAvailable(session)
+          ),
           laneKey: notebookLaneKey(session.lane),
           runId,
           executionReference: runId,
@@ -1763,13 +1856,7 @@ class NotebookExecutionOwner {
             durableAdmission.run,
             new Error(SHELL_CANCELLED_MESSAGE)
           )
-          const result = {
-            stdout: cancelled.text.stdout,
-            stderr: cancelled.text.stderr,
-            exitCode: null,
-            ...(cancelled.truncated ? { truncated: true } : {})
-          }
-          return result
+          return publicShellResult(cancelled)
         }
         {
           const terminalized = await this.options.runTerminalization.runAdmitted({
@@ -1787,6 +1874,12 @@ class NotebookExecutionOwner {
                 lifecycleSignal,
                 readTrustedNotebookBindingPermissionPrompts(request)
               )
+              try {
+                await prepareNotebookExecution(request, 'dispatch')
+              } catch (error) {
+                if (!(error instanceof NotebookExecutionAdmissionError)) throw error
+                return { ...errorToExecutionResult(error, frozenShellContext.cwd), exitCode: 1 }
+              }
               lifecycleSignal.throwIfAborted()
               const workingFileObservation = await startWorkingFileObservation({
                 dataRoot: session.dataRoot,
@@ -1843,7 +1936,7 @@ class NotebookExecutionOwner {
                     ? 'failed'
                     : shellResult.exitCode === 0
                       ? 'completed'
-                      : shellResult.exitCode === null
+                      : shellResult.timedOut
                         ? 'timeout'
                         : 'failed'
               this.options.logger.info?.('shell execution completed', {
@@ -1855,16 +1948,16 @@ class NotebookExecutionOwner {
                 stage:
                   shellResult.runtimeStatus === 'unavailable' ? 'sandbox-prepare' : 'execution',
                 status,
-                terminationReason:
-                  shellResult.errorCode === 'shell-cleanup-incomplete'
-                    ? 'cleanup-incomplete'
-                    : shellResult.cancelled
-                      ? 'cancel'
-                      : shellResult.exitCode === null
-                        ? 'timeout'
-                        : 'exit',
-                cleanupState:
-                  shellResult.errorCode === 'shell-cleanup-incomplete' ? 'incomplete' : 'complete',
+                terminationReason: !ownedTreeReaped
+                  ? 'cleanup-incomplete'
+                  : shellResult.cancelled
+                    ? 'cancel'
+                    : status === 'timeout'
+                      ? 'timeout'
+                      : shellResult.exitCode !== null
+                        ? 'exit'
+                        : undefined,
+                cleanupState: ownedTreeReaped ? 'complete' : 'incomplete',
                 exitCode: shellResult.exitCode,
                 stdoutByteCount: Buffer.byteLength(shellResult.stdout, 'utf8'),
                 stderrByteCount: Buffer.byteLength(shellResult.stderr, 'utf8'),
@@ -1894,26 +1987,16 @@ class NotebookExecutionOwner {
                 exitCode: shellResult.exitCode,
                 runtimeStatus: shellResult.runtimeStatus,
                 errorCode: shellResult.errorCode,
-                recovery: shellResult.recovery
+                recovery: shellResult.recovery,
+                kernelDispatched: shellResult.kernelDispatched,
+                executionStarted: shellResult.executionStarted
               }
             }
           })
           // Cancellation must report an unconfirmed stop to its owning turn. Ordinary launch/exit
           // cleanup failures retain the existing result and recovery instructions for their caller.
           if (!ownedTreeReaped && lifecycleSignal.aborted) throw new NotebookExecutionStopError()
-          const result = terminalized.result
-          if (!result) {
-            return publicShellResult(terminalized.run)
-          }
-          return {
-            stdout: result.stdout,
-            stderr: result.stderr,
-            exitCode: result.exitCode,
-            ...(result.runtimeStatus ? { runtimeStatus: result.runtimeStatus } : {}),
-            ...(result.errorCode ? { errorCode: result.errorCode } : {}),
-            ...(result.recovery ? { recovery: result.recovery } : {}),
-            ...(result.truncated ? { truncated: true } : {})
-          }
+          return publicShellResult(terminalized.run, terminalized.result)
         }
       } finally {
         try {

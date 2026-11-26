@@ -7,6 +7,7 @@ import {
   SKILL_RUNTIME_ALLOWED_NAMES_ENV,
   SKILL_RUNTIME_ROOT_ENV
 } from '../skills/runtime-mcp-server'
+import * as profiles from '../settings/codebuddy-profile'
 import { createCodeBuddyFramework } from './codebuddy'
 
 const provider = {
@@ -237,6 +238,26 @@ describe('codebuddy framework', () => {
     )
   })
 
+  it('stops a shared conversation before resuming when the CLI changes site', async () => {
+    const site = vi.spyOn(profiles, 'sharedCodeBuddySiteMatches').mockReturnValue(false)
+    const request = vi.fn()
+    try {
+      await expect(
+        createCodeBuddyFramework().beforePromptDispatch?.({
+          connection: { agent: { request } } as never,
+          providerSessionId: 'prior-session',
+          cwd: '/workspace',
+          mcpServers: [],
+          codeBuddySharedSite: 'internal'
+        })
+      ).rejects.toThrow('Sign in to the selected site')
+      expect(site).toHaveBeenCalledWith('internal')
+      expect(request).not.toHaveBeenCalled()
+    } finally {
+      site.mockRestore()
+    }
+  })
+
   it('replays dynamic MCP servers when activating the target Session before a prompt', async () => {
     const request = vi.fn(async () => ({}))
     const mcpServers = [
@@ -272,6 +293,29 @@ describe('codebuddy framework', () => {
         },
         { name: 'notebook', command: '/app/electron', args: ['/app/notebook.js'], env: [] }
       ]
+    })
+  })
+
+  it('reapplies the selected model after resuming a history-bearing session', async () => {
+    const request = vi.fn(async () => ({}))
+
+    await createCodeBuddyFramework().beforePromptDispatch?.({
+      connection: { agent: { request } } as never,
+      providerSessionId: 'provider-session',
+      cwd: '/workspace',
+      mcpServers: [],
+      sessionModel: 'hy4flash-free'
+    })
+
+    expect(request).toHaveBeenNthCalledWith(1, 'session/resume', {
+      sessionId: 'provider-session',
+      cwd: '/workspace',
+      mcpServers: []
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'session/set_config_option', {
+      sessionId: 'provider-session',
+      configId: 'model',
+      value: 'hy4flash-free'
     })
   })
 

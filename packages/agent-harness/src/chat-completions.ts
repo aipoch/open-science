@@ -1,4 +1,11 @@
 import { mediaCapabilities, nativeMedia, requestBody, type InputCapabilities } from './media'
+import {
+  normalizeProviderError,
+  type SummarizeProviderError,
+  normalizeUpstreamError,
+  responseErrorDiagnostics,
+  type ProviderErrorReason
+} from './errors/normalize-upstream-error'
 import { frozen, json } from './session-state'
 import type { AgentModel, Json, ModelRequest, ModelUsage, ToolCall } from './session-types'
 
@@ -10,6 +17,7 @@ export type ChatCompletionsOptions = {
   id?: string
   apiKey(signal: AbortSignal): string | Promise<string>
   fetch?: typeof globalThis.fetch
+  summarizeProviderError?: SummarizeProviderError
   /** Provider tuning only. Cannot replace messages, model, tools, streaming or output limits. */
   parameters?: Readonly<Record<string, Json>>
   maxResponseBytes?: number
@@ -19,7 +27,7 @@ export type ChatCompletionsOptions = {
   inputCapabilities?: InputCapabilities
 }
 
-/** Bounded parser state only; never contains provider text, arguments, URLs or headers. */
+/** Parse bounded status and allowed error fields without retaining content, tool arguments, or requests. */
 export type ChatCompletionsDiagnostics = Readonly<{
   httpStatus: number
   phase:
@@ -39,9 +47,13 @@ export type ChatCompletionsDiagnostics = Readonly<{
   finishReason?: 'stop' | 'tool_calls' | 'length'
   /** Observed usage before failure, not proof that the response or task completed. */
   usage?: Readonly<ModelUsage>
+  /** Allowlisted provider diagnostics for HTTP/SSE failures. */
+  reason?: ProviderErrorReason
+  providerExcerpt?: string
+  requestId?: string
 }>
 
-/** Does not retain upstream response bodies, credentials or raw network errors. */
+/** Retain normalized diagnostics only, excluding raw responses and network exceptions. */
 export class ChatCompletionsError extends Error {
   readonly diagnostics?: ChatCompletionsDiagnostics
   constructor(
@@ -90,6 +102,37 @@ function normalizeUsage(value: unknown): ModelUsage {
   return result
 }
 
+/**
+ * Validate compatibility frames after completion without discarding new content or tool deltas.
+ *
+ * Args:
+ *   choice: A subsequent frame already validated as the primary choice.
+ *   finish: The first recorded finish reason, which subsequent frames must preserve.
+ */
+function validateTerminalTrailer(
+  choice: Record<string, unknown>,
+  finish: NonNullable<ChatCompletionsDiagnostics['finishReason']>
+): void {
+  if (
+    choice.finish_reason != null &&
+    choice.finish_reason !== '' &&
+    choice.finish_reason !== finish
+  )
+    return protocol()
+  const delta = object(choice.delta)
+  for (const [name, value] of Object.entries(delta)) {
+    if (value == null) continue
+    if (name === 'role') {
+      if (value !== '' && value !== 'assistant') return protocol()
+    } else if (name === 'tool_calls' || name === 'reasoning_details') {
+      if (!Array.isArray(value) || value.length !== 0) return protocol()
+    } else if (name === 'function_call' || value !== '') {
+      // Unknown extensions must also be empty; never discard unrecognized audio, video, or other payloads.
+      return protocol()
+    }
+  }
+}
+
 export async function* dataEvents(
   response: Response,
   limit: number,
@@ -109,7 +152,18 @@ export async function* dataEvents(
   try {
     while (true) {
       signal.throwIfAborted()
-      const chunk = await reader.read()
+      let chunk: Awaited<ReturnType<typeof reader.read>>
+      try {
+        chunk = await reader.read()
+      } catch {
+        signal.throwIfAborted()
+        throw new ChatCompletionsError('network', undefined, {
+          httpStatus: response.status,
+          phase: 'stream',
+          eventCount: 0,
+          receivedDone: false
+        })
+      }
       signal.throwIfAborted()
       size += chunk.value?.byteLength ?? 0
       if (size > limit) throw new ChatCompletionsError('limit')
@@ -320,13 +374,31 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
         !response.ok ||
         !response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')
       ) {
-        await response.body?.cancel().catch(() => undefined)
-        if (!response.ok) throw new ChatCompletionsError('http', response.status)
-        throw new ChatCompletionsError('protocol', undefined, {
+        if (!response.ok) {
+          const diagnostics = await normalizeUpstreamError(
+            response,
+            signal,
+            input.summarizeProviderError
+          )
+          throw new ChatCompletionsError('http', response.status, {
+            httpStatus: response.status,
+            phase: 'response',
+            eventCount: 0,
+            receivedDone: false,
+            ...diagnostics
+          })
+        }
+        const diagnostics = await normalizeUpstreamError(
+          response,
+          signal,
+          input.summarizeProviderError
+        )
+        throw new ChatCompletionsError('protocol', response.status, {
           httpStatus: response.status,
           phase: 'response',
           eventCount: 0,
-          receivedDone: false
+          receivedDone: false,
+          ...diagnostics
         })
       }
       let content = '',
@@ -349,15 +421,31 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
           phase = 'event-json'
           const event = object(JSON.parse(data))
           phase = 'provider'
-          if (event.error || (event.base_resp && object(event.base_resp).status_code !== 0))
-            return protocol()
+          if (event.error || (event.base_resp && object(event.base_resp).status_code !== 0)) {
+            const detail = event.error ?? event.base_resp ?? event
+            throw new ChatCompletionsError('protocol', response.status, {
+              httpStatus: response.status,
+              phase: 'provider',
+              eventCount,
+              receivedDone: ended,
+              ...normalizeProviderError(
+                event.error ? event : detail,
+                undefined,
+                input.summarizeProviderError
+              )
+            })
+          }
           phase = 'usage'
           if (event.usage != null) usage = normalizeUsage(event.usage)
           phase = 'choice'
           if (!Array.isArray(event.choices)) return protocol()
           for (const item of event.choices) {
             const choice = object(item)
-            if (choice.index !== 0 || finish) return protocol()
+            if (choice.index !== 0) return protocol()
+            if (finish !== undefined) {
+              validateTerminalTrailer(choice, finish)
+              continue
+            }
             const delta = object(choice.delta)
             if (delta.content != null) {
               if (typeof delta.content !== 'string') return protocol()
@@ -412,14 +500,16 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
                   return protocol()
                 const fn = object(part.function ?? {})
                 const prior = calls.get(index) ?? { id: '', name: '', arguments: '' }
-                if (part.id !== undefined) {
-                  if (typeof part.id !== 'string' || (prior.id && prior.id !== part.id))
-                    return protocol()
-                  prior.id = part.id
+                // Some gateways repeat null for identity fields already sent on this index.
+                const id = part.id === null && prior.id ? undefined : part.id
+                const name = fn.name === null && prior.name ? undefined : fn.name
+                if (id !== undefined) {
+                  if (typeof id !== 'string' || (prior.id && prior.id !== id)) return protocol()
+                  prior.id = id
                 }
-                if (fn.name !== undefined) {
-                  if (typeof fn.name !== 'string') return protocol()
-                  prior.name += fn.name
+                if (name !== undefined) {
+                  if (typeof name !== 'string') return protocol()
+                  prior.name += name
                 }
                 if (fn.arguments !== undefined && typeof fn.arguments !== 'string')
                   return protocol()
@@ -429,8 +519,8 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
                   type: 'tool-delta',
                   index,
                   arguments: (fn.arguments ?? '') as string,
-                  ...(part.id !== undefined ? { id: part.id as string } : {}),
-                  ...(fn.name !== undefined ? { name: fn.name as string } : {})
+                  ...(id !== undefined ? { id } : {}),
+                  ...(name !== undefined ? { name } : {})
                 }
               }
             }
@@ -496,6 +586,16 @@ export function createChatCompletionsModel(input: ChatCompletionsOptions): Agent
             phase,
             eventCount,
             receivedDone: ended,
+            ...(error instanceof ChatCompletionsError
+              ? {
+                  reason: error.diagnostics?.reason,
+                  ...(error.diagnostics?.providerExcerpt
+                    ? { providerExcerpt: error.diagnostics.providerExcerpt }
+                    : {}),
+                  requestId: error.diagnostics?.requestId
+                }
+              : {}),
+            ...responseErrorDiagnostics(response),
             ...(finish ? { finishReason: finish } : {}),
             ...(usage ? { usage } : {})
           }

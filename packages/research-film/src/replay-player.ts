@@ -5,7 +5,7 @@ import { Zip, ZipDeflate, ZipPassThrough } from 'fflate'
 import { readVideoSourceFile } from './build-player.js'
 import { parseReplayCase, replayNarrationSpec, REPLAY_RUNTIME_VERSION } from './replay-case.js'
 import { buildVideoTimeline, type VoiceTiming } from './timeline.js'
-import type { ResearchVideoSessionSource } from './source.js'
+import { assertResearchVideoPlayerSize, type ResearchVideoSessionSource } from './source.js'
 import { researchFilmResources } from './resources.js'
 import { replayWorkbench } from './replay-workbench.js'
 
@@ -185,6 +185,7 @@ export async function buildReplayPlayer(options: {
     )
   )
   const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="open-science-research-video" content="1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"><title>Operation replay</title><!-- ${notices.join('\n').replace(/--/g, '—')} --><style>${css}</style><body><div id="root"></div><div id="controls"></div><script>${scripts.replace(/<\/script/gi, '<\\/script')}</script></body></html>`
+  assertResearchVideoPlayerSize(Buffer.byteLength(html))
   await mkdir(options.outputDirectory, { recursive: false })
   try {
     const playerPath = join(options.outputDirectory, 'player.html'),

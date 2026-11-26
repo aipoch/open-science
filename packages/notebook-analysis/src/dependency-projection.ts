@@ -2462,7 +2462,10 @@ const projectNotebookFileDependencies = (
   fileDependenciesByRunId: Record<string, NotebookFileDependency[]>
   unresolvedFileReadRunIds: string[]
 } => {
-  const producers = new Map<string, { runId: string; generationId?: string; checksum?: string }>()
+  const producers = new Map<
+    string,
+    { runId: string; generationId?: string; checksum?: string; advisory: boolean }
+  >()
   const producerPaths = new Map<string, NotebookWorkingFile>()
   const ambiguousPaths = new Set<string>()
   const unresolvedFileReadRunIds = new Set<string>()
@@ -2508,7 +2511,8 @@ const projectNotebookFileDependencies = (
   const registerProducer = (
     run: NotebookRunRecord,
     sourcePath: string,
-    generation: NotebookWorkingFile
+    generation: NotebookWorkingFile,
+    advisory = false
   ): void => {
     // A new generation supersedes every prior alias for the same artifact. Keep
     // those aliases ambiguous until the exact identities observed in this run
@@ -2517,6 +2521,7 @@ const projectNotebookFileDependencies = (
     invalidateGenerationAliases(run, generation, true)
     const producer = {
       runId: run.runId,
+      advisory,
       ...(generation.generationId ? { generationId: generation.generationId } : {}),
       ...(generation.checksum ? { checksum: generation.checksum } : {})
     }
@@ -2632,17 +2637,31 @@ const projectNotebookFileDependencies = (
           if (!runtimeEvidenceComplete || explicitBarrier) unresolvedFileReadRunIds.add(run.runId)
           continue
         }
-        if (fileAccess.readState !== 'complete') continue
+        if (fileAccess.readState === 'unavailable') continue
         const producer = producers.get(key)
         if (!producer || producer.runId === run.runId) continue
+        const advisory = producer.advisory || fileAccess.readState === 'partial'
+        if (advisory) {
+          unresolvedFileReadRunIds.add(run.runId)
+          const endedAt = runsById.get(producer.runId)?.endedAt
+          // Incomplete coverage supports a candidate only for a specific generation
+          // which predates the read, with no observed rewrite in the reading run.
+          if (
+            !producer.generationId ||
+            !producer.checksum ||
+            endedAt === undefined ||
+            run.startedAt === undefined ||
+            endedAt > run.startedAt ||
+            observedFileGeneration(run, rawPath)
+          )
+            continue
+        }
         dependencies.push({
           producerRunId: producer.runId,
           path,
           ...(producer.generationId ? { generationId: producer.generationId } : {}),
           ...(producer.checksum ? { checksum: producer.checksum } : {}),
-          confidence: (producer.checksum
-            ? 'verified'
-            : 'advisory') as NotebookFileDependency['confidence']
+          confidence: producer.checksum && !advisory ? 'verified' : 'advisory'
         })
       }
       if (dependencies.length) dependenciesByRunId[run.runId] = dependencies
@@ -2712,8 +2731,12 @@ const projectNotebookFileDependencies = (
         }
       } else {
         for (const generation of observedChanges) markAmbiguous(run, generation)
-        if (!runtimeWriterEvidenceComplete) {
-          for (const rawPath of fileAccess?.writes ?? []) markPathAmbiguous(run, rawPath)
+        for (const rawPath of fileAccess?.writes ?? []) {
+          const generation =
+            fileAccess?.writeState === 'partial' && observedFileGeneration(run, rawPath)
+          if (generation && generation.generationId && generation.checksum) {
+            registerProducer(run, rawPath, generation, true)
+          } else markPathAmbiguous(run, rawPath)
         }
         for (const scope of fileAccess?.writeScopes ?? []) {
           for (const generation of observedScopedGenerations(run, [scope]))

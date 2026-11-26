@@ -1,3 +1,4 @@
+import { taskRunTracing, requireTracingFramework } from './task-run-tracing'
 import type {
   AcpCreateSessionResponse,
   AcpPromptRequest,
@@ -6,6 +7,9 @@ import type {
 } from '../../shared/acp'
 import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { TaskAgentPort, TaskAgentPromptRequest } from '../tasks/task-runner'
+import { notebookExecutionIntent, withNotebookUserOperation } from '../notebook/execution-intent'
+import { markTaskNotebookRuntime } from '../notebook/runtime-binding-admission'
+import { withTaskPromptOwner } from '../../shared/task-continuation'
 import type { AcpCreateSessionWorkflow } from './create-session-workflow'
 import {
   toSessionAgentConfiguration,
@@ -14,6 +18,11 @@ import {
 } from './session-agent-target'
 
 type AcpTaskAgentRuntime = {
+  listTaskQuestions?: NonNullable<TaskAgentPort['questions']>['list']
+  respondToTaskQuestion?: NonNullable<TaskAgentPort['questions']>['respond']
+  setContinuationTracker?: TaskAgentPort['setContinuationTracker']
+  captureNotebookTaskIntent?(request: AcpPromptRequest): AcpPromptRequest
+  assertAttachedTracingReady?(sessionId: string): Promise<void>
   getSnapshot(): { sessionIds: string[] }
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<unknown>
@@ -26,6 +35,11 @@ type AcpTaskAgentRuntime = {
     runtimeReviewOwner?: 'task' | 'renderer'
   ): Promise<unknown>
   cancelPrompt(request: { sessionId: string }): Promise<unknown>
+  respondSessionPlan?: NonNullable<TaskAgentPort['respondDelegatedPlan']>
+  getTaskPermissions?: TaskAgentPort['getTaskPermissions']
+  respondTaskPermission?: TaskAgentPort['respondTaskPermission']
+  restoreTaskPermission?: TaskAgentPort['restoreTaskPermission']
+  delegateInteractions?: TaskAgentPort['delegateInteractions']
 }
 
 type TaskPromptNotifications = Pick<TaskNotificationService, 'trackPrompt' | 'untrackPrompt'>
@@ -40,6 +54,7 @@ type SessionArchiveAvailability = {
 
 const toAcpPromptRequest = (request: TaskAgentPromptRequest): AcpPromptRequest => ({
   sessionId: request.sessionId,
+  ...(request.otelTraces ? { [taskRunTracing]: true } : {}),
   text: request.text,
   ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
   provenanceContext: request.provenanceContext,
@@ -60,16 +75,30 @@ const createAcpTaskAgentPort = (
   resolveSessionAgentTarget?: SessionAgentTargetResolver,
   resolveDefaultSessionAgentTarget?: DefaultSessionAgentTargetResolver
 ): TaskAgentPort => ({
+  ...(runtime.listTaskQuestions && runtime.respondToTaskQuestion
+    ? {
+        questions: {
+          list: runtime.listTaskQuestions.bind(runtime),
+          respond: runtime.respondToTaskQuestion.bind(runtime)
+        }
+      }
+    : {}),
+  ...(runtime.setContinuationTracker
+    ? { setContinuationTracker: (tracker) => runtime.setContinuationTracker!(tracker) }
+    : {}),
   withSessionAvailable: (projectId, sessionId, operation) =>
     archiveAvailability
       ? archiveAvailability.withSessionAvailable(projectId, sessionId, operation)
       : operation(),
+  assertAttachedTracingReady: runtime.assertAttachedTracingReady?.bind(runtime),
   listAttachedSessionIds: async () => [...runtime.getSnapshot().sessionIds],
   createSession: async (request) => {
     const agentTarget = request.agentConfiguration
       ? await resolveSessionAgentTarget?.({ agentConfiguration: request.agentConfiguration })
       : await resolveDefaultSessionAgentTarget?.()
+    if (request.otelTraces && agentTarget) requireTracingFramework(agentTarget.frameworkId)
     const response = await createSessionWorkflow.create({
+      ...(request.otelTraces ? { [taskRunTracing]: true } : {}),
       projectId: request.projectId,
       permissionProfile: request.permissionProfile,
       ...(request.cwd ? { cwd: request.cwd } : {}),
@@ -89,6 +118,7 @@ const createAcpTaskAgentPort = (
       agentConfiguration: request.agentConfiguration
     })
     const response = await runtime.resumeSession({
+      ...(request.otelTraces ? { [taskRunTracing]: true } : {}),
       sessionId: request.sessionId,
       cwd: request.cwd,
       projectId: request.projectId,
@@ -111,25 +141,48 @@ const createAcpTaskAgentPort = (
     runtime.setPermissionProfile({ sessionId, profile }).then(() => undefined),
   setMemoryEnabled: async (sessionId, enabled) => runtime.setMemoryEnabled(sessionId, enabled),
   prompt: async (request, observer) => {
-    const acpRequest = toAcpPromptRequest(request)
-    const tracked = notifications?.trackPrompt(acpRequest)
+    const prompt = markTaskNotebookRuntime(
+      withTaskPromptOwner(toAcpPromptRequest(request), request.taskRunId),
+      request.notebookRuntime
+    )
+    // TaskRunner owns this boundary after reserving the Session and accepting its exact root
+    // prompt. Freeze authority before notifications, admission or Provider preparation can yield.
+    const acpRequest = request.notebookContinuation
+      ? withNotebookUserOperation(prompt, request.notebookContinuation)
+      : (runtime.captureNotebookTaskIntent?.(prompt) ?? prompt)
+    let tracked: ReturnType<TaskPromptNotifications['trackPrompt']> | undefined
     try {
-      if (observer?.onProviderPromptAccepted || observer?.onPromptAdmitted) {
+      tracked = notifications?.trackPrompt(acpRequest)
+      if (request.otelTraces || observer?.onProviderPromptAccepted || observer?.onPromptAdmitted) {
         await runtime.sendPromptObserved(
           acpRequest,
-          observer.onProviderPromptAccepted ?? (() => undefined),
-          observer.onPromptAdmitted,
+          observer?.onProviderPromptAccepted ?? (() => undefined),
+          observer?.onPromptAdmitted,
           'task'
         )
       } else {
         await runtime.sendPrompt(acpRequest)
       }
     } catch (error) {
+      notebookExecutionIntent(acpRequest)?.abandonUserExecution()
       if (tracked) notifications?.untrackPrompt(acpRequest.sessionId, tracked)
       throw error
     }
   },
-  cancelPrompt: (sessionId) => runtime.cancelPrompt({ sessionId }).then(() => undefined)
+  cancelPrompt: (sessionId) => runtime.cancelPrompt({ sessionId }).then(() => undefined),
+  ...(runtime.delegateInteractions ? { delegateInteractions: runtime.delegateInteractions } : {}),
+  ...(runtime.respondSessionPlan
+    ? { respondDelegatedPlan: runtime.respondSessionPlan.bind(runtime) }
+    : {}),
+  ...(runtime.getTaskPermissions
+    ? { getTaskPermissions: runtime.getTaskPermissions.bind(runtime) }
+    : {}),
+  ...(runtime.respondTaskPermission
+    ? { respondTaskPermission: runtime.respondTaskPermission.bind(runtime) }
+    : {}),
+  ...(runtime.restoreTaskPermission
+    ? { restoreTaskPermission: runtime.restoreTaskPermission.bind(runtime) }
+    : {})
 })
 
 export { createAcpTaskAgentPort }

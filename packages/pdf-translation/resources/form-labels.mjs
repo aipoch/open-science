@@ -12,7 +12,8 @@ import { engine } from './pdfium.mjs'
 import { createHash } from 'node:crypto'
 
 // PDFium serializes a four-corner open path as `re`, closing its missing edge.
-// An empty final subpath preserves butt-capped paint and prevents that rewrite.
+// The same rewrite can shorten a collinear stroke that doubles back.
+// An empty final subpath preserves butt-capped paint and prevents either rewrite.
 export function preserveOpenRectanglePaths(native, page) {
   const { p, m } = native
   const at = native.alloc(8)
@@ -37,16 +38,58 @@ export function preserveOpenRectanglePaths(native, page) {
       }
       if (points.length !== 4) continue
       const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = points
-      if (!(
+      const rectangle =
         (x0 === x1 && y1 === y2 && x2 === x3 && y3 === y0 && x0 !== x2 && y0 !== y2) ||
         (y0 === y1 && x1 === x2 && y2 === y3 && x3 === x0 && x0 !== x2 && y0 !== y2)
-      ))
-        continue
+      const backtrackingStroke =
+        y0 === y1 &&
+        y1 === y2 &&
+        y2 === y3 &&
+        ((x0 < x2 && x2 < x1 && x1 < x3) || (x0 > x2 && x2 > x1 && x1 > x3)) &&
+        p.FPDFPath_GetDrawMode(object, at, at + 4) &&
+        m.HEAP32[at / 4] === 0 &&
+        m.HEAP32[at / 4 + 1] === 1
+      if (!rectangle && !backtrackingStroke) continue
       if (!p.FPDFPath_MoveTo(object, x3, y3)) throw Error('Could not preserve open PDF rectangle')
     }
   } finally {
     native.free(at)
   }
+}
+
+// PDFium can serialize a rectangle with repeated corners as a zero-height
+// clip. Leave this Form untouched rather than hide its raster or vector paint.
+function unsafeRepeatedCornerClip(parts) {
+  if (
+    parts.length !== 8 ||
+    parts.some(([type, close], index) => type !== (index === 0 ? 2 : 0) || close)
+  )
+    return false
+  const [
+    [, , x0, y0],
+    [, , x1, y1],
+    [, , x2, y2],
+    [, , x3, y3],
+    [, , x4, y4],
+    [, , x5, y5],
+    [, , x6, y6],
+    [, , x7, y7]
+  ] = parts
+  return (
+    [x0, y0, x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6, x7, y7].every(Number.isFinite) &&
+    x0 === x7 &&
+    y0 === y7 &&
+    x1 === x2 &&
+    y1 === y2 &&
+    x3 === x4 &&
+    y3 === y4 &&
+    x5 === x6 &&
+    y5 === y6 &&
+    x0 !== x3 &&
+    y0 !== y3 &&
+    ((x0 === x1 && x3 === x5 && y0 === y5 && y1 === y3) ||
+      (y0 === y1 && y3 === y5 && x0 === x5 && x1 === x3))
+  )
 }
 
 // PDFium can assign one overprinted label's text to a different native object
@@ -207,7 +250,7 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
         height,
         stride,
         p.FPDFBitmap_GetFormat(bitmap),
-        digest(e.m.HEAPU8.slice(at, at + stride * height))
+        digest(e.m.HEAPU8.subarray(at, at + stride * height))
       ]
     } finally {
       p.FPDFBitmap_Destroy(bitmap)
@@ -441,9 +484,10 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
           for (const child of children)
             if (p.FPDFPageObj_GetType(child) === 5)
               nestedText = walk(child, outer, depth + 1) || nestedText
-          const objects = children.map((child) => describe(child, text, input.doc, page))
-          if (!objects.some((o) => o.type === 1 && o.text)) return nestedText
           if (nestedText) return true
+          if (!children.some((child) => p.FPDFPageObj_GetType(child) === 1)) return false
+          const objects = children.map((child) => describe(child, text, input.doc, page))
+          if (!objects.some((o) => o.type === 1 && o.text)) return false
           forms.push({
             key: JSON.stringify(objects),
             outer,
@@ -456,7 +500,8 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
           })
           return true
         }
-        for (const object of e.objects(page)) walk(object.obj, [1, 0, 0, 1, 0, 0], 0)
+        const count = p.FPDFPage_CountObjects(page)
+        for (let i = 0; i < count; i++) walk(p.FPDFPage_GetObject(page, i), [1, 0, 0, 1, 0, 0], 0)
       } finally {
         if (text) p.FPDFText_ClosePage(text)
         e.free(at)
@@ -554,7 +599,9 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
       if (!page) throw Error('Could not open PDF Form content')
       const text = p.FPDFText_LoadPage(page)
       try {
-        const objects = e.objects(page).map((o) => describe(o.obj, text, native.doc, page)),
+        const pageObjects = e.objects(page)
+        if (!pageObjects.some(({ type }) => type === 1)) continue
+        const objects = pageObjects.map((o) => describe(o.obj, text, native.doc, page)),
           [a, , , d, x, y] = records[index].matrix,
           // PDFium applies the Form's own Matrix to its children; its outer
           // object matrix contains only the invocation transform.
@@ -595,6 +642,12 @@ export async function translateFormLabels(data, units, pages, generate, onSavedU
         (m) =>
           m.found === record.found || (m.key === record.key && m.found.page === record.found.page)
       ).length !== 1
+    )
+      continue
+    if (
+      record.objects.some(
+        (object) => object.type === 3 && object.identity?.clipping.some(unsafeRepeatedCornerClip)
+      )
     )
       continue
     const form = record.found,

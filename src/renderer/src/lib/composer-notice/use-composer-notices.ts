@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { classifyFailure } from '../../../../shared/failure/classify'
 import type { ClassifiedFailure, FailureFacts } from '../../../../shared/failure/contract'
 import type { TurnOutcome } from '../../../../shared/session-turn-outcome-contract'
-import { noticePriority, type ComposerNotice } from './catalog'
+import { noticePriority, type ComposerNotice } from '@/components/notices/composer-notice-catalog'
 
 export type ComposerOperationFailure = Readonly<{
   id: string
@@ -13,6 +13,7 @@ export type ComposerOperationFailure = Readonly<{
   occurredAt?: number
   origin?: FailureFacts['origin']
   blocksSend?: boolean
+  summary?: ComposerNotice['summary']
 }>
 
 export const useComposerNotices = (input: {
@@ -32,15 +33,22 @@ export const useComposerNotices = (input: {
   const prefix = input.sessionId ?? 'draft'
   const notices: ComposerNotice[] = []
   const { turn, recovery, legacy } = input
-  if (recovery)
+  if (recovery) {
+    const cancelled = recovery.cause === 'cancelled'
     notices.push({
       id: `${prefix}:session:${recovery.cause}:${recovery.error ?? ''}`,
       source: 'session',
       recoveryCause: recovery.cause,
       occurredAt: turn?.outcome.settledAt ?? 0,
       blocksSend: true,
-      failure: classifyFailure({ origin: 'session', text: recovery.error })
+      failure:
+        !cancelled &&
+        turn?.outcome.kind === 'interrupted' &&
+        turn.outcome.failure?.diagnostics.protocol
+          ? turn.outcome.failure
+          : classifyFailure({ origin: 'session', text: cancelled ? undefined : recovery.error })
     })
+  }
   if (turn?.outcome.kind === 'failed')
     notices.push({
       id: `${prefix}:turn:${turn.promptMessageId}:${turn.outcome.settledAt}`,
@@ -82,6 +90,7 @@ export const useComposerNotices = (input: {
       id: `${prefix}:${operation.id}:${operation.occurredAt ?? ''}:${operation.message ?? ''}`,
       source: 'operation',
       operation: operation.id,
+      summary: operation.summary,
       blocksSend: operation.blocksSend || failure.reason === 'configuration/auth-failed',
       occurredAt: operation.occurredAt ?? 0,
       failure: {
@@ -90,7 +99,10 @@ export const useComposerNotices = (input: {
           ...failure.diagnostics,
           raw:
             [operation.message, operation.detail ?? failure.diagnostics.raw]
-              .filter((value, index, all) => value && all.indexOf(value) === index)
+              .filter(
+                (value, index, all) =>
+                  value && value !== operation.summary?.title && all.indexOf(value) === index
+              )
               .join('\n') || undefined
         }
       }
@@ -113,7 +125,7 @@ export const useComposerNotices = (input: {
       .filter((notice) => !dismissed.has(notice.id))
       .sort((a, b) => noticePriority(a) - noticePriority(b) || b.occurredAt - a.occurredAt),
     dismiss: (notice) => {
-      if (notice.failure.category === 'session') return
+      if (notice.source === 'session' || notice.failure.category === 'session') return
       setDismissed((current) => new Set([...current, notice.id]))
     }
   }

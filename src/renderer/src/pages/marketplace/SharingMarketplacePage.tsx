@@ -155,6 +155,7 @@ export const SharingMarketplacePage = ({
   const returnToProject = useNavigationStore((state) => state.returnToProject)
   const resourceCenterIntent = useNavigationStore((state) => state.resourceCenterIntent)
   const initialIntent = embedded ? undefined : resourceCenterIntent
+  const [settingsOrigin, setSettingsOrigin] = useState(initialIntent?.settingsOrigin)
   const appliedIntent = useRef(initialIntent)
   const clearResourceCenterIntent = useNavigationStore((state) => state.clearResourceCenterIntent)
   const activeProjectId = useNavigationStore((state) => state.activeProjectId)
@@ -163,7 +164,11 @@ export const SharingMarketplacePage = ({
       (project) => project.id === activeProjectId && project.archivedAt === undefined
     )
   )
-  const returnLabel = hasActiveProject ? t('Back to Project') : t('Back to Home')
+  const returnLabel = settingsOrigin
+    ? t('Back to settings')
+    : hasActiveProject
+      ? t('Back to Project')
+      : t('Back to Home')
   const [collapsed, setCollapsed] = useState(false)
   // Returning from the full case library restores the project panel that handed off its list.
   const [activeResource, setActiveResource] = useState<ResourceCenterResource>(() => {
@@ -347,6 +352,7 @@ export const SharingMarketplacePage = ({
     if (appliedIntent.current !== intent) {
       appliedIntent.current = intent
       requestLeave(() => {
+        setSettingsOrigin(intent.settingsOrigin)
         setActiveResource(intent.resource)
         setVisitedResources((current) => new Set([...current, intent.resource]))
         setDetail(null)
@@ -354,6 +360,12 @@ export const SharingMarketplacePage = ({
           const view = intent.view ?? { kind: 'list' }
           if (view.kind === 'detail') setDetail({ resource: 'connectors', view })
           else setConnectorsView(view)
+        } else if (intent.resource === 'skills' && !intent.skillId) {
+          setSkillsView({ kind: 'list' })
+          skillHistory.current = []
+        } else if (intent.resource === 'specialists' && !intent.specialistId) {
+          setSpecialistsView({ kind: 'list' })
+          specialistHistory.current = []
         } else if (intent.resource === 'skills' && intent.skillId) {
           setDetail({ resource: 'skills', view: { kind: 'detail', id: intent.skillId } })
         } else if (intent.resource === 'specialists' && intent.specialistId) {
@@ -758,7 +770,19 @@ export const SharingMarketplacePage = ({
               className={cn('mb-3 h-9 w-full gap-2 px-0', !collapsed && 'sm:justify-start sm:px-3')}
               aria-label={returnLabel}
               title={returnLabel}
-              onClick={() => requestLeave(() => returnToProject('user'))}
+              onClick={() =>
+                requestLeave(() => {
+                  if (!settingsOrigin) {
+                    returnToProject('user')
+                    return
+                  }
+                  if (settingsOrigin.view === 'library')
+                    useNavigationStore.getState().openLibrary('user')
+                  else if (settingsOrigin.view !== 'marketplace') returnToProject('user')
+                  setSettingsOrigin(undefined)
+                  useSettingsStore.getState().resumeSettingsRoute(settingsOrigin.route)
+                })
+              }
             >
               <ArrowLeft className="size-4 shrink-0" aria-hidden="true" />
               {!collapsed && <span className="hidden sm:inline">{returnLabel}</span>}
@@ -860,7 +884,11 @@ export const SharingMarketplacePage = ({
             )}
             aria-hidden={activeResource !== 'marketplace'}
           >
-            <UseCaseCarousel variant="marketplace" compact={embedded} />
+            <UseCaseCarousel
+              variant="marketplace"
+              compact={embedded}
+              active={activeResource === 'marketplace'}
+            />
           </div>
           {visitedResources.has('skills') && (
             <div

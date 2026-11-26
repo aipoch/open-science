@@ -81,7 +81,7 @@ const requestByMethod = {
     recordId: 'trusted-record',
     reason: 'Download the requested public dataset.'
   },
-  state: request,
+  state: { ...request, historyLimit: 10, runIds: ['run-1'] },
   restart: { ...request, language: 'r', environment: 'default-r' },
   shutdown: request,
   inspectPackages: { ...request, language: 'python', packages: ['numpy'] },

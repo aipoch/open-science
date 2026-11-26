@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactReproducibilityCheckRequest } from '../../shared/artifact-reproducibility'
+import { withNotebookUserOperation } from '../notebook/execution-intent'
 import { registerArtifactReproducibilityIpcHandlers } from './artifact-reproducibility-ipc'
 
 const handlers = new Map<string, (event: never, request: never) => unknown>()
@@ -133,7 +134,11 @@ describe('artifact reproducibility IPC', () => {
       { attemptId: 'attempt-1' } as never
     )
 
-    expect(owner.start).toHaveBeenCalledWith(request, 17, expect.any(Function))
+    expect(owner.start).toHaveBeenCalledWith(
+      withNotebookUserOperation(request, { assertCurrent: expect.any(Function) }),
+      17,
+      expect.any(Function)
+    )
     expect(
       handlers.get('artifacts:get-reproducibility-check')?.({ sender } as never, request as never)
     ).toEqual({ attemptId: 'attempt-1' })

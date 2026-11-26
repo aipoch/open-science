@@ -1,5 +1,6 @@
-/* Layout glue for os-kit.js. Visual styling comes from os-app.css (the app's own stylesheet) through the real class names;
-   this file only sets what the app computes at runtime (window size, rail width, scroll areas) using the app's tokens. */
+/* Layout glue for os-kit.js (Open-Science 1.2.1). Visual styling comes from os-app.css (the app's own stylesheet) through the
+   real class names; this file only sets what the app computes at runtime (window size, the macOS title bar, resizable panel
+   widths, scroll areas) and the compact (9:16) layout, using the app's tokens. */
 .osk-window {
   position: absolute;
   left: 0;
@@ -8,7 +9,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--background);
+  background: var(--bg-10);
   color: var(--foreground);
   font-family: var(--font-sans);
   font-size: 14px;
@@ -25,20 +26,28 @@
   width: 720px;
   height: 1280px;
 }
+.osk-rounded {
+  border-radius: 16px;
+}
+
+/* native macOS title bar (not part of the renderer): 32px, centred lights, the window title to their right */
 .osk-titlebar {
-  height: 30px;
+  height: 32px;
   flex: none;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  padding-left: 14px;
+  padding-left: 9px;
+  background: #fff;
+  border-bottom: 1px solid #e6e6e6;
 }
 .osk-lights {
   display: flex;
-  gap: 8px;
+  gap: 9px;
 }
 .osk-lights i {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: #ff5f57;
   box-shadow: inset 0 0 0 0.5px #0000001f;
@@ -49,191 +58,121 @@
 .osk-lights i:nth-child(3) {
   background: #28c840;
 }
-.osk-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
+.osk-wintitle {
+  margin-left: 16px;
+  font:
+    600 13px/16px -apple-system,
+    BlinkMacSystemFont,
+    'SF Pro Text',
+    system-ui,
+    sans-serif;
+  color: rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
 }
 
-/* sidebar rail */
-.osk-sidebar {
-  width: 224px;
+/* main > layout > resizable group (sidebar | conversation | preview) */
+.osk-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.osk-layout {
+  flex: 1;
+}
+.osk-group {
+  display: flex;
+}
+.osk-side-panel {
+  flex: 0 0 var(--osk-side-w, 16%);
+  min-width: 0;
+  display: flex;
+}
+.osk-conv-panel {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+.osk-preview-panel {
+  flex: 0 0 var(--osk-panel-w, 40%);
+  min-width: 0;
+  display: flex;
+}
+.osk-handle {
   flex: none;
-  padding: 0 0 8px 8px;
-  display: flex;
-  flex-direction: column;
+  z-index: 20;
 }
-.osk-nav {
-  padding-top: 6px;
-}
-.osk-sessions {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  overflow: hidden;
-  padding: 0 6px;
-}
-.osk-section-label {
-  padding: 10px 10px 4px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-300);
-}
-.osk-session-row {
-  height: 32px;
-}
-.osk-dot-idle {
-  box-shadow: inset 0 0 0 1.25px var(--text-300);
-}
-.osk-dot-running {
-  background: var(--session-running);
-}
-.osk-dot-done {
-  background: var(--success-000);
-}
-.osk-rail-foot {
-  margin-top: auto;
-  padding-top: 8px;
+.osk-handle-line {
+  box-shadow: 1px 0 3px rgba(30, 28, 24, 0.08);
 }
 
 /* conversation */
 .osk-conv {
   flex: 1;
-  padding: 6px 6px 0 16px;
-}
-.osk-compact .osk-conv {
-  padding: 0;
-}
-.osk-header {
-  height: 40px;
-  flex: none;
-  padding: 0 8px;
-}
-.osk-compact .osk-header {
-  height: 52px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--color-border-200);
 }
 .osk-scroller {
-  flex: 1;
-  min-height: 0;
   overflow: hidden;
-  position: relative;
 }
 .osk-thread {
-  max-width: 48rem;
-  margin: 0 auto;
-  padding: 12px 24px 300px;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  padding-bottom: 300px;
   will-change: transform;
-}
-.osk-compact .osk-thread {
-  padding: 16px 20px 420px;
-  gap: 20px;
 }
 .osk-group-wrap {
   margin-top: 10px;
 }
-.osk-tool-row {
-  color: var(--text-000);
+.osk-spin {
+  animation: none;
 }
 
-/* composer */
-.osk-composer {
-  position: absolute;
-  left: 16px;
-  right: 6px;
-  bottom: 10px;
-  padding: 0 24px;
-}
-.osk-compact .osk-composer {
-  left: 0;
-  right: 0;
-  bottom: 18px;
-  padding: 0 16px;
-}
-.osk-composer-card {
-  max-width: 46rem;
-  margin: 0 auto;
-  padding: 12px 10px 8px 14px;
-}
-.osk-composer-input {
-  font-size: 14px;
-  padding: 0 2px 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.osk-compact .osk-composer-input {
-  font-size: 15px;
+/* composer: a long draft shows its end, as after typing or pasting it */
+.osk-composer-input.osk-scroll-end {
+  display: flex;
+  flex-direction: column-reverse;
 }
 
-/* generated files */
-.osk-art-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  max-width: 30rem;
+/* right preview panel: the content area (.osk-file-body) takes text, an image, or any element (iframe, canvas) */
+.osk-preview-panel > .osk-panel {
+  flex: 1;
 }
-.osk-art-card {
-  overflow: hidden;
+.osk-card-wrap {
+  display: flex;
 }
-.osk-art-thumb {
-  height: 54px;
-  display: grid;
-  place-items: center;
-}
-.osk-art-more {
-  min-height: 84px;
-}
-
-/* right preview panel */
-.osk-panel {
-  width: 41%;
-  flex: none;
+.osk-file-content {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  border-left: 1px solid var(--color-border-200);
-  background: var(--bg-000);
-  padding: 6px 10px 10px;
-}
-.osk-tabbar {
-  height: 34px;
-  font-size: 12px;
-  flex: none;
-}
-.osk-tab {
-  height: 28px;
-  padding: 0 8px;
-  max-width: 200px;
-}
-.osk-file-head {
-  height: 36px;
-  flex: none;
-  padding: 0 6px;
-  border-bottom: 1px solid var(--color-border-200);
-}
-.osk-file-ver {
-  height: 30px;
-  flex: none;
-  padding: 0 6px;
+  overflow: hidden;
 }
 .osk-file-body {
   flex: 1;
   min-height: 0;
+  position: relative;
   overflow: hidden;
+  background: var(--bg-000);
+}
+.osk-file-body.osk-text {
   padding: 6px 14px;
   font: 12px/1.65 var(--font-mono);
   white-space: pre;
   color: var(--text-000);
 }
-.osk-panel.osk-panel-custom .osk-file-head,
-.osk-panel.osk-panel-custom .osk-file-ver {
-  display: none;
+.osk-file-body.osk-element {
+  display: flex;
+  flex-direction: column;
+}
+.osk-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  border: 0;
+}
+.osk-file-body img.osk-preview-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 6px;
 }
 .osk-panel.osk-panel-custom .osk-file-body {
   padding: 0;
@@ -241,10 +180,38 @@
   white-space: normal;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--color-border-200);
-  border-radius: 10px;
-  overflow: hidden;
-  margin-top: 4px;
+}
+
+/* compact (9:16): the app's mobile layout (its max-md: variants don't apply at the page's desktop width) */
+.osk-compact .osk-main {
+  padding: 0;
+}
+.osk-compact .osk-group {
+  margin-right: 0;
+}
+.osk-compact .osk-conv {
+  padding: 0;
+}
+.osk-compact .osk-header {
+  padding: 8px 8px 8px;
+  border-bottom: 1px solid var(--color-border-200);
+}
+.osk-compact .osk-item {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.osk-compact .osk-thread {
+  padding: 4px 4px 420px;
+}
+.osk-compact .osk-dock-pad {
+  padding: 0 8px 8px;
+}
+.osk-compact .osk-dock-pad > div > div {
+  padding: 0 4px;
+}
+.osk-compact .osk-composer-input,
+.osk-compact .osk-placeholder {
+  font-size: 15px;
 }
 
 /* editorial highlight (video layer, not part of the app) */
@@ -322,7 +289,6 @@ mark.osk-hl {
 /* project menu placement + separator */
 .osk-menu {
   position: absolute;
-  width: 288px;
   z-index: 40;
 }
 .osk-menu-sep {
@@ -342,10 +308,4 @@ mark.osk-hl {
   border: 1px solid var(--color-border-200);
   border-radius: 8px;
   margin: 6px 0;
-}
-.osk-file-body img.osk-preview-img {
-  display: block;
-  width: 100%;
-  height: auto;
-  margin-top: 6px;
 }

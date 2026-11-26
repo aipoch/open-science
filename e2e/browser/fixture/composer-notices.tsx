@@ -1,18 +1,22 @@
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
 import type { FailureCategory } from '../../../src/shared/failure/contract'
-import type { NoticeActionHandlers } from '@/lib/composer-notice/catalog'
+import type { NoticeActionHandlers } from '@/components/notices/composer-notice-catalog'
 import '@/assets/main.css'
 
 const query = new URLSearchParams(location.search)
 const locale = query.get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
 const previewState = query.get('state') ?? 'default'
 const category = (query.get('category') ?? 'service') as FailureCategory
-const raw = 'Example diagnostic with an unusually long upstream response.\n'.repeat(30)
+const requestDetail = 'The response stream ended early.'
+const raw =
+  previewState === 'request'
+    ? 'Internal error: ' + JSON.stringify({ detail: requestDetail })
+    : 'Example diagnostic with an unusually long upstream response.\n'.repeat(30)
 if (query.has('dark')) document.documentElement.classList.add('dark')
 
 export function Fixture(): React.JSX.Element {
@@ -32,16 +36,24 @@ export function Fixture(): React.JSX.Element {
               settledAt: 2,
               failure: {
                 category,
+                ...(previewState === 'request' && category === 'service'
+                  ? { responseMessage: requestDetail }
+                  : {}),
                 diagnostics: {
-                  ...(['configuration', 'service', 'input'].includes(category)
-                    ? {
-                        status:
-                          category === 'configuration' ? 401 : category === 'input' ? 413 : 503,
-                        provider: 'Example Provider',
-                        model: 'example-model-with-a-long-name',
-                        requestId: 'request-'.repeat(18)
-                      }
-                    : { code: category === 'environment' ? 'ENOENT' : '-32603' }),
+                  ...(previewState === 'request'
+                    ? { code: '-32603', model: 'example-model' }
+                    : ['configuration', 'service', 'input'].includes(category)
+                      ? {
+                          status:
+                            category === 'configuration' ? 401 : category === 'input' ? 413 : 503,
+                          adapterCode: 'provider',
+                          provider: 'Example Provider',
+                          model: 'example-model-with-a-long-name',
+                          requestId: 'request-'.repeat(18)
+                        }
+                      : category === 'environment'
+                        ? { code: 'ENOENT' }
+                        : {}),
                   raw
                 }
               }

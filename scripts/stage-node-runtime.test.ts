@@ -1,12 +1,16 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { constants } from 'node:fs'
+import { access, mkdtemp, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { c as createTar } from 'tar'
 import { zipSync, strToU8 } from 'fflate'
 import { afterEach, expect, it } from 'vitest'
 import {
   extractNodeRuntime,
+  fetchNodeRuntimeArchive,
+  NODE_RUNTIME_DOWNLOAD_BACKOFF_MS,
   nodeRuntime,
   verifyNodeArchive,
   stageNodeRuntime
@@ -24,14 +28,19 @@ async function temporary(): Promise<string> {
 const npmFiles = {
   'package.json': '{"name":"npm","version":"10.9.9"}',
   LICENSE: 'npm-license',
-  'bin/npm-cli.js': 'npm-entry',
+  'bin/npm-cli.js': "require('../lib/cli/entry.js')(process)",
   'bin/npm': 'npm-shell',
   'bin/npx': 'npx-shell',
   'bin/npm.cmd': 'npm-cmd',
   'bin/npx.cmd': 'npx-cmd',
-  'bin/npx-cli.js': 'npx-entry',
+  'bin/npx-cli.js': "console.log(require('@npmcli/config/lib/definitions'))",
+  'bin/npm-prefix.js': '',
+  'lib/cli/entry.js': "module.exports = proc => proc.stdout.write(require('dependency'))",
+  'node_modules/@npmcli/config/lib/definitions/index.js': "module.exports = 'npx-definitions'",
+  'node_modules/node-gyp/bin/node-gyp.js': '',
+  'node_modules/init-package-json/lib/default-input.js': '',
   'lib/cli.js': 'runtime-code',
-  'node_modules/dependency/index.js': 'dependency-code',
+  'node_modules/dependency/index.js': "module.exports = 'dependency-code'",
   'node_modules/dependency/LICENSE': 'dependency-license',
   'node_modules/dependency/README.md': 'omit-readme',
   'node_modules/dependency/CHANGELOG.md': 'omit-history',
@@ -114,8 +123,8 @@ it.skipIf(process.platform === 'win32')(
     // Launcher links must stay inside the runtime root: absolute targets dangle once the
     // archive moves off the staging machine, breaking the bundled npm fallback.
     for (const [name, entry] of [
-      ['npm', 'npm-entry'],
-      ['npx', 'npx-entry']
+      ['npm', npmFiles['bin/npm-cli.js']],
+      ['npx', npmFiles['bin/npx-cli.js']]
     ]) {
       const target = await readlink(join(output, name))
       expect(target.startsWith('/')).toBe(false)
@@ -150,6 +159,36 @@ it('rejects unsupported targets before downloading', async () => {
   await expect(stageNodeRuntime({ platform: 'freebsd', arch: 'arm64' })).rejects.toThrow(
     'No pinned'
   )
+})
+
+it('retries a transient Node runtime download before succeeding', async () => {
+  const attempts: number[] = []
+  const delays: number[] = []
+  const response = { ok: true, body: [] }
+  const result = await fetchNodeRuntimeArchive('https://nodejs.org/runtime.zip', {
+    fetchImpl: async () => {
+      attempts.push(attempts.length + 1)
+      if (attempts.length < 3) throw new Error('connect timeout')
+      return response
+    },
+    delay: async (milliseconds) => delays.push(milliseconds),
+    log: () => undefined
+  })
+  expect(result).toBe(response)
+  expect(attempts).toEqual([1, 2, 3])
+  expect(delays).toEqual(NODE_RUNTIME_DOWNLOAD_BACKOFF_MS)
+})
+
+it('does not retry a non-transient Node runtime response', async () => {
+  const delays: number[] = []
+  await expect(
+    fetchNodeRuntimeArchive('https://nodejs.org/runtime.zip', {
+      fetchImpl: async () => ({ ok: false, status: 404, body: undefined }),
+      delay: async (milliseconds) => delays.push(milliseconds),
+      log: () => undefined
+    })
+  ).rejects.toThrow('Node runtime download failed (404).')
+  expect(delays).toEqual([])
 })
 
 it.for(['darwin', 'win32'])(
@@ -187,11 +226,20 @@ it.for(['darwin', 'win32'])(
         .digest('hex')
     }
     const output = join(directory, 'output')
-    const options = { platform, arch, cache: directory, output, reuse: true }
+    const options = {
+      platform,
+      arch,
+      cache: directory,
+      output: relative(process.cwd(), output),
+      reuse: true
+    }
     const marker = join(output, 'unchanged-output')
     const executable = join(output, platform === 'win32' ? 'node.exe' : 'node')
     try {
       await stageNodeRuntime(options)
+      if (platform !== 'win32') {
+        for (const launcher of ['npm', 'npx']) await access(join(output, launcher), constants.X_OK)
+      }
       await writeFile(marker, 'kept')
       await stageNodeRuntime(options)
       expect(await readFile(marker, 'utf8')).toBe('kept')
@@ -199,7 +247,7 @@ it.for(['darwin', 'win32'])(
         executable,
         join(output, 'LICENSE'),
         join(output, 'node_modules/npm/bin/npx-cli.js'),
-        join(output, 'node_modules/npm/node_modules/dependency/index.js')
+        join(output, 'node_modules/npm/cli-bundle.cjs')
       ]) {
         await writeFile(target, 'corrupt')
         await stageNodeRuntime(options)
@@ -227,7 +275,19 @@ it.for(['darwin', 'win32'])(
       }
       await rm(join(output, 'node_modules/npm/bin/npx-cli.js'))
       await stageNodeRuntime(options)
-      await assertNpmFixture(output)
+      const npm = join(output, 'node_modules/npm')
+      expect(
+        execFileSync(process.execPath, [join(npm, 'bin/npx-cli.js')], { encoding: 'utf8' }).trim()
+      ).toBe('npx-definitions')
+      expect(
+        execFileSync(process.execPath, [join(npm, 'bin/npm-cli.js')], { encoding: 'utf8' }).trim()
+      ).toBe('dependency-code')
+      await expect(readFile(join(npm, 'node_modules/dependency/index.js'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      expect(await readFile(join(npm, 'THIRD-PARTY-NOTICES.txt'), 'utf8')).toContain(
+        'dependency-license'
+      )
       await rm(executable)
       await stageNodeRuntime(options)
       expect(await readFile(executable, 'utf8')).toBe('executable')

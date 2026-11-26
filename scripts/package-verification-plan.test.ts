@@ -50,7 +50,11 @@ describe('independent package verification', () => {
   it('builds citations without selecting its tests for discovery', () => {
     const plan = verificationPlanFromArguments(['--packages=literature-discovery'], {})
     expect(plan).toEqual({
-      builds: ['packages/literature-citations', 'packages/literature-discovery'],
+      builds: [
+        'packages/literature-citations',
+        'packages/resilient-download',
+        'packages/literature-discovery'
+      ],
       tests: ['packages/literature-discovery']
     })
     expect(verificationCommands(plan)).toEqual([

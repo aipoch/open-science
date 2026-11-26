@@ -11,6 +11,101 @@ import { readPdfTranslationCases } from './fixtures/read-cases.js'
 import { verifyPdfUnits } from './support/pdf-translation-native-verification.js'
 import { verifyPdfPreservation } from './support/pdf-translation-preservation.js'
 
+it.each(['strict', 'automatic', 'requested'] as const)(
+  'keeps translated prose and omits only its unprovable click target: %s',
+  async (mode) => {
+    const pdf = await PDFDocument.create()
+    const font = await pdf.embedFont(StandardFonts.TimesRoman)
+    const page = pdf.addPage([600, 800])
+    const text = 'Measurements were checked against references [2] and [3] before publication.'
+    const translation = '发布前已根据参考文献 [2] 和 [3] 核对测量结果。'
+    page.drawText(text, { x: 40, y: 700, size: 12, font })
+    page.drawText('Independent reference.', { x: 40, y: 650, size: 12, font })
+    const x = 40 + font.widthOfTextAtSize(text.split('[2]')[0], 12)
+    const next = 40 + font.widthOfTextAtSize(text.split('[3]')[0], 12)
+    const width = font.widthOfTextAtSize('[2]', 12)
+    const rect: [number, number, number, number] = [x, 698, x + width, 709]
+    const urls = [
+      'https://example.invalid/citation',
+      'https://example.invalid/independent',
+      'https://example.invalid/retained'
+    ]
+    const rectangles = [rect, [40, 648, 151, 660], [next, 698, next + width, 709]]
+    page.node.set(
+      PDFName.of('Annots'),
+      pdf.context.obj(
+        urls.map((url, index) =>
+          pdf.context.register(
+            pdf.context.obj({
+              Type: 'Annot',
+              Subtype: 'Link',
+              Rect: rectangles[index],
+              ...(index || mode === 'requested'
+                ? {}
+                : {
+                    QuadPoints: [x, 709, x + width, 709, x, 698, x + width, 698]
+                  }),
+              A: { S: 'URI', URI: PDFString.of(url) }
+            })
+          )
+        )
+      )
+    )
+    const data = await pdf.save(),
+      originalTask = getDocument({ data: data.slice() })
+    const registry = new TestCallerRegistry()
+    onTestFinished(() => originalTask.destroy())
+    onTestFinished(() => registry.dispose())
+    const original = await originalTask.promise
+    const { lease } = registry.acquire({ leaseId: 'optional-citation', surface: 'electron' })
+    const { source } = await extractPdfTranslationSource({
+      document: original,
+      resourceRequestKey: 'optional-citation',
+      signal: lease.signal
+    })
+    const owner = source.units.find((unit) => unit.source === text)!
+    expect(owner).toBeDefined()
+    const link = { pageNumber: 1, index: 0, rect }
+    const output = await new PdfTranslationWriter(() =>
+      resolve('resources/worker.mjs')
+    ).generateDetailed(
+      {
+        id: 'optional-citation',
+        data,
+        pages: source.pages,
+        preserveUnsupported: true,
+        preserveUnmatched: true,
+        allowLinkOmission: mode !== 'strict',
+        ...(mode === 'requested' ? { dropLinks: [link] } : {}),
+        units: [
+          { source: text, translation, fragments: pdfTranslationLayoutFragments(owner, source) }
+        ]
+      },
+      lease
+    )
+    expect(output!.layoutFailures.map(({ code }) => code)).toEqual(
+      mode === 'strict' ? ['annotations'] : []
+    )
+    const targetTask = getDocument({ data: output!.data.slice() })
+    onTestFinished(() => targetTask.destroy())
+    const target = await (await targetTask.promise).getPage(1)
+    const content = await target.getTextContent()
+    const written = content.items.flatMap((item) => ('str' in item ? [item.str] : [])).join('')
+    expect(written.replace(/\s+/gu, '')).toContain(
+      (mode === 'strict' ? text : translation).replace(/\s+/gu, '')
+    )
+    expect((await target.getAnnotations()).map(({ url }) => url)).toEqual(
+      mode === 'strict' ? urls : urls.slice(1)
+    )
+    if (mode !== 'strict') {
+      expect(output!.omittedLinks).toEqual([{ ...link, rect: rect.map(Math.fround) }])
+      expect((await (await original.getPage(1)).getAnnotations()).map(({ url }) => url)).toEqual(
+        urls
+      )
+    }
+  }
+)
+
 it.each(
   readPdfTranslationCases<{
     name: string
@@ -390,4 +485,276 @@ it('fits linked prose with native rows closer than the initial target font size'
   expect(preservation.pages.flatMap((entry) => entry.failures)).toEqual([])
   expect(preservation.pages[0].pixels!.changedPixels).toBe(0)
   expect((await (await target.getPage(1)).getAnnotations()).map((link) => link.url)).toEqual([uri])
+})
+
+it('fits a cross-page continuation on its three native citation rows', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    width = 612,
+    height = 792,
+    size = 10,
+    left = 51,
+    headY = 144,
+    tailY = 717,
+    leading = 12.45,
+    head = pdf.addPage([width, height]),
+    tail = pdf.addPage([width, height]),
+    headText = 'The instrument recorded every measurement and reported a repeatable result.',
+    citations = [
+      ['An independent check (', 'Sample Study Team', '2041', ') establishes the starting point.'],
+      ['A separate record in ', 'Another Research Group', '2042', ' adds the baseline comparison.'],
+      [
+        'The established method (',
+        'The Reference Collective',
+        '2043',
+        ') specifies the conditions.'
+      ]
+    ],
+    destination = [head.ref, PDFName.of('XYZ'), left, headY, null]
+  head.drawText(headText, { x: left, y: headY, size, font })
+  for (const [index, [prefix, author, year, suffix]] of citations.entries()) {
+    const y = tailY - index * leading
+    let x = left
+    for (const [text, linked] of [
+      [prefix, false],
+      [author, true],
+      [' ', false],
+      [year, true],
+      [suffix, false]
+    ] as const) {
+      const advance = font.widthOfTextAtSize(text, size)
+      if (text.trim()) tail.drawText(text.trimEnd(), { x, y, size, font })
+      if (linked)
+        tail.node.addAnnot(
+          pdf.context.register(
+            pdf.context.obj({
+              Type: 'Annot',
+              Subtype: 'Link',
+              Rect: [x - 0.1, y - 3.45, x + advance + 0.1, y + 8.43],
+              Border: [0, 0, 0],
+              Dest: destination
+            })
+          )
+        )
+      x += advance
+    }
+  }
+
+  const prose = '这里记录每次操作的结果并观察不同设置如何改变读数',
+    translation = `${prose.repeat(2).slice(0, 45)}。${citations
+      .map(([, author, year]) => `${author}（${year}）`)
+      .join(`${prose.repeat(3).slice(0, 50)}。`)}。`,
+    unit = {
+      source: [
+        headText,
+        ...citations.map(([prefix, author, year, suffix]) => `${prefix}${author} ${year}${suffix}`)
+      ].join(' '),
+      translation,
+      fragments: [headY, tailY].map((y, index) => ({
+        pageNumber: index + 1,
+        rect: {
+          x: left / width,
+          y: (height - y - 9.54) / height,
+          width: 530 / width,
+          height: (2 * leading + 12.03) / height
+        }
+      }))
+    },
+    data = await pdf.save(),
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'native-citation-rows', surface: 'electron' })
+  onTestFinished(() => registry.dispose())
+  const result = await new PdfTranslationWriter(() =>
+    resolve('resources/worker.mjs')
+  ).generateDetailed(
+    {
+      id: 'native-citation-rows',
+      data,
+      pages: [head, tail].map(() => ({ width, height })),
+      units: [unit],
+      preserveUnsupported: true
+    },
+    caller.lease
+  )
+  expect(result?.layoutFailures).toEqual([])
+  const originalLoad = getDocument({ data: data.slice(), useSystemFonts: true }),
+    translatedLoad = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+  onTestFinished(() => originalLoad.destroy())
+  onTestFinished(() => translatedLoad.destroy())
+  const [original, translated] = await Promise.all([originalLoad.promise, translatedLoad.promise]),
+    placements = await verifyPdfUnits(translated, [{ ...unit, sourceIndex: 0 }], [], original),
+    sourceLinks = await (await original.getPage(2)).getAnnotations(),
+    targetLinks = await (await translated.getPage(2)).getAnnotations()
+  expect(placements[0].translationFound).toBe(true)
+  expect(targetLinks).toHaveLength(6)
+  for (const [index, target] of targetLinks.entries()) {
+    const source = sourceLinks[index]
+    expect(await translated.getPageIndex(target.dest[0])).toBe(0)
+    expect(target.dest.slice(1)).toEqual(source.dest.slice(1))
+    expect(target.rect[1]).toBeCloseTo(source.rect[1], 3)
+    expect(target.rect[3]).toBeCloseTo(source.rect[3], 3)
+  }
+})
+
+it('keeps a compact figure panel on one line while moving only its linked digit', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    width = 600,
+    height = 800,
+    left = 40,
+    top = 700,
+    leading = 12,
+    size = 10,
+    page = pdf.addPage([width, height]),
+    rows = [
+      'Here we report the collected measurements.',
+      'Fig. 2b shows the first set of results.',
+      'The second set repeats the same checks.',
+      'The recordings are available for review.'
+    ],
+    digitX = left + font.widthOfTextAtSize('Fig. ', size),
+    digitY = top - leading
+  rows.forEach((text, index) =>
+    page.drawText(text, { x: left, y: top - index * leading, size, font })
+  )
+  page.node.addAnnot(
+    pdf.context.register(
+      pdf.context.obj({
+        Type: 'Annot',
+        Subtype: 'Link',
+        Rect: [
+          digitX - 0.02,
+          digitY - 2.8,
+          digitX + font.widthOfTextAtSize('2', size) + 0.55,
+          digitY + 8.1
+        ],
+        Border: [0, 0, 0],
+        Dest: [page.ref, PDFName.of('XYZ'), left, top, null]
+      })
+    )
+  )
+  const data = new Uint8Array(await pdf.save()),
+    original = getDocument({ data: data.slice(), useSystemFonts: true }),
+    registry = new TestCallerRegistry()
+  onTestFinished(() => original.destroy())
+  onTestFinished(() => registry.dispose())
+  const caller = registry.acquire({ leaseId: 'linked-figure-panel', surface: 'electron' }),
+    answer = await new PdfTranslationWriter(() => resolve('resources/worker.mjs')).generateDetailed(
+      {
+        id: 'linked-figure-panel',
+        data,
+        pages: [{ width, height }],
+        units: [
+          {
+            source: rows.join(' '),
+            translation:
+              '实验记录整理后得到的第一组实验结果见图 2b，并再次采用相同的办法核对其余数据。完整记录可供阅览。',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 39 / width, y: 90 / height, width: 206 / width, height: 52 / height }
+              }
+            ]
+          }
+        ],
+        preserveUnsupported: true,
+        preserveUnmatched: true
+      },
+      caller.lease
+    )
+  expect(answer?.layoutFailures).toEqual([])
+  const output = getDocument({ data: answer!.data.slice(), useSystemFonts: true })
+  onTestFinished(() => output.destroy())
+  const before = await (await original.promise).getPage(1),
+    after = await (await output.promise).getPage(1),
+    items = (await after.getTextContent()).items,
+    digit = items.find((item) => 'str' in item && item.str === '2'),
+    prefix = items.find((item) => 'str' in item && item.str.trimEnd().endsWith('图')),
+    suffix = items.find((item) => 'str' in item && item.str.startsWith('b，'))
+  if (!digit || !prefix || !suffix || !('str' in digit && 'str' in prefix && 'str' in suffix))
+    throw new Error('Missing figure panel text')
+  const [oldLink] = await before.getAnnotations(),
+    [newLink] = await after.getAnnotations()
+  expect(Math.abs(digit.transform[5] - prefix.transform[5])).toBeLessThan(size * 0.2)
+  expect(Math.abs(digit.transform[5] - suffix.transform[5])).toBeLessThan(size * 0.2)
+  expect(newLink.dest).toEqual(oldLink.dest)
+  expect(newLink.rect).not.toEqual(oldLink.rect)
+  expect(newLink.rect[2] - newLink.rect[0]).toBeCloseTo(oldLink.rect[2] - oldLink.rect[0], 3)
+  expect(newLink.rect[0]).toBeLessThanOrEqual(digit.transform[4])
+  expect(newLink.rect[2]).toBeGreaterThanOrEqual(digit.transform[4] + digit.width)
+  expect(newLink.rect[2]).toBeLessThan(suffix.transform[4])
+})
+
+it('moves a citation whose author period is painted in a separate text run', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    width = 600,
+    height = 800,
+    page = pdf.addPage([width, height]),
+    x = 40,
+    y = 700,
+    size = 10,
+    prefix = 'Measurements followed a published procedure [',
+    author = 'Sample et al',
+    first = prefix + author,
+    stopX = x + font.widthOfTextAtSize(first, size),
+    year = '2040] for comparison.',
+    citationLeft = x + font.widthOfTextAtSize(prefix, size),
+    citationRight = stopX + font.widthOfTextAtSize('.', size) + 0.1,
+    destination = [page.ref, PDFName.of('XYZ'), x, y - 40, null]
+  page.drawText(first, { x, y, size, font })
+  page.drawText('. ', { x: stopX, y, size, font })
+  page.drawText(year, { x: stopX + font.widthOfTextAtSize('. ', size), y, size, font })
+  page.node.addAnnot(
+    pdf.context.register(
+      pdf.context.obj({
+        Type: 'Annot',
+        Subtype: 'Link',
+        Rect: [citationLeft - 0.1, y - 2, citationRight, y + 8],
+        Border: [0, 0, 0],
+        Dest: destination
+      })
+    )
+  )
+  const source = first + '. ' + year,
+    translation = '按已发表的方法 [Sample et al. 2040] 进行测量与比较。',
+    unit = {
+      source,
+      translation,
+      fragments: [
+        {
+          pageNumber: 1,
+          rect: {
+            x: x / width,
+            y: (height - y - 8) / height,
+            width: 510 / width,
+            height: 11 / height
+          }
+        }
+      ]
+    },
+    bytes = await pdf.save(),
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'split-author-period', surface: 'electron' })
+  onTestFinished(() => registry.dispose())
+  const result = await new PdfTranslationWriter(() =>
+    resolve('resources/worker.mjs')
+  ).generateDetailed(
+    {
+      id: 'split-author-period',
+      data: bytes,
+      pages: [{ width, height }],
+      units: [unit],
+      preserveUnsupported: true
+    },
+    caller.lease
+  )
+  expect(result?.layoutFailures).toEqual([])
+  const output = getDocument({ data: result!.data.slice(), useSystemFonts: true })
+  onTestFinished(() => output.destroy())
+  const translated = await output.promise,
+    [link] = await (await translated.getPage(1)).getAnnotations()
+  expect(await translated.getPageIndex(link.dest[0])).toBe(0)
+  expect(link.dest.slice(1)).toEqual([{ name: 'XYZ' }, x, y - 40, null])
+  expect(link.rect[0]).not.toBeCloseTo(citationLeft, 1)
 })

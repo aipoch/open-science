@@ -605,11 +605,9 @@ describe('conversation message scroller integration', () => {
     expect(workspaceWebSearchActivityRowSource).toContain('const WorkspaceWebSearchActivityRow')
     expect(workspaceWebSearchActivityRowSource).toContain('<WorkspaceToolActivityRowButton')
     expect(workspaceWebSearchActivityRowSource).toContain('panelTestId="tool-search-details"')
+    expect(workspaceWebSearchActivityRowSource).toContain('formatResultCountLabel(resultCount, t)')
     expect(workspaceWebSearchActivityRowSource).toContain(
-      'formatResultCountLabel(details.resultCount, t)'
-    )
-    expect(workspaceWebSearchActivityRowSource).toContain(
-      'canExpand={Boolean(details.query || details.resultCount)}'
+      'canExpand={Boolean(builtin || query || resultCount)}'
     )
     expect(workspaceMessageItemSource).toContain('const WorkspaceMessageItem')
     expect(workspaceMessageItemSource).toContain('<SessionMessageMarkdown')
@@ -640,7 +638,9 @@ describe('conversation message scroller integration', () => {
     const workspaceToolCodeBlockSource = readFileSync(workspaceToolCodeBlockPath, 'utf8')
     const workspaceToolRowButtonSource = readFileSync(workspaceToolRowButtonPath, 'utf8')
 
-    expect(workspaceActivityGroupSource).toContain('buildToolActivityDetails(activity, t)')
+    expect(workspaceActivityGroupSource).toContain(
+      'buildToolActivityDetails(activity, t, expandedRun)'
+    )
     expect(workspaceActivityGroupSource).toContain('<WorkspaceToolDetailsRow')
     expect(workspaceToolDetailsRowSource).toContain('const WorkspaceToolDetailsRow')
     expect(workspaceToolDetailsRowSource).toContain('<WorkspaceToolActivityRowButton')

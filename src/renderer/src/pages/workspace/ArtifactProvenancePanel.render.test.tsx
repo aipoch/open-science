@@ -1949,6 +1949,44 @@ describe('ArtifactProvenancePanel', () => {
     )
   })
 
+  it('keeps a local Provenance selection while the owner retains the preview item', async () => {
+    act(() => root.unmount())
+    container.replaceChildren()
+    root = createRoot(container)
+    const onVersionChange = vi.fn(() => true)
+
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={{ ...item, selectedVersionId: 'version-2', versionNumber: 2 }}
+          projectId="project-1"
+          onClose={vi.fn()}
+          onVersionChange={onVersionChange}
+          preserveVersionSelection
+        />
+      )
+    )
+    await flush()
+
+    const previous = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Previous Artifact version"]'
+    )
+    expect(previous?.disabled).toBe(false)
+    await act(async () => previous?.click())
+    await flush()
+
+    expect(onVersionChange).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedVersionId: 'version-1', versionNumber: 1 })
+    )
+    expect(container.querySelector('[data-testid="artifact-provenance"]')?.textContent).toContain(
+      'v1'
+    )
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="Next Artifact version"]')
+        ?.disabled
+    ).toBe(false)
+  })
+
   it('renders captured Messages through the normal Session message surface without GENERATED cards', async () => {
     await clickTab('Messages')
 
@@ -2982,3 +3020,127 @@ it('preserves saved run identity without describing provenance evidence as a his
     'Environment evidence is incomplete or unavailable. Current packages cannot fill historical gaps.'
   )
 })
+
+function imageProvenance(model = 'fixture-image'): ArtifactVersionProvenance {
+  const snapshot = provenance()
+  snapshot.evidence!.producer = {
+    state: 'available',
+    kind: 'connector',
+    connector_id: 'image-model',
+    tool_id: 'edit_image',
+    invocation_id: 'image-edit',
+    implementation_version: '1',
+    arguments_checksum: 'a'.repeat(64),
+    association_method: 'app-owned-handler'
+  }
+  snapshot.evidence!.connector_execution = {
+    schema_version: 1,
+    arguments_checksum: 'a'.repeat(64),
+    normalized_arguments: {
+      model,
+      parameters: { aspect_ratio: '16:9' },
+      sourceVersionId: 'source-version'
+    }
+  }
+  return snapshot
+}
+
+it.each([false, true])(
+  'keeps image evidence and tabs stable while switching versions (locked: %s)',
+  async (lockVersion) => {
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    const second = Promise.withResolvers<ArtifactVersionProvenance>()
+    const third = Promise.withResolvers<ArtifactVersionProvenance>()
+    const renderVersion = async (version: PreviewFileItem): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <ArtifactProvenancePanel
+            item={version}
+            projectId="project-1"
+            onClose={vi.fn()}
+            lockVersion={lockVersion}
+          />
+        )
+      )
+      await flush()
+    }
+    getVersionProvenance.mockResolvedValue(imageProvenance())
+    await renderVersion(item)
+    expect(container.textContent).toContain('fixture-image')
+    const pendingLineage =
+      Promise.withResolvers<Awaited<ReturnType<typeof window.api.artifacts.getLineage>>>()
+    const loadedLineage = await window.api.artifacts.getLineage({
+      projectId: 'project-1',
+      appSessionId: item.sessionId,
+      artifactId: item.artifactId!
+    })
+    vi.mocked(window.api.artifacts.getLineage).mockReturnValueOnce(pendingLineage.promise)
+    getVersionProvenance.mockReturnValueOnce(second.promise).mockReturnValueOnce(third.promise)
+    await renderVersion({ ...item, selectedVersionId: 'version-2', name: 'second.png' })
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      'Execution Log'
+    )
+    expect(container.querySelector('[role="tab"]')?.textContent).toBe('Execution Log')
+    expect(container.textContent).toContain('fixture-image')
+    await act(async () => pendingLineage.resolve(loadedLineage))
+    await flush()
+    expect(
+      container.querySelector('[data-testid="artifact-provenance"]')?.getAttribute('aria-busy')
+    ).toBe('true')
+    expect(container.querySelector('[inert]')?.textContent).toContain('fixture-image')
+    expect(container.querySelector('[aria-label="Loading Provenance"]')).toBeNull()
+    expect([...container.querySelectorAll('[role="tab"]')].map((node) => node.textContent)).toEqual(
+      ['Execution Log', 'Messages', 'Review']
+    )
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      'Execution Log'
+    )
+    await renderVersion(item)
+    await act(async () => second.resolve(imageProvenance('stale-result')))
+    expect(container.textContent).not.toContain('stale-result')
+    await act(async () => third.resolve(imageProvenance('current-result')))
+    expect(container.textContent).toContain('current-result')
+    expect(container.querySelector('[inert]')).toBeNull()
+  }
+)
+
+it.each(['code', 'environment', 'reproducibility'] as const)(
+  'replaces the inapplicable %s tab with the saved image receipt',
+  async (selectedTab) => {
+    await act(async () => root.unmount())
+    getVersionProvenance.mockResolvedValue(imageProvenance())
+    getCodeReconstruction.mockClear()
+    getVersionExecution.mockClear()
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <ArtifactProvenancePanel
+          item={item}
+          projectId="project-1"
+          onClose={vi.fn()}
+          selectedTab={selectedTab}
+        />
+      )
+    )
+    await flush()
+    expect([...container.querySelectorAll('[role="tab"]')].map((node) => node.textContent)).toEqual(
+      ['Execution Log', 'Messages', 'Review']
+    )
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      'Execution Log'
+    )
+    expect(container.textContent).toContain('fixture-image')
+    expect(container.textContent).not.toContain('source-version')
+    expect(container.textContent).not.toContain('16:9')
+    const output = [...container.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Output settings'
+    )
+    expect(output?.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => output?.click())
+    expect(container.textContent).toContain('16:9')
+    expect(container.textContent).not.toContain('Generate script')
+    expect(getCodeReconstruction).not.toHaveBeenCalled()
+    expect(getVersionExecution).not.toHaveBeenCalled()
+  }
+)

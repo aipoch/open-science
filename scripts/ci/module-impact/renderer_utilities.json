@@ -219,6 +219,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSkillActivityRow.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSkillLoadRow.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.render.test.tsx",
       "src/renderer/src/pages/workspace/annotations/AnnotationCards.test.tsx",
       "src/renderer/src/pages/workspace/annotations/annotation-transfer.interaction.test.tsx",
       "src/renderer/src/pages/workspace/artifact-image-recovery.test.tsx",

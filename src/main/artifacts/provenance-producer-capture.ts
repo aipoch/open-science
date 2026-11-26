@@ -17,6 +17,7 @@ import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/noteb
 import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
+import type { ArtifactProducerInputScope } from '../managed-file-versions/read-port'
 import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repository'
 import {
   unavailableNotebookDependencyProjection,
@@ -43,6 +44,9 @@ import { readNativeEvidence } from './execution-evidence-log'
 import { sealArtifactAnalysisRevision } from './provenance-analysis-revision'
 
 const CONNECTOR_ARGUMENTS_MAX_BYTES = 64 * 1024
+// Image prompts allow 32,000 characters; JSON escaping can require six bytes per character.
+const connectorArgumentsLimit = (connectorId: string): number =>
+  connectorId === 'image-model' ? 256 * 1024 : CONNECTOR_ARGUMENTS_MAX_BYTES
 const CONNECTOR_IDENTITY_MAX_LENGTH = 256
 const MAX_GRAPH_ACTIVITY_COUNT = 256
 const MAX_GRAPH_SOURCE_BYTES = 16 * 1024 * 1024
@@ -80,7 +84,7 @@ const prepareConnectorExecution = (
     throw new Error('Connector normalized arguments must be finite canonical JSON values.')
   }
   const serialized = canonicalJson(producer.normalizedArguments as CanonicalJson)
-  if (Buffer.byteLength(serialized, 'utf8') > CONNECTOR_ARGUMENTS_MAX_BYTES) {
+  if (Buffer.byteLength(serialized, 'utf8') > connectorArgumentsLimit(producer.connectorId)) {
     throw new Error('Connector normalized arguments exceed the provenance evidence limit.')
   }
   return {
@@ -104,10 +108,14 @@ const connectorEvidenceIsValid = (evidence: ArtifactVersionEvidence): boolean =>
   }
   const serialized = canonicalJson(execution.normalized_arguments as CanonicalJson)
   return (
-    Buffer.byteLength(serialized, 'utf8') <= CONNECTOR_ARGUMENTS_MAX_BYTES &&
+    Buffer.byteLength(serialized, 'utf8') <= connectorArgumentsLimit(producer.connector_id) &&
     sha256(serialized) === execution.arguments_checksum &&
     execution.arguments_checksum === producer.arguments_checksum
   )
+}
+
+export type AppGeneratedArtifactWriteProducer = AppGeneratedArtifactProducer & {
+  inputScope?: ArtifactProducerInputScope
 }
 
 type ArtifactVersionProducerCapture =
@@ -156,7 +164,8 @@ type PreparedArtifactVersionPersistence = {
 }
 type ArtifactProvenanceProducerCaptureOptions = {
   inputAuthority: Pick<ImmutableInputAuthority, 'validateVersion'>
-  notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'>
+  notebookRepository: Pick<NotebookRunRepository, 'readSessionDocuments'> &
+    Partial<Pick<NotebookRunRepository, 'readSessionRun'>>
   storageRoot: string
   createId: () => string
   dependencyAnalyzer?: Pick<NotebookDependencyAnalyzer, 'project'>
@@ -243,12 +252,25 @@ class ArtifactProvenanceProducerCapture {
     request: CreateArtifactVersionRequest,
     createdAt: Date,
     target: ArtifactVersionTargetCapture,
-    appGeneratedProducer?: AppGeneratedArtifactProducer
+    appGeneratedProducer?: AppGeneratedArtifactWriteProducer
   ): Promise<ArtifactVersionProducerCapture> {
+    if (
+      request.imageTaskId &&
+      (request.imageTaskId !== request.artifactRunId ||
+        request.promptMessageId !== null ||
+        request.runtimeSegmentId !== null ||
+        appGeneratedProducer?.connectorId !== 'image-model')
+    )
+      throw new Error('Invalid image task provenance context.')
     if (appGeneratedProducer) {
       const execution = prepareConnectorExecution(appGeneratedProducer)
       const inputFiles = appGeneratedProducer.inputFiles ?? []
-      await this.validateInputReferences(request.projectId, inputFiles, 'Connector')
+      await this.validateInputReferences(
+        request.projectId,
+        inputFiles,
+        'Connector',
+        appGeneratedProducer.inputScope
+      )
       return {
         state: 'available',
         kind: 'connector',
@@ -261,6 +283,8 @@ class ArtifactProvenanceProducerCapture {
         inputFiles
       }
     }
+    if (!request.promptMessageId || !request.runtimeSegmentId)
+      throw new Error('Conversation provenance requires a prompt and runtime segment.')
     if (request.producerRunId && !request.notebookSessionId) {
       throw new Error('producerRunId requires notebookSessionId in the active Artifact run.')
     }
@@ -283,7 +307,7 @@ class ArtifactProvenanceProducerCapture {
       request.projectId,
       request.notebookSessionId
     )
-    const document =
+    let document =
       (request.producerRunId
         ? documents.find((candidate) =>
             candidate.runs.some((run) => run.runId === request.producerRunId)
@@ -355,12 +379,29 @@ class ArtifactProvenanceProducerCapture {
       }
     }
     const producerRunIndex = document?.runs.findIndex((run) => run.runId === producerRunId) ?? -1
-    const producerRun = document?.runs[producerRunIndex]
+    const producerRun = producerRunIndex >= 0 ? document?.runs[producerRunIndex] : undefined
 
     if (!document || !producerRun || producerRunIndex < 0) {
       throw new Error(`Notebook producer run not found: ${producerRunId}`)
     }
-    const scopeMismatch = producerScopeMismatch(producerRun, scope)
+    const hydratedProducerRun = this.options.notebookRepository.readSessionRun
+      ? await this.options.notebookRepository.readSessionRun(
+          request.projectId,
+          request.notebookSessionId,
+          producerRunId
+        )
+      : undefined
+    if (hydratedProducerRun) {
+      document = {
+        ...document,
+        runs: document.runs.map((run) => (run.runId === producerRunId ? hydratedProducerRun : run))
+      }
+    }
+    const selectedProducerRun = document.runs[producerRunIndex]
+    if (!selectedProducerRun) {
+      throw new Error(`Notebook producer run not found: ${producerRunId}`)
+    }
+    const scopeMismatch = producerScopeMismatch(selectedProducerRun, scope)
     if (scopeMismatch) {
       if (scopeMismatch === 'agentFrameId') {
         throw new Error(
@@ -460,7 +501,11 @@ class ArtifactProvenanceProducerCapture {
       })
     )
     const sourceGenerationId = sourceFileObservation
-      ? await this.findSourceGenerationId(producerRun, sourceFileObservation, target.checksum)
+      ? await this.findSourceGenerationId(
+          selectedProducerRun,
+          sourceFileObservation,
+          target.checksum
+        )
       : undefined
     const notebookDependencies = await this.options.dependencyAnalyzer
       ?.project({
@@ -504,7 +549,7 @@ class ArtifactProvenanceProducerCapture {
     const inputFiles = executionSnapshot.inputFiles
     await this.validateInputReferences(request.projectId, inputFiles)
     const executionJson = canonicalJson(executionSnapshot as unknown as CanonicalJson)
-    const environment = resolveRunEnvironmentCapture(producerRun)
+    const environment = resolveRunEnvironmentCapture(selectedProducerRun)
     const computeExecutions = computeResult.activities.map((compute) => compute.evidence)
 
     return {
@@ -516,9 +561,9 @@ class ArtifactProvenanceProducerCapture {
       associationMethod: request.producerRunId
         ? 'agent-declared-and-session-validated'
         : 'server-inferred-file-observation',
-      kernelKind: producerRun.kernelKind,
-      environmentName: producerRun.environment,
-      reproductionCode: producerRun.script,
+      kernelKind: selectedProducerRun.kernelKind,
+      environmentName: selectedProducerRun.environment,
+      reproductionCode: selectedProducerRun.script,
       executionJson,
       executionChecksum: sha256(executionJson),
       inputFiles,
@@ -554,10 +599,11 @@ class ArtifactProvenanceProducerCapture {
       conversation: {
         agent_frame_id: request.agentFrameId,
         message_branch_id: request.messageBranchId,
-        prompt_message_id: request.promptMessageId,
+        prompt_message_id: request.promptMessageId ?? undefined,
         root_frame_id: request.rootFrameId,
-        runtime_segment_id: request.runtimeSegmentId
+        runtime_segment_id: request.runtimeSegmentId ?? undefined
       },
+      ...(request.imageTaskId ? { image_task_id: request.imageTaskId } : {}),
       created_at: createdAt.toISOString(),
       environment_status:
         producer.state !== 'available'
@@ -805,10 +851,15 @@ class ArtifactProvenanceProducerCapture {
   private async validateInputReferences(
     projectId: string,
     inputs: NotebookRunInputFile[],
-    producerLabel = 'Notebook'
+    producerLabel = 'Notebook',
+    inputScope?: ArtifactProducerInputScope
   ): Promise<void> {
     for (const input of inputs) {
-      const validation = await this.options.inputAuthority.validateVersion(projectId, input)
+      const validation = await this.options.inputAuthority.validateVersion(
+        projectId,
+        input,
+        inputScope
+      )
       if (validation.state === 'project-mismatch') {
         throw new Error(
           `${producerLabel} input belongs to another Project: ${input.inputFileVersionId}`

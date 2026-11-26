@@ -315,7 +315,7 @@ const test = base.extend<{ desktop: Desktop }>({
           { cwd, projectId, live: Boolean(liveAgent) }
         )
         await page.reload({ waitUntil: 'domcontentloaded' })
-        // Load both bodies before testing a background preference save.
+        // Visit both conversations before exercising the background metadata write.
         await openProjectSession(page, 'Storage warning reproduction', backgroundTitle)
         await expect(
           page
@@ -398,14 +398,14 @@ test('identifies a failed background Session and clears only its confirmed succe
       string,
       (...args: unknown[]) => unknown
     >
-    const original = handlers.get('sessions:save-session')
-    if (!original) throw new Error('Session save handler missing.')
+    const original = handlers.get('sessions:set-pinned')
+    if (!original) throw new Error('Session pin handler missing.')
     Reflect.set(globalThis, 'restoreStorageWarningRepro', () =>
-      handlers.set('sessions:save-session', original)
+      handlers.set('sessions:set-pinned', original)
     )
-    handlers.set('sessions:save-session', async (...args) => {
-      const session = args[1] as { id: string }
-      if (session.id === targetId) throw new Error('E2E transient Session storage failure')
+    handlers.set('sessions:set-pinned', async (...args) => {
+      const request = args[1] as { sessionId: string }
+      if (request.sessionId === targetId) throw new Error('E2E transient Session storage failure')
       return original(...args)
     })
   }, backgroundId)
@@ -505,14 +505,14 @@ test('verifies a saved Session after losing its acknowledgement on the real runt
       string,
       (...args: unknown[]) => Promise<unknown>
     >
-    const original = handlers.get('sessions:save-session')
-    if (!original) throw new Error('Session save handler missing for outcome probe.')
+    const original = handlers.get('sessions:set-pinned')
+    if (!original) throw new Error('Session pin handler missing for outcome probe.')
     const outcomes: Array<{ ok: boolean; code: string | null; submittedResultUnknown: boolean }> =
       []
     Reflect.set(globalThis, 'storageSaveOutcomeProbes', outcomes)
     const wrapped = async (...args: unknown[]): Promise<unknown> => {
       const result = await original(...args)
-      if ((args[1] as { id?: string })?.id === sessionId) {
+      if ((args[1] as { sessionId?: string })?.sessionId === sessionId) {
         const outcome = result as { ok: boolean; error?: { code?: string; message?: string } }
         outcomes.push({
           ok: outcome.ok,
@@ -523,11 +523,11 @@ test('verifies a saved Session after losing its acknowledgement on the real runt
       }
       return result
     }
-    handlers.set('sessions:save-session', wrapped)
+    handlers.set('sessions:set-pinned', wrapped)
     Reflect.set(globalThis, 'restoreStorageOutcomeProbe', () => {
       // Recovery installs a replacement adapter; never overwrite its current handler.
-      if (handlers.get('sessions:save-session') === wrapped)
-        handlers.set('sessions:save-session', original)
+      if (handlers.get('sessions:set-pinned') === wrapped)
+        handlers.set('sessions:set-pinned', original)
     })
   }, backgroundId)
   await page.evaluate(() => {
@@ -740,10 +740,10 @@ test('preserves size-limit classification across the real Electron preload bound
       string,
       (...args: unknown[]) => unknown
     >
-    const original = handlers.get('sessions:save-session')
-    if (!original) throw new Error('Session save handler missing.')
-    handlers.set('sessions:save-session', async (...args) => {
-      if ((args[1] as { id?: string })?.id === targetId)
+    const original = handlers.get('sessions:set-pinned')
+    if (!original) throw new Error('Session pin handler missing.')
+    handlers.set('sessions:set-pinned', async (...args) => {
+      if ((args[1] as { sessionId?: string })?.sessionId === targetId)
         return {
           ok: false,
           error: {
@@ -754,7 +754,7 @@ test('preserves size-limit classification across the real Electron preload bound
       return original(...args)
     })
     Reflect.set(globalThis, 'restoreStorageWarningRepro', () =>
-      handlers.set('sessions:save-session', original)
+      handlers.set('sessions:set-pinned', original)
     )
   }, backgroundId)
   await togglePin(page, 'Pin')
@@ -792,7 +792,14 @@ test('preserves size-limit classification across the real Electron preload bound
   await expect(alert).toHaveCount(0)
 })
 
-for (const framework of ['claude-code', 'opencode', 'codex', 'codebuddy', 'pi'] as const) {
+for (const framework of [
+  'claude-code',
+  'opencode',
+  'codex',
+  'codebuddy',
+  'pi',
+  'open-science-agent'
+] as const) {
   test(`retains a not-submitted preference until explicit retry for ${framework} (common save path)`, async ({
     desktop: { application, page, projectId, backgroundId }
   }, testInfo) => {
@@ -816,11 +823,12 @@ for (const framework of ['claude-code', 'opencode', 'codex', 'codebuddy', 'pi'] 
         string,
         (...args: unknown[]) => unknown
       >
-      const original = handlers.get('sessions:save-session')!
+      const original = handlers.get('sessions:set-pinned')!
+      const save = handlers.get('sessions:save-session')!
       let rejected = false
-      const submissions: Array<{ expectedRevision?: number }> = []
-      handlers.set('sessions:save-session', async (...args) => {
-        if ((args[1] as { id: string }).id !== sessionId) return original(...args)
+      const submissions: Array<{ expectedRevision?: number } | { expectedPinned?: boolean }> = []
+      handlers.set('sessions:set-pinned', async (...args) => {
+        if ((args[1] as { sessionId: string }).sessionId !== sessionId) return original(...args)
         if (!rejected) {
           rejected = true
           return {
@@ -832,14 +840,23 @@ for (const framework of ['claude-code', 'opencode', 'codex', 'codebuddy', 'pi'] 
           }
         }
         submissions.push({
-          expectedRevision: (args[2] as { expectedRevision?: number })?.expectedRevision
+          expectedPinned: (args[1] as { expectedPinned?: boolean }).expectedPinned
         })
         return original(...args)
       })
+      // An explicit retry reads the whole current Session and saves with its exact revision.
+      handlers.set('sessions:save-session', (...args) => {
+        if ((args[1] as { id: string }).id === sessionId)
+          submissions.push({
+            expectedRevision: (args[2] as { expectedRevision?: number })?.expectedRevision
+          })
+        return save(...args)
+      })
       Reflect.set(globalThis, 'storageRetrySubmissions', submissions)
-      Reflect.set(globalThis, 'restoreStorageWarningRepro', () =>
-        handlers.set('sessions:save-session', original)
-      )
+      Reflect.set(globalThis, 'restoreStorageWarningRepro', () => {
+        handlers.set('sessions:set-pinned', original)
+        handlers.set('sessions:save-session', save)
+      })
     }, backgroundId)
     await togglePin(page, 'Pin')
     const alert = page.getByTestId('session-persistence-alert')

@@ -13,7 +13,12 @@ import {
   removeDocumentSources,
   type DocumentTransaction
 } from './document-store'
-import { Prisma, type PdfAnnotation as PdfAnnotationRow, type PrismaClient } from '@prisma/client'
+import {
+  Prisma,
+  type PdfAnnotation as PdfAnnotationRow,
+  type PdfAnnotationSourceBinding,
+  type PrismaClient
+} from '@prisma/client'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
@@ -46,6 +51,7 @@ const importReceiptId = (scope: PdfAnnotationScope, source: PdfAnnotationSource)
 import { z } from 'zod'
 import {
   createPdfAnnotationRequestSchema,
+  comparePdfAnnotationReadingPosition,
   pdfAnnotationSchema,
   type CreatePdfAnnotationRequest,
   type DeletePdfAnnotationRequest,
@@ -75,6 +81,7 @@ type Client = Pick<
 >
 type Transaction = Pick<
   Prisma.TransactionClient,
+  | '$queryRaw'
   | 'pdfDocument'
   | 'contentBlob'
   | 'uploadVersion'
@@ -191,15 +198,17 @@ const readAnnotations = async (
   const activeProjects = new Set(projects.map((project) => project.id))
   for (const deletion of deletions) activeProjects.delete(deletion.projectId)
   const activeVersions = new Set(versions.map((version) => version.id))
-  const activeSources = sources.filter((source) =>
-    source.projectId ? activeProjects.has(source.projectId) : activeVersions.has(source.versionId)
-  )
+  const candidatesByDocument = Map.groupBy(sources, (source) => source.documentId)
+  for (const [documentId, bindings] of candidatesByDocument) {
+    const live = bindings.filter((source) =>
+      source.projectId ? activeProjects.has(source.projectId) : activeVersions.has(source.versionId)
+    )
+    // Internal snapshots retain Trash records when the document has no live navigation route.
+    if (live.length) candidatesByDocument.set(documentId, live)
+  }
   return rows.flatMap((row) => {
-    const live = activeSources.filter((source) => source.documentId === row.documentId)
-    // Internal resource snapshots retain Trash records; prefer a live navigation route when one exists.
-    const candidates = live.length
-      ? live
-      : sources.filter((source) => source.documentId === row.documentId)
+    const candidates = candidatesByDocument.get(row.documentId)
+    if (!candidates) return []
     const source =
       (preferredProjectId
         ? (candidates.find((source) => source.projectId === preferredProjectId) ??
@@ -270,19 +279,26 @@ const deletePdfAnnotations = async (
 const scopeWhere = (request: ListPdfAnnotationsRequest): Prisma.PdfAnnotationWhereInput => ({
   document: { sources: { some: bindingWhere(request) } }
 })
-const scopedRow = async (
+const requireScopedSource = async (
   tx: Transaction,
-  row: PdfAnnotationRow,
+  documentId: string,
   scope: ListPdfAnnotationsRequest
-): Promise<PdfAnnotationRow> => {
+): Promise<PdfAnnotationSourceBinding> => {
   const source = await tx.pdfAnnotationSourceBinding.findFirst({
-    where: { ...bindingWhere(scope), documentId: row.documentId },
+    where: { ...bindingWhere(scope), documentId },
     orderBy: { id: 'asc' }
   })
   if (!source) throw new Error('PDF annotation source is not available.')
   await requireDocumentOwner(tx, source)
-  return projectAnnotation(row, source)
+  return source
 }
+
+const scopedRow = async (
+  tx: Transaction,
+  row: PdfAnnotationRow,
+  scope: ListPdfAnnotationsRequest
+): Promise<PdfAnnotationRow> =>
+  projectAnnotation(row, await requireScopedSource(tx, row.documentId, scope))
 
 const requireProject = async (
   client: Pick<Transaction, 'project' | 'projectDeletionIntent'>,
@@ -321,6 +337,8 @@ const requireDocumentOwner = async (
   if (row.sourceKind !== 'literature-attachment-version' || !version)
     throw new Error('PDF annotation source is not available.')
 }
+
+const MAX_READING_ORDER_PREVIEW_ROWS = 20_000
 
 class PdfAnnotationRepository {
   constructor(
@@ -507,11 +525,6 @@ class PdfAnnotationRepository {
         scope.id = id
       }
       if (request.projectId) await requireProject(transaction, request.projectId)
-      const rows = await transaction.pdfAnnotation.findMany({
-        where: { ...scope, ...after },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        take: limit + 1
-      })
       const total = await transaction.pdfAnnotation.count({ where: scope })
       const documents = await transaction.pdfAnnotationDocument.findMany({
         where: { sources: { some: bindingWhere(request) } },
@@ -539,10 +552,75 @@ class PdfAnnotationRepository {
             )
         )
         .flatMap((document) => document.sources.map(bindingSource))
-      const projected = await Promise.all(
-        rows.slice(0, limit).map((row) => scopedRow(transaction, row, request))
+      let rows: PdfAnnotationRow[]
+      if (request.readingOrderPreview) {
+        // This is a display-only prefix of one verified notebook, not a chronological cursor.
+        if (
+          !request.literatureVersionId ||
+          documents.length !== 1 ||
+          reconciliationSources.length ||
+          total > MAX_READING_ORDER_PREVIEW_ROWS
+        )
+          return { items: [], total }
+        const documentId = documents[0].id
+        const positions = await transaction.$queryRaw<
+          {
+            id: string
+            createdAt: Date
+            page: number | null
+            top: number | null
+          }[]
+        >`SELECT id, createdAt,
+          CAST(CASE json_extract(selectorJson, '$.selector.kind')
+            WHEN 'document-note' THEN 0
+            ELSE json_extract(selectorJson, '$.selector.pageNumber') END AS REAL) AS page,
+          CAST(CASE json_extract(selectorJson, '$.selector.kind')
+            WHEN 'text' THEN COALESCE(json_extract(selectorJson, '$.selector.quads[0].y'), 0)
+            WHEN 'region' THEN json_extract(selectorJson, '$.selector.rect.y')
+            WHEN 'document-note' THEN 0
+            WHEN 'page-note' THEN 0 END AS REAL) AS top
+          FROM PdfAnnotation WHERE documentId = ${documentId}`
+        const ordered = []
+        for (const { id, createdAt, page, top } of positions) {
+          if (page === null || top === null || !(createdAt instanceof Date))
+            return { items: [], total }
+          ordered.push({
+            id,
+            createdAt: createdAt.toISOString(),
+            page,
+            top
+          })
+        }
+        const ids = ordered
+          .sort(comparePdfAnnotationReadingPosition)
+          .slice(0, limit)
+          .map(({ id }) => id)
+        const selected = await transaction.pdfAnnotation.findMany({
+          where: { ...scope, id: { in: ids } }
+        })
+        const byId = new Map(selected.map((row) => [row.id, row]))
+        rows = ids.flatMap((id) => byId.get(id) ?? [])
+      } else {
+        rows = await transaction.pdfAnnotation.findMany({
+          where: { ...scope, ...after },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          take: limit + 1
+        })
+      }
+      const pageRows = rows.slice(0, limit)
+      const documentIds = new Set(pageRows.map((row) => row.documentId))
+      const scopedSources = new Map(
+        await Promise.all(
+          Array.from(
+            documentIds,
+            async (id) => [id, await requireScopedSource(transaction, id, request)] as const
+          )
+        )
       )
-      const page = await readAnnotations(transaction, projected)
+      const page = await readAnnotations(
+        transaction,
+        pageRows.map((row) => projectAnnotation(row, scopedSources.get(row.documentId)!))
+      )
       const last = rows.length > limit ? page.at(-1) : undefined
       const receipt =
         !request.cursor &&

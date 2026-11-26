@@ -814,6 +814,26 @@ export class SessionProjectionRepository {
     ]
   }
 
+  async deletedSessionScopes(): Promise<Map<string, boolean>> {
+    const client = await this.client()
+    const rows = await client.session.findMany({
+      where: { deletedAtMs: { not: null } },
+      select: { projectId: true, id: true }
+    })
+    const scopes = new Map(rows.map((row) => [row.projectId + ':' + row.id, false]))
+    if (scopes.size) {
+      const origins = await client.fileOriginSession.findMany({
+        where: { state: { in: ['deleting', 'deleted'] } },
+        select: { projectId: true, sessionId: true }
+      })
+      for (const origin of origins) {
+        const scope = origin.projectId + ':' + origin.sessionId
+        if (scopes.has(scope)) scopes.set(scope, true)
+      }
+    }
+    return scopes
+  }
+
   async isDeleted(projectId: string, id: string): Promise<boolean> {
     const client = await this.client()
     return !!(await client.session.findFirst({
@@ -1240,6 +1260,21 @@ export class SessionProjectionRepository {
       })
     )
     await client.$transaction(writes)
+  }
+
+  async findArtifactSessions(
+    artifactId: string
+  ): Promise<Array<{ projectId: string; sessionId: string }>> {
+    const client = await this.client()
+    const refs = await client.sessionArtifactRef.findMany({
+      where: {
+        artifactId,
+        session: { deletedAtMs: null, project: { deletedAt: null } }
+      },
+      orderBy: [{ session: { updatedAtMs: 'desc' } }, { sessionId: 'asc' }],
+      select: { sessionId: true, session: { select: { projectId: true } } }
+    })
+    return refs.map(({ sessionId, session }) => ({ sessionId, projectId: session.projectId }))
   }
 
   async list(): Promise<SessionSummary[]> {

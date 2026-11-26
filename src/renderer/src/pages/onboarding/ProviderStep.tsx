@@ -25,12 +25,18 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerFormLocalModels,
+  providerFormManualModels,
+  providerFormModel,
   providerFormModelForFramework,
   providerFormTokenLimits,
   providerKindPatch,
   type ProviderFormValue
 } from '../settings/provider-form-value'
 import { describeValidation, localizeProviderResourceMessage } from '../settings/validation-message'
+import { mergeLocalModels } from '../settings/provider-model-form'
+import { modelCatalogErrorMessage } from '../settings/model-catalog-feedback'
+import type { ProviderStepOperation } from './use-provider-step-operation'
 
 const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
   type === 'codex-isolated' ||
@@ -45,10 +51,15 @@ const toUpsertRequest = (value: ProviderFormValue, id?: string): UpsertProviderR
   codexTransport: value.codexTransport,
   name: value.name,
   baseUrl: value.baseUrl,
-  model: value.model,
+  model: providerFormModel(value),
+  localModels: providerFormLocalModels(value),
+  manualModels: providerFormManualModels(value),
   ...providerFormTokenLimits(value),
   vendorId: value.vendorId,
   region: value.region,
+  cloudflare: value.cloudflare,
+  manualConnection: value.manualConnection,
+  localPresetId: value.type === 'custom' ? (value.localPresetId ?? null) : undefined,
   // Persist the chosen API format so an OpenAI-compatible provider is validated + driven correctly.
   apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,
@@ -66,6 +77,7 @@ type ProviderStepProps = {
   onProviderSaved?: (id: string | undefined) => void
   onBack: () => void
   onAdvance: () => void
+  operation: ProviderStepOperation
 }
 
 // Model provider step: configure and validate the provider new research sessions will use. Reuses
@@ -76,7 +88,8 @@ const ProviderStep = ({
   providerId: savedProviderId,
   onProviderSaved,
   onBack,
-  onAdvance
+  onAdvance,
+  operation
 }: ProviderStepProps): React.JSX.Element => {
   const { t } = useTranslation()
   // Validation copy is shared with the settings page and lives in the `settings` namespace, so this
@@ -84,8 +97,18 @@ const ProviderStep = ({
   const { t: tSettings } = useTranslation()
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+  const activeModel = useSettingsStore((state) => state.activeModel)
+  const existingProvider = useSettingsStore((state) =>
+    state.providers.find((provider) => provider.id === state.activeProviderId)
+  )
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
+  const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
+  const addOnboardingKiloProvider = useSettingsStore((state) => state.addOnboardingKiloProvider)
+  const existingKiloId = useSettingsStore(
+    (state) =>
+      state.providers.find(({ type, vendorId }) => type === 'official' && vendorId === 'kilo')?.id
+  )
   const persistProvider = useSettingsStore((state) => state.persistProvider)
   const setActiveProvider = useSettingsStore((state) => state.setActiveProvider)
   const loginIsolatedCodex = useSettingsStore((state) => state.loginIsolatedCodex)
@@ -100,6 +123,10 @@ const ProviderStep = ({
   const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
 
   const [isSaving, setIsSaving] = useState(false)
+  const [isSkipping, setIsSkipping] = useState(false)
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false)
+  const [catalogError, setCatalogError] = useState<string>()
+  const busy = operation.pending
   const mounted = useRef(false)
   useEffect(() => {
     mounted.current = true
@@ -121,6 +148,16 @@ const ProviderStep = ({
   const [validationOk, setValidationOk] = useState(false)
   const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   const activeFramework = useSettingsStore(selectActiveAgentFramework)
+  const canReuseExistingProvider =
+    !formValue.providerFormTouched &&
+    existingProvider !== undefined &&
+    existingProvider.lastValidatedAt !== undefined &&
+    existingProvider.lastValidationFailure === undefined &&
+    !existingProvider.needsKey &&
+    isProviderUsableByFramework(
+      { apiEndpoints: existingProvider.apiEndpoints, type: existingProvider.type },
+      { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
+    )
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
   // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
@@ -168,6 +205,29 @@ const ProviderStep = ({
   // Required fields must be filled before the draft can be tested.
   const formErrors = getProviderFormErrors(formValue)
 
+  const handleRefreshModels = async (): Promise<void> => {
+    if (!operation.begin()) return
+    setIsRefreshingModels(true)
+    setCatalogError(undefined)
+    try {
+      const result = await refreshProviderModels({ draft: toUpsertRequest(formValue) })
+      if (!mounted.current) return
+      if (!result.ok) {
+        setCatalogError(modelCatalogErrorMessage(result.code, t))
+        return
+      }
+      setFormValue((current) => ({
+        ...current,
+        localModels: mergeLocalModels(current.localModels ?? [], result.models ?? [])
+      }))
+    } catch {
+      if (mounted.current) setCatalogError(modelCatalogErrorMessage(undefined, t))
+    } finally {
+      operation.finish()
+      if (mounted.current) setIsRefreshingModels(false)
+    }
+  }
+
   const handleClaudeTokenFallback = async (token: string): Promise<ValidateProviderResult> => {
     manualClaudePasteWonRef.current = true
     await cancelIsolatedClaudeLogin()
@@ -206,7 +266,33 @@ const ProviderStep = ({
     }
   }
 
+  const handleSkip = async (): Promise<void> => {
+    if (!operation.begin()) return
+    setIsSkipping(true)
+    setValidationMessage(undefined)
+    try {
+      if (canReuseExistingProvider) {
+        advanceIfMounted()
+        return
+      }
+      await addOnboardingKiloProvider()
+      advanceIfMounted()
+    } catch (error) {
+      if (!mounted.current) return
+      setValidationOk(false)
+      setValidationMessage(
+        error instanceof Error
+          ? localizeProviderResourceMessage(error.message, tSettings)
+          : t('Could not save provider.')
+      )
+    } finally {
+      operation.finish()
+      setIsSkipping(false)
+    }
+  }
+
   const handleSaveProvider = async (): Promise<void> => {
+    if (busy) return
     // First submit attempt surfaces any missing required fields instead of testing an incomplete draft.
     if (hasProviderFormErrors(formErrors)) {
       setShowProviderErrors(true)
@@ -241,6 +327,7 @@ const ProviderStep = ({
       return
     }
 
+    if (!operation.begin()) return
     setIsSaving(true)
     setValidationMessage(undefined)
 
@@ -376,8 +463,9 @@ const ProviderStep = ({
         return
       }
 
+      const isKilo = providerValue.type === 'official' && providerValue.vendorId === 'kilo'
       const { providerId, validation } = await saveAndActivateProvider(
-        toUpsertRequest(providerValue, savedProviderId)
+        toUpsertRequest(providerValue, (isKilo ? existingKiloId : undefined) ?? savedProviderId)
       )
       // Persistence survives Back even though this page's permission to navigate does not.
       if (providerId) onProviderSaved?.(providerId)
@@ -411,6 +499,7 @@ const ProviderStep = ({
           : t('Could not save provider.')
       )
     } finally {
+      operation.finish()
       setIsSaving(false)
     }
   }
@@ -427,9 +516,12 @@ const ProviderStep = ({
           )}
         </CardDescription>
         <p className="text-xs leading-5 text-muted-foreground">
-          {t(
-            'Connect and test a model to finish setup. The agent needs this connection to respond to your requests.'
-          )}
+          {canReuseExistingProvider && existingProvider
+            ? t('Already configured: {{name}} ({{model}}). You can continue with this provider.', {
+                name: existingProvider.name,
+                model: existingProvider.model ?? activeModel ?? t('default model')
+              })
+            : t('Skip to access free Kilo models.')}
         </p>
       </CardHeader>
       <Separator className="bg-border-200" />
@@ -449,11 +541,16 @@ const ProviderStep = ({
           <ProviderForm
             key={savedProviderId ?? 'new-provider'}
             value={formValue}
-            onChange={(patch) =>
+            onChange={(patch) => {
+              if ('baseUrl' in patch || 'localPresetId' in patch || 'key' in patch)
+                setCatalogError(undefined)
               setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
-            }
+            }}
             errors={showProviderErrors ? formErrors : undefined}
-            disabled={isSaving}
+            disabled={isSaving || isSkipping || isRefreshingModels}
+            onRefreshModels={formValue.localPresetId ? handleRefreshModels : undefined}
+            isRefreshingModels={isRefreshingModels}
+            catalogError={catalogError}
             encryptionAvailable={encryptionAvailable}
             showCodexSubscriptions={
               agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent'
@@ -508,6 +605,7 @@ const ProviderStep = ({
           <Button
             type="button"
             variant="outline"
+            disabled={isSkipping}
             onClick={() => {
               mounted.current = false
               onBack()
@@ -518,8 +616,17 @@ const ProviderStep = ({
         )}
         <Button
           type="button"
+          variant="outline"
+          onClick={() => void handleSkip()}
+          disabled={busy}
+          aria-busy={isSkipping}
+        >
+          {canReuseExistingProvider ? t('Use configured provider') : t('Skip')}
+        </Button>
+        <Button
+          type="button"
           onClick={() => void handleSaveProvider()}
-          disabled={isSaving}
+          disabled={busy}
           className="px-4"
           aria-busy={Boolean(isSaving)}
         >

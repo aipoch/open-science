@@ -68,6 +68,7 @@ import { discardImportedEnvironmentLock } from './imported-environment-lock'
 import { isChildUnconfirmedError, micromambaDiagnosticText } from './provisioner-runtime'
 import { envsLockDir } from './runtime-relocation'
 import {
+  DEFAULT_BUNDLE_VERSION,
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -104,6 +105,7 @@ export type FetchedBundle = {
 
 export type RuntimeRepairOptions = {
   force?: boolean
+  signal?: AbortSignal
   // Runs after queued cancellation is consumed, before acquiring the environment lock so active
   // kernels can release their execution leases. Per-language cancellation is ignored afterward.
   onStarting?: () => Promise<void> | void
@@ -130,17 +132,28 @@ export const DEFAULT_MANAGED_VERSION: Record<NotebookLanguage, string> = {
   r: '4.4'
 }
 
-// Default managed env package sets. These are now the MINIMAL kernel-protocol floor (interpreter +
-// matplotlib-base/nomkl for Python; r-jsonlite for R) — NOT a full scientific stack. The heavier
-// convenience packages (numpy/pandas/scipy/…) install on demand via manage_packages, matching the
-// curated language packs (which are likewise minimal). No Jupyter: code runs through the exec-loop
-// (python_loop.py / r_loop.R). matplotlib-base backs Python figure capture; r-jsonlite implements the
-// R loop's line-based JSON protocol.
+// Fresh defaults use the same package specs as release staging. Named environments stay lean.
 export const DEFAULT_PYTHON_SPEC: EnvSpec = {
   name: DEFAULT_PY_ENV,
   language: 'python',
   version: DEFAULT_MANAGED_VERSION.python,
-  packages: [`python=${DEFAULT_MANAGED_VERSION.python}`, 'matplotlib-base', 'nomkl']
+  packages: [
+    `python=${DEFAULT_MANAGED_VERSION.python}`,
+    'matplotlib-base',
+    'nomkl',
+    'python-docx=1.2.0',
+    'python-pptx=1.0.2',
+    'pillow',
+    'reportlab',
+    'pypdf',
+    'pdfplumber',
+    'pypdfium2',
+    'openpyxl',
+    'pandas',
+    'numpy',
+    'scipy',
+    'pandoc=3.12.1'
+  ]
 }
 export const DEFAULT_R_SPEC: EnvSpec = {
   name: DEFAULT_R_ENV,
@@ -319,8 +332,8 @@ const CREATE_TICK_GAIN = 0.12
 // The provisioning contract consumed via IPC by Workstream D (contract §4).
 export interface RuntimeProvisioner {
   status(): ProvisionStatus
-  provisionPython(onProgress: (p: ProvisionProgress) => void): Promise<void>
-  provisionR(onProgress: (p: ProvisionProgress) => void): Promise<void>
+  provisionPython(onProgress: (p: ProvisionProgress) => void, signal?: AbortSignal): Promise<void>
+  provisionR(onProgress: (p: ProvisionProgress) => void, signal?: AbortSignal): Promise<void>
   upgradeIfNeeded(onProgress: (p: ProvisionProgress) => void): Promise<void>
   // `force` = explicit user recovery: clears a recovery quarantine (block + retained journal record +
   // sidecar) before rebuilding, so a stuck/uncertain runtime can be reset. Auto/startup repair omits it
@@ -939,22 +952,36 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
   // any work, and the provisioning flag + abort controller cover the whole run. repair uses this too, so
   // a cancel that arrived while the Reset was queued aborts BEFORE the destructive rm — never leaving a
   // deleted-but-not-rebuilt env. The wrapped body must NOT call beginLanguageRun itself (single owner).
-  private async runLanguage(language: NotebookLanguage, run: () => Promise<void>): Promise<void> {
+  private async runLanguage(
+    language: NotebookLanguage,
+    run: () => Promise<void>,
+    signal?: AbortSignal
+  ): Promise<void> {
+    signal?.throwIfAborted()
     this.beginLanguageRun(language)
+    const controller = this.abort
+    const cancel = (): void => {
+      if (!this.uninterruptible.has(language)) controller?.abort(signal?.reason)
+    }
+    signal?.addEventListener('abort', cancel, { once: true })
     this.provisioning = true
     try {
       // Reject before repair preparation can invalidate bindings, stop kernels or delete a prefix.
       this.assertLanguagePath(language)
       await run()
     } finally {
+      signal?.removeEventListener('abort', cancel)
       this.provisioning = false
       this.endLanguageRun(language)
     }
   }
 
-  async provisionPython(rawProgress: (p: ProvisionProgress) => void): Promise<void> {
+  async provisionPython(
+    rawProgress: (p: ProvisionProgress) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
     return this.withEnvPrefixLock(DEFAULT_PY_ENV, () =>
-      this.runLanguage('python', () => this.doProvisionPython(rawProgress))
+      this.runLanguage('python', () => this.doProvisionPython(rawProgress), signal)
     )
   }
 
@@ -979,9 +1006,12 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     }
   }
 
-  async provisionR(rawProgress: (p: ProvisionProgress) => void): Promise<void> {
+  async provisionR(
+    rawProgress: (p: ProvisionProgress) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
     return this.withEnvPrefixLock(DEFAULT_R_ENV, () =>
-      this.runLanguage('r', () => this.doProvisionR(rawProgress))
+      this.runLanguage('r', () => this.doProvisionR(rawProgress), signal)
     )
   }
 
@@ -1069,7 +1099,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     // write into a half-deleted prefix. The rebuild calls the LOCK-FREE do* variants (not the public
     // provision*), which would otherwise re-acquire this same exclusive lock and deadlock.
     // Consume queued cancellation before preparation can invalidate bindings or persist isolation.
-    return this.runLanguage(lang, async () => {
+    const rebuild = async (): Promise<void> => {
       try {
         if (opts?.onStarting) {
           // Preparation invalidates bindings and stops kernels that may hold shared leases.
@@ -1130,7 +1160,8 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
       } finally {
         this.uninterruptible.delete(lang)
       }
-    })
+    }
+    return this.runLanguage(lang, rebuild, opts?.signal)
   }
 
   // Rebuilds envs captured by a data-root relocation (runtime-relocation.exportRuntimeLocks) offline
@@ -1631,6 +1662,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     spec: EnvSpec,
     onProgress: (p: ProvisionProgress) => void
   ): Promise<void> {
+    // Legacy upgrades retain the readiness baseline; new libraries apply to fresh materialization.
     const fetchCache = this.legacyCache
     const bundle = await this.deps.fetchBundle(
       spec,
@@ -1769,7 +1801,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     const fetchCache = this.legacyCache
     const bundle = await this.deps.fetchBundle(
       spec,
-      DEFAULT_ENV_VERSION,
+      DEFAULT_BUNDLE_VERSION,
       onProgress,
       this.abort?.signal
     )
@@ -1891,7 +1923,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
           })
           const reseeded = await this.deps.fetchBundle(
             spec,
-            DEFAULT_ENV_VERSION,
+            DEFAULT_BUNDLE_VERSION,
             onProgress,
             this.abort?.signal
           )

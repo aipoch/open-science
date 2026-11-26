@@ -15,6 +15,7 @@ import {
 import { extractProviderToolName } from './runtime-events'
 import {
   APP_AUTO_OPERATION_IDENTITIES,
+  IMAGE_MCP_TOOL_IDENTITIES,
   classifyAppAutoOperation,
   type AutoOperationDecision
 } from './auto-operation-policy'
@@ -37,6 +38,7 @@ type PermissionPolicyContext = {
   permissionGrantSessionId?: string
   modelRoute?: import('../agent-framework/types').AgentModelRoute
   frameworkId?: AgentFrameworkId
+  hostWebOperation?: 'search' | 'fetch'
   shellDialect?: CommandShellDialect
   notebookShellRuntime?: ShellRuntimeBinding['kind']
   notebookShellRuntimeQualifier?: string
@@ -104,6 +106,7 @@ const CODEX_MCP_TOOL_PREFIX = 'mcp.'
 const MCP_PROVIDER_LEAF_ALIASES: Record<string, Readonly<Record<string, string>>> = {
   'open-science-notebook': { execute: 'notebook_execute' },
   'open-science-artifacts': { write: 'write_artifact_file' },
+  'open-science-images': { write: 'generate_image' },
   'open-science-activity': { begin_activity_group: 'begin_activity_group' }
 }
 
@@ -378,6 +381,8 @@ const resolveLegacyAutomaticPermissionReason = (
     return 'full_access'
   }
 
+  if (context?.profile === 'auto' && context.hostWebOperation) return 'host_web_auto'
+
   const libraryIdentity = trustedMcpToolIdentity(params)
   if (
     isSchedulePermissionTool(libraryIdentity) &&
@@ -448,18 +453,29 @@ const resolveLegacyAutomaticPermissionReason = (
 }
 
 // All automatic classifications share this entry. Existing cross-profile exceptions retain their
-// original precedence and semantics; the new operation rules apply only to trusted Auto requests.
+// original precedence and semantics; operation rules require verified Auto capability identities.
 const resolveAutoOperation = (
   params: RequestPermissionRequest,
   context: PermissionPolicyContext | undefined
 ): AutoOperationDecision => {
   const autoEvidence = (params as TrustedAutoOperationRequest)[TRUSTED_AUTO_OPERATION]
-  const identity = trustedMcpToolIdentity(params) ?? autoEvidence?.identity
-  if (context?.profile === 'auto' && identity && APP_AUTO_OPERATION_IDENTITIES.has(identity)) {
-    if (!context.mcpServerNames?.map(canonicalAppMcpServerName).includes(identity.split('/')[0])) {
-      return { kind: 'legacy' }
+  if (context?.profile === 'auto') {
+    const mountedServers = context.mcpServerNames ?? []
+    let identity = trustedMcpToolIdentity(params) ?? autoEvidence?.identity
+    if (!identity) {
+      const reportedIdentity = resolveCanonicalMcpToolIdentity(
+        extractProviderToolName(params.toolCall),
+        mountedServers
+      )
+      if (reportedIdentity && IMAGE_MCP_TOOL_IDENTITIES.has(reportedIdentity))
+        identity = reportedIdentity
     }
-    return classifyAppAutoOperation(identity, params.toolCall.rawInput ?? autoEvidence?.rawInput)
+    if (identity && APP_AUTO_OPERATION_IDENTITIES.has(identity)) {
+      if (!mountedServers.map(canonicalAppMcpServerName).includes(identity.split('/')[0])) {
+        return { kind: 'legacy' }
+      }
+      return classifyAppAutoOperation(identity, params.toolCall.rawInput ?? autoEvidence?.rawInput)
+    }
   }
   const reason = resolveLegacyAutomaticPermissionReason(params, context)
   if (!reason) return { kind: 'legacy' }

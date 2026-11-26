@@ -558,6 +558,14 @@ describe('module test impact commands', () => {
         testFiles: []
       })
 
+      if (expectedModules[0] === 'settings_repository') {
+        const manifest = loadModuleImpactManifest()
+        expect(plan.mode).toBe('full')
+        expect(plan.reasonChains).toContain(
+          `settings_repository -> ${manifest.modules.settings_repository.fullTestReason} -> full`
+        )
+        return
+      }
       expect(plan.mode).toBe('selective')
       expect([...plan.modules].sort()).toEqual(expectedModules)
       const rootModule = path.startsWith('packages/providers/')
@@ -1252,6 +1260,7 @@ it.each([
   }
   // Test process routing separately while retaining the production full-validation guard above.
   delete manifest.modules.main_delegation.fullTestReason
+  delete manifest.modules.host_process_runtime.fullTestReason
   const plan = createAffectedTestPlan(changes, graph, manifest)
 
   expect(plan.mode).toBe('selective')

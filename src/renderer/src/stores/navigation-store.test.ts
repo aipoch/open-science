@@ -280,6 +280,56 @@ describe('navigation store', () => {
     expect(useSessionStore.getState().sessions).toHaveLength(1)
   })
 
+  it('selects an unloaded Session and queues details recovery atomically', () => {
+    useSessionStore.getState().hydrateSessions([createSession({})])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        contentLoaded: false,
+        needsStartupRecovery: true
+      }))
+    }))
+    const snapshots: Array<{
+      selectedSessionId: string | undefined
+      sessionDetailsRecoveryRequest: { projectId: string; sessionId: string } | undefined
+    }> = []
+    const unsubscribe = useSessionStore.subscribe((state) => {
+      snapshots.push({
+        selectedSessionId: state.selectedSessionId,
+        sessionDetailsRecoveryRequest: state.sessionDetailsRecoveryRequest
+      })
+    })
+    try {
+      useNavigationStore.getState().openSession('project-a', 'session-1', 'user')
+    } finally {
+      unsubscribe()
+    }
+
+    expect(snapshots).toContainEqual({
+      selectedSessionId: 'session-1',
+      sessionDetailsRecoveryRequest: { projectId: 'project-a', sessionId: 'session-1' }
+    })
+  })
+
+  it('queues details recovery for an automatic deep-link to an unloaded Session', () => {
+    useSessionStore.getState().hydrateSessions([createSession({})])
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        contentLoaded: false,
+        needsStartupRecovery: true
+      }))
+    }))
+
+    useNavigationStore.getState().openSession('project-a', 'session-1', 'automatic')
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-1')
+    expect(useSessionStore.getState().sessionDetailsRecoveryRequest).toEqual({
+      projectId: 'project-a',
+      sessionId: 'session-1'
+    })
+  })
+
   it('returns Home after a Home entry even with a retained Session selection', () => {
     useSessionStore.getState().hydrateSessions([createSession({})])
     useNavigationStore.getState().openSession('project-a', 'session-1', 'user')

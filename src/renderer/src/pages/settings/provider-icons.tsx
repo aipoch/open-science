@@ -1,4 +1,6 @@
-import { CirclePlus, Sparkles } from 'lucide-react'
+import { isLocalProviderPresetId, type LocalProviderPresetId } from '@aipoch/providers'
+import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
+import { CirclePlus, FlaskConical, Server, Sparkles } from 'lucide-react'
 
 import {
   AipochMono,
@@ -13,6 +15,15 @@ import {
 import { cn } from '@/lib/utils'
 import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import apodexLogo from '@/assets/provider-icons/apodex.svg'
+import awsLogo from '@/assets/provider-icons/aws.svg'
+import azureLogo from '@/assets/provider-icons/azure.svg'
+import cloudflareLogo from '@/assets/provider-icons/cloudflare.svg'
+import llamaCppLogo from '@/assets/provider-icons/llamacpp.svg'
+import lmStudioLogo from '@/assets/provider-icons/lmstudio.svg'
+import magpieLogo from '@/assets/provider-icons/magpie.png'
+import ollamaLogo from '@/assets/provider-icons/ollama.svg'
+import vectrustLogo from '@/assets/provider-icons/vectrust.png'
+import vllmLogo from '@/assets/provider-icons/vllm.svg'
 import claudeLogo from '@/assets/provider-icons/claude.svg'
 // CodeBuddy is a third-party product mark used only to identify its compatible ACP runtime.
 // Keep it separate from Open-Science branding and avoid implying affiliation or endorsement.
@@ -24,6 +35,8 @@ import minimaxLogo from '@/assets/provider-icons/minimax.svg'
 import stepfunLogo from '@/assets/provider-icons/stepfun.svg'
 import openaiLogo from '@/assets/provider-icons/openai.svg'
 import zhipuLogo from '@/assets/provider-icons/zhipu.svg'
+// Official Kilo icon from https://kilo.ai/favicon/favicon.svg
+import kiloLogo from '@/assets/provider-icons/kilo.svg'
 import kimiLogo from '@/assets/provider-icons/kimi.svg'
 import openrouterLogo from '@/assets/provider-icons/openrouter.svg'
 import requestyLogo from '@/assets/provider-icons/requesty.svg'
@@ -56,8 +69,17 @@ export const AgentFrameworkIcon = ({
   return <CodexMono size={size} className={cn('text-foreground', className)} />
 }
 
+// Keep the original artwork on the same light surface throughout the dark provider UI.
+// Inline monochrome glyphs use the matching dark ink through currentColor.
+const darkLogoBacking =
+  'dark:rounded-xs dark:bg-foreground dark:text-background dark:ring-2 dark:ring-foreground'
+
 export const TypeSafeIcon = ({ className }: { className?: string }): React.JSX.Element => (
-  <img src={typesafeLogo} alt="" className={cn('size-3 shrink-0 object-contain', className)} />
+  <img
+    src={typesafeLogo}
+    alt=""
+    className={cn('size-3 shrink-0 object-contain', darkLogoBacking, className)}
+  />
 )
 
 // Official vendor brand marks, bundled as assets. Providers from the same vendor share one mark:
@@ -78,16 +100,28 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   stepplan: stepfunLogo,
   zhipu: zhipuLogo,
   glmcodingplan: zhipuLogo,
+  kilo: kiloLogo,
   kimi: kimiLogo,
   kimiforcode: kimiLogo,
   openrouter: openrouterLogo,
   requesty: requestyLogo,
   xiaomimimo: xiaomimimoLogo,
   sensenova: sensenovaLogo,
-  volcengine: volcengineLogo
+  volcengine: volcengineLogo,
+  'cloudflare-ai-gateway': cloudflareLogo,
+  'aws-bedrock': awsLogo,
+  'microsoft-foundry': azureLogo,
+  vectrust: vectrustLogo
 }
 
-// Renders the icon for a provider-kind key ('custom' or `official:<vendorId>`).
+const LOCAL_LOGO: Record<LocalProviderPresetId, string> = {
+  llamacpp: llamaCppLogo,
+  lmstudio: lmStudioLogo,
+  magpie: magpieLogo,
+  ollama: ollamaLogo,
+  vllm: vllmLogo
+}
+
 export const ProviderKindIcon = ({
   kindKey,
   className
@@ -95,13 +129,10 @@ export const ProviderKindIcon = ({
   kindKey: string
   className?: string
 }): React.JSX.Element => {
+  const iconClass = cn('size-5 shrink-0', darkLogoBacking, className)
+
   if (kindKey === 'custom') {
-    return (
-      <CirclePlus
-        className={cn('size-5 shrink-0 text-muted-foreground', className)}
-        aria-hidden="true"
-      />
-    )
+    return <CirclePlus className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />
   }
 
   if (
@@ -109,11 +140,19 @@ export const ProviderKindIcon = ({
     kindKey === 'codex-shared' ||
     kindKey === 'codex-isolated'
   ) {
-    return <img src={openaiLogo} alt="" className={cn('size-5 shrink-0', className)} />
+    return <img src={openaiLogo} alt="" className={iconClass} />
+  }
+
+  if (kindKey === 'codebuddy-subscription' || codeBuddySiteForId(kindKey)) {
+    return <AgentFrameworkIcon frameworkId="codebuddy" className={iconClass} />
   }
 
   if (kindKey === 'xai-subscription') {
-    return <img src={grokLogo} alt="" className={cn('size-5 shrink-0', className)} />
+    return <img src={grokLogo} alt="" className={iconClass} />
+  }
+
+  if (kindKey === 'lab') {
+    return <FlaskConical className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />
   }
 
   if (
@@ -121,21 +160,17 @@ export const ProviderKindIcon = ({
     kindKey === 'claude-shared' ||
     kindKey === 'claude-isolated'
   ) {
-    return <img src={claudeLogo} alt="" className={cn('size-5 shrink-0', className)} />
+    return <img src={claudeLogo} alt="" className={iconClass} />
   }
 
   if (kindKey === 'official:opencode-go' || kindKey === 'official:opencode') {
     return (
-      <OpenCodeMono
-        size={20}
-        className={cn('size-5 shrink-0 text-foreground', className)}
-        aria-hidden="true"
-      />
+      <OpenCodeMono size={20} className={cn('text-foreground', iconClass)} aria-hidden="true" />
     )
   }
 
   if (kindKey === 'official:nvidia') {
-    return <NvidiaColor size={20} className={cn('size-5 shrink-0', className)} aria-hidden="true" />
+    return <NvidiaColor size={20} className={iconClass} aria-hidden="true" />
   }
 
   if (
@@ -143,27 +178,24 @@ export const ProviderKindIcon = ({
     kindKey === 'official:tencentcodingplan' ||
     kindKey === 'official:tencenttokenplan'
   ) {
-    return (
-      <TencentCloudColor
-        size={20}
-        className={cn('size-5 shrink-0', className)}
-        aria-hidden="true"
-      />
-    )
+    return <TencentCloudColor size={20} className={iconClass} aria-hidden="true" />
   }
 
-  const vendorId = kindKey.slice('official:'.length) as OfficialVendorId
-  const logo = VENDOR_LOGO[vendorId]
+  const localId = kindKey.startsWith('local:') ? kindKey.slice('local:'.length) : undefined
+  const logo = isLocalProviderPresetId(localId)
+    ? LOCAL_LOGO[localId]
+    : kindKey.startsWith('official:')
+      ? VENDOR_LOGO[kindKey.slice('official:'.length) as OfficialVendorId]
+      : undefined
 
   if (logo) {
-    return <img src={logo} alt="" className={cn('size-5 shrink-0', className)} />
+    return <img src={logo} alt="" className={cn('object-contain', iconClass)} />
+  }
+
+  if (localId !== undefined) {
+    return <Server className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />
   }
 
   // No official asset bundled for this vendor yet (e.g. GLM/Z.AI): neutral placeholder, not a guess.
-  return (
-    <Sparkles
-      className={cn('size-5 shrink-0 text-muted-foreground', className)}
-      aria-hidden="true"
-    />
-  )
+  return <Sparkles className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />
 }

@@ -79,5 +79,10 @@ export type AcpProviderTurnProbe = Readonly<{
  * than by widening this interface with provider payloads or application-owner concerns.
  */
 export type AcpProviderTurnAdapter = Readonly<{
+  /** Some ACP providers encode request failures in a successful terminal RPC response. */
+  getPromptError?: (
+    response: Readonly<PromptResponse>,
+    providerSessionId?: string
+  ) => Error | undefined
   begin: (input: AcpProviderTurnBeginInput) => AcpProviderTurnProbe | Promise<AcpProviderTurnProbe>
 }>

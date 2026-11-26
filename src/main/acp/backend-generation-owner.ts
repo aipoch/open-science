@@ -34,6 +34,7 @@ export type AcpBackendGenerationView = Readonly<{
     supportsImageInput: boolean
   }>
   adapter: Readonly<{
+    codeBuddySharedSite?: ResolvedAgentBackend['codeBuddySharedSite']
     claudeConfigDir?: string
     codexHome?: string
     nativeMcpEnabled: boolean
@@ -110,6 +111,7 @@ const generationView = (backend: ResolvedAgentBackend): AcpBackendGenerationView
       supportsImageInput: backend.supportsImageInput === true
     }),
     adapter: Object.freeze({
+      ...(backend.codeBuddySharedSite && { codeBuddySharedSite: backend.codeBuddySharedSite }),
       ...(claudeConfigDir ? { claudeConfigDir } : {}),
       ...(codexHome ? { codexHome } : {}),
       nativeMcpEnabled: backend.framework.id !== 'codex' || !bridgeMcpAliasesEnabled,

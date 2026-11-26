@@ -740,6 +740,32 @@ describe('getRenderableActivityEntries', () => {
 })
 
 describe('formatStepCount', () => {
+  it('counts a completed step separately from a tool whose permission was declined', () => {
+    const completed = createActivity({ id: 'read', status: 'completed' })
+    const declined = createActivity({
+      id: 'save',
+      status: 'completed',
+      toolDisposition: 'declined'
+    })
+    expect(formatStepCount([completed, declined])).toBe(
+      '1 completed · 1 not run (permission denied)'
+    )
+    expect(formatStepCount([declined])).toBe('1 not run (permission denied)')
+    expect(formatActivityGroupTitle([completed, declined])).toBe('Tool activity')
+  })
+
+  it('keeps progress and failure counts when a tool was declined', () => {
+    const activities = [
+      createActivity({ id: 'read' }),
+      createActivity({ id: 'save', toolDisposition: 'declined' }),
+      createActivity({ id: 'report', status: 'failed' }),
+      createActivity({ id: 'query', status: 'in_progress' })
+    ]
+    expect(formatStepCount(activities, undefined, undefined, undefined, 1)).toBe(
+      '1 step remaining · 1 completed · 1 not run (permission denied) · 1 failed'
+    )
+  })
+
   it('summarizes step totals and flags failures', () => {
     expect(
       formatStepCount([

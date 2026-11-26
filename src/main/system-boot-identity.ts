@@ -1,5 +1,8 @@
 import { execFile, execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { win32 } from 'node:path'
+import { promisify } from 'node:util'
 
 import { UpdateLifecycleError } from '../shared/update'
 import { resolveWindowsPowerShellExecutable } from './windows-powershell'
@@ -55,7 +58,8 @@ export function prefetchSystemBootIdentity(): Promise<string> {
     execFile(
       resolveWindowsPowerShellExecutable(),
       WINDOWS_POWERSHELL_ARGS,
-      { encoding: 'utf8', timeout: 5000, windowsHide: true },
+      // Add-Type can take several seconds to compile the probe on a cold Windows host.
+      { encoding: 'utf8', timeout: 12_000, windowsHide: true },
       (error, stdout) => {
         if (error) return reject(bootIdentityUnavailable('PowerShell query failed', error))
         try {
@@ -118,6 +122,35 @@ export function hasSystemRestarted(recorded: unknown, current: unknown): boolean
     recorded.split(':')[0] === current.split(':')[0] &&
     recorded !== current
   )
+}
+
+export type WindowsBootObservation = Readonly<{ hostHash: string; bootIdentity: string }>
+
+let cachedWindowsBootObservation: WindowsBootObservation | undefined
+
+// A data directory can move. A different machine's boot UUID cannot establish a reboot of
+// the original Windows installation. Persist only a digest of the installation identifier.
+export async function readWindowsBootObservation(): Promise<WindowsBootObservation | undefined> {
+  if (cachedWindowsBootObservation) return cachedWindowsBootObservation
+  const windowsRoot = process.env.SystemRoot || process.env.WINDIR
+  if (process.platform !== 'win32' || !windowsRoot || !win32.isAbsolute(windowsRoot)) return
+  try {
+    const bootIdentity = await prefetchSystemBootIdentity()
+    const { stdout } = await promisify(execFile)(
+      win32.join(windowsRoot, 'System32', 'reg.exe'),
+      ['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid', '/reg:64'],
+      { encoding: 'utf8', timeout: 5000, windowsHide: true }
+    )
+    const machineGuid = /^\s*MachineGuid\s+REG_SZ\s+([a-f0-9-]+)\s*$/im
+      .exec(stdout)?.[1]
+      .toLowerCase()
+    if (!machineGuid || !validUuid(machineGuid)) return
+    const hostHash = createHash('sha256').update(machineGuid).digest('hex')
+    return (cachedWindowsBootObservation = { hostHash, bootIdentity })
+  } catch {
+    // Retry unavailable registry or kernel evidence on a later recovery scan.
+    return undefined
+  }
 }
 export function assertSystemRestarted(recorded: unknown, current: unknown): void {
   if (

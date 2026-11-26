@@ -551,7 +551,8 @@ describe('Session persistence coordinator architecture', () => {
       'onDelegationPolicyUpdated:optional',
       'workspaceOwnership:optional',
       'preparePackageDeletion:optional',
-      'deletionWork:optional'
+      'deletionWork:optional',
+      'webEvidence:optional'
     ])
     expect(exportedNames(facadeFile, 'value')).toEqual(
       ['SessionPersistenceCoordinator', 'SessionRuntimeContextRevisionConflictError'].sort()
@@ -609,6 +610,7 @@ describe('Session persistence coordinator architecture', () => {
         'sessionDeletionHandlers',
         'sideChatOwner',
         'stateOwner',
+        'webEvidence',
         'workspaceOwnership'
       ].sort()
     )
@@ -660,6 +662,7 @@ describe('Session persistence coordinator architecture', () => {
         'repository',
         'stateOwner',
         'uploads',
+        'webEvidence',
         'workspaceOwnership'
       ].sort()
     )
@@ -1480,7 +1483,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/runtime-session-file.ts',
       'src/main/session-persistence/runtime-session-mutation.ts',
       'src/main/session-persistence/session-storage-benchmark.test.ts',
-      'src/main/session-persistence/deferred-recovery.ts'
+      'src/main/session-persistence/deferred-recovery.ts',
+      'src/main/session-persistence/web-evidence.integration.test.ts'
     ])
     expect(sessionPersistence.interfacePaths).toEqual([
       'src/main/session-persistence/coordinator.ts',
@@ -1570,7 +1574,8 @@ describe('Session persistence coordinator architecture', () => {
       'src/main/session-persistence/repository-pending-import.test.ts',
       'src/main/session-persistence/runtime-business-records.integration.test.ts',
       'src/main/session-persistence/runtime-session-file.test.ts',
-      'src/main/session-persistence/session-storage-benchmark.test.ts'
+      'src/main/session-persistence/session-storage-benchmark.test.ts',
+      'src/main/session-persistence/web-evidence.integration.test.ts'
     ])
     expect(sessionPersistence.testFiles.contract).toEqual([
       'src/shared/session-persistence.test.ts',

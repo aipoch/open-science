@@ -10,7 +10,8 @@ import { describe, expect, it, vi } from 'vitest'
 // Behavior tests execute the exact inline github-script blocks shipped by the label lifecycle and
 // AI review workflows instead of reimplementing their logic.
 type WorkflowJob = {
-  steps: { with?: { script?: string }; uses?: string; run?: string }[]
+  steps?: { with?: { script?: string }; uses?: string; run?: string }[]
+  uses?: string
   permissions?: Record<string, string>
   concurrency?: { group: string; 'cancel-in-progress': boolean }
   if?: string
@@ -145,13 +146,13 @@ async function runJob(
       : jobId === 'sync'
         ? syncWorkflow
         : labelsWorkflow
-  const script = workflow.jobs[jobId]?.steps[0].with?.script
+  const script = workflow.jobs[jobId]?.steps?.[0].with?.script
   if (!script) throw new Error(`job ${jobId} has no inline script`)
   const summary = { addHeading: vi.fn(), addTable: vi.fn(), write: vi.fn() }
   summary.addHeading.mockReturnValue(summary)
   summary.addTable.mockReturnValue(summary)
   const core = { notice: vi.fn(), warning: vi.fn(), setFailed: vi.fn(), info: vi.fn(), summary }
-  const processStub = { env }
+  const processStub = { env: { PR_NUMBER: '7', PR_HEAD_SHA: 'sha1', ...env } }
   const run = new Function(
     'github',
     'context',
@@ -547,6 +548,15 @@ describe('PR classification', () => {
 })
 
 describe('reset_review_labels', () => {
+  it('does not change labels after the PR head advances', async () => {
+    for (const job of ['reset_review_labels', 'apply_type_labels']) {
+      const { github, added, removed } = makeGithub({ prHeadSha: 'new-head' })
+      await runJob(job, pullRequestContext(), github)
+      expect(added).toEqual([])
+      expect(removed).toEqual([])
+    }
+  })
+
   it('removes stale outcome labels and tolerates missing ones', async () => {
     const { github, removed } = makeGithub({ labels: ['ready-to-merge'] })
     await runJob('reset_review_labels', pullRequestContext(), github)
@@ -760,12 +770,10 @@ describe('label configuration contracts', () => {
     }
   })
 
-  it('retains target permissions and isolates classification concurrency from AI review resets', () => {
-    expect(labelsWorkflow.on).toEqual({
-      pull_request_target: {
-        branches: ['main'],
-        types: ['opened', 'synchronize', 'reopened', 'edited']
-      }
+  it('uses trusted signals and isolates classification concurrency from AI review resets', () => {
+    expect(labelsWorkflow.on.workflow_run).toEqual({
+      workflows: ['PR Automation Signal'],
+      types: ['completed']
     })
     expect(labelsWorkflow.jobs.apply_type_labels.permissions).toEqual({
       contents: 'read',
@@ -773,12 +781,13 @@ describe('label configuration contracts', () => {
       'pull-requests': 'write'
     })
     expect(labelsWorkflow.jobs.apply_type_labels.concurrency).toEqual({
-      group: 'pr-classification-${{ github.event.pull_request.number }}',
+      group:
+        "pr-classification-${{ needs.resolve.outputs.number }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'live' }}",
       'cancel-in-progress': false
     })
     expect(labelsWorkflow.jobs.reset_review_labels.concurrency).toBeUndefined()
-    expect(labelsWorkflow.jobs.reset_review_labels.if).toContain("github.event.action != 'edited'")
-    expect(labelsWorkflow.jobs.apply_type_labels.if).toContain('github.event.changes.title')
+    expect(labelsWorkflow.jobs.reset_review_labels.if).not.toContain('"edited"')
+    expect(labelsWorkflow.jobs.apply_type_labels.if).toContain('"edited"')
     const text = readFileSync('.github/workflows/ai-review-labels.yml', 'utf8')
     const result = checkCiIntegrityChanges([
       { path: '.github/workflows/ai-review-labels.yml', baseText: text, headText: text }
@@ -806,7 +815,8 @@ describe('label configuration contracts', () => {
     expect(syncWorkflow.jobs.sync.permissions).toEqual({ contents: 'read', issues: 'write' })
     for (const workflow of [labelsWorkflow, syncWorkflow]) {
       for (const job of Object.values(workflow.jobs)) {
-        for (const step of job.steps) {
+        if (job.uses) expect(job.uses).toBe('./.github/workflows/resolve-pr-signal.yml')
+        for (const step of job.steps ?? []) {
           expect(step.uses).toMatch(/^actions\/github-script@[a-f0-9]{40}$/)
           expect(step.run).toBeUndefined()
           expect(step.with?.script).not.toContain('${{')

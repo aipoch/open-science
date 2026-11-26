@@ -1,6 +1,14 @@
+import { decodeProviderModels } from '../../shared/configured-provider-model'
+import { decodeLocalProviderModels } from '../../shared/local-provider-preset'
+import { resolveOfficialModelCatalog } from '../../shared/provider-model-catalog'
+import { resolveConfiguredProviderTarget } from './manual-provider-target'
 import type { ProviderDraft } from '../../shared/settings'
 import {
+  configuredProviderConnectionKind,
+  isLocalProviderPresetId,
   isOfficialVendorId,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList,
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
   resolveVendorChatCompletionsBaseUrl,
@@ -15,6 +23,33 @@ import { resolveCustomTokenLimits } from './provider-token-limits'
 
 export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => {
   if (draft.type === 'official' && isOfficialVendorId(draft.vendorId)) {
+    if (configuredProviderConnectionKind(draft.vendorId)) {
+      const configuredModels = supportsConfiguredProviderModelList(draft.vendorId)
+        ? draft.manualModels
+        : undefined
+      const manualModels = decodeProviderModels(configuredModels)
+      if (configuredModels !== undefined && !manualModels)
+        throw new Error('Enter a valid model list.')
+      const modelIds = manualModels?.map(({ id }) => id)
+      const target = resolveConfiguredProviderTarget(
+        draft.vendorId,
+        draft,
+        selectConfiguredModelId(draft.model, modelIds),
+        draft.key,
+        modelIds
+      )
+      const { contextWindow } = resolveCustomTokenLimits({
+        type: draft.type,
+        contextWindow: draft.contextWindow
+      })
+      const model = resolveOfficialModelCatalog({
+        ...draft,
+        model: target.model,
+        contextWindow,
+        manualModels
+      }).find(({ id }) => id === target.model)
+      return { ...target, contextWindow: model?.contextWindow }
+    }
     const draftModel = draft.model ?? defaultVendorModel(draft.vendorId, draft.region)
     return {
       type: 'custom',
@@ -28,14 +63,25 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
     }
   }
   const tokenLimits = draft.type === 'custom' ? resolveCustomTokenLimits(draft) : undefined
+  const localModels =
+    draft.type === 'custom' && isLocalProviderPresetId(draft.localPresetId)
+      ? decodeLocalProviderModels(draft.localModels)
+      : undefined
+  const localModelId = selectConfiguredModelId(
+    draft.model,
+    localModels?.map(({ id }) => id)
+  )
+  const localModel = localModels?.find(({ id }) => id === localModelId)
   return {
     type: draft.type,
     ...(draft.codexTransport === undefined ? {} : { codexTransport: draft.codexTransport }),
     baseUrl: draft.baseUrl,
-    model: draft.model,
+    model: localModel?.id ?? draft.model,
     ...(draft.type === 'custom'
       ? {
-          contextWindow: resolveCustomModelContextWindow(tokenLimits?.contextWindow),
+          contextWindow: resolveCustomModelContextWindow(
+            localModel ? localModel.contextWindow : tokenLimits?.contextWindow
+          ),
           ...(tokenLimits?.maxInputTokens === undefined
             ? {}
             : { maxInputTokens: tokenLimits.maxInputTokens }),

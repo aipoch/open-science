@@ -1,3 +1,11 @@
+import type {
+  ImageModelCatalogRequest,
+  ImageModelCatalogResult,
+  ImageModelTestRequest,
+  ImageModelTestResult,
+  ImageModelSettingsMutation,
+  ImageModelSettingsSnapshot
+} from '../../shared/image-model-settings'
 import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { SourceLinkMetadata } from '../../shared/source-preview'
 import type {
@@ -38,6 +46,7 @@ import type {
   SetSessionDetailsModelRequest,
   SetSubagentModelRequest,
   SetVisionModelRequest,
+  SettingsSnapshot,
   ValidateProviderRequest,
   UpsertProviderRequest,
   SaveValidatedProviderResult
@@ -133,6 +142,7 @@ type CoreSettingsCommandStore = Pick<
   | 'getSkillMarketplaceBatch'
   | 'stopSkillMarketplaceBatch'
   | 'markOnboardingComplete'
+  | 'addOnboardingKiloProvider'
   | 'createWslSupportHandoff'
   | 'openWslTerminal'
   | 'previewAgentHomeSkill'
@@ -162,6 +172,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setSubagentModel'
   | 'setVisionModel'
   | 'validateProvider'
+  | 'imageModels'
 > & {
   classification: Pick<ClassificationSettingsOwner, 'snapshot' | 'mutate' | 'probe'>
 }
@@ -263,6 +274,26 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [id: string],
     StoreResult<'getConnectorDetail'>
   >('settings:get-connector-detail'),
+  testImageModel: defineApplicationCommand<
+    'settings:test-image-model',
+    readonly [request: ImageModelTestRequest],
+    ImageModelTestResult
+  >('settings:test-image-model'),
+  refreshImageModelCatalog: defineApplicationCommand<
+    'settings:refresh-image-model-catalog',
+    readonly [request: ImageModelCatalogRequest],
+    ImageModelCatalogResult
+  >('settings:refresh-image-model-catalog'),
+  getImageModels: defineApplicationCommand<
+    'settings:get-image-models',
+    readonly [],
+    ImageModelSettingsSnapshot
+  >('settings:get-image-models'),
+  updateImageModels: defineApplicationCommand<
+    'settings:update-image-models',
+    readonly [request: ImageModelSettingsMutation],
+    ImageModelSettingsSnapshot
+  >('settings:update-image-models'),
   getClassification: defineApplicationCommand<
     'settings:get-classification',
     readonly [],
@@ -394,6 +425,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'markOnboardingComplete'>
   >('settings:mark-onboarding-complete'),
+  addOnboardingKiloProvider: defineApplicationCommand<
+    'settings:add-onboarding-kilo-provider',
+    readonly [],
+    SettingsSnapshot
+  >('settings:add-onboarding-kilo-provider'),
   previewAgentHomeSkill: defineApplicationCommand<
     'settings:preview-agent-home-skill',
     readonly [request: PreviewAgentHomeSkillRequest],
@@ -595,6 +631,10 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.detectOpencode,
   settingsCoreApplicationCommands.getConnectorDetail,
   settingsCoreApplicationCommands.getClassification,
+  settingsCoreApplicationCommands.testImageModel,
+  settingsCoreApplicationCommands.refreshImageModelCatalog,
+  settingsCoreApplicationCommands.getImageModels,
+  settingsCoreApplicationCommands.updateImageModels,
   settingsCoreApplicationCommands.getGitHubTokenStatus,
   settingsCoreApplicationCommands.getPackageMirror,
   settingsCoreApplicationCommands.reviewNotebookPrivateDestination,
@@ -629,6 +669,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.stopSkillMarketplaceBatch,
   settingsCoreApplicationCommands.getSkillMarketplaceDetail,
   settingsCoreApplicationCommands.markOnboardingComplete,
+  settingsCoreApplicationCommands.addOnboardingKiloProvider,
   settingsCoreApplicationCommands.previewAgentHomeSkill,
   settingsCoreApplicationCommands.previewGitHubSkill,
   settingsCoreApplicationCommands.previewSkillZip,
@@ -730,6 +771,22 @@ const registerCoreSettingsApplicationCommands = (
         dependencies.snapshotCommits.currentSnapshotAfter(dependencies.service.detectOpencode()),
       'settings:get-connector-detail': ({ args }) =>
         dependencies.service.getConnectorDetail(args[0]),
+      'settings:test-image-model': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:test-image-model')
+        return dependencies.service.imageModels.test(args[0])
+      },
+      'settings:refresh-image-model-catalog': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:refresh-image-model-catalog')
+        return dependencies.service.imageModels.refreshCatalog(args[0])
+      },
+      'settings:get-image-models': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:get-image-models')
+        return dependencies.service.imageModels.snapshot()
+      },
+      'settings:update-image-models': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:update-image-models')
+        return dependencies.service.imageModels.mutate(args[0])
+      },
       'settings:get-classification': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-classification')
         return dependencies.service.classification.snapshot()
@@ -818,6 +875,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:mark-onboarding-complete': () =>
         dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.service.markOnboardingComplete()
+        ),
+      'settings:add-onboarding-kilo-provider': () =>
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.addOnboardingKiloProvider()
         ),
       'settings:preview-agent-home-skill': ({ args }) =>
         dependencies.service.previewAgentHomeSkill(args[0]),

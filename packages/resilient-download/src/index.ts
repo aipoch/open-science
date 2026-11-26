@@ -11,3 +11,6 @@ export const resilientDownload: (
 export { DownloadChecksumError, DownloadSourceError } from './errors'
 export { SpeedMeter } from './download-speed'
 export type { DownloadPhase, DownloadProgress, ResilientDownloadOpts } from './types'
+
+export { publicDownloadUrl, isPublicDownloadAddress, requestPublicHttps } from './public-https'
+export type { PublicDownloadTunnel } from './public-https'

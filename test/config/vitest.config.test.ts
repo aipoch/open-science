@@ -454,8 +454,11 @@ it.each([false, true])(
     const result = JSON.parse(probe.stdout)
     if (excluded) expect(result.specs).toEqual([])
     else {
-      expect(result.specs).toHaveLength(3)
-      expect(new Set(result.specs.map(({ path }: { path: string }) => path)).size).toBe(3)
+      expect(result.specs.map(({ path }: { path: string }) => resolve(path)).sort()).toEqual(
+        ['download-speed', 'public-https', 'resilient-download', 'transport'].map((name) =>
+          resolve('packages/resilient-download/src', name + '.test.ts')
+        )
+      )
       expect(
         result.specs.every(({ name }: { name: string }) => name === 'resilient-download')
       ).toBe(true)

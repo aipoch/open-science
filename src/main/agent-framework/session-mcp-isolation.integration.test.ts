@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import { expect, it } from 'vitest'
@@ -14,6 +14,7 @@ import { ResponsesToChatCompletionsBridge } from '../settings/responses-to-chat-
 import { NativeResponsesCompatibilityProxy } from '../settings/native-responses-compatibility'
 
 const claudeNative = process.env.CLAUDE_NATIVE_PATH
+const claudeAdapter = process.env.CLAUDE_ACP_PATH
 const codexAdapter = process.env.CODEX_ACP_PATH
 const codexNative = process.env.CODEX_NATIVE_PATH
 const probeTools = [
@@ -31,7 +32,7 @@ const listen = async (server: Server): Promise<string> => {
 // Record actual MCP credentials with a per-turn nonce; assistant prose cannot satisfy this check.
 for (const engine of ['claude-code', 'codex-responses', 'codex-bridge'] as const) {
   it
-    .runIf(engine === 'claude-code' ? claudeNative : codexAdapter && codexNative)
+    .runIf(engine === 'claude-code' ? claudeNative && claudeAdapter : codexAdapter && codexNative)
     .each(['stdio', 'http'] as const)(
     `${engine} preserves Session tool ownership through switching, concurrency, and resume (%s)`,
     async (transport) => {
@@ -293,10 +294,7 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
         await writeFile(file.path, file.content)
       }
       const setup = framework.buildSessionSetup({ systemPromptAppends: [] })
-      const executable =
-        engine === 'claude-code'
-          ? resolve('node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js')
-          : codexAdapter!
+      const executable = engine === 'claude-code' ? claudeAdapter! : codexAdapter!
       // Avoid inherited credentials/proxy settings. The framework supplies isolated app-owned homes.
       const env: NodeJS.ProcessEnv = {
         PATH: process.env.PATH,

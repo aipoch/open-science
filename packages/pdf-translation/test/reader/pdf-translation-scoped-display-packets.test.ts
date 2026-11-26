@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
 import type { PDFPageProxy, PDFDocumentProxy } from 'pdfjs-dist'
+import type { TextItem } from 'pdfjs-dist/types/src/display/api.js'
 import { OPS, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -17,6 +18,10 @@ import {
   nativeClosedMathGrammar
 } from '../../src/reader/native-display-packets.js'
 import { getPdfTranslationTextContent } from '../../src/reader/text-content.js'
+import {
+  nativeLiteralMathCandidates,
+  nativeLiteralMathOwners
+} from '../../src/reader/native-literal-math.js'
 
 type Request = Parameters<typeof nativeAlgorithmInkRegions>
 
@@ -202,8 +207,37 @@ it.each(['', 'text-in-clip', 'foreign-paint', 'no-sequence'])(
           u.fragments.some((f) => f.items.some((i) => i.text === 'in'))
         )!
       expect(formula).toBeDefined()
-      expect(formula.sourceOnly === true).toBe(fault === '')
-      if (!fault) expect(formula.preserve).toBe('formula')
+      expect(formula.sourceOnly === true).toBe(fault !== 'no-sequence')
+      expect(formula.preserve).toBe(
+        !fault ? 'formula' : fault === 'no-sequence' ? undefined : 'literal'
+      )
+      const page = await document.getPage(1),
+        content = await getPdfTranslationTextContent(page),
+        viewport = page.getViewport({ scale: 1 }),
+        units = extraction.source.units.map((owner) => {
+          if (owner.id !== formula.id) return owner
+          const copy = { ...owner }
+          delete copy.sourceOnly
+          delete copy.preserve
+          return copy
+        }),
+        before = structuredClone(units),
+        positive = await nativeScopedDisplayOwners(units, page, content, viewport, 1, {
+          read: async (): Promise<undefined> => undefined,
+          dispose: async (): Promise<void> => undefined
+        }),
+        negative = await nativeLiteralMathOwners(units, page, content, viewport, 1)
+      // A literal fallback never upgrades a failed native paint certificate.
+      expect(positive.has(formula.id)).toBe(fault === '')
+      expect(units).toEqual(before)
+      if (fault === 'text-in-clip' || fault === 'foreign-paint') {
+        expect(negative.has(formula.id)).toBe(true)
+        expect({
+          ...units.find((owner) => owner.id === formula.id),
+          sourceOnly: true,
+          preserve: 'literal'
+        }).toEqual(formula)
+      }
       expect(
         extraction.source.units.find((u) => u.source.startsWith('The following'))?.sourceOnly
       ).not.toBe(true)
@@ -331,4 +365,108 @@ it.each([
   if (fault === 'foreign-script') packet[3] = atom('测量', 142, 300, 10, 10)
   if (fault === 'greek-prose') packet[3] = atom('λόγος', 142, 300, 10, 10)
   expect(nativeClosedMathGrammar(packet, 10)).toBe(fault === 'attached')
+})
+
+it.each(['stacked fraction', 'different source text', 'mixed owner'])(
+  'retains native operands next to a serialized protected formula: %s',
+  (scenario) => {
+    const item = (str: string, x: number, y: number, height = 10, hasEOL = false): TextItem => ({
+        str,
+        dir: 'ltr',
+        fontName: 'F',
+        width: 5,
+        height,
+        hasEOL,
+        transform: [height, 0, 0, height, x, y]
+      }),
+      items = [
+        item('We estimate the following quantity:', 40, 360, 10, true),
+        item('z', 130, 320),
+        item('=', 143, 320),
+        item('3', 157, 327, 7),
+        item('2', 157, 316, 7),
+        item('+', 172, 320),
+        item('w', 184, 320),
+        item('(4)', 400, 320, 10, true),
+        item('The comparison comes from the same measurements.', 40, 290, 10, true),
+        item('(5)', 400, 260, 10, true)
+      ],
+      owner = (
+        id: string,
+        indices: number[],
+        source?: string,
+        preserve?: 'formula'
+      ): Parameters<typeof nativeLiteralMathCandidates>[0][number] => ({
+        id,
+        source: source ?? indices.map((index) => items[index].str).join(' '),
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+            items: indices.map((index) => ({ index, text: items[index].str }))
+          }
+        ],
+        ...(preserve ? { sourceOnly: true as const, preserve } : {})
+      }),
+      protectedFraction = owner(
+        'fraction',
+        [3, 4],
+        scenario === 'different source text' ? '3/8' : '3/2',
+        'formula'
+      ),
+      units = [
+        owner('lead', [0]),
+        owner('left', [1, 2], undefined, 'formula'),
+        protectedFraction,
+        owner('plus', [5], undefined, 'formula'),
+        owner('variable', scenario === 'mixed owner' ? [6, 8] : [6]),
+        owner('label', [7], undefined, 'formula'),
+        ...(scenario === 'mixed owner' ? [] : [owner('following', [8])]),
+        owner('other label', [9], undefined, 'formula')
+      ],
+      before = structuredClone(units),
+      candidates = nativeLiteralMathCandidates(units, { items, styles: {}, lang: null }, 1)
+    expect([...candidates]).toEqual(scenario === 'stacked fraction' ? ['variable'] : [])
+    expect(units).toEqual(before)
+  }
+)
+
+it.each([342, 329])('keeps an inset display separate from the inline condition at %s', (leadY) => {
+  const rows: [string, number, number][] = [
+    ['We therefore have', 40, leadY],
+    ['v', 350, leadY],
+    ['≥', 363, leadY],
+    ['0,', 375, leadY],
+    ['z', 145, 320],
+    ['=', 158, 320],
+    ['1', 171, 320],
+    ['(4)', 400, 320],
+    ['The next statement uses the same quantity.', 40, 290],
+    ['(5)', 400, 260]
+  ]
+  const items = rows.map(([str, x, y]) => ({
+    str,
+    dir: 'ltr',
+    fontName: 'F',
+    width: 7,
+    height: 10,
+    hasEOL: str.startsWith('('),
+    transform: [10, 0, 0, 10, x, y]
+  }))
+  const units = [[0, 1, 2, 3], [4, 5, 6], [7], [8], [9]].map((indices, group) => ({
+    id: `owner-${group}`,
+    source: indices.map((index) => items[index].str).join(' '),
+    fragments: [
+      {
+        pageNumber: 1,
+        rect: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+        items: indices.map((index) => ({ index, text: items[index].str }))
+      }
+    ],
+    ...(group === 2 || group === 4
+      ? { sourceOnly: true as const, preserve: 'formula' as const }
+      : {})
+  }))
+  const candidates = nativeLiteralMathCandidates(units, { items, styles: {}, lang: null }, 1)
+  expect([...candidates]).toEqual(leadY === 342 ? ['owner-1'] : [])
 })

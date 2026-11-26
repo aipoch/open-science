@@ -1,14 +1,15 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, open, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import * as durableFiles from '@aipoch/durable-files'
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import { NotebookSessionReadModel, type NotebookSessionReadSource } from './session-read-model'
 import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis'
 import type { NotebookSessionSnapshot } from './session-aggregate'
 import { createFrameNotebookLane } from './lane-identity'
-import type { NotebookRunRecord } from '../../shared/notebook'
+import type { NotebookRunRecord, NotebookSessionState } from '../../shared/notebook'
 
 let root: string | undefined
 
@@ -125,6 +126,163 @@ const makeReadModel = (
   })
 
 describe('NotebookSessionReadModel', () => {
+  it('reads only the requested public evidence, including from a historical frame', async () => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const readModel = makeReadModel(storageRoot, undefined, repository)
+    const lane = createFrameNotebookLane('project', 'session', 'child')
+    await repository.loadOrCreate({
+      projectId: 'project',
+      sessionId: 'session',
+      workspaceCwd: storageRoot,
+      lane
+    })
+    const run = makeRun({
+      agentFrameId: 'child',
+      kernelEpochId: 'epoch',
+      submissionIdentity: 'internal'
+    })
+    await repository.appendRun({ projectId: 'project', sessionId: 'session', lane, run })
+    const window = vi.spyOn(repository, 'readSessionRunWindow')
+    const evidence = await readModel.runEvidence('project', 'session', run.runId)
+    expect(window).toHaveBeenCalledWith('project', 'session', 0, [run.runId], undefined, undefined)
+    expect(evidence).toEqual({ runId: run.runId, kernelEpochId: 'epoch' })
+    await expect(readModel.runEvidence('project', 'session', 'absent')).resolves.toBeNull()
+  })
+
+  it('transfers figure descriptors first and only the selected capture on demand', async () => {
+    const root = await createRoot()
+    const session = makeSession(root)
+    const { projectId, sessionId, lane } = session
+    const request = { projectId, sessionId, workspaceCwd: session.cwd }
+    const repository = new NotebookRunRepository(root)
+    await repository.loadOrCreate({ ...request, lane })
+    const outputs: NotebookRunRecord['outputs'] = [
+      { type: 'display', data: { 'image/png': 'RklSU1Q=', 'text/plain': 'chart' } },
+      { type: 'display', data: { 'image/png': 'U0VDT05E' } }
+    ]
+    await repository.appendRun({ projectId, sessionId, lane, run: makeRun({ outputs }) })
+    const model = makeReadModel(root, session)
+    const projected = await model.state(
+      session,
+      ['run-1'],
+      undefined,
+      undefined,
+      100,
+      undefined,
+      true
+    )
+    expect(projected.runs[0].outputs).toEqual([
+      { type: 'display', data: { 'text/plain': 'chart' }, deferredImageTypes: ['image/png'] },
+      { type: 'display', data: {}, deferredImageTypes: ['image/png'] }
+    ])
+    const figure = { ...request, runId: 'run-1', outputIndex: 1, mimeType: 'image/png' }
+    expect(await model.runFigure(projectId, sessionId, figure, session)).toBe('U0VDT05E')
+    expect(
+      await model.runFigure(projectId, sessionId, { ...figure, outputIndex: 2 }, session)
+    ).toBeNull()
+    expect((await model.state(session, ['run-1'])).runs[0].outputs).toEqual(outputs)
+  })
+
+  it('reuses the foreground summary populated during live kernel loading', async () => {
+    const root = await createRoot()
+    const session = makeSession(root)
+    const { projectId, sessionId, lane } = session
+    const writer = new NotebookRunRepository(root)
+    await writer.loadOrCreate({ projectId, sessionId, lane, workspaceCwd: root })
+    await writer.appendRun({ projectId, sessionId, lane, run: makeRun() })
+
+    const reader = new NotebookRunRepository(root)
+    const history = vi.spyOn(reader, 'readSessionRunWindow')
+    const model = makeReadModel(root, session, reader)
+    await expect(model.backgroundTasks(projectId, sessionId, session)).resolves.toEqual({
+      runs: []
+    })
+    expect(history).not.toHaveBeenCalled()
+  })
+
+  it('projects only visible background task metadata within the same byte window', async () => {
+    root = await createRoot()
+    const repository = new NotebookRunRepository(root)
+    const readModel = makeReadModel(root, undefined, repository)
+    const background = makeRun({
+      runId: 'bg',
+      executionMode: 'background',
+      agentFrameId: 'worker',
+      script: '\r\n  ' + 'x'.repeat(100) + '\nprivate',
+      cancellationRequestedAt: 12
+    })
+    const foreground = makeRun({ runId: 'fg' })
+    const window = {
+      runs: [background, foreground],
+      total: 2,
+      agentSummaries: [],
+      latestRunEnvironments: {}
+    }
+    vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue(window)
+    const result = await readModel.backgroundTasks('project', 'session')
+    expect(result.runs).toEqual([
+      {
+        runId: 'bg',
+        agentFrameId: 'worker',
+        title: 'x'.repeat(80),
+        status: 'completed',
+        kernelKind: 'python',
+        startedAt: 1,
+        cancellationRequestedAt: 12
+      }
+    ])
+    foreground.text.stdout = 'x'.repeat(32 * 1024 * 1024)
+    await expect(readModel.backgroundTasks('project', 'session')).resolves.toEqual({ runs: [] })
+  })
+
+  it('polls validated large background history without rereading output and falls back if the file changes', async () => {
+    const storageRoot = await createRoot()
+    const scope = { projectId: 'project', sessionId: 'session' }
+    const lane = createFrameNotebookLane('project', 'session', 'worker')
+    const writer = new NotebookRunRepository(storageRoot)
+    const doc = await writer.loadOrCreate({ ...scope, lane, workspaceCwd: storageRoot })
+    const run = makeRun({ executionMode: 'background', agentFrameId: 'worker' })
+    await writer.appendRun({ ...scope, lane, run })
+    // Escaping makes this body exceed the 63 MiB budget when the recent Run is counted twice.
+    await writer.appendRun({
+      ...scope,
+      lane,
+      run: {
+        ...run,
+        runId: 'latest',
+        startedAt: 2,
+        text: { ...run.text, stdout: '"'.repeat(17 * 1024 * 1024) }
+      }
+    })
+    const repository = new NotebookRunRepository(storageRoot)
+    const session = { ...makeSession(storageRoot), ...scope, lane }
+    const model = makeReadModel(storageRoot, session, repository)
+    const history = vi.spyOn(repository, 'readSessionRunWindow')
+    const initial = await model.backgroundTasks(scope.projectId, scope.sessionId, session)
+    expect(initial.runs.map((row) => row.runId)).toEqual(['latest'])
+    expect(history).not.toHaveBeenCalled()
+    const reads = vi.spyOn(durableFiles, 'readFileWithinLimit')
+    try {
+      expect(
+        (await model.backgroundTasks(scope.projectId, scope.sessionId)).runs.map((r) => r.runId)
+      ).toEqual(['latest'])
+      expect(reads).not.toHaveBeenCalled()
+      const directory = join(doc.notebookSessionRoot, '.run-records')
+      const [file] = await readdir(directory)
+      const handle = await open(join(directory, file), 'r+')
+      try {
+        await handle.write('!', 0, 'utf8')
+      } finally {
+        await handle.close()
+      }
+      expect((await model.backgroundTasks(scope.projectId, scope.sessionId)).runs).toEqual([])
+      expect(reads).toHaveBeenCalled()
+    } finally {
+      reads.mockRestore()
+    }
+  })
+
   it('returns only actionable live handoff data and never consults durable storage', async () => {
     const storageRoot = await createRoot()
     const repository = new NotebookRunRepository(storageRoot)
@@ -283,6 +441,16 @@ describe('NotebookSessionReadModel', () => {
       workspaceCwd: session.cwd
     })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      agentSummaries: [
+        {
+          agentFrameId: 'frame-old',
+          isRoot: false,
+          runCount: 1,
+          views: [
+            { kernelKind: 'r', environment: 'historical-r', runCount: 1, latestRunId: 'old-run' }
+          ]
+        }
+      ],
       runs: Array.from({ length: 100 }, (_, index) =>
         makeRun({
           runId: `run-${index + 25}`,
@@ -322,6 +490,25 @@ describe('NotebookSessionReadModel', () => {
       undefined,
       undefined
     )
+    const expectedAgents = [
+      {
+        agentFrameId: 'frame-old',
+        isRoot: false,
+        runCount: 1,
+        views: [
+          { kernelKind: 'r', environment: 'historical-r', runCount: 1, latestRunId: 'old-run' }
+        ]
+      }
+    ]
+    expect(state.agentSummaries).toEqual(expectedAgents)
+    const imported = await makeReadModel(storageRoot, undefined, repository).importedState(
+      { projectId: session.projectId, sessionId: session.sessionId, workspaceCwd: session.cwd },
+      [],
+      undefined,
+      undefined,
+      100
+    )
+    expect(imported.agentSummaries).toEqual(expectedAgents)
     expect(state.runCount).toBe(125)
     expect(state.latestRunEnvironments).toEqual({ python: 'historical-python' })
     expect(state.runs).toHaveLength(100)
@@ -359,6 +546,7 @@ describe('NotebookSessionReadModel', () => {
       latestDataKernel: 'r' as const
     }
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      agentSummaries: [],
       runs: [],
       total: 125,
       latestRunEnvironments: {},
@@ -395,13 +583,21 @@ describe('NotebookSessionReadModel', () => {
       lane: session.lane,
       workspaceCwd: session.cwd
     })
+    const run = makeRun({
+      runId: 'run-old',
+      startedAt: 1,
+      environmentManifestChecksum: 'manifest-checksum',
+      environmentManifest: { packages: [] } as never
+    })
     const readWindow = vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
-      runs: [makeRun({ runId: 'run-old', startedAt: 1 })],
+      agentSummaries: [],
+      runs: [run],
       total: 125,
       latestRunEnvironments: {}
     })
 
-    const state = await makeReadModel(storageRoot, session, repository).state(session, ['run-old'])
+    const model = makeReadModel(storageRoot, session, repository)
+    const state = await model.state(session, ['run-old'])
 
     expect(readWindow).toHaveBeenCalledWith(
       session.projectId,
@@ -415,6 +611,10 @@ describe('NotebookSessionReadModel', () => {
     expect(state.recentRuns).toEqual([])
     expect(state.cells).toEqual([])
     expect(state.runCount).toBe(125)
+    expect(state.runs[0]).toHaveProperty('environmentManifest')
+
+    const normalState = await model.state(session)
+    expect(normalState.runs[0]).not.toHaveProperty('environmentManifest')
   })
 
   it('prefers a live reference and otherwise falls back to normalized durable roots', async () => {
@@ -513,6 +713,48 @@ describe('NotebookSessionReadModel', () => {
 })
 
 it.each(['live', 'imported'])(
+  'keeps a complete latest Run under a preview byte budget for %s history',
+  async (mode) => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const session = makeSession(storageRoot)
+    const request = {
+      projectId: session.projectId,
+      sessionId: session.sessionId,
+      workspaceCwd: session.cwd
+    }
+    await repository.loadOrCreate({ ...request, lane: session.lane })
+    const runs = [
+      makeRun({ runId: 'older' }),
+      makeRun({
+        runId: 'latest',
+        startedAt: 2,
+        text: { stdout: 'x'.repeat(2048), stderr: '', traceback: '', plain: [] }
+      })
+    ]
+    vi.spyOn(repository, 'readSessionRunWindow').mockResolvedValue({
+      runs,
+      total: 2,
+      latestRunEnvironments: {},
+      agentSummaries: []
+    })
+    const model = makeReadModel(storageRoot, session, repository)
+    const read = (bytes?: number): Promise<NotebookSessionState> =>
+      mode === 'live'
+        ? model.state(session, [], undefined, undefined, 100, bytes)
+        : model.importedState(request, [], undefined, undefined, 100, bytes)
+    expect((await read()).runs).toHaveLength(2)
+    const preview = await read(1024)
+    expect(preview.runs.map((run) => run.runId)).toEqual(['latest'])
+    expect(preview.runs[0].text.stdout).toBe(runs[1].text.stdout)
+    expect(preview.historyPage).toEqual({
+      hasEarlierRuns: true,
+      oldestCursor: { startedAt: 2, runId: 'latest' }
+    })
+  }
+)
+
+it.each(['live', 'imported'])(
   'pages large %s Notebook history without losing complete run outputs',
   async (mode) => {
     const storageRoot = await createRoot()
@@ -570,3 +812,54 @@ it.each(['live', 'imported'])(
     expect(ids.sort()).toEqual(['large-0', 'large-1', 'large-2'])
   }
 )
+
+it('recovers an old Shell receipt from disk after a timeout and a fresh read model', async () => {
+  const storageRoot = await createRoot()
+  const session = makeSession(storageRoot)
+  const { projectId, sessionId, lane } = session
+  const writer = new NotebookRunRepository(storageRoot)
+  await writer.loadOrCreate({ projectId, sessionId, lane, workspaceCwd: storageRoot })
+  const stdout = JSON.stringify({ data: 'x'.repeat(18000), _handoff: { orderId: 'saved-order' } })
+  await writer.appendRun({
+    projectId,
+    sessionId,
+    lane,
+    run: makeRun({
+      runId: 'outline',
+      kernelKind: 'bash',
+      text: { stdout, stderr: '', traceback: '', plain: [] }
+    })
+  })
+  for (let index = 0; index < 12; index++) {
+    await writer.appendRun({
+      projectId,
+      sessionId,
+      lane,
+      run: makeRun({
+        runId: `later-${index}`,
+        startedAt: index + 2,
+        kernelKind: 'bash',
+        status: index === 11 ? 'timeout' : 'completed'
+      })
+    })
+  }
+  // Reopen the repository without any original interpreter or in-memory run cache.
+  const reader = new NotebookRunRepository(storageRoot)
+  const model = makeReadModel(storageRoot, undefined, reader)
+  const recovered = await model.importedState(
+    { projectId, sessionId, workspaceCwd: storageRoot },
+    ['outline'],
+    undefined,
+    undefined,
+    10
+  )
+  expect(recovered.runs.find((run) => run.runId === 'outline')?.text.stdout).toBe(stdout)
+  const foreign = await model.importedState(
+    { projectId, sessionId: 'other-session', workspaceCwd: storageRoot },
+    ['outline'],
+    undefined,
+    undefined,
+    10
+  )
+  expect(foreign.runs).toEqual([])
+})

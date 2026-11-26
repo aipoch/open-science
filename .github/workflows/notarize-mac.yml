@@ -308,6 +308,16 @@ jobs:
           rm -f mac/latest-mac.yml
           node scripts/regenerate-mac-feed.mjs mac "${{ matrix.arch }}"
 
+      - name: Generate signed adjacent macOS patch
+        if: steps.gate.outputs.enabled == 'true' && inputs.certified_build && vars.MAC_SPARKLE_PUBLIC_KEY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAC_SPARKLE_PUBLIC_KEY: ${{ vars.MAC_SPARKLE_PUBLIC_KEY }}
+          MAC_SPARKLE_PRIVATE_KEY: ${{ secrets.MAC_SPARKLE_PRIVATE_KEY }}
+        run: |
+          bash build/mac-sparkle/sdk.sh "$RUNNER_TEMP/sparkle-sdk"
+          node build/mac-sparkle/release.mjs mac "${{ matrix.arch }}" "$RUNNER_TEMP/sparkle-sdk"
+
       # Stapling changes the installer bytes. Re-hash the final artifacts while preserving the
       # package certification signal already established by the separate smoke job.
       - name: Refresh macOS certification evidence
@@ -316,15 +326,10 @@ jobs:
           inputs.from_run &&
           inputs.certified_build
         run: >-
-          node scripts/ci/release-certification-evidence.mjs write
+          node scripts/ci/release-certification-evidence.mjs refresh
           --platform "macos-${{ matrix.arch }}"
           --artifact-dir mac
           --output "mac/certification-macos-${{ matrix.arch }}.json"
-          --electron-p0 not-applicable
-          --visual-regression not-applicable
-          --package-smoke passed
-          --database-migration-certification mac/database-migration-certification.json
-          --authenticode not-applicable
 
       - name: Preserve final database certification name
         if: >-
@@ -361,6 +366,7 @@ jobs:
           path: |
             mac/*-mac-*.dmg
             mac/*-mac-*.zip
+            mac/*-mac-*.zip.from-*.delta
             mac/*-mac-*.zip.blockmap
             mac/*-mac.yml
           if-no-files-found: error

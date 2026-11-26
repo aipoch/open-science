@@ -1,8 +1,9 @@
+import { redactSensitiveText } from '@aipoch/diagnostics'
 import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { TurnOutcome } from '../../../../shared/session-persistence'
-import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
 
 type TurnOutcomeActions = {
   artifactRetryingPromptMessageId?: string
@@ -44,7 +45,10 @@ const TurnOutcomeNotice = ({
           }
         ]}
         handlers={{
-          report: { run: () => actions.onReportError(actions.resolveError(outcome.error)) },
+          report: {
+            run: () =>
+              actions.onReportError(redactSensitiveText(actions.resolveError(outcome.error)))
+          },
           ...(outcome.recovery === 'retry-artifact-publication'
             ? {
                 retry: {

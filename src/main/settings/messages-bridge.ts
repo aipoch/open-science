@@ -8,11 +8,18 @@ import { pipeline } from 'node:stream/promises'
 
 import { createLogger, errorLogFields, type Logger } from '@aipoch/diagnostics/node'
 import { normalizeMessagesRootUrl } from '@aipoch/providers/protocol'
-import { fetchProviderRequest } from '@aipoch/providers/transport'
 import {
+  fetchProviderRequest,
+  withProviderRequestPolicy,
+  type ProviderRequestPolicy
+} from '@aipoch/providers/transport'
+import {
+  copyProviderResponseHeaders,
+  PROVIDER_HOP_BY_HOP_HEADERS,
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
+  withProviderConnectionMarker,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 import {
@@ -25,19 +32,6 @@ import {
 } from './provider-error-replay'
 
 const ALLOWED_PATHS = new Set(['/v1/messages', '/v1/messages/count_tokens'])
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection',
-  'content-encoding',
-  'content-length',
-  'host',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade'
-])
 type ProviderErrorSnapshot = Readonly<{
   body: Buffer
   headers: Record<string, string>
@@ -59,6 +53,7 @@ export type MessagesBridgeTarget = Readonly<{
   onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
+  requestPolicy?: ProviderRequestPolicy
   model: string
   backgroundModel?: string
   useApiKeyHeader?: boolean
@@ -78,7 +73,8 @@ const requestHeaders = (
   for (const [name, value] of Object.entries(request.headers)) {
     const normalized = name.toLowerCase()
     if (
-      HOP_BY_HOP_HEADERS.has(normalized) ||
+      PROVIDER_HOP_BY_HOP_HEADERS.has(normalized) ||
+      normalized === 'content-encoding' ||
       // Fetch decodes upstream responses, so it must negotiate its own supported encodings.
       normalized === 'accept-encoding' ||
       normalized === 'authorization' ||
@@ -99,14 +95,6 @@ const requestHeaders = (
     else headers.set('authorization', `Bearer ${key}`)
   }
   headers.set('content-type', 'application/json')
-  return headers
-}
-
-const responseHeaders = (source: Headers): Record<string, string> => {
-  const headers: Record<string, string> = {}
-  for (const [name, value] of source) {
-    if (!HOP_BY_HOP_HEADERS.has(name.toLowerCase())) headers[name] = value
-  }
   return headers
 }
 
@@ -223,7 +211,10 @@ export class MessagesBridge {
     let upstream: Response
     try {
       upstream = await fetchProviderRequest(
-        this.fetchImpl,
+        withProviderConnectionMarker(
+          withProviderRequestPolicy(this.fetchImpl, target.requestPolicy, target.key),
+          response
+        ),
         `${baseUrl}${requestUrl.pathname}${requestUrl.search}`,
         {
           method: 'POST',
@@ -242,7 +233,7 @@ export class MessagesBridge {
       })
       throw error
     }
-    const headers = responseHeaders(upstream.headers)
+    const headers = copyProviderResponseHeaders(upstream.headers)
     if (isDeterministicProviderErrorStatus(upstream.status)) {
       const upstreamBody = await readBoundedProviderErrorBody(upstream, {
         signal: request.signal

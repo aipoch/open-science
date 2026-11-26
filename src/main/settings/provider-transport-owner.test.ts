@@ -875,6 +875,31 @@ describe('ProviderTransportOwner generations', () => {
     expect(bridge.close).toHaveBeenCalledOnce()
   })
 
+  it('passes the active model reasoning capability to the CodeBuddy selector', async () => {
+    const selector = makeResponsesToChatCompletionsBridge(0)
+    const bridge = makeOpenAiBridge(0)
+    const createResponsesToChatCompletionsBridge = vi.fn(() => selector)
+    const owner = new ProviderTransportOwner({
+      createResponsesToChatCompletionsBridge,
+      createProtocolForwardingBridge: () => bridge
+    })
+    const target: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      reasoningEffortProfile: { supported: false }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget: target,
+      plan: { ...makePlan({ kind: 'direct' }), modelRoute: 'codebuddy-openai' }
+    })
+
+    expect(createResponsesToChatCompletionsBridge).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningSupported: false }),
+      { skillSelectorFailureMode: 'throw' }
+    )
+    await generation.release()
+  })
+
   it('routes CodeBuddy xAI subscription traffic through the OAuth bridge', async () => {
     const selector = makeResponsesToChatCompletionsBridge(0)
     const oauthBridge = makeOpenAiBridge(0)
@@ -924,6 +949,61 @@ describe('ProviderTransportOwner generations', () => {
       expect.objectContaining({
         baseUrl: 'http://127.0.0.1:44000/v1',
         key: 'openai-token-0'
+      }),
+      { skillSelectorFailureMode: 'throw' }
+    )
+    await generation.release()
+  })
+
+  it('routes CodeBuddy Lab skill selection through the local forwarding bridge', async () => {
+    const selector = makeResponsesToChatCompletionsBridge(0)
+    const bridge = makeOpenAiBridge(0)
+    let targets: readonly ProtocolForwardingBridgeTarget[] = []
+    const createResponsesToChatCompletionsBridge = vi.fn(() => selector)
+    const createProtocolForwardingBridge = vi.fn((registered) => {
+      targets = registered
+      return bridge
+    })
+    const owner = new ProviderTransportOwner({
+      createResponsesToChatCompletionsBridge,
+      createProtocolForwardingBridge,
+      getLabAccessToken: vi.fn(async () => 'lab-access-token')
+    })
+    const base = makeTarget()
+    const activeTarget: ProviderRuntimeTarget = {
+      ...base,
+      providerId: 'builtin-lab',
+      providerType: 'lab',
+      effectiveModel: 'lab:research-default',
+      provider: {
+        ...base.provider,
+        type: 'lab',
+        baseUrl: 'https://lab.example.com/v1',
+        chatCompletionsBaseUrl: 'https://lab.example.com/v1',
+        model: 'lab:research-default',
+        key: undefined,
+        labServerUrl: 'https://lab.example.com',
+        apiEndpoints: ['chat-completions']
+      }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: {
+        ...makePlan({ kind: 'direct' }),
+        modelRoute: 'codebuddy-openai'
+      }
+    })
+
+    expect(targets).toHaveLength(1)
+    expect(targets[0]).toMatchObject({
+      endpoint: 'https://lab.example.com/v1/chat/completions',
+      model: 'research-default'
+    })
+    expect(createResponsesToChatCompletionsBridge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'http://127.0.0.1:44000/v1',
+        model: 'lab:research-default'
       }),
       { skillSelectorFailureMode: 'throw' }
     )
@@ -1194,6 +1274,51 @@ describe('ProviderTransportOwner generations', () => {
     await generation.release()
   })
 
+  it('prepares Lab credentials and wire model for the native Responses path', async () => {
+    const proxy = makeNativeProxy()
+    let captured:
+      { baseUrl?: string; model?: string; resolveKey?: () => Promise<string> } | undefined
+    const getLabAccessToken = vi.fn(async () => 'lab-access-token')
+    const owner = new ProviderTransportOwner({
+      createNativeResponsesProxy: (target) => {
+        captured = target
+        return proxy
+      },
+      getLabAccessToken
+    })
+    const activeTarget: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      providerId: 'builtin-lab',
+      providerType: 'lab',
+      effectiveModel: 'lab:research-default',
+      apiEndpoints: ['responses'],
+      needsChatResponsesToChatCompletionsBridge: false,
+      needsNativeResponsesCompatibility: true,
+      provider: {
+        type: 'lab',
+        baseUrl: 'https://lab.example.com/v1',
+        chatCompletionsBaseUrl: 'https://lab.example.com/v1',
+        labServerUrl: 'https://lab.example.com',
+        model: 'lab:research-default',
+        apiEndpoints: ['responses']
+      }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget,
+      plan: makePlan({ kind: 'codex-responses-compatibility', targets: [] })
+    })
+
+    expect(captured).toMatchObject({
+      baseUrl: 'https://lab.example.com/v1',
+      model: 'research-default'
+    })
+    if (!captured?.resolveKey) throw new Error('expected a prepared Lab target')
+    await expect(captured.resolveKey()).resolves.toBe('lab-access-token')
+    expect(getLabAccessToken).toHaveBeenCalledWith(undefined, 'https://lab.example.com')
+    await generation.release()
+  })
+
   it('closes a half-started native compatibility generation and preserves its start error', async () => {
     const startError = new Error('native compatibility start failed')
     const closeError = new Error('native compatibility close failed')
@@ -1402,13 +1527,21 @@ describe('ProviderTransportOwner generations', () => {
 
   it('owns the native Codex provider projection, retargeting, and release', async () => {
     const bridge = makeOpenAiBridge(0)
+    const upstreamBase = 'https://api.openai.com/v1'
     const owner = new ProviderTransportOwner({
-      createProtocolForwardingBridge: () => bridge
+      createProtocolForwardingBridge: (targets) => {
+        expect(targets[0].endpoint).toBe(`${upstreamBase}/responses`)
+        return bridge
+      }
     })
     const activeTarget: ProviderRuntimeTarget = {
       ...makeTarget(),
       apiEndpoints: ['responses'],
-      provider: { ...makeTarget().provider, apiEndpoints: ['responses'] },
+      provider: {
+        ...makeTarget().provider,
+        apiEndpoints: ['responses'],
+        responsesBaseUrl: upstreamBase
+      },
       needsChatResponsesToChatCompletionsBridge: false
     }
     const initialTargetId = 'codex/provider-a/model-a'
@@ -1429,6 +1562,7 @@ describe('ProviderTransportOwner generations', () => {
     expect(generation.provider).toMatchObject({
       baseUrl: 'http://127.0.0.1:44000',
       chatCompletionsBaseUrl: 'http://127.0.0.1:44000/v1',
+      responsesBaseUrl: 'http://127.0.0.1:44000/v1',
       key: 'openai-token-0',
       model: 'model-a',
       apiEndpoints: ['responses']

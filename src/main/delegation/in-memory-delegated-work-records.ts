@@ -250,6 +250,7 @@ const createInMemoryDelegatedWorkRecords = (input: {
         !previous ||
         previous.id !== input.previousAttemptId ||
         previous.status === 'running' ||
+        (input.taskResponse && child.messageBranchId !== request.sourceMessageBranchId) ||
         state.rootBranchId !== request.rootBranchId ||
         !state.originMessageIds.includes(request.rootOriginMessageId)
       ) {
@@ -266,6 +267,7 @@ const createInMemoryDelegatedWorkRecords = (input: {
       ) {
         throw new DurableDelegatedWorkError('conflict', 'duplicate question continuation identity')
       }
+      input.assertTaskCurrent?.()
       child.attempts.push({
         id: input.attemptId,
         initiatingTurnMessageId: input.initiatingTurnMessageId,
@@ -288,7 +290,8 @@ const createInMemoryDelegatedWorkRecords = (input: {
         draftAnswers: structuredClone(input.answers),
         answers: structuredClone(input.answers),
         respondedAt: input.startedAt,
-        continuationAttemptId: input.attemptId
+        continuationAttemptId: input.attemptId,
+        ...(input.taskResponse ? { taskResponse: input.taskResponse } : {})
       }
     },
     async cancelQuestions(frameId, endedAt, reason) {

@@ -20,6 +20,7 @@ import { SessionPersistenceCoordinator } from '../session-persistence/coordinato
 import type { CodexAuthStatus } from './codex-auth'
 import type { OpenScienceClient as PublicClient } from '../../../packages/open-science/index'
 import type { TaskAgentPort } from '../tasks/task-runner'
+import type { LoadSessionRequest } from '../../shared/session-persistence'
 // @ts-expect-error The JavaScript CLI command intentionally has no declaration file.
 import { codexLoginCommand } from '../../../packages/open-science/codex-login.mjs'
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
@@ -51,9 +52,9 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
     return {
       result: { installId: 'fixture', ok: true },
       adapterPath,
-      adapterVersion: '1.6.2',
+      adapterVersion: '2.6.0',
       codexPath: nativePath,
-      codexVersion: '0.157.1'
+      codexVersion: '0.166.0'
     }
   })
   const status = async (): Promise<CodexAuthStatus> => ({
@@ -84,12 +85,13 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
       managedAdapterPath: adapterPath,
       managedCodexPath: nativePath,
       isRunnable: async () => installed,
-      getAdapterVersion: async () => (installed ? '1.6.2' : undefined),
-      getCodexVersion: async () => (installed ? '0.157.1' : undefined),
+      getAdapterVersion: async () => (installed ? '2.6.0' : undefined),
+      getCodexVersion: async () => (installed ? '0.166.0' : undefined),
       smokeInitialize: async () => true,
       resolveNpmBinDirs: async () => []
     },
     installManagedCodexImpl: install,
+    probeRegistry: async () => 10,
     codexAuth: {
       getStatus: status,
       loginIsolated: status,
@@ -134,8 +136,17 @@ it('bootstraps through real local HTTP, restarts the profile, and submits a pers
             return projects.list()
           case 'sessions:load-all':
             return sessions.loadAll()
+          case 'sessions:load-one': {
+            const { projectId, sessionId } = args[0] as LoadSessionRequest
+            const owner = projectId ?? (await sessions.locateSession(sessionId))?.projectId
+            return owner ? sessions.loadSession(owner, sessionId) : undefined
+          }
           case 'sessions:save-session':
-            return coordinator.saveSession(args[0] as Parameters<typeof coordinator.saveSession>[0])
+            return coordinator.saveSession(
+              args[0] as Parameters<typeof coordinator.saveSession>[0],
+              {},
+              { taskRunCommit: invocation.callerContext.surface === 'task' }
+            )
           case 'sessions:stage-task-completion':
             return coordinator.stageTaskCompletion(
               args[0] as Parameters<typeof coordinator.stageTaskCompletion>[0]

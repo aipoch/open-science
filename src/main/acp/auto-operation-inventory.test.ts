@@ -15,9 +15,11 @@ import {
 // Legacy entries require no migration of their existing authorization contract.
 const registrations: Record<
   string,
-  'allow_once' | 'inner_authorization' | 'legacy' | 'operations' | 'review'
+  'allow_once' | 'host_web' | 'inner_authorization' | 'legacy' | 'operations' | 'review'
 > = {
   "artifacts/mcp-server.ts:'write_artifact_file'": 'allow_once',
+  "image-model/mcp-server.ts:'generate_image'": 'allow_once',
+  "image-model/mcp-server.ts:'edit_image'": 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME': 'allow_once',
@@ -51,7 +53,11 @@ const registrations: Record<
   "session-plan/plan-mcp-server.ts:'update_step_status'": 'legacy',
   'side-chat/host-message-mcp-server.ts:HOST_SEND_MESSAGE_TOOL_NAME': 'legacy',
   'skills/mcp-server.ts:REQUEST_SKILL_IMPORT_TOOL_NAME': 'inner_authorization',
-  'skills/runtime-mcp-server.ts:LOAD_SKILL_TOOL_NAME': 'legacy'
+  'skills/runtime-mcp-server.ts:LOAD_SKILL_TOOL_NAME': 'legacy',
+  // Host route ownership and the current permission mode are checked before dispatch. Auto may
+  // allow these read-only capabilities; external same-name tools do not inherit that authority.
+  'web/mcp-server.ts:WEB_FETCH_TOOL_NAME': 'host_web',
+  'web/mcp-server.ts:WEB_SEARCH_TOOL_NAME': 'host_web'
 }
 const notebookOperations: Record<string, 'inner_authorization' | 'legacy' | 'operations'> = {
   ask_user_question: 'inner_authorization',
@@ -163,7 +169,8 @@ describe('Auto operation completeness against real tool registrations', () => {
       literatureDiscovery: digest(readSource(join(mainRoot, 'literature/discovery-contract.ts'))),
       planSchema: digest(z.toJSONSchema(generatePlanToolSchema)),
       planValidation: digest(readSource(join(mainRoot, '../shared/session-plan/contract.ts'))),
-      activityDeclaration: digest(readSource(join(mainRoot, '../shared/activity-groups.ts')))
+      activityDeclaration: digest(readSource(join(mainRoot, '../shared/activity-groups.ts'))),
+      webTools: digest(readSource(join(mainRoot, '../shared/web-tools.ts')))
     }
     expect({ definitions, notebookSchemas, sharedContracts }).toEqual({
       definitions: {
@@ -171,16 +178,21 @@ describe('Auto operation completeness against real tool registrations', () => {
         // rejected in favor of source. Allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
           '9e0e7684e9ce91f56ba4e6bfc49bcd2a1bb97bf6dd2a22bd686307c9d634dde2',
+        // Image tools use the current turn capability and the configured model's operation schema.
+        'image-model/mcp-server.ts':
+          'a83381424a1c34c05d37c2a3fe9efc71ef47c08dfd561861170d4f165fae893c',
         // Reviewed: save_to_inbox/acquire_pdf advertise candidates as objects; the same strict
         // candidate schema now validates inline records in the handler before any save or download.
         // Citation tool descriptions are shortened only. Trusted origin, permission inputs and
-        // allow-once disposition are unchanged.
+        // allow-once disposition are unchanged. Shared contracts were extracted from the runtime
+        // handlers without changing the automatically handled operation branches.
         'literature/library-mcp-server.ts':
-          '400ea9fb1739b849dad3f55d453b02be9879bda3e86fde29ebb34084d3e7e33e',
+          'a243f2ab289a861466bb203213f8ee747224345c52220aacfe758a3f119ee3ef',
         // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
         // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
+        // Presentation helpers and contracts were extracted without changing handler branches.
         'literature/mcp-server.ts':
-          '561a62c02556d3677874d524dd7c9433b3131a42eda21f526d8684888a673cd9',
+          '10a2eec347f763a29d87725b2dca1676814b387e4603defbfff4a4f37574b1ab',
         // Reviewed: calls require a mounted route and current turn. Task edits are scoped to the
         // originating conversation, and unattended mutations are limited to the task's own trigger.
         'schedules/mcp.ts': '4c7322e66195808835ae282899a90c51777f79cf0ccf07ee7cdb6d2607b63f52',
@@ -192,15 +204,29 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Tool schemas, handlers, operation classifiers and Auto dispositions are unchanged.
         // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
         // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
+        // Main-only initial connection preparation changes no tool schemas, handlers or Auto dispositions.
+        // Reviewed: default runtime advice and no-retry guidance for declines and stops only change
+        // tool text. RPC dispatch, input schemas and Auto authorization remain unchanged.
+        // Reviewed: terminal status and diagnostics are projected after RPC dispatch. Background
+        // query and cancel still require the registered action and its validated Run identity.
+        // The read-only state request limits history to the ten runs its response can display.
+        // Directory discovery publishes its existing result fields using the MCP default dialect.
+        // Output paging reads one persisted Run through the existing session-scoped state route.
+        // Paging and handoff extraction project results only; no Auto operation branch changed.
         'notebook/mcp-server.ts':
-          '5dd96acc425304cc6c75989dc99420e61899733b2ad1423a0df547ea9a5868a6',
+          '246821c41c360ed03b33b39d42dd5600d2339edc245814f1acb4949b052b187e',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':
           '1451e969ed1af4ddea333c4005f11713d39f8590083099c0ce3c73b47937d326',
         // Reviewed: import errors carry codes and next steps; the schema and preview handoff are unchanged.
-        'skills/mcp-server.ts': '75e23698e0b11be9919ae224e1516ba82241aa703a20ae29c50448c35ce1d8da'
+        'skills/mcp-server.ts': '75e23698e0b11be9919ae224e1516ba82241aa703a20ae29c50448c35ce1d8da',
+        // Reviewed: strict shared inputs enter the host-owned route. Search sends queries to
+        // anonymous Exa and returns one bounded evidence envelope. Required filters are preserved.
+        // Receipt hooks observe revocation and return the authoritative cancellation result.
+        // Both tools share result validation and check cancellation before returning the envelope.
+        'web/mcp-server.ts': '27bccd06a2b18dd547a4454b0f0864dee2a305d5b6b09f744ba9d571512f3154'
       },
       notebookSchemas: {
         // Reviewed: pros/cons are optional trimmed strings capped at 4000 characters; they only
@@ -214,7 +240,13 @@ describe('Auto operation completeness against real tool registrations', () => {
         activityDeclaration: '1739b6cfadd2912aa53f4d11bf69d908da37d5f822476a998b928e9de7ddffdc',
         literatureDiscovery: '3ded9eab859b472f0d20d7a232c8971a517f3b493db318efb0a07753278fdee6',
         planSchema: '16f6ba38e7ae9320c2fb9d1a215592c11ada256781882e5e3f16336eb303cfb7',
-        planValidation: 'fb649e539cdd8f71abd34ec329ca7ee378cf7605fcbe8d0123b7703ed7dedddb'
+        // Reviewed: Task decision receipts and branch identity extend the Plan response types.
+        // The generated Plan schema and Auto operation classifier still validate the same inputs.
+        planValidation: 'c20f73fec42da43bccadf93b575910aebf4820a826730da53e0a1db1036c5495',
+        // Reviewed: strict search/fetch inputs reject provider, network and replay options.
+        // Bounded attempts, usage and provenance fields grant no permission or execution authority.
+        // The saved-envelope reader validates results for evidence and presentation.
+        webTools: 'bf80012978d94e4bc68d2e08ff76f5c422b8f4b6bf67dee0faf5690e5ced2ff1'
       }
     })
   })

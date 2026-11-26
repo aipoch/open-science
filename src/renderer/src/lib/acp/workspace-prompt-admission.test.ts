@@ -524,6 +524,98 @@ describe('Stop before an existing Session prompt reaches Main', () => {
     await saveSessionInOrder(toPersistedSession(useSessionStore.getState().sessions[0]))
   }
 
+  it('sends a fresh visible memory continuation through the dedicated human command without persisting its grant', async () => {
+    const { main, agent } = await existing()
+    const continueNotebookExecution = vi.fn(async () => snapshot)
+    const result = await sendWorkspaceMessage(
+      { ...agent, continueNotebookExecution },
+      {
+        sessionId: 'bound-session',
+        projectId: 'project',
+        cwd: '/workspace',
+        text: 'Recheck memory and reconsider the blocked Notebook work.',
+        requireExistingSession: true,
+        notebookContinuation: { refusalId: 'refusal-1' }
+      },
+      {
+        flushPersistence: async () => {
+          await saveSessionInOrder(toPersistedSession(useSessionStore.getState().sessions[0]))
+        }
+      }
+    )
+    expect(result).toBeDefined()
+    expect(agent.sendPrompt).not.toHaveBeenCalled()
+    expect(continueNotebookExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project',
+        sessionId: 'bound-session',
+        refusalId: 'refusal-1',
+        text: 'Recheck memory and reconsider the blocked Notebook work.',
+        provenanceContext: expect.objectContaining({ promptMessageId: result!.messageId })
+      })
+    )
+    expect(
+      useSessionStore
+        .getState()
+        .sessions.find(({ id }) => id === 'bound-session')
+        ?.messages.at(-1)?.content
+    ).toBe('Recheck memory and reconsider the blocked Notebook work.')
+    expect(main.read()?.conversationGraph?.messages.at(-1)?.content).toBe(
+      'Recheck memory and reconsider the blocked Notebook work.'
+    )
+    expect(JSON.stringify(main.read())).not.toContain('refusal-1')
+    expect(JSON.stringify(main.read())).not.toContain('notebookContinuation')
+  })
+
+  it('leaves history untouched when a Notebook decision belongs to another branch', async () => {
+    const { main, agent } = await existing()
+    const before = main.read()
+    const continueNotebookExecution = vi.fn()
+    await expect(
+      sendWorkspaceMessage(
+        { ...agent, continueNotebookExecution },
+        {
+          sessionId: 'bound-session',
+          projectId: 'project',
+          text: 'Continue',
+          requireExistingSession: true,
+          notebookContinuation: { refusalId: 'refusal-1', messageBranchId: 'another-branch' }
+        }
+      )
+    ).rejects.toThrow('Return to the conversation branch')
+    expect(main.read()).toEqual(before)
+    expect(continueNotebookExecution).not.toHaveBeenCalled()
+  })
+
+  it('waits for Main to acknowledge the memory continuation before returning the prompt identity', async () => {
+    const { agent } = await existing()
+    const acknowledged = gate()
+    const continueNotebookExecution = vi.fn(async () => {
+      await acknowledged.promise
+      return snapshot
+    })
+    const accepted = vi.fn()
+    const sent = sendWorkspaceMessage(
+      { ...agent, continueNotebookExecution },
+      {
+        ...input,
+        requireExistingSession: true,
+        notebookContinuation: { refusalId: 'refusal-1', kind: 'memory' }
+      },
+      { flushPersistence: saveCurrent }
+    ).then((result) => {
+      accepted(result)
+      return result
+    })
+    await vi.waitFor(() => expect(continueNotebookExecution).toHaveBeenCalledOnce())
+    expect(accepted).not.toHaveBeenCalled()
+    acknowledged.resolve()
+    await expect(sent).resolves.toMatchObject({
+      sessionId: 'bound-session',
+      messageId: expect.any(String)
+    })
+  })
+
   it.each(['prepare', 'flush'] as const)(
     'rolls back an exact unsent preparation after Stop during %s',
     async (phase) => {

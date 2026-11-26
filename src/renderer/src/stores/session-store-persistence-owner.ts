@@ -88,6 +88,7 @@ export type SessionStoreData = {
   sessions: ChatSession[]
   selectedSessionId: string | undefined
   streamingMessages: StreamingMessageContentByMessageId
+  sessionDetailsRecoveryRequest?: { projectId: string; sessionId: string }
 }
 
 export type SessionHydrationSelection = { sessionId: string | undefined }
@@ -120,7 +121,8 @@ export type SessionPersistenceActions = {
     summaries: SessionSummary[],
     selected: PersistedChatSession | undefined,
     manifest?: PersistedSessionManifest,
-    selection?: SessionHydrationSelection
+    selection?: SessionHydrationSelection,
+    preserveLiveState?: boolean
   ) => void
   upsertPersistedSession: (session: PersistedChatSession) => void
 }
@@ -316,6 +318,7 @@ export const toPersistedSession = (
     liveInteractionState,
     activePlanProjection,
     contentLoaded,
+    needsStartupRecovery,
     historyPage,
     activeMessageCount,
     artifactCount,
@@ -353,6 +356,7 @@ export const toPersistedSession = (
   void liveInteractionState
   void activePlanProjection
   void contentLoaded
+  void needsStartupRecovery
   void historyPage
   void activeMessageCount
   void artifactCount
@@ -432,7 +436,9 @@ export const hydrateSession = (session: PersistedChatSession): ChatSession => {
   }
 }
 
-const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
+export const hydrateSessionSummary = (
+  summary: Omit<SessionSummary, 'number'> & Pick<ChatSession, 'number'>
+): ChatSession => ({
   number: summary.number,
   id: summary.id,
   projectId: summary.projectId,
@@ -448,6 +454,7 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
   createdAt: summary.createdAt,
   updatedAt: summary.updatedAt,
   contentLoaded: false,
+  needsStartupRecovery: summary.needsStartupRecovery,
   activeMessageCount: summary.activeMessageCount,
   artifactCount: summary.artifactCount,
   ...(summary.wslSetup ? { wslSetup: true as const } : {}),
@@ -464,6 +471,70 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
     ? { attention: { recordProblems: summary.recordProblems ?? [] } }
     : {})
 })
+
+const mergeSessionSummaryWithLiveState = (
+  summary: ChatSession,
+  current: ChatSession
+): ChatSession => {
+  const summaryIsNewer = (summary.revision ?? 0) > (current.revision ?? 0)
+  const preservesActiveStatus =
+    current.activeRun !== undefined ||
+    current.status === 'running' ||
+    current.status.startsWith('waiting-')
+  return {
+    ...summary,
+    ...current,
+    number: summary.number,
+    id: summary.id,
+    projectId: summary.projectId,
+    parentSessionId: summary.parentSessionId,
+    title: current.unsavedTitle || !summaryIsNewer ? current.title : summary.title,
+    pinned: summaryIsNewer ? summary.pinned : current.pinned,
+    archivedAt: summaryIsNewer ? summary.archivedAt : current.archivedAt,
+    revision: Math.max(current.revision ?? 0, summary.revision ?? 0),
+    filesRevision: Math.max(current.filesRevision ?? 0, summary.filesRevision ?? 0),
+    createdAt: summary.createdAt,
+    updatedAt: Math.max(current.updatedAt, summary.updatedAt),
+    status: preservesActiveStatus || !summaryIsNewer ? current.status : summary.status,
+    contentLoaded: current.contentLoaded,
+    needsStartupRecovery: summary.needsStartupRecovery,
+    activeMessageCount: summaryIsNewer ? summary.activeMessageCount : current.activeMessageCount,
+    artifactCount: summaryIsNewer ? summary.artifactCount : current.artifactCount,
+    recordProblems: summaryIsNewer ? summary.recordProblems : current.recordProblems,
+    ...(summaryIsNewer && summary.wslSetup ? { wslSetup: true as const } : {})
+  }
+}
+
+export const hasLocalSessionWork = (session: ChatSession): boolean =>
+  session.activeRun !== undefined ||
+  session.status === 'running' ||
+  session.status.startsWith('waiting-') ||
+  session.unsavedTitle === true ||
+  session.firstPromptDraft !== undefined ||
+  session.elicitationEditDrafts !== undefined
+
+const replaceIdleSessionWithNewerSummary = (
+  summary: ChatSession,
+  current: ChatSession
+): ChatSession => {
+  if (hasLocalSessionWork(current) || (summary.revision ?? 0) <= (current.revision ?? 0))
+    return mergeSessionSummaryWithLiveState(summary, current)
+
+  if (current.contentLoaded === false) return summary
+
+  const authority = {
+    ...toPersistedSession(current),
+    title: summary.title,
+    status: summary.status,
+    pinned: summary.pinned,
+    ...(summary.archivedAt !== undefined ? { archivedAt: summary.archivedAt } : {}),
+    revision: summary.revision,
+    filesRevision: summary.filesRevision,
+    updatedAt: summary.updatedAt
+  }
+  markExternallyHydratedSession(summary, authority)
+  return summary
+}
 
 const matchesPersistedPlanProjection = (
   projection: ActivePlanProjection | undefined,
@@ -567,6 +638,7 @@ const withTransientSessionState = (
     firstPromptDraft: source.firstPromptDraft,
     pendingBindingSessionId: source.pendingBindingSessionId,
     wslSetup: source.wslSetup,
+    needsStartupRecovery: source.needsStartupRecovery,
     interrupted: source.interrupted ?? hydrated.interrupted,
     fixLoopActive: source.fixLoopActive,
     compacting: source.compacting,
@@ -713,26 +785,43 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set({ sessions: hydrated, selectedSessionId } as Partial<State>)
   },
 
-  hydrateSessionSummaries: (summaries, selected, manifest, selection) => {
+  hydrateSessionSummaries: (
+    summaries,
+    selected,
+    manifest,
+    selection,
+    preserveLiveState = false
+  ) => {
     const selectedById = selected ? new Map([[selected.id, selected]]) : new Map()
-    const hydrated = [...summaries]
-      .sort((left, right) => right.updatedAt - left.updatedAt)
-      .map((summary) => {
-        const authority = selectedById.get(summary.id)
-        if (!authority) return hydrateSessionSummary(summary)
-        const hydrated = hydrateSession(authority)
-        if (summary.wslSetup) hydrated.wslSetup = true
-        markExternallyHydratedSession(hydrated, authority)
-        return hydrated
-      })
-    const hasExplicitSelection = selection !== undefined
-    const requestedSelection = hasExplicitSelection ? selection.sessionId : manifest?.lastSessionId
-    const selectedSessionId = hydrated.some((session) => session.id === requestedSelection)
-      ? requestedSelection
-      : hasExplicitSelection
-        ? undefined
-        : hydrated[0]?.id
-    set({ sessions: hydrated, selectedSessionId } as Partial<State>)
+    set((state) => {
+      const currentById = new Map(state.sessions.map((session) => [session.id, session]))
+      const hydrated = [...summaries]
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+        .map((summary) => {
+          const authority = selectedById.get(summary.id)
+          if (authority) {
+            const hydrated = hydrateSession(authority)
+            if (summary.wslSetup) hydrated.wslSetup = true
+            markExternallyHydratedSession(hydrated, authority)
+            return hydrated
+          }
+          const summarySession = hydrateSessionSummary(summary)
+          const current = preserveLiveState ? currentById.get(summary.id) : undefined
+          return current
+            ? replaceIdleSessionWithNewerSummary(summarySession, current)
+            : summarySession
+        })
+      const hasExplicitSelection = selection !== undefined
+      const requestedSelection = hasExplicitSelection
+        ? selection.sessionId
+        : manifest?.lastSessionId
+      const selectedSessionId = hydrated.some((session) => session.id === requestedSelection)
+        ? requestedSelection
+        : hasExplicitSelection
+          ? undefined
+          : hydrated[0]?.id
+      return { sessions: hydrated, selectedSessionId } as Partial<State>
+    })
   },
 
   upsertPersistedSession: (session) => {
@@ -946,6 +1035,20 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         }
         const projected = withTransientSessionState(authority, current)
         projected.interrupted = hydrateSession(authority).interrupted
+        // A rejected continuation can leave its transient segment pointing outside the
+        // restored graph. Keep it only for the same live run and its owning frame.
+        if (
+          !projected.activeRun ||
+          projected.activeRun.promptMessageId !== current.activeRun?.promptMessageId ||
+          projected.activeRun.startedAt !== current.activeRun.startedAt ||
+          !projected.conversationGraph?.runtimeSegments.some(
+            (segment) =>
+              segment.id === projected.activeRunRuntimeSegmentId &&
+              segment.agentFrameId === projected.conversationGraph?.activeFrameId
+          )
+        ) {
+          projected.activeRunRuntimeSegmentId = undefined
+        }
         projected.branchContextResetRequired = authority.branchContextResetRequired
         projected.agentStatus = undefined
         projected.awaitingFirstAgentOutput = undefined

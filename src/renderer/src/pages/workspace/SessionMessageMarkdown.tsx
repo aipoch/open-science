@@ -134,8 +134,6 @@ const SessionArtifactImage = ({
     setHasBeenNearViewport(true)
   }
   const hasFailed = failedRequestKey === resourceRequestKey
-  // Share publication retries and decoded-source caching with the Generated thumbnail. A transient
-  // first read must not leave the inline image stuck while the same artifact is visible below it.
   const resourceState = useCachedPreviewImage(
     request,
     !publicationPending && !isTiff && hasBeenNearViewport && !hasFailed,

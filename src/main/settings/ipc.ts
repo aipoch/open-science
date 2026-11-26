@@ -1,6 +1,6 @@
 import { readSourceLinkImage, readSourceLinkMetadata } from './source-link-metadata'
 import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
-import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
+import type { LabCheckRequest, SetLabServerRequest } from '../../shared/lab'
 import type { SettingsFileCommands } from './file-commands'
 import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
@@ -347,6 +347,14 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:logout-isolated-claude', () =>
     snapshotCommits.projectAfter(workflows.runtime.logoutIsolatedClaude())
   )
+  ipcMainHandle('settings:codebuddy-account', (_event, request) => {
+    const result = workflows.runtime.codeBuddyAccount(request)
+    return request?.action === 'login' ||
+      request?.action === 'logout' ||
+      request?.action === 'refresh'
+      ? snapshotCommits.projectAfter(result)
+      : result
+  })
   ipcMainHandle('settings:login-isolated-codex', () =>
     snapshotCommits.projectAfter(workflows.runtime.loginIsolatedCodex())
   )
@@ -361,10 +369,30 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:logout-xai-oauth', () =>
     snapshotCommits.currentSnapshotAfter(workflows.runtime.logoutXaiOAuth())
   )
+  ipcMainHandle('settings:lab-set-server', (_event, request: SetLabServerRequest) =>
+    snapshotCommits.projectAfter(service.setLabServer(request))
+  )
+  ipcMainHandle('settings:lab-check', (_event, request?: LabCheckRequest) =>
+    snapshotCommits.projectAfter(service.checkLab(request))
+  )
+  ipcMainHandle('settings:lab-begin-login', () =>
+    snapshotCommits.projectAfter(service.beginLabLogin())
+  )
+  ipcMainHandle('settings:lab-wait-login', () =>
+    snapshotCommits.projectAfter(service.waitLabLogin())
+  )
+  ipcMainHandle('settings:lab-cancel-login', () =>
+    snapshotCommits.projectAfter(service.cancelLabLogin())
+  )
+  ipcMainHandle('settings:lab-refresh', () => snapshotCommits.projectAfter(service.refreshLab()))
+  ipcMainHandle('settings:lab-logout', () => snapshotCommits.projectAfter(service.logoutLab()))
   ipcMainHandle(
     'settings:refresh-provider-models',
     (_event, request: RefreshProviderModelsRequest) =>
       snapshotCommits.projectAfter(workflows.runtime.refreshProviderModels(request))
+  )
+  ipcMainHandle('settings:add-onboarding-kilo-provider', () =>
+    snapshotCommits.currentSnapshotAfter(service.addOnboardingKiloProvider())
   )
   ipcMainHandle('settings:mark-onboarding-complete', () =>
     snapshotCommits.currentSnapshotAfter(service.markOnboardingComplete())
@@ -560,6 +588,14 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:set-ncbi-credentials', (_event, request: SetNcbiCredentialsRequest) =>
     workflows.connectors.setNcbiCredentials(request)
   )
+  ipcMainHandle('settings:test-image-model', (_event, request) => service.imageModels.test(request))
+  ipcMainHandle('settings:refresh-image-model-catalog', (_event, request) =>
+    service.imageModels.refreshCatalog(request)
+  )
+  ipcMainHandle('settings:get-image-models', () => service.imageModels.snapshot())
+  ipcMainHandle('settings:update-image-models', (_event, request) =>
+    service.imageModels.mutate(request)
+  )
   ipcMainHandle('settings:get-classification', () => service.classification.snapshot())
   ipcMainHandle('settings:update-classification', (_event, request) =>
     service.classification.mutate(request)
@@ -599,11 +635,6 @@ const registerSettingsIpcHandlers = ({
     'settings:disconnect-device-credential',
     (_event, request: DeviceCredentialAuthenticationRequest) =>
       workflows.connectors.disconnectDeviceCredential(request)
-  )
-  ipcMainHandle(
-    'settings:set-semantic-scholar-credential',
-    (_event, request: SetSemanticScholarCredentialRequest) =>
-      workflows.connectors.setSemanticScholarCredential(request)
   )
   ipcMainHandle(
     'settings:set-openalex-credential',

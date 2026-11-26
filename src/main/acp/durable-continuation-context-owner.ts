@@ -5,21 +5,32 @@ import type { AcpPromptRequest } from '../../shared/acp'
 import {
   getActiveConversationContext,
   resolveActiveConversationActivities,
+  resolveActiveConversationMessages,
   resolveMessageBranchPath,
   type PersistedConversationGraph
 } from '../../shared/conversation-graph'
-import type { ElicitationAnswer, PendingElicitationRequest } from '../../shared/elicitation'
+import {
+  matchesElicitationPrompt,
+  type ElicitationAnswer,
+  type PendingElicitationRequest,
+  type TaskQuestionReceipt
+} from '../../shared/elicitation'
 import type { HistoryReplayDescriptor } from '../../shared/history-replay-contract'
 import {
   buildSessionHistoryReplay,
   type SessionHistoryReplay
 } from '../../shared/session-history-replay'
 import {
+  latestTurnPromptIds,
   rearmUnacceptedElicitationContinuations,
   sanitizeSessionReferences,
   type PersistedChatSession
 } from '../../shared/session-persistence'
-import type { SessionCatalog, SessionMutation } from '../session-persistence/coordinator'
+import type {
+  SessionCatalog,
+  SessionMutation,
+  SessionPersistenceCommands
+} from '../session-persistence/coordinator'
 import {
   validateElicitationAnswers,
   agentUserChoiceOutcomes,
@@ -27,7 +38,7 @@ import {
 } from './elicitation-owner'
 
 type DurableContinuationSessions = Pick<SessionCatalog, 'loadSessionForContinuation'> &
-  Partial<SessionMutation>
+  Partial<SessionMutation & Pick<SessionPersistenceCommands, 'prepareRuntimeResume'>>
 
 type DurableContinuationPreparation = Readonly<{
   provenanceContext: NonNullable<AcpPromptRequest['provenanceContext']>
@@ -74,9 +85,25 @@ const isActivityVisibleOnBranch = (
 }
 
 class AcpDurableContinuationContextOwner {
+  private readonly contextResetSessionIds = new Set<string>()
+
+  markContextReset(sessionId: string): void {
+    this.contextResetSessionIds.add(sessionId)
+  }
+  requiresReplay(sessionId: string): boolean {
+    return this.contextResetSessionIds.has(sessionId)
+  }
+  clearContextReset(sessionId: string): void {
+    this.contextResetSessionIds.delete(sessionId)
+  }
+
   constructor(
     private readonly sessions?: DurableContinuationSessions,
-    private readonly publishSessionUpdated?: PublishDurableContinuationSession
+    private readonly publishSessionUpdated?: PublishDurableContinuationSession,
+    private readonly replaySource?: {
+      descriptor: () => HistoryReplayDescriptor
+      supportsImageInput: () => Promise<boolean>
+    }
   ) {}
 
   async prepare(input: {
@@ -84,9 +111,22 @@ class AcpDurableContinuationContextOwner {
     sessionId: string
     promptMessageId: string
     replay?: DurableContinuationReplay
+    replayIfContextReset?: boolean
+    forceReplay?: boolean
   }): Promise<DurableContinuationPreparation> {
+    let replay = input.replay
+    if (
+      !replay &&
+      this.replaySource &&
+      (input.forceReplay || (input.replayIfContextReset && this.requiresReplay(input.sessionId)))
+    ) {
+      replay = {
+        descriptor: this.replaySource.descriptor(),
+        supportsImageInput: await this.replaySource.supportsImageInput()
+      }
+    }
     const session = await this.loadSession(input.projectId, input.sessionId)
-    return this.prepareFromSession(session, input.promptMessageId, input.replay)
+    return this.prepareFromSession(session, input.promptMessageId, replay)
   }
 
   async prepareElicitation(input: {
@@ -99,9 +139,27 @@ class AcpDurableContinuationContextOwner {
     replacePreviousAnswer?: boolean
     retryContinuation?: boolean
     continuePrepared?: boolean
+    beforeAttachment?: boolean
     recovery?: { error: string }
     replay?: DurableContinuationReplay
+    replayIfContextReset?: boolean
+    taskResponse?: {
+      receipt: TaskQuestionReceipt
+      assertCurrent: (session: PersistedChatSession, request?: PendingElicitationRequest) => void
+    }
   }): Promise<DurableElicitationContinuationPreparation> {
+    let replay = input.replay
+    if (
+      !replay &&
+      this.replaySource &&
+      input.replayIfContextReset &&
+      this.requiresReplay(input.sessionId)
+    ) {
+      replay = {
+        descriptor: this.replaySource.descriptor(),
+        supportsImageInput: await this.replaySource.supportsImageInput()
+      }
+    }
     const session = await this.loadSession(input.projectId, input.sessionId).catch(
       (error: unknown) => {
         if (!input.continuePrepared) throw error
@@ -110,15 +168,28 @@ class AcpDurableContinuationContextOwner {
       }
     )
     if (input.replacePreviousAnswer) {
-      return this.prepareElicitationRevision(session, input)
+      return this.prepareElicitationRevision(session, { ...input, replay })
     }
     if (input.action === 'cancel') {
       return this.endElicitation(session, input)
     }
     const saved = input.retryContinuation || input.continuePrepared
     if (saved) this.assertRetry(session, input)
-    const authority = this.resolvePendingElicitation(session, input, saved)
-    const continuation = this.prepareFromSession(session, authority.promptMessageId, input.replay)
+    const readAuthority = (
+      candidate: PersistedChatSession
+    ): ReturnType<AcpDurableContinuationContextOwner['resolvePendingElicitation']> => {
+      let current
+      try {
+        current = this.resolvePendingElicitation(candidate, input, saved)
+      } catch (error) {
+        input.taskResponse?.assertCurrent(candidate)
+        throw error
+      }
+      input.taskResponse?.assertCurrent(candidate, this.canonicalRequest(candidate.id, current))
+      return current
+    }
+    const authority = readAuthority(session)
+    const continuation = this.prepareFromSession(session, authority.promptMessageId, replay)
     const request = this.canonicalRequest(session.id, authority)
     // Commit the decision and adopt legacy transcript ownership in the same Main mutation.
     if (!this.sessions?.mutateRuntimeSession) {
@@ -126,9 +197,14 @@ class AcpDurableContinuationContextOwner {
     }
     const answers =
       input.action === 'accept' ? validateElicitationAnswers(request, input.answers) : undefined
+    // The cold read normalizes a parked question. Persist that same recovery before
+    // comparing the request against the raw journal within the answer mutation.
+    if (input.beforeAttachment && !saved) {
+      await this.sessions.prepareRuntimeResume?.(input.projectId, input.sessionId)
+    }
     const commit = this.sessions.mutateRuntimeSession(input, (latest) => {
       if (saved) this.assertRetry(latest, input)
-      const current = this.resolvePendingElicitation(latest, input, saved)
+      const current = readAuthority(latest)
       if (!isDeepStrictEqual(current, authority)) {
         throw new Error('Durable elicitation changed before its answer was committed.')
       }
@@ -141,6 +217,7 @@ class AcpDurableContinuationContextOwner {
         state: input.action === 'accept' ? ('answered' as const) : ('declined' as const),
         ...(answers ? { answers } : {}),
         respondedAt: saved ? previous.respondedAt : Date.now(),
+        ...(input.taskResponse ? { taskResponse: input.taskResponse.receipt } : {}),
         continuationPending: true as const
       }
       return {
@@ -288,8 +365,16 @@ class AcpDurableContinuationContextOwner {
         activities: latest.conversationGraph!.activities.map(settle)
       }
       const activities = resolveActiveConversationActivities(graph).activities
-      const stillWaiting = activities.some(
-        ({ elicitation }) => elicitation?.state === 'pending' || elicitation?.continuationRecovery
+      const currentPromptIds = latestTurnPromptIds(resolveActiveConversationMessages(graph))
+      const activeBranchId = graph.frames.find(
+        ({ id }) => id === graph.activeFrameId
+      )?.activeBranchId
+      const stillWaiting = graph.activities.some(
+        (activity) =>
+          activity.messageBranchId === activeBranchId &&
+          (activity.elicitation?.state === 'pending' ||
+            activity.elicitation?.continuationRecovery) &&
+          matchesElicitationPrompt(activity, currentPromptIds)
       )
       return {
         ...latest,

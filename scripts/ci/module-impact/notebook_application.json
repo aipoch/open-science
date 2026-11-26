@@ -27,6 +27,7 @@
     "src/main/notebook/export-reader.ts",
     "src/main/notebook/fixtures/windows-exiting-repl-loop.cjs",
     "src/main/notebook/fixtures/windows-interrupted-shell-launch.ts",
+    "src/main/notebook/fixtures/windows-standard-process-sandbox.ts",
     "src/main/notebook/full-stack.smoke.test.ts",
     "src/main/notebook/heatmap-loop.integration.test.ts",
     "src/main/notebook/host-compute.integration.test.ts",
@@ -46,6 +47,7 @@
     "src/main/notebook/local-rpc-notebook-adapter.ts",
     "src/main/notebook/local-rpc-server.agents.test.ts",
     "src/main/notebook/local-rpc-server.capabilities.test.ts",
+    "src/main/notebook/local-rpc-server.image-generation.test.ts",
     "src/main/notebook/local-rpc-server.delegated-work.test.ts",
     "src/main/notebook/local-rpc-server.errors.test.ts",
     "src/main/notebook/local-rpc-server.frames.test.ts",
@@ -146,7 +148,21 @@
     "src/main/notebook-payload.integration.test.ts",
     "src/main/notebook/authorized-directories.integration.test.ts",
     "src/main/notebook/idle-reclamation.ts",
-    "src/main/notebook/idle-reclamation.test.ts"
+    "src/main/notebook/idle-reclamation.test.ts",
+    "src/main/notebook/execution-intent.ts",
+    "src/main/notebook/local-rpc-execution-intent.integration.test.ts",
+    "src/main/notebook/runtime-execution-admission.test.ts",
+    "src/main/notebook/runtime-pressure-reclamation.test.ts",
+    "src/main/notebook/runtime-pressure-reclamation.macos.integration.test.ts",
+    "src/main/notebook/owned-resources.test.ts",
+    "src/main/notebook/resource-release.ts",
+    "src/main/notebook/resource-release.test.ts",
+    "src/main/notebook/resource-release.integration.test.ts",
+    "src/main/notebook/resource-release.windows.integration.test.ts",
+    "src/main/notebook/memory-admission.windows.integration.test.ts",
+    "src/main/notebook/python-lifecycle.macos.integration.test.ts",
+    "src/main/notebook/python-lifecycle.windows.integration.test.ts",
+    "src/main/notebook/resource-release-commands.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/harness-mcp-turn.ts",
@@ -158,6 +174,7 @@
     "src/main/notebook/env-ipc.ts",
     "src/main/notebook/execution-owner.ts",
     "src/main/notebook/export-reader.ts",
+    "src/main/notebook/fixtures/windows-standard-process-sandbox.ts",
     "src/main/notebook/failure-diagnostic.ts",
     "src/main/notebook/host-frames-service.ts",
     "src/main/notebook/host-model-service.ts",
@@ -239,7 +256,9 @@
     "src/main/notebook/runtime-ipc.ts",
     "src/main/notebook/runtime-service.ts",
     "src/main/notebook/runtime-workflows.ts",
-    "src/main/notebook/windows-python.test-support.ts"
+    "src/main/notebook/windows-python.test-support.ts",
+    "src/main/notebook/execution-intent.ts",
+    "src/main/notebook/resource-release.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -344,7 +363,18 @@
       "src/main/notebook/runtime-service.architecture.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/notebook/source-analysis-worker.test.ts",
-      "src/main/notebook/idle-reclamation.test.ts"
+      "src/main/notebook/idle-reclamation.test.ts",
+      "src/main/notebook/runtime-execution-admission.test.ts",
+      "src/main/notebook/runtime-pressure-reclamation.test.ts",
+      "src/main/notebook/runtime-pressure-reclamation.macos.integration.test.ts",
+      "src/main/notebook/owned-resources.test.ts",
+      "src/main/notebook/resource-release.test.ts",
+      "src/main/notebook/resource-release.integration.test.ts",
+      "src/main/notebook/resource-release.windows.integration.test.ts",
+      "src/main/notebook/memory-admission.windows.integration.test.ts",
+      "src/main/notebook/python-lifecycle.macos.integration.test.ts",
+      "src/main/notebook/python-lifecycle.windows.integration.test.ts",
+      "src/main/notebook/resource-release-commands.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -358,7 +388,8 @@
       "src/main/notebook/environment-runner.test.ts",
       "src/main/notebook/environment-startup.contract.test.ts",
       "src/main/notebook/windows-runtime-download.contract.test.ts",
-      "src/main/notebook/authorized-directories.integration.test.ts"
+      "src/main/notebook/authorized-directories.integration.test.ts",
+      "src/main/notebook/local-rpc-execution-intent.integration.test.ts"
     ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
@@ -852,7 +883,9 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
-      "src/main/composition/session-packages.test.ts"
+      "src/main/composition/session-packages.test.ts",
+      "src/renderer/src/pages/workspace/NotebookMemoryNoticeBridge.interaction.test.tsx",
+      "src/main/composition/session-package-lifecycle.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

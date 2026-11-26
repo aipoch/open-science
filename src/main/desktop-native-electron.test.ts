@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   message: vi.fn(),
   print: vi.fn(),
+  checkFilm: vi.fn(),
   windows: vi.fn(),
   parent: vi.fn(),
   openPath: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock('electron', () => ({
 vi.mock('./session-persistence/conversation-pdf-electron', () => ({
   printConversationPdf: mocks.print
 }))
+vi.mock('./research-video/export-electron', () => ({ checkResearchVideoHtml: mocks.checkFilm }))
 beforeEach(() => vi.resetAllMocks())
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -42,6 +44,22 @@ function setup() {
 }
 
 describe('native operations requested by the Node runtime', () => {
+  it('reviews the private HTML on the film job signal after the originating document closes', async () => {
+    const value = setup()
+    value.resolve.mockReturnValue(undefined)
+    mocks.windows.mockReturnValue([])
+    const request = {
+      operation: 'research-video-check' as const,
+      htmlPath: join(tmpdir(), 'player.html'),
+      includeFrames: true
+    }
+    mocks.checkFilm.mockResolvedValue({ issues: [], frames: [] })
+    await expect(
+      value.handler({ kind: 'native-request', id: 1, request }, value.signal.signal)
+    ).resolves.toEqual({ issues: [], frames: [] })
+    expect(mocks.checkFilm).toHaveBeenCalledWith(request, value.signal.signal)
+    expect(value.resolve).not.toHaveBeenCalled()
+  })
   it('parents native dialogs to the current document and strips Electron-only result fields', async () => {
     const value = setup()
     const path = join(tmpdir(), 'chosen.science')

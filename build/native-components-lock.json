@@ -2,95 +2,95 @@
   "darwin-arm64": {
     "schema": 1,
     "target": "darwin-arm64",
-    "source": "b0a81e68c330f5403137a4cceae4615c19aa70f3195032b4836ff35e8ca474e2",
+    "source": "4eb6715ca7bb49f95fdf5fa4c88dfd2064b14d6665b2ee0944a58a310c3090c6",
     "node": "22.23.3",
     "signing": "release",
     "files": [
       {
         "package": "credential-identity-probe-native",
         "name": "credential_identity_probe",
-        "sha256": "936ac9c4041195ecb3a45e759c7d408d6426d18f24c3e0240ee1f9448589586b",
+        "sha256": "22aa1e1fd6ec47987b40c8c15e8cec97f10157c8fb25e4ba0ff256f5bf7ae3af",
         "size": 78304,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/936ac9c4041195ecb3a45e759c7d408d6426d18f24c3e0240ee1f9448589586b/credential_identity_probe"
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/22aa1e1fd6ec47987b40c8c15e8cec97f10157c8fb25e4ba0ff256f5bf7ae3af/credential_identity_probe"
       },
       {
         "package": "credential-identity-probe-native",
         "name": "credential_key_validator",
-        "sha256": "7400fe8b0cd89547a6f4292838c061fcf9f7de9c42c2d132338961e9c78b91e6",
+        "sha256": "970e4087be53a4475497e8158ce1e416fbe35501aba0f9601692a850c9761e8d",
         "size": 71968,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/7400fe8b0cd89547a6f4292838c061fcf9f7de9c42c2d132338961e9c78b91e6/credential_key_validator"
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/970e4087be53a4475497e8158ce1e416fbe35501aba0f9601692a850c9761e8d/credential_key_validator"
       },
       {
         "package": "credential-identity-probe-native",
         "name": "credential_secret",
-        "sha256": "e9930ff88d7ae3207002108071e54c402f726daf99cbc590b20fe6062fbfc7f3",
+        "sha256": "822de2468ed1f4e3f5afb13ac3a18f237109eb5d8e2b7949d0072d896c6727ab",
         "size": 70784,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/e9930ff88d7ae3207002108071e54c402f726daf99cbc590b20fe6062fbfc7f3/credential_secret"
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/822de2468ed1f4e3f5afb13ac3a18f237109eb5d8e2b7949d0072d896c6727ab/credential_secret"
       },
       {
         "package": "process-tree-native",
         "name": "process_tree_native.node",
-        "sha256": "c1405216626c50a6c7737fd07a04266a070f0cd056abc796d6c05d36529c202d",
-        "size": 78544,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/c1405216626c50a6c7737fd07a04266a070f0cd056abc796d6c05d36529c202d/process_tree_native.node"
+        "sha256": "c4ae801dc6c391e6946ec0136da038ad1ff2cb6665558230213f5396d30ca4a8",
+        "size": 101904,
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/c4ae801dc6c391e6946ec0136da038ad1ff2cb6665558230213f5396d30ca4a8/process_tree_native.node"
       },
       {
         "package": "safe-file-publisher-native",
         "name": "safe_file_publisher_native.node",
-        "sha256": "dea6ff6e3b21bee53cb4a5a3d23a31cd9b1b90e1189fba1f02e394e2d8c533e3",
-        "size": 100384,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/dea6ff6e3b21bee53cb4a5a3d23a31cd9b1b90e1189fba1f02e394e2d8c533e3/safe_file_publisher_native.node"
+        "sha256": "63968cea39b73c3448cd26238b31c38597f3a35a03f0d841bd65d845417e636d",
+        "size": 100912,
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-arm64/63968cea39b73c3448cd26238b31c38597f3a35a03f0d841bd65d845417e636d/safe_file_publisher_native.node"
       }
     ]
   },
   "darwin-x64": {
     "schema": 1,
     "target": "darwin-x64",
-    "source": "b0a81e68c330f5403137a4cceae4615c19aa70f3195032b4836ff35e8ca474e2",
+    "source": "4eb6715ca7bb49f95fdf5fa4c88dfd2064b14d6665b2ee0944a58a310c3090c6",
     "node": "22.23.3",
     "signing": "release",
     "files": [
       {
         "package": "credential-identity-probe-native",
         "name": "credential_identity_probe",
-        "sha256": "3a56ad26eaefd09d8347cdc3eba0f7f8bd9de0c359d680c473b083619fd53fa7",
+        "sha256": "3cfdf4f299c2b44212b45ad5d72416817c44938b9256e71576d76ac8d2bca808",
         "size": 53568,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/3a56ad26eaefd09d8347cdc3eba0f7f8bd9de0c359d680c473b083619fd53fa7/credential_identity_probe"
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/3cfdf4f299c2b44212b45ad5d72416817c44938b9256e71576d76ac8d2bca808/credential_identity_probe"
       },
       {
         "package": "credential-identity-probe-native",
         "name": "credential_key_validator",
-        "sha256": "d882be8f045db09310fecbf4b0324ab26b4a06654ac7ca337c4792687d95ed13",
+        "sha256": "ef52ecf536c13090d65795633562ca01fba9dd9e6b7dc8c1784bfd52a114648c",
         "size": 38976,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/d882be8f045db09310fecbf4b0324ab26b4a06654ac7ca337c4792687d95ed13/credential_key_validator"
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/ef52ecf536c13090d65795633562ca01fba9dd9e6b7dc8c1784bfd52a114648c/credential_key_validator"
       },
       {
         "package": "credential-identity-probe-native",
         "name": "credential_secret",
-        "sha256": "d91670575696047a33f4d1389e6f227bc4fff848672f54b78a10c8bc84ea0505",
+        "sha256": "95f32927c69428e8fda56eeb516c38d7ce0a4c0a321dc476af150f9e71d9fb1b",
         "size": 37760,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/d91670575696047a33f4d1389e6f227bc4fff848672f54b78a10c8bc84ea0505/credential_secret"
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/95f32927c69428e8fda56eeb516c38d7ce0a4c0a321dc476af150f9e71d9fb1b/credential_secret"
       },
       {
         "package": "process-tree-native",
         "name": "process_tree_native.node",
-        "sha256": "a1b233c7dca3bd1efc27b71bd470a20e911f7304b13260231851e786a68fc11d",
-        "size": 54368,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/a1b233c7dca3bd1efc27b71bd470a20e911f7304b13260231851e786a68fc11d/process_tree_native.node"
+        "sha256": "f3058af05ab523c94caa5d9e781eb233d59ba8de555bffe844f8a847ca0df5c4",
+        "size": 65520,
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/f3058af05ab523c94caa5d9e781eb233d59ba8de555bffe844f8a847ca0df5c4/process_tree_native.node"
       },
       {
         "package": "safe-file-publisher-native",
         "name": "safe_file_publisher_native.node",
-        "sha256": "202fc138ebc2afd219216bb81e3b160a79dbfee57d5f032ace41f5317b808820",
-        "size": 71504,
-        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/202fc138ebc2afd219216bb81e3b160a79dbfee57d5f032ace41f5317b808820/safe_file_publisher_native.node"
+        "sha256": "03ebfa778a1f242d5ac81a7c54a1056163fa7910fdac4648a838590007f0437a",
+        "size": 72048,
+        "url": "https://statics.aipoch.com/open-science/native-components/darwin-x64/03ebfa778a1f242d5ac81a7c54a1056163fa7910fdac4648a838590007f0437a/safe_file_publisher_native.node"
       }
     ]
   },
   "linux-arm64": {
     "schema": 1,
     "target": "linux-arm64",
-    "source": "b0a81e68c330f5403137a4cceae4615c19aa70f3195032b4836ff35e8ca474e2",
+    "source": "4eb6715ca7bb49f95fdf5fa4c88dfd2064b14d6665b2ee0944a58a310c3090c6",
     "node": "22.23.3",
     "signing": "none",
     "files": [
@@ -118,23 +118,23 @@
       {
         "package": "process-tree-native",
         "name": "process_tree_native.node",
-        "sha256": "ddf4c7f37c810cdc041034b4807421b5ceddd7336eafdc38edd8d83405cd60d7",
-        "size": 73352,
-        "url": "https://statics.aipoch.com/open-science/native-components/linux-arm64/ddf4c7f37c810cdc041034b4807421b5ceddd7336eafdc38edd8d83405cd60d7/process_tree_native.node"
+        "sha256": "48e73bc3f6341822a7a02e434e5564c91dcf8b9a73ca9beaf568f35188e3f292",
+        "size": 74440,
+        "url": "https://statics.aipoch.com/open-science/native-components/linux-arm64/48e73bc3f6341822a7a02e434e5564c91dcf8b9a73ca9beaf568f35188e3f292/process_tree_native.node"
       },
       {
         "package": "safe-file-publisher-native",
         "name": "safe_file_publisher_native.node",
-        "sha256": "dbd00448c908ad1eb9f7cced2fc594ed38382672587e3eb1be02afd23dbb4b30",
-        "size": 77208,
-        "url": "https://statics.aipoch.com/open-science/native-components/linux-arm64/dbd00448c908ad1eb9f7cced2fc594ed38382672587e3eb1be02afd23dbb4b30/safe_file_publisher_native.node"
+        "sha256": "abae85ed0231c7cd1a88827f48f68c153c31aeb4c2335d709e27515f5cb5967f",
+        "size": 77600,
+        "url": "https://statics.aipoch.com/open-science/native-components/linux-arm64/abae85ed0231c7cd1a88827f48f68c153c31aeb4c2335d709e27515f5cb5967f/safe_file_publisher_native.node"
       }
     ]
   },
   "linux-x64": {
     "schema": 1,
     "target": "linux-x64",
-    "source": "b0a81e68c330f5403137a4cceae4615c19aa70f3195032b4836ff35e8ca474e2",
+    "source": "4eb6715ca7bb49f95fdf5fa4c88dfd2064b14d6665b2ee0944a58a310c3090c6",
     "node": "22.23.3",
     "signing": "none",
     "files": [
@@ -162,60 +162,60 @@
       {
         "package": "process-tree-native",
         "name": "process_tree_native.node",
-        "sha256": "d412148312e8bac3218805ae4df70b93afa5482349298385ef9c95dcd6aa27ad",
-        "size": 27376,
-        "url": "https://statics.aipoch.com/open-science/native-components/linux-x64/d412148312e8bac3218805ae4df70b93afa5482349298385ef9c95dcd6aa27ad/process_tree_native.node"
+        "sha256": "55ad2e9e4c440dfdee5eaa64120328f2cc9bcd50064644ec46edd457db1cf636",
+        "size": 32544,
+        "url": "https://statics.aipoch.com/open-science/native-components/linux-x64/55ad2e9e4c440dfdee5eaa64120328f2cc9bcd50064644ec46edd457db1cf636/process_tree_native.node"
       },
       {
         "package": "safe-file-publisher-native",
         "name": "safe_file_publisher_native.node",
-        "sha256": "62dc41d38bc14807bdd9bff97527c227a046d6d8d8c86bee78ceb14483f74085",
-        "size": 55592,
-        "url": "https://statics.aipoch.com/open-science/native-components/linux-x64/62dc41d38bc14807bdd9bff97527c227a046d6d8d8c86bee78ceb14483f74085/safe_file_publisher_native.node"
+        "sha256": "5e51094988ee8a6360f052aa7cd84d66273fbdb951fef918042e2f742c5d30d1",
+        "size": 60048,
+        "url": "https://statics.aipoch.com/open-science/native-components/linux-x64/5e51094988ee8a6360f052aa7cd84d66273fbdb951fef918042e2f742c5d30d1/safe_file_publisher_native.node"
       }
     ]
   },
   "win32-x64": {
     "schema": 1,
     "target": "win32-x64",
-    "source": "b0a81e68c330f5403137a4cceae4615c19aa70f3195032b4836ff35e8ca474e2",
+    "source": "4eb6715ca7bb49f95fdf5fa4c88dfd2064b14d6665b2ee0944a58a310c3090c6",
     "node": "22.23.3",
     "signing": "release",
     "files": [
       {
         "package": "credential-identity-probe-native",
         "name": "credential_identity_probe.exe",
-        "sha256": "de333abe6fb24e4609b2cb8ca1b3bf190b134b05dff90e5bac1edb3a7c833903",
-        "size": 233208,
-        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/de333abe6fb24e4609b2cb8ca1b3bf190b134b05dff90e5bac1edb3a7c833903/credential_identity_probe.exe"
+        "sha256": "dde6abc690a3ce956d1732776899ba57d1778eab50e2aedfd82a2ca04cb9e499",
+        "size": 233216,
+        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/dde6abc690a3ce956d1732776899ba57d1778eab50e2aedfd82a2ca04cb9e499/credential_identity_probe.exe"
       },
       {
         "package": "credential-identity-probe-native",
         "name": "credential_key_validator.exe",
-        "sha256": "d86a3dd30961b2d681b4d35ee914a28212e60c0ba154f62c5b58845a48376472",
-        "size": 235256,
-        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/d86a3dd30961b2d681b4d35ee914a28212e60c0ba154f62c5b58845a48376472/credential_key_validator.exe"
+        "sha256": "434c46b9ab9d4aba0bb6bbb11261b3c2b27ecc6c5e8d927e34247276a99bbb3e",
+        "size": 235264,
+        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/434c46b9ab9d4aba0bb6bbb11261b3c2b27ecc6c5e8d927e34247276a99bbb3e/credential_key_validator.exe"
       },
       {
         "package": "credential-identity-probe-native",
         "name": "credential_secret.exe",
-        "sha256": "3f9e854879719446a42abc1b7fab4d826e0422c4dce863667582e5fed71ec636",
-        "size": 277752,
-        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/3f9e854879719446a42abc1b7fab4d826e0422c4dce863667582e5fed71ec636/credential_secret.exe"
+        "sha256": "f719f999a99acd1887f9cfd596183058f63ccfaf2cd5742cb9442bd583efdbdb",
+        "size": 277760,
+        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/f719f999a99acd1887f9cfd596183058f63ccfaf2cd5742cb9442bd583efdbdb/credential_secret.exe"
       },
       {
         "package": "process-tree-native",
         "name": "process_tree_native.node",
-        "sha256": "551f3fb1990bc0bd1ea56d97468edbf42e12ce823f400694876de2a34c69e631",
-        "size": 257784,
-        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/551f3fb1990bc0bd1ea56d97468edbf42e12ce823f400694876de2a34c69e631/process_tree_native.node"
+        "sha256": "7d1d7b8ae705f8f505eaf63f72b33999c0eee312769971c7756bafb48297787e",
+        "size": 260856,
+        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/7d1d7b8ae705f8f505eaf63f72b33999c0eee312769971c7756bafb48297787e/process_tree_native.node"
       },
       {
         "package": "safe-file-publisher-native",
         "name": "safe_file_publisher_native.node",
-        "sha256": "7add30c1305827ca65e971a81f5da3beb09fa09bbd5a0624217331182cc83b2a",
-        "size": 177920,
-        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/7add30c1305827ca65e971a81f5da3beb09fa09bbd5a0624217331182cc83b2a/safe_file_publisher_native.node"
+        "sha256": "bb71af87c5dd8efeead8aea75a5de4ef1ce7831665ef69dce1cb3f86a06c027c",
+        "size": 186624,
+        "url": "https://statics.aipoch.com/open-science/native-components/win32-x64/bb71af87c5dd8efeead8aea75a5de4ef1ce7831665ef69dce1cb3f86a06c027c/safe_file_publisher_native.node"
       }
     ]
   }

@@ -1,3 +1,4 @@
+import { notebookExecutionIntent, markNotebookExecutionIntent } from '../notebook/execution-intent'
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
@@ -92,6 +93,7 @@ type AcpDelegateRuntime = Readonly<{
     profile: PermissionProfileId
   }): Promise<unknown>
   respondToPermission(response: AcpPermissionResponse): Promise<unknown>
+  respondTaskPermission?: import('../acp/runtime').AcpRuntime['respondTaskPermission']
   deleteSession(request: { sessionId: string }): Promise<unknown>
   shutdownForQuit(): Promise<{ reaped: boolean }>
 }>
@@ -445,6 +447,9 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           providerToolName: request.providerToolName,
           isMcp: request.isMcp,
           toolKind: request.toolKind,
+          ...(!request.appOwned && runtime?.respondTaskPermission
+            ? { taskBranchId: activeTurn?.messageBranchId ?? scope?.provenance.messageBranchId }
+            : {}),
           options: request.options.map(({ optionId, name, kind, scope }) => ({
             optionId,
             name,
@@ -589,27 +594,37 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
 
     const promptRequest = (
       text: string
-    ): Parameters<AcpDelegateRuntime['sendAppContinuation']>[0] => ({
-      sessionId: providerSessionId!,
-      text,
-      suppressUserMessage: true,
-      ...(scope?.permissionPrompts ? { permissionPrompts: scope.permissionPrompts } : {}),
-      ...((activeTurn?.promptMessageId ?? scope?.provenance.promptMessageId)
-        ? {
-            provenanceContext: {
-              promptMessageId: activeTurn?.promptMessageId ?? scope!.provenance.promptMessageId!,
-              agentFrameId: scope!.provenance.agentFrameId,
-              ...((activeTurn?.messageBranchId ?? scope!.provenance.messageBranchId)
-                ? {
-                    messageBranchId:
-                      activeTurn?.messageBranchId ?? scope!.provenance.messageBranchId
-                  }
-                : {}),
-              runtimeSegmentId: activeTurn?.runtimeSegmentId ?? scope!.provenance.runtimeSegmentId
+    ): Parameters<AcpDelegateRuntime['sendAppContinuation']>[0] => {
+      const request: Parameters<AcpDelegateRuntime['sendAppContinuation']>[0] = {
+        sessionId: providerSessionId!,
+        text,
+        suppressUserMessage: true,
+        ...(scope?.permissionPrompts ? { permissionPrompts: scope.permissionPrompts } : {}),
+        ...((activeTurn?.promptMessageId ?? scope?.provenance.promptMessageId)
+          ? {
+              provenanceContext: {
+                promptMessageId: activeTurn?.promptMessageId ?? scope!.provenance.promptMessageId!,
+                agentFrameId: scope!.provenance.agentFrameId,
+                ...((activeTurn?.messageBranchId ?? scope!.provenance.messageBranchId)
+                  ? {
+                      messageBranchId:
+                        activeTurn?.messageBranchId ?? scope!.provenance.messageBranchId
+                    }
+                  : {}),
+                runtimeSegmentId: activeTurn?.runtimeSegmentId ?? scope!.provenance.runtimeSegmentId
+              }
             }
-          }
-        : {})
-    })
+          : {})
+      }
+      // A cold continuation has no inherited intent. Use the first connection's own blocked
+      // intent so the provider can receive the answer without restarting Notebook execution.
+      const intent =
+        (activeTurn && notebookExecutionIntent(activeTurn)) ??
+        notebookExecutionIntent(input) ??
+        (scope && !activeMessage ? notebookExecutionIntent(scope.capability) : undefined)
+      if (intent) markNotebookExecutionIntent(request, intent)
+      return request
+    }
 
     const work = (async (): Promise<void> => {
       try {
@@ -782,12 +797,27 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         }
         await runtime.setPermissionProfile({ sessionId: providerSessionId, profile })
       },
-      async respondToPermission(response: DelegatePermissionResponse) {
+      async respondToPermission(response: DelegatePermissionResponse, decision) {
         if (!writable || !runtime || !pendingPermissions.delete(response.requestId)) {
           throw new Error(`permission request is not active: ${response.requestId}`)
         }
         try {
-          await runtime.respondToPermission(response)
+          if (decision) {
+            const prompt = activeTurn?.promptMessageId ?? scope?.provenance.promptMessageId
+            if (
+              !providerSessionId ||
+              !prompt ||
+              !response.optionId ||
+              !(await runtime.respondTaskPermission?.(
+                providerSessionId,
+                prompt,
+                response.requestId,
+                response.optionId,
+                decision
+              ))
+            )
+              throw new Error('The child permission is no longer active.')
+          } else await runtime.respondToPermission(response)
         } catch (error) {
           if (writable && !terminalSettled && !cancelRequested) {
             pendingPermissions.add(response.requestId)

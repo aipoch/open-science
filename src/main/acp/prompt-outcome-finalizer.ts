@@ -1,3 +1,4 @@
+import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -12,6 +13,7 @@ import type {
   AcpTurnTokenUsage
 } from '../../shared/acp-usage-contract'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import { readHarnessErrorDiagnostics } from '../../shared/failure/contract'
 import { classifyFailure } from '../../shared/failure/classify'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
@@ -34,7 +36,10 @@ export type AcpPromptFinalizationHandles = Readonly<{
   sessionId: string
   promptMessageId?: string
   interaction: AcpPromptSessionInteractionScope
-  interactions: Pick<InteractionOwner, 'captureTerminal' | 'current' | 'release' | 'settle'>
+  interactions: Pick<
+    InteractionOwner,
+    'captureTerminal' | 'current' | 'isCancellationAccepted' | 'release' | 'settle'
+  >
   permission: Pick<AcpPermissionContext, 'clearCorrelationsForSession'>
   prepared?: Pick<PreparedPromptHandle, 'close'>
   context?: ContextWindowTurnHandle
@@ -170,10 +175,12 @@ export class AcpPromptOutcomeFinalizer {
   ): Promise<PromptResponse> {
     let artifactPublished = false
     let artifactRetryAttempted = false
+    let userStopDisposal: Promise<void> | undefined
     let skillOutcome: TurnSkillOutcome = 'failed'
     let observedStop: ObservedPromptStop | undefined
     const sessionId = handles.sessionId
     const { context, interaction, interactions, permission } = handles
+    const userStopped = interactions.isCancellationAccepted(interaction, 'user')
     const eventIdentity = handles.promptMessageId
       ? { promptMessageId: handles.promptMessageId, promptExecutionId: interaction.turnToken }
       : {}
@@ -210,6 +217,15 @@ export class AcpPromptOutcomeFinalizer {
     }
     const publishObservedStop = async (failure?: unknown): Promise<boolean> => {
       if (!observedStop) return false
+      if (userStopped && observedStop.response.stopReason === 'cancelled') {
+        // Disposal drains foreground Notebook work. Commit one terminal after its outcome.
+        userStopDisposal ??= Promise.resolve().then(handles.disposeArtifact)
+        try {
+          await userStopDisposal
+        } catch (error) {
+          failure ??= error ?? new Error('Artifact cleanup failed')
+        }
+      }
       const terminal = interactions.settle(interaction, {
         ...(observedStop.turnUsage ? { turnUsage: observedStop.turnUsage } : {}),
         ...(observedStop.modelTurnCount === undefined
@@ -245,7 +261,12 @@ export class AcpPromptOutcomeFinalizer {
         turnUsage: logicalUsage.turnUsage,
         ...(modelCallUsage ? { modelCallUsage } : {}),
         ...(observedStop.terminalContextWindow
-          ? { terminalContextWindow: observedStop.terminalContextWindow }
+          ? {
+              terminalContextWindow:
+                failure === undefined
+                  ? observedStop.terminalContextWindow
+                  : { ...observedStop.terminalContextWindow, termination: { kind: 'error' } }
+            }
           : {}),
         ...(failure === undefined ? { raw: observedStop.response } : {}),
         ...(failure === undefined
@@ -345,9 +366,28 @@ export class AcpPromptOutcomeFinalizer {
       const capturedContext = context?.captureTerminal()
       context?.fail()
       safeCleanup('skill activity cleanup failed', handles.failPendingSkillActivities)
-      safeLog('error', 'prompt failed', errorLogFields(error))
-      const failure = classifyFailure(collectPromptFailureFacts(error, handles))
-      const text = failure.responseMessage ?? describePromptError(error, { model: handles.model })
+      const facts = collectPromptFailureFacts(error, handles)
+      const failure = classifyFailure(facts)
+      const excerpt = facts.providerExcerpt ?? providerErrorExcerpt(facts.responseMessage)
+      safeLog('error', 'prompt failed', {
+        ...(facts.origin === 'provider'
+          ? {
+              error: { ...(excerpt ? { message: excerpt } : {}), status: facts.status },
+              ...readHarnessErrorDiagnostics({ code: facts.code, requestId: facts.requestId }),
+              model: facts.model
+            }
+          : errorLogFields(error)),
+        ...eventIdentity,
+        phase: 'prompt',
+        reason: failure.reason
+      })
+      if (failure.diagnostics.protocol)
+        safeLog('error', 'model request failed', { reason: failure.reason, ...failure.diagnostics })
+      const text =
+        (failure.reason === 'internal/model-request-stack-overflow'
+          ? failure.diagnostics.raw
+          : (failure.responseMessage ?? excerpt)) ??
+        describePromptError(error, { model: handles.model })
       const recoverable =
         failure.category === 'session'
           ? 'session-lost'
@@ -379,27 +419,28 @@ export class AcpPromptOutcomeFinalizer {
       else handles.pushEvent(failureEvent)
       throw error
     } finally {
-      let stopFailure: NotebookExecutionStopError | undefined
+      let stopFailure: unknown
       safeCleanup('prompt preparation cleanup failed', () => handles.prepared?.close())
       if (!artifactPublished && !artifactRetryAttempted) await retryArtifact()
       try {
-        await handles.disposeArtifact()
+        await (userStopDisposal ?? handles.disposeArtifact())
       } catch (error) {
-        if (error instanceof NotebookExecutionStopError) {
-          stopFailure = error
+        if (userStopDisposal || error instanceof NotebookExecutionStopError) {
+          stopFailure = error ?? new Error('Artifact cleanup failed')
           skillOutcome = 'failed'
         }
-        // Cleanup is not Artifact publication: it must not settle or rewrite the Turn Outcome.
-        safeCleanup('Artifact cleanup event failed', () =>
-          handles.pushEvent({
-            kind: 'system',
-            level: 'warning',
-            sessionId,
-            ...eventIdentity,
-            title: ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
-            text: handles.errorMessage(error)
-          })
-        )
+        // Outside a user Stop the terminal was already committed before cleanup.
+        if (!userStopDisposal)
+          safeCleanup('Artifact cleanup event failed', () =>
+            handles.pushEvent({
+              kind: 'system',
+              level: 'warning',
+              sessionId,
+              ...eventIdentity,
+              title: ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
+              text: handles.errorMessage(error)
+            })
+          )
       }
       const ownsInteraction = interactionCurrent()
       if (ownsInteraction) {
@@ -427,7 +468,7 @@ export class AcpPromptOutcomeFinalizer {
         safeCleanup('activity callback failed', handles.generationActivityChanged)
       // A failed process stop must override provider cancellation, after every owner is released.
       // eslint-disable-next-line no-unsafe-finally
-      if (stopFailure) throw stopFailure
+      if (stopFailure !== undefined) throw stopFailure
     }
   }
 }

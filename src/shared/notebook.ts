@@ -27,7 +27,7 @@ export const NOTEBOOK_RUN_FILE = 'run.json'
 // Execution authorization canonicalizes omitted control/shell deadlines to the same defaults used
 // by the MCP schema and process owner. These are runtime constants, not persisted schema fields.
 export const NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000 + 15_000
-export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 120_000
+export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 300_000
 
 export type ShellRuntimeBinding =
   | Readonly<{
@@ -317,6 +317,8 @@ export type NotebookOutput =
       // image/png is base64.
       type: 'display'
       data: Record<string, string>
+      /** Read projection only. Stored records retain the captured MIME bundle. */
+      deferredImageTypes?: string[]
     }
 
 export type NotebookWorkingFile = {
@@ -502,6 +504,23 @@ export type NotebookRunRecord = {
   interruptionReason?: 'app-terminated' | 'execution-error'
 }
 
+// Main Agent history can contain both provisional and canonical root IDs. Resolve membership
+// from existing provenance without rewriting the records; Subagents remain exact Frame matches.
+export const createNotebookFrameRunFilter = (
+  sessionId: string,
+  agentFrameId: string,
+  runs: readonly NotebookRunRecord[]
+): ((run: NotebookRunRecord) => boolean) => {
+  const canonicalRootFrameId = `root-frame-${sessionId}`
+  const isRoot =
+    agentFrameId === canonicalRootFrameId || runs.some((run) => run.rootFrameId === agentFrameId)
+  return (run) =>
+    run.agentFrameId === agentFrameId ||
+    (isRoot &&
+      run.agentFrameId !== undefined &&
+      (run.agentFrameId === canonicalRootFrameId || run.agentFrameId === run.rootFrameId))
+}
+
 // Orthogonal to NotebookRunStatus: a completed run may later become stale when a name it depended
 // on is redefined in the same persistent-kernel generation.
 export type NotebookRunStaleness =
@@ -605,6 +624,22 @@ export type NotebookProjectBackgroundRunActivity = ProjectIdScope & {
   acceptedAt: number
 }
 
+// Display fields for the Session background-task list. Large code and output stay in Notebook.
+export type NotebookBackgroundTask = Pick<
+  NotebookRunRecord,
+  | 'runId'
+  | 'agentFrameId'
+  | 'status'
+  | 'kernelKind'
+  | 'environment'
+  | 'startedAt'
+  | 'endedAt'
+  | 'cancellationRequestedAt'
+  | 'shellConcurrency'
+> & { title: string }
+
+export type NotebookBackgroundTaskSnapshot = { runs: NotebookBackgroundTask[] }
+
 export type NotebookProjectActivityRequest = ProjectIdScope
 
 export type NotebookProjectActivity = Readonly<{
@@ -619,6 +654,73 @@ export type NotebookRunHistorySummary = {
   runCount: number
   kernelCounts: Record<NotebookKernelKind, number>
   latestDataKernel?: 'python' | 'r'
+}
+
+// Read-time discovery only: no code/output payloads, transcript reads, or persisted fields.
+export type NotebookHistoryView = {
+  kernelKind: NotebookKernelKind
+  environment?: string
+  runCount: number
+  latestRunId: string
+}
+
+export type NotebookAgentSummary = {
+  agentFrameId: string
+  isRoot: boolean
+  runCount: number
+  // Newest view first, so an unopened view defaults to its actual last-used environment.
+  views: NotebookHistoryView[]
+}
+
+export const summarizeNotebookHistory = (
+  sessionId: string,
+  runs: readonly NotebookRunRecord[]
+): NotebookAgentSummary[] => {
+  const canonicalRoot = `root-frame-${sessionId}`
+  const agents = new Map<
+    string,
+    {
+      first: NotebookRunRecord
+      count: number
+      views: Map<string, { run: NotebookRunRecord; count: number }>
+    }
+  >()
+  const compare = (a: NotebookRunRecord, b: NotebookRunRecord): number =>
+    a.startedAt - b.startedAt || a.runId.localeCompare(b.runId)
+  const environmentOf = (run: NotebookRunRecord): string | undefined =>
+    run.kernelKind === 'python' || run.kernelKind === 'r'
+      ? (run.environment ?? (run.kernelKind === 'r' ? 'default-r' : 'default-python'))
+      : undefined
+  for (const run of runs) {
+    if (!run.agentFrameId) continue
+    const id = run.agentFrameId === run.rootFrameId ? canonicalRoot : run.agentFrameId
+    const agent = agents.get(id) ?? { first: run, count: 0, views: new Map() }
+    if (compare(run, agent.first) < 0) agent.first = run
+    agent.count += 1
+    const key = JSON.stringify([run.kernelKind, environmentOf(run)])
+    const view = agent.views.get(key)
+    agent.views.set(key, {
+      run: view && compare(view.run, run) > 0 ? view.run : run,
+      count: (view?.count ?? 0) + 1
+    })
+    agents.set(id, agent)
+  }
+  // First execution order gives delegates deterministic numbers independent of the current page.
+  return [...agents.entries()]
+    .sort((a, b) => compare(a[1].first, b[1].first) || a[0].localeCompare(b[0]))
+    .map(([agentFrameId, agent]) => ({
+      agentFrameId,
+      isRoot: agentFrameId === canonicalRoot,
+      runCount: agent.count,
+      views: [...agent.views.values()]
+        .sort((a, b) => compare(b.run, a.run))
+        .map(({ run, count }) => ({
+          kernelKind: run.kernelKind,
+          ...(environmentOf(run) ? { environment: environmentOf(run) } : {}),
+          runCount: count,
+          latestRunId: run.runId
+        }))
+    }))
 }
 
 // Stable chronological cursor for renderer history pagination. runId disambiguates runs that share
@@ -660,6 +762,8 @@ export type NotebookSessionState = {
   runtimeBindings?: NotebookRuntimeBindings
   // Present only when state() requested one Agent's complete-history discovery metadata.
   historySummary?: NotebookRunHistorySummary
+  // Complete Agent/kernel/environment discovery, independent of the bounded record window.
+  agentSummaries: NotebookAgentSummary[]
   // Present on normal and cursor-paged renderer reads; omitted for sparse run-id/summary requests.
   historyPage?: NotebookRunPage
   runs: NotebookRunRecord[]
@@ -682,7 +786,12 @@ export type NotebookSessionReference = ProjectIdScope & {
 }
 
 export type NotebookAvailableEvent = NotebookSessionReference
-export type NotebookChangedEvent = NotebookSessionReference
+export type NotebookChangedEvent = NotebookSessionReference & {
+  // A successful append changes only the draft cell code within an existing write lock.
+  codeAppendOnly?: true
+  // A draft acquired or released its write lock without changing Run history.
+  codeWriteOnly?: true
+}
 
 // Extends a run record with workspace roots so the agent can decide what to do next.
 export type NotebookRunSummary = Omit<
@@ -749,11 +858,33 @@ export const isNotebookRunCursor = (value: unknown): value is NotebookRunCursor 
   )
 }
 
+export type NotebookRunFigureRequest = NotebookSessionRequest & {
+  runId: string
+  outputIndex: number
+  mimeType: string
+}
+
+export type NotebookRunEvidenceRequest = NotebookSessionRequest & { runId: string }
+
+export type NotebookRunEvidenceSnapshot = Pick<
+  NotebookRunRecord,
+  | 'runId'
+  | 'kernelEpochId'
+  | 'environmentCapture'
+  | 'environmentManifestChecksum'
+  | 'environmentManifest'
+  | 'helperEvidenceStatus'
+>
+
 export type NotebookSessionStateRequest = NotebookSessionRequest & {
   runIds?: string[]
   historySummaryFrameId?: string
   historyBefore?: NotebookRunCursor
   historyLimit?: number
+  /** Prefer a smaller initial Run window when opening the Notebook preview. */
+  previewHistory?: true
+  /** Return captured image MIME types without transferring their payloads. */
+  deferImages?: true
 }
 
 // Read-only, process-local view of the selected live data-kernel namespace. These values are never

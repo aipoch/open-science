@@ -3,8 +3,18 @@ import {
   SessionHistoryCursorStaleError,
   loadSessionHistoryPageRequestSchema
 } from '../shared/session-history'
+import type {
+  ImageTask,
+  ImageTaskStart,
+  ImageTaskList,
+  ImageTaskStartResult,
+  ImageTaskIdentity
+} from '../shared/image-task'
+import type { ImageTaskOwner } from './image-model/tasks'
+import { ImageModelError } from './image-model/contract'
 import type { LocalModelSnapshot } from '../shared/local-models'
 import type {
+  ResearchVideoActiveSession,
   ResearchVideoPresentationRequest,
   ResearchVideoStartRequest,
   ResearchVideoStatusRequest,
@@ -13,7 +23,8 @@ import type {
 import type { createResearchVideoPresentationOwner } from './research-video/presentation'
 import type {
   ResearchVideoProgress,
-  ResearchVideoExportResult
+  ResearchVideoExportResult,
+  ResearchVideoResolution
 } from '@aipoch/research-film/contracts'
 import type { createVideoExportTools } from '@aipoch/research-film'
 import { createResearchVideoExportControl } from './research-video/export-control'
@@ -49,7 +60,11 @@ import type { ProjectFilesHandlers } from './project-files/ipc'
 import type { ProjectHandlers } from './projects/ipc'
 import type { SessionPersistenceHandlers } from './session-persistence/ipc'
 import type { ManagedPreviewOwnerRegistry } from './managed-preview-ipc'
-import { canMutateSessionDelegationPolicy } from './caller-context'
+import {
+  canMutateSessionDelegationPolicy,
+  canRelayTaskInteraction,
+  hasCallerAuthority
+} from './caller-context'
 import { preserveSessionSizeLimitCode } from './session-persistence/application-command-errors'
 
 import {
@@ -58,6 +73,7 @@ import {
 } from '../shared/application-command-contract'
 import * as Artifacts from '../shared/artifacts'
 import type * as ConversationExport from '../shared/conversation-export'
+import * as OrgCases from '../shared/org-cases'
 import * as SessionPackage from '../shared/session-package'
 import type * as SessionDiagnostics from '../shared/session-diagnostics'
 import { sessionDiagnosticCommandContracts } from '../shared/session-diagnostics-contracts'
@@ -244,6 +260,12 @@ type DataRootWrite = <Result>(operation: () => Promise<Result>) => Promise<Resul
 
 type DataContentApplicationCommandDependencies = Readonly<{
   useCaseCatalog: UseCaseCatalog
+  orgCases: {
+    listCases(query?: OrgCases.ListOrgCasesQuery): Promise<OrgCases.ListOrgCasesResult>
+    getCase(caseId: string): Promise<OrgCases.GetOrgCaseDetailResult>
+    importCase(caseId: string): Promise<OrgCases.ImportOrgCaseResult>
+    cancelImport(caseId?: string): OrgCases.CancelOrgCaseImportResult
+  }
   officePreviewCommands: OfficePreviewCommands
   pptxEditCommands: PptxEditCommands
   pptxDraftCommands: PptxDraftCommands
@@ -254,6 +276,7 @@ type DataContentApplicationCommandDependencies = Readonly<{
   electron: ElectronDataContentApplicationCommandAdapter
   events: ApplicationEventPublisher
   managedFileVersions: ManagedFileVersionCommandOwner
+  imageTasks?: ImageTaskOwner
   researchVideoPresentation?: ReturnType<typeof createResearchVideoPresentationOwner>
   videoExportTools?: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
   managedPreview: ManagedPreviewApplicationCommandOwner
@@ -289,6 +312,26 @@ const dataContentApplicationCommands = Object.freeze({
     readonly ['cached' | 'refreshed' | 'reload'],
     UseCase[]
   >('sessions:use-case-catalog', useCaseCatalogContract),
+  orgCasesList: defineApplicationCommand<
+    'sessions:org-cases-list',
+    readonly [query?: OrgCases.ListOrgCasesQuery],
+    OrgCases.ListOrgCasesResult
+  >('sessions:org-cases-list', OrgCases.orgCaseCommandContracts.list),
+  orgCaseDetail: defineApplicationCommand<
+    'sessions:org-case-detail',
+    readonly [caseId: string],
+    OrgCases.GetOrgCaseDetailResult
+  >('sessions:org-case-detail', OrgCases.orgCaseCommandContracts.detail),
+  orgCaseImport: defineApplicationCommand<
+    'sessions:org-case-import',
+    readonly [caseId: string],
+    OrgCases.ImportOrgCaseResult
+  >('sessions:org-case-import', OrgCases.orgCaseCommandContracts.import),
+  orgCaseCancelImport: defineApplicationCommand<
+    'sessions:org-case-cancel-import',
+    readonly [caseId?: string],
+    OrgCases.CancelOrgCaseImportResult
+  >('sessions:org-case-cancel-import', OrgCases.orgCaseCommandContracts.cancelImport),
   officePreviewOpen: invocationCommandFor<OfficePreviewCommands>()('office-preview:open', 'open'),
   officePreviewAttachFrame: invocationCommandFor<OfficePreviewCommands>()(
     'office-preview:attach-frame',
@@ -463,9 +506,34 @@ const dataContentApplicationCommands = Object.freeze({
   >('preview-resources:read-range'),
   previewResearchVideoExport: defineApplicationCommand<
     'preview-resources:export-research-video',
-    readonly [request: { resourceId: string }],
+    readonly [request: { resourceId: string; resolution?: ResearchVideoResolution }],
     ResearchVideoExportResult
   >('preview-resources:export-research-video'),
+  imageTaskStart: defineApplicationCommand<
+    'image-tasks:start',
+    readonly [request: ImageTaskStart],
+    ImageTaskStartResult
+  >('image-tasks:start'),
+  imageTaskGet: defineApplicationCommand<
+    'image-tasks:get',
+    readonly [request: ImageTaskIdentity],
+    ImageTask | undefined
+  >('image-tasks:get'),
+  imageTaskList: defineApplicationCommand<
+    'image-tasks:list',
+    readonly [request: ImageTaskList],
+    ImageTask[]
+  >('image-tasks:list'),
+  imageTaskCancel: defineApplicationCommand<
+    'image-tasks:cancel',
+    readonly [request: ImageTaskIdentity],
+    void
+  >('image-tasks:cancel'),
+  researchVideoPresentationActive: defineApplicationCommand<
+    'research-video:active-sessions',
+    readonly [],
+    readonly ResearchVideoActiveSession[]
+  >('research-video:active-sessions'),
   researchVideoPresentationStart: defineApplicationCommand<
     'research-video:start',
     readonly [request: ResearchVideoStartRequest],
@@ -784,6 +852,11 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.previewResourceRelease,
     dataContentApplicationCommands.previewResearchVideoExport,
     dataContentApplicationCommands.previewResearchVideoCancel,
+    dataContentApplicationCommands.imageTaskStart,
+    dataContentApplicationCommands.imageTaskGet,
+    dataContentApplicationCommands.imageTaskList,
+    dataContentApplicationCommands.imageTaskCancel,
+    dataContentApplicationCommands.researchVideoPresentationActive,
     dataContentApplicationCommands.researchVideoPresentationStart,
     dataContentApplicationCommands.researchVideoPresentationStatus,
     dataContentApplicationCommands.researchVideoPresentationRemove,
@@ -828,6 +901,10 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionExportPackage,
     dataContentApplicationCommands.sessionImportPackage,
     dataContentApplicationCommands.sessionPackageOperation,
+    dataContentApplicationCommands.orgCasesList,
+    dataContentApplicationCommands.orgCaseDetail,
+    dataContentApplicationCommands.orgCaseImport,
+    dataContentApplicationCommands.orgCaseCancelImport,
     dataContentApplicationCommands.useCaseCatalog,
     dataContentApplicationCommands.useCaseIntroduction,
     dataContentApplicationCommands.sessionFilterPdfContextCandidates,
@@ -1077,6 +1154,33 @@ const registerDataContentApplicationCommands = (
           invocation.callerContext.clientId
         )
       },
+      'image-tasks:start': async (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        try {
+          return await dependencies.imageTasks.start(invocation.args[0])
+        } catch (error) {
+          if (!(error instanceof ImageModelError)) throw error
+          return { error: error.detail }
+        }
+      },
+      'image-tasks:get': (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        return dependencies.imageTasks.get(invocation.args[0])
+      },
+      'image-tasks:list': (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        return dependencies.imageTasks.list(invocation.args[0])
+      },
+      'image-tasks:cancel': (invocation) => {
+        if (!dependencies.imageTasks) throw new Error('Image tasks are unavailable.')
+        return dependencies.imageTasks.cancel(invocation.args[0])
+      },
+      'research-video:active-sessions': (invocation) => {
+        assertElectronCaller(invocation, 'research-video:active-sessions')
+        if (!dependencies.researchVideoPresentation)
+          throw new Error('Research explanation service is unavailable.')
+        return dependencies.researchVideoPresentation.activeSessions()
+      },
       'research-video:start': (invocation) => {
         assertElectronCaller(invocation, 'research-video:start')
         if (!dependencies.researchVideoPresentation)
@@ -1317,11 +1421,56 @@ const registerDataContentApplicationCommands = (
           ? dependencies.useCaseCatalog.cached()
           : dependencies.useCaseCatalog.refresh(invocation.args[0] === 'reload')
       },
+      'sessions:org-cases-list': (invocation) => {
+        assertElectronOrLocalWebCaller(invocation, dataContentApplicationCommands.orgCasesList.name)
+        return dependencies.orgCases.listCases(invocation.args[0])
+      },
+      'sessions:org-case-detail': (invocation) => {
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.orgCaseDetail.name
+        )
+        return dependencies.orgCases.getCase(invocation.args[0])
+      },
+      'sessions:org-case-import': (invocation) => {
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.orgCaseImport.name
+        )
+        return dependencies.orgCases.importCase(invocation.args[0])
+      },
+      'sessions:org-case-cancel-import': (invocation) => {
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.orgCaseCancelImport.name
+        )
+        return dependencies.orgCases.cancelImport(invocation.args[0])
+      },
       'sessions:package-operation': (invocation) => {
+        if (invocation.args[0].action === 'respond-export-review') {
+          if (
+            !canRelayTaskInteraction(invocation.callerContext) ||
+            !invocation.callerLease.isCurrent()
+          )
+            throw new ApplicationCommandError(
+              'command-unavailable',
+              'Relaying a sensitive export decision requires the authenticated local Agent interface.'
+            )
+          return dependencies.electron.sessionPackageOperation(invocation)
+        }
         assertElectronOrLocalWebCaller(
           invocation,
           dataContentApplicationCommands.sessionPackageOperation.name
         )
+        if (
+          invocation.args[0].action === 'agent-import' &&
+          !hasCallerAuthority(invocation.callerContext, 'import-local-package-path')
+        ) {
+          throw new ApplicationCommandError(
+            'command-unavailable',
+            'Importing an explicit path requires the authenticated local Agent interface.'
+          )
+        }
         return dependencies.electron.sessionPackageOperation(invocation)
       },
       'sessions:filter-pdf-context-candidates': ({ args }) =>

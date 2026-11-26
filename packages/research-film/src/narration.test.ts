@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { encodeVideoWav, prepareVideoNarration } from './narration.js'
+import { encodeVideoWav, mixFilmNarration, prepareVideoNarration } from './narration.js'
 
 describe('research video narration', () => {
   it('speaks original skill say text while aligning expanded numbers and units to caption words', async () => {
@@ -37,6 +37,57 @@ describe('research video narration', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+  it.each([1, 8])(
+    'aligns proportional captions to %i seconds of audio without probes',
+    async (duration) => {
+      const root = await mkdtemp(join(tmpdir(), 'research-video-proportional-'))
+      const caption =
+        'We compare the average temperature across three independent experiments today.'
+      const synthesize = vi.fn(async () => ({
+        samples: new Float32Array(duration * 8000),
+        sampleRate: 8000
+      }))
+      const measureDuration = vi.fn()
+      try {
+        const result = await prepareVideoNarration({
+          spec: { scenes: [{ id: 's', msg: 0, lines: [{ caption }], panels: [] }] },
+          synthesizer: {
+            identity: 'fixture',
+            proportionalTiming: true,
+            synthesize,
+            measureDuration
+          },
+          outputDirectory: join(root, 'voice'),
+          signal: new AbortController().signal
+        })
+        const { words } = result.voices.s_0
+        expect(words).toHaveLength(10)
+        expect(words[0][0]).toBe(0)
+        expect(words.at(-1)?.[1]).toBe(duration)
+        expect(words.every(([a, b], i) => b > a && (!i || a === words[i - 1][1]))).toBe(true)
+        expect(synthesize).toHaveBeenCalledExactlyOnceWith(caption)
+        expect(measureDuration).not.toHaveBeenCalled()
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it('rejects an oversized stereo mix before opening line recordings', async () => {
+    const voice = { duration: 275, words: [[0, 275] as [number, number]] }
+    await expect(
+      mixFilmNarration(
+        {
+          scenes: [
+            { id: 's', msg: 0, panels: [], lines: [{ caption: 'One.' }, { caption: 'Two.' }] }
+          ]
+        },
+        { s_0: voice, s_1: voice },
+        'unused',
+        new AbortController().signal
+      )
+    ).rejects.toThrow('Shorten the film to fit the narration audio limit.')
   })
   it('writes bounded PCM and rejects nonfinite samples', () => {
     const wav = encodeVideoWav(new Float32Array([-2, 0, 2]), 24000)

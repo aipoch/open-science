@@ -1,3 +1,4 @@
+import { CODEBUDDY_VERSION } from './codebuddy-install'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { existsSync } from 'node:fs'
@@ -45,6 +46,12 @@ import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
 // Unit service tests do not start installed coding agents; the native probe has its own coverage.
+vi.mock('../acp/agent-process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../acp/agent-process')>()),
+  isClaudeAgentAcpAvailable: () => true,
+  resolveClaudeAgentAcpEntry: () => '/fixture/claude-acp'
+}))
+
 vi.mock('./provider-acp-validation', () => ({
   ProviderAcpValidator: class {
     validate = vi.fn(async () => ({
@@ -165,7 +172,7 @@ type ManagedInstallImpl = (options: {
   installId: string
   onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
-  registries?: string[]
+  registries?: readonly string[]
   signal?: AbortSignal
 }) => Promise<{
   result: { installId: string; ok: boolean; error?: string }
@@ -198,6 +205,7 @@ const createService = (
     installManagedClaudeImpl?: ManagedInstallImpl
     installManagedOpencodeImpl?: ManagedInstallImpl
     installManagedCodexImpl?: ManagedCodexInstallImpl
+    probeRegistry?: SettingsServiceOptions['probeRegistry']
     // When set, opencode detection resolves this path/version; otherwise it finds nothing.
     opencodeDetected?: { path: string; version: string }
     // When set, CodeBuddy detection resolves this path/version; otherwise it finds nothing.
@@ -244,12 +252,14 @@ const createService = (
     userAgentsDir: options.userAgentsDir ?? join(storageRoot, 'no-user-agents'),
     userSkills: options.userSkills,
     executeClaudeProbe: options.executeClaudeProbe,
+    installManagedClaudeAcpImpl: vi.fn(async () => undefined),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedClaudeImpl: options.installManagedClaudeImpl as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedOpencodeImpl: options.installManagedOpencodeImpl as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     installManagedCodexImpl: options.installManagedCodexImpl as any,
+    probeRegistry: options.probeRegistry ?? (async () => 10),
     detectDeps: {
       env: {},
       homePath: '/home',
@@ -294,7 +304,7 @@ const createService = (
       getAdapterVersion: (path) =>
         Promise.resolve(
           path === options.codexDetected?.path || path === options.managedCodexAdapterPath
-            ? (options.codexDetected?.version ?? 'codex-acp 1.6.2')
+            ? (options.codexDetected?.version ?? 'codex-acp 2.6.0')
             : undefined
         ),
       getCodexVersion: (path) =>
@@ -302,7 +312,7 @@ const createService = (
           path === options.codexDetected?.nativePath
             ? options.codexDetected.nativeVersion
             : path === options.managedCodexNativePath
-              ? 'codex-cli 0.157.1'
+              ? 'codex-cli 0.166.0'
               : path === options.codexExternalNative?.path
                 ? options.codexExternalNative.version
                 : undefined
@@ -3082,9 +3092,9 @@ describe('SettingsService: preflight & spawn config', () => {
     ] as const) {
       await repository.setCodexInfo({
         resolvedPath: adapter,
-        version: '1.6.2',
+        version: '2.6.0',
         nativePath,
-        nativeVersion: '0.157.1'
+        nativeVersion: '0.166.0'
       })
       const snapshot = await service.getSettingsView()
       expect(snapshot.codexManaged).toBe(true)
@@ -3113,11 +3123,11 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(authPath, authContent)
     await writeFile(configPath, 'model = "account-default"\n')
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex',
       managedCodexAdapterPath: adapterPath
     })
-    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '2.6.0' })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
       id: CODEX_ISOLATED_PROVIDER_ID,
@@ -3152,9 +3162,9 @@ describe('SettingsService: preflight & spawn config', () => {
     const service = createService(undefined, {
       codexDetected: {
         path: adapterPath,
-        version: 'codex-acp 1.6.2',
+        version: 'codex-acp 2.6.0',
         nativePath,
-        nativeVersion: 'codex-cli 0.157.1'
+        nativeVersion: 'codex-cli 0.166.0'
       }
     })
 
@@ -3163,9 +3173,9 @@ describe('SettingsService: preflight & spawn config', () => {
 
     expect(snapshot.codex).toEqual({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativeManaged: false,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     expect(await service.getPreflight()).toMatchObject({ codexReady: true, agentReady: true })
   })
@@ -3176,8 +3186,8 @@ describe('SettingsService: preflight & spawn config', () => {
     // the smoke test. Otherwise native CLI would show missing and block Continue.
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
-      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: '/usr/local/bin/codex', version: 'codex-cli 0.157.1' }
+      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 2.6.0' },
+      codexExternalNative: { path: '/usr/local/bin/codex', version: 'codex-cli 0.166.0' }
     })
 
     const result = await service.checkEnvironment()
@@ -3199,16 +3209,16 @@ describe('SettingsService: preflight & spawn config', () => {
     const globalAdapterPath = '/opt/tools/codex-acp'
     const globalNativePath = '/usr/local/bin/codex'
     const service = createService(undefined, {
-      codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.157.1' },
+      codexDetected: { path: globalAdapterPath, version: 'codex-acp 2.6.0' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.166.0' },
       managedCodexAdapterPath: managedAdapterPath
     })
     await repository.setAgentFramework('codex')
     await repository.setCodexInfo({
       resolvedPath: globalAdapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: globalNativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
 
     const result = await service.checkEnvironment()
@@ -3216,9 +3226,9 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(result.ready).toBe(true)
     expect((await repository.getSettings()).codex).toEqual({
       resolvedPath: managedAdapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: globalNativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
   })
 
@@ -3227,7 +3237,7 @@ describe('SettingsService: preflight & spawn config', () => {
     // executable is not sufficient because runtime must not fall back to ambient profile discovery.
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
-      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.6.2' }
+      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 2.6.0' }
       // No codexExternalNative: probe finds nothing, but smoke test passed.
     })
 
@@ -3249,7 +3259,7 @@ describe('SettingsService: preflight & spawn config', () => {
     // records adapterFound=true with a smoke-test-failed reason that the UI must honor.
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
-      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.6.2' },
+      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 2.6.0' },
       codexSmokeOk: false
     })
 
@@ -3268,7 +3278,7 @@ describe('SettingsService: preflight & spawn config', () => {
     const service = createService(undefined, {
       codexDetected: {
         path: managedCodexAdapterEntry(storageRoot),
-        version: 'codex-acp 1.6.2',
+        version: 'codex-acp 2.6.0',
         nativePath: managedCodexBinary(storageRoot)
       }
     })
@@ -3284,15 +3294,15 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await service.detectCodex()
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     const provider = (
       await service.upsertProvider({
@@ -3366,14 +3376,14 @@ describe('SettingsService: preflight & spawn config', () => {
     const service = createService(undefined, {
       codexDetected: {
         path: adapterPath,
-        version: 'codex-acp 1.6.2',
+        version: 'codex-acp 2.6.0',
         nativePath,
-        nativeVersion: 'codex-cli 0.157.1'
+        nativeVersion: 'codex-cli 0.166.0'
       }
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath
     })
     const provider = (
@@ -3384,7 +3394,7 @@ describe('SettingsService: preflight & spawn config', () => {
         key: 'test-key'
       })
     ).providers[0]
-    await service.setActiveProvider(provider.id, 'gpt-5.4')
+    await service.setActiveProvider(provider.id, 'gpt-5.5')
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     const backend = await resolveActiveBackend(service)
@@ -3403,16 +3413,16 @@ describe('SettingsService: preflight & spawn config', () => {
     const service = createService(undefined, {
       codexDetected: {
         path: adapterPath,
-        version: 'codex-acp 1.6.2',
+        version: 'codex-acp 2.6.0',
         nativePath,
-        nativeVersion: 'codex-cli 0.158.0'
+        nativeVersion: 'codex-cli 0.167.0'
       }
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     const provider = (
       await service.upsertProvider({
@@ -3422,7 +3432,7 @@ describe('SettingsService: preflight & spawn config', () => {
         key: 'test-key'
       })
     ).providers[0]
-    await service.setActiveProvider(provider.id, 'gpt-5.4')
+    await service.setActiveProvider(provider.id, 'gpt-5.5')
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     const backend = await resolveActiveBackend(service)
@@ -3446,9 +3456,9 @@ describe('SettingsService: preflight & spawn config', () => {
     await chmod(adapterPath, 0o755)
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
@@ -3489,15 +3499,15 @@ describe('SettingsService: preflight & spawn config', () => {
     await chmod(globalAdapterPath, 0o755)
     await chmod(globalNativePath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.157.1' },
+      codexDetected: { path: globalAdapterPath, version: 'codex-acp 2.6.0' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.166.0' },
       managedCodexAdapterPath: managedAdapterPath
     })
     await repository.setCodexInfo({
       resolvedPath: globalAdapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: globalNativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -3528,15 +3538,15 @@ describe('SettingsService: preflight & spawn config', () => {
     await chmod(globalAdapterPath, 0o755)
     await chmod(globalNativePath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.157.1' },
+      codexDetected: { path: globalAdapterPath, version: 'codex-acp 2.6.0' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.166.0' },
       managedCodexAdapterPath: join(storageRoot, 'missing-managed-adapter', 'index.js')
     })
     await repository.setCodexInfo({
       resolvedPath: globalAdapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: globalNativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -3563,10 +3573,10 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(managedAdapterPath, '#!/usr/bin/env node\n')
     await chmod(managedAdapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: managedAdapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: managedAdapterPath, version: 'codex-acp 2.6.0' },
       managedCodexAdapterPath: managedAdapterPath
     })
-    await repository.setCodexInfo({ resolvedPath: managedAdapterPath, version: '1.6.2' })
+    await repository.setCodexInfo({ resolvedPath: managedAdapterPath, version: '2.6.0' })
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
@@ -3601,15 +3611,15 @@ describe('SettingsService: preflight & spawn config', () => {
       logoutIsolated: vi.fn()
     }
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex',
       codexAuth
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
@@ -3655,7 +3665,7 @@ describe('SettingsService: preflight & spawn config', () => {
       logoutIsolated: vi.fn()
     }
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex',
       codexAuth,
       resolveCodexProxyEnvironment: () =>
@@ -3670,9 +3680,9 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
@@ -3753,7 +3763,7 @@ describe('SettingsService: preflight & spawn config', () => {
     })
 
     const fallbackService = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex',
       resolveCodexProxyEnvironment: () => Promise.resolve(undefined)
     })
@@ -3770,14 +3780,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
@@ -3884,14 +3894,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -3920,7 +3930,7 @@ describe('SettingsService: preflight & spawn config', () => {
 
     // Chat Completions provider ⇒ bridge ⇒ Codex runs the classic-tool-mode catalog model so it
     // advertises the shell_command function tool the bridge can forward (CODEX_BRIDGE_MODEL).
-    expect(backend.sessionModel).toBe('gpt-5.4')
+    expect(backend.sessionModel).toBe('gpt-5.5')
     expect(backend.sessionEffort).toBe('none')
     expect(backend.contextWindow).toBe(1_000_000)
     expect(backend.providerConfiguration).toEqual({
@@ -4064,14 +4074,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const first = (
@@ -4165,14 +4175,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -4207,14 +4217,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -4490,7 +4500,7 @@ describe('SettingsService: official vendors', () => {
     expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
   })
 
-  it('refreshes DeepSeek models while retaining bundled compatibility names', async () => {
+  it('stores the returned DeepSeek IDs and exposes its two compatible aliases in the picker', async () => {
     const service = createService()
     mockedNet.fetch.mockClear()
     vi.stubGlobal(
@@ -4521,7 +4531,7 @@ describe('SettingsService: official vendors', () => {
       expect.objectContaining({ method: 'GET', signal: expect.any(AbortSignal) })
     )
 
-    // Preserve the raw discovery result, but expose compatibility names in the effective catalog.
+    // The saved snapshot records the vendor response. The picker also resolves the legacy aliases.
     expect((await repository.getSettings()).providers[0].fetchedModels).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro'
@@ -4530,13 +4540,12 @@ describe('SettingsService: official vendors', () => {
     expect(view.models).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro',
-      'deepseek-flash',
       'deepseek-v4-flash',
       'deepseek-v4-flash-vision-exp'
     ])
   })
 
-  it('keeps a captured DeepSeek session model usable and passes its original id after refresh', async () => {
+  it('preserves a captured removed model id and requires reselection when it is used', async () => {
     await repository.setAgentFramework('claude-code')
     const service = createService()
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
@@ -4548,14 +4557,14 @@ describe('SettingsService: official vendors', () => {
         key: 'k'
       })
     ).providers[0]
-    await service.setActiveProvider(created.id, 'deepseek-v4-flash')
+    await service.setActiveProvider(created.id, 'deepseek-v4-pro')
     const selection = await service.captureActiveAgentBackendSelection()
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            data: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }]
+            data: [{ id: 'deepseek-flash' }]
           })
         )
       )
@@ -4563,18 +4572,15 @@ describe('SettingsService: official vendors', () => {
     expect(await service.refreshProviderModels({ providerId: created.id })).toMatchObject({
       ok: true
     })
-    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-flash')
-    const backend = await service.resolveAgentBackend(selection)
-    expect(backend.env.ANTHROPIC_MODEL).toBe('deepseek-v4-flash')
-    expect(backend.contextUsageModel).toBe('deepseek-v4-flash')
+    expect((await service.getSettingsView()).activeModel).toBe('deepseek-v4-pro')
+    await expect(service.resolveAgentBackend(selection)).rejects.toThrow(
+      'The configured model is no longer available from provider "DeepSeek": "deepseek-v4-pro". Pick another model in Settings → Model.'
+    )
   })
 
   it('reports a refresh failure without changing the bundled catalog', async () => {
     const service = createService()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({ status: 401, json: () => Promise.resolve({}) })
-    )
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })))
 
     const created = (
       await service.upsertProvider({
@@ -4600,7 +4606,7 @@ describe('SettingsService: official vendors', () => {
 
     const result = await service.refreshProviderModels({ providerId: created.id })
     expect(result.ok).toBe(false)
-    expect(result.message).toMatch(/no model-list endpoint/i)
+    expect(result.code).toBe('unsupported')
   })
 
   it.each(['opencode', 'claude-code'] as const)(
@@ -4861,7 +4867,7 @@ describe('SettingsService: image-input capability', () => {
       vi
         .fn()
         .mockResolvedValue(
-          new Response(JSON.stringify({ data: [{ id: 'claude-opus-5-unreleased' }] }))
+          Response.json({ data: [{ id: 'claude-opus-5-unreleased' }], has_more: false })
         )
     )
 
@@ -4874,7 +4880,7 @@ describe('SettingsService: image-input capability', () => {
       })
     ).providers[0]
 
-    await service.refreshProviderModels({ providerId: created.id })
+    expect((await service.refreshProviderModels({ providerId: created.id })).ok).toBe(true)
     // Activate the fetched model, then read the active provider's view.
     const view = (
       await service.setActiveProvider(created.id, 'claude-opus-5-unreleased')
@@ -4884,9 +4890,9 @@ describe('SettingsService: image-input capability', () => {
     expect(view?.supportsImageInput).toBe(true)
   })
 
-  it('uses the vendor default model, not the refreshed catalog head, for the capability fallback', async () => {
+  it('projects the capability of the refreshed default model when no model is selected', async () => {
     const service = createService()
-    // A refresh reorders Kimi's catalog so a text-only id leads, while the default remains multimodal.
+    // With no explicit selection, capabilities follow the refreshed default, which is text-only here.
     vi.stubGlobal(
       'fetch',
       vi
@@ -4900,12 +4906,9 @@ describe('SettingsService: image-input capability', () => {
     ).providers[0]
     await service.refreshProviderModels({ providerId: created.id })
 
-    // With no active model, the capability must match the model resolveProvider actually spawns — the
-    // bundled multimodal default — not the refreshed list head kimi-k2.7-code (text-only), or
-    // OpenCode would keep stripping images from a default that supports them.
     const view = (await service.getSettingsView()).providers.find((p) => p.id === created.id)
     expect(view?.models[0]).toBe('kimi-k2.7-code')
-    expect(view?.supportsImageInput).toBe(true)
+    expect(view?.supportsImageInput).toBe(false)
   })
 })
 
@@ -5448,8 +5451,8 @@ describe('SettingsService: skills', () => {
         // like C:\… when splitting PATH on ':' , so detection would never match the file it created).
         platform: process.platform,
         isRunnable: (path) => Promise.resolve(path === adapterPath),
-        getAdapterVersion: () => Promise.resolve('codex-acp 1.6.2'),
-        getCodexVersion: () => Promise.resolve('codex-cli 0.157.1'),
+        getAdapterVersion: () => Promise.resolve('codex-acp 2.6.0'),
+        getCodexVersion: () => Promise.resolve('codex-cli 0.166.0'),
         smokeInitialize: () => Promise.resolve(true),
         resolveNpmBinDirs: () => Promise.resolve([]),
         managedAdapterPath: adapterPath
@@ -5457,9 +5460,9 @@ describe('SettingsService: skills', () => {
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -5586,8 +5589,8 @@ describe('SettingsService: skills', () => {
         homePath: '/home',
         platform: 'linux',
         isRunnable: (path) => Promise.resolve(path === adapterPath),
-        getAdapterVersion: () => Promise.resolve('codex-acp 1.6.2'),
-        getCodexVersion: () => Promise.resolve('codex-cli 0.157.1'),
+        getAdapterVersion: () => Promise.resolve('codex-acp 2.6.0'),
+        getCodexVersion: () => Promise.resolve('codex-cli 0.166.0'),
         smokeInitialize: () => Promise.resolve(true),
         resolveNpmBinDirs: () => Promise.resolve([]),
         managedAdapterPath: adapterPath
@@ -5595,9 +5598,9 @@ describe('SettingsService: skills', () => {
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const customSkillName = 'mcp-xt'
@@ -6009,6 +6012,32 @@ describe('installOpencode', () => {
     expect(result.ok).toBe(false)
     expect((await service.getSettingsView()).opencode).toEqual({})
   })
+
+  it('forwards probe-selected registry order through SettingsService for OpenCode', async () => {
+    const installManagedOpencodeImpl = vi.fn<ManagedInstallImpl>(async ({ installId }) => ({
+      result: { installId, ok: true },
+      resolvedPath: '/data/opencode-managed/bin/opencode',
+      version: '1.18.3'
+    }))
+    const service = createService(undefined, {
+      probeRegistry: async (registry) => {
+        if (registry === 'npmjs') {
+          await new Promise((resolve) => setTimeout(resolve, 25))
+          return 25
+        }
+        return 5
+      },
+      installManagedOpencodeImpl
+    })
+
+    await service.installOpencode({ source: 'managed' }, () => undefined)
+
+    expect(installManagedOpencodeImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        registries: ['https://registry.npmmirror.com', 'https://registry.npmjs.org']
+      })
+    )
+  })
 })
 
 describe('installCodex', () => {
@@ -6017,9 +6046,9 @@ describe('installCodex', () => {
       installManagedCodexImpl: async ({ installId }) => ({
         result: { installId, ok: true },
         adapterPath: '/data/codex-managed/adapter/dist/index.js',
-        adapterVersion: '1.6.2',
+        adapterVersion: '2.6.0',
         codexPath: '/data/codex-managed/codex/vendor/target/bin/codex',
-        codexVersion: '0.157.1'
+        codexVersion: '0.166.0'
       })
     })
 
@@ -6028,9 +6057,9 @@ describe('installCodex', () => {
     expect(result.ok).toBe(true)
     expect((await repository.getSettings()).codex).toEqual({
       resolvedPath: '/data/codex-managed/adapter/dist/index.js',
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/codex/vendor/target/bin/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
   })
 })
@@ -6188,7 +6217,7 @@ describe('checkEnvironment', () => {
     // but the result's runtime + gating reflect the SELECTED framework (OpenCode).
     const service = createService(undefined, {
       opencodeDetected: { path: '/usr/local/bin/opencode', version: '1.19.0' },
-      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: '2.138.0' }
+      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: CODEBUDDY_VERSION }
     })
 
     const result = await service.checkEnvironment()
@@ -6236,7 +6265,7 @@ describe('checkEnvironment', () => {
     await repository.setAgentFramework('opencode')
     // Claude is detectable (default detectDeps); OpenCode is declared absent (no opencodeDetected).
     const service = createService(undefined, {
-      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: '2.138.0' }
+      codebuddyDetected: { path: '/usr/local/bin/codebuddy', version: CODEBUDDY_VERSION }
     })
 
     const result = await service.checkEnvironment()
@@ -6293,13 +6322,13 @@ describe('SettingsService: managed-runtime flags', () => {
 })
 
 describe('SettingsService: uninstall managed runtime', () => {
-  it('uninstalls app-managed Codex and falls back to ready Claude', async () => {
+  it('uninstalls app-managed Codex and falls back to the built-in Agent', async () => {
     const { managedCodexAdapterEntry } = await import('./managed-codex')
     const adapterPath = managedCodexAdapterEntry(storageRoot)
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
-    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '2.6.0' })
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.setAgentFramework('codex')
     const service = createService()
@@ -6308,7 +6337,7 @@ describe('SettingsService: uninstall managed runtime', () => {
 
     await expect(readFile(adapterPath)).rejects.toThrow()
     expect(snapshot.codex).toEqual({})
-    expect(snapshot.agentFrameworkId).toBe('claude-code')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
     expect(activeBackendAffected).toBe(true)
   })
 
@@ -6324,14 +6353,14 @@ describe('SettingsService: uninstall managed runtime', () => {
     expect(activeBackendAffected).toBe(false)
   })
 
-  it('uninstallOpencode removes the managed install, clears the record, and auto-switches to Claude when it was active', async () => {
+  it('uninstallOpencode removes the managed install, clears the record, and switches to the built-in Agent when it was active', async () => {
     // A real managed opencode binary on disk, recorded and selected as the active backend.
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     await mkdir(managedOpencodeDir(storageRoot), { recursive: true })
     await writeFile(opencodeBin, '', 'utf8')
     await chmod(opencodeBin, 0o755)
     await repository.setOpencodeInfo(opencodeBin, '1.18.3')
-    // A separate Claude still present on disk, so the active framework can fall back to it.
+    // A separate Claude still present on disk, which must remain available for explicit selection.
     const claudeBin = join(storageRoot, 'fake-claude', 'claude')
     await mkdir(dirname(claudeBin), { recursive: true })
     await writeFile(claudeBin, '', 'utf8')
@@ -6346,7 +6375,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     await expect(readFile(opencodeBin)).rejects.toThrow()
     expect(snapshot.opencode).toEqual({})
     expect(snapshot.opencodeManaged).toBe(false)
-    expect(snapshot.agentFrameworkId).toBe('claude-code')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
     // OpenCode was the active backend, so the caller must reconnect.
     expect(activeBackendAffected).toBe(true)
   })
@@ -6366,7 +6395,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     expect(activeBackendAffected).toBe(false)
   })
 
-  it('does not auto-switch to the other runtime when it exists but cannot report a version (not ready)', async () => {
+  it('falls back to the built-in Agent when the other external runtime is broken', async () => {
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     await mkdir(managedOpencodeDir(storageRoot), { recursive: true })
     await writeFile(opencodeBin, '', 'utf8')
@@ -6383,10 +6412,10 @@ describe('SettingsService: uninstall managed runtime', () => {
     const { snapshot } = await service.uninstallOpencode()
 
     // A broken runtime is never auto-selected: the selection stays put and the gate will flag it.
-    expect(snapshot.agentFrameworkId).toBe('opencode')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
   })
 
-  it('falls through to ready Codex when earlier fallback runtimes are unavailable', async () => {
+  it('falls back to the built-in Agent even when Codex is ready', async () => {
     const opencodeBin = join(managedOpencodeDir(storageRoot), 'opencode')
     const codexAdapter = join(storageRoot, 'fallback', 'codex-acp')
     const nativePath = join(storageRoot, 'fallback', 'codex')
@@ -6398,9 +6427,9 @@ describe('SettingsService: uninstall managed runtime', () => {
     await repository.setOpencodeInfo(opencodeBin, '1.18.3')
     await repository.setCodexInfo({
       resolvedPath: codexAdapter,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('opencode')
     const service = createService(
@@ -6408,16 +6437,16 @@ describe('SettingsService: uninstall managed runtime', () => {
       {
         codexDetected: {
           path: codexAdapter,
-          version: 'codex-acp 1.6.2',
+          version: 'codex-acp 2.6.0',
           nativePath,
-          nativeVersion: 'codex-cli 0.157.1'
+          nativeVersion: 'codex-cli 0.166.0'
         }
       }
     )
 
     const { snapshot } = await service.uninstallOpencode()
 
-    expect(snapshot.agentFrameworkId).toBe('codex')
+    expect(snapshot.agentFrameworkId).toBe('open-science-agent')
   })
 })
 
@@ -6542,9 +6571,9 @@ describe('SettingsService: reasoning effort', () => {
     await repository.setAgentFramework('codex')
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: execPath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     const codex = (await service.upsertProvider({ type: 'codex-isolated' })).providers[0]
     await service.setActiveProvider(codex.id)
@@ -6709,14 +6738,14 @@ describe('SettingsService: reasoning effort', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (

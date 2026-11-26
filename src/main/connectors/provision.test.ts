@@ -1,9 +1,16 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtemp, mkdir, readdir, readFile, writeFile, stat, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, writeFile, stat, utimes, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
 import type { StoredCustomMcpServer } from '../settings/types'
+
+vi.mock(import('@aipoch/connector-core'), async (importOriginal) => ({
+  ...(await importOriginal()),
+  createConnectorRegistry: () => {
+    throw new Error('Provisioning Skill documents must not compile tool argument validators')
+  }
+}))
 
 describe('syncConnectorSkillDocs', () => {
   it('does not write or remove bundled docs when already cancelled', async () => {
@@ -20,6 +27,26 @@ describe('syncConnectorSkillDocs', () => {
 
       expect(await readFile(join(dir, 'mcp-chemistry', 'SKILL.md'), 'utf8')).toBe('existing')
       expect(await readdir(dir)).toEqual(['mcp-chemistry'])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps identical documents and repairs same-size edits on resync', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'skills-resync-'))
+    try {
+      const sync = (): Promise<void> => syncConnectorSkillDocs(dir, ['chemistry', 'literature'])
+      await sync()
+      const unchanged = join(dir, 'mcp-chemistry', 'SKILL.md')
+      const changed = join(dir, 'mcp-literature', 'SKILL.md')
+      const expected = await readFile(changed)
+      await writeFile(changed, Buffer.alloc(expected.length, 32))
+      await utimes(unchanged, 1, 1)
+      const { mtimeMs } = await stat(unchanged)
+
+      await sync()
+      expect((await stat(unchanged)).mtimeMs).toBe(mtimeMs)
+      expect(await readFile(changed)).toEqual(expected)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

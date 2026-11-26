@@ -157,10 +157,9 @@ export const contracts = {
   'literature.citationStyles': callable<
     (request: LiteratureCitationStylesRequest) => Promise<LiteratureCitationStylesResult>
   >()('literature', ['literature:citation-styles', WEB, undefined, undefined, RUNTIME_VALIDATED]),
-  'literature.lookupMetadata': callable<(doi: string) => Promise<LiteratureItemInput>>()(
-    'literature',
-    ['literature:lookup-metadata', WEB, undefined, undefined, RUNTIME_VALIDATED]
-  ),
+  'literature.lookupMetadata': callable<
+    (reference: string, requestId?: string) => Promise<LiteratureItemInput>
+  >()('literature', ['literature:lookup-metadata', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.completeMetadata': callable<
     (request: LiteratureMetadataCompletionRequest) => Promise<LiteratureMetadataCompletionResult>
   >()('literature', ['literature:complete-metadata', WEB, undefined, undefined, RUNTIME_VALIDATED]),
@@ -198,6 +197,10 @@ export const contracts = {
   'literature.publicationCheck': callable<
     (request: LiteraturePublicationCheckRequest) => Promise<LiteraturePublicationCheckResult>
   >()('literature', ['literature:publication-check', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.cancelRelated': callable<(request: { requestId: string }) => Promise<void>>()(
+    'literature',
+    ['literature:cancel-related', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.related': callable<
     (request: LiteratureRelatedRequest) => Promise<LiteratureRelatedResult>
   >()('literature', ['literature:related', WEB, undefined, undefined, RUNTIME_VALIDATED]),

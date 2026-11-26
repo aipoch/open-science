@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Card } from '@/components/ui/card'
+import { WorkflowDialogFrame } from '@/components/ui/workflow-dialog-frame'
 import { cn } from '@/lib/utils'
 import { APP } from '../../../../shared/app-config'
 import type { StorageInfo } from '../../../../shared/storage'
@@ -12,12 +13,14 @@ import {
   createEmptyProviderFormValue,
   type ProviderFormValue
 } from '../settings/provider-form-value'
+import { RuntimesPanel } from '../settings/RuntimesPanel'
 import { AgentStep } from './AgentStep'
 import { EnvironmentStep } from './EnvironmentStep'
 import { LocationStep, type LocationDraft } from './LocationStep'
 import { NotebookStep } from './NotebookStep'
 import { onboardingErrorMessage } from './onboarding-error'
 import { ProviderStep } from './ProviderStep'
+import { useProviderStepOperation } from './use-provider-step-operation'
 
 type WizardStep = 'environment' | 'agent' | 'provider' | 'notebook' | 'location'
 type OnboardingWizardProps = {
@@ -176,12 +179,20 @@ const OnboardingWizard = ({
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
+  const notebookSettingsOpen = useSettingsStore(
+    (state) => state.isSettingsOpen && state.pendingSettingsIntent?.route.panel === 'runtimes'
+  )
+  const closeSettings = useSettingsStore((state) => state.closeSettings)
   // First-time setup always starts on the visible environment summary, even when every check has
   // already passed. The user explicitly continues to agent setup after reviewing it.
 
   const envInit = useNotebookEnvStore((s) => s.init)
+  const notebookProvisioning = useNotebookEnvStore(
+    (s) => s.status.provisioning || Object.values(s.byLang).some((state) => state?.preparing)
+  )
 
   const [step, setStep] = useState<WizardStep>('environment')
+  const providerOperation = useProviderStepOperation()
   const stepCard = useRef<HTMLDivElement>(null)
   const previousStep = useRef(step)
   useEffect(() => {
@@ -413,6 +424,7 @@ const OnboardingWizard = ({
               />
             ) : step === 'provider' ? (
               <ProviderStep
+                operation={providerOperation}
                 formValue={providerDraft.value}
                 setFormValue={setFormValue}
                 providerId={providerDraft.providerId}
@@ -428,6 +440,22 @@ const OnboardingWizard = ({
           </Card>
         </div>
       </div>
+      {notebookSettingsOpen ? (
+        <WorkflowDialogFrame
+          title={t('Runtimes')}
+          busy={notebookProvisioning}
+          onClose={closeSettings}
+          footer={null}
+        >
+          <RuntimesPanel
+            showLocalShell={false}
+            title={t('Notebook runtimes')}
+            description={t(
+              'Choose which Python and R environments notebooks and the Agent can use. App-managed environments are enabled by default.'
+            )}
+          />
+        </WorkflowDialogFrame>
+      ) : null}
     </main>
   )
 }

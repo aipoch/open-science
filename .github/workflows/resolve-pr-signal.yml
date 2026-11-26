@@ -1,0 +1,90 @@
+name: Resolve PR automation signal
+
+on:
+  workflow_call:
+    inputs:
+      run_id:
+        required: true
+        type: string
+      run_attempt:
+        required: false
+        default: ''
+        type: string
+    outputs:
+      number:
+        value: ${{ jobs.resolve.outputs.number }}
+      head_sha:
+        value: ${{ jobs.resolve.outputs.head_sha }}
+      base_sha:
+        value: ${{ jobs.resolve.outputs.base_sha }}
+      action:
+        value: ${{ jobs.resolve.outputs.action }}
+      title:
+        value: ${{ jobs.resolve.outputs.title }}
+
+permissions: {}
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: read
+    outputs:
+      number: ${{ steps.resolve.outputs.number }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      base_sha: ${{ steps.resolve.outputs.base_sha }}
+      action: ${{ steps.resolve.outputs.action }}
+      title: ${{ steps.resolve.outputs.title }}
+    steps:
+      - id: resolve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          SIGNAL_RUN_ID: ${{ inputs.run_id }}
+          SIGNAL_RUN_ATTEMPT: ${{ inputs.run_attempt }}
+        with:
+          script: |
+            const runId = Number(process.env.SIGNAL_RUN_ID);
+            if (!Number.isSafeInteger(runId) || runId <= 0) throw new Error('Invalid signal run ID');
+            const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId });
+            const repo = context.payload.repository;
+            if (run.repository.id !== repo.id || run.event !== 'pull_request' ||
+                run.path !== '.github/workflows/pr-automation-signal.yml' ||
+                run.status !== 'completed' || run.conclusion !== 'success' ||
+                (process.env.SIGNAL_RUN_ATTEMPT && String(run.run_attempt) !== process.env.SIGNAL_RUN_ATTEMPT)) return;
+            // This is an untrusted routing hint, never authorization. Every effect must
+            // still enforce current PR identity, head, draft state and fork policy.
+            const action = /^PR automation \((opened|edited|synchronize|reopened|ready_for_review|converted_to_draft)\)$/.exec(run.display_title)?.[1];
+            if (!action || !run.head_repository?.id || !run.head_branch) return;
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+              ...context.repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100,
+            });
+            if (!jobs.some(job => job.name === 'Signal PR automation' && job.conclusion === 'success')) return;
+
+            const linked = run.pull_requests.filter(pr => pr.base.repo.id === repo.id &&
+              pr.base.ref === repo.default_branch);
+            if (linked.length > 1) return;
+            let number = linked[0]?.number;
+            if (!number) {
+              // GitHub can omit fork associations; match repository identity as well as ref.
+              const pulls = await github.paginate(github.rest.pulls.list, {
+                ...context.repo, state: 'open', base: repo.default_branch,
+                head: `${run.head_repository.owner.login}:${run.head_branch}`, per_page: 100,
+              });
+              const matches = pulls.filter(pr => pr.head.repo?.id === run.head_repository.id &&
+                pr.head.ref === run.head_branch && pr.head.sha === run.head_sha &&
+                pr.created_at <= run.created_at);
+              if (matches.length !== 1) return;
+              number = matches[0].number;
+            }
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+            if (pr.state !== 'open' || pr.base.repo.id !== repo.id || pr.base.ref !== repo.default_branch ||
+                pr.head.repo?.id !== run.head_repository.id || pr.head.ref !== run.head_branch ||
+                pr.head.sha !== run.head_sha || pr.created_at > run.created_at ||
+                !/^[0-9a-f]{40}$/.test(pr.head.sha) || !/^[0-9a-f]{40}$/.test(pr.base.sha)) return;
+            core.setOutput('number', String(pr.number));
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('action', action);
+            core.setOutput('title', pr.title);

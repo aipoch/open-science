@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AcpStateSnapshot } from '../../shared/acp'
 import { toAcpStateCommandResponse } from '../../shared/acp'
 import { SessionSizeLimitError } from '../../shared/session-persistence'
+import { ApplicationCallerLeaseRegistry } from '../caller-lifecycle'
+import { notebookUserOperation } from '../notebook/execution-intent'
 import {
   createApplicationCommandRouter,
   type ApplicationCallerLease,
@@ -139,6 +141,7 @@ describe('ACP application commands', () => {
       'acp:compact-session',
       'acp:connect',
       'acp:continue-interrupted-turn',
+      'acp:continue-notebook-execution',
       'acp:create-session',
       'acp:delete-session',
       'acp:discard-unavailable-plan',
@@ -234,7 +237,10 @@ describe('ACP application commands', () => {
     expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledWith(interruptedTurn)
     expect(dependencies.runtime.resetSessionContext).toHaveBeenCalledWith(resumeSession)
     expect(dependencies.runtime.compactSession).toHaveBeenCalledWith(compactSession)
-    expect(dependencies.runtime.cancelPrompt).toHaveBeenCalledWith(cancel)
+    expect(dependencies.runtime.cancelPrompt).toHaveBeenCalledWith({
+      ...cancel,
+      userInitiated: true
+    })
     expect(dependencies.runtime.deleteSession).toHaveBeenCalledWith(deleteSession)
     expect(dependencies.runtime.respondToPermission).toHaveBeenCalledWith(permission)
     expect(dependencies.runtime.respondToElicitation).toHaveBeenCalledWith(elicitation)
@@ -302,6 +308,81 @@ describe('ACP application commands', () => {
     expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledTimes(1)
   })
 
+  it('accepts a new Notebook execution prompt only from a current Desktop human caller', async () => {
+    const dependencies = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const request = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      refusalId: 'refusal',
+      text: 'Continue execution after checking memory.'
+    }
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.continueNotebookExecution,
+        invocation([request], createTaskCallerContext())
+      )
+    ).rejects.toThrow('Only a current human caller')
+    for (const web of [
+      createWebCallerContext('local-web'),
+      createWebCallerContext('remote-web', { location: 'remote' })
+    ]) {
+      await expect(
+        router.dispatcher.invoke(acpCommands.continueNotebookExecution, invocation([request], web))
+      ).rejects.toThrow('Open-Science desktop app')
+    }
+    expect(dependencies.workflows.sendPrompt).not.toHaveBeenCalled()
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.continueNotebookExecution,
+        invocation([request], createElectronCallerContext(7))
+      )
+    ).resolves.toEqual(commandResponse)
+    expect(dependencies.workflows.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it.each(['sendPrompt', 'continueNotebookExecution'] as const)(
+    'expires %s execution authority when its document lease ends during prompt preparation',
+    async (command) => {
+      const dependencies = createDependencies()
+      let prepare!: () => void
+      const prepared = new Promise<void>((resolve) => (prepare = resolve))
+      vi.mocked(dependencies.workflows.sendPrompt).mockImplementation(async (request) => {
+        await prepared
+        notebookUserOperation(request)!.assertCurrent()
+        return snapshot
+      })
+      const router = createApplicationCommandRouter()
+      registerAcpCommands(router.registrar, dependencies)
+      const context =
+        command === 'continueNotebookExecution'
+          ? createElectronCallerContext(7)
+          : createWebCallerContext('notebook-human')
+      const leases = new ApplicationCallerLeaseRegistry()
+      const caller = leases.acquire(context)
+      const pending = router.dispatcher.invoke(acpCommands[command], {
+        callerContext: context,
+        callerLease: caller.lease,
+        args: [
+          {
+            projectId: 'project-1',
+            sessionId: 'session-1',
+            refusalId: 'refusal',
+            text: 'Continue execution after checking memory.'
+          }
+        ]
+      })
+      await vi.waitFor(() => expect(dependencies.workflows.sendPrompt).toHaveBeenCalledOnce())
+      const rejected = expect(pending).rejects.toThrow(/expired|current human caller/)
+      caller.release()
+      prepare()
+      await rejected
+      router.dispose()
+      leases.dispose()
+    }
+  )
+
   it.each([
     createElectronCallerContext(7),
     createWebCallerContext('local-web'),
@@ -342,11 +423,13 @@ describe('ACP application commands', () => {
 
     await router.dispatcher.invoke(acpCommands.sendPrompt, invocation([request]))
 
-    expect(dependencies.workflows.sendPrompt).toHaveBeenCalledWith({
-      ...request,
-      continuation: undefined,
-      suppressUserMessage: undefined
-    })
+    expect(dependencies.workflows.sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...request,
+        continuation: undefined,
+        suppressUserMessage: undefined
+      })
+    )
     expect(request.continuation.originatingTurnToken).toBe('renderer-forged-turn')
   })
 
@@ -512,7 +595,7 @@ describe('ACP application commands', () => {
     expect(dependencies.runtime.discardUnavailableSessionPlan).toHaveBeenCalledTimes(1)
   })
 
-  it('routes Plan decisions and revision feedback from current humans and Task automation', async () => {
+  it('routes Plan decisions from current humans and local Task relays, not declared caller identities', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
@@ -540,6 +623,13 @@ describe('ACP application commands', () => {
         acpCommands.respondPlan,
         invocation([request], createTaskCallerContext())
       )
+    ).rejects.toThrow('Plan responses require a current human caller')
+    const relay = { ...request, source: 'user_relay' as const, expectedBranchId: 'branch-1' }
+    await expect(
+      router.dispatcher.invoke(
+        acpCommands.respondPlan,
+        invocation([relay], createTaskCallerContext({ authenticatedLocalBearer: true }))
+      )
     ).resolves.toMatchObject({ changed: true })
     await expect(
       router.dispatcher.invoke(
@@ -551,13 +641,11 @@ describe('ACP application commands', () => {
       router.dispatcher.invoke(
         acpCommands.respondPlan,
         invocation(
-          [request],
+          [relay],
           createWebCallerContext('agent-origin', { actionOrigin: 'agent-session' })
         )
       )
-    ).rejects.toThrow(
-      'Only a current human or Task automation caller can respond to a Session Plan.'
-    )
+    ).rejects.toThrow('Plan responses require a current human caller')
   })
 
   it('preserves the Session size-limit code for Plan responses', async () => {

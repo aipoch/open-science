@@ -8,25 +8,35 @@ import type { UpdateStrategy } from './strategy'
 // Registers the renderer-callable update commands. Returns the strategy so the scheduler can drive it.
 export const registerUpdateIpcHandlers = (
   strategy: UpdateStrategy = createUpdateStrategy(),
-  owner: UpdateCommandOwner = createUpdateCommandOwner(strategy),
-  validateFrame?: (event: import('electron').IpcMainInvokeEvent) => void
+  owner: UpdateCommandOwner | undefined = undefined,
+  validateFrame?: (event: import('electron').IpcMainInvokeEvent) => void,
+  openProcessManager?: () => Promise<boolean>
 ): UpdateStrategy => {
+  const commandOwner = owner ?? createUpdateCommandOwner(strategy, openProcessManager)
   const handle: typeof ipcMainHandle = (channel, listener) => {
     ipcMainHandle(channel, (event, ...args) => {
       validateFrame?.(event)
       return listener(event, ...args)
     })
   }
-  handle('update:recheck', () => owner.recheck())
-  handle('update:recover', () => owner.recover())
-  handle('update:get-app-info', () => owner.getAppInfo())
-  handle('update:get-status', () => owner.getStatus())
-  handle('update:get-installer', () => owner.getInstaller())
-  handle('update:reveal-installer', () => owner.revealInstaller())
-  handle('update:check', () => owner.check())
-  handle('update:download', (_event, options?: UpdateDownloadOptions) => owner.download(options))
-  handle('update:cancel', () => owner.cancel())
-  handle('update:apply', (_event, options?: UpdateApplyOptions) => owner.apply(options))
+  handle('update:recheck', () => commandOwner.recheck())
+  if (strategy.setAutomaticDownloads) {
+    handle('update:set-automatic-downloads', (_event, enabled: boolean) =>
+      strategy.setAutomaticDownloads!(enabled)
+    )
+  }
+  handle('update:recover', () => commandOwner.recover())
+  handle('update:get-app-info', () => commandOwner.getAppInfo())
+  handle('update:get-status', () => commandOwner.getStatus())
+  handle('update:get-installer', () => commandOwner.getInstaller())
+  handle('update:reveal-installer', () => commandOwner.revealInstaller())
+  handle('update:check', () => commandOwner.check())
+  handle('update:download', (_event, options?: UpdateDownloadOptions) =>
+    commandOwner.download(options)
+  )
+  handle('update:cancel', () => commandOwner.cancel())
+  handle('update:apply', (_event, options?: UpdateApplyOptions) => commandOwner.apply(options))
+  handle('update:open-process-manager', () => commandOwner.openProcessManager?.() ?? false)
   return strategy
 }
 

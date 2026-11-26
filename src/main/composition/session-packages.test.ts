@@ -7,6 +7,8 @@ import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtur
 import * as storageRoots from '../storage-root'
 import * as projectDatabase from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
+import { ArchiveCoordinator } from '../archive/coordinator'
+import { ProjectRepository } from '../projects/repository'
 import { SessionProjectionRepository } from '../session-persistence/projection'
 import {
   SessionPersistenceCoordinator,
@@ -87,11 +89,30 @@ async function createPublicationFixture(): Promise<{
     reconcileActiveSessions: vi.fn().mockResolvedValue(undefined),
     markReconciliationIncomplete: vi.fn()
   } satisfies SessionFileIndex)
+  const archiveCoordinator = new ArchiveCoordinator(
+    new ProjectRepository(async () => target.client, target.storageRoot),
+    owner,
+    {
+      isSessionBusy: () => false,
+      isProjectBusy: () => false,
+      liveSessionProjectId: () => undefined
+    }
+  )
   const compose = (): ReturnType<typeof composeSessionPackages> =>
     composeSessionPackages({
       settingsRepository: { getSettings: async () => ({}) },
       storedSettings: { pathsNormalizedAt: 1 },
       getDetectSessionExportBlockingSessions: () => () => [],
+      getSessionExportOwners: () => ({
+        archiveCoordinator,
+        sessionPersistenceCoordinator: owner,
+        // Publication recovery has no Notebook runtime or live process resources.
+        notebookService: {
+          currentExecutionIntent: () => undefined,
+          waitForSessionTeardown: async () => undefined
+        }
+      }),
+      readImageTasks: async () => [],
       modules: { add: (_: undefined, create: () => { capability: unknown }) => create().capability }
     } as unknown as Parameters<typeof composeSessionPackages>[0])
   return { target, archive, repository, owner, compose }
@@ -466,4 +487,31 @@ it('routes receipt progress and targeted cancellation through the existing packa
   } finally {
     await lifecycle.close()
   }
+})
+
+it('includes registered external transfers in both quit and update guards', () => {
+  const lifecycle = { isActive: () => false, close: async () => {} }
+  const surfaces = composeSessionPackageSurfaces({
+    declareElectronAdapter: (name, install) => {
+      if (name === 'session-package-quit-guard') install()
+    },
+    sessionPackageDesktopLifecycle: lifecycle,
+    packageHandoffHeld: { current: false },
+    translate: englishNativeTranslator
+  } as Parameters<typeof composeSessionPackageSurfaces>[0])
+  const canBlockQuit = native.installQuitGuard.mock.calls[0][0] as () => boolean
+
+  let active = true
+  const unregister = surfaces.registerExternalTransferCheck(() => active)
+  expect(lifecycle.isActive()).toBe(true)
+  expect(canBlockQuit()).toBe(true)
+
+  active = false
+  expect(lifecycle.isActive()).toBe(false)
+  expect(canBlockQuit()).toBe(false)
+
+  active = true
+  unregister()
+  expect(lifecycle.isActive()).toBe(false)
+  expect(canBlockQuit()).toBe(false)
 })

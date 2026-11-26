@@ -158,44 +158,53 @@ it('module evidence never pulls in upstream or unrelated package tests', async (
 
 // Cover packages still outside the independent-suite registry as well. Tests and
 // fixtures must not import host code, even when the test compiles a source string.
-it('all package tests and fixtures keep relative dependencies inside their package', () => {
-  const violations: string[] = []
-  for (const file of files('packages').filter(
-    (path) =>
-      /\.[cm]?[jt]sx?$/.test(path) &&
-      (/\.(test|spec)\./.test(path) || /\/(test|tests|test-fixtures)\//.test(path))
-  )) {
-    const root = resolve(file.split('/').slice(0, 2).join('/'))
-    const text = readFileSync(file, 'utf8')
-    const inspect = (source: string): void => {
-      for (const { fileName: specifier } of ts.preProcessFile(source, true, true).importedFiles) {
-        if (!specifier.startsWith('.')) continue
-        const target = relative(root, resolve(file, '..', specifier))
-          .split(sep)
-          .join('/')
-        if (target === '..' || target.startsWith('../')) violations.push(`${file} -> ${specifier}`)
+const packageRoots = readdirSync('packages', { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => `packages/${entry.name}`)
+
+it.each(packageRoots)(
+  '%s tests and fixtures keep relative dependencies inside their package',
+  (packageRoot) => {
+    const root = resolve(packageRoot)
+    const violations: string[] = []
+    for (const file of files(packageRoot).filter(
+      (path) =>
+        /\.[cm]?[jt]sx?$/.test(path) &&
+        (/\.(test|spec)\./.test(path) || /\/(test|tests|test-fixtures)\//.test(path))
+    )) {
+      const text = readFileSync(file, 'utf8')
+      const inspect = (source: string): void => {
+        for (const { fileName: specifier } of ts.preProcessFile(source, true, true).importedFiles) {
+          if (!specifier.startsWith('.')) continue
+          const target = relative(root, resolve(file, '..', specifier))
+            .split(sep)
+            .join('/')
+          if (target === '..' || target.startsWith('../'))
+            violations.push(`${file} -> ${specifier}`)
+        }
       }
-    }
-    inspect(text)
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
-    const visit = (node: ts.Node): void => {
-      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) inspect(node.text)
-      if (
-        ts.isCallExpression(node) &&
-        node.arguments[0] &&
-        ts.isStringLiteral(node.arguments[0]) &&
-        ['vi.mock', 'vi.doMock', 'vi.importActual', 'jest.mock'].includes(
-          node.expression.getText(source)
-        )
-      ) {
-        inspect(`import ${JSON.stringify(node.arguments[0].text)}`)
+      inspect(text)
+      const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true)
+      const visit = (node: ts.Node): void => {
+        if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) inspect(node.text)
+        if (
+          ts.isCallExpression(node) &&
+          node.arguments[0] &&
+          ts.isStringLiteral(node.arguments[0]) &&
+          ['vi.mock', 'vi.doMock', 'vi.importActual', 'jest.mock'].includes(
+            node.expression.getText(source)
+          )
+        ) {
+          inspect(`import ${JSON.stringify(node.arguments[0].text)}`)
+        }
+        ts.forEachChild(node, visit)
       }
-      ts.forEachChild(node, visit)
+      visit(source)
     }
-    visit(source)
-  }
-  expect(violations).toEqual([])
-}, 60_000)
+    expect(violations).toEqual([])
+  },
+  60_000
+)
 
 it('module evidence follows independent package dependency direction', async () => {
   const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
@@ -447,11 +456,14 @@ it('Compute host edits never register or select upstream Compute units', async (
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
     if (
       path.startsWith('src/main/literature/') ||
-      path.startsWith('src/renderer/src/pages/literature/')
+      path.startsWith('src/renderer/src/pages/literature/') ||
+      path === 'src/main/settings/document-store.ts'
     ) {
       expect(plan.mode, path).toBe('full')
       expect(plan.reasonChains).toContainEqual(
-        expect.stringMatching(/^(main_literature|page_literature) -> .+ -> full$/)
+        expect.stringMatching(
+          /^(main_literature|page_literature|settings_repository) -> .+ -> full$/
+        )
       )
       continue
     }
@@ -521,11 +533,14 @@ it('selects durable file consumers downstream without testing unchanged prerequi
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
     if (
       path.startsWith('src/main/literature/') ||
-      path.startsWith('src/renderer/src/pages/literature/')
+      path.startsWith('src/renderer/src/pages/literature/') ||
+      path === 'src/main/settings/document-store.ts'
     ) {
       expect(plan.mode, path).toBe('full')
       expect(plan.reasonChains).toContainEqual(
-        expect.stringMatching(/^(main_literature|page_literature) -> .+ -> full$/)
+        expect.stringMatching(
+          /^(main_literature|page_literature|settings_repository) -> .+ -> full$/
+        )
       )
       continue
     }
@@ -585,29 +600,14 @@ it('routes download package changes downstream and honors full host owners', asy
     `${packageRoot}/src/errors.ts`,
     `${packageRoot}/src/download-speed.ts`
   ]) {
-    expect(createPackageTestPlan([path], registry).selected, path).toEqual([packageRoot])
+    expect(createPackageTestPlan([path], registry).selected.sort(), path).toEqual(
+      [packageRoot, 'packages/literature-discovery', 'packages/literature-library'].sort()
+    )
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
-    expect(plan.mode).toBe('selective')
-    expect(plan.testFiles).toEqual(
-      expect.arrayContaining([
-        `${packageRoot}/src/resilient-download.test.ts`,
-        `${packageRoot}/src/transport.test.ts`,
-        'src/main/update/downloader.test.ts',
-        'src/main/local-models/download.test.ts',
-        'src/main/local-models/owner.test.ts',
-        'src/main/notebook/environment-download.contract.test.ts',
-        'src/main/notebook/windows-runtime-download.contract.test.ts',
-        'src/main/session-package/transfer.test.ts'
-      ])
+    expect(plan.mode).toBe('full')
+    expect(plan.reasonChains).toContain(
+      `resilient_download -> ${loadModuleImpactManifest().modules.resilient_download.fullTestReason} -> full`
     )
-    expect(plan.capabilityOverlays).toEqual(
-      expect.arrayContaining(['windows_sensitive', 'notebook_network_sandbox'])
-    )
-    for (const entry of registry.packages)
-      expect(
-        plan.testFiles.some((file) => file.startsWith(entry.root + '/')),
-        `${path} -> ${entry.root}`
-      ).toBe(entry.root === packageRoot)
   }
   for (const [path, test] of [
     ['src/main/update/downloader.ts', 'src/main/update/downloader.test.ts'],

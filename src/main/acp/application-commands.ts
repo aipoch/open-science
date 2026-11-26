@@ -5,6 +5,7 @@ import type {
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
   AcpContinueInterruptedTurnRequest,
+  AcpContinueNotebookExecutionRequest,
   AcpDeleteSessionRequest,
   AcpPermissionResponse,
   ElicitationResponse,
@@ -30,7 +31,13 @@ import {
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from '../application-command-router'
-import { canAccessSessionPlan, canSatisfyHumanApproval } from '../caller-context'
+import {
+  canAccessSessionPlan,
+  canRelayTaskInteraction,
+  canSatisfyHumanApproval,
+  requireDesktopCaller
+} from '../caller-context'
+import { withNotebookUserOperation } from '../notebook/execution-intent'
 import { z } from 'zod'
 import type { AcpHandlerWorkflows } from './handler-workflows'
 import {
@@ -39,7 +46,7 @@ import {
 } from './response-session-admission'
 import { bindResumeRequestToProject } from './session-project-binding'
 import type { AcpRuntimeCoordinator } from './runtime-coordinator'
-import type { ActivePlanProjection } from '../../shared/session-plan/contract'
+import { PlanCommandError, type ActivePlanProjection } from '../../shared/session-plan/contract'
 import { preserveSessionSizeLimitCode } from '../session-persistence/application-command-errors'
 import { withAgentAuthenticationRecovery } from './prompt-error'
 
@@ -139,13 +146,26 @@ const acpResponseCommandContracts = Object.freeze({
               sessionId: z.string().min(1),
               artifactVersionId: z.string().min(1),
               expectedRevision: z.number().int().nonnegative(),
-              decision: z.enum(['approved', 'rejected'])
+              decision: z.enum(['approved', 'rejected']),
+              source: z.literal('user_relay').optional(),
+              expectedBranchId: z.string().min(1).optional()
             })
             .strict(),
           z
             .object({
               projectId: z.string().min(1),
               sessionId: z.string().min(1),
+              feedback: z.string().min(1)
+            })
+            .strict(),
+          z
+            .object({
+              projectId: z.string().min(1),
+              sessionId: z.string().min(1),
+              artifactVersionId: z.string().min(1),
+              expectedRevision: z.number().int().nonnegative(),
+              source: z.literal('user_relay'),
+              expectedBranchId: z.string().min(1),
               feedback: z.string().min(1)
             })
             .strict()
@@ -198,6 +218,11 @@ const acpCommands = Object.freeze({
     readonly [request: AcpPromptRequest],
     AcpStateCommandResponse
   >('acp:send-prompt'),
+  continueNotebookExecution: defineApplicationCommand<
+    'acp:continue-notebook-execution',
+    readonly [request: AcpContinueNotebookExecutionRequest],
+    AcpStateCommandResponse
+  >('acp:continue-notebook-execution'),
   steerFollowUp: defineApplicationCommand<
     'acp:steer-follow-up',
     readonly [request: AcpSteerFollowUpRequest],
@@ -265,6 +290,7 @@ const acpApplicationCommands = defineApplicationCommandGroup('acp', [
   acpCommands.resetSessionContext,
   acpCommands.compactSession,
   acpCommands.sendPrompt,
+  acpCommands.continueNotebookExecution,
   acpCommands.steerFollowUp,
   acpCommands.saveAsSkill,
   acpCommands.cancel,
@@ -381,14 +407,57 @@ const registerAcpCommands = (
             : dependencies.runtime.compactSession(invocation.args[0])
         ),
       'acp:send-prompt': (invocation) => {
+        const request: AcpPromptRequest = {
+          ...invocation.args[0],
+          turnIntent: invocation.args[0].turnIntent === 'plan-first' ? 'plan-first' : undefined,
+          permissionPrompts: undefined,
+          continuation: undefined,
+          suppressUserMessage: undefined
+        }
         return stateCommand(
-          dependencies.workflows.sendPrompt({
-            ...invocation.args[0],
-            turnIntent: invocation.args[0].turnIntent === 'plan-first' ? 'plan-first' : undefined,
-            permissionPrompts: undefined,
-            continuation: undefined,
-            suppressUserMessage: undefined
-          })
+          dependencies.workflows.sendPrompt(
+            canSatisfyHumanApproval(invocation.callerContext)
+              ? withNotebookUserOperation(request, {
+                  assertCurrent: () => {
+                    if (
+                      !canSatisfyHumanApproval(invocation.callerContext) ||
+                      invocation.callerLease.signal.aborted ||
+                      !invocation.callerLease.isCurrent()
+                    )
+                      throw new Error('Notebook user operation expired.')
+                  }
+                })
+              : request
+          )
+        )
+      },
+      'acp:continue-notebook-execution': (invocation) => {
+        const assertCurrent = (): void => {
+          if (
+            !canSatisfyHumanApproval(invocation.callerContext) ||
+            invocation.callerLease.signal.aborted ||
+            !invocation.callerLease.isCurrent()
+          )
+            throw new Error('Only a current human caller can continue Notebook execution.')
+          requireDesktopCaller(invocation.callerContext)
+        }
+        assertCurrent()
+        const { projectId, refusalId, ...request } = invocation.args[0]
+        if (!projectId?.trim() || !refusalId?.trim() || !request.text?.trim())
+          throw new Error('Notebook continuation requires a current refusal and a new user prompt.')
+        return stateCommand(
+          dependencies.workflows.sendPrompt(
+            withNotebookUserOperation(
+              {
+                ...request,
+                turnIntent: undefined,
+                permissionPrompts: undefined,
+                continuation: undefined,
+                suppressUserMessage: undefined
+              },
+              { projectId, refusalId, desktopContinuation: true, assertCurrent }
+            )
+          )
         )
       },
       'acp:steer-follow-up': (invocation) =>
@@ -400,7 +469,12 @@ const registerAcpCommands = (
         return stateCommand(dependencies.workflows.saveAsSkill(invocation.args[0]))
       },
       'acp:cancel': (invocation) =>
-        stateCommand(dependencies.runtime.cancelPrompt(invocation.args[0])),
+        stateCommand(
+          dependencies.runtime.cancelPrompt({
+            ...invocation.args[0],
+            userInitiated: canSatisfyHumanApproval(invocation.callerContext)
+          })
+        ),
       'acp:delete-session': (invocation) =>
         stateCommand(dependencies.runtime.deleteSession(invocation.args[0])),
       'acp:respond-permission': (invocation) => {
@@ -481,19 +555,33 @@ const registerAcpCommands = (
         )
       },
       'acp:respond-plan': (invocation) => {
-        if (!canAccessSessionPlan(invocation.callerContext)) {
-          throw new Error(
-            'Only a current human or Task automation caller can respond to a Session Plan.'
+        const [input] = invocation.args
+        const context = invocation.callerContext
+        const external =
+          input.source === 'user_relay' &&
+          Boolean(input.expectedBranchId) &&
+          canRelayTaskInteraction(context)
+        if (!external && !(input.source === undefined && canSatisfyHumanApproval(context))) {
+          throw new PlanCommandError(
+            'interaction-mismatch',
+            'Plan responses require a current human caller or an authenticated local Task relaying a user decision.'
           )
         }
+        const respond = (): ReturnType<AcpRuntimeCoordinator['respondSessionPlan']> =>
+          external
+            ? dependencies.runtime.respondSessionPlan(
+                input,
+                () => canRelayTaskInteraction(context) && invocation.callerLease.isCurrent()
+              )
+            : dependencies.runtime.respondSessionPlan(input)
         return preserveSessionSizeLimitCode(() =>
           dependencies.archiveAvailability
             ? dependencies.archiveAvailability.withSessionAvailable(
-                invocation.args[0].projectId,
-                invocation.args[0].sessionId,
-                () => dependencies.runtime.respondSessionPlan(invocation.args[0])
+                input.projectId,
+                input.sessionId,
+                respond
               )
-            : dependencies.runtime.respondSessionPlan(invocation.args[0])
+            : respond()
         )
       }
     })

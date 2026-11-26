@@ -144,7 +144,6 @@ const AgentPanel = ({
   const [isSwitching, setIsSwitching] = useState(false)
   const [frameworkDetectionError, setFrameworkDetectionError] = useState<string | undefined>()
   const [installActionError, setInstallActionError] = useState<string | undefined>()
-  const onboardingAutoSelectAttempted = useRef(false)
   const onboardingSwitchInFlight = useRef(false)
   const onboardingUserIntentVersion = useRef(0)
   const onboardingPendingSwitch = useRef<OnboardingSwitchRequest | null>(null)
@@ -269,44 +268,6 @@ const AgentPanel = ({
     (!codex.version || isSupportedCodexAcpVersion(codex.version)) &&
     isSupportedCodexCliVersion(codex.nativeVersion)
 
-  // First-run users should land on a runtime they can actually use. Registry order is the stable
-  // tie-breaker, and this onboarding-only preference never changes Settings selection behavior.
-  useEffect(() => {
-    if (
-      !isOnboarding ||
-      onboardingAutoSelectAttempted.current ||
-      onboardingUserIntentVersion.current > 0
-    ) {
-      return
-    }
-
-    const readyByFramework: Record<AgentFrameworkId, boolean> = {
-      'claude-code': preflight.claudeReady,
-      opencode: preflight.opencodeReady,
-      codex: codexReady,
-      codebuddy: preflight.codebuddyReady,
-      'open-science-agent': false, // Built-in trial remains an explicit choice during onboarding.
-      pi: preflight.piReady === true
-    }
-    if (agentFrameworkId === 'open-science-agent' || readyByFramework[agentFrameworkId]) return
-
-    const installedFramework = agentFrameworks.find((framework) => readyByFramework[framework.id])
-    if (!installedFramework) return
-
-    onboardingAutoSelectAttempted.current = true
-    queueOnboardingSwitch(installedFramework.id)
-  }, [
-    agentFrameworkId,
-    agentFrameworks,
-    isOnboarding,
-    preflight.claudeReady,
-    codexReady,
-    preflight.codebuddyReady,
-    preflight.piReady,
-    preflight.opencodeReady,
-    queueOnboardingSwitch
-  ])
-
   // The section-level Re-detect re-scans all frameworks at once; the per-card detect buttons
   // were removed in favor of this single action.
   const isDetectingAnyFramework =
@@ -353,7 +314,6 @@ const AgentPanel = ({
     version?: string
     versionDetail?: string
     updateAvailable?: boolean
-    canUpdate?: boolean
     updateHint?: string
     path?: string
     sourceLabel: string
@@ -389,7 +349,7 @@ const AgentPanel = ({
             )
           : t('Install Claude Agent below, or install it manually and re-detect.'),
       uninstallCommand: 'npm uninstall -g @anthropic-ai/claude-code',
-      managed: claudeManaged,
+      managed: claudeManaged || preflight.claudeReady,
       installSources: getClaudeInstallSources(window.api?.platform),
       install: claudeInstall,
       onInstall: (source) =>
@@ -436,15 +396,6 @@ const AgentPanel = ({
       description: t("OpenAI's coding agent, connected through the Codex ACP adapter."),
       ready: codexReady,
       installed: Boolean(codex.resolvedPath),
-      updateRequired: Boolean(
-        codex.resolvedPath &&
-        ((codex.version && !isSupportedCodexAcpVersion(codex.version)) ||
-          !isSupportedCodexCliVersion(codex.nativeVersion))
-      ),
-      minimumVersion:
-        codex.version && !isSupportedCodexAcpVersion(codex.version)
-          ? MINIMUM_CODEX_ACP_VERSION
-          : undefined,
       versionDetail:
         codex.resolvedPath || codex.version || codex.nativeVersion
           ? t('Codex CLI {{nativeVersion}}, ACP {{adapterVersion}}', {
@@ -453,7 +404,10 @@ const AgentPanel = ({
             })
           : undefined,
       updateAvailable: Boolean(
-        codexManaged && codex.nativeManaged && hasCodexNativeUpdate(codex.nativeVersion)
+        codexReady &&
+        codexManaged &&
+        codex.nativeManaged &&
+        hasCodexNativeUpdate(codex.nativeVersion)
       ),
       updateHint:
         codex.resolvedPath &&
@@ -462,7 +416,7 @@ const AgentPanel = ({
           ? t(
               'Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.'
             )
-          : hasCodexNativeUpdate(codex.nativeVersion)
+          : codexReady && hasCodexNativeUpdate(codex.nativeVersion)
             ? codexManaged && codex.nativeManaged
               ? t(
                   'Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.',
@@ -500,7 +454,9 @@ const AgentPanel = ({
       uninstallCommand: 'npm uninstall -g @agentclientprotocol/codex-acp',
       managed: codexManaged,
       installSources:
-        codex.resolvedPath && !isSupportedCodexCliVersion(codex.nativeVersion)
+        codex.resolvedPath &&
+        (!isSupportedCodexCliVersion(codex.nativeVersion) ||
+          (codex.version && !isSupportedCodexAcpVersion(codex.version)))
           ? getCodexInstallSources().filter((source) => source.id === 'managed')
           : getCodexInstallSources(),
       install: codexInstall,
@@ -550,7 +506,6 @@ const AgentPanel = ({
       installed: Boolean(preflight.piRuntimePath),
       updateRequired: Boolean(preflight.piRuntimePath) && !preflight.piReady,
       version: preflight.piReady ? PI_SDK_VERSION : undefined,
-      canUpdate: true,
       path: preflight.piRuntimePath,
       sourceLabel: 'earendil-works/pi',
       sourceUrl: 'https://github.com/earendil-works/pi',
@@ -680,6 +635,12 @@ const AgentPanel = ({
         (check) => check.id === 'agent' && check.status === 'failed'
       ))
 
+  const repairDisabled =
+    anyInstalling ||
+    isUninstalling ||
+    isDetectingAnyFramework ||
+    promptInFlight ||
+    (!isOnboarding && isSwitching)
   const pendingRepairCard = frameworkCards.find((card) => card.key === pendingRepair)
   const installedRadioId =
     installedFrameworks.find((card) => card.ready && card.frameworkId === agentFrameworkId)
@@ -733,7 +694,6 @@ const AgentPanel = ({
       version={card.version}
       versionDetail={card.versionDetail}
       updateAvailable={card.updateAvailable}
-      canUpdate={card.canUpdate}
       updateHint={card.updateHint}
       path={card.path}
       sourceLabel={card.sourceLabel}
@@ -920,14 +880,14 @@ const AgentPanel = ({
         name={pendingRepairCard?.name ?? null}
         sources={pendingRepairCard?.installSources ?? []}
         installing={pendingRepairCard?.install.isInstalling ?? false}
-        disabled={anyInstalling || isUninstalling || (!isOnboarding && isSwitching)}
+        disabled={repairDisabled}
         npmAvailable={npmAvailable}
         blockedInstallSources={
           pendingRepairCard?.frameworkId === agentFrameworkId ? blockedInstallSources : {}
         }
         onCancel={() => setPendingRepair(null)}
         onRepair={(source) => {
-          if (!pendingRepairCard) return
+          if (!pendingRepairCard || repairDisabled) return
           setPendingRepair(null)
           void installFramework(pendingRepairCard, source)
         }}

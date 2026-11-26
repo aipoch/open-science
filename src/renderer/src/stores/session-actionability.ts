@@ -1,6 +1,8 @@
+import { matchesElicitationPrompt } from '../../../shared/elicitation'
 import { hasPendingSandboxNetworkApproval } from '../../../shared/sandbox-network-approval'
 import {
   deriveSessionAttention,
+  latestTurnPromptIds,
   projectSessionAttention
 } from '../../../shared/session-persistence'
 import type { SessionAttention } from '../../../shared/session-attention-contract'
@@ -62,12 +64,20 @@ type SessionInteractionSource = Readonly<{
   liveInteractionState?: ChatSession['liveInteractionState']
   runtimeContext?: ChatSession['runtimeContext']
   activities?: readonly {
+    id?: string
+    promptMessageId?: string
     elicitation?: {
       state: string
-      durable?: { kind: string }
+      durable?: {
+        kind: string
+        promptMessageId?: string
+        provenanceContext?: { messageBranchId?: string }
+      }
+      continuationPending?: boolean
+      continuationRecovery?: unknown
     }
   }[]
-  activeRun?: unknown
+  activeRun?: Pick<NonNullable<ChatSession['activeRun']>, 'promptMessageId'>
   agentPromptInFlight?: boolean
   isPending?: boolean
   pendingRetryable?: boolean
@@ -143,6 +153,56 @@ export const resolveSessionInteractionStatus = (
   return session.activeRun || session.agentPromptInFlight ? 'running' : 'idle'
 }
 
+// Historical requests can arrive before their activity. Unknown ownership keeps the wait.
+export const isCurrentQuestionBranch = (
+  session: Pick<SessionInteractionSource, 'conversationGraph'>,
+  toolCallId: string | undefined,
+  durable: { provenanceContext?: { messageBranchId?: string } } | undefined
+): boolean => {
+  const graph = session.conversationGraph
+  if (!graph) return true
+  const activeBranch = graph.frames.find(
+    (frame) => frame.id === graph.activeFrameId
+  )?.activeBranchId
+  const owner =
+    durable?.provenanceContext?.messageBranchId ??
+    graph.activities.find((activity) => activity.id === toolCallId)?.messageBranchId
+  return !activeBranch || !owner || owner === activeBranch
+}
+
+export const isCurrentSavedQuestion = (
+  session: SessionInteractionSource,
+  activity: NonNullable<SessionInteractionSource['activities']>[number]
+): boolean => {
+  if (!isCurrentQuestionBranch(session, activity.id, activity.elicitation?.durable)) return false
+  const activePromptId = session.activeRun?.promptMessageId
+  const currentPromptIds = activePromptId
+    ? new Set([activePromptId])
+    : latestTurnPromptIds(session.messages ?? [])
+  const authority = session.conversationGraph?.activities.find(({ id }) => id === activity.id)
+  return matchesElicitationPrompt(authority ?? activity, currentPromptIds)
+}
+
+const hasOnlyHistoricalQuestions = (session: SessionInteractionSource): boolean => {
+  // Hydration projects only activities on this branch into the flat list. Read the
+  // graph as well, preferring newer flat activity state for the same tool call.
+  const flat = session.activities ?? []
+  const projectedIds = new Set(flat.map(({ id }) => id))
+  const questions = [
+    ...flat,
+    ...(session.conversationGraph?.activities.filter(({ id }) => !projectedIds.has(id)) ?? [])
+  ].filter(
+    ({ elicitation }) =>
+      elicitation?.state === 'pending' ||
+      elicitation?.continuationPending ||
+      elicitation?.continuationRecovery
+  )
+  return (
+    questions.length > 0 &&
+    questions.every((activity) => !isCurrentSavedQuestion(session, activity))
+  )
+}
+
 const actionAvailability = (
   disabledReason: SessionActionDisabledReason | undefined
 ): SessionActionAvailability =>
@@ -164,7 +224,25 @@ export const projectSessionActionability = (
 ): SessionActionabilityProjection => {
   const isImported = Boolean(session.packageOrigin)
   const interactionState = inferSessionInteractionState(session)
-  const status = resolveSessionInteractionStatus(session, interactionState)
+  const sessionAwaitsAnswer =
+    interactionState.elicitation || session.liveInteractionState?.elicitation === true
+  const elicitationPending =
+    facts.elicitationPending ??
+    (session.liveInteractionState?.elicitation === true ||
+      (interactionState.elicitation && !hasOnlyHistoricalQuestions(session)))
+  const status =
+    sessionAwaitsAnswer && !elicitationPending
+      ? resolveSessionInteractionStatus(
+          session,
+          {
+            ...interactionState,
+            permission:
+              interactionState.permission || session.liveInteractionState?.permission === true,
+            elicitation: false
+          },
+          false
+        )
+      : resolveSessionInteractionStatus(session, interactionState)
   const statusWaitReason = isSessionWaitReason(status) ? status : facts.presentedWaitReason
   const waitReason =
     facts.rootPermissionPending === true
@@ -190,9 +268,6 @@ export const projectSessionActionability = (
     (facts.rootPermissionPending ??
       (interactionState.permission || session.liveInteractionState?.permission === true))
   const credentialPending = facts.credentialPending === true
-  const elicitationPending =
-    facts.elicitationPending ??
-    (interactionState.elicitation || session.liveInteractionState?.elicitation === true)
   const planPending = facts.planPending ?? interactionState.plan
   const blockingInteraction: SessionBlockingInteraction | undefined = permissionPending
     ? 'permission'

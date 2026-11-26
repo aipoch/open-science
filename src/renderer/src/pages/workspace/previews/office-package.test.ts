@@ -178,7 +178,7 @@ describe('validateOfficePackage', () => {
         createZip(validEntries.docx.map((name) => ({ name, flags: 0x0001 }))),
         'docx'
       )
-    ).rejects.toThrow(/encrypted/i)
+    ).rejects.toMatchObject({ code: 'ENCRYPTED_PACKAGE' })
   })
 
   it('rejects ZIP64 packages', async () => {
@@ -384,7 +384,9 @@ describe('validateOfficePackage', () => {
       }
     ])
 
-    await expect(validateOfficePackage(pptx, 'pptx')).rejects.toThrow(/external resources/i)
+    await expect(validateOfficePackage(pptx, 'pptx')).rejects.toMatchObject({
+      code: 'EXTERNAL_RESOURCES'
+    })
   })
 
   it('rejects ZIP entries whose local and central names differ', async () => {
@@ -450,7 +452,9 @@ describe('validateOfficePackage', () => {
       }
     ])
 
-    await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/external resources/i)
+    await expect(validateOfficePackage(docx, 'docx')).rejects.toMatchObject({
+      code: 'EXTERNAL_RESOURCES'
+    })
   })
 
   it.each([
@@ -475,7 +479,9 @@ describe('validateOfficePackage', () => {
       }
     ])
 
-    await expect(validateOfficePackage(docx, 'docx')).rejects.toThrow(/external resources/i)
+    await expect(validateOfficePackage(docx, 'docx')).rejects.toMatchObject({
+      code: 'EXTERNAL_RESOURCES'
+    })
   })
 
   it('allows external hyperlinks in PPTX packages', async () => {

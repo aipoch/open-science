@@ -1,16 +1,19 @@
+import { useImageComposerHost } from './image-edit/image-composer-bridge'
+import { imageEditorScope } from './image-edit/image-editor-state'
 import { usePromptOptimization } from './composer/use-prompt-optimization'
 
 import { ScheduleCardsProvider } from './schedules/ScheduleMessageCard'
 import { ResearchVideoButton } from '../../components/research-video-button'
 import type { TFunction } from 'i18next'
-import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
+import { NotebookMemoryContinuationNotice } from './NotebookMemoryNoticeBridge'
 import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
 import {
   formatNoticeDiagnostics,
   noticePresentation,
   type NoticeActionHandlers
-} from '@/lib/composer-notice/catalog'
+} from '@/components/notices/composer-notice-catalog'
 import {
   SplitButton,
   SplitButtonGroup,
@@ -73,7 +76,10 @@ import {
   createSessionPlanPreviewItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import { projectSessionActionability } from '@/stores/session-actionability'
+import {
+  isCurrentQuestionBranch,
+  projectSessionActionability
+} from '@/stores/session-actionability'
 import { useSessionStore } from '@/stores/session-store'
 import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -106,7 +112,15 @@ import {
   WandSparkles,
   X
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   DelegatedWorkUnavailableReason,
@@ -222,6 +236,29 @@ const composerCancelButtonClassName = cn(
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-200 text-text-000 hover:bg-bg-300 focus-visible:keyboard-focus',
   composerInteractiveTransitionClassName
 )
+const ComposerDock = ({
+  pending,
+  isNewConversation,
+  children
+}: {
+  pending: boolean
+  isNewConversation: boolean
+  children: React.ReactNode
+}): React.JSX.Element => (
+  <div
+    data-testid="conversation-composer-dock"
+    data-placement={isNewConversation ? 'start' : 'bottom'}
+    aria-hidden={pending || undefined}
+    className={cn(
+      'relative shrink-0',
+      pending && 'h-24 md:h-20',
+      isNewConversation && 'min-h-0 flex-1 overflow-y-auto'
+    )}
+  >
+    {pending ? null : children}
+  </div>
+)
+
 const composerContentClassName = 'mx-auto w-full max-w-4xl'
 const attachmentChipClassName =
   'flex h-9 min-w-0 max-w-[220px] items-center gap-2 rounded-lg border border-border-200 bg-bg-200 px-2 text-text-000'
@@ -516,6 +553,28 @@ const ConversationPanel = ({
     state.sessions.find((session) => session.id === activeSession?.branchSource?.sessionId)
   )
   const sourceSessionNumber = sourceSession?.number
+  const sourceSessionId = activeSession?.branchSource?.sessionId
+  const openSourceSession = sessionTools.openSession
+  const forkSourceContent = useMemo(
+    () =>
+      sourceSessionId && openSourceSession ? (
+        <div className="mb-2 flex items-center gap-2 text-xs">
+          <span className="h-px flex-1 bg-border" aria-hidden="true" />
+          <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
+          <button
+            type="button"
+            className="text-primary hover:underline"
+            onClick={() => openSourceSession(sourceSessionId)}
+          >
+            {sourceSessionNumber !== undefined
+              ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
+              : t('Continued from chat')}
+          </button>
+          <span className="h-px flex-1 bg-border" aria-hidden="true" />
+        </div>
+      ) : null,
+    [openSourceSession, sourceSessionId, sourceSessionNumber, t]
+  )
   const hasBookmarkEntry = Boolean(activeSession && (bookmarkCount > 0 || bookmarkLoadError))
   const {
     view: {
@@ -526,6 +585,7 @@ const ConversationPanel = ({
       error: composerError,
       errorFailure: composerFailure,
       errorDetail: composerErrorDetail,
+      attachmentNotice,
       historyStatus,
       isHistoryBrowsing,
       isUploading: isUploadingAttachments,
@@ -856,12 +916,6 @@ const ConversationPanel = ({
     ? submissions.stopBySessionId.get(activeSession.id)
     : undefined
   const isStopping = activeStopSubmission?.pending === true
-  const stopError = activeStopSubmission?.error
-
-  const handleStop = (): void => submissions.submitStop(activeSession?.id, onCancelRun)
-
-  const handleStopSubagents = (): void => submissions.submitStop(activeSession?.id, onStopSubagents)
-
   // Unconditional hook: one shared data source for the background-task strip chip and
   // the expandable ledger. Compute Jobs stay observable before the Notebook exists.
   const backgroundTasks = useSessionBackgroundTasks(
@@ -873,7 +927,12 @@ const ConversationPanel = ({
     activeSession !== undefined &&
     (backgroundTasks.summary.activeCount > 0 || backgroundTasks.summary.totalTasks > 0)
   const [backgroundTasksExpanded, setBackgroundTasksExpanded] = useState(false)
-  const isImported = Boolean(activeSession?.packageOrigin)
+  const isImported = !!activeSession && isImportedSession(activeSession)
+  const historyLoading = activeSession?.contentLoaded === false && !activeSession.historyPage
+  // Commit navigation before mounting a ready (including cached) imported transcript.
+  const readyImportId = isImported && !historyLoading ? activeSession.id : null
+  const deferredImportId = useDeferredValue(readyImportId, null)
+  const importPending = isImported && (historyLoading || readyImportId !== deferredImportId)
   const pendingInteractionFactsBySession = useSessionPendingInteractions()
   const pendingInteractionFacts =
     activeSession && !isImported
@@ -883,6 +942,56 @@ const ConversationPanel = ({
   const subagentSummary = projectSessionSubagents(activeSession, pendingPermissions)
   const hasSubagents = subagentSummary.children.length > 0
   const hasRunningSubagents = subagentSummary.runningCount > 0
+  const graph = activeSession?.conversationGraph
+  const rootBranchId = graph?.frames.find((frame) => frame.id === graph.rootFrameId)?.activeBranchId
+  const run = activeSession?.activeRun
+  const childTargets = subagentSummary.children.flatMap((child) =>
+    child.status === 'running' || child.status === 'awaiting_user'
+      ? [child.attemptId ?? child.frameId]
+      : []
+  )
+  // Main cancels only attempts admitted by this prompt. Detached work from older turns
+  // can outlive a confirmed root cancellation on the very same branch.
+  const runTargets = (activeSession?.runtimeContext?.delegatedWork?.records ?? []).flatMap(
+    (record) => {
+      const attempt = record.attempts.at(-1)
+      return run &&
+        attempt?.status === 'running' &&
+        attempt.initiatingTurnMessageId === run.promptMessageId
+        ? [attempt.id]
+        : []
+    }
+  )
+  const promptId =
+    run?.promptMessageId ?? activeSession?.messages.findLast(({ role }) => role === 'user')?.id
+  if (run) runTargets.push(JSON.stringify(['run', run.promptMessageId, run.startedAt]))
+  else if (
+    conversation.runtimeInteractionInFlight ||
+    activeSession?.status === 'running' ||
+    activeSession?.status.startsWith('waiting-')
+  )
+    runTargets.push(JSON.stringify(['pending', promptId]))
+  if (activeSession?.fixLoopActive) runTargets.push(JSON.stringify(['review', promptId]))
+  if (activeSession?.compacting) runTargets.push(JSON.stringify(['compaction', promptId]))
+  const remainingTargets = new Set([...runTargets, ...childTargets])
+  const stopScope = activeStopSubmission?.scope
+  const stopError =
+    stopScope &&
+    stopScope.branchId === rootBranchId &&
+    stopScope.targets.some((id) => remainingTargets.has(id))
+      ? activeStopSubmission?.error
+      : undefined
+  const handleStop = (): void =>
+    submissions.submitStop(activeSession?.id, onCancelRun, {
+      branchId: rootBranchId,
+      targets: runTargets
+    })
+  const handleStopSubagents = (): void =>
+    submissions.submitStop(activeSession?.id, onStopSubagents, {
+      branchId: rootBranchId,
+      subagentsOnly: true,
+      targets: childTargets
+    })
   const isSaveAsSkillDisabled = isSaveAsSkillDisabledFromParent || hasRunningSubagents
   const saveAsSkillDisabledReason = hasRunningSubagents
     ? t('Wait for all subagents to finish.')
@@ -996,6 +1105,14 @@ const ConversationPanel = ({
   )
   const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
   const promptOptimizationModel = useSettingsStore((state) => state.promptOptimizationModel)
+  const labStateExpired = useSettingsStore((state) => state.lab?.state === 'expired')
+  const providers = useSettingsStore((state) => state.providers)
+  const labSignInExpired =
+    labStateExpired &&
+    Boolean(
+      modelConfiguration?.providerId &&
+      providers.find((provider) => provider.id === modelConfiguration.providerId)?.type === 'lab'
+    )
   const optimizationModelConfiguration =
     promptOptimizationModel.mode === 'fixed'
       ? {
@@ -1020,9 +1137,13 @@ const ConversationPanel = ({
     onChange: (doc) => onValidatedDraftDocChange(doc, undefined, false)
   })
 
+  const annotationDropError = annotationDrop.error
+    ? t('Could not move this annotation. It may have changed or the target is full.')
+    : undefined
+  const fileDropError = fileMentionDrop.error ? t('Could not resolve file version.') : undefined
   const composerNotices = useComposerNotices({
     sessionId: activeSession?.id,
-    authenticationResolved: view.authenticationRecovery?.required === false,
+    authenticationResolved: !labSignInExpired && view.authenticationRecovery?.required === false,
     compacting: activeSession?.compacting,
     turn: isImported ? undefined : currentTurnOutcome,
     recovery: showSessionRecovery ? (sessionRecovery ?? {}) : undefined,
@@ -1058,25 +1179,70 @@ const ConversationPanel = ({
       },
       {
         id: 'action',
-        message: actionError,
+        message: attachmentNotice && actionError === composerError ? undefined : actionError,
         failure: operationFailure ?? (actionError === composerError ? composerFailure : undefined),
         detail:
           operationDiagnostic?.message === actionError ? operationDiagnostic.detail : undefined,
         occurredAt: operationDiagnostic?.occurredAt
       },
       {
-        id: 'composer',
+        id: attachmentNotice ? 'attachment' : 'composer',
+        summary: attachmentNotice,
         message:
-          composerError !== actionError && composerError !== DISCUSSION_DRAFT_CONFLICT
+          (attachmentNotice || composerError !== actionError) &&
+          composerError !== DISCUSSION_DRAFT_CONFLICT
             ? composerError
             : undefined,
-        failure: composerFailure,
+        failure: attachmentNotice ? { category: 'internal', diagnostics: {} } : composerFailure,
         detail: composerErrorDetail
+      },
+      {
+        id: 'annotation-drop',
+        message: annotationDropError,
+        summary: annotationDropError ? { title: annotationDropError } : undefined,
+        failure: { category: 'input', diagnostics: {} }
+      },
+      {
+        id: 'file-drop',
+        message: fileDropError,
+        summary: fileDropError ? { title: fileDropError } : undefined,
+        failure: { category: 'input', diagnostics: {} }
+      },
+      {
+        id: 'stop',
+        message: stopError,
+        summary: stopError
+          ? {
+              title: stopScope?.subagentsOnly
+                ? t('Could not confirm that all subagents stopped.')
+                : t('Could not confirm that the run stopped.')
+            }
+          : undefined,
+        failure: { category: 'internal', diagnostics: {} }
       },
       {
         id: 'authentication',
         message: view.authenticationRecovery?.required ? 'Authentication required' : undefined,
         blocksSend: true
+      },
+      {
+        id: 'lab-auth-expired',
+        message: labSignInExpired ? t('Lab sign-in expired. Sign in again.') : undefined,
+        blocksSend: true,
+        ...(labSignInExpired
+          ? {
+              summary: {
+                title: t('Model provider error'),
+                description: t('Lab sign-in expired. Sign in again.')
+              },
+              failure: {
+                category: 'configuration' as const,
+                reason: 'configuration/auth-failed' as const,
+                diagnostics: {},
+                responseMessage: t('Lab sign-in expired. Sign in again.')
+              }
+            }
+          : {})
       },
       {
         id: 'reconfigure',
@@ -1130,6 +1296,11 @@ const ConversationPanel = ({
   // with a question that is waiting for an answer. A projection without a live request is
   // actionable only when its durable context can reconstruct that request.
   const livePendingElicitationRequest = sessionPendingElicitations.find((request) => {
+    if (
+      !activeSession ||
+      !isCurrentQuestionBranch(activeSession, request.toolCallId, request.durable)
+    )
+      return false
     const state = sessionActivities.find((activity) => activity.id === request.toolCallId)
       ?.elicitation?.state
     return state === undefined || state === 'pending'
@@ -1144,7 +1315,6 @@ const ConversationPanel = ({
   )
   const failedContinuation =
     pendingElicitationActivity?.elicitation?.continuationPending &&
-    !pendingElicitationActivity.elicitation.continuationRecovery &&
     continuationFailure?.requestId === pendingElicitationRequest?.requestId
       ? continuationFailure
       : undefined
@@ -1157,7 +1327,10 @@ const ConversationPanel = ({
           ...pendingElicitationActivity.elicitation,
           ...(failedContinuation
             ? {
-                continuationRecovery: { error: failedContinuation.error }
+                continuationRecovery: {
+                  ...pendingElicitationActivity.elicitation.continuationRecovery,
+                  error: failedContinuation.error
+                }
               }
             : {})
         }
@@ -1184,7 +1357,15 @@ const ConversationPanel = ({
           : pendingCredentialRequest
             ? 'waiting-for-user'
             : undefined,
-        elicitationPending: pendingElicitation ? true : undefined,
+        elicitationPending: pendingElicitation
+          ? true
+          : sessionPendingElicitations.length &&
+              sessionPendingElicitations.every(
+                (request) =>
+                  !isCurrentQuestionBranch(activeSession, request.toolCallId, request.durable)
+              )
+            ? false
+            : undefined,
         planPending:
           pendingPlan !== undefined
             ? true
@@ -1217,8 +1398,12 @@ const ConversationPanel = ({
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
   const packageOperation = usePackageOperationStore((state) => state.operation)
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
+  const { active: imageComposerActive, attachHost: attachImageComposerHost } = useImageComposerHost(
+    imageEditorScope(activeSession),
+    !blockingInteraction && !packageLocked && !authenticationRequired && !isImported
+  )
   const ordinaryComposerBlocked = Boolean(
-    blockingInteraction || packageLocked || authenticationRequired
+    blockingInteraction || packageLocked || authenticationRequired || imageComposerActive
   )
   const pendingChoiceQuestions = resolveAgentUserChoiceQuestions(
     pendingElicitationRequest?.fields ?? pendingElicitation?.fields ?? []
@@ -1293,6 +1478,7 @@ const ConversationPanel = ({
     }
   }, [canEditDraft, ordinaryComposerBlocked])
   const rootTurnBusy = Boolean(
+    conversation.runtimeInteractionInFlight ||
     blockingInteraction ||
     actionability?.activity === 'running' ||
     activeSession?.compacting ||
@@ -1308,16 +1494,21 @@ const ConversationPanel = ({
   }
   // The scroller memo compares this object by identity, so keep it stable across draft edits:
   // callbacks read the latest render's handlers through a ref instead of being recreated.
-  const turnOutcomeHandlers = {
+  const transcriptHandlers = {
+    insertResearchPrompt,
     retryArtifact: (promptMessageId: string): void => {
       if (activeSession) workflows.artifactFinalization.request(activeSession.id, promptMessageId)
     },
     reportError: openReportDialog
   }
-  const turnOutcomeHandlersRef = useRef(turnOutcomeHandlers)
+  const transcriptHandlersRef = useRef(transcriptHandlers)
   useLayoutEffect(() => {
-    turnOutcomeHandlersRef.current = turnOutcomeHandlers
+    transcriptHandlersRef.current = transcriptHandlers
   })
+  const startResearchFromTranscript = useCallback(
+    (prompt: string) => transcriptHandlersRef.current.insertResearchPrompt(prompt),
+    []
+  )
   const artifactRetryingPromptMessageId = workflows.artifactFinalization.retryingPromptMessageId
   const artifactRetryDisabled = isImported || workflows.artifactFinalization.running
   const turnOutcomeActions = useMemo<TurnOutcomeActions>(
@@ -1325,9 +1516,9 @@ const ConversationPanel = ({
       artifactRetryingPromptMessageId,
       artifactRetryDisabled,
       onRetryArtifact: (promptMessageId) =>
-        turnOutcomeHandlersRef.current.retryArtifact(promptMessageId),
+        transcriptHandlersRef.current.retryArtifact(promptMessageId),
       resolveError: resolveRunError,
-      onReportError: (error) => turnOutcomeHandlersRef.current.reportError(error)
+      onReportError: (error) => transcriptHandlersRef.current.reportError(error)
     }),
     [artifactRetryDisabled, artifactRetryingPromptMessageId, resolveRunError]
   )
@@ -1347,7 +1538,7 @@ const ConversationPanel = ({
       run: async (notice) => {
         if (notice.operation === 'reconfigure') return onReconfigureRetry()
         if (notice.recovery === 'retry-artifact-publication' && notice.promptMessageId)
-          return turnOutcomeHandlers.retryArtifact(notice.promptMessageId)
+          return transcriptHandlers.retryArtifact(notice.promptMessageId)
         if (notice.promptMessageId) {
           const prompt = activeSession?.messages.find(({ id }) => id === notice.promptMessageId)
           if (!prompt) return
@@ -1376,16 +1567,26 @@ const ConversationPanel = ({
     },
     'open-provider-settings': {
       run: (notice) => {
+        if (labSignInExpired) {
+          openSettingsToPanel('lab')
+          return
+        }
         if (notice.failure.reason === 'configuration/auth-failed' && view.authenticationRecovery)
           view.authenticationRecovery.openSettings()
-        else
+        else {
+          const failedProvider = useSettingsStore
+            .getState()
+            .providers.find((provider) => provider.id === modelConfiguration?.providerId)
           openSettingsToPanel(
-            notice.failure.reason === 'configuration/claude-cli' ||
-              notice.failure.reason === 'configuration/codex-cli' ||
-              notice.failure.reason === 'configuration/codex-adapter'
-              ? 'agent'
-              : 'model'
+            failedProvider?.type === 'lab'
+              ? 'lab'
+              : notice.failure.reason === 'configuration/claude-cli' ||
+                  notice.failure.reason === 'configuration/codex-cli' ||
+                  notice.failure.reason === 'configuration/codex-adapter'
+                ? 'agent'
+                : 'model'
           )
+        }
       }
     },
     'open-environment': {
@@ -1410,7 +1611,9 @@ const ConversationPanel = ({
     report: {
       run: (notice) => {
         const copy = noticePresentation(notice.failure)
-        openReportDialog(formatNoticeDiagnostics(notice, t(copy.titleKey), t(copy.descriptionKey)))
+        openReportDialog(
+          formatNoticeDiagnostics(notice, t(copy.titleKey), t(copy.descriptionKey)).fullText
+        )
       }
     }
   }
@@ -1463,6 +1666,7 @@ const ConversationPanel = ({
   )
 
   const handleSubmit = (): void => {
+    if (ordinaryComposerBlocked) return
     if (canExplainUnavailableSpecialist && activeSession) {
       setSpecialistNoticeVisible(!specialistNoticeTarget)
       setSpecialistNoticeTarget({ sessionId: activeSession.id, specialistId })
@@ -1806,8 +2010,7 @@ const ConversationPanel = ({
           </button>
         </header>
 
-        {isNewConversation ? null : activeSession?.contentLoaded === false &&
-          !activeSession.historyPage ? (
+        {isNewConversation ? null : historyLoading || importPending ? (
           sessionLoadError ? (
             <div className="flex min-h-0 flex-1 items-center justify-center p-6">
               <SessionPersistenceAlert
@@ -1835,33 +2038,11 @@ const ConversationPanel = ({
                 onStartResearch={
                   canEditDraft &&
                   !draftDoc.nodes.some((node) => node.type !== 'text' || node.text.trim())
-                    ? (prompt) => {
-                        onValidatedDraftDocChange(docFromText(prompt))
-                        window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
-                      }
+                    ? startResearchFromTranscript
                     : undefined
                 }
                 onOpenLibraryMention={layout.onOpenLibraryMention}
-                forkSourceContent={
-                  activeSession?.branchSource && sessionTools.openSession ? (
-                    <div className="mb-2 flex items-center gap-2 text-xs">
-                      <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                      <GitBranch className="size-3 text-muted-foreground" aria-hidden="true" />
-                      <button
-                        type="button"
-                        className="text-primary hover:underline"
-                        onClick={() =>
-                          sessionTools.openSession?.(activeSession.branchSource!.sessionId)
-                        }
-                      >
-                        {sourceSessionNumber !== undefined
-                          ? t('Continued from chat #{{number}}', { number: sourceSessionNumber })
-                          : t('Continued from chat')}
-                      </button>
-                      <span className="h-px flex-1 bg-border" aria-hidden="true" />
-                    </div>
-                  ) : null
-                }
+                forkSourceContent={forkSourceContent}
                 credentialPending={pendingCredentialRequest !== undefined}
                 visiblePermissionPending={!isImported && pendingPermissions.length > 0}
                 optimisticMessage={optimisticMessage}
@@ -1899,10 +2080,9 @@ const ConversationPanel = ({
           </ScheduleCardsProvider>
         )}
 
-        <div
-          data-testid="conversation-composer-dock"
-          data-placement={isNewConversation ? 'start' : 'bottom'}
-          className={cn('relative shrink-0', isNewConversation && 'min-h-0 flex-1 overflow-y-auto')}
+        <ComposerDock
+          pending={importPending || (isImported && !activeSession?.packageOrigin)}
+          isNewConversation={isNewConversation}
         >
           <div
             aria-hidden="true"
@@ -1928,6 +2108,7 @@ const ConversationPanel = ({
                 />
               )}
               <div className="px-1 md:px-3">
+                <NotebookMemoryContinuationNotice session={activeSession} />
                 <ComposerNoticeSlot
                   draftConflict={
                     composerError === DISCUSSION_DRAFT_CONFLICT
@@ -2032,6 +2213,7 @@ const ConversationPanel = ({
                     requests={pendingPermissions.filter((request) => request.delegated)}
                     onRespond={onRespondToPermission}
                     disabled={isStopping}
+                    imageSourceSession={activeSession}
                     notebookLookup={
                       activeSession
                         ? {
@@ -2143,7 +2325,8 @@ const ConversationPanel = ({
                     data-testid="composer-card-backdrop"
                     className={cn(
                       'relative -mb-8 rounded-2xl bg-bg-200 pb-8',
-                      (authenticationRequired ||
+                      (imageComposerActive ||
+                        authenticationRequired ||
                         packageLocked ||
                         hasPendingPermission ||
                         pendingElicitation ||
@@ -2154,6 +2337,7 @@ const ConversationPanel = ({
                   />
 
                   {ordinaryComposerBlocked &&
+                  !imageComposerActive &&
                   (!authenticationRequired || pendingElicitation?.continuationRecovery) ? (
                     <div
                       data-testid="blocking-composer-overlay"
@@ -2165,6 +2349,7 @@ const ConversationPanel = ({
                             requests={rootPermissionRequests}
                             onRespond={onRespondToPermission}
                             embedded
+                            imageSourceSession={activeSession}
                             notebookLookup={
                               activeSession
                                 ? {
@@ -2186,15 +2371,10 @@ const ConversationPanel = ({
                       ) : pendingElicitation?.continuationRecovery ? (
                         <WorkspaceElicitationRecovery
                           key={pendingElicitationRequest?.requestId}
-                          elicitation={{
-                            ...pendingElicitation,
-                            continuationRecovery: {
-                              ...pendingElicitation.continuationRecovery,
-                              error: actionError ?? pendingElicitation.continuationRecovery.error
-                            }
-                          }}
+                          elicitation={pendingElicitation}
                           request={pendingElicitationRequest}
                           onRespond={onRespondToElicitation}
+                          hasModelConfiguration={modelConfiguration !== undefined}
                         />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
@@ -2274,8 +2454,14 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {/* The ordinary composer keeps this lane's geometry while a blocking interaction
-                      overlays it, so panel entry/resize/exit never resizes the transcript viewport. */}
+                  <div
+                    ref={attachImageComposerHost}
+                    hidden={!imageComposerActive}
+                    data-testid="conversation-image-composer"
+                    className="absolute inset-x-0 bottom-0 z-30"
+                  />
+                  {/* The ordinary composer keeps this lane's geometry under the image editor or a
+                      blocking interaction, so panel entry/resize/exit never resizes the transcript viewport. */}
                   <TooltipProvider>
                     {packageLocked ? (
                       <section
@@ -2411,23 +2597,13 @@ const ConversationPanel = ({
                             {t('Add to main conversation')}
                           </div>
                         ) : null}
-                        {annotationDrop.error ? (
-                          <p role="alert" className="text-xs text-danger-000">
-                            {t(
-                              'Could not move this annotation. It may have changed or the target is full.'
-                            )}
-                          </p>
-                        ) : null}
+
                         {fileMentionDrop.over ? (
                           <div className="rounded-md border border-primary px-2 py-1 text-xs text-text-200">
                             {t('Drop to mention in chat')}
                           </div>
                         ) : null}
-                        {fileMentionDrop.error ? (
-                          <p role="alert" className="text-xs text-danger-000">
-                            {t('Could not resolve file version.')}
-                          </p>
-                        ) : null}
+
                         {specialistComposerColor && selectedSpecialist ? (
                           <span
                             key={selectedSpecialist.id}
@@ -2920,7 +3096,9 @@ const ConversationPanel = ({
                                             ? 'text-red-600'
                                             : 'text-text-300'
                                         }`}
-                                        title={transfer.errorDetail ?? statusLabel}
+                                        title={[statusLabel, transfer.errorDetail]
+                                          .filter(Boolean)
+                                          .join('\n')}
                                       >
                                         {statusLabel}
                                       </div>
@@ -3498,11 +3676,6 @@ const ConversationPanel = ({
                                         )}
                                       </SplitButtonPrimary>
                                     </PopoverAnchor>
-                                    {stopError ? (
-                                      <span className="sr-only" role="alert">
-                                        {stopError}
-                                      </span>
-                                    ) : null}
 
                                     <>
                                       <Tooltip>
@@ -3761,15 +3934,6 @@ const ConversationPanel = ({
                                 </Tooltip>
                               </>
                             ) : null}
-                            {stopError ? (
-                              <span
-                                className="max-w-48 whitespace-normal [overflow-wrap:anywhere] text-[11px] text-danger-000"
-                                role="alert"
-                                title={stopError}
-                              >
-                                {stopError}
-                              </span>
-                            ) : null}
                           </div>
                         </div>
                       </form>
@@ -3785,7 +3949,7 @@ const ConversationPanel = ({
               ) : null}
             </div>
           </div>
-        </div>
+        </ComposerDock>
 
         {/* Remount on each open so editable report state resets, then stay mounted for Radix's exit. */}
         <ReportErrorDialog

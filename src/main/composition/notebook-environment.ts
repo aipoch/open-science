@@ -5,10 +5,7 @@ import type { NotebookRunResultDeliveryAdapter } from '../background-result-deli
 import { registerNotebookEnvIpcHandlers } from '../desktop-surface-declarations'
 import { installNotebookEnvironmentSurface } from '../notebook/application'
 import { broadcastNotebookEnvProgress } from '../notebook/env-ipc'
-import {
-  createNotebookEnvironmentLifecycle,
-  type NotebookEnvironmentLifecycle
-} from '../notebook/environment-lifecycle-workflows'
+import { createNotebookEnvironmentLifecycle } from '../notebook/environment-lifecycle-workflows'
 import {
   createProductionProvisioner,
   type ProductionProvisionerDeps
@@ -37,6 +34,7 @@ type NotebookEnvironmentCompositionDependencies = {
     | 'withEnvLock'
     | 'recoverInterruptedOperations'
     | 'ensureRecovered'
+    | 'ensureEnvironmentStatusReady'
     | 'isDefaultEnvRecoveryBlocked'
     | 'recoveryStatus'
     | 'prepareRuntimeRepair'
@@ -63,7 +61,9 @@ export const registerNotebookEnvironmentComposition = async ({
   notebookRunResultDelivery,
   markNotebookResultAuthorityReady,
   declareElectronAdapter
-}: NotebookEnvironmentCompositionDependencies): Promise<NotebookEnvironmentLifecycle> => {
+}: NotebookEnvironmentCompositionDependencies): Promise<
+  ReturnType<typeof createNotebookEnvironmentLifecycle>
+> => {
   // Resolve the shared conda base under the app data root (relocatable, where the runtime install
   // lives) and start the env readiness gate. Named environments resolve the effective conda channel
   // lazily because they are the only path that solves online; default runtime packs use the official
@@ -180,6 +180,7 @@ export const registerNotebookEnvironmentComposition = async ({
     root: provisioningRoot,
     projectProgress: broadcastNotebookEnvProgress,
     waitForRecovery,
+    waitForStatusRecovery: () => notebookService.ensureEnvironmentStatusReady(),
     recoveryStatus: () => notebookService.recoveryStatus(),
     assertProvisionAllowed,
     onRepairStarting: (language, target) => notebookService.prepareRuntimeRepair(language, target),

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { waitFor } from '@testing-library/react'
-import { act, StrictMode } from 'react'
+import { act, StrictMode, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1025,9 +1025,15 @@ describe('ProjectFilesView', () => {
     expect(countLabel?.textContent).toBe('1 file')
   })
 
-  it('shows an actionable incomplete-index state instead of an empty state', async () => {
+  it('checks an uncertain repair without submitting it again', async () => {
     await renderView([])
-    const repairIndex = vi.fn().mockResolvedValue(undefined)
+    const repairIndex = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Error invoking remote method 'project-files:repair-index': DesktopRuntimeDisconnectedError: connection closed"
+        )
+      )
     Object.assign(window.api.projectFiles, { repairIndex })
     vi.mocked(window.api.projectFiles.getOverview).mockResolvedValue({
       totalCount: 0,
@@ -1064,19 +1070,40 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
     expect(repairIndex).toHaveBeenCalledWith({ projectId: 'default' })
+    expect(container.textContent).toContain('Reconnect to check whether indexing finished.')
+    const check = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Check index status'
+    )!
+    const overview = vi.mocked(window.api.projectFiles.getOverview)
+    overview.mockRejectedValueOnce(new Error('command-failed'))
+    await act(async () => check.click())
+    expect(container.textContent).toContain('Could not check the file index status.')
+    overview.mockResolvedValueOnce({
+      totalCount: 0,
+      uploadCount: 0,
+      artifactCount: 0,
+      artifactGroupCount: 0,
+      isIndexComplete: true
+    })
+    await act(async () => check.click())
+    expect(container.textContent).not.toContain('Check index status')
+    expect(repairIndex).toHaveBeenCalledTimes(1)
   })
 
-  it('wraps and announces a long file loading error while keeping retry available', async () => {
-    const message =
-      'Could not load project files because the remote catalog returned a detailed error that must remain readable on narrow screens.'
+  it('announces the failed read and keeps the command detail out of the alert', async () => {
+    const message = 'Error invoking remote method: ApplicationCommandError: command-failed'
 
     await renderView([], false, () => {
       vi.mocked(window.api.projectFiles.getOverview).mockRejectedValue(new Error(message))
     })
 
     await vi.waitFor(() => {
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(message)
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        'Could not load project files'
+      )
     })
+    expect(container.textContent).not.toContain(message)
+    expect(container.textContent).not.toContain('Reconnect')
 
     const alert = container.querySelector<HTMLElement>('[role="alert"]')
     const errorText = alert?.querySelector('p')
@@ -1675,7 +1702,7 @@ describe('ProjectFilesView', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(container.textContent).toContain('Upload page unavailable')
+    expect(container.textContent).toContain('Could not load project files')
     const retry = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent === 'Retry'
     )
@@ -1687,8 +1714,48 @@ describe('ProjectFilesView', () => {
     })
 
     expect(attempts).toBe(2)
-    expect(container.textContent).not.toContain('Upload page unavailable')
+    expect(container.textContent).not.toContain('Could not load project files')
     expect(container.textContent).toContain('retry.txt')
+  })
+
+  it('keeps search hits and retries the same continuation after a disconnect', async () => {
+    const first = createUpload({ originalName: 'report.csv' })
+    const fixture = [createSession({ messages: [createMessage({ uploads: [first] })] })]
+    const item = projectFileFixturesFromSessions(fixture).uploadFiles[0]
+    await renderView(fixture)
+    const list = vi.mocked(window.api.projectFiles.listFiles)
+    list
+      .mockResolvedValueOnce({ items: [item], totalCount: 2, nextCursor: 'next-hit' })
+      .mockRejectedValueOnce({ code: 'desktop-runtime-disconnected', message: 'read interrupted' })
+      .mockResolvedValueOnce({
+        items: [{ ...item, id: 'second', name: 'report-2.csv' }],
+        totalCount: 2
+      })
+    const search = container.querySelector<HTMLInputElement>('input[type="search"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
+        search,
+        'report'
+      )
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await vi.waitFor(() =>
+      expect(container.querySelector('[aria-label="Load more uploaded files"]')).not.toBeNull()
+    )
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Load more uploaded files"]')!.click()
+    )
+    expect(container.textContent).toContain('Could not load more search results.')
+    expect(container.textContent).toContain('Reconnect to the local service and try again.')
+    expect(container.textContent).toContain('report.csv')
+    const retry = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Retry'
+    )!
+    await act(async () => retry.click())
+    const tail = list.mock.calls.slice(-2).map(([request]) => request)
+    expect(tail[0]).toMatchObject({ cursor: 'next-hit', search: { filenameContains: 'report' } })
+    expect(tail[1]).toEqual(tail[0])
+    expect(container.textContent).toContain('report-2.csv')
   })
 
   it('opens a filter menu with a "this computer" entry', async () => {
@@ -2975,14 +3042,14 @@ describe('ProjectFilesView', () => {
       projectId: 'default',
       fileId: 'artifact-1',
       mimeType: 'image/png',
-      imagePreview: true
+      imagePreview: 'thumbnail'
     })
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
       projectId: 'default',
       fileId: 'upload-1',
       mimeType: 'image/png',
-      imagePreview: true
+      imagePreview: 'thumbnail'
     })
     expect(
       vi
@@ -3071,7 +3138,7 @@ describe('ProjectFilesView', () => {
       projectId: 'default',
       fileId: 'artifact-1',
       mimeType: 'image/png',
-      imagePreview: true
+      imagePreview: 'thumbnail'
     })
   })
 
@@ -3156,6 +3223,7 @@ describe('ProjectFilesView', () => {
       projectId: 'default',
       sessionId: 'session-1',
       fileId: 'artifact-csv',
+      versionId: 'artifact-csv',
       maxBytes: 32768,
       encoding: 'utf8'
     })
@@ -3197,6 +3265,56 @@ describe('ProjectFilesView', () => {
 
     // The existence probe rejected with ENOENT, so the tile carries the "Missing" tag.
     expect(container.textContent).toContain('Missing')
+  })
+
+  it('refreshes file previews when only the selected version changes', async () => {
+    const { useProjectFilePreviewReader, useProjectFilePreviews } =
+      await import('./project-files-preview-owner')
+    const file: ProjectFileItem = {
+      id: 'artifact:diagram',
+      source: 'artifact',
+      sourceFileId: 'diagram',
+      sourceVersionId: 'version-1',
+      projectId: 'default',
+      sessionId: 'session-1',
+      name: 'diagram.treefile',
+      path: '/workspace/diagram.treefile',
+      mimeType: 'text/plain',
+      size: 100,
+      mtimeMs: 1710000000000,
+      sortAtMs: 1710000000000
+    }
+    vi.mocked(window.api.artifacts.readPreview)
+      .mockResolvedValueOnce({
+        content: 'first version',
+        encoding: 'utf8',
+        size: 100,
+        truncated: false
+      })
+      .mockResolvedValueOnce({
+        content: 'second version',
+        encoding: 'utf8',
+        size: 100,
+        truncated: false
+      })
+    const Preview = ({ files }: { files: ProjectFileItem[] }): ReactElement => {
+      const reader = useProjectFilePreviewReader()
+      const previews = useProjectFilePreviews(files, reader)
+      return <span>{previews.get(file.id)?.content}</span>
+    }
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<Preview files={[file]} />)
+    })
+    await waitFor(() => expect(container.textContent).toBe('first version'))
+    await act(async () => {
+      root.render(<Preview files={[{ ...file, sourceVersionId: 'version-2' }]} />)
+    })
+    await waitFor(() => expect(container.textContent).toBe('second version'))
+    expect(window.api.artifacts.readPreview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ fileId: 'diagram', versionId: 'version-2' })
+    )
   })
 
   it('keeps previews for every currently rendered file beyond the hidden cache limit', async () => {

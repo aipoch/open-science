@@ -8,7 +8,8 @@ const runtimeConstruction = vi.hoisted(() => ({
   options: undefined as NotebookRuntimeServiceOptions | undefined
 }))
 
-vi.mock('./runtime-service', () => ({
+vi.mock('./runtime-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./runtime-service')>()),
   NotebookRuntimeService: class MockNotebookRuntimeService {
     state = vi.fn().mockResolvedValue({ sessionId: 'session-1', cells: [] })
     dispose = vi.fn().mockResolvedValue({ reaped: true })
@@ -76,6 +77,61 @@ describe('Notebook application composition', () => {
     expect(publish.mock.calls).toEqual([
       ['notebook:available', available],
       ['notebook:changed', changed]
+    ])
+  })
+
+  it('publishes live memory refusal and observation without creating Notebook history', () => {
+    const publish = vi.fn()
+    createNotebookApplication({
+      configRoot: '/config',
+      dataRoot: '/data',
+      projectId: 'Open-Science',
+      events: { publish }
+    })
+    const state = {
+      status: 'pressured' as const,
+      source: 'macos-dispatch',
+      executionScope: 'macos:host',
+      sampledAt: 5,
+      sampleAgeMs: 2,
+      reason: { code: 'macos-critical' },
+      facts: { pressureLevel: 'critical' as const }
+    }
+    runtimeConstruction.options?.callbacks?.onMemoryPolicyRejected?.(
+      {
+        projectId: 'project',
+        sessionId: 'session',
+        source: 'agent'
+      },
+      state
+    )
+    runtimeConstruction.options?.callbacks?.onMemoryPolicyChanged?.(state, true)
+    expect(publish.mock.calls).toEqual([
+      [
+        'notebook:memory-rejected',
+        {
+          projectId: 'project',
+          sessionId: 'session',
+          source: 'agent',
+          memory: expect.objectContaining({
+            status: 'pressured',
+            reason: 'macos-critical',
+            pressureLevel: 'critical',
+            sampleAgeMs: 2,
+            checkedAt: expect.any(Number)
+          })
+        }
+      ],
+      [
+        'notebook:memory-policy-changed',
+        {
+          hasLiveResources: true,
+          memory: expect.objectContaining({
+            source: 'macos-dispatch',
+            executionScope: 'macos:host'
+          })
+        }
+      ]
     ])
   })
 

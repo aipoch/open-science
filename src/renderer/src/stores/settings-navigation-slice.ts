@@ -23,10 +23,12 @@ export type SettingsNavigationState = {
 
 export type SettingsNavigationActions = {
   openSettings: () => void
+  resumeSettingsRoute: (route: SettingsRoute) => void
   openSettingsToPanel: (panel: SettingsPanelId) => void
   openSettingsToProvider: (providerId: string, model?: string) => void
   openSettingsToConnector: (id: string) => void
   openSettingsToClassification: () => void
+  openSettingsToImageServices: () => void
   openSettingsToOpenAlex: () => void
   closeSettings: () => void
   openSettingsToSkill: (skillId: string) => void
@@ -80,6 +82,8 @@ export const createSettingsNavigationSlice = ({
       setState({ isSettingsOpen: true })
     },
 
+    resumeSettingsRoute: openTo,
+
     openSettingsToPanel: (panel) => {
       if (panel === 'skills' || panel === 'specialists' || panel === 'connectors') {
         openResource(settingsPanelRoute(panel), { resource: panel })
@@ -98,6 +102,7 @@ export const createSettingsNavigationSlice = ({
     },
     openSettingsToClassification: () =>
       openTo({ panel: 'model', view: { kind: 'classification' } }),
+    openSettingsToImageServices: () => openTo({ panel: 'model', view: { kind: 'image-services' } }),
     openSettingsToOpenAlex: () =>
       openTo({ panel: 'credentials', view: { kind: 'service', serviceId: 'openalex' } }),
 

@@ -180,7 +180,25 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
   })
   const durableContinuationContext = new AcpDurableContinuationContextOwner(
     options.permissionWait?.sessions,
-    options.permissionWait?.onContinuationSessionUpdated
+    options.permissionWait?.onContinuationSessionUpdated,
+    {
+      descriptor: () => {
+        const backend = base.backendGeneration.current
+        const target =
+          backend.framework.id === 'codex'
+            ? backend.modelRoute === 'codex-bridge'
+              ? 'codex-bridge'
+              : 'codex-response'
+            : backend.framework.id
+        return {
+          target,
+          ...(backend.context.window ? { contextWindow: backend.context.window } : {})
+        }
+      },
+      supportsImageInput: async () =>
+        base.backendGeneration.current.context.supportsImageInput ||
+        (await options.imageInputCompatibility?.isAvailable()) === true
+    }
   )
   const sandboxNetworkApprovalOwner =
     options.permissionWait?.networkApprovalOwner ??
@@ -293,6 +311,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       currentInteractionSequence: (sessionId) =>
         base.sessionInteractions.current(sessionId)?.sequence,
       mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
+      webToolOperationFor: (sessionId, identity) =>
+        base.sessionCapabilities.webToolOperationFor(sessionId, identity),
       piPermissionContextFor,
       authorizeRuntimeBindingAdmission: options.notebook?.authorizeRuntimeBindingAdmission,
       canOwnRuntimeBindingDecision: options.notebook?.canOwnRuntimeBindingDecision,
@@ -410,7 +430,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       permissionContext.clearCorrelationsForSession(sessionId),
     currentSessionSetup: () => ({
       framework: base.backendGeneration.current.framework,
-      sessionOptions: base.backendGeneration.current.session.options
+      sessionOptions: base.backendGeneration.current.session.options,
+      supportsSessionClose: base.connectionResources.capabilities.close
     }),
     currentStartupGeneration: () => sessionRegistry.startupGeneration,
     isPrimarySessionIdClaimed: (sessionId) => sessionRegistry.isIdentityClaimed(sessionId),
@@ -436,12 +457,18 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       promptMessageIdForSession: (sessionId) => {
         const interaction = base.sessionInteractions.current(sessionId)
         return interaction?.kind === 'prompt' ? interaction.promptMessageId : undefined
+      },
+      provenanceForSession: (sessionId) => {
+        const interaction = base.sessionInteractions.current(sessionId)
+        return interaction?.kind === 'prompt' ? interaction.provenanceContext : undefined
       }
     },
     elicitation: elicitationOwner,
     permission: permissionContext
   })
   const sessionUpdateProjector = new AcpSessionUpdateProjector({
+    webToolOperationFor: (sessionId, identity) =>
+      base.sessionCapabilities.webToolOperationFor(sessionId, identity),
     separateProviderNotices: options.separateProviderNotices,
     registry: sessionRegistry,
     contextUsage: base.contextUsageTracker,

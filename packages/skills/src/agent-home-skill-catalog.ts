@@ -267,55 +267,59 @@ export class AgentHomeSkillCatalog {
         item
       ])
     )
-    const results: AgentHomeSkillImportResult[] = []
+    return this.userSkills.withAgentHomeImportBatch(async (importSkill) => {
+      const results: AgentHomeSkillImportResult[] = []
 
-    for (const skill of skills) {
-      const candidate =
-        typeof skill === 'object' && skill !== null
-          ? (skill as { source?: unknown; slug?: unknown })
-          : undefined
-      const ref: Partial<AgentHomeSkillRef> = {}
-      if (
-        candidate?.source === 'agents' ||
-        candidate?.source === 'claude' ||
-        candidate?.source === 'codex'
-      ) {
-        ref.source = candidate.source
-      }
-      if (typeof candidate?.slug === 'string') ref.slug = candidate.slug
+      for (const skill of skills) {
+        const candidate =
+          typeof skill === 'object' && skill !== null
+            ? (skill as { source?: unknown; slug?: unknown })
+            : undefined
+        const ref: Partial<AgentHomeSkillRef> = {}
+        if (
+          candidate?.source === 'agents' ||
+          candidate?.source === 'claude' ||
+          candidate?.source === 'codex'
+        ) {
+          ref.source = candidate.source
+        }
+        if (typeof candidate?.slug === 'string') ref.slug = candidate.slug
 
-      try {
-        if (!ref.source || ref.slug === undefined) {
-          throw new Error('Installed skill entries must include a valid source and slug.')
+        try {
+          if (!ref.source || ref.slug === undefined) {
+            throw new Error('Installed skill entries must include a valid source and slug.')
+          }
+          const validated: AgentHomeSkillRef = { source: ref.source, slug: ref.slug }
+          const sourcePath = await this.resolveAgentHomeSkillPath(
+            validated.source,
+            validated.slug,
+            availableSources
+          )
+          const canonical = await this.canonicalAgentHomeSkillRef(sourcePath, availableSources)
+          if (!canonical) {
+            throw new Error(
+              'Refusing to import installed skill outside a top-level skill directory.'
+            )
+          }
+          const pathKey = process.platform === 'win32' ? sourcePath.toLowerCase() : sourcePath
+          const discoveredSkill = discoveredByPath.get(pathKey)
+          const outcome = await importSkill(sourcePath, canonical, {
+            aliases: discoveredSkill?.aliases,
+            fallbackDirectoryNames: discoveredSkill
+              ? [...discoveredSkill.matchedFallbackDirectoryNames]
+              : undefined,
+            reservedNames
+          })
+          results.push({ ...validated, ...outcome })
+        } catch (error) {
+          results.push({
+            ...ref,
+            error: error instanceof Error ? error.message : 'Could not import the installed skill.'
+          })
         }
-        const validated: AgentHomeSkillRef = { source: ref.source, slug: ref.slug }
-        const sourcePath = await this.resolveAgentHomeSkillPath(
-          validated.source,
-          validated.slug,
-          availableSources
-        )
-        const canonical = await this.canonicalAgentHomeSkillRef(sourcePath, availableSources)
-        if (!canonical) {
-          throw new Error('Refusing to import installed skill outside a top-level skill directory.')
-        }
-        const pathKey = process.platform === 'win32' ? sourcePath.toLowerCase() : sourcePath
-        const discoveredSkill = discoveredByPath.get(pathKey)
-        const outcome = await this.userSkills.importAgentHomeSkill(sourcePath, canonical, {
-          aliases: discoveredSkill?.aliases,
-          fallbackDirectoryNames: discoveredSkill
-            ? [...discoveredSkill.matchedFallbackDirectoryNames]
-            : undefined,
-          reservedNames
-        })
-        results.push({ ...validated, ...outcome })
-      } catch (error) {
-        results.push({
-          ...ref,
-          error: error instanceof Error ? error.message : 'Could not import the installed skill.'
-        })
       }
-    }
-    return results
+      return results
+    })
   }
 
   private async resolveAgentHomeSkillPath(

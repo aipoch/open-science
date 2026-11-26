@@ -2,11 +2,13 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import type { AcpPromptRequest, AgentTurnProvenanceContext } from '../../shared/acp'
 import type { TaskAgentPort } from '../tasks/task-runner'
+import { NotebookExecutionIntent, withNotebookExecutionIntent } from '../notebook/execution-intent'
 import {
   materializeSessionAgentConfiguration,
   toAcpSessionAgentTarget,
   type SessionAgentTargetSource
 } from './session-agent-target'
+import { requiresTaskRunTracing, taskRunTracing } from './task-run-tracing'
 import { createAcpTaskAgentPort } from './task-agent-port'
 
 const taskProvenanceContext = (promptMessageId: string): AgentTurnProvenanceContext => ({
@@ -22,7 +24,9 @@ const taskProvenanceContext = (promptMessageId: string): AgentTurnProvenanceCont
 describe('ACP Task Agent port', () => {
   it('exposes only the Task execution capabilities', () => {
     expectTypeOf<keyof TaskAgentPort>().toEqualTypeOf<
+      | 'delegateInteractions'
       | 'withSessionAvailable'
+      | 'assertAttachedTracingReady'
       | 'listAttachedSessionIds'
       | 'createSession'
       | 'resumeSession'
@@ -30,6 +34,12 @@ describe('ACP Task Agent port', () => {
       | 'setMemoryEnabled'
       | 'prompt'
       | 'cancelPrompt'
+      | 'getTaskPermissions'
+      | 'respondTaskPermission'
+      | 'restoreTaskPermission'
+      | 'respondDelegatedPlan'
+      | 'questions'
+      | 'setContinuationTracker'
     >()
   })
 
@@ -285,6 +295,54 @@ describe('ACP Task Agent port', () => {
     expect(untrackPrompt).toHaveBeenCalledWith('session-1', trackedPrompt)
   })
 
+  it.each([
+    ['tracking', true],
+    ['dispatch', true],
+    ['tracking', false],
+    ['dispatch', false]
+  ] as const)(
+    'abandons only fresh Task authority after %s failure (fresh: %s)',
+    async (failurePoint, fresh) => {
+      const intent = new NotebookExecutionIntent({ projectId: 'project', sessionId: 'session' })
+      if (fresh) intent.prepareUserExecution()
+      const failure = new Error(`Task ${failurePoint} failed`)
+      const sendPrompt = vi.fn(async () => {
+        throw failure
+      })
+      const port = createAcpTaskAgentPort(
+        {
+          captureNotebookTaskIntent: (request) => withNotebookExecutionIntent(request, intent),
+          getSnapshot: () => ({ sessionIds: ['session'] }),
+          resumeSession: vi.fn(),
+          setPermissionProfile: vi.fn(),
+          setMemoryEnabled: vi.fn(),
+          sendPrompt,
+          sendPromptObserved: sendPrompt,
+          cancelPrompt: vi.fn()
+        },
+        { create: vi.fn() },
+        {
+          trackPrompt: () => {
+            if (failurePoint === 'tracking') throw failure
+            return { token: 1 }
+          },
+          untrackPrompt: vi.fn()
+        }
+      )
+      await expect(
+        port.prompt({
+          sessionId: 'session',
+          promptMessageId: 'accepted-root',
+          provenanceContext: taskProvenanceContext('accepted-root'),
+          text: 'Execute the accepted Task.'
+        })
+      ).rejects.toBe(failure)
+      expect(sendPrompt).toHaveBeenCalledTimes(failurePoint === 'dispatch' ? 1 : 0)
+      if (fresh) expect(() => intent.assertExecutable()).toThrow('Execution was not started')
+      else expect(() => intent.assertExecutable()).not.toThrow()
+    }
+  )
+
   it('forwards provider acceptance through the provider-neutral Task prompt observer', async () => {
     const onProviderPromptAccepted = vi.fn()
     const onPromptAdmitted = vi.fn(async () => undefined)
@@ -319,17 +377,21 @@ describe('ACP Task Agent port', () => {
         promptMessageId: 'prompt-1',
         provenanceContext: taskProvenanceContext('prompt-1'),
         text: 'Research this.',
-        permissionPrompts: 'none'
+        permissionPrompts: 'none',
+        otelTraces: true
       },
       { onPromptAdmitted, onProviderPromptAccepted }
     )
 
     expect(sendPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({ permissionPrompts: 'none' }),
+      expect.objectContaining({ permissionPrompts: 'none', [taskRunTracing]: true }),
       expect.any(Function),
       onPromptAdmitted,
       'task'
     )
+    const forwarded = sendPrompt.mock.calls[0][0]
+    expect(forwarded).not.toHaveProperty('otelTraces')
+    expect(requiresTaskRunTracing(structuredClone(forwarded))).toBe(false)
     expect(onPromptAdmitted).toHaveBeenCalledOnce()
     expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
   })

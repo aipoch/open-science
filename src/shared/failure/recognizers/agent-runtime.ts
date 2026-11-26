@@ -1,8 +1,25 @@
 import { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../../claude-runtime'
 import { CODEX_CLI_INCOMPATIBLE_MESSAGE, MINIMUM_CODEX_ACP_VERSION } from '../../codex-runtime'
+import {
+  CALL_STACK_LIMIT_MESSAGE,
+  CLAUDE_ACP_MISSING_MESSAGE,
+  EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE,
+  unwrapIpcErrorDetail
+} from '../messages'
 import type { Recognizer } from '../contract'
 
 export const recognizeAgentRuntime: Recognizer = ({ text = '', code, origin }) => {
+  if (
+    origin === 'agent-runtime' &&
+    (code === 'invalid_request_error' || code === 'upstream_error') &&
+    text === CALL_STACK_LIMIT_MESSAGE
+  )
+    return {
+      category: 'internal',
+      reason: 'internal/model-request-stack-overflow',
+      diagnostics: {}
+    }
   if (text.includes('Built-in Agent tool outcome is unknown:'))
     return { category: 'session', reason: 'session/tool-outcome-unknown', diagnostics: {} }
   if (code === 'specialist-reconfigure-failed')
@@ -50,9 +67,17 @@ export const recognizeAgentRuntime: Recognizer = ({ text = '', code, origin }) =
     )
       return { category: 'configuration', reason: 'configuration/codex-adapter', diagnostics: {} }
   }
+  if (unwrapIpcErrorDetail(message) === EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE) {
+    return {
+      category: 'configuration',
+      reason: 'configuration/selected-provider-unavailable',
+      diagnostics: {}
+    }
+  }
   if (
     [
-      'No active model provider is configured. Configure one in settings.',
+      NO_ACTIVE_PROVIDER_MESSAGE,
+      CLAUDE_ACP_MISSING_MESSAGE,
       'Claude executable is not configured. Complete onboarding in settings.',
       'The active model is not supported over the Codex Chat Completions bridge. Pick another model in Settings → Model.',
       'This agent build cannot resume sessions; start a new conversation.'

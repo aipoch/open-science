@@ -7,6 +7,10 @@ import type { PreviewFileRendererProps } from './preview-types'
 
 export const PreviewFileContent = ({
   item,
+  imageEditPresentation,
+  onPinImageSource,
+  onImageEditorVersionChange,
+  onImageEditActionChange,
   presentation,
   readOnly,
   downloadVersionContext,
@@ -32,6 +36,10 @@ export const PreviewFileContent = ({
 }): React.JSX.Element => {
   const content = renderPreviewFile({
     item,
+    imageEditPresentation,
+    onPinImageSource,
+    onImageEditorVersionChange,
+    onImageEditActionChange,
     presentation,
     readOnly: item.source === 'compute-output' || readOnly,
     annotationVersionId,

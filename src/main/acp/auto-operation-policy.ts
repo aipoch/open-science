@@ -9,7 +9,13 @@ export type AutoOperationDecision =
   | { kind: 'inner_authorization'; reason: string }
   | { kind: 'legacy' }
 
+export const IMAGE_MCP_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
+  'open-science-images/generate_image',
+  'open-science-images/edit_image'
+])
+
 export const APP_AUTO_OPERATION_IDENTITIES: ReadonlySet<string> = new Set([
+  ...IMAGE_MCP_TOOL_IDENTITIES,
   'open-science-notebook/background_run',
   'open-science-notebook/manage_environments',
   'open-science-plan/generate_plan',
@@ -33,6 +39,10 @@ export const classifyAppAutoOperation = (
   trustedIdentity: string,
   input: unknown
 ): AutoOperationDecision => {
+  // The image MCP server validates arguments and source ownership before the provider request.
+  if (IMAGE_MCP_TOOL_IDENTITIES.has(trustedIdentity)) {
+    return { kind: 'allow_once', reason: 'image_mcp_auto' }
+  }
   switch (trustedIdentity) {
     case 'open-science-notebook/background_run': {
       const parsed = backgroundRunSchema.safeParse(input)

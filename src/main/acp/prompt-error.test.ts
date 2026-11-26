@@ -370,15 +370,15 @@ describe('classified failure facts across agent execution paths', () => {
       expect(classifyFailure(facts).category).toBe(category)
     }
   )
-  it('recognizes a typed provider resource-not-found response without an HTTP status', () => {
+  it('keeps an ambiguous provider resource-not-found distinct from an unavailable model', () => {
     const message = 'Example deployment unavailable'
     const error = RequestError.internalError(
       { errorName: 'APIError' },
       JSON.stringify({ error: { type: 'resource_not_found_error', message } })
     )
     expect(classifyFailure(collectPromptFailureFacts(error))).toEqual({
-      category: 'configuration',
-      reason: 'configuration/model-unavailable',
+      category: 'service',
+      reason: 'service/provider-error',
       responseMessage: message,
       diagnostics: { code: 'resource_not_found_error', raw: error.message }
     })
@@ -398,6 +398,7 @@ describe('classified failure facts across agent execution paths', () => {
       )
       expect(failure).toEqual({
         category: 'service',
+        reason: 'service/provider-error',
         responseMessage: message,
         diagnostics: {
           provider: 'Example Provider',
@@ -465,13 +466,79 @@ describe('native framework failure facts', () => {
 })
 
 describe('compatibility bridge upstream status preservation', () => {
+  it('recognizes the terminal connection failure reported by codex-acp 1.6.2 after 502 retries', () => {
+    const message =
+      'unexpected status 502 Bad Gateway: Could not connect to the model provider, url: http://127.0.0.1:43210/v1/responses'
+    const error = agentError('Internal error: ' + message, { message, codexErrorInfo: 'other' })
+    const failure = classifyFailure(collectPromptFailureFacts(error, { model: 'fixture' }))
+    expect(failure).toMatchObject({
+      reason: 'service/connection-failed',
+      diagnostics: { model: 'fixture' }
+    })
+    expect(JSON.stringify(failure)).not.toContain('127.0.0.1')
+    expect(describePromptError(error)).not.toContain('127.0.0.1')
+  })
+
+  it.each([502, 503])('preserves a relayed HTTP %i when Codex flattens its body', (status) => {
+    const label = status === 502 ? 'Bad Gateway' : 'Service Unavailable'
+    const message = `unexpected status ${status} ${label}: Upstream HTTP ${status}: Upstream gateway unavailable, url: http://127.0.0.1:43210/v1/responses`
+    const error = agentError('Internal error: ' + message, { message, codexErrorInfo: 'other' })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(error, { model: 'fixture', providerName: 'Example Provider' })
+    )
+    expect(failure).toMatchObject({
+      reason: 'service/unavailable',
+      responseMessage: 'Upstream gateway unavailable',
+      diagnostics: { status, model: 'fixture', provider: 'Example Provider' }
+    })
+    expect(JSON.stringify(failure)).not.toContain('127.0.0.1')
+    expect(describePromptError(error)).not.toContain('127.0.0.1')
+  })
+
+  it('does not attribute a local response conversion failure to upstream HTTP', () => {
+    const message =
+      'unexpected status 502 Bad Gateway: The model service returned invalid JSON., url: http://127.0.0.1:43210/v1/responses'
+    const facts = collectPromptFailureFacts(
+      agentError('Internal error: ' + message, { message, codexErrorInfo: 'other' })
+    )
+    expect(facts.status).toBeUndefined()
+    expect(facts.origin).not.toBe('provider')
+  })
+
+  it('restores a typed 401 when Codex reports the bridge envelope as other', () => {
+    const message = JSON.stringify({
+      error: { type: 'upstream_error', status: 401, message: 'Credentials rejected' }
+    })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(
+        agentError('Internal error: ' + message, { message, codexErrorInfo: 'other' })
+      )
+    )
+    expect(failure).toMatchObject({
+      reason: 'configuration/auth-failed',
+      diagnostics: { status: 401 }
+    })
+  })
+
+  it('recognizes the native Codex high-demand failure after an upstream 500', () => {
+    const message = 'We’re currently experiencing high demand, which may cause temporary errors.'
+    const failure = classifyFailure(
+      collectPromptFailureFacts(
+        agentError('Internal error: ' + message, { message, codexErrorInfo: 'internalServerError' })
+      )
+    )
+    expect(failure.reason).toBe('service/unavailable')
+    expect(failure.diagnostics.status).toBeUndefined()
+  })
+
   // Compose the bridge's tested HTTP body with each adapter's tested RequestError boundary.
   // These are deterministic boundary fixtures, not a captured native model invocation.
   for (const path of ['codex-bridge', 'claude-code'] as const) {
     it.each([
       [401, 'configuration'],
+      [402, 'configuration'],
       [403, 'configuration'],
-      [404, 'configuration'],
+      [404, 'service'],
       [413, 'input']
     ] as const)(
       `${path} restores original status %i from the typed bridge envelope`,
@@ -503,6 +570,116 @@ describe('compatibility bridge upstream status preservation', () => {
     )
     expect(collectPromptFailureFacts(error).status).toBe(400)
   })
+  it('carries the safe explanation from a relayed provider error into the user notice', () => {
+    const safe = "Unsupported parameter: 'temperature'"
+    const body = JSON.stringify({
+      error: {
+        type: 'upstream_error',
+        message: safe + '. PRIVATE_PROMPT user@example.test',
+        status: 400
+      }
+    })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(agentError('Internal error: ' + body, { message: body }))
+    )
+    expect(failure.responseMessage).toBe(safe)
+    expect(failure.reason).toBe('configuration/request-invalid')
+    expect(failure.diagnostics.status).toBe(400)
+    expect(JSON.stringify(failure)).not.toMatch(/PRIVATE_PROMPT|user@example.test/)
+  })
+
+  it('classifies an untagged upstream billing envelope by its HTTP status', () => {
+    const body = JSON.stringify({
+      error: {
+        type: 'upstream_error',
+        message: 'Insufficient Balance (request_id: request-402)',
+        status: 402
+      }
+    })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(agentError(body, { errorKind: 'unknown' }))
+    )
+    expect(failure).toMatchObject({
+      category: 'configuration',
+      reason: 'configuration/billing',
+      responseMessage: 'Insufficient Balance (request_id: request-402)',
+      diagnostics: { status: 402 }
+    })
+    expect(failure.diagnostics.code).toBeUndefined()
+    expect(failure.diagnostics.raw).toContain('"type":"upstream_error"')
+    expect(failure.diagnostics.raw).toContain('Insufficient Balance')
+  })
+
+  it.each([
+    [400, 'configuration', 'configuration/request-invalid'],
+    [401, 'configuration', 'configuration/auth-failed'],
+    [402, 'configuration', 'configuration/billing'],
+    [403, 'configuration', 'configuration/auth-failed'],
+    [404, 'service', 'service/provider-error'],
+    [413, 'input', 'input/context-overflow'],
+    [422, 'configuration', 'configuration/request-invalid'],
+    [429, 'service', 'service/rate-limited'],
+    [500, 'service', 'service/unavailable']
+  ] as const)(
+    'uses an explicit upstream HTTP status %i for classification',
+    (status, category, reason) => {
+      const body = JSON.stringify({
+        error: { type: 'upstream_error', message: 'Provider request failed', status }
+      })
+      const failure = classifyFailure(
+        collectPromptFailureFacts(agentError(body, { errorKind: 'unknown' }))
+      )
+      expect(failure).toMatchObject({ category, reason, diagnostics: { status } })
+    }
+  )
+
+  it('attributes a confirmed upstream stack error to the model service', () => {
+    const body = JSON.stringify({
+      error: { type: 'upstream_error', message: 'Maximum call stack size exceeded', status: 400 }
+    })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(agentError('Internal error: ' + body, { message: body }))
+    )
+    expect(failure).toMatchObject({
+      reason: 'service/provider-error',
+      responseMessage: 'Maximum call stack size exceeded'
+    })
+  })
+
+  it('recognizes the bridge response-format error relayed without an HTTP status', () => {
+    const body = JSON.stringify({
+      error: {
+        type: 'invalid_upstream_response',
+        message: 'The model service returned invalid JSON.'
+      }
+    })
+    const error = agentError('Internal error: ' + body, { message: body })
+    const failure = classifyFailure(collectPromptFailureFacts(error))
+    expect(failure.reason).toBe('service/response-invalid')
+    expect(failure.diagnostics.status).toBeUndefined()
+    expect(failure.responseMessage).toBeUndefined()
+  })
+
+  it('distinguishes a malformed upstream response from service downtime at the ACP boundary', () => {
+    const payload = JSON.stringify({
+      error: {
+        type: 'invalid_upstream_response',
+        message: 'The model service returned invalid JSON.'
+      }
+    })
+    const error = RequestError.internalError(
+      { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 502 } } },
+      '502 Bad Gateway: ' + payload
+    )
+    const failure = classifyFailure(collectPromptFailureFacts(error))
+    expect(failure.responseMessage).toBeUndefined()
+    expect(failure).toMatchObject({
+      category: 'service',
+      reason: 'service/response-invalid',
+      diagnostics: { status: 502, code: 'invalid_upstream_response' }
+    })
+  })
+
   it('does not turn an unowned ACP payload into a provider error', () => {
     const error = RequestError.resourceNotFound('file:///missing')
     expect(classifyFailure(collectPromptFailureFacts(error)).category).toBe('internal')

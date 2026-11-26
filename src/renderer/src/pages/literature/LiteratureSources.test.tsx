@@ -49,6 +49,20 @@ describe('LiteratureSources', () => {
     expect(screen.getByText(/Source record saved:/)).not.toBeNull()
   })
 
+  it('distinguishes acquisition time from save time and ignores malformed legacy values', async () => {
+    sources.mockResolvedValue([{ ...record, rawMetadata: { retrievedAt: 1600000000000 } }])
+    const view = render(<LiteratureSources itemId="item-1" />)
+    await toggle('Metadata sources')
+    expect(await screen.findByText(/Fetched:/)).toBeTruthy()
+    expect(screen.getByText(/Source record saved:/)).toBeTruthy()
+    view.unmount()
+    sources.mockResolvedValue([{ ...record, rawMetadata: { retrievedAt: 'unknown' } }])
+    render(<LiteratureSources itemId="item-2" />)
+    await toggle('Metadata sources')
+    await screen.findByText('Crossref')
+    expect(screen.queryByText(/Fetched:/)).toBeNull()
+  })
+
   it('distinguishes loading failure from an empty result and retries', async () => {
     sources.mockRejectedValueOnce(new Error('database unavailable')).mockResolvedValueOnce([])
     render(<LiteratureSources itemId="item-1" />)
@@ -114,4 +128,58 @@ it('refreshes saved sources while the disclosure stays open', async () => {
     for (const listener of listeners) listener()
   })
   expect(screen.queryByText('PubMed')).not.toBeNull()
+})
+
+it('summarizes legacy and current citation evidence and retains identifiers when roots are unavailable', async () => {
+  const get = vi
+    .fn()
+    .mockResolvedValueOnce({ item: { title: 'Original paper' } })
+    .mockRejectedValueOnce(new Error('unavailable'))
+  Object.assign(window.api.literature, { get })
+  sources.mockResolvedValue([
+    {
+      ...record,
+      provider: 'europe-pmc',
+      rawMetadata: {
+        rootItemId: 'root-a',
+        seedPaperId: 'europe-pmc:MED:1',
+        direction: 'references'
+      }
+    },
+    {
+      ...record,
+      id: 'second',
+      provider: 'opencitations',
+      rawMetadata: {
+        citationContexts: [
+          null,
+          {
+            rootItemId: 'root-b',
+            seedPaperId: 'opencitations:br/2',
+            directions: ['citations'],
+            lookupMode: 'index',
+            rootMetadataRevision: 2
+          },
+          {
+            rootItemId: 'root-b',
+            seedPaperId: 'opencitations:br/2',
+            directions: ['references'],
+            lookupMode: 'skg-if',
+            rootMetadataRevision: 1
+          }
+        ]
+      }
+    }
+  ])
+  render(<LiteratureSources itemId="item-1" />)
+  await toggle('Metadata sources')
+  expect(await screen.findByText('Exploration started from Original paper')).not.toBeNull()
+  expect(screen.getAllByText('Exploration started from root-b')).toHaveLength(2)
+  expect(screen.getByText('Metadata revision 2')).toBeTruthy()
+  expect(screen.getByText('Metadata revision 1')).toBeTruthy()
+  expect(screen.getByText('OpenCitations · Index v2')).toBeTruthy()
+  expect(screen.getByText('OpenCitations · SKG-IF')).toBeTruthy()
+  expect(screen.getByText('References · europe-pmc:MED:1')).not.toBeNull()
+  expect(screen.getByText('Cited by · opencitations:br/2')).not.toBeNull()
+  expect(get).toHaveBeenCalledTimes(2)
 })

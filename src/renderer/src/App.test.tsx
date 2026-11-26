@@ -278,8 +278,10 @@ vi.mock('@/stores/project-store', () => ({
     })
 }))
 vi.mock('@/stores/settings-store', () => ({
-  useSettingsStore: <T,>(selector: (state: typeof mocks.settings) => T): T =>
-    selector(mocks.settings)
+  useSettingsStore: Object.assign(
+    <T,>(selector: (state: typeof mocks.settings) => T): T => selector(mocks.settings),
+    { getState: () => mocks.settings }
+  )
 }))
 vi.mock('@/stores/skill-import-store', () => ({
   useSkillImportStore: <T,>(selector: (state: typeof mocks.skillImport) => T): T =>
@@ -1183,6 +1185,47 @@ describe('App startup routing', () => {
     expect(mocks.settings.openSettings).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ['darwin', 'Dismiss'],
+    ['linux', 'Dismiss'],
+    ['linux', 'View updates']
+  ] as const)(
+    'handles an interrupted %s open with %s and clears its launch marker',
+    async (platform, action) => {
+      const originalUrl = window.location.href
+      const { jsdom } = globalThis as unknown as {
+        jsdom: { reconfigure: (options: { url: string }) => void }
+      }
+      try {
+        jsdom.reconfigure({ url: 'file:///app/index.html#update-open-interrupted' })
+        window.api.platform = platform
+        mocks.settings.isLoaded = true
+        await render()
+        const message = Array.from(container.querySelectorAll('[role="status"]')).find((node) =>
+          node.textContent?.includes('Reopen your file or link')
+        )
+        const notice = platform === 'linux' ? message?.closest('[data-bottom-notice]') : message
+        expect(
+          notice?.closest(
+            platform === 'linux' ? '[data-bottom-notice-stack]' : '[data-action-toast-stack]'
+          )
+        ).toBeTruthy()
+        expect(mocks.update.isDialogOpen).toBe(false)
+        const button = Array.from(notice!.querySelectorAll('button')).find(
+          (entry) => entry.getAttribute('aria-label') === action || entry.textContent === action
+        )
+        await act(async () => button!.click())
+        expect(notice!.isConnected).toBe(false)
+        expect(window.location.hash).toBe('')
+        if (action === 'View updates')
+          expect(mocks.settings.openSettingsToPanel).toHaveBeenCalledWith('general')
+        else expect(mocks.settings.openSettingsToPanel).not.toHaveBeenCalled()
+      } finally {
+        jsdom.reconfigure({ url: originalUrl })
+      }
+    }
+  )
+
   it('loads the update owner on first activation and retains it for its close lifecycle', async () => {
     mocks.settings.isLoaded = true
     await render()
@@ -1519,10 +1562,10 @@ describe('App startup routing', () => {
 
     await render()
 
-    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith({
-      isHydrated: false,
-      isReady: false
-    })
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(
+      { isHydrated: false, isReady: false },
+      expect.any(Function)
+    )
   })
 
   it('allows navigation and target-validated deletion after a partial session load', async () => {
@@ -1538,10 +1581,10 @@ describe('App startup routing', () => {
     expect(mocks.lifecycleSync).toHaveBeenCalledWith({
       isSessionPersistenceHydrated: true
     })
-    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith({
-      isHydrated: true,
-      isReady: false
-    })
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(
+      { isHydrated: true, isReady: false },
+      expect.any(Function)
+    )
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
     ).toBe('true')
@@ -2445,6 +2488,7 @@ describe('App startup routing', () => {
 
   const notificationUnavailableErrors = [
     "No handler registered for 'notifications:peek-pending-open-session'",
+    "Error invoking remote method 'notifications:peek-pending-open-session': DesktopRuntimeWriteNotSubmittedError: Desktop runtime is disconnected.",
     "Error invoking remote method 'notifications:peek-pending-open-session': Error: Desktop is recovering. This operation was not submitted."
   ]
 

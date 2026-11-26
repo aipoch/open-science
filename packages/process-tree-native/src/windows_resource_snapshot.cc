@@ -37,7 +37,7 @@ struct Query {
   napi_deferred deferred = nullptr;
   bool include_processes = false, supported = false, complete = true, system_read = false;
   uint32_t system_error = 0;
-  uint64_t commit = 0, limit = 0, available = 0;
+  uint64_t commit = 0, limit = 0, available = 0, total_physical = 0;
   double started = 0, ended = 0;
   std::vector<Identity> retained;
   std::vector<Process> processes;
@@ -129,6 +129,7 @@ void Collect(Query* query) {
     query->commit = static_cast<uint64_t>(info.CommitTotal) * info.PageSize;
     query->limit = static_cast<uint64_t>(info.CommitLimit) * info.PageSize;
     query->available = static_cast<uint64_t>(info.PhysicalAvailable) * info.PageSize;
+    query->total_physical = static_cast<uint64_t>(info.PhysicalTotal) * info.PageSize;
   } else query->system_error = GetLastError();
   if (!query->include_processes) return;
   auto parents = ReadParents(query);
@@ -204,6 +205,7 @@ void Complete(napi_env env, napi_status status, void* data) {
     Number(env, system, "committedBytes", static_cast<double>(query->commit));
     Number(env, system, "commitLimitBytes", static_cast<double>(query->limit));
     Number(env, system, "availableBytes", static_cast<double>(query->available));
+    Number(env, system, "totalPhysicalBytes", static_cast<double>(query->total_physical));
     napi_set_named_property(env, result, "system", system);
   } else Number(env, result, "systemError", query->system_error);
   napi_create_array_with_length(env, query->processes.size(), &processes);

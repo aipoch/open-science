@@ -3,3 +3,4 @@
 {"name": "same-line-bullet-and-multiplication-dot", "translations": ["• 比较 a · b 与 c · d。", "• 后续说明"]}
 {"name": "same-line-reversed-glyph-aliases", "translations": ["乘积 a · b；• 首项；再次 a · b。", "• 后续说明"]}
 {"name":"greek-compatibility-variant-keeps-distinct-unicode","translations":["• 比较 ϵ 与 ε。","乘积 a · b，ε 和 ϵ 均保留。"]}
+{"name":"slanted-relation-aliases-keep-distinct-unicode","translations":["• 测量范围 a ⩽ x ≤ b。","比较 y ≥ c 与 y ⩾ d；保留中点 ·。"]}

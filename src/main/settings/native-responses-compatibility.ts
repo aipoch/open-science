@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import {
   observeProviderFailure,
+  safeNetworkErrorCode,
   type ProviderFailureObserver
 } from './provider-failure-observation'
 
@@ -38,8 +39,11 @@ import {
 
 import {
   writeProviderLoopbackJson as json,
+  copyProviderResponseHeaders,
+  PROVIDER_HOP_BY_HOP_HEADERS,
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
+  withProviderConnectionMarker,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
 
@@ -100,16 +104,6 @@ const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000
 const MAX_REPLAY_ERROR_BODY_BYTES = 256 * 1024
 const responseLimit = (value: number | undefined, fallback: number): number =>
   Math.max(1, Math.floor(value ?? fallback))
-const SAFE_NETWORK_ERROR_CODES = new Set([
-  'EAI_AGAIN',
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EHOSTUNREACH',
-  'ENETUNREACH',
-  'ESOCKETTIMEDOUT',
-  'ETIMEDOUT'
-])
-
 type ProviderErrorSnapshot = Readonly<{
   body: Buffer
   headers: Record<string, string>
@@ -124,26 +118,6 @@ class NativeResponsesTimeoutError extends Error {
     super(message)
     this.name = 'TimeoutError'
   }
-}
-
-const safeRead = (value: object, key: string): unknown => {
-  try {
-    return (value as Record<string, unknown>)[key]
-  } catch {
-    return undefined
-  }
-}
-
-const safeNetworkErrorCode = (error: unknown): string | undefined => {
-  if (typeof error !== 'object' || error === null) return undefined
-  const directCode = safeRead(error, 'code')
-  if (typeof directCode === 'string' && SAFE_NETWORK_ERROR_CODES.has(directCode)) return directCode
-  const cause = safeRead(error, 'cause')
-  if (typeof cause !== 'object' || cause === null) return undefined
-  const causeCode = safeRead(cause, 'code')
-  return typeof causeCode === 'string' && SAFE_NETWORK_ERROR_CODES.has(causeCode)
-    ? causeCode
-    : undefined
 }
 
 const upstreamResponseType = (contentType: string): 'event-stream' | 'json' | 'binary' => {
@@ -222,19 +196,6 @@ const responsesUrl = (baseUrl: string): string =>
     .replace(/\/+$/, '')
     .replace(/\/responses$/i, '')}/responses`
 
-const HOP_BY_HOP_HEADERS = new Set([
-  'connection',
-  'content-length',
-  'host',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade'
-])
-
 const upstreamHeaders = (
   request: ProviderLoopbackHttpRequest,
   key: string | undefined
@@ -244,7 +205,7 @@ const upstreamHeaders = (
     // Node fetch adds Fetch Metadata headers to the loopback request. Chromium owns these headers and
     // rejects callers that pass them explicitly to Electron net.fetch with ERR_INVALID_ARGUMENT.
     if (
-      HOP_BY_HOP_HEADERS.has(name) ||
+      PROVIDER_HOP_BY_HOP_HEADERS.has(name) ||
       // Fetch decodes upstream responses, so it must negotiate its own supported encodings.
       name === 'accept-encoding' ||
       name === 'authorization' ||
@@ -257,16 +218,6 @@ const upstreamHeaders = (
   }
   headers['content-type'] = 'application/json'
   if (key) headers.authorization = `Bearer ${key}`
-  return headers
-}
-
-const copyResponseHeaders = (upstream: Response): Record<string, string> => {
-  const headers: Record<string, string> = {}
-  upstream.headers.forEach((value, name) => {
-    // Fetch decodes compressed bodies. Forwarding the original encoding after rewriting would make
-    // Codex try to decompress already-decoded bytes.
-    if (!HOP_BY_HOP_HEADERS.has(name) && name !== 'content-encoding') headers[name] = value
-  })
   return headers
 }
 
@@ -573,7 +524,7 @@ const streamResponse = async (
 
   const writeHeaders = (): void => {
     if (headersWritten) return
-    response.writeHead(upstream.status, copyResponseHeaders(upstream))
+    response.writeHead(upstream.status, copyProviderResponseHeaders(upstream.headers))
     headersWritten = true
   }
   const flushEvent = (): void => {
@@ -1061,7 +1012,8 @@ export class NativeResponsesCompatibilityProxy {
         'Native Responses upstream did not return response headers in time.'
       )
       const providerRequestStartedAt = Date.now()
-      let upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(target.baseUrl), {
+      const fetchUpstream = withProviderConnectionMarker(this.fetchImpl, response)
+      let upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
@@ -1069,7 +1021,7 @@ export class NativeResponsesCompatibilityProxy {
       })
       if (upstream.status === 401 && target.resolveKey) {
         const refreshedKey = await target.resolveKey(true)
-        upstream = await fetchProviderRequest(this.fetchImpl, responsesUrl(target.baseUrl), {
+        upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
           method: 'POST',
           headers: upstreamHeaders(request, refreshedKey),
           body: upstreamRequestBody,
@@ -1124,7 +1076,7 @@ export class NativeResponsesCompatibilityProxy {
               })
             )
         const headers = {
-          ...copyResponseHeaders(upstream),
+          ...copyProviderResponseHeaders(upstream.headers),
           ...(bodyIsReplayable ? {} : { 'content-type': 'application/json' }),
           'content-length': String(bodyToReplay.byteLength),
           'x-open-science-upstream-status': String(upstream.status)
@@ -1170,7 +1122,7 @@ export class NativeResponsesCompatibilityProxy {
             )
           )
         )
-        response.writeHead(upstream.status, copyResponseHeaders(upstream))
+        response.writeHead(upstream.status, copyProviderResponseHeaders(upstream.headers))
         response.end(JSON.stringify(payload))
       } else {
         const body = await readBoundedResponseBytes(
@@ -1178,7 +1130,7 @@ export class NativeResponsesCompatibilityProxy {
           responseLimit(this.options.maxResponseBytes, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES),
           'Native Responses upstream binary response'
         )
-        response.writeHead(upstream.status, copyResponseHeaders(upstream))
+        response.writeHead(upstream.status, copyProviderResponseHeaders(upstream.headers))
         response.end(body)
       }
       log.info('native Responses compatibility request completed', {

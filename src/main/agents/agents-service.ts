@@ -270,6 +270,10 @@ export class AgentsService {
         'Operation "switch" is not configured (approval/binding/persistence seams missing)'
       )
     }
+    const name = params.name
+    if (name !== null && (typeof name !== 'string' || !name.trim())) {
+      throw agentsPublicError('Pass a Specialist name or explicit null to return to Main Agent.')
+    }
     const operation = new SwitchOperation({
       specialistService: this.deps.specialistService,
       sessionBinding,
@@ -279,9 +283,8 @@ export class AgentsService {
       persistBinding: persistSessionSpecialist,
       sequencer: this.switchSequencer
     })
-    const name = params.name
     const switchParams: SwitchParams = {
-      ...(typeof name === 'string' || name === null ? { name } : {}),
+      name,
       ...(typeof params.revision === 'number' ? { revision: params.revision } : {})
     }
     return operation.run(switchParams, context)

@@ -67,7 +67,8 @@ it('adds empty smart storage while preserving ordinary collections, membership a
         '0056_compute_kubernetes_workspace',
         '0057_project_optimization_prompt',
         '0058_session_schedules',
-        '0059_session_history'
+        '0059_session_history',
+        '0060_image_models'
       ]
     })
     expect(await client.literatureCollection.findMany({ include: { items: true } })).toEqual(before)

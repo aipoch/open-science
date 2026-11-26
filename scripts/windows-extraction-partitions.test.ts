@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync
 } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -34,12 +35,6 @@ beforeAll(() => {
     'OPEN_SCIENCE_HELPER_TEST_SEAMS'
   ])
 }, 30_000)
-// The diagnostics script stays PowerShell; it runs only on failure paths.
-const powershell = join(
-  process.env.SystemRoot || 'C:\\Windows',
-  'System32/WindowsPowerShell/v1.0/powershell.exe'
-)
-
 function fixture(): string {
   const parent = resolve('tmp/extraction-partition-tests')
   mkdirSync(parent, { recursive: true })
@@ -158,6 +153,36 @@ describe('Windows extraction partition generation', () => {
 })
 
 describe.skipIf(process.platform !== 'win32')('real Windows partition extraction', () => {
+  it('publishes only manifest bytes from the prepared tree or requests embedded extraction', () => {
+    const f = payload()
+    const id = '1234567890abcdef'.repeat(2)
+    const source = join(f.root, id, 'payload')
+    mkdirSync(join(f.root, id))
+    renameSync(join(f.root, 'input'), source)
+    const copy = (target: string): ReturnType<typeof spawnSync> => {
+      mkdirSync(target)
+      return spawnSync(
+        helper,
+        ['copy-prepared', '--root', f.root, '--target', target, '--lists', f.lists],
+        {
+          windowsHide: true,
+          env: { ...process.env, OPEN_SCIENCE_PREPARED_ID: id },
+          encoding: 'utf16le'
+        }
+      )
+    }
+    const good = copy(f.output)
+    if (good.status !== 0) {
+      // Elevated setup must ignore user-writable staging and use its own signed archive.
+      expect(String(good.stderr)).toContain('Elevated installers use the embedded archive')
+      return
+    }
+    expect(readFileSync(join(f.output, 'app.exe'), 'utf8')).toBe('shell')
+    writeFileSync(join(source, 'app.exe'), 'wrong')
+    const rejected = copy(join(f.root, 'retry'))
+    expect(rejected.status).not.toBe(0)
+    expect(String(rejected.stderr)).toContain('checksum mismatch')
+  })
   it('handles a file-only archive with an empty second partition', () => {
     const root = fixture(),
       input = join(root, 'input'),
@@ -312,27 +337,22 @@ class Extractor { static int Main(string[] args) {
         const notice = join(f.root, 'notice.txt')
         for (const action of ['record', 'finalize']) {
           const diagnostic = spawnSync(
-            powershell,
+            helper,
             [
-              '-NoProfile',
-              '-NonInteractive',
-              '-ExecutionPolicy',
-              'Bypass',
-              '-File',
-              resolve('build/windows-install-diagnostics.ps1'),
-              '-Action',
+              'diagnostics',
+              '--action',
               action,
-              '-ReportPath',
+              '--report-path',
               reportPath,
-              '-Phase',
+              '--phase',
               'extract-new-program-files',
-              '-ErrorSource',
+              '--error-source',
               'powershell-extractor',
-              '-ExitCode',
+              '--exit-code',
               String(result.status),
-              '-LogDirectory',
+              '--log-directory',
               join(f.root, 'logs'),
-              '-MessagePath',
+              '--message-path',
               notice
             ],
             { windowsHide: true, encoding: 'utf16le', timeout: 30_000 }

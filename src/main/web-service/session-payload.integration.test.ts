@@ -173,6 +173,36 @@ it.each(['legacy', 'replay'] as const)(
   }
 )
 
+it('retains a projected update for reconnect without encoding a legacy broadcast', async () => {
+  const { server, events, session } = await setup()
+  const bootstrap = await fetch(
+    `http://127.0.0.1:${server.port}/api/bootstrap?token=test-token`
+  ).then((response) => response.json())
+  let reads = 0
+  const observed = {
+    ...session,
+    get title() {
+      reads++
+      return session.title
+    }
+  }
+  events.publish('session:updated', { session: observed, originClientId: 'test' })
+  expect(reads).toBe(1)
+
+  const cursor = bootstrap.eventStream
+  const socket = new WebSocket(
+    `ws://127.0.0.1:${server.port}/events?token=test-token&client=payload-test&eventProtocol=${WEB_EVENT_STREAM_PROTOCOL_VERSION}&stream=${cursor.streamId}&after=${cursor.latestSequence}`
+  )
+  cleanups.push(() => socket.terminate())
+  const [message] = await once(socket, 'message')
+  expect(JSON.parse(message.toString())).toMatchObject({
+    kind: 'event',
+    channel: 'session:updated',
+    payload: { kind: 'session-invalidation', sessionId: session.id, projectId: session.projectId }
+  })
+  expect(reads).toBe(1)
+})
+
 it('loads a readable persisted session through the HTTP RPC boundary', async () => {
   const { server, session } = await setup()
   const load = await clientFor(server)

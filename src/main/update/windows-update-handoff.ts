@@ -11,7 +11,7 @@ const require = createRequire(__filename)
 
 // Keep update handoff identity evidence inside the update module. The shared desktop helper is
 // owned by the composition layer, and importing it here would create a runtime dependency cycle.
-function processBirthIdentity(pid: number): string | undefined {
+export function processBirthIdentity(pid: number): string | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined
   try {
     if (process.platform === 'darwin') {

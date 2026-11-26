@@ -51,6 +51,10 @@ const expectedChannels = [
   'settings:detect-opencode',
   'settings:get-connector-detail',
   'settings:get-classification',
+  'settings:test-image-model',
+  'settings:refresh-image-model-catalog',
+  'settings:get-image-models',
+  'settings:update-image-models',
   'settings:get-github-token-status',
   'settings:get-package-mirror',
   'settings:review-notebook-private-destination',
@@ -84,6 +88,7 @@ const expectedChannels = [
   'settings:stop-skill-marketplace-batch',
   'settings:get-skill-marketplace-detail',
   'settings:mark-onboarding-complete',
+  'settings:add-onboarding-kilo-provider',
   'settings:preview-agent-home-skill',
   'settings:preview-github-skill',
   'settings:preview-skill-zip',
@@ -571,6 +576,24 @@ describe('Settings core application commands', () => {
       [settingsCoreApplicationCommands.installClaude, [{ source: 'managed' }]],
       [settingsCoreApplicationCommands.installCodex, [{ source: 'managed' }]],
       [settingsCoreApplicationCommands.installOpencode, [{ source: 'managed' }]],
+      [
+        settingsCoreApplicationCommands.testImageModel,
+        [
+          {
+            kind: 'save',
+            id: '11111111-1111-4111-8111-111111111111',
+            name: 'Images',
+            adapter: 'openai-images',
+            models: []
+          } satisfies import('../../shared/image-model-settings').ImageModelTestRequest
+        ]
+      ],
+      [
+        settingsCoreApplicationCommands.refreshImageModelCatalog,
+        [{ id: '11111111-1111-4111-8111-111111111111', adapter: 'openai-images' }]
+      ],
+      [settingsCoreApplicationCommands.getImageModels, []],
+      [settingsCoreApplicationCommands.updateImageModels, [{ kind: 'bind' }]],
       [settingsCoreApplicationCommands.getGitHubTokenStatus, []],
       [settingsCoreApplicationCommands.saveGitHubToken, [{ token: 'github_pat_test' }]],
       [settingsCoreApplicationCommands.removeGitHubToken, []],

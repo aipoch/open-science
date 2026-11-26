@@ -1,3 +1,4 @@
+import { taskRunTracing } from './task-run-tracing'
 import type { ActiveSession, ClientConnection, McpServer } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -7,6 +8,7 @@ import type { ShellRuntimeAgentContract } from '../notebook/shell-runtime'
 import { shellRuntimeAgentContract } from '../notebook/shell-runtime'
 import {
   claudeCodeFramework,
+  getAgentFramework,
   codexFramework,
   opencodeFramework,
   type AgentFramework
@@ -46,10 +48,12 @@ const createHarness = (options: {
     appliedModel: undefined
     configOptions: undefined
   }>
+  traceReadiness?: () => Promise<{ ready: boolean }>
   registerSessionSpecialist?: () => void
   pushEvent?: () => void
   emitState?: () => void
   order?: string[]
+  role?: 'primary' | 'side-chat' | 'restricted-inference'
   descriptorCapabilities?: SessionCapabilityName[]
   framework?: AgentFramework
   nativeMcpEnabled?: boolean
@@ -77,6 +81,7 @@ const createHarness = (options: {
   }))
   const connection = {
     agent: {
+      request: options.traceReadiness,
       buildSession
     }
   } as unknown as ClientConnection
@@ -110,7 +115,7 @@ const createHarness = (options: {
     order.push('capability provision')
     const mcpServers = options.capabilityMcpServers ?? []
     const descriptor = {
-      role: 'primary' as const,
+      role: options.role ?? 'primary',
       delegation: 'denied' as const,
       transport: 'none' as const,
       capabilities: options.descriptorCapabilities ?? [],
@@ -158,7 +163,10 @@ const createHarness = (options: {
       })
     },
     capabilities: { provision },
-    capabilityPolicy: CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+    capabilityPolicy: {
+      ...CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY,
+      role: options.role ?? 'primary'
+    },
     resolveProjectAgentContext: options.projectAgentContextError
       ? vi.fn(async () => {
           throw options.projectAgentContextError
@@ -206,6 +214,40 @@ const createHarness = (options: {
 }
 
 describe('AcpProviderSessionCreator', () => {
+  it.each(['claude-code', 'open-science-agent'] as const)(
+    'refuses unavailable tracing before creating a %s session',
+    async (id) => {
+      const traceReadiness = vi.fn(async () => ({ ready: false }))
+      const harness = createHarness({ framework: getAgentFramework(id), traceReadiness })
+      const traced = { projectId: 'project', [taskRunTracing]: true }
+      await expect(harness.creator.create(traced)).rejects.toThrow(
+        id === 'open-science-agent' ? 'OTLP_TRACES_ENDPOINT' : 'built-in Open-Science Agent'
+      )
+      expect(traceReadiness).toHaveBeenCalledTimes(id === 'open-science-agent' ? 1 : 0)
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.buildSession).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['primary', 'side-chat', 'restricted-inference'] as const)(
+    'sets the built-in Agent session lifetime for %s',
+    async (role) => {
+      const harness = createHarness({ framework: getAgentFramework('open-science-agent'), role })
+      await harness.creator.create({ projectId: 'project-a' })
+      const metadata = vi.mocked(harness.buildSession).mock.lastCall?.[0]._meta
+      if (role === 'restricted-inference') {
+        expect(metadata).toMatchObject({
+          'open-science-agent/ephemeral-session': true,
+          'open-science-agent/tool-less': true
+        })
+        expect(metadata).not.toHaveProperty('open-science-agent/owner')
+      } else {
+        expect(metadata).toHaveProperty('open-science-agent/owner', { projectId: 'project-a' })
+        expect(metadata).not.toHaveProperty('open-science-agent/ephemeral-session')
+      }
+    }
+  )
+
   it('merges framework-contributed MCP servers into session/new', async () => {
     const capabilityServer: McpServer = {
       type: 'http',

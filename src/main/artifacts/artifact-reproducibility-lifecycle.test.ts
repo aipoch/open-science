@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const diagnosticLog = vi.hoisted(() => ({
   info: vi.fn(),
@@ -21,6 +24,7 @@ import { CHILD_UNCONFIRMED } from '@aipoch/environment'
 import { ReproducibilityCleanupError } from '@aipoch/reproducibility'
 import { withReproducibilityNotebookLifecycle } from './reproducibility-notebook-lifecycle'
 import { SessionDeletionOwner } from '../session-deletion/owner'
+import { NotebookExecutionIntent } from '../notebook/execution-intent'
 import {
   ArtifactReproducibilityAttemptOwner,
   type ArtifactReproducibilityAttemptOwnerDependencies
@@ -78,6 +82,197 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
 }
 
 describe('reproducibility resource lifecycle', () => {
+  it('retains one originating intent for every step without publishing it in check state', async () => {
+    const intent = new NotebookExecutionIntent({
+      projectId: request.projectId,
+      sessionId: request.appSessionId
+    })
+    const prepareExecutionIntent = vi.fn(() => intent)
+    const createExecutionAdmission = vi.fn<
+      NonNullable<ArtifactReproducibilityAttemptOwnerDependencies['createExecutionAdmission']>
+    >(() => ({
+      prepare: async () => {},
+      assertCurrent: () => {}
+    }))
+    const execute: NonNullable<ArtifactReproducibilityAttemptOwnerDependencies['execute']> = async (
+      input
+    ) => {
+      input.createExecutionAdmission?.(input.signal)
+      input.createExecutionAdmission?.(input.signal)
+      return { matched: true, completedStepIds: [], comparisons: [] }
+    }
+    const owner = createOwner({ prepareExecutionIntent, createExecutionAdmission, execute })
+    const states: ArtifactReproducibilityCheckState[] = []
+    owner.start(request, 1, (state) => states.push(state))
+    await vi.waitFor(() => expect(terminalStates(states)).toHaveLength(1))
+    expect(prepareExecutionIntent).toHaveBeenCalledTimes(1)
+    expect(createExecutionAdmission).toHaveBeenCalledTimes(2)
+    for (const call of createExecutionAdmission.mock.calls) expect(call[2]).toBe(intent)
+    expect(JSON.stringify(states)).not.toContain('executionIntent')
+    expect(JSON.stringify(states)).not.toContain('Notebook host execution intent')
+  })
+  it('retains the original isolated cleanup handle in the application scope and retries without replay', async () => {
+    let reaped = false
+    const treeIdentity = {}
+    const shutdown = vi.fn(async () => ({ reaped }))
+    const runtime = {
+      execute: async (): Promise<never> => {
+        throw new Error('unused')
+      },
+      shutdown,
+      resources: () =>
+        reaped
+          ? []
+          : [
+              {
+                identity: treeIdentity,
+                group: 'kernel' as const,
+                kind: 'python',
+                phase: 'cleanup-pending' as const,
+                projectId: 'synthetic-project',
+                sessionId: 'synthetic-session',
+                startedAt: 123,
+                release: shutdown
+              }
+            ]
+    }
+    const execute = vi.fn<NonNullable<ArtifactReproducibilityAttemptOwnerDependencies['execute']>>(
+      async (input) => {
+        input.onRuntimeCreated?.(runtime)
+        input.onCleanupRetained?.(shutdown)
+        throw new Error(CHILD_UNCONFIRMED)
+      }
+    )
+    const owner = createOwner({ execute })
+    owner.start(request, 1, vi.fn())
+    await vi.waitFor(() => expect(owner.getCheck(request, 1)?.status).toBe('failed'))
+    const resources = owner.resources({
+      projectId: request.projectId,
+      sessionId: request.appSessionId
+    })
+    expect(resources).toEqual([
+      expect.objectContaining({
+        group: 'reproduction',
+        phase: 'cleanup-pending',
+        projectId: request.projectId,
+        sessionId: request.appSessionId
+      }),
+      expect.objectContaining({
+        identity: treeIdentity,
+        group: 'kernel',
+        projectId: request.projectId,
+        sessionId: request.appSessionId
+      })
+    ])
+    await expect(resources[0].release()).resolves.toMatchObject({ reaped: false })
+    expect(owner.getActiveSessions()).toHaveLength(1)
+    reaped = true
+    await expect(
+      owner.cancelSession(request.projectId, request.appSessionId)
+    ).resolves.toBeUndefined()
+    expect(owner.resources()).toEqual([])
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(shutdown).toHaveBeenCalledTimes(2)
+    await owner.dispose()
+  })
+
+  it('keeps an unconfirmed installer resource visible after its kernel has stopped', async () => {
+    let proofAvailable = false
+    const child = {}
+    const installer = {
+      identity: child,
+      startedAt: 123,
+      release: vi.fn(async () => ({ reaped: proofAvailable }))
+    }
+    const cleanup = vi.fn(async () => ({ reaped: proofAvailable }))
+    const execute = vi.fn<NonNullable<ArtifactReproducibilityAttemptOwnerDependencies['execute']>>(
+      async (input) => {
+        input.onRuntimeCreated?.({
+          execute: async (): Promise<never> => {
+            throw new Error('unused')
+          },
+          shutdown: async () => ({ reaped: true }),
+          resources: () => []
+        })
+        input.onCleanupRetained?.(cleanup, installer)
+        throw new Error(CHILD_UNCONFIRMED)
+      }
+    )
+    const owner = createOwner({ execute })
+    owner.start(request, 1, vi.fn())
+    await vi.waitFor(() => expect(owner.getCheck(request, 1)?.status).toBe('failed'))
+    const resource = owner.resources().find(({ group }) => group === 'installer')!
+    expect(resource).toMatchObject({
+      identity: child,
+      startedAt: 123,
+      phase: 'cleanup-pending',
+      projectId: request.projectId,
+      sessionId: request.appSessionId
+    })
+    await expect(resource.release()).resolves.toEqual({ reaped: false })
+    await expect(owner.cancelSession(request.projectId, request.appSessionId)).rejects.toThrow(
+      CHILD_UNCONFIRMED
+    )
+    expect(owner.resources().find(({ group }) => group === 'installer')?.identity).toBe(child)
+    proofAvailable = true
+    await expect(resource.release()).resolves.toEqual({ reaped: true })
+    await owner.cancelSession(request.projectId, request.appSessionId)
+    expect(owner.resources()).toEqual([])
+    expect(execute).toHaveBeenCalledOnce()
+    await owner.dispose()
+  })
+
+  it('waits for an original batch to drain even when a different Attempt cleanup fails', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'reproduction-drain-'))
+    const load = deferred()
+    let batchLoading = false
+    const owner = createOwner({
+      storageRoot,
+      loadExecution: async (selected) => {
+        if (selected.artifactId === 'waiting') {
+          batchLoading = true
+          await load.promise
+        }
+        return execution
+      },
+      execute: async () => {
+        throw new Error(CHILD_UNCONFIRMED)
+      }
+    })
+    owner.start(request, 1, vi.fn())
+    await vi.waitFor(() => expect(owner.getCheck(request, 1)?.status).toBe('failed'))
+    const preparing = owner.sessionCommand(
+      {
+        projectId: request.projectId,
+        appSessionId: request.appSessionId,
+        action: 'prepare',
+        targets: [{ artifactId: 'waiting', versionId: 'v1', name: 'waiting.csv' }]
+      },
+      1
+    )
+    await vi.waitFor(() => expect(batchLoading).toBe(true))
+    const rejected = vi.fn()
+    const stopping = owner.cancelSession(request.projectId, request.appSessionId).catch(rejected)
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(rejected).not.toHaveBeenCalled()
+      expect(owner.resources().find(({ group }) => group === 'batch')?.phase).toBe(
+        'cleanup-pending'
+      )
+      load.resolve()
+      await preparing
+      await stopping
+      expect(rejected).toHaveBeenCalledOnce()
+      expect(owner.resources().some(({ group }) => group === 'batch')).toBe(false)
+    } finally {
+      load.resolve()
+      await preparing.catch(() => undefined)
+      await stopping
+      await owner.dispose().catch(() => undefined)
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
+
   it('reports cleanup failures after cancellation without treating stopped workers as unsafe', async () => {
     const stopped = deferred()
     const execute = vi.fn(async () => {

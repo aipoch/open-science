@@ -136,7 +136,8 @@ export {
   INTERRUPTED_SESSION_ERROR,
   INTERRUPTED_TURN_ERROR,
   normalizeSessionAfterRestore,
-  rearmUnacceptedElicitationContinuations
+  rearmUnacceptedElicitationContinuations,
+  resolveRestorablePermissionToolAuthority
 } from './session-persistence/restore'
 export {
   isReviewerCorrectionAttribution,
@@ -177,6 +178,7 @@ export {
   isInheritedForkTurn,
   isTurnAnchor,
   latestTurnAnchor,
+  latestTurnPromptIds,
   turnAnchorInterval
 } from './session-persistence/turn-anchor'
 export type { TurnOutcome } from './session-persistence/turn-outcome'

@@ -63,6 +63,7 @@ describe('fixed impact-registration gate', () => {
       expect(step['continue-on-error']).toBeUndefined()
     }
     expect(job.steps.flatMap(({ run }) => (run ? [run] : []))).toEqual([
+      'node scripts/ci/check-installation-helper-registration.mjs',
       'npm ci --ignore-scripts --no-audit',
       'npx vitest run --config scripts/ci/vitest.registration.config.ts'
     ])
@@ -89,6 +90,8 @@ describe('fixed impact-registration gate', () => {
               EVENT_NAME: event,
               PREFLIGHT_RESULT: 'success',
               REGISTRATION_RESULT: result,
+              UPDATE_OCCUPANCY_REQUIRED: 'false',
+              UPDATE_OCCUPANCY_RESULT: 'skipped',
               RUNTIME_REQUIRED: 'false',
               PACKAGE_RESULT: 'success',
               PACKAGE_SOURCE_REQUIRED: 'false',

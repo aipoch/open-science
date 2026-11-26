@@ -1,3 +1,18 @@
+import { subscribeWebBranchChanges } from '../web/evidence-lifecycle'
+import { WebInvocationOwner } from '../web/invocation-owner'
+import {
+  getWebInvocationStore,
+  type WebInvocationBinding,
+  type WebInvocationScope
+} from '../web/invocation-store'
+import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
+import { sanitizeRawToolPayload, sanitizeToolContent } from '../../shared/tool-detail-sanitizer'
+import { SearchService } from '../web/search-service'
+import { WebSessionSlots } from '../web/limits'
+import { WebService } from '../web/service'
+import { getWebSnapshotStore } from '../web/snapshot-store'
+import { WebEvidenceLifecycle } from '../web/evidence-lifecycle'
+import { WebRuntimeEvidence } from '../web/runtime-evidence'
 import type { PdfAnnotationAgentTools } from '../pdf-annotations/agent-tools'
 import type { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
@@ -19,7 +34,10 @@ import type { AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import { SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE } from '../../shared/failure/messages'
 import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
-import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
+import {
+  resolveActiveConversationMessages,
+  resolveMessageBranchPath
+} from '../../shared/conversation-graph'
 import {
   MAIN_DURABLE_CONTINUATION_LIFECYCLE_CLIENT_ID,
   MAIN_PERMISSION_WAIT_LIFECYCLE_CLIENT_ID
@@ -42,10 +60,8 @@ import type { LiteratureAttachmentAuthority } from '../literature/attachment-aut
 import type { LiteratureCatalog } from '../literature/catalog'
 import { LiteratureCitationDocument } from '../literature/citation-document'
 import type { LiteratureDocumentReader } from '../literature/document-reader'
-import {
-  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
-  type LiteratureLibraryScope
-} from '../literature/library-mcp-server'
+import { LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT } from '../literature/library-mcp-contract'
+import type { LiteratureLibraryScope } from '../literature/library-mcp-contract'
 import type { PdfElementTools } from '../literature/pdf-structure/agent-reader'
 import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { netFetchStandard } from '../network-fetch'
@@ -146,6 +162,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   notebookRpcServer: NotebookLocalRpcServer
   wslSetupSessions?: AcpRuntimeOptions['wslSetupSessions']
   getShellRuntimeBinding?: () => ShellRuntimeBinding | Promise<ShellRuntimeBinding>
+  bindTaskNotebookRuntime?: NonNullable<AcpRuntimeOptions['notebook']>['bindTaskRuntime']
   canOwnRuntimeBindingDecision?: NonNullable<
     AcpRuntimeOptions['notebook']
   >['canOwnRuntimeBindingDecision']
@@ -222,7 +239,11 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   preparedSkills?: Awaited<
     ReturnType<NonNullable<AcpSettingsCapabilities['prepareDelegatedSkills']>>
   >
-  delegatedNotebookConnection?: NotebookRpcConnection
+  delegatedNotebookConnection?: NotebookRpcConnection & {
+    refreshExecutionIntent?(
+      intent: import('../notebook/execution-intent').NotebookExecutionIntent
+    ): Promise<NotebookRpcConnection>
+  }
   // Disposable delegated framework homes contain copied authentication and Skill material.
   // Keep the per-attempt home protected even when a parent data directory is granted.
   delegatedRuntimeHome?: string
@@ -278,6 +299,7 @@ const createAcpRuntime = ({
   wslSetupSessions,
   getShellRuntimeBinding,
   canOwnRuntimeBindingDecision,
+  bindTaskNotebookRuntime,
   peekNotebookHandoffContext,
   isReplNamespaceUnavailable,
   authorizeSkillImportReferencedUploads,
@@ -340,6 +362,131 @@ const createAcpRuntime = ({
     : undefined
   const configRoot = resolveConfigRoot()
   const dataRoot = resolveDataRoot()
+  const webSessionSlots = new WebSessionSlots()
+  const webSnapshots = getWebSnapshotStore(join(dataRoot, 'web-evidence'))
+  const webSearchService = new SearchService({ sessionSlots: webSessionSlots })
+  const webService = new WebService({
+    sessionSlots: webSessionSlots,
+    store: webSnapshots
+  })
+  const webEvidenceLifecycle = new WebEvidenceLifecycle(
+    webSnapshots,
+    async (projectId, sessionId) =>
+      sessionPersistenceCoordinator?.loadSessionForContinuation(projectId, sessionId)
+  )
+  const webRuntimeEvidence = new WebRuntimeEvidence({
+    service: webService,
+    loadSession: ({ projectId, sessionId }) => {
+      if (!sessionPersistenceCoordinator)
+        throw new Error('Web execution requires durable Session authority')
+      return sessionPersistenceCoordinator.loadSessionForContinuation(projectId, sessionId)
+    },
+    ensureBranchOwnership: (session, branchId) =>
+      webEvidenceLifecycle.ensureBranchOwnership(session, branchId)
+  })
+  const readWebScope = async (binding: WebInvocationBinding): Promise<WebInvocationScope> => {
+    if (!sessionPersistenceCoordinator)
+      throw new Error('Web execution requires durable Session authority')
+    const session = await sessionPersistenceCoordinator.loadSessionForContinuation(
+      binding.projectId,
+      binding.sessionId
+    )
+    if (session.packageOrigin) throw new Error('Imported Sessions cannot execute Web tools')
+    const graph = session.conversationGraph
+    const frame = graph?.frames.find((frame) => frame.id === graph.activeFrameId)
+    if (!graph || !frame || frame.kind !== 'root')
+      throw new Error('Web execution requires the active primary Session branch')
+    const path = resolveMessageBranchPath(graph, frame.activeBranchId)
+    const prompt = path.findLast((message) => message.role === 'user')
+    if (!prompt?.runtimeSegmentId) throw new Error('Web execution has no durable prompt scope')
+    return {
+      ...binding,
+      branchId: frame.activeBranchId,
+      promptMessageId: prompt.id,
+      agentFrameId: frame.id,
+      runtimeSegmentId: prompt.runtimeSegmentId
+    }
+  }
+  let publishWebEvent: (event: AcpRuntimeEvent) => void = () => undefined
+  const webInvocations = new WebInvocationOwner({
+    store: getWebInvocationStore(join(dataRoot, 'web-invocations')),
+    scope: readWebScope,
+    publishSnapshot: (scope, snapshotId, authorize) =>
+      webRuntimeEvidence.commit(scope, snapshotId, authorize),
+    execute: (scope, operation, input, context) =>
+      operation === 'search'
+        ? webSearchService.search(scope.sessionId, input, {
+            ...context,
+            sessionSlotKey: JSON.stringify([scope.projectId, scope.sessionId])
+          })
+        : webRuntimeEvidence.fetch(scope, input, context),
+    publish: async (record, status, result, disposition) => {
+      const event: AcpRuntimeEvent = {
+        id: randomUUID(),
+        kind: 'tool',
+        level: 'info',
+        timestamp: Date.now(),
+        sessionId: record.sessionId,
+        promptMessageId: record.promptMessageId,
+        agentFrameId: record.agentFrameId,
+        messageBranchId: record.branchId,
+        ...(status === 'in_progress' ? {} : { publicationOwner: 'main' as const }),
+        appOwned: true,
+        executionInvocationId: record.invocationId,
+        toolCallId: record.invocationId,
+        title: `mcp__open_science_web__web_${record.operation}`,
+        providerToolName: `mcp__open_science_web__web_${record.operation}`,
+        toolKind: record.operation === 'search' ? 'search' : 'fetch',
+        status,
+        webInvocation: webInvocations.metadataFor(record, record.invocationId) ?? {
+          attempt: record.attempt,
+          configGeneration: record.configGeneration
+        },
+        rawInput: sanitizeRawToolPayload(record.input, 8000),
+        ...(disposition ? { toolDisposition: disposition } : {}),
+        ...(result
+          ? {
+              toolContent: sanitizeToolContent([
+                { type: 'content', content: { type: 'text', text: JSON.stringify(result) } }
+              ]) as AcpRuntimeEvent['toolContent']
+            }
+          : {})
+      }
+      if (status === 'in_progress') {
+        // The Web invocation journal already owns attempt history. The harness publishes the
+        // final tool event after the receipt commits, including the journaled attempt metadata.
+        // Live progress must stay off the Session queue used for authority and receipt checks.
+        return publishWebEvent(event)
+      }
+      await sessionPersistenceCoordinator!.mutateRuntimeSession(record, (session) => {
+        const graph = session.conversationGraph
+        const frame = graph?.frames.find((frame) => frame.id === graph.activeFrameId)
+        if (
+          session.packageOrigin ||
+          (!disposition &&
+            (frame?.id !== record.agentFrameId || frame.activeBranchId !== record.branchId))
+        )
+          throw new Error('Web tool Session branch changed before publication')
+        return applyRuntimeSessionEvents(
+          session,
+          {
+            promptMessageId: record.promptMessageId,
+            agentFrameId: record.agentFrameId,
+            messageBranchId: record.branchId,
+            runtimeSegmentId: record.runtimeSegmentId
+          },
+          [event]
+        )
+      })
+      return publishWebEvent(event)
+    }
+  })
+  const webControlsRef = new WeakRef(webInvocations)
+  const unsubscribeWebBranches = subscribeWebBranchChanges((change) => {
+    const controls = webControlsRef.deref()
+    if (controls) controls.branchChanged(change, change.branchId)
+    else unsubscribeWebBranches()
+  })
   const defaultCwd = homedir()
   const delegatedProtectedReadRoots = [
     delegatedRuntimeHome,
@@ -430,7 +577,28 @@ const createAcpRuntime = ({
   }
   const callbacks: AcpRuntimeCallbacks = {
     ...clientCallbacks,
-    onEvent: (event) => {
+    onEvent: (incoming) => {
+      let event = incoming
+      const projectId = event.sessionId
+        ? runtimeCoordinatorRef.current?.liveSessionProjectId(event.sessionId)
+        : undefined
+      const invocationId = event.executionInvocationId ?? event.toolCallId
+      const metadata =
+        event.appOwned && event.sessionId && invocationId && projectId
+          ? webInvocations.metadataFor({ projectId, sessionId: event.sessionId }, invocationId)
+          : undefined
+      if (metadata) {
+        const disposition = webInvocations.dispositionFor(
+          { projectId: projectId!, sessionId: event.sessionId! },
+          invocationId!
+        )
+        event = {
+          ...event,
+          webInvocation: metadata,
+          executionInvocationId: invocationId,
+          ...(disposition ? { status: 'completed' as const, toolDisposition: disposition } : {})
+        }
+      }
       runtimeSessionOwner?.accept(event)
       clientCallbacks.onEvent?.(event)
     },
@@ -452,6 +620,11 @@ const createAcpRuntime = ({
     }
   }
 
+  publishWebEvent = (event) =>
+    event.publicationOwner === 'main'
+      ? callbacks.onEvent?.(event)
+      : clientCallbacks.onEvent?.(event)
+
   const runtimeCoordinator = new AcpRuntimeCoordinator(
     (runtimeCallbacks, permissionGrantStore, target) => {
       const selection = fixedBackend
@@ -461,6 +634,8 @@ const createAcpRuntime = ({
           : settingsService.captureActiveAgentBackendSelection()
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion,
+        trackTaskContinuation: (identity, send) =>
+          runtimeCoordinator.trackTaskContinuation(identity, send),
         auxiliaryUsage,
         classifySkills: delegatedNotebookConnection ? undefined : classifySkills,
         classifyReadingRoute: delegatedNotebookConnection ? undefined : classifyReadingRoute,
@@ -500,6 +675,24 @@ const createAcpRuntime = ({
         ...(spawnAgent ? { spawnAgent } : {}),
         ...(spawnProcess ? { spawnProcess } : {}),
         ...(registerOpenCodeStoreRelease ? { registerOpenCodeStoreRelease } : {}),
+        web: delegatedNotebookConnection
+          ? undefined
+          : {
+              cancelSession: (sessionId) => webInvocations.cancelSession(sessionId),
+              handlerFor: (sessionId, projectId) => ({
+                search: (input, context) =>
+                  webInvocations.execute({ projectId, sessionId }, 'search', input, context),
+                fetchPage: (input, context) =>
+                  webInvocations.execute({ projectId, sessionId }, 'fetch', input, context),
+                reconcileResult: (query) =>
+                  webInvocations.reconcileResult({ projectId, sessionId }, query),
+                cancelUndispatched: (query) =>
+                  webInvocations.cancelUndispatched({ projectId, sessionId }, query),
+                receiptSignal: (id) => webInvocations.receiptSignal({ projectId, sessionId }, id),
+                receiptCommitted: (result) =>
+                  webInvocations.receiptCommitted({ projectId, sessionId }, result)
+              })
+            },
         schedules: delegatedNotebookConnection ? undefined : schedules,
         mcpHttpHost: new AgentMcpHttpHost({
           receiptDirectory: join(dataRoot, 'open-science-agent', 'tool-receipts')
@@ -783,6 +976,13 @@ const createAcpRuntime = ({
                 dataRoot,
                 projectId: DEFAULT_ARTIFACT_PROJECT_ID,
                 mcpEntryPath,
+                enableImageGeneration: true,
+                imageMcp: {
+                  getPresetId: () =>
+                    settingsService.imageModels
+                      .resolve()
+                      .then((resolved) => resolved?.model.presetId)
+                },
                 repository,
                 runRegistry,
                 provenance: provenanceRepository,
@@ -811,6 +1011,21 @@ const createAcpRuntime = ({
             }
           : undefined,
         notebook: {
+          ...(!delegatedNotebookConnection
+            ? {
+                bindTaskRuntime: bindTaskNotebookRuntime,
+                createExecutionIntent: (
+                  scope: import('../notebook/execution-intent').NotebookExecutionIntentScope
+                ) => notebookRpcServer.createExecutionIntent(scope),
+                currentExecutionIntent: (
+                  scope: import('../notebook/execution-intent').NotebookExecutionIntentScope
+                ) => notebookRpcServer.currentExecutionIntent(scope)
+              }
+            : {}),
+          rememberExecutionIntent: (scope, promptId, intent) =>
+            notebookRpcServer.rememberExecutionIntent(scope, promptId, intent),
+          resolveExecutionIntent: (scope, promptId) =>
+            notebookRpcServer.resolveExecutionIntent(scope, promptId),
           canOwnRuntimeBindingDecision: async (request) => {
             const trustedRequest = notebookRpcServer.runtimeBindingAdmissionRequest(
               request,
@@ -830,14 +1045,17 @@ const createAcpRuntime = ({
           memoryTools: !delegatedNotebookConnection,
           isMemoryEnabled: () => memory?.isEnabled?.() ?? Promise.resolve(false),
           getShellRuntimeBinding,
-          getRpcConnection: ({ sessionId, projectId, memoryTools }) =>
+          getRpcConnection: ({ sessionId, projectId, memoryTools, executionIntent }) =>
             delegatedNotebookConnection
-              ? Promise.resolve(delegatedNotebookConnection)
+              ? executionIntent && delegatedNotebookConnection.refreshExecutionIntent
+                ? delegatedNotebookConnection.refreshExecutionIntent(executionIntent)
+                : Promise.resolve(delegatedNotebookConnection)
               : notebookRpcServer.issueSessionConnection(
                   sessionId,
                   projectId,
                   `root-frame-${sessionId}`,
-                  memoryTools
+                  memoryTools,
+                  executionIntent
                 ),
           ...(delegatedNotebookConnection
             ? {}
@@ -1119,6 +1337,8 @@ const createAcpRuntime = ({
             }
           : undefined,
         resolveProjectAgentContext: createProjectAgentContextResolver(projectRepository),
+        resolveProjectTracing: async (projectId) =>
+          (await projectRepository.get(projectId))?.sessionDefaults?.agentTracingEnabled === true,
         ...(resolveComputeExecutionTargetIds ? { resolveComputeExecutionTargetIds } : {})
       }
       const baseOwners = composeAcpRuntimeBaseOwners(runtimeOptions)
@@ -1137,9 +1357,18 @@ const createAcpRuntime = ({
       onSessionTurnStarted,
       onSessionTurnEnded,
       onSkillImportAttachmentEligible,
-      onSessionCancellationRequested,
-      onAllSessionsCancellationRequested,
-      onSessionDeleteStarted,
+      onSessionCancellationRequested: (sessionId) => {
+        webInvocations.cancelSession(sessionId)
+        onSessionCancellationRequested?.(sessionId)
+      },
+      onAllSessionsCancellationRequested: () => {
+        webInvocations.cancelAll()
+        onAllSessionsCancellationRequested?.()
+      },
+      onSessionDeleteStarted: (sessionId) => {
+        webInvocations.cancelSession(sessionId)
+        onSessionDeleteStarted?.(sessionId)
+      },
       beforeSessionDelete,
       afterSessionDelete
     },

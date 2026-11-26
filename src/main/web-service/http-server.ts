@@ -1,5 +1,6 @@
 import { projectSessionEventPayload } from '../session-event-payload'
 import { RUNTIME_PAYLOAD_CAPABILITY } from '../../shared/runtime-payload-transfer'
+import { isProviderSetupAction } from '../../shared/bootstrap'
 import { runtimePayloadTransfers } from '../runtime-payload-transfers'
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
@@ -12,6 +13,7 @@ import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
 import { parseRpcJson, stringifyRpcJson } from '../rpc-json'
+import { createPackedWebAssetReader } from './packed-web-assets'
 import type {
   ExternalWebAccess,
   ExternalWebAccessAuthorization,
@@ -25,6 +27,7 @@ export type {
 } from './external-access-contract'
 
 import { WebSocket, WebSocketServer } from 'ws'
+import { z } from 'zod'
 
 import {
   createLogger,
@@ -42,6 +45,11 @@ import type {
   UpdateSessionConfigurationRequest
 } from '../../shared/session-configuration'
 import { PlanCommandError } from '../../shared/session-plan/contract'
+import type {
+  TaskInteractionScope,
+  TaskPermissionResponse,
+  TaskQuestionResponse
+} from '../../shared/task-interaction'
 import type {
   CreateTaskProjectRequest,
   StartTaskRunRequest,
@@ -64,6 +72,7 @@ import type { ApplicationEventSource } from '../application-events'
 import {
   createTaskCallerContext,
   createWebCallerContext,
+  canRelayTaskInteraction,
   type CallerContext
 } from '../caller-context'
 import { createWebSocketFrameBudget, createWebSocketFrameSender } from '../websocket-frame-sender'
@@ -175,8 +184,16 @@ type WebServerOptions = {
         | 'supportsSubmissions'
         | 'submitRun'
         | 'getSubmission'
+        | 'supportsNotebookContinuation'
+        | 'continueNotebook'
         | 'getSessionPlan'
         | 'respondSessionPlan'
+        | 'listInteractions'
+        | 'getInteraction'
+        | 'respondPermission'
+        | 'setRunInteractionMode'
+        | 'supportsTaskQuestions'
+        | 'answerQuestion'
         | 'resolveActiveRun'
         | 'getProjectSessionDefaults'
         | 'updateProjectSessionDefaults'
@@ -196,6 +213,14 @@ type WebServerOptions = {
         | 'updateAgentRouting'
         | 'doctor'
         | 'bootstrap'
+        | 'prepareNotebookEnvironment'
+        | 'supportsNotebookRuntimeSelection'
+        | 'listNotebookRuntimes'
+        | 'configureNotebookRuntime'
+        | 'supportsNotebookEnvironmentOperations'
+        | 'startNotebookEnvironmentOperation'
+        | 'getNotebookEnvironmentOperation'
+        | 'cancelNotebookEnvironmentOperation'
         | 'installCli'
         | 'listRuntimes'
       >
@@ -467,8 +492,14 @@ const publicApplicationCommandError = (
 const applicationCommandErrorStatus = (error: ApplicationCommandError): number => {
   if (error.code === 'invalid-command-arguments' || error.code.startsWith('csl-')) return 400
   if (error.code === 'command-unavailable') return 404
-  if (error.code === 'session-details-conflict') return 409
-  if (error.code === 'session-revision-conflict') return 409
+  if (
+    error.code === 'session-details-conflict' ||
+    error.code === 'session-revision-conflict' ||
+    error.code === 'session-package-busy' ||
+    error.code === 'session-package-operation-conflict' ||
+    error.code === 'session-package-review-unavailable'
+  )
+    return 409
   return 500
 }
 
@@ -609,8 +640,20 @@ const readJsonBody = async (
 }
 
 const taskErrorStatus = (error: TaskApiError): number => {
+  if (error.code === 'task_relay_required' || error.code === 'task_delegation_required') return 403
+  if (error.code === 'notebook_setup_failed') return 503
   if (error.code === 'submission_unavailable') return 503
-  if (error.code === 'submission_conflict' || error.code === 'session_read_only') return 409
+  if (
+    error.code === 'submission_conflict' ||
+    error.code === 'interaction_revision_conflict' ||
+    error.code === 'question_already_answered' ||
+    error.code === 'notebook_environment_operation_conflict' ||
+    error.code === 'notebook_runtime_unavailable' ||
+    error.code === 'notebook_continuation_expired' ||
+    error.code === 'session_read_only' ||
+    error.code === 'session_project_mismatch'
+  )
+    return 409
   if (error.code === 'invalid_request') return 400
   if (error.code === 'invalid_configuration') return 400
   if (
@@ -630,39 +673,105 @@ const parseTaskPlanResponseRequest = (value: unknown): TaskPlanResponseRequest =
     throw new TaskApiError('invalid_request', 'Plan response must be an object.')
   }
   const candidate = value as Record<string, unknown>
-  if ('feedback' in candidate) {
-    if (
-      typeof candidate.feedback !== 'string' ||
-      candidate.feedback.trim().length === 0 ||
-      'decision' in candidate ||
-      'artifactVersionId' in candidate ||
-      'expectedRevision' in candidate
-    ) {
-      throw new TaskApiError(
-        'invalid_request',
-        'Plan feedback must be a non-empty string without decision fields.'
-      )
-    }
-    return { feedback: candidate.feedback.trim() }
-  }
   if (
-    (candidate.decision !== 'approved' && candidate.decision !== 'rejected') ||
+    Object.keys(candidate).some(
+      (key) =>
+        ![
+          'projectId',
+          'artifactVersionId',
+          'expectedRevision',
+          'expectedBranchId',
+          'expectedModeRevision',
+          'source',
+          'feedback',
+          'decision'
+        ].includes(key)
+    ) ||
+    (candidate.projectId !== undefined &&
+      (typeof candidate.projectId !== 'string' || !candidate.projectId.trim())) ||
+    (candidate.source !== 'user_relay' && candidate.source !== 'delegated_agent') ||
+    (candidate.source === 'delegated_agent' &&
+      (!Number.isSafeInteger(candidate.expectedModeRevision) ||
+        (candidate.expectedModeRevision as number) < 0)) ||
+    (candidate.source === 'user_relay' && candidate.expectedModeRevision !== undefined) ||
     typeof candidate.artifactVersionId !== 'string' ||
     candidate.artifactVersionId.trim().length === 0 ||
-    !Number.isInteger(candidate.expectedRevision) ||
+    typeof candidate.expectedBranchId !== 'string' ||
+    !candidate.expectedBranchId.trim() ||
+    !Number.isSafeInteger(candidate.expectedRevision) ||
     (candidate.expectedRevision as number) < 0
   ) {
     throw new TaskApiError(
       'invalid_request',
-      'Plan decision requires approved or rejected, a non-empty artifact version, and a non-negative integer revision.'
+      'Relay the user’s decision for the exact Plan Artifact Version and revision they reviewed.'
     )
   }
-  return {
-    decision: candidate.decision,
+  const reviewedPlan = {
+    source: candidate.source as TaskPlanResponseRequest['source'],
+    ...(candidate.source === 'delegated_agent'
+      ? { expectedModeRevision: candidate.expectedModeRevision as number }
+      : {}),
+    ...(typeof candidate.projectId === 'string' ? { projectId: candidate.projectId.trim() } : {}),
     artifactVersionId: candidate.artifactVersionId.trim(),
+    expectedBranchId: candidate.expectedBranchId.trim(),
     expectedRevision: candidate.expectedRevision as number
   }
+  if (
+    (candidate.decision === 'approved' || candidate.decision === 'rejected') &&
+    !('feedback' in candidate)
+  ) {
+    return { ...reviewedPlan, decision: candidate.decision }
+  }
+  if (
+    typeof candidate.feedback === 'string' &&
+    candidate.feedback.trim() &&
+    !('decision' in candidate)
+  ) {
+    return { ...reviewedPlan, feedback: candidate.feedback.trim() }
+  }
+  throw new TaskApiError(
+    'invalid_request',
+    'Supply an approval, a rejection, or revision feedback.'
+  )
 }
+
+const parseTaskInteractionScope = (params: URLSearchParams): TaskInteractionScope => {
+  const runId = params.get('runId')?.trim()
+  const projectId = params.get('projectId')?.trim()
+  const sessionId = params.get('sessionId')?.trim()
+  if (runId && !params.has('projectId') && !params.has('sessionId')) return { runId }
+  if (!params.has('runId') && projectId && sessionId) return { projectId, sessionId }
+  throw new TaskApiError('invalid_request', 'Supply runId or both projectId and sessionId.')
+}
+
+const questionAnswer = z
+  .strictObject({
+    expectedRevision: z.number().int().nonnegative(),
+    expectedBranchId: z.string().trim().min(1).max(1000),
+    source: z.enum(['user_relay', 'known_context']),
+    action: z.enum(['accept', 'decline']),
+    answers: z
+      .array(
+        z.union([
+          z.strictObject({ fieldId: z.string().min(1).max(1000), status: z.literal('skipped') }),
+          z.strictObject({
+            fieldId: z.string().min(1).max(1000),
+            status: z.literal('answered').optional(),
+            value: z.union([
+              z.string().max(4000),
+              z.number(),
+              z.boolean(),
+              z.array(z.string().max(1000)).max(64)
+            ])
+          })
+        ])
+      )
+      .max(16)
+      .optional()
+  })
+  .refine(
+    (body) => body.action === 'accept' || !body.answers?.length
+  ) satisfies z.ZodType<TaskQuestionResponse>
 
 class ExternalAuthorizationExpiredError extends Error {
   constructor() {
@@ -1022,7 +1131,8 @@ const handleTaskApiRequest = async (
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization,
   waitUntilTasksReady?: () => Promise<void>,
-  fetchPreview?: WebServerOptions['fetchPreview']
+  fetchPreview?: WebServerOptions['fetchPreview'],
+  localBearer?: boolean
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
     const reply = (status: number, body: unknown): void => {
@@ -1044,6 +1154,15 @@ const handleTaskApiRequest = async (
           requestBodyBudgetRegistry,
           requestBodyClientId
         )
+        if (isProviderSetupAction((body as { action?: unknown } | null)?.action) && !localBearer) {
+          reply(403, {
+            error: {
+              code: 'forbidden',
+              message: 'Provider setup requires a local CLI or MCP connection.'
+            }
+          })
+          return true
+        }
         assertExternalAuthorizationCurrent(externalAuthorization)
         const data = await tasks.bootstrap(
           body as import('../../shared/bootstrap').BootstrapRequest
@@ -1055,6 +1174,92 @@ const handleTaskApiRequest = async (
         assertExternalAuthorizationCurrent(externalAuthorization)
         reply(200, { data: await tasks.installCli() })
         return true
+      }
+      if (
+        url.pathname === '/api/v1/notebook-environment' &&
+        request.method === 'POST' &&
+        tasks.prepareNotebookEnvironment
+      ) {
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        const language = (body as { language?: unknown } | null)?.language
+        if ((language !== 'python' && language !== 'r') || Object.keys(body as object).length !== 1)
+          throw new TaskApiError('invalid_request', 'Supply only a Notebook language: python or r.')
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        await tasks.prepareNotebookEnvironment(language)
+        reply(200, { data: {} })
+        return true
+      }
+      if (
+        url.pathname === '/api/v1/notebook-runtimes' &&
+        tasks.supportsNotebookRuntimeSelection?.()
+      ) {
+        if (request.method === 'GET' && tasks.listNotebookRuntimes) {
+          reply(200, { data: await tasks.listNotebookRuntimes(url.searchParams.get('language')) })
+          return true
+        }
+        if (request.method === 'POST' && tasks.configureNotebookRuntime) {
+          const body = await readJsonBody(
+            request,
+            response,
+            requestBodyBudgetRegistry,
+            requestBodyClientId
+          )
+          reply(200, { data: await tasks.configureNotebookRuntime(body) })
+          return true
+        }
+      }
+      const environmentOperation = url.pathname.match(
+        /^\/api\/v1\/notebook-environment\/operations\/([A-Za-z0-9_-]{1,128})$/
+      )
+      if (environmentOperation && tasks.supportsNotebookEnvironmentOperations?.()) {
+        if (externalAuthorization) {
+          reply(403, {
+            error: { code: 'access_denied', message: 'Notebook setup requires a local connection.' }
+          })
+          return true
+        }
+        const operationId = environmentOperation[1]
+        if (request.method === 'PUT' && tasks.startNotebookEnvironmentOperation) {
+          const body = await readJsonBody(
+            request,
+            response,
+            requestBodyBudgetRegistry,
+            requestBodyClientId
+          )
+          const { language, action } = (body ?? {}) as { language?: unknown; action?: unknown }
+          if (
+            (language !== 'python' && language !== 'r') ||
+            (action !== 'prepare' && action !== 'repair') ||
+            Object.keys(body as object).length !== 2
+          )
+            throw new TaskApiError(
+              'invalid_request',
+              'Supply a Notebook language and a prepare or repair action.'
+            )
+          reply(200, {
+            data: tasks.startNotebookEnvironmentOperation({ operationId, language, action })
+          })
+          return true
+        }
+        if (request.method === 'GET' || request.method === 'DELETE') {
+          const language = url.searchParams.get('language')
+          if (language !== 'python' && language !== 'r')
+            throw new TaskApiError('invalid_request', 'Supply a Notebook language: python or r.')
+          const target = { operationId, language } as const
+          const data =
+            request.method === 'GET'
+              ? tasks.getNotebookEnvironmentOperation?.(target)
+              : tasks.cancelNotebookEnvironmentOperation?.(target)
+          if (data) {
+            reply(200, { data })
+            return true
+          }
+        }
       }
       if (url.pathname === '/api/v1/runtimes' && request.method === 'GET' && tasks.listRuntimes) {
         assertExternalAuthorizationCurrent(externalAuthorization)
@@ -1263,6 +1468,29 @@ const handleTaskApiRequest = async (
         return true
       }
 
+      const notebookContinuationMatch = url.pathname.match(
+        /^\/api\/v1\/notebook-continuations\/([^/]+)$/
+      )
+      if (notebookContinuationMatch && request.method === 'PUT' && tasks.continueNotebook) {
+        if (!canRelayTaskInteraction(callerContext)) {
+          throw new TaskApiError(
+            'task_relay_required',
+            'Notebook continuation requires a local authenticated Task connection.'
+          )
+        }
+        const body = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        reply(202, {
+          data: await tasks.continueNotebook(decodeURIComponent(notebookContinuationMatch[1]), body)
+        })
+        return true
+      }
+
       if (url.pathname === '/api/v1/runs' && request.method === 'POST') {
         const body = (await readJsonBody(
           request,
@@ -1288,7 +1516,154 @@ const handleTaskApiRequest = async (
       const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/)
       if (runMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        reply(200, { data: tasks.getRun(decodeURIComponent(runMatch[1])) })
+        reply(200, { data: await tasks.getRun(decodeURIComponent(runMatch[1])) })
+        return true
+      }
+      const modeMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/interaction-mode$/)
+      if (modeMatch && request.method === 'PUT' && tasks.setRunInteractionMode) {
+        if (!canRelayTaskInteraction(callerContext))
+          throw new TaskApiError(
+            'task_relay_required',
+            'Task delegation requires a local authenticated Task connection.'
+          )
+        const input: unknown = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        if (
+          !input ||
+          typeof input !== 'object' ||
+          Array.isArray(input) ||
+          Object.keys(input).length !== 2 ||
+          !('interactionMode' in input) ||
+          (input.interactionMode !== 'relay' && input.interactionMode !== 'delegate') ||
+          !('expectedRevision' in input) ||
+          typeof input.expectedRevision !== 'number' ||
+          !Number.isSafeInteger(input.expectedRevision) ||
+          input.expectedRevision < 0
+        )
+          throw new TaskApiError(
+            'invalid_request',
+            'Supply the current revision and relay or delegate.'
+          )
+        reply(200, {
+          data: await tasks.setRunInteractionMode(decodeURIComponent(modeMatch[1]), {
+            interactionMode: input.interactionMode,
+            expectedRevision: input.expectedRevision
+          })
+        })
+        return true
+      }
+      const interactionMatch = url.pathname.match(/^\/api\/v1\/interactions(?:\/([^/]+))?$/)
+      const permissionResponseMatch = url.pathname.match(
+        /^\/api\/v1\/interactions\/([^/]+)\/permission$/
+      )
+      if (permissionResponseMatch && request.method === 'POST' && tasks.respondPermission) {
+        if (!canRelayTaskInteraction(callerContext)) {
+          throw new TaskApiError(
+            'task_relay_required',
+            'Permission responses require a local authenticated Task connection.'
+          )
+        }
+        const scope = parseTaskInteractionScope(url.searchParams)
+        const input: unknown = await readJsonBody(
+          request,
+          response,
+          requestBodyBudgetRegistry,
+          requestBodyClientId
+        )
+        if (
+          !input ||
+          typeof input !== 'object' ||
+          Array.isArray(input) ||
+          Object.keys(input).some(
+            (key) =>
+              ![
+                'optionId',
+                'source',
+                'expectedRevision',
+                'expectedModeRevision',
+                'expectedBranchId',
+                'expectedLanguage'
+              ].includes(key)
+          ) ||
+          !('optionId' in input) ||
+          typeof input.optionId !== 'string' ||
+          !input.optionId.trim() ||
+          !('expectedBranchId' in input) ||
+          typeof input.expectedBranchId !== 'string' ||
+          !input.expectedBranchId.trim() ||
+          ('expectedLanguage' in input &&
+            !['python', 'r', 'repl', 'bash'].some(
+              (language) => language === input.expectedLanguage
+            )) ||
+          !('expectedRevision' in input) ||
+          typeof input.expectedRevision !== 'number' ||
+          !Number.isSafeInteger(input.expectedRevision) ||
+          input.expectedRevision < 0 ||
+          !('source' in input) ||
+          (input.source !== 'user_relay' && input.source !== 'delegated_agent') ||
+          (input.source === 'delegated_agent' &&
+            (!('expectedModeRevision' in input) ||
+              typeof input.expectedModeRevision !== 'number' ||
+              !Number.isSafeInteger(input.expectedModeRevision) ||
+              input.expectedModeRevision < 0)) ||
+          (input.source === 'user_relay' && 'expectedModeRevision' in input)
+        ) {
+          throw new TaskApiError(
+            'invalid_request',
+            'Supply the current permission option, branch, revision and decision source.'
+          )
+        }
+        reply(200, {
+          data: await tasks.respondPermission(
+            decodeURIComponent(permissionResponseMatch[1]),
+            scope,
+            input as TaskPermissionResponse
+          )
+        })
+        return true
+      }
+      if (
+        interactionMatch &&
+        request.method === 'GET' &&
+        tasks.getInteraction &&
+        tasks.listInteractions
+      ) {
+        assertExternalAuthorizationCurrent(externalAuthorization)
+        const scope = parseTaskInteractionScope(url.searchParams)
+        const id = interactionMatch[1] ? decodeURIComponent(interactionMatch[1]) : undefined
+        const data = id
+          ? await tasks.getInteraction(id, scope)
+          : await tasks.listInteractions(scope)
+        reply(200, { data })
+        return true
+      }
+      const questionAnswerMatch = url.pathname.match(/^\/api\/v1\/interactions\/([^/]+)\/answer$/)
+      if (questionAnswerMatch && request.method === 'POST' && tasks.answerQuestion) {
+        if (!canRelayTaskInteraction(callerContext))
+          throw new TaskApiError(
+            'task_relay_required',
+            'Question responses require a local authenticated Task connection.'
+          )
+        const scope = parseTaskInteractionScope(url.searchParams)
+        const result = questionAnswer.safeParse(
+          await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
+        )
+        if (!result.success)
+          throw new TaskApiError(
+            'invalid_request',
+            'Specify the reviewed question revision, active branch, and a valid answer or decline decision.'
+          )
+        reply(200, {
+          data: await tasks.answerQuestion(
+            decodeURIComponent(questionAnswerMatch[1]),
+            scope,
+            result.data
+          )
+        })
         return true
       }
       const cancelRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/cancel$/)
@@ -1312,6 +1687,12 @@ const handleTaskApiRequest = async (
         /^\/api\/v1\/sessions\/([^/]+)\/plan\/respond$/
       )
       if (sessionPlanResponseMatch && request.method === 'POST' && tasks.respondSessionPlan) {
+        if (!canRelayTaskInteraction(callerContext)) {
+          throw new TaskApiError(
+            'task_relay_required',
+            'Plan responses require a local authenticated Task connection.'
+          )
+        }
         const body = parseTaskPlanResponseRequest(
           await readJsonBody(request, response, requestBodyBudgetRegistry, requestBodyClientId)
         )
@@ -1336,7 +1717,10 @@ const handleTaskApiRequest = async (
       if (sessionConfigMatch && request.method === 'GET' && tasks.getSessionConfiguration) {
         assertExternalAuthorizationCurrent(externalAuthorization)
         reply(200, {
-          data: await tasks.getSessionConfiguration(decodeURIComponent(sessionConfigMatch[1]))
+          data: await tasks.getSessionConfiguration(
+            decodeURIComponent(sessionConfigMatch[1]),
+            url.searchParams.get('project') ?? undefined
+          )
         })
         return true
       }
@@ -1359,7 +1743,12 @@ const handleTaskApiRequest = async (
       const sessionMatch = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)$/)
       if (sessionMatch && request.method === 'GET') {
         assertExternalAuthorizationCurrent(externalAuthorization)
-        reply(200, { data: await tasks.getSession(decodeURIComponent(sessionMatch[1])) })
+        reply(200, {
+          data: await tasks.getSession(
+            decodeURIComponent(sessionMatch[1]),
+            url.searchParams.get('project') ?? undefined
+          )
+        })
         return true
       }
       const artifactMatch = url.pathname.match(/^\/api\/v1\/artifacts\/([^/]+)\/content$/)
@@ -1425,7 +1814,8 @@ const serveStatic = async (
   request: IncomingMessage,
   response: ServerResponse,
   staticRoot: string,
-  pathname: string
+  pathname: string,
+  readPackedAsset: ReturnType<typeof createPackedWebAssetReader>
 ): Promise<void> => {
   const root = resolve(staticRoot)
   const requested = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1))
@@ -1436,13 +1826,15 @@ const serveStatic = async (
   }
 
   try {
-    if (!(await stat(filePath)).isFile()) throw new Error('Not a file')
-  } catch {
-    filePath = resolve(root, 'index.html')
-  }
-
-  try {
-    const content = await readFile(filePath)
+    const packed = await readPackedAsset(filePath)
+    if (packed === undefined) {
+      try {
+        if (!(await stat(filePath)).isFile()) throw new Error('Not a file')
+      } catch {
+        filePath = resolve(root, 'index.html')
+      }
+    }
+    const content = packed ?? (await readFile(filePath))
     const extension = extname(filePath).toLowerCase()
     const canCompress =
       content.byteLength >= MIN_GZIP_BYTES && COMPRESSIBLE_EXTENSIONS.has(extension)
@@ -1470,6 +1862,7 @@ const serveStatic = async (
 }
 
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
+  const readPackedAsset = createPackedWebAssetReader(options.staticRoot)
   const sockets = new Set<WebSocket>()
   const outboundBudget = createWebSocketFrameBudget()
   const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
@@ -1517,6 +1910,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
     (clientId, principalId) => {
       try {
         commandClient.releaseClient('web', clientId)
+        commandClient.releaseClient('task', clientId)
       } finally {
         if (principalId !== 'local') options.tasks?.releaseRemoteClient?.(clientId)
       }
@@ -1614,14 +2008,59 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             .update('\0')
             .update(clientPrincipalId)
             .digest('hex'),
-          taskCapabilities: options.tasks
-            ? [
-                'permission-prompts-none',
-                ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
-                  ? ['durable-submissions']
-                  : [])
-              ]
-            : [],
+          taskCapabilities: [
+            ...(options.tasks
+              ? [
+                  'permission-prompts-none',
+                  'task-artifacts',
+                  ...(auth.localBearer &&
+                  options.tasks.listInteractions &&
+                  options.tasks.getInteraction &&
+                  options.tasks.respondSessionPlan
+                    ? ['task-interactions']
+                    : []),
+                  ...(auth.localBearer && options.tasks.setRunInteractionMode
+                    ? ['task-delegation']
+                    : []),
+                  ...(auth.localBearer && options.tasks.respondPermission
+                    ? ['task-permissions']
+                    : []),
+                  ...(auth.localBearer && options.tasks.supportsTaskQuestions?.()
+                    ? ['task-questions']
+                    : []),
+                  ...(auth.localBearer && options.tasks.supportsNotebookContinuation?.()
+                    ? ['notebook-continuation']
+                    : []),
+                  ...(options.tasks.doctor ? ['doctor'] : []),
+                  ...(!externalAuthorization && options.tasks.bootstrap
+                    ? ['runtime-bootstrap', 'agent-setup']
+                    : []),
+                  ...(auth.localBearer && options.tasks.bootstrap
+                    ? ['provider-setup', 'provider-terminal-setup']
+                    : []),
+                  ...(!externalAuthorization && options.tasks.prepareNotebookEnvironment
+                    ? ['notebook-setup']
+                    : []),
+                  ...(auth.localBearer && options.tasks.supportsNotebookRuntimeSelection?.()
+                    ? ['notebook-runtime-selection']
+                    : []),
+                  ...(!externalAuthorization &&
+                  options.tasks.supportsNotebookEnvironmentOperations?.()
+                    ? ['notebook-setup-operations']
+                    : []),
+                  ...(options.tasks.listRuntimes ? ['list-runtimes'] : []),
+                  ...(!externalAuthorization && options.tasks.supportsSubmissions?.()
+                    ? ['durable-submissions', 'run-otel-traces']
+                    : [])
+                ]
+              : []),
+            ...(auth.ok && rpcChannels.includes('sessions:package-operation')
+              ? ['agent-package-operations', 'agent-package-fork']
+              : []),
+            ...(auth.localBearer && rpcChannels.includes('sessions:package-operation')
+              ? ['agent-package-import', 'agent-sensitive-export-review']
+              : [])
+          ],
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
           rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [RUNTIME_PAYLOAD_CAPABILITY],
           rpcChannels,
@@ -1685,7 +2124,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                     location: 'remote',
                     isAuthorizationCurrent: authorization.isCurrent
                   }
-                : {}
+                : {
+                    authenticatedLocalBearer: auth.localBearer,
+                    isAuthorizationCurrent: lease.isCurrent
+                  }
             )
             if (
               await handleTaskApiRequest(
@@ -1700,7 +2142,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
                 taskIdempotencyRegistry,
                 authorization,
                 options.waitUntilTasksReady,
-                options.fetchPreview
+                options.fetchPreview,
+                auth.localBearer
               )
             )
               return
@@ -1783,22 +2226,6 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           )
           return
         }
-        const callerContext = createWebCallerContext(clientId, {
-          authorities:
-            auth.localBearer && channel === 'sessions:import-package'
-              ? ['import-local-package-path']
-              : [],
-          ...(externalAuthorization
-            ? {
-                location: 'remote' as const,
-                authorities:
-                  externalAuthorization.kind === 'authorized-pairing-manager'
-                    ? (['manage-remote-pairing'] as const)
-                    : [],
-                isAuthorizationCurrent: externalAuthorization.isCurrent
-              }
-            : {})
-        })
         let clientLease: WebClientLease
         try {
           clientLease = webClientLeases.acquireHttp(clientPrincipalId, clientNonce, clientId)
@@ -1812,6 +2239,34 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         const releaseDisconnectedClient = (): void => clientLease.release(true)
         request.once('aborted', releaseDisconnectedClient)
         response.once('close', releaseDisconnectedClient)
+        const operation = parsed.data.args[0] as { action?: unknown } | null | undefined
+        const callerContext =
+          channel === 'sessions:package-operation' && operation?.action === 'respond-export-review'
+            ? createTaskCallerContext({
+                clientId,
+                location: externalAuthorization ? 'remote' : 'local',
+                authenticatedLocalBearer: auth.localBearer,
+                isAuthorizationCurrent: () =>
+                  clientLease.isCurrent() && (externalAuthorization?.isCurrent() ?? true)
+              })
+            : createWebCallerContext(clientId, {
+                authorities:
+                  auth.localBearer &&
+                  (channel === 'sessions:import-package' ||
+                    channel === 'sessions:package-operation')
+                    ? ['import-local-package-path']
+                    : [],
+                ...(externalAuthorization
+                  ? {
+                      location: 'remote' as const,
+                      authorities:
+                        externalAuthorization.kind === 'authorized-pairing-manager'
+                          ? (['manage-remote-pairing'] as const)
+                          : [],
+                      isAuthorizationCurrent: externalAuthorization.isCurrent
+                    }
+                  : {})
+              })
         try {
           assertExternalAuthorizationCurrent(externalAuthorization)
           const dispatcher = auth.ok
@@ -1886,7 +2341,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       }
 
       if (request.method === 'GET' || request.method === 'HEAD') {
-        await serveStatic(request, response, options.staticRoot, url.pathname)
+        await serveStatic(request, response, options.staticRoot, url.pathname, readPackedAsset)
         return
       }
 
@@ -2076,19 +2531,12 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
     const projection = projectWebRendererEvent(event)
-    const internalProjection = projection
-      ? { ...projection, payload: projectSessionEventPayload(projection) }
-      : undefined
-    const needsPayloadClient = internalProjection?.payload !== projection?.payload
     const publicMessages = projectPublicTaskEvents(event, (sessionId, promptMessageId) =>
       options.tasks?.resolveActiveRun?.(sessionId, promptMessageId)
     ).map((projection) => publicTaskEventStream.publish(projection))
-    const legacyInternalMessage = internalProjection
-      ? JSON.stringify(internalProjection)
-      : undefined
-    const replayInternalMessage = internalProjection
-      ? internalEventStream.publish(internalProjection)
-      : undefined
+    const replayInternalMessage = projection ? internalEventStream.publish(projection) : undefined
+    // Legacy sockets cannot hydrate invalidations. Encode their live-only message on demand.
+    let legacyInternalMessage: string | null | undefined
     for (const socket of sockets) {
       if (publicEventSockets.has(socket)) {
         for (const publicMessage of publicMessages) {
@@ -2096,8 +2544,14 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         }
       } else if (internalEventSockets.get(socket) === 'replay') {
         if (replayInternalMessage) sendCurrentWebSocketMessage(socket, replayInternalMessage)
-      } else if (legacyInternalMessage) {
-        if (needsPayloadClient) {
+      } else if (projection) {
+        if (legacyInternalMessage === undefined) {
+          legacyInternalMessage =
+            projectSessionEventPayload(projection) === projection.payload
+              ? JSON.stringify(projection)
+              : null
+        }
+        if (legacyInternalMessage === null) {
           socket.close(1002, 'Reload to receive large Session updates')
           continue
         }

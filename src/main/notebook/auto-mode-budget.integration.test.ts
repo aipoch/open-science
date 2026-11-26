@@ -6,6 +6,7 @@ import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { analyzeNotebookCodeRisk } from '@aipoch/notebook-code-risk'
 import { objectLoop162 } from './code-risk-budget-fixtures'
 import * as parser from '@aipoch/notebook-syntax'
+import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import { NotebookRuntimeService, type NotebookExecutionApproval } from './runtime-service'
 
 configureTestRuntimeMetadata()
@@ -103,6 +104,7 @@ describe('Auto object-loop history admission regression', () => {
   it('keeps one real kernel alive for three ordinary operations and one-shot deletion review', async () => {
     const root = await mkdtemp(join(tmpdir(), 'auto-budget-kernel-'))
     const service = new NotebookRuntimeService({
+      memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
       dataRoot: root,
       projectId: 'budget'

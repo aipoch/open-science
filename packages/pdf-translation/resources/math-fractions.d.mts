@@ -8,11 +8,13 @@ export type FractionItem = {
 export function resolveInlineFractions(
   items: FractionItem[],
   bodyBaseline: number,
-  bodyFont: number
+  bodyFont: number,
+  coefficientDenominator?: boolean
 ): Array<{
   indices: number[]
   label: string
   numerator: number
   denominator: number[]
+  enclosure?: [FractionItem, FractionItem]
   bounds: [number, number, number, number]
 }>

@@ -14,7 +14,10 @@ import {
   isToolSearchActivity,
   getNotebookRunIdFromActivity
 } from './workspace-tool-activity-details'
-import { hasWebSearchContentEvidence } from './workspace-web-search-details'
+import {
+  hasWebSearchContentEvidence,
+  isBuiltinWebSearchActivity
+} from './workspace-web-search-details'
 import {
   getCorrelatedNotebookRun,
   getToolExecutionPhase,
@@ -117,6 +120,7 @@ const isToolSearchWrapperActivity = (activity: ToolActivity): boolean =>
 
 // Matches Claude's concrete WebSearch tool identity without conflating file-search kinds.
 const isProviderWebSearchActivity = (activity: ToolActivity): boolean =>
+  isBuiltinWebSearchActivity(activity) ||
   activity.providerToolName?.trim().toLowerCase() === WEB_SEARCH_PROVIDER_TOOL_NAME
 
 // Quoted titles are how the current ACP payload represents individual search queries.
@@ -311,6 +315,9 @@ const formatActivityGroupTitle = (
 ): string => {
   const groupTitle = declaredTitle?.trim()
   if (groupTitle) return groupTitle
+  if (activities.some((activity) => activity.toolDisposition === 'declined')) {
+    return t('Tool activity')
+  }
 
   const categoryCounts = new Map<ActivityCategory, number>()
 
@@ -465,23 +472,39 @@ const getRenderableActivityEntries = (activities: ToolActivity[]): RenderableAct
     )
 }
 
-// Formats the group header's total visible-step count, flagging any failed steps.
+// Keeps permission denials distinct from steps that ran, even in a collapsed group.
 const formatStepCount = (
   activities: ToolActivity[],
   permission?: SessionPermissionRuntimeContext,
   notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>,
-  t: TFunction = i18next.t.bind(i18next)
+  t: TFunction = i18next.t.bind(i18next),
+  remainingCount = 0
 ): string => {
   const activityCount = activities.length
-  const stepLabel =
-    activityCount === 1 ? t('1 step') : t('{{count}} steps', { count: activityCount })
-  const failedCount = activities.filter(
-    (activity) => getToolExecutionPhase(activity, permission, notebookRunsById) === 'failed'
-  ).length
+  const phases = activities.map((activity) =>
+    getToolExecutionPhase(activity, permission, notebookRunsById)
+  )
+  const completedCount = phases.filter((phase) => phase === 'completed').length
+  const declinedCount = phases.filter((phase) => phase === 'declined').length
+  const failedCount = phases.filter((phase) => phase === 'failed').length
 
-  return failedCount > 0
-    ? `${stepLabel} · ${t('{{count}} failed', { count: failedCount })}`
-    : stepLabel
+  const labels: string[] = []
+  if (remainingCount > 0) {
+    labels.push(
+      t('{{count}} steps remaining', {
+        count: remainingCount,
+        defaultValue_one: '{{count}} step remaining'
+      })
+    )
+  } else if (declinedCount === 0 || completedCount + declinedCount + failedCount < activityCount) {
+    labels.push(activityCount === 1 ? t('1 step') : t('{{count}} steps', { count: activityCount }))
+  }
+  if (declinedCount > 0) {
+    if (completedCount > 0) labels.push(t('{{count}} completed', { count: completedCount }))
+    labels.push(t('{{count}} not run (permission denied)', { count: declinedCount }))
+  }
+  if (failedCount > 0) labels.push(t('{{count}} failed', { count: failedCount }))
+  return labels.join(' · ')
 }
 
 // Adds each tool's own runtime, excluding idle gaps between tools in the same group.

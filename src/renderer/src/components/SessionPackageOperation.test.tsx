@@ -1,6 +1,4 @@
 import { ApplicationStartup } from './ApplicationStartup'
-import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
-import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
@@ -15,6 +13,8 @@ import {
   PackageOperationIndicator
 } from './SessionPackageOperation'
 import { sessionExportLocked, usePackageOperationStore } from '@/stores/package-operation-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { useOrgCaseStore } from '@/stores/org-cases-store'
 import type { PackageOperationSnapshot } from '../../../shared/session-package'
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
@@ -200,8 +200,12 @@ beforeEach(() => {
     open: false,
     excludedStorageKeys: null,
     selectionPreset: 'full',
-    threshold: '256'
+    threshold: '256',
+    orgCaseDraft: null,
+    retryOrgCaseUpload: false
   })
+  useSettingsStore.setState({ lab: undefined })
+  useOrgCaseStore.getState().reset()
 })
 
 it('releases measured layout when the dialog changes to a fork', async () => {
@@ -678,6 +682,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
   document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
   document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+  useSettingsStore.setState({ lab: undefined })
+  useOrgCaseStore.getState().reset()
 })
 
 it('starts with a simple export summary and reveals optional controls on request', async () => {
@@ -787,7 +793,29 @@ it('shows a matching renamed version beyond the initial version page without cha
   expect(document.body.textContent).toContain('Optional files: 0 / 60 selected')
 })
 
+it('shows the reason and Close when export is blocked before packaging', async () => {
+  const error =
+    'Respond to the permission request in the conversation, then export again after the run finishes.'
+  usePackageOperationStore.setState({
+    open: true,
+    operation: {
+      ...snapshot,
+      files: undefined,
+      state: 'failed',
+      progress: { phase: 'preparing' },
+      error,
+      exportBlocked: true
+    }
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(error)
+  expect(document.querySelector('details')).toBeNull()
+  expect(document.body.textContent).not.toContain('Try again')
+  expect(button('Close')).toBeDefined()
+})
+
 it.each([
+  [{ phase: 'preparing' }, 'Preparing package…'],
   [{ phase: 'saving' }, 'Saving package…'],
   [{ phase: 'importing', importStage: 'publish' }, 'Finishing import…']
 ])('retains the failed processing stage %s in the result', async (progress, label) => {
@@ -812,6 +840,7 @@ it.each([
     )
   )
   expect(document.body.textContent).toContain(`Last stage: ${label}`)
+  expect(button('Try again')).toBeDefined()
   const alert = document.querySelector('[role="alert"]')
   expect(alert?.textContent).toContain('Disk full')
   expect(alert?.textContent).not.toContain('Package operation failed')
@@ -1867,11 +1896,15 @@ it('never labels required Literature PDF evidence as Essential export', async ()
   )
 })
 
-const sensitiveFailure: PackageOperationSnapshot = {
+const sensitiveReview: PackageOperationSnapshot = {
   ...snapshot,
-  state: 'failed',
-  progress: { phase: 'validating' },
-  error: 'Sensitive content detected',
+  state: 'awaiting-selection',
+  progress: { phase: 'confirming' },
+  sensitiveExportReview: {
+    expiresAt: 2_000_000_000_000,
+    destination: '/tmp/review.science',
+    fileDigest: { sizeBytes: 7, checksum: 'c'.repeat(64) }
+  },
   sensitiveContent: [
     {
       location: 'session.json',
@@ -1890,7 +1923,7 @@ it('requires fresh acknowledgement, sends the bound action once, and resets afte
   let reject!: (error: Error) => void
   const packageOperation = vi.fn((request: { action: string }) =>
     request.action === 'snapshot'
-      ? Promise.resolve(sensitiveFailure)
+      ? Promise.resolve(sensitiveReview)
       : new Promise((_, rejectPromise) => {
           reject = rejectPromise
         })
@@ -1898,7 +1931,7 @@ it('requires fresh acknowledgement, sends the bound action once, and resets afte
   vi.stubGlobal('api', {
     sessions: { packageOperation, onPackageOperation: () => () => undefined }
   })
-  usePackageOperationStore.setState({ operation: sensitiveFailure, open: true })
+  usePackageOperationStore.setState({ operation: sensitiveReview, open: true })
   await act(async () => root.render(<SessionPackageOperation />))
   const checkbox = document.querySelector<HTMLInputElement>('input[type="checkbox"]')!
   expect(checkbox).not.toBeNull()
@@ -1915,9 +1948,8 @@ it('requires fresh acknowledgement, sends the bound action once, and resets afte
     packageOperation.mock.calls.filter(
       ([request]) => request.action === 'export-with-sensitive-content'
     )
-  ).toEqual([[{ action: 'export-with-sensitive-content', operationId: sensitiveFailure.id }]])
-  expect(drainWorkspaceRuntimeEventsForPersistence).toHaveBeenCalledWith('s')
-  expect(flushSessionPersistence).toHaveBeenCalled()
+  ).toEqual([[{ action: 'export-with-sensitive-content', operationId: sensitiveReview.id }]])
+  expect(document.body.textContent).toContain('/tmp/review.science')
   expect(button('Export anyway').disabled).toBe(true)
   expect(checkbox.disabled).toBe(true)
   await act(async () => reject(new Error('Export failed again')))
@@ -1929,16 +1961,16 @@ it('requires fresh acknowledgement, sends the bound action once, and resets afte
   expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(false)
   await act(async () => document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
   await act(async () =>
-    usePackageOperationStore.getState().receive({ ...sensitiveFailure, id: 'replacement' })
+    usePackageOperationStore.getState().receive({ ...sensitiveReview, id: 'replacement' })
   )
   expect(button('Export anyway').disabled).toBe(true)
 })
 
 it.each([
-  { ...sensitiveFailure, kind: 'fork' as const },
-  { ...sensitiveFailure, kind: 'import' as const },
-  { ...sensitiveFailure, sensitiveContent: undefined },
-  { ...sensitiveFailure, cleanupPending: true }
+  { ...sensitiveReview, kind: 'fork' as const },
+  { ...sensitiveReview, kind: 'import' as const },
+  { ...sensitiveReview, state: 'failed' as const, sensitiveExportReview: undefined },
+  { ...sensitiveReview, cleanupPending: true }
 ])('hides sensitive export acknowledgement for ineligible operation %#', async (operation) => {
   vi.stubGlobal('api', {
     sessions: { packageOperation: async () => operation, onPackageOperation: () => () => undefined }
@@ -1949,6 +1981,22 @@ it.each([
   expect(
     [...document.querySelectorAll('button')].some((item) => item.textContent === 'Export anyway')
   ).toBe(false)
+})
+
+it('shows the Desktop handoff without an approval control in the local Web UI', async () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation: async () => sensitiveReview,
+      onPackageOperation: () => () => undefined
+    }
+  })
+  usePackageOperationStore.getState().receive(sensitiveReview)
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(document.body.textContent).toContain('Open Open-Science Desktop to review this export.')
+  expect(document.querySelector('input[type="checkbox"]')).toBeNull()
+  expect(document.body.textContent).not.toContain('Export anyway')
 })
 
 it.each(['import', 'fork'] as const)(
@@ -2827,3 +2875,290 @@ it.each([false, true])(
     )
   }
 )
+
+it('localizes the known required Web evidence export restriction with an isolated locale', async () => {
+  const { createInstance } = await import('i18next')
+  const { I18nextProvider } = await import('react-i18next')
+  const error = 'Required Web execution evidence cannot be shared under the current data policy.'
+  const locale = createInstance()
+  await locale.init({
+    lng: 'test',
+    keySeparator: false,
+    nsSeparator: false,
+    resources: { test: { translation: { [error]: 'Localized Web policy restriction' } } },
+    interpolation: { escapeValue: false }
+  })
+  usePackageOperationStore.setState({ open: true })
+  vi.stubGlobal('api', {
+    sessions: {
+      onPackageOperation: () => () => undefined,
+      packageOperation: vi.fn(async () => ({
+        ...snapshot,
+        state: 'failed',
+        progress: { phase: 'saving' },
+        error
+      }))
+    }
+  })
+  await act(async () =>
+    root.render(
+      <I18nextProvider i18n={locale}>
+        <PackageOperationIndicator />
+        <SessionPackageOperation />
+      </I18nextProvider>
+    )
+  )
+  const alert = document.querySelector('[role="alert"]')
+  expect(alert?.textContent).toContain('Localized Web policy restriction')
+  expect(alert?.textContent).not.toContain(error)
+})
+
+it('shows terminal Web omissions after large selection summaries have been released', async () => {
+  const completed: PackageOperationSnapshot = {
+    ...snapshot,
+    state: 'succeeded',
+    progress: { phase: 'saving' },
+    files: undefined,
+    summary: undefined,
+    importPreview: undefined,
+    result: {
+      filePath: '/exports/research.science',
+      webOmissions: [{ component: 'fetch_body', reason: 'policy-unknown', count: 1 }]
+    }
+  }
+  usePackageOperationStore.setState({ open: true })
+  vi.stubGlobal('api', {
+    sessions: {
+      onPackageOperation: () => () => undefined,
+      packageOperation: vi.fn(async () => completed)
+    }
+  })
+  await act(async () =>
+    root.render(
+      <>
+        <PackageOperationIndicator />
+        <SessionPackageOperation />
+      </>
+    )
+  )
+  expect(document.querySelector('[data-testid="package-web-omissions"]')?.textContent).toContain(
+    'Sharing permission has not been confirmed'
+  )
+  expect(document.body.textContent).toContain('Fetched page text')
+  expect(document.body.textContent).toContain('/exports/research.science')
+})
+
+it('hides Export and upload when Lab is not authenticated', async () => {
+  vi.stubGlobal('api', { sessions: { packageOperation: vi.fn(async () => undefined) } })
+  useSettingsStore.setState({ lab: { state: 'signedOut', serverUrl: 'https://lab.example.com' } })
+  usePackageOperationStore.getState().receive({
+    ...snapshot,
+    sessionTitle: 'My Research Session'
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(
+    [...document.querySelectorAll('button')].some((item) =>
+      item.textContent?.includes('Export and upload')
+    )
+  ).toBe(false)
+})
+
+it('expands editable case name and description, uploads when confirmed, displays share code, and refreshes org cases', async () => {
+  const packageOperation = vi.fn(async () => undefined)
+  const orgCasesList = vi.fn(async () => ({
+    ok: true as const,
+    page: { items: [], total: 0, page: 1, page_size: 20 }
+  }))
+  const writeText = vi.fn(async () => undefined)
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText },
+    configurable: true
+  })
+
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation,
+      orgCasesList
+    }
+  })
+  useSettingsStore.setState({
+    lab: {
+      state: 'authenticated',
+      serverUrl: 'https://lab.example.com',
+      accountName: 'Alice',
+      orgId: 'org_1'
+    }
+  })
+  usePackageOperationStore.getState().receive({
+    ...snapshot,
+    sessionTitle: 'Alpha Session Title'
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+
+  await act(async () => button('Export and upload').click())
+  const nameInput = document.querySelector<HTMLInputElement>('input[value="Alpha Session Title"]')!
+  expect(nameInput).not.toBeNull()
+
+  const setInputValue = (el: HTMLInputElement | HTMLTextAreaElement, value: string): void => {
+    const prototype =
+      el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')!.set!
+    setter.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  await act(async () => {
+    setInputValue(nameInput, '   ')
+  })
+  await act(async () => button('Confirm and upload').click())
+  expect(document.body.textContent).toContain('Enter a case name.')
+  expect(packageOperation).not.toHaveBeenCalled()
+
+  const descInput = document.querySelector<HTMLTextAreaElement>('textarea')!
+  await act(async () => {
+    setInputValue(nameInput, 'Curated Org Case')
+    setInputValue(descInput, 'Validated steps and parameters')
+  })
+  await act(async () => button('Confirm and upload').click())
+
+  expect(packageOperation).toHaveBeenCalledWith({
+    action: 'select',
+    operationId: snapshot.id,
+    excludedStorageKeys: ['artifacts/p/s/small', 'artifacts/p/s/large', 'artifacts/p/s/oversized'],
+    includePdfNotes: false,
+    destination: 'org-case',
+    orgCase: {
+      name: 'Curated Org Case',
+      description: 'Validated steps and parameters'
+    }
+  })
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      id: snapshot.id,
+      kind: 'export',
+      session: snapshot.session,
+      exportDestination: 'org-case',
+      state: 'running',
+      progress: { phase: 'uploading', completedBytes: 512, totalBytes: 1024 }
+    })
+  )
+  expect(document.body.textContent).toContain('Uploading package…')
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      id: snapshot.id,
+      kind: 'export',
+      session: snapshot.session,
+      exportDestination: 'org-case',
+      state: 'succeeded',
+      progress: { phase: 'uploading', completedBytes: 1024, totalBytes: 1024 },
+      result: {
+        uploadedCase: {
+          id: 'case_99',
+          name: 'Curated Org Case',
+          code: '7Q2M9X4B'
+        }
+      }
+    })
+  )
+
+  expect(document.body.textContent).toContain('Session package uploaded')
+  expect(document.body.textContent).toContain('Curated Org Case')
+  expect(document.querySelector('[data-testid="uploaded-org-case-code"]')?.textContent).toBe(
+    '7Q2M9X4B'
+  )
+  expect(
+    [...document.querySelectorAll('button')].some((item) =>
+      item.textContent?.includes('Show in folder')
+    )
+  ).toBe(false)
+  expect(orgCasesList).toHaveBeenCalledWith({ page: 1, pageSize: 20 })
+
+  const copyBtn = document.querySelector<HTMLButtonElement>('button[aria-label="Copy share code"]')!
+  await act(async () => copyBtn.click())
+  expect(writeText).toHaveBeenCalledWith('7Q2M9X4B')
+})
+
+it('preserves edited org-case draft across Try again on upload failure and clears it after Close', async () => {
+  const exportPackage = vi.fn(async () => ({ saved: false }))
+  const packageOperation = vi.fn(async () => undefined)
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation,
+      exportPackage,
+      orgCasesList: vi.fn(async () => ({
+        ok: true as const,
+        page: { items: [], total: 0, page: 1, page_size: 20 }
+      }))
+    }
+  })
+  useSettingsStore.setState({
+    lab: {
+      state: 'authenticated',
+      serverUrl: 'https://lab.example.com',
+      accountName: 'Alice',
+      orgId: 'org_1'
+    }
+  })
+  usePackageOperationStore.getState().receive({
+    ...snapshot,
+    id: 'op-fail-1',
+    sessionTitle: 'Default Title'
+  })
+  await act(async () => root.render(<SessionPackageOperation />))
+  await act(async () => button('Export and upload').click())
+
+  const nameInput = document.querySelector<HTMLInputElement>('input[value="Default Title"]')!
+  const setInputValue = (el: HTMLInputElement, value: string): void => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    setter.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  await act(async () => setInputValue(nameInput, 'Saved Draft Name'))
+  await act(async () => button('Confirm and upload').click())
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      id: 'op-fail-1',
+      kind: 'export',
+      session: snapshot.session,
+      exportDestination: 'org-case',
+      state: 'failed',
+      progress: { phase: 'uploading' },
+      error: 'Upload failed'
+    })
+  )
+  await act(async () => button('Try again').click())
+  expect(exportPackage).toHaveBeenCalledWith(snapshot.session)
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      ...snapshot,
+      id: 'op-retry-2',
+      sessionTitle: 'Default Title'
+    })
+  )
+  expect(document.querySelector<HTMLInputElement>('input[value="Saved Draft Name"]')).not.toBeNull()
+
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      id: 'op-retry-2',
+      kind: 'export',
+      session: snapshot.session,
+      exportDestination: 'org-case',
+      state: 'failed',
+      progress: { phase: 'uploading' },
+      error: 'Upload failed'
+    })
+  )
+  await act(async () => button('Close').click())
+  await act(async () =>
+    usePackageOperationStore.getState().receive({
+      ...snapshot,
+      id: 'op-fresh-3',
+      sessionTitle: 'Default Title'
+    })
+  )
+  expect(document.querySelector('input[value="Saved Draft Name"]')).toBeNull()
+})

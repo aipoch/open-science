@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
+import { readdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep, win32 } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
@@ -41,15 +41,15 @@ function windowsInspectionFailure(cause: unknown): UpdateLifecycleError {
   )
 }
 
+function belongsToLinuxInstallation(path: string, roots: string[]): boolean {
+  const file = path.replace(/ \(deleted\)$/, '')
+  return roots.some((root) => file === root || file.startsWith(root + '/'))
+}
+
 // Node can rewrite argv, hiding its installation from ps. procfs retains the executable identity.
-function isLinuxInstallationExecutable(pid: number, installationRoot: string): boolean {
+function isLinuxInstallationExecutable(pid: number, roots: string[]): boolean {
   try {
-    const executable = readlinkSync(`/proc/${pid}/exe`)
-    return (
-      executable === installationRoot ||
-      executable === `${installationRoot} (deleted)` ||
-      executable.startsWith(`${installationRoot}/`)
-    )
+    return belongsToLinuxInstallation(readlinkSync(`/proc/${pid}/exe`), roots)
   } catch (cause) {
     // Exited processes/kernel threads have no executable. Other users' executable links may be
     // protected; their command lines and live installation registrations are still checked.
@@ -66,11 +66,7 @@ function isLinuxInstallationExecutable(pid: number, installationRoot: string): b
   }
 }
 
-function isLinuxInstallationMappingUser(pid: number, root: string): boolean {
-  const belongs = (path: string): boolean => {
-    path = path.replace(/ \(deleted\)$/, '')
-    return path === root || path.startsWith(root + '/')
-  }
+function isLinuxInstallationMappingUser(pid: number, roots: string[]): boolean {
   let unknown: unknown
   const inspect = <T>(read: () => T): T | undefined => {
     try {
@@ -84,7 +80,7 @@ function isLinuxInstallationMappingUser(pid: number, root: string): boolean {
   const maps = inspect(() => readFileSync(`/proc/${pid}/maps`, 'utf8'))
   for (const line of maps?.split('\n') ?? []) {
     const path = /^\S+\s+\S+\s+\S+\s+\S+\s+\d+\s+(.+)$/.exec(line)?.[1]
-    if (path && belongs(path.replace(/\\012/g, '\n'))) return true
+    if (path && belongsToLinuxInstallation(path.replace(/\\012/g, '\n'), roots)) return true
   }
   // This helper runs only after argv/exe yielded no installation candidate. An unrelated user's
   // protected process cannot make every ordinary Linux update permanently unavailable. Record
@@ -112,12 +108,44 @@ function installationPsArgs(): string[] {
   return ['-axo', process.platform === 'darwin' ? 'pid=,comm=' : 'pid=,command=']
 }
 
+// Extract-and-run uses one shared directory per image. A second launcher can remove it
+// while this Desktop is alive. procfs still identifies the mapped executable and its parent.
+function deletedLinuxExtraction(): string | undefined {
+  const directory = process.env.APPDIR
+  if (
+    process.platform !== 'linux' ||
+    !directory ||
+    !process.env.APPIMAGE ||
+    dirname(process.execPath) !== directory
+  )
+    return undefined
+  try {
+    if (
+      readlinkSync('/proc/self/exe') === process.execPath + ' (deleted)' &&
+      readlinkSync(`/proc/${process.ppid}/exe`) === realpathSync(process.env.APPIMAGE)
+    )
+      return directory
+  } catch {
+    // Unproven ownership must not exempt a process.
+  }
+  return undefined
+}
+
 function installationPsOccupants(
   stdout: string,
   installationRoot: string,
   signal?: AbortSignal
 ): Set<number> {
   const pids = new Set<number>()
+  const roots = [installationRoot]
+  // A mounted executable lives under APPDIR while registrations use the stable outer image.
+  if (
+    process.platform === 'linux' &&
+    process.env.APPIMAGE &&
+    process.env.APPDIR &&
+    realpathSync(process.env.APPIMAGE) === installationRoot
+  )
+    roots.push(deletedLinuxExtraction() ?? realpathSync(process.env.APPDIR))
   for (const line of stdout.split('\n')) {
     signal?.throwIfAborted()
     const match = /^\s*(\d+)\s+(.+)$/.exec(line)
@@ -129,8 +157,8 @@ function installationPsOccupants(
     } else if (
       command.includes(installationRoot) ||
       (process.platform === 'linux' &&
-        (isLinuxInstallationExecutable(Number(pid), installationRoot) ||
-          isLinuxInstallationMappingUser(Number(pid), installationRoot)))
+        (isLinuxInstallationExecutable(Number(pid), roots) ||
+          isLinuxInstallationMappingUser(Number(pid), roots)))
     )
       pids.add(Number(pid))
   }
@@ -388,17 +416,71 @@ export async function inspectProcessNamesAsync(
   return names
 }
 
-/** AppImage extract-and-run keeps its runtime parent alive until Electron exits.
- * Exempt only our direct parent executing the exact outer image for our extracted executable. */
+// Type-2's pre-fork keepalive pipe survives exec: the payload holds the read end,
+// the daemon the write end. Ignore stdio and pipes with both ends in the same
+// process (Electron creates these too). Launchers can also leave unrelated inherited pipes.
+function appImagePipes(pid: number, writeEnd: boolean, image?: string): string[] | undefined {
+  const root = `/proc/${pid}`
+  const reads = new Set<string>()
+  const writes = new Set<string>()
+  let fuse = false
+  let imageOpen = false
+  for (const fd of readdirSync(root + '/fd')) {
+    if (Number(fd) < 3) continue
+    let target: string
+    try {
+      target = readlinkSync(`${root}/fd/${fd}`)
+    } catch (error) {
+      // readdir's own directory descriptor is already closed.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw error
+    }
+    if (target === '/dev/fuse') fuse = true
+    if (target === image) imageOpen = true
+    if (!/^pipe:\[\d+\]$/.test(target)) continue
+    const flags = /^flags:\s*([0-7]+)$/m.exec(readFileSync(`${root}/fdinfo/${fd}`, 'utf8'))
+    if (!flags) return undefined
+    // Linux fdinfo includes status/descriptor flags; only O_ACCMODE identifies the pipe end.
+    const mode = parseInt(flags[1], 8) & 3
+    if (mode === 0) reads.add(target)
+    if (mode === 1) writes.add(target)
+  }
+  if (writeEnd && (!fuse || !imageOpen)) return undefined
+  const ends = writeEnd ? writes : reads
+  const peers = writeEnd ? reads : writes
+  return [...ends].filter((pipe) => !peers.has(pipe))
+}
+
 export function inspectOwnedLinuxAppImageLauncher(): number[] {
   if (process.platform !== 'linux' || !process.env.APPIMAGE || !process.env.APPDIR) return []
   try {
-    if (
-      !realpathSync(process.execPath).startsWith(realpathSync(process.env.APPDIR) + sep) ||
-      readlinkSync(`/proc/${process.ppid}/exe`) !== realpathSync(process.env.APPIMAGE)
-    )
-      return []
-    return [process.ppid]
+    if (deletedLinuxExtraction()) return [process.ppid]
+    const mount = realpathSync(process.env.APPDIR)
+    const image = realpathSync(process.env.APPIMAGE)
+    if (!realpathSync(process.execPath).startsWith(mount + sep)) return []
+    // Extract-and-run keeps the exact outer image as the payload's direct parent.
+    if (readlinkSync(`/proc/${process.ppid}/exe`) === image) return [process.ppid]
+    // Mounted Type-2 payloads inherit the mount directory itself at fd 1023.
+    if (readlinkSync('/proc/self/fd/1023') !== mount) return []
+    const pipes = appImagePipes(process.pid, false)
+    if (!pipes?.length) return []
+    const owned: number[] = []
+    for (const name of readdirSync('/proc')) {
+      if (!/^\d+$/.test(name)) continue
+      try {
+        if (readlinkSync(`/proc/${name}/exe`) !== image) continue
+        const matches = (appImagePipes(Number(name), true, image) ?? []).filter((pipe) =>
+          pipes.includes(pipe)
+        )
+        // Same-direction inherited endpoints prove nothing. Require one opposite endpoint
+        // and one daemon; multiple possible keepalive pipes still receive no exemption.
+        if (matches.length > 1) return []
+        if (matches.length === 1) owned.push(Number(name))
+      } catch {
+        // Exited or inaccessible processes receive no exemption.
+      }
+    }
+    return owned.length === 1 ? owned : []
   } catch {
     return []
   }
@@ -415,7 +497,9 @@ export function inspectOwnedLinuxZygoteProcesses(): number[] {
   })
   if (result.status !== 0)
     throw new UpdateLifecycleError('installation-busy', 'Zygote ownership could not be inspected.')
-  const executable = realpathSync(process.execPath)
+  const executable = deletedLinuxExtraction()
+    ? readlinkSync('/proc/self/exe')
+    : realpathSync(process.execPath)
   const candidates = result.stdout.split('\n').flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line)
     return match ? [{ pid: Number(match[1]), parent: Number(match[2]) }] : []
@@ -482,14 +566,15 @@ export function inspectOwnedCrashpadProcesses(options: {
       return undefined
     }
   }
-  const executable = canonical(
-    join(
-      options.installationRoot,
-      process.platform === 'darwin'
-        ? 'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler'
-        : 'chrome_crashpad_handler'
-    )
+  const handler = join(
+    options.installationRoot,
+    process.platform === 'darwin'
+      ? 'Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler'
+      : 'chrome_crashpad_handler'
   )
+  const deleted =
+    process.platform === 'linux' && deletedLinuxExtraction() === options.installationRoot
+  const executable = deleted ? handler : canonical(handler)
   const database = canonical(options.crashDumpsPath)
   if (!executable || !database || !options.instanceId) return []
   const commands = read('comm')
@@ -501,7 +586,7 @@ export function inspectOwnedCrashpadProcesses(options: {
         return []
       }
     }
-    if (canonical(command) !== executable) return []
+    if (deleted ? command !== handler + ' (deleted)' : canonical(command) !== executable) return []
     let args: string[] | null
     try {
       // Startup recovery must remain reachable when the native component is missing or damaged.
@@ -517,7 +602,8 @@ export function inspectOwnedCrashpadProcesses(options: {
     } catch {
       return []
     }
-    if (!args?.length || canonical(args[0]) !== executable) return []
+    if (!args?.length || (deleted ? args[0] !== handler : canonical(args[0]) !== executable))
+      return []
     const databases = args.filter((arg) => arg.startsWith('--database='))
     const instances = args.filter((arg) => arg.startsWith('--annotation=openScienceInstance='))
     return databases.length === 1 &&

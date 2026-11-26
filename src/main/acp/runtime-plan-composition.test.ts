@@ -12,6 +12,7 @@ import {
   createPlanMcpServerForEnvironment
 } from '../session-plan/plan-mcp-server'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
 
@@ -2655,6 +2656,7 @@ describe('Agent-visible committed Plan decisions', () => {
       if (stage === 'clear') harness.deliveries.clear.mockRejectedValueOnce(new Error(secret))
       const root = await createTemporaryRoot()
       const notebook = new NotebookRuntimeService({
+        memoryPolicy: healthyNotebookMemoryPolicy(),
         configRoot: root,
         dataRoot: root,
         projectId: 'project-1',

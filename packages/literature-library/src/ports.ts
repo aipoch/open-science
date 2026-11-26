@@ -79,6 +79,7 @@ export interface LibraryStore {
   replaceMetadata(id: string, expectedRevision: number, item: LiteratureItemInput): Promise<void>
   metadataReceipt(operationId: string): Promise<MetadataReceipt | null>
   saveMetadataReceipt(operationId: string, receipt: MetadataReceipt): Promise<void>
+  // Existing candidate metadata stays frozen; new discovery evidence may be merged.
   attachSource(input: {
     source: LiteratureSourceInput
     itemId?: string

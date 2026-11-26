@@ -6,6 +6,8 @@ import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/t
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { executionRecoveryContext } from './execution-recovery'
+import { notebookDiagnosticPreview } from './content-limits'
+import type { NotebookExecutionIntent } from './execution-intent'
 
 import {
   MAX_AGENT_USER_CHOICE_OPTIONS,
@@ -44,6 +46,9 @@ const HOST_SDK_DISCOVERY_GUIDANCE =
   "Use documented calls directly. Unknown options: `return JSON.stringify(await host.help('topic'))` gives field descriptions; `host.help()` is the role-aware catalog. Do not guess or inspect function source; do not prefetch topics. Check availability: catalog visibility does not grant access."
 const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
   'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
+const NOTEBOOK_REJECTION_GUIDANCE =
+  'Memory/intent refusal: not started; explain and await explicit user Retry/Continue. Never auto-retry, queue/replay, poll memory or bypass via tools/languages/environments/Sessions/Subagents. Chat/approval/auto-continuation cannot unlock; released variables may vanish.'
+const NOTEBOOK_TOOL_REJECTION_GUIDANCE = 'Refusal requires explicit user Retry/Continue.'
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools. Keep equivalent
 // guidance concise; the prompt and complete MCP schema share the tested static context budget.
@@ -52,13 +57,14 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Guidance only applies when using open-science-notebook tools.',
   'For materially different interpretations, app-owned `ask_user_question` is the first tool call; do not inspect or use other tools first. Send all 1-3 known questions in one call. Infer reversible details.',
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
-  'One `notebook_execute` per Python/R cell; reuse `cellId`. Idle interpreters lose variables after 15 minutes or excess idle capacity; persist reusable data. Skills: repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
-  'Use the call forms in `repl_execute`; batch known independent operations when safe.',
+  'One `notebook_execute` per Python/R cell; reuse `cellId`. Idle/capacity reclamation loses variables; persist reusable data. Skills: repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
+  'Use call forms in `repl_execute`; batch safe independent operations.',
   'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
-  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
+  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. executionStarted reports whether user code began, when known. After kernel failure/timeout, check possible side effects before retrying.',
+  NOTEBOOK_REJECTION_GUIDANCE,
   'For a network block record, call `request_network_access` with its recordId and reason. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
   'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
@@ -72,6 +78,10 @@ type NotebookRpcConnection = LocalRpcTransport & {
   // Optional owner-scoped cleanup for provisional startup connections. Releasing an older connection
   // must not revoke a newer token issued under the same stable app Session id.
   release?: () => void
+  // Main-only preparation fence. The returned owner callback activates only this concrete token.
+  deferExecution?: () => () => void
+  // Main-only activation of the connection already installed by session/new or resume.
+  prepareInitialExecution?: (intent: NotebookExecutionIntent) => { commit(): void; release(): void }
 }
 
 type NotebookMcpEnvironment = NotebookRpcConnection &
@@ -103,7 +113,7 @@ const executeToolSchema = {
     .optional()
     .describe('Return after durable admission; keep this Python/R Run active in the Session.'),
   cellId: z.string().min(1).optional(),
-  language: z.enum(['python', 'r']).optional(),
+  language: z.enum(['python', 'r']).optional().describe('Defaults to Python.'),
   kernelSkillIds: z
     .array(z.string().min(1).max(128))
     .optional()
@@ -277,7 +287,7 @@ const LIST_NOTEBOOK_RUNTIMES_DOC = [
 
 const BIND_RUNTIME_DOC = [
   'Bind one enabled runtimeId per language for this session. Disabled/unknown IDs are refused.',
-  'Use bind when no binding exists; otherwise switch. notebook_execute uses it automatically; no per-call runtime.'
+  'Use notebook_execute with the installed, enabled app-managed default. For explicit selection, bind when no binding exists or switch.'
 ].join('\n')
 
 const SWITCH_RUNTIME_DOC = [
@@ -288,7 +298,8 @@ const SWITCH_RUNTIME_DOC = [
 
 // Control-plane REPL contract, embedded as the repl_execute description so the agent always sees it.
 const REPL_EXECUTE_DOC = [
-  'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
+  'Persistent JavaScript control-plane REPL; Python/R use notebook_execute.',
+  NOTEBOOK_TOOL_REJECTION_GUIDANCE,
   "This is a CommonJS REPL: load Node modules with `require('node:fs')`, not dynamic `import()`.",
   'Gate optional namespaces with `await host.capabilities()`; see `self-awareness`.',
   'Host SDK: `host.llm(prompt)` for tool-less inference; `host.mcp(server, method, args)` for connectors; `host.compute` for jobs; `host.agents` for Specialists.',
@@ -296,8 +307,8 @@ const REPL_EXECUTE_DOC = [
   HOST_SDK_DISCOVERY_GUIDANCE,
   'Images: `await host.viewImage({ path: "plot.png" })` or `{ versionId: "..." }`, never a string.',
   'Main/root agents: `await host.delegate({ name: "Check", task: "Self-contained assignment" }, { wait: true })`. Omit profile to inherit the parent; "Main Agent" is not a profile. Other profiles: exact id/name from host.agents.list(). Options/results: `host.help(\'delegate\')`. Delegate agents cannot delegate.',
-  'Foreground for results needed now, host.viewImage, host.agents.switch and user input. background:true supports host.mcp, host.compute, host.llm, host.delegate and read-only calls. Save runId; query/cancel via background_run, without frequent polling. Accepted Runs survive turn end/disconnect. BACKGROUND_HOST_METHOD_UNSAFE requires foreground.',
-  'Restored conversation history does not restore variables after restart/idle reclamation. Reconstruct values from verified history/files; never probe old variable names or replay side-effecting calls. Live globals persist; top-level return/await and redeclaration work. Return JSON.stringify(value) for objects. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
+  'Foreground: results needed now, host.viewImage, host.agents.switch and user input. background:true supports host.mcp, host.compute, host.llm, host.delegate, read-only calls. Save runId; background_run queries/cancels, never poll frequently. Accepted Runs survive turn end/disconnect. BACKGROUND_HOST_METHOD_UNSAFE requires foreground.',
+  'Restored conversation history does not restore variables after restart/reclamation. Verify history/files to reconstruct; never probe old variable names or replay side-effecting calls. Globals persist; top-level return/await/redeclaration work. Return JSON.stringify(value) for objects. timeoutMs overrides 30-minute wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); analysis: notebook_execute.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -317,19 +328,20 @@ const buildShellExecuteDoc = (
       : undefined
   const exitCodeContract =
     binding.kind === 'powershell'
-      ? 'Returns { stdout, stderr, exitCode }. Host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 to avoid garbling. Native failures retain their exit code; unhandled cmdlet failures return exitCode 1. Inspect exitCode.'
+      ? 'Returns { stdout, stderr, exitCode }. UTF-8 host/cmdlet text; native programs must emit UTF-8. Native exit codes preserved; unhandled cmdlet failures return 1. Inspect exitCode.'
       : 'Returns { stdout, stderr, exitCode }; non-zero exits do not throw. Inspect exitCode.'
 
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, launch-context change, or idle reclamation resets state; earlier commands are never replayed. TEMP/TMP may be deleted. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
+    `Calls share variables, exports, functions and cwd per lane/runtime. Cancellation, timeout, exit, restart, context changes or idle reclamation reset state without replay. Data-kernel cwd; TEMP/TMP may vanish. Handoff: ${handoffVariable}, never relative to cwd.`,
     exitCodeContract,
-    'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
-    'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
-    'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
-    'Do NOT copy a generated notebook output into the workspace with this tool. Publish final user-facing files with `write_artifact_file`, using the same relative filename you saved with; it resolves against the notebook session data dir and copies safely on every platform.',
-    'One managed command only. Use notebook_execute for Python/R, repl_execute for JavaScript, manage_packages for installs; never run analysis scripts, inline code or installers here.'
+    NOTEBOOK_TOOL_REJECTION_GUIDANCE,
+    'For exitCode:null follow status and recovery. Verify remote completion before retrying a timeout.',
+    'Use background:true for independent work. Accepted Runs survive turn end and disconnect; cancel with background_run.',
+    'Never detach with &, nohup, setsid, disown, Start-Process, Start-Job or equivalents.',
+    'Publish Notebook files by relative filename with `write_artifact_file`. Do not copy them via Shell.',
+    'One managed command. Python/R: notebook_execute; JavaScript: repl_execute; installs: manage_packages. Never run analysis scripts, inline code or installers here.'
   ].join('\n')
 }
 
@@ -494,10 +506,13 @@ const callNotebookRpc = async (
       body: JSON.stringify({
         method,
         params: {
-          ...((params ?? {}) as Record<string, unknown>),
+          ...(method === 'state'
+            ? pickDefined(asRecord(params) ?? {}, ['runIds'])
+            : ((params ?? {}) as Record<string, unknown>)),
           sessionId: environment.sessionId,
           workspaceCwd: environment.workspaceCwd,
           projectId,
+          ...(method === 'state' ? { historyLimit: MAX_STATE_RUNS } : {}),
           ...(method === 'executeShell' && environment.shellRuntime
             ? { shellRuntime: environment.shellRuntime }
             : {})
@@ -537,6 +552,21 @@ const callNotebookRpc = async (
 // one next step chosen by the RPC status so the Agent neither abandons the tool nor loops on it.
 const notebookRpcErrorGuidance = (status: number, error: unknown): string | undefined => {
   const detail = asRecord(error)
+  const code = typeof error === 'string' ? error.split(':', 1)[0] : detail?.code
+  if (
+    typeof error === 'string' &&
+    (error.startsWith('Notebook execution declined:') ||
+      error.startsWith('Notebook runtime selection declined'))
+  ) {
+    return 'Notebook approval was not granted. Do not repeat the action or try another route. Wait for the user to authorize a different action.'
+  }
+  if (
+    code === 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION' ||
+    code === 'NOTEBOOK_MEMORY_PRESSURE' ||
+    code === 'NOTEBOOK_MEMORY_UNAVAILABLE'
+  ) {
+    return 'Notebook work is stopped. Do not retry, change tools, language, environment or Session, or delegate it. After resolving the cause, ask the user to choose Continue Notebook work in Compute in the Open-Science desktop app.'
+  }
   if (detail && ['recovery', 'retryable', 'hint', 'guidance'].some((key) => key in detail))
     return undefined
   if (status === 400) return TOOL_ARGUMENT_RECOVERY
@@ -596,6 +626,50 @@ const clipAgentText = (text: string, limit: number): { text: string; clipped: bo
   return {
     text: `${text.slice(0, limit)}\n…[${text.length - limit} chars omitted; full output in notebook preview]`,
     clipped: true
+  }
+}
+
+// Extract only complete, bounded protocol metadata; never guess IDs from partial JSON.
+const stdoutHandoff = (text: string): unknown => {
+  try {
+    const parsed = JSON.parse(text)
+    const handoff = parsed?._handoff
+    if (!handoff || typeof handoff !== 'object' || Array.isArray(handoff)) return undefined
+    return JSON.stringify(handoff, null, 2).length <= 2_000 ? handoff : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Reads persisted output through the existing session-scoped history capability. No kernel
+// execution or arbitrary path access is involved, including after interpreter replacement.
+const notebookOutputPage = (raw: unknown, input: Record<string, unknown>): unknown => {
+  const runIds = input.runIds as string[]
+  const runs = asRecord(raw)?.runs
+  const run = Array.isArray(runs)
+    ? runs.map(asRecord).find((value) => value?.runId === runIds[0])
+    : undefined
+  if (!run)
+    throw new Error(
+      'Saved Notebook run is unavailable in this session; do not repeat the original operation to retrieve its output.'
+    )
+  const stream = input.outputStream as string
+  const value = run[stream] ?? asRecord(run.text)?.[stream]
+  const text = typeof value === 'string' ? value : ''
+  const offset = (input.outputOffset as number | undefined) ?? 0
+  if (offset > text.length) throw new Error('Output offset exceeds saved stream length.')
+  // Bound the serialized page too: escaped control characters can expand sixfold.
+  let end = Math.min(text.length, offset + ((input.outputLimit as number | undefined) ?? 2_000))
+  while (JSON.stringify(text.slice(offset, end)).length > 3_000) end--
+  return {
+    runId: run.runId,
+    status: run.status,
+    stream,
+    offset,
+    nextOffset: end < text.length ? end : null,
+    totalCharacters: text.length,
+    text: text.slice(offset, end),
+    captureTruncated: run.truncated === true
   }
 }
 
@@ -818,10 +892,13 @@ const compactExecutionOutputs = (
 
     if (record.type === 'error') {
       const error = pickDefined(record, ['type', 'name', 'message', 'line'])
+      if (typeof record.message === 'string') {
+        error.message = notebookDiagnosticPreview(record.message, MIME_INLINE_LIMIT)
+        truncated ||= error.message !== record.message
+      }
       if (typeof record.traceback === 'string' && record.traceback !== canonicalTraceback) {
-        const clipped = clipAgentText(record.traceback, MIME_INLINE_LIMIT)
-        error.traceback = clipped.text
-        truncated = truncated || clipped.clipped
+        error.traceback = notebookDiagnosticPreview(record.traceback, MIME_INLINE_LIMIT)
+        truncated ||= error.traceback !== record.traceback
       }
       outputs.push(error)
       continue
@@ -854,8 +931,12 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     return typeof value === 'string' ? value : ''
   }
   const stdout = clipAgentText(stream('stdout'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
-  const stderr = clipAgentText(stream('stderr'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
-  const traceback = clipAgentText(stream('traceback'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const handoff = stdoutHandoff(stream('stdout'))
+  const stderr = notebookDiagnosticPreview(stream('stderr'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const traceback = notebookDiagnosticPreview(
+    stream('traceback'),
+    NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT
+  )
   const compactOutputs = compactExecutionOutputs(record.outputs, stream('traceback'))
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const artifacts = compactArtifacts(record.artifacts)
@@ -866,8 +947,8 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     (Array.isArray(record.artifacts) && record.artifacts.length > artifacts.length)
   const resultCompacted =
     stdout.clipped ||
-    stderr.clipped ||
-    traceback.clipped ||
+    stderr !== stream('stderr') ||
+    traceback !== stream('traceback') ||
     compactOutputs.truncated ||
     filesOmitted ||
     staleness.truncated
@@ -916,6 +997,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'cellId',
       'kernelKind',
       'kernelDispatched',
+      'executionStarted',
       'status',
       'executionCount',
       'environment',
@@ -925,12 +1007,15 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'runtimeStatus',
       'errorCode'
     ]),
+    ...(record.shellErrorCode ? { errorCode: record.shellErrorCode } : {}),
+    ...(record.shellRuntimeStatus ? { runtimeStatus: record.shellRuntimeStatus } : {}),
     ...(recovery ? { recovery } : {}),
     ...(staleness.value ? { staleness: staleness.value } : {}),
     ...(invalidatedRuns.length ? { invalidatedRuns } : {}),
+    ...(handoff ? { stdoutHandoff: handoff } : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
-    ...(stderr.text ? { stderr: stderr.text } : {}),
-    ...(traceback.text ? { traceback: traceback.text } : {}),
+    ...(stderr ? { stderr } : {}),
+    ...(traceback ? { traceback } : {}),
     ...(hint ? { hint } : {}),
     ...(compactOutputs.outputs.length ? { outputs: compactOutputs.outputs } : {}),
     ...(compactOutputs.omitted > 0 ? { omittedOutputCount: compactOutputs.omitted } : {}),
@@ -947,7 +1032,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
             ? resultCompacted
               ? 'Notebook output was truncated during capture and shortened again for this agent-facing result.'
               : 'Notebook output was truncated during capture.'
-            : 'Agent-facing result shortened; full output remains in the notebook preview.'
+            : 'Agent-facing result shortened. Read saved output with notebook_state using runIds:[runId], outputStream:"stdout", outputOffset:0 and follow nextOffset. Preserve workflow identifiers from stdoutHandoff or the saved stream for later steps. Do not repeat the original operation to retrieve its result.'
         }
       : {})
   }
@@ -1067,7 +1152,9 @@ const compactStateRun = (
   const output = diagnosticOutput ?? displayOutput
   const outputPreview =
     includeOutputPreview && typeof output === 'string'
-      ? clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
+      ? text?.stderr || traceback
+        ? notebookDiagnosticPreview(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT)
+        : clipAgentText(output, NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT).text
       : undefined
   const workingFiles = compactWorkingFiles(record.workingFiles)
   const compactedStaleness = compactStaleness(staleness, STATE_STALENESS_LIMITS)
@@ -1079,6 +1166,7 @@ const compactStateRun = (
       'cellId',
       'kernelKind',
       'kernelDispatched',
+      'executionStarted',
       'status',
       'executionCount',
       'environment',
@@ -1167,6 +1255,10 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
     'executionInvocationId',
     'sessionId',
     'kernelStatus',
+    'errorCode',
+    'runtimeStatus',
+    'kernelDispatched',
+    'executionStarted',
     'exitCode',
     'offset',
     'nextOffset',
@@ -1175,6 +1267,21 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
   ])
   for (const [key, fieldValue] of Object.entries(identity)) {
     if (typeof fieldValue === 'string') identity[key] = clipAgentText(fieldValue, 256).text
+  }
+  // Reserve bounded space for the cause even when an unrelated field exhausts the JSON budget.
+  for (const field of ['traceback', 'stderr'] as const) {
+    const diagnostic = record[field]
+    if (typeof diagnostic === 'string' && diagnostic)
+      identity[field] = notebookDiagnosticPreview(diagnostic, 512)
+  }
+  if (record.stdoutHandoff && JSON.stringify(record.stdoutHandoff, null, 2).length <= 2_000)
+    identity.stdoutHandoff = record.stdoutHandoff
+  const recovery = executionRecoveryContext(record.recovery)
+  if (recovery) {
+    identity.recovery =
+      JSON.stringify(recovery).length <= 2000
+        ? recovery
+        : { execution: recovery.execution, retryAfter: recovery.retryAfter }
   }
   const base = {
     ...identity,
@@ -1259,14 +1366,27 @@ const buildNotebookToolContent = (
   return content
 }
 
-// A failed foreground Python/R cell and a queried background Run that failed are tool failures,
-// like a non-zero foreground shell exit. Receipts, cancellation and other statuses are not.
+// A submission receipt acknowledges admission. Only foreground results and single-Run queries
+// report terminal failures to the tool caller.
 const notebookRunFailed = (rpcMethod: string, input: unknown, raw: unknown): boolean => {
-  if (rpcMethod === 'execute')
-    return asRecord(input)?.background !== true && asRecord(raw)?.status === 'failed'
-  if (rpcMethod !== 'getBackgroundRun') return false
-  const run = asRecord(asRecord(raw)?.run)
-  return run?.status === 'failed' || (typeof run?.exitCode === 'number' && run.exitCode !== 0)
+  const query = rpcMethod === 'getBackgroundRun'
+  if (
+    !query &&
+    (!['execute', 'executeControl', 'executeShell'].includes(rpcMethod) ||
+      asRecord(input)?.background === true)
+  )
+    return false
+  const run = asRecord(query ? asRecord(raw)?.run : raw)
+  if (!run || run.status === 'cancelled' || run.status === 'running' || run.status === 'queued')
+    return false
+  return (
+    run.status === 'failed' ||
+    run.status === 'timeout' ||
+    run.status === 'interrupted' ||
+    ((query || rpcMethod === 'executeShell') &&
+      typeof run.exitCode === 'number' &&
+      run.exitCode !== 0)
+  )
 }
 
 // Registers one MCP tool that forwards its validated input to a matching notebook RPC method.
@@ -1319,18 +1439,10 @@ const registerNotebookRpcTool = (
         )
         const rejected =
           definition.method === 'memoryRemember' && asRecord(raw)?.status === 'rejected'
-        const exitCode = asRecord(raw)?.exitCode
-        const shellFailed =
-          rpcMethod === 'executeShell' &&
-          asRecord(input)?.background !== true &&
-          typeof exitCode === 'number' &&
-          exitCode !== 0
         return {
           content: buildNotebookToolContent(raw, definition, input),
           ...(definition.outputSchema && asRecord(raw) ? { structuredContent: asRecord(raw) } : {}),
-          ...(rejected || shellFailed || notebookRunFailed(rpcMethod, input, raw)
-            ? { isError: true }
-            : {})
+          ...(rejected || notebookRunFailed(rpcMethod, input, raw) ? { isError: true } : {})
         }
       } finally {
         if (heartbeat) clearInterval(heartbeat)
@@ -1663,7 +1775,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_execute',
     title: 'Execute notebook code',
     description: [
-      'Run Python/R code as a persistent notebook cell.',
+      'Execute a persistent Python/R cell.',
+      NOTEBOOK_TOOL_REJECTION_GUIDANCE,
       'Uses the session binding, else the installed, enabled app-managed default. Multiple runtimes require explicit binding only without a usable default.',
       "artifactVersionInputs: this Run's provenance inputs (Version IDs); producerRunId=runId.",
       'Foreground for results needed now; background:true for longer independent work.',
@@ -1732,11 +1845,23 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   {
     name: 'notebook_state',
     title: 'Get notebook state',
-    description:
-      'Return compact session state: cell identities, latest run metadata/output preview, cwd/dataRoot, kernel status, and runtime bindings. Full run history stays in the notebook preview.',
+    description: 'Get session state or page saved output by run ID and stream. Follow nextOffset.',
     method: 'state',
-    inputSchema: {},
-    mapResult: compactNotebookStateResult,
+    inputSchema: {
+      runIds: z.array(z.string().min(1).max(256)).length(1).optional(),
+      outputStream: z.enum(['stdout', 'stderr', 'traceback']).optional(),
+      outputOffset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+      outputLimit: z.number().int().min(1).max(2_000).optional()
+    },
+    mapResult: (raw, input) => {
+      const request = asRecord(input) ?? {}
+      if (request.outputStream) {
+        if (!Array.isArray(request.runIds) || request.runIds.length !== 1)
+          throw new Error('Output reads require exactly one run ID.')
+        return notebookOutputPage(raw, request)
+      }
+      return compactNotebookStateResult(raw)
+    },
     resultLimitChars: NOTEBOOK_MCP_STATE_RESULT_LIMIT
   },
   {
@@ -1745,17 +1870,20 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: AUTHORIZED_DIRECTORIES_DESCRIPTION,
     method: 'listAuthorizedDirectories',
     inputSchema: {},
-    outputSchema: z.object({
-      revision: z.string(),
-      directories: z.array(
-        z.object({
-          path: z.string(),
-          name: z.string(),
-          access: z.enum(['ro', 'rw']),
-          grantedAt: z.string().datetime()
-        })
-      )
-    }),
+    // These keywords also support MCP's default JSON Schema 2020-12 dialect.
+    outputSchema: z
+      .object({
+        revision: z.string(),
+        directories: z.array(
+          z.object({
+            path: z.string(),
+            name: z.string(),
+            access: z.enum(['ro', 'rw']),
+            grantedAt: z.string().datetime()
+          })
+        )
+      })
+      .meta({ $schema: undefined }),
     mapResult: (raw) => raw
   },
   {

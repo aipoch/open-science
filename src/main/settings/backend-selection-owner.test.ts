@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings-runtime'
-import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/failure/messages'
+import {
+  EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE
+} from '../../shared/failure/messages'
 import { BackendSelectionOwner } from './backend-selection-owner'
 import type { StoredSettings } from './types'
 
@@ -103,6 +106,27 @@ describe('BackendSelectionOwner', () => {
       providerId: 'provider-a',
       modelSelection: { kind: 'required', model: 'model-a' },
       reasoningEffort: 'high'
+    })
+  })
+
+  it('reports a missing explicit provider even when the global default is configured', async () => {
+    const current = settings()
+    const owner = new BackendSelectionOwner({
+      readSettings: async () => current,
+      readFrameworkOverride: () => undefined,
+      resolveRuntimeReasoningEffortProfile: vi.fn()
+    })
+
+    await expect(
+      owner.resolveExplicitTarget({
+        frameworkId: 'opencode',
+        providerId: 'removed-provider',
+        model: { kind: 'required', id: 'old-model' },
+        reasoningEffort: 'default'
+      })
+    ).rejects.toThrow(EXPLICIT_MODEL_PROVIDER_UNAVAILABLE_MESSAGE)
+    await expect(owner.resolveActiveSelection()).resolves.toMatchObject({
+      providerId: current.activeProviderId
     })
   })
 

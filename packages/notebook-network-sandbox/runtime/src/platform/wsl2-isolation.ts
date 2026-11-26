@@ -68,6 +68,12 @@ type Wsl2Launch = Readonly<{
   argv: string[]
   env: NodeJS.ProcessEnv
   beginSpawn: () => Readonly<{ started: () => void; notStarted: () => void }>
+  memoryProbe: Readonly<{
+    executionScope: string
+    proofPath: string
+    token: string
+    openReader(program: string, signal: AbortSignal): ChildProcessWithoutNullStreams
+  }>
   release: (reason?: Wsl2CleanupReason) => Promise<Wsl2ReleaseResult>
 }>
 
@@ -100,7 +106,17 @@ while [ "$#" -gt 0 ]; do
     *) args+=("$1"); shift ;;
   esac
 done
-exec "${'$'}{args[@]}"
+# Keep the outside-namespace original parent alive for execution-domain identity.
+# Bash would otherwise give an asynchronous command /dev/null as stdin.
+exec 3<&0
+"${'$'}{args[@]}" <&3 3<&- &
+workload=$!
+start=$(awk '{print $22}' "/proc/$$/stat") || exit 71
+printf 'v1 %s %s %s\n' "$token" "$$" "$start" > "$receipt.memory.tmp" || exit 71
+mv -f -- "$receipt.memory.tmp" "$receipt.memory" || exit 71
+exec 3<&-
+wait "$workload"
+exit $?
 `
 
 // Every process launched below bwrap inherits the unguessable token. Cleanup scans the guest
@@ -185,7 +201,7 @@ EOF
   i=$((i + 1)); sleep 0.1
 done
 [ "${'$'}{alive:-0}" -eq 0 ] || exit 5
-rm -f -- "$receipt" "$receipt.tmp" || exit 8
+rm -f -- "$receipt" "$receipt.tmp" "$receipt.memory" "$receipt.memory.tmp" || exit 8
 `
 
 const reconcileExecutionReceiptsScript = String.raw`
@@ -996,6 +1012,8 @@ const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
       '--user',
       request.target.user,
       '--exec',
+      '/usr/bin/env',
+      `OPEN_SCIENCE_WSL_EXECUTION_TOKEN=${token}`,
       '/bin/bash',
       '--noprofile',
       '--norc',
@@ -1007,6 +1025,34 @@ const wsl2Launch = async (request: Wsl2LaunchRequest): Promise<Wsl2Launch> => {
       ...bwrap
     ],
     env: sanitizedHostEnvironment(),
+    memoryProbe: {
+      executionScope: `wsl:${request.target.profileId}:${randomUUID()}`,
+      proofPath: `${receipt}.memory`,
+      token,
+      openReader: (program, signal) => {
+        if (releaseReason !== undefined || spawnState !== 'started')
+          throw new Error('The original WSL execution is not available for memory sampling.')
+        signal.throwIfAborted()
+        return spawn(
+          wslExecutable(),
+          [
+            '--distribution',
+            request.target.distro,
+            '--user',
+            request.target.user,
+            '--exec',
+            '/usr/bin/env',
+            `OPEN_SCIENCE_WSL_EXECUTION_TOKEN=${token}`,
+            '/usr/bin/python3',
+            '-I',
+            '-u',
+            '-c',
+            program
+          ],
+          { windowsHide: true, stdio: 'pipe', env: sanitizedHostEnvironment() }
+        )
+      }
+    },
     beginSpawn: () => {
       if (spawnState !== 'not-started') throw new Error('WSL2 spawn was already admitted.')
       spawnState = 'uncertain'

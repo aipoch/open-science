@@ -16,6 +16,7 @@ import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { MemoryChangedEvent } from '../shared/memory'
 import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/notebook'
 import type { NotificationInboxChanged } from '../shared/notifications'
+import type { OrgCaseDownloadSnapshot } from '../shared/org-cases'
 import type {
   PdfAnnotationsChangedEvent,
   PdfNativeAnnotationImportProgress
@@ -46,6 +47,7 @@ import type { MigrationProgress } from '../shared/storage'
 import type { TagsChangedEvent } from '../shared/tags'
 import type { UpdateStatus } from '../shared/update'
 import type { WslSetupStatus } from '../shared/wsl-setup'
+import type { ResearchVideoActiveSession } from '../shared/research-video-presentation'
 import type { CompletionGateLifecycleEvent } from './agents/completion-gate-contract'
 
 const log = createLogger('application-events')
@@ -55,7 +57,10 @@ const log = createLogger('application-events')
 // them deliberately.
 export type ApplicationEventMap = {
   'resource-recording:changed': import('../shared/resource-recording').ResourceRecordingState
+  'research-video:activity-changed': readonly ResearchVideoActiveSession[]
   'sessions:package-operation-changed': PackageOperationSnapshot
+  'sessions:catalog-changed': undefined
+  'sessions:org-case-download-changed': OrgCaseDownloadSnapshot | null
   'acp:state': AcpStateUpdate
   'acp:event': readonly AcpRuntimeEvent[]
   'acp:agent-runtime-update': AcpAgentRuntimeUpdate
@@ -64,6 +69,8 @@ export type ApplicationEventMap = {
   'side-chat:relay-delivered': SideChatRelayDeliveredEvent
   'notebook:available': NotebookAvailableEvent
   'notebook:changed': NotebookChangedEvent
+  'notebook:memory-rejected': import('../shared/notebook-memory').NotebookMemoryRejectedEvent
+  'notebook:memory-policy-changed': import('../shared/notebook-memory').NotebookMemoryPolicyChangedEvent
   'notebook-env:progress': ProvisionProgress
   'runtime:policy-changed': undefined
   'notifications:changed': NotificationInboxChanged

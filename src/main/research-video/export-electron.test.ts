@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { renderResearchVideoMp4 } from './export-electron'
+import { checkResearchVideoHtml, renderResearchVideoMp4 } from './export-electron'
 
 const electron = vi.hoisted(() => {
   const clearData = vi.fn(async () => {})
@@ -14,6 +14,20 @@ const electron = vi.hoisted(() => {
     duration: 0
   }))
   const destroy = vi.fn()
+  const setContentSize = vi.fn()
+  const setZoomFactor = vi.fn()
+  const display = vi.fn(() => ({ scaleFactor: 1 }))
+  const resize = vi.fn(() => ({ toPNG: () => Buffer.from('frame') }))
+  const toBitmap = vi.fn(() => Buffer.from('retina bitmap'))
+  const getSize = vi.fn(() => ({ width: 3840, height: 2160 }))
+  const getScaleFactors = vi.fn(() => [1])
+  const createFromBitmap = vi.fn(() => ({ resize }))
+  const capturePage = vi.fn(async () => ({
+    getSize,
+    getScaleFactors,
+    toBitmap,
+    resize
+  }))
   const protocol = { handle: vi.fn(), unhandle: vi.fn() }
   const fromPartition = vi.fn(() => ({
     clearData,
@@ -27,11 +41,36 @@ const electron = vi.hoisted(() => {
     return {
       loadURL,
       destroy,
+      getBounds: () => ({ x: 0, y: 0, width: 1920, height: 1080 }),
+      setContentSize,
       isDestroyed: () => false,
-      webContents: { executeJavaScript, setWindowOpenHandler: vi.fn(), on: vi.fn() }
+      webContents: {
+        executeJavaScript,
+        capturePage,
+        setZoomFactor,
+        setWindowOpenHandler: vi.fn(),
+        on: vi.fn()
+      }
     }
   })
-  return { clearData, loadURL, executeJavaScript, destroy, protocol, fromPartition, BrowserWindow }
+  return {
+    clearData,
+    loadURL,
+    executeJavaScript,
+    destroy,
+    protocol,
+    fromPartition,
+    BrowserWindow,
+    setContentSize,
+    setZoomFactor,
+    display,
+    capturePage,
+    resize,
+    getSize,
+    getScaleFactors,
+    toBitmap,
+    createFromBitmap
+  }
 })
 
 const encode = vi.hoisted(() =>
@@ -50,6 +89,8 @@ vi.mock('@aipoch/research-film/export', async (original) => ({
 
 vi.mock('electron', () => ({
   BrowserWindow: electron.BrowserWindow,
+  nativeImage: { createFromBitmap: electron.createFromBitmap },
+  screen: { getDisplayMatching: electron.display },
   session: { fromPartition: electron.fromPartition }
 }))
 
@@ -82,19 +123,30 @@ it('cancels queued exports and holds the shared partition until teardown complet
         )
       )
     )
+    electron.executeJavaScript.mockResolvedValueOnce(undefined)
     const firstExport = start('first', first)
     await cleaning.promise
 
     const cancelledExport = start('missing', cancelled)
+    const reviewDeadline = vi.spyOn(AbortSignal, 'timeout')
+    const review = checkResearchVideoHtml(
+      { htmlPath: join(root, 'second.html'), includeFrames: false },
+      cancelled.signal
+    ).catch((error) => error)
+    expect(reviewDeadline).not.toHaveBeenCalledWith(120_000)
+    reviewDeadline.mockRestore()
     const secondExport = start('second', second)
     const reason = new Error('cancelled while waiting')
     cancelled.abort(reason)
     expect(await cancelledExport).toBe(reason)
+    expect(await review).toBe(reason)
     expect(electron.BrowserWindow).toHaveBeenCalledOnce()
     expect(electron.protocol.unhandle).toHaveBeenCalledWith('https')
 
     cleaned.resolve()
-    expect(await firstExport).toEqual(new Error('Invalid research video stage'))
+    expect(await firstExport).toEqual(
+      new Error('The research film player did not initialize. Regenerate the film and try again.')
+    )
     expect(await secondExport).toEqual(new Error('Invalid research video stage'))
     expect(electron.BrowserWindow).toHaveBeenCalledTimes(2)
     expect(electron.fromPartition).toHaveBeenCalledOnce()
@@ -258,3 +310,86 @@ it('keeps encoder inputs when the cancelled backend request deletes its staging 
     await rm(root, { recursive: true, force: true })
   }
 })
+
+it('seeks in the live player for visual defects without starting an encoder', async () => {
+  vi.clearAllMocks()
+  const root = await mkdtemp(join(tmpdir(), 'film-check-html-'))
+  const htmlPath = join(root, 'player.html')
+  try {
+    await writeFile(htmlPath, '<meta name="open-science-research-video" content="1">')
+    const issues = [{ scene: 'setup', script: 'anims/setup.js', message: 'Overlapping labels' }]
+    electron.executeJavaScript
+      .mockResolvedValueOnce({ W: 1080, H: 1920, duration: 3 })
+      .mockResolvedValueOnce({ issues, frames: [{ scene: 'setup', time: 1.5 }] })
+      .mockResolvedValueOnce({ W: 1920, H: 1080, duration: 3 })
+      .mockResolvedValueOnce({ issues, frames: [{ scene: 'setup', time: 1.5 }] })
+    await expect(
+      checkResearchVideoHtml({ htmlPath, includeFrames: true }, new AbortController().signal)
+    ).resolves.toEqual({
+      issues: [
+        { ...issues[0], message: '9x16: Overlapping labels' },
+        { ...issues[0], message: '16x9: Overlapping labels' }
+      ],
+      frames: []
+    })
+    expect(electron.loadURL).toHaveBeenNthCalledWith(1, expect.stringContaining('ar=9x16'))
+    expect(electron.loadURL).toHaveBeenNthCalledWith(2, expect.stringContaining('ar=16x9'))
+    expect(electron.executeJavaScript).toHaveBeenCalledWith('window.__checkFilm()')
+    expect(encode).not.toHaveBeenCalled()
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it.each([
+  ['720p', 1, 1280, 720, 1],
+  ['1080p', 1, 1920, 1080, 1],
+  ['4k', 1, 3840, 2160, 2],
+  ['4k', 2, 3840, 2160, 1]
+] as const)(
+  'captures %s on a %sx display at the requested pixel size',
+  async (resolution, scaleFactor, width, height, zoom) => {
+    vi.clearAllMocks()
+    const root = await mkdtemp(join(tmpdir(), 'film-resolution-'))
+    const htmlPath = join(root, 'player.html')
+    electron.display.mockReturnValueOnce({ scaleFactor })
+    electron.getSize.mockReturnValueOnce({ width: 1920 * zoom, height: 1080 * zoom })
+    electron.getScaleFactors.mockReturnValueOnce([scaleFactor])
+    electron.executeJavaScript
+      .mockResolvedValueOnce({ W: 1920, H: 1080, duration: 1 })
+      .mockResolvedValueOnce('data:audio/wav;base64,YQ==')
+    encode.mockImplementationOnce(async (options) => {
+      expect(options).toMatchObject({ width, height })
+      await options.renderer.capture(0, options.signal)
+      await writeFile(options.outputPath, 'verified video')
+    })
+    try {
+      await writeFile(htmlPath, '<meta name="open-science-research-video" content="1">')
+      await renderResearchVideoMp4(
+        { htmlPath, resolution, encoderPath: '', probePath: '' },
+        new AbortController().signal
+      )
+      expect(electron.setZoomFactor).toHaveBeenCalledWith(zoom)
+      expect(electron.setZoomFactor.mock.invocationCallOrder[0]).toBeLessThan(
+        electron.loadURL.mock.invocationCallOrder[0]
+      )
+      expect(electron.capturePage).toHaveBeenCalledWith({
+        x: 0,
+        y: 0,
+        width: 1920 * zoom,
+        height: 1080 * zoom
+      })
+      expect(electron.resize).toHaveBeenCalledWith({ width, height, quality: 'best' })
+      if (resolution === '4k' && scaleFactor === 2) {
+        expect(electron.toBitmap).toHaveBeenCalledWith({ scaleFactor: 2 })
+        expect(electron.createFromBitmap).toHaveBeenCalledWith(Buffer.from('retina bitmap'), {
+          width: 3840,
+          height: 2160
+        })
+      } else expect(electron.createFromBitmap).not.toHaveBeenCalled()
+      if (zoom > 1) expect(electron.setContentSize).toHaveBeenCalledWith(width, height)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

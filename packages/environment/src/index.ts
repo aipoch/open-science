@@ -1,4 +1,5 @@
 export {
+  DEFAULT_BUNDLE_VERSION,
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
@@ -49,6 +50,8 @@ export {
   type MicromambaDeps
 } from './micromamba'
 export {
+  DEFAULT_PYTHON_SPEC,
+  DEFAULT_R_SPEC,
   BASE_PYTHON_PACKAGES,
   BASE_R_PACKAGES,
   DefaultRuntimeProvisioner,
@@ -63,8 +66,11 @@ export {
   captureMicromamba,
   createExecutableVerifier,
   createMicromambaExecutor,
+  environmentChildCleanup,
   isChildUnconfirmedError,
-  killAndConfirmExit
+  killAndConfirmExit,
+  retainEnvironmentChildCleanup,
+  type EnvironmentChildCleanup
 } from './provisioner-runtime'
 export {
   captureNotebookEnvironmentLock,

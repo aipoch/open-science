@@ -15,11 +15,21 @@
     "src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceWebFetchActivityRow.render.test.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceWebFetchActivityRow.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.render.test.tsx",
     "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx",
     "src/renderer/src/pages/workspace/literature-candidate-session-context.ts",
     "src/renderer/src/pages/workspace/LiteratureToolReferenceList.tsx",
     "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-    "src/renderer/src/pages/workspace/pdf-text-coverage.test.tsx"
+    "src/renderer/src/pages/workspace/pdf-text-coverage.test.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceImageToolCard.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceImageToolCard.test.tsx",
+    "src/renderer/src/pages/workspace/image-tool-preview-context.ts",
+    "src/renderer/src/pages/workspace/WorkspacePackageWebActivityRow.tsx",
+    "src/renderer/src/pages/workspace/WorkspacePackageWebActivityRow.render.test.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceWebActivityDetails.tsx",
+    "src/renderer/src/pages/workspace/workspace-web-render-test-fixture.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/AuthorizedDirectoriesList.tsx",
@@ -31,8 +41,12 @@
     "src/renderer/src/pages/workspace/WorkspaceSkillLoadRow.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx",
+    "src/renderer/src/pages/workspace/WorkspaceWebFetchActivityRow.tsx",
     "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx",
-    "src/renderer/src/pages/workspace/literature-candidate-session-context.ts"
+    "src/renderer/src/pages/workspace/literature-candidate-session-context.ts",
+    "src/renderer/src/pages/workspace/WorkspaceImageToolCard.tsx",
+    "src/renderer/src/pages/workspace/image-tool-preview-context.ts",
+    "src/renderer/src/pages/workspace/workspace-web-render-test-fixture.ts"
   ],
   "testFiles": {
     "owner": [
@@ -43,7 +57,11 @@
       "src/renderer/src/pages/workspace/WorkspaceSkillLoadRow.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/pdf-text-coverage.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspaceWebFetchActivityRow.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.render.test.tsx",
+      "src/renderer/src/pages/workspace/pdf-text-coverage.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceImageToolCard.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePackageWebActivityRow.render.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -164,5 +182,6 @@
   },
   "consumerModules": [],
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Image tool cards are shared by permissions, conversation and provenance beyond the reviewed presentation sources; retain full CI until the expanded boundary is reviewed."
 }

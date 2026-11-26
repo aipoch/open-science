@@ -6,6 +6,7 @@ import { expect, it } from 'vitest'
 import lifecycleConfig from './vitest.config'
 
 const text = readFileSync('.github/workflows/process-lifecycle.yml', 'utf8')
+const occupancyText = readFileSync('.github/workflows/update-occupancy.yml', 'utf8')
 const workflow = load(text) as {
   on: Record<string, unknown>
   permissions: Record<string, string>
@@ -26,6 +27,13 @@ const workflow = load(text) as {
       }>
     }
   >
+}
+const occupancyWorkflow = load(occupancyText) as {
+  jobs: {
+    occupancy: {
+      steps: Array<{ name: string; run?: string }>
+    }
+  }
 }
 
 it('discovers the native suite only through its dedicated configuration', () => {
@@ -53,7 +61,7 @@ it('discovers the native suite only through its dedicated configuration', () => 
 
 it('runs the three-platform fixed collection daily without an unchanged-SHA bypass', () => {
   expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'schedule', 'workflow_dispatch'])
-  expect(workflow.on.schedule).toEqual([{ cron: '23 19 * * *' }])
+  expect(workflow.on.schedule).toEqual([{ cron: '33 16 * * *' }])
   expect(workflow.jobs.lifecycle.strategy?.matrix.include.map((row) => row.platform)).toEqual([
     'macos',
     'linux',
@@ -90,7 +98,6 @@ it('validates lifecycle owners and runtime prerequisites at the exact PR head', 
     'src/main/windows-powershell.ts',
     'src/main/windows-process-query.ts',
     'src/main/settings/managed-codex.ts',
-    'src/main/acp/claude-executable.ts',
     'src/main/settings/shell-path.ts',
     'src/main/node-process-host.ts',
     'src/main/process-birth-identity.ts',
@@ -122,7 +129,7 @@ it('validates lifecycle owners and runtime prerequisites at the exact PR head', 
     'src/main/runtime-payload-transfers.ts',
     'package.json',
     'package-lock.json',
-    'patches/@agentclientprotocol+claude-agent-acp+0.70.0.patch',
+    'resources/claude-acp/@agentclientprotocol+claude-agent-acp+0.70.0.patch',
     'prisma/schema.prisma',
     'tsconfig.web.json',
     'src/renderer/src/components/Button.tsx',
@@ -144,16 +151,31 @@ it('retains evidence on failure and uses the existing reporter only for complete
   )!
   expect(upload.if).toContain('always()')
   expect(upload.with?.['if-no-files-found']).toBe('error')
-  expect(workflow.jobs.report.needs).toBe('lifecycle')
+  expect(workflow.jobs.report.needs).toEqual(['lifecycle', 'update_occupancy'])
   expect(workflow.jobs.report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
   expect(workflow.jobs.report.permissions).toEqual({ contents: 'read', issues: 'write' })
   const reporter = workflow.jobs.report.steps.at(-1)!
   expect(reporter.env?.CONCLUSION).toBe(
-    "${{ needs.lifecycle.result == 'success' && 'success' || 'failure' }}"
+    "${{ needs.lifecycle.result == 'success' && needs.update_occupancy.result == 'success' && 'success' || 'failure' }}"
   )
   expect(reporter.with?.script).toContain('report-scheduled-failure.mjs')
   for (const job of Object.values(workflow.jobs))
-    for (const step of job.steps) {
+    for (const step of job.steps ?? []) {
       if (step.uses) expect(step.uses).toMatch(/@[a-f0-9]{40}$/)
     }
+})
+
+it('runs the helper registration guard before platform occupancy tests', () => {
+  const steps = occupancyWorkflow.jobs.occupancy.steps
+  const guard = steps.find((step) => step.name === 'Verify runtime helper registration')
+  const install = steps.find((step) => step.name === 'Install dependencies')
+  const occupancy = steps.find(
+    (step) => step.name === 'Verify update occupancy through both real launchers'
+  )
+  expect(guard?.run).toBe('node scripts/ci/check-installation-helper-registration.mjs')
+  expect(steps.indexOf(guard!)).toBeLessThan(steps.indexOf(install!))
+  expect(steps.indexOf(guard!)).toBeLessThan(steps.indexOf(occupancy!))
+  expect(occupancy?.run).toContain(
+    'coordinates cross-profile registrations and never stops them|keeps the update gate blocked by a live registration with an unreadable record'
+  )
 })

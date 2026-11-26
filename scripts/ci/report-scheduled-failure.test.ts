@@ -20,17 +20,30 @@ const trackingIssue = {
   body: `${trackingMarker('nightly.yml')}\n<!-- scheduled-failure-run:100 -->\nfailed`
 }
 
+type IssueRest = {
+  listForRepo: Mock
+  listComments: Mock
+  createLabel: Mock
+  create: Mock
+  createComment: Mock
+  update: Mock
+}
 type Fixture = {
-  github: { paginate: Mock; rest: { issues: Record<string, Mock> } }
+  github: {
+    paginate: Mock
+    rest: { issues: IssueRest; actions: { listWorkflowRuns: Mock } }
+  }
   repo: typeof repo
   log: Mock
-  issues: Record<string, Mock>
+  issues: IssueRest
+  actions: { listWorkflowRuns: Mock }
 }
 function fixture({
-  issues = [] as Array<{ number: number; body: string; pull_request?: unknown }>,
-  comments = [] as Array<{ body: string }>
+  issues: issueList = [] as Array<{ number: number; body: string; pull_request?: unknown }>,
+  comments = [] as Array<{ body: string }>,
+  completedRuns = [] as Array<{ id: number }>
 } = {}): Fixture {
-  const rest = {
+  const issues = {
     listForRepo: vi.fn(),
     listComments: vi.fn(),
     createLabel: vi.fn().mockResolvedValue({}),
@@ -38,16 +51,32 @@ function fixture({
     createComment: vi.fn().mockResolvedValue({}),
     update: vi.fn().mockResolvedValue({})
   }
+  const actions = { listWorkflowRuns: vi.fn() }
   const paginate = vi.fn(async (endpoint: Mock) =>
-    endpoint === rest.listForRepo ? issues : endpoint === rest.listComments ? comments : []
+    endpoint === issues.listForRepo
+      ? issueList
+      : endpoint === issues.listComments
+        ? comments
+        : endpoint === actions.listWorkflowRuns
+          ? completedRuns
+          : []
   )
-  return { github: { paginate, rest: { issues: rest } }, repo, log: vi.fn(), issues: rest }
+  return {
+    github: { paginate, rest: { issues, actions } },
+    repo,
+    log: vi.fn(),
+    issues,
+    actions
+  }
 }
 
 describe('scheduled failure tracking issues', () => {
   it('opens a labelled tracking issue on the first failure', async () => {
     const f = fixture()
-    expect(await reportScheduledOutcome({ ...f, ...run, conclusion: 'failure' })).toEqual({
+    const failureDetails = 'Baseline: v1.3.0. Failed stage: A to B and rollback.'
+    expect(
+      await reportScheduledOutcome({ ...f, ...run, conclusion: 'failure', failureDetails })
+    ).toEqual({
       action: 'created',
       issueNumber: 42
     })
@@ -67,6 +96,7 @@ describe('scheduled failure tracking issues', () => {
     for (const fragment of [
       trackingMarker('nightly.yml'),
       run.runUrl,
+      failureDetails,
       sha,
       'attempt 1',
       'To investigate'
@@ -116,6 +146,25 @@ describe('scheduled failure tracking issues', () => {
     })
     await reportScheduledOutcome({ ...older, ...run, conclusion: 'failure' })
     expect(older.issues.createComment).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores an older run after a newer scheduled run completes', async () => {
+    const f = fixture({ issues: [trackingIssue], completedRuns: [{ id: 102 }] })
+    expect(
+      await reportScheduledOutcome({ ...f, ...run, conclusion: 'failure', ignoreStaleRuns: true })
+    ).toEqual({ action: 'none' })
+    expect(f.issues.createComment).not.toHaveBeenCalled()
+    expect(f.issues.update).not.toHaveBeenCalled()
+    expect(f.issues.create).not.toHaveBeenCalled()
+    expect(f.github.paginate).toHaveBeenCalledWith(
+      f.actions.listWorkflowRuns,
+      expect.objectContaining({
+        ...repo,
+        workflow_id: 'nightly.yml',
+        event: 'schedule',
+        status: 'completed'
+      })
+    )
   })
 
   it('closes the tracking issue after a scheduled success', async () => {

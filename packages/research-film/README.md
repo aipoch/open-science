@@ -8,6 +8,10 @@ The package owns screenplay validation and correction, shared and per-scene anim
 
 In Open-Science, generation starts only from the user's research-film button and runs independently of conversation turns. The host uses tool-less model inference for authoring; generation is not exposed as an Agent/MCP tool. Players and source bundles are stored as session-derived film files, not published as conversation Artifacts.
 
+The explanation player supports landscape and portrait playback. Before publication, the desktop host checks the rendered HTML in both orientations. Model-assisted review uses landscape frames. MP4 exports are landscape (16:9) at 720p, 1080p, or 4K. An interrupted MP4 export starts over on the next attempt.
+
+An unfinished generation keeps individual narration WAVs and timing files under `speech/voice/`. A checksum binds their contents to the captions, spoken text, scene IDs, voice engine and model revision. Visual repairs reuse verified recordings and mix them against the current timeline in the worker's temporary directory. Before resuming an unpublished build, the host checks the player and source ZIP against the fingerprint in `pending.json`. A missing or stale fingerprint triggers a rebuild from the remaining checkpoints.
+
 The host owns session/branch authorization, frozen source and approved image staging, model selection and usage accounting, model downloads and leases, data-root admission, storage/publication, UI, and Electron capture/save dialogs. No host imports or Electron dependency are used here.
 
 ```ts
@@ -38,9 +42,54 @@ Stage the approved `session.json` and `files/` into a fresh job directory before
 
 `createResearchVideoGenerator` also accepts an existing source `specPath` directly. `exportResearchVideoMp4` from `@aipoch/research-film/export` accepts encoder paths and a frame-capture port. This separate entry can be bundled into Electron without shipping the speech pipeline there. `@aipoch/research-film/contracts` is browser-safe.
 
+## Remote speech backends
+
+Passing `speech` to `generateResearchFilm` (or `ResearchVideoGenerationInput`) routes narration
+through an HTTP TTS endpoint instead of the local Kokoro model; omitting it keeps the existing
+local pipeline unchanged. Remote synthesis executes in the process that owns the generator —
+never in a speech worker — and every request goes through `createResearchVideoGenerator({ remoteFetch })`,
+so a host can inject its proxy-aware transport (defaulting to the platform fetch) and keep remote
+narration behind the host's network policy. Two wire shapes are supported: `audio-speech`
+(OpenAI-compatible `{ model, input, voice, response_format }` returning raw WAV bytes) and
+`chat-completions` (chat endpoint carrying the spoken text in an `assistant` message with
+`audio: { format, voice }` and base64 WAV in `choices[0].message.audio.data`, the Xiaomi MiMo TTS
+shape). The `voice` value is passed through verbatim, so provider voice IDs and base64 clone
+samples both work.
+
+```ts
+const generate = createResearchVideoGenerator({
+  temporaryRoot,
+  remoteFetch: hostProxyAwareFetch // optional; defaults to the platform fetch
+})
+const result = await generateResearchFilm({
+  /* ...same options as above... */
+  generate,
+  speech: {
+    kind: 'remote-http',
+    style: 'chat-completions',
+    endpoint: 'https://api.example.com/v1/chat/completions',
+    model: 'tts-model-id',
+    voice: 'voice-id-or-base64-sample',
+    apiKey // sent as `Authorization: Bearer …`; never part of the identity or cache keys
+  }
+})
+```
+
+Remote captions distribute each chunk's measured audio duration across its spoken words by
+character count and punctuation, without additional HTTP requests. Local Kokoro retains its
+prefix and suffix timing probes. Endpoints must use HTTP(S) and reject URL userinfo and
+credential-bearing query parameters. Pass credentials through `apiKey`. The engine identity in
+`timings.json` and the source archive contains only the protocol and a SHA-256 digest of the
+endpoint, model, and voice configuration. Changing any of these invalidates retained speech.
+Responses are read through a bounded stream with a hard byte cap, and
+every early rejection releases the response body, before decoding. Endpoints
+must return WAV (PCM 16/24/32-bit or IEEE float32); compressed audio is rejected with an
+actionable error. The host remains responsible for credentials, disclosure of narration text to
+the endpoint, rate limiting, and opt-in UI.
+
 Resources and workers resolve relative to the installed package, not the application's working directory. Keep `dist` and `resources` together. Run the Node pipeline outside an ASAR; desktop hosts can stage this package into their ordinary Node backend. The package contains no downloaded narration weights, ONNX engine, voice binary, or FFmpeg executable. Catalogs pin downloads for the host's model manager. Existing `sharp` is reused through normal package dependency resolution.
 
-Authoring documentation: [format and constraints](resources/authoring/SKILL.md), [drawing API](resources/authoring/KIT.md). Syntax validation does not certify scientific accuracy or visual quality; review generated playback.
+Open-Science uses the selected model to review narration against the [nine-point rubric](resources/authoring/SCRIPT.md) before producing the illustrations. For a session with an eligible offline ES-module app, the host can offer to stage its modules with the user’s consent. Open-Science supplies `reviewPlayer` to inspect each generated research explanation in the desktop HTML renderer. Narration scores are advisory. The desktop checks both aspect ratios. Drawing errors, blank animations, text overlap and clipping share a budget of three repairs. At the limit, it selects the playable version with the fewest rendering failures, then the fewest text defects, keeping the earliest on a tie. An embedded app that fails to run can be replaced by a drawing. See the [authoring format](resources/authoring/SKILL.md) and [drawing API](resources/authoring/KIT.md).
 
 ```sh
 npm run build

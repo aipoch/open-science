@@ -6,7 +6,10 @@ import { lstat, readdir, mkdtemp, readFile, writeFile, rm, mkdir, copyFile } fro
 import { dirname, join } from 'node:path'
 import { Worker, type WorkerOptions } from 'node:worker_threads'
 import { availableParallelism, totalmem } from 'node:os'
+import type { VideoSpec } from './timeline.js'
 import type { SpeechSynthesizer } from './narration.js'
+import type { RemoteSpeechConfig } from './remote-speech.js'
+import { createRemoteSpeechSynthesizer } from './remote-speech.js'
 import {
   forkSpeechProcess,
   ownSpeechProcess,
@@ -24,6 +27,8 @@ export type ResearchVideoGenerationInput = {
   modelDirectory: string
   engineDirectory: string
   outputDirectory: string
+  /** Opt-in remote HTTP speech backend; omit to keep the local Kokoro engine. */
+  speech?: RemoteSpeechConfig
 }
 export type ResearchVideoGenerationResult = {
   playerPath: string
@@ -81,13 +86,19 @@ export class ResearchVideoBuildCleanupError extends Error {
   }
 }
 
-const GENERATION_IDLE_TIMEOUT_MS = 4 * 60_000
+const GENERATION_IDLE_TIMEOUT_MS = 8 * 60_000
 
 /** The caller owns source authorization and Artifact publication; this owner only generates files. */
 export const createResearchVideoGenerator = (options: {
   temporaryRoot: string
   createWorker?: (options: WorkerOptions) => Worker
   createSpeechProcess?: () => ChildProcess
+  /**
+   * Transport for remote narration. Remote synthesis runs in this process (no speech worker
+   * is forked for it), so a host can inject its proxy-aware fetch here and keep outbound
+   * requests behind the host's network policy. Defaults to the platform fetch.
+   */
+  remoteFetch?: typeof fetch
 }): ResearchVideoGenerate & { assertReady: () => void } => {
   const { temporaryRoot } = options
   const createWorker =
@@ -105,7 +116,25 @@ export const createResearchVideoGenerator = (options: {
     onProgress?: (progress: ResearchVideoStep) => void
   ): Promise<ResearchVideoGenerationResult> => {
     signal.throwIfAborted()
+    // Remote synthesis runs in this (host-owned) process so the injected transport governs
+    // every request; fail fast on a malformed config before allocating scratch space.
+    // remoteAbort fires when the caller aborts OR when this generation settles, so an
+    // in-flight request can never outlive the generation that started it.
+    const remoteAbort = new AbortController()
+    const remoteInFlight = new Set<Promise<unknown>>()
+    const remote = input.speech
+      ? createRemoteSpeechSynthesizer(input.speech, {
+          fetch: options.remoteFetch,
+          signal: remoteAbort.signal
+        })
+      : undefined
     const temporaryDirectory = await mkdtemp(join(temporaryRoot, 'research-video-'))
+    // Register cancellation only after setup can no longer throw: a failed synthesizer
+    // validation or scratch allocation must never leave a listener (and the generation
+    // state it captures) attached to the caller's reused signal.
+    const forwardAbort = (): void => remoteAbort.abort(signal.reason)
+    if (signal.aborted) remoteAbort.abort(signal.reason)
+    else signal.addEventListener('abort', forwardAbort, { once: true })
     let worker: Worker | undefined
     let stopping = false
     let speech: ReturnType<typeof ownSpeechProcess> | undefined
@@ -141,6 +170,13 @@ export const createResearchVideoGenerator = (options: {
     const removeScratch = (): Promise<void> =>
       rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 3 })
     const cleanup = async (): Promise<void> => {
+      // Abort in-flight remote requests first, then wait for them to settle: a cancelled
+      // generation must stop talking to the endpoint before the next one may start.
+      signal.removeEventListener('abort', forwardAbort)
+      remoteAbort.abort(
+        new Error('Film generation finished before the remote speech request completed.')
+      )
+      await Promise.allSettled([...remoteInFlight])
       const [build, narration] = await Promise.allSettled([stopBuild(), speech?.stop()])
       const narrationError: unknown = narration.status === 'rejected' ? narration.reason : undefined
       const buildError: unknown = build.status === 'rejected' ? build.reason : undefined
@@ -215,6 +251,36 @@ export const createResearchVideoGenerator = (options: {
               )
                 throw new Error('Invalid speech worker lane')
               armIdleDeadline('narration preparation')
+              if (remote) {
+                const pending = (async () => {
+                  if (value.kind === 'measure-duration' && remote.measureDuration) {
+                    const duration = await remote.measureDuration(value.text)
+                    if (stopping || signal.aborted) return
+                    armIdleDeadline('narration preparation')
+                    worker!.postMessage({ kind: 'speech-duration', lane: value.lane, duration })
+                    return
+                  }
+                  const audio = await remote.synthesize(value.text)
+                  if (stopping || signal.aborted) return
+                  armIdleDeadline('narration preparation')
+                  if (value.kind === 'measure-duration')
+                    worker!.postMessage({
+                      kind: 'speech-duration',
+                      lane: value.lane,
+                      duration: audio.samples.length / audio.sampleRate
+                    })
+                  else
+                    worker!.postMessage({ kind: 'speech-result', lane: value.lane, audio }, [
+                      audio.samples.buffer as ArrayBuffer
+                    ])
+                })().catch((error) => {
+                  if (!stopping) reject(new ResearchVideoWorkerError(error, 'speech', value.lane))
+                })
+                // Cleanup awaits this set after aborting, so no request outlives the run.
+                remoteInFlight.add(pending)
+                void pending.finally(() => remoteInFlight.delete(pending))
+                return
+              }
               speech ??= ownSpeechProcess(
                 (options.createSpeechProcess ?? forkSpeechProcess)(),
                 (reply) => {
@@ -315,29 +381,45 @@ export async function generateResearchVideoInWorker(
   progress: (progress: ResearchVideoStep) => void,
   synthesizers: SpeechSynthesizer[]
 ): Promise<ResearchVideoGenerationResult> {
-  const { prepareVideoNarration } = await import('./narration.js')
-  const { buildResearchVideoPlayer } = await import('./build-player.js')
+  const { prepareVideoNarration, mixFilmNarration } = await import('./narration.js')
+  const { buildResearchVideoPlayer, readFilmVoiceTimings } = await import('./build-player.js')
   const { freezeResearchVideoSource } = await import('./freeze-source.js')
   const replay = input.mode === 'operation-replay'
   const { freezeReplaySource, buildReplayPlayer } = await import('./replay-player.js')
   const { replayNarrationSpec, REPLAY_RUNTIME_VERSION } = await import('./replay-case.js')
-  const specPath = await (replay ? freezeReplaySource : freezeResearchVideoSource)(
-    input.specPath,
-    join(input.temporaryDirectory, 'source'),
-    new AbortController().signal
-  )
+  const sourceDirectory = join(input.temporaryDirectory, 'source')
+  const freezeSignal = new AbortController().signal
+  const specPath = replay
+    ? await freezeReplaySource(input.specPath, sourceDirectory, freezeSignal)
+    : await freezeResearchVideoSource(
+        input.specPath,
+        sourceDirectory,
+        freezeSignal,
+        typeof input.provenance?.sessionAppSha256 === 'string'
+          ? input.provenance.sessionAppSha256
+          : undefined
+      )
   const spec = JSON.parse(await readFile(specPath, 'utf8'))
-  const narrationSpec = replay ? replayNarrationSpec(spec) : spec
+  const narrationSpec: VideoSpec = replay ? replayNarrationSpec(spec) : spec
   progress({ phase: 'loading' })
   const speech = input.retainNarration
     ? join(dirname(input.specPath), 'speech')
     : input.temporaryDirectory
   const voiceDirectory = join(speech, 'voice')
-  const mixPath = join(speech, 'mix.wav')
+  const mixPath = join(input.temporaryDirectory, 'mix.wav')
   const marker = join(speech, 'complete.json')
   const inputKey = createHash('sha256')
     .update(
-      JSON.stringify([replay ? REPLAY_RUNTIME_VERSION : 1, spec, input.provenance?.modelRevision])
+      JSON.stringify([
+        'line-audio-v1',
+        replay ? REPLAY_RUNTIME_VERSION : 1,
+        input.provenance?.modelRevision,
+        synthesizers[0].identity,
+        narrationSpec.scenes.map((scene) => [
+          scene.id,
+          scene.lines.map((line) => [line.caption, line.say || line.caption])
+        ])
+      ])
     )
     .digest('hex')
   // Check the bytes once before using a previous run's speech/timing files.
@@ -347,8 +429,8 @@ export async function generateResearchVideoInWorker(
     const names = await readdir(voiceDirectory)
     if (names.length > 256) throw new Error('Too many narration files')
     let bytes = 0
-    for (const name of ['mix.wav', ...names.sort().map((name) => 'voice/' + name)]) {
-      const path = join(speech, name)
+    for (const name of names.sort()) {
+      const path = join(voiceDirectory, name)
       const stat = await lstat(path)
       bytes += stat.size
       if (!stat.isFile() || bytes > 200 * 1024 * 1024)
@@ -378,8 +460,17 @@ export async function generateResearchVideoInWorker(
       await mkdir(speech, { mode: 0o700 })
     }
   }
-  if (!ready) {
-    const { mix } = await prepareVideoNarration({
+  let mix: Buffer
+  if (ready) {
+    progress({ phase: 'mixing' })
+    mix = await mixFilmNarration(
+      narrationSpec,
+      await readFilmVoiceTimings(voiceDirectory, narrationSpec),
+      voiceDirectory,
+      freezeSignal
+    )
+  } else {
+    const narration = await prepareVideoNarration({
       spec: narrationSpec,
       synthesizer: synthesizers[0],
       additionalSynthesizer: synthesizers[1],
@@ -387,10 +478,11 @@ export async function generateResearchVideoInWorker(
       outputDirectory: voiceDirectory,
       signal: new AbortController().signal
     })
-    await writeFile(mixPath, mix, { flag: 'wx' })
+    mix = narration.mix
     if (input.retainNarration)
       await writeFile(marker, await signature(), { flag: 'wx', mode: 0o600 })
   }
+  await writeFile(mixPath, mix, { flag: 'wx' })
   progress({ phase: 'build' })
   return (replay ? buildReplayPlayer : buildResearchVideoPlayer)({
     ...input,

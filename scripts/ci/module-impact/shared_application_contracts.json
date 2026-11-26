@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/shared/acp-select-options.ts",
     "src/shared/agent-framework-id.ts",
     "src/shared/interface-scale.ts",
     "src/shared/bootstrap.ts",
@@ -27,7 +28,11 @@
     "src/shared/specialist.test.ts",
     "src/shared/specialist.ts",
     "src/shared/task-api.ts",
+    "src/shared/task-continuation.ts",
+    "src/shared/task-interaction-decision-source.ts",
+    "src/shared/task-interaction.ts",
     "src/shared/web-event-connection.ts",
+    "src/shared/web-tools.ts",
     "src/shared/window-controls.test.ts",
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts",
@@ -38,7 +43,10 @@
     "src/shared/session-event-hydrator.ts",
     "src/shared/session-event-hydrator.test.ts",
     "src/shared/runtime-startup.ts",
-    "src/shared/provider-url-policy.ts"
+    "src/shared/provider-url-policy.ts",
+    "src/shared/codebuddy-subscription.ts",
+    "src/shared/lab.ts",
+    "src/shared/lab.test.ts"
   ],
   "interfacePaths": [
     "src/shared/agent-framework-id.ts",
@@ -63,7 +71,10 @@
     "src/shared/specialist-marketplace.ts",
     "src/shared/specialist.ts",
     "src/shared/task-api.ts",
+    "src/shared/task-continuation.ts",
+    "src/shared/task-interaction.ts",
     "src/shared/web-event-connection.ts",
+    "src/shared/web-tools.ts",
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts",
     "src/shared/config-root.ts",
@@ -71,7 +82,8 @@
     "src/shared/runtime-payload-client.ts",
     "src/shared/session-event-hydrator.ts",
     "src/shared/runtime-startup.ts",
-    "src/shared/provider-url-policy.ts"
+    "src/shared/provider-url-policy.ts",
+    "src/shared/lab.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -95,7 +107,8 @@
       "src/shared/renderer-contracts/definition.test.ts",
       "src/shared/pdf-text.test.ts",
       "src/shared/runtime-payload-client.test.ts",
-      "src/shared/session-event-hydrator.test.ts"
+      "src/shared/session-event-hydrator.test.ts",
+      "src/shared/lab.test.ts"
     ],
     "contract": [],
     "consumer": [

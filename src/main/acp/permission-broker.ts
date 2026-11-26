@@ -3,7 +3,13 @@ import { createHash, randomUUID } from 'node:crypto'
 
 import { createLogger } from '@aipoch/diagnostics/node'
 import type { AcpPermissionResponse, AcpPermissionSettlementState } from '../../shared/acp'
-import type { AcpPermissionGrant, AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import {
+  isAppOwnedNotebookCodeReview,
+  isAppOwnedNotebookRuntimeReview,
+  type AcpPermissionGrant,
+  type AcpPermissionRequest,
+  type PendingNotebookReview
+} from '../../shared/acp-permission-contract'
 import type {
   PermissionCapability,
   PermissionGrantRecord,
@@ -11,6 +17,7 @@ import type {
 } from '../../shared/permission-grants'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
+import type { TaskInteractionDecisionSource } from '../../shared/task-interaction'
 import {
   canonicalAppMcpServerName,
   resolveCanonicalMcpToolIdentity
@@ -29,6 +36,7 @@ import {
   type PermissionDiagnostic
 } from '../permission-grants/diagnostics'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { IMAGE_MCP_TOOL_IDENTITIES } from './auto-operation-policy'
 import {
   isManagedSkillPermission,
   isMcpToolName,
@@ -65,6 +73,41 @@ type PendingPermission = {
 }
 
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
+
+type TaskNotebookReviewScope = Readonly<{ projectId: string; messageBranchId: string }>
+
+const notebookReviewMatches = (
+  request: AcpPermissionRequest,
+  promptMessageId: string,
+  scope?: TaskNotebookReviewScope
+): boolean => {
+  if (!scope) return false
+  const review = isAppOwnedNotebookRuntimeReview(request)
+    ? request.rawInput.notebookRuntimeSelection
+    : isAppOwnedNotebookCodeReview(request)
+      ? request.rawInput.notebookCodeRisk
+      : undefined
+  return (
+    review?.promptMessageId === promptMessageId &&
+    review.projectId === scope.projectId &&
+    review.messageBranchId === scope.messageBranchId
+  )
+}
+
+const taskPermissionOptions = (request: AcpPermissionRequest): AcpPermissionRequest['options'] =>
+  request.options.filter(
+    (option) =>
+      (option.scope === undefined || option.scope === 'once') &&
+      ['allow_once', 'reject_once'].includes(option.kind.toLowerCase())
+  )
+
+type TaskPermissionDecision = Readonly<{
+  source: TaskInteractionDecisionSource
+  assertCurrent: () => void
+  assertScope?: () => Promise<void>
+  commit: (operation: () => Promise<boolean>) => Promise<boolean>
+  record: (status: 'unconfirmed' | 'released') => Promise<void>
+}>
 
 type AppPermissionRequest = Readonly<{
   onNetworkAddressesApproved?: (addresses: readonly string[]) => void
@@ -110,6 +153,7 @@ type RestoredPermissionContinuation = {
   readonly requestId: string
   readonly promptMessageId: string
   readonly fingerprint: string
+  readonly taskResponse?: true
   interactionSequence?: number
   agentFrameId?: string
   messageBranchId?: string
@@ -639,7 +683,8 @@ const resolveCategoryKey = (
           resolveLegacyClaudeMcpIdentity(toolCall.title))
         : undefined)
 
-    if (!identity) return undefined
+    // Ask confirms each new image request. Keep any prior grants stored so nothing is deleted.
+    if (!identity || IMAGE_MCP_TOOL_IDENTITIES.has(identity)) return undefined
 
     const notebookContext =
       (trustedIdentity
@@ -920,6 +965,73 @@ class AcpPermissionBroker {
       .map(({ request }) => request)
   }
 
+  getTaskPermissions(
+    sessionId: string,
+    promptMessageId: string,
+    notebookScope?: TaskNotebookReviewScope
+  ): AcpPermissionRequest[] {
+    return this.getPendingRequests().filter((request) => {
+      if (request.sessionId !== sessionId || request.delegated) return false
+      const pending = this.pendingRequests.get(request.requestId)
+      return Boolean(
+        pending &&
+        this.isPendingCurrent(pending) &&
+        (pending.appOwned
+          ? notebookReviewMatches(request, promptMessageId, notebookScope)
+          : pending.policyContext?.promptMessageId === promptMessageId)
+      )
+    })
+  }
+
+  respondTaskPermission(
+    sessionId: string,
+    promptMessageId: string,
+    requestId: string,
+    optionId: string,
+    decision: TaskPermissionDecision,
+    notebookScope?: TaskNotebookReviewScope
+  ): Promise<boolean> {
+    const request = this.getTaskPermissions(sessionId, promptMessageId, notebookScope).find(
+      (item) => item.requestId === requestId
+    )
+    if (!request || !taskPermissionOptions(request).some((item) => item.optionId === optionId)) {
+      return Promise.resolve(false)
+    }
+    return this.respond({ requestId, optionId }, decision)
+  }
+
+  pendingNotebookReviews(sessionId: string): PendingNotebookReview[] {
+    return this.getPendingRequests().flatMap<PendingNotebookReview>((request) => {
+      if (request.sessionId !== sessionId) return []
+      if (isAppOwnedNotebookCodeReview(request)) {
+        const { runId } = request.rawInput.notebookCodeRisk
+        return typeof runId === 'string' ? [{ kind: 'code', runId }] : []
+      }
+      if (isAppOwnedNotebookRuntimeReview(request)) {
+        const { projectId, promptMessageId, messageBranchId, language } =
+          request.rawInput.notebookRuntimeSelection
+        if (
+          typeof projectId === 'string' &&
+          projectId &&
+          typeof promptMessageId === 'string' &&
+          promptMessageId &&
+          typeof messageBranchId === 'string' &&
+          messageBranchId
+        )
+          return [
+            {
+              kind: 'runtime',
+              projectId,
+              promptMessageId,
+              messageBranchId,
+              ...(language === 'python' || language === 'r' ? { language } : {})
+            }
+          ]
+      }
+      return []
+    })
+  }
+
   hasPendingForSession(sessionId: string): boolean {
     return Array.from(this.pendingRequests.values()).some(
       ({ request }) => request.sessionId === sessionId
@@ -1187,8 +1299,12 @@ class AcpPermissionBroker {
     const requestId = randomUUID()
     const mcpServerNames = policyContext?.mcpServerNames ?? []
     const isMcp = isMcpPermission(params, mcpServerNames)
-    const isWebSearch = !isMcp && isNativeWebSearchPermission(params, policyContext)
-    const isWebFetch = !isMcp && isNativeWebFetchPermission(params, policyContext)
+    const isWebSearch =
+      policyContext?.hostWebOperation === 'search' ||
+      (!isMcp && isNativeWebSearchPermission(params, policyContext))
+    const isWebFetch =
+      policyContext?.hostWebOperation === 'fetch' ||
+      (!isMcp && isNativeWebFetchPermission(params, policyContext))
     const codexGroupMatch =
       policyContext?.frameworkId === 'codex' && !isMcp
         ? codexCommandGroup(params, policyContext.shellDialect)
@@ -1306,11 +1422,12 @@ class AcpPermissionBroker {
       toolCallId: params.toolCall.toolCallId,
       title: resolvePermissionTitle(params, isMcp),
       status: params.toolCall.status ?? undefined,
-      providerToolName: isWebSearch
-        ? 'WebSearch'
-        : isWebFetch
-          ? 'WebFetch'
-          : extractProviderToolName(params.toolCall),
+      providerToolName:
+        isWebSearch && !isMcp
+          ? 'WebSearch'
+          : isWebFetch && !isMcp
+            ? 'WebFetch'
+            : extractProviderToolName(params.toolCall),
       isMcp,
       ...(mcpIdentity ? { mcpIdentity } : {}),
       toolKind: params.toolCall.kind ?? undefined,
@@ -1708,18 +1825,20 @@ class AcpPermissionBroker {
   }
 
   // Resolves one pending request and reports whether it was found.
-  async respond(response: AcpPermissionResponse): Promise<boolean> {
+  async respond(response: AcpPermissionResponse, task?: TaskPermissionDecision): Promise<boolean> {
     const pending = this.pendingRequests.get(response.requestId)
 
     if (!pending) {
       return false
     }
 
+    task?.assertCurrent()
     this.pendingRequests.delete(response.requestId)
-    pending.decisionAuthority ??= 'human'
+    pending.decisionAuthority ??= task?.source ?? 'human'
 
     // Keep the claimed request cancellable until its provider decision is released.
     this.respondingRequests.set(response.requestId, pending)
+    let taskCommitStarted = false
     try {
       if (pending.beforeRespond) {
         const optionId =
@@ -1810,10 +1929,30 @@ class AcpPermissionBroker {
       }
 
       // Legacy Session grants are owned by Open-Science. The Agent receives only its one-shot option.
-      if (pending.categoryKey) {
+      if (pending.categoryKey && !task) {
         this.rememberSessionGrant(pending.request, pending.categoryKey, response.optionId)
       }
 
+      if (task) {
+        return await task.commit(async () => {
+          task.assertCurrent()
+          if (pending.settled || !this.isPendingCurrent(pending)) return false
+          taskCommitStarted = true
+          await task.record('unconfirmed')
+          const persistence = this.persistLiveSettlement(pending)
+          if (persistence) await persistence
+          await task.assertScope?.()
+          if (pending.settled || !this.isPendingCurrent(pending)) return false
+          task.assertCurrent()
+          this.settlePending(
+            pending,
+            { outcome: { outcome: 'selected', optionId: providerOptionId } },
+            settlementState
+          )
+          await task.record('released')
+          return true
+        })
+      }
       const persistence = this.persistLiveSettlement(pending)
       if (persistence) await persistence
       if (pending.decisionAuthority === 'registry_grant') {
@@ -1847,7 +1986,8 @@ class AcpPermissionBroker {
     } catch (error) {
       // A durable app decision that failed to commit still owns its live wait. Keep it actionable
       // and do not release privileged work as if the human had denied the request.
-      if (pending.beforeRespond && !pending.settled) {
+      if ((pending.beforeRespond || (task && !taskCommitStarted)) && !pending.settled) {
+        if (task) pending.decisionAuthority = undefined
         if (pending.refreshRequest) {
           pending.request = pending.refreshRequest()
           this.emitPermissionRequest(pending.request)
@@ -2114,4 +2254,10 @@ export {
   resolveNotebookPermissionContext,
   type AppPermissionRequest
 }
-export type { DurablePermissionWaitCandidate, PermissionWaitHooks, RestoredPermissionContinuation }
+export { taskPermissionOptions }
+export type {
+  DurablePermissionWaitCandidate,
+  PermissionWaitHooks,
+  RestoredPermissionContinuation,
+  TaskPermissionDecision
+}

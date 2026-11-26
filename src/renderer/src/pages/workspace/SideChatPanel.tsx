@@ -8,6 +8,10 @@ import { annotationValidationMessage } from './annotations/annotation-validation
  * Hallmark · modern-minimal · quiet utility · palette: existing semantic theme
  * Macrostructure: integrated in-flow side panel · pre-emit critique: P5 H5 E4 S5 R5 V4
  */
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
+import type { ComposerNotice } from '@/components/notices/composer-notice-catalog'
+import { useSettingsStore } from '@/stores/settings-store'
+import { classifyFailure } from '../../../../shared/failure/classify'
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
 import { Button } from '@/components/ui/button'
@@ -251,6 +255,41 @@ const SideChatPanel = ({
     })
   }
 
+  const sideNotice = view.notice || view.error === t('Side chat prompt cancelled.')
+  const notices: ComposerNotice[] = []
+  if (view.error && !sideNotice && presentationBarrierIndex < 0) {
+    const recordedFailure =
+      view.errorDetails?.message === view.error ? view.errorDetails.failure : undefined
+    const failure = recordedFailure ?? classifyFailure({ origin: 'operation', text: view.error })
+    notices.push({
+      id: `side-chat-${view.generation}-${view.error}`,
+      source: 'operation',
+      occurredAt: 0,
+      failure,
+      ...(!recordedFailure && failure.category === 'internal' && !failure.reason
+        ? { summary: { title: t('Request failed') } }
+        : {})
+    })
+  }
+  if (view.persistenceError)
+    notices.push({
+      id: 'side-chat-storage',
+      source: 'operation',
+      occurredAt: 0,
+      failure: { category: 'internal', diagnostics: {} },
+      summary: {
+        title: t('Could not save Side chat: {{error}}', { error: view.persistenceError })
+      }
+    })
+  if (annotationError)
+    notices.push({
+      id: 'side-chat-annotation',
+      source: 'input',
+      occurredAt: 0,
+      failure: { category: 'input', diagnostics: {} },
+      summary: { title: annotationError }
+    })
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
     event.preventDefault()
@@ -379,13 +418,8 @@ const SideChatPanel = ({
                   ) : null}
                 </div>
               ) : null}
-              {view.persistenceError ? (
-                <div role="alert" className="py-2 text-[12px] text-danger-000">
-                  {t('Could not save Side chat: {{error}}', { error: view.persistenceError })}
-                </div>
-              ) : null}
-              {view.error && presentationBarrierIndex < 0 ? (
-                <div role="alert" className="py-2 text-[12px] text-danger-000">
+              {view.error && sideNotice && presentationBarrierIndex < 0 ? (
+                <div role="status" className="py-2 text-[12px] text-text-300">
                   {view.error}
                 </div>
               ) : null}
@@ -402,6 +436,18 @@ const SideChatPanel = ({
             className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-7 bg-gradient-to-t from-bg-000 to-bg-000/0"
           />
         </div>
+        {notices.length ? (
+          <div className="z-20 mx-4 shrink-0">
+            <ComposerNoticeSlot
+              notices={notices}
+              handlers={{
+                'open-provider-settings': {
+                  run: () => useSettingsStore.getState().openSettingsToPanel('model')
+                }
+              }}
+            />
+          </div>
+        ) : null}
         <div
           data-testid="side-chat-composer"
           className="relative z-20 mx-4 mb-2 flex shrink-0 flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2"
@@ -439,11 +485,6 @@ const SideChatPanel = ({
                 }}
               />
             </AnnotationDragSource>
-            {annotationError ? (
-              <p role="alert" className="text-xs text-danger-000">
-                {annotationError}
-              </p>
-            ) : null}
             <Textarea
               ref={followUpRef}
               rows={1}

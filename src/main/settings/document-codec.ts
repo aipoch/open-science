@@ -1,3 +1,4 @@
+import { configuredProviderConnectionKind, selectConfiguredModelId } from '@aipoch/providers'
 import { computePythonSelectionSchema } from '../../shared/compute-python-runtime'
 import { isAbsolute } from 'node:path'
 import { classificationSettingsSchema } from './classification-config'
@@ -10,6 +11,7 @@ import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import { isPermissionProfileId } from '../../shared/permission-profiles'
+import { availableOfficialModelIds } from '../../shared/provider-model-catalog'
 import type { ProjectFilesFilterPreference } from '../../shared/settings'
 import type {
   SessionDetailsModelConfiguration,
@@ -36,7 +38,8 @@ import {
   sanitizeComputeGrant,
   sanitizeConnectors,
   sanitizePackageMirror,
-  sanitizeProvider
+  sanitizeProvider,
+  sanitizeImageSettings
 } from './record-codec'
 import {
   createEmptySettings,
@@ -263,6 +266,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
     ...(modalRuntime.success ? { modalRuntime: modalRuntime.data } : {}),
     version: SETTINGS_FILE_VERSION,
     providers,
+    ...sanitizeImageSettings(value, providers),
     ...(classification ? { classification } : {}),
     subagentModel: sanitizeSubagentModel(value.subagentModel),
     reviewerModel: sanitizeSubagentModel(value.reviewerModel),
@@ -290,15 +294,25 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
       : legacyActiveProviderId
   if (claude) settings.claude = claude
   if (codex) settings.codex = codex
-  if (activeProviderId && providers.some((provider) => provider.id === activeProviderId)) {
-    settings.activeProviderId = activeProviderId
-    const activeProvider = providers.find((provider) => provider.id === activeProviderId)
-    const activeModel = asString(value.activeModel) ?? activeProvider?.model
+  const activeProvider = providers.find((provider) => provider.id === activeProviderId)
+  if (activeProvider) {
+    settings.activeProviderId = activeProvider.id
+    let activeModel = asString(value.activeModel) ?? activeProvider.model
+    if (
+      activeProvider.type === 'official' &&
+      configuredProviderConnectionKind(activeProvider.vendorId)
+    ) {
+      // Recover the current settings selection from the catalog. Runtime checks session pins separately.
+      const availableIds = availableOfficialModelIds(activeProvider)
+      if (!activeModel || !availableIds.includes(activeModel))
+        activeModel = selectConfiguredModelId(activeProvider.model, availableIds)
+    }
     if (activeModel) settings.activeModel = activeModel
   }
 
   const onboardingCompletedAt = asNumber(value.onboardingCompletedAt)
   if (onboardingCompletedAt !== undefined) settings.onboardingCompletedAt = onboardingCompletedAt
+  if (value.kiloDefaultInitialized === true) settings.kiloDefaultInitialized = true
 
   const disabledSkillIds = Array.isArray(value.disabledSkillIds)
     ? [

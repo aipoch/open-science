@@ -32,6 +32,7 @@ import {
   type ArtifactStorageAccessDurability
 } from './storage-access'
 import type { FileDigest } from '../bounded-file-io'
+import type { PendingFileTransactionRequest } from './pending-file-contract'
 import type { PendingFileBudgetReservation } from './pending-file-transaction'
 
 type ArtifactRepositoryWriteOptions = PendingFileTransactionOptions
@@ -91,7 +92,7 @@ class ArtifactRepository {
   }
 
   async withPendingFileTransaction<Result>(
-    request: WritePendingArtifactFileRequest,
+    request: PendingFileTransactionRequest,
     options: ArtifactRepositoryWriteOptions,
     operation: (
       artifact: ArtifactFile,

@@ -13,12 +13,15 @@
     "src/main/web-service/internal-web-event-stream.test.ts",
     "src/main/web-service/internal-web-event-stream.ts",
     "src/main/web-service/options.ts",
+    "src/main/web-service/packed-web-assets.ts",
     "src/main/web-service/public-task-event-stream.test.ts",
     "src/main/web-service/public-task-event-stream.ts",
     "src/main/web-service/state-file.test.ts",
     "src/main/web-service/state-file.ts",
     "src/main/web-service/task-api.test.ts",
     "src/main/web-service/task-api.ts",
+    "src/main/web-service/task-notebook-readiness.test.ts",
+    "src/main/web-service/task-notebook-readiness.ts",
     "src/main/web-service/external-access-contract.ts",
     "src/main/web-service/session-payload.integration.test.ts"
   ],
@@ -44,6 +47,7 @@
       "src/main/web-service/public-task-event-stream.test.ts",
       "src/main/web-service/state-file.test.ts",
       "src/main/web-service/task-api.test.ts",
+      "src/main/web-service/task-notebook-readiness.test.ts",
       "src/main/web-service/session-payload.integration.test.ts"
     ],
     "contract": [
@@ -90,5 +94,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Serving desktop assets from an indexed archive adds a filesystem reader beyond the reviewed Web service sources. Run full CI until the expanded boundary is independently reclassified."
 }

@@ -53,18 +53,17 @@
 
 > このドキュメントは英語版 `README.md` の翻訳です。内容に相違がある場合は、[英語版](../../README.md)が優先されます。
 
-### 💡 AIPOCH Open-Science v1.2.2 の更新
+### 💡 AIPOCH Open-Science v1.3.5 の更新
 
-_2026 年 11 月 18 日_
+_2026 年 11 月 24 日_
 
-- **厳格なネットワークモード**：Notebook のネットワーク用に Strict ホワイトリストにオプトインできます。リクエストはプロトコル、ホスト、ポートがルールと一致した場合のみ許可され、一致しないリクエストは承認のプロンプトなしにブロックされます。
-- **研究フィルムの再開**：中断した研究フィルムの生成は、検証済みのチェックポイントから 5 段階の進行状況表示で再開します。完了したシーンとナレーションは再利用されます。
-- **PDF の忠実性**：外部 PDF の図、表、キャプション、読み順を保持します。翻訳では構造とレイアウトを保ち、配置を検証できない内容は原文を残します。
-- **より安全な Windows のフォルダー付与**：保護モードでのフォルダー付与は保存前にチェックされ、更新、アンインストール、ハンドオフの各フローは診断情報を保持したままより確実に復旧します。
-- **プロバイダーの更新**：Qwen4 Max Preview（1M コンテキスト）が北京とシンガポールの Bailian Token Plans に加わり、公式接続のデフォルトモデルも更新されました。
-- **信頼性の修正**：セッションのインポートが結果を報告し、サービスの復旧は接続が戻るまでワークスペースをブロックし、ダークモードのコントラストはあらゆる画面で維持されます。
+- **より小さな macOS アップデート**：アプリ内アップデートはフルインストーラーの代わりに署名済み差分をダウンロードするため、ほとんどのアップデートで転送量がごく一部になります。
+- **読んでいた場所を見失わずに文献を読む**：本文中の参照から図と表をプレビューでき、選択した箇所は PDF リーダー内でその場で翻訳されます。
+- **モデル接続の選択肢がさらに拡大**：クラウドゲートウェイ（Cloudflare AI Gateway、AWS Bedrock Runtime、Microsoft Foundry、Vectrust）とローカルプリセット（Ollama、LM Studio、llama.cpp、vLLM）がプロバイダーカタログに加わりました。
+- **より軽く、より安定したアプリ**：トランスクリプト履歴と Notebook の図はオンデマンドで読み込まれ、Notebook のメモリ受け入れは作業を続ける前に再確認されます。
+- **より良い復旧**：セッション再開はプロバイダーが利用できない状態でも失敗せず、PDF 翻訳はネイティブレイアウトをより忠実に保持します。
 
-[v1.2.2 のリリースノート全文](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
+[v1.3.5 のリリースノート全文](https://github.com/aipoch/open-science/releases/tag/v1.3.5)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +88,14 @@ _2026 年 11 月 18 日_
 | Linux ARM64                          | Linux ARM64 AppImage または Debian パッケージ |
 
 インストール前の確認については、[ダウンロードの検証](../../SECURITY.md#verifying-your-download)を参照してください。
+
+Windows 10/11 x64 では、[Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) からデスクトップアプリをインストールするか、PowerShell で WinGet を使ってインストールできます。
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+入手できるバージョンは配布チャネルによって異なる場合があります。詳しくは[インストールとアップデートのガイド](https://aipoch.com/docs/guides/installation/)を参照してください。
 
 macOS では [Homebrew](https://brew.sh) でもインストールできます：
 
@@ -172,6 +179,7 @@ AIPOCH は AIPOCH Open-Science を、論文の検索から内容に関する質�
 | 文献に基づいて回答する     | LitQA2-FullText        | 別の LitQA2-FullText 評価では、Open-Science が **75 問中 70 問に正解**しました（**正解率 93.33%**、deepseek-flash、Max 推論）。                                  |
 | 引用付きの回答をまとめる   | ScholarQA-CS2          | ScholarQA-CS2 の検証用 100 問で、deepseek-v4-flash を使用し **総合品質スコア 0.9289/1** を記録しました。公式テストの参考結果は異なる問題を使用しています。       |
 | 研究ワークフローを実行する | ASI-Bench              | 同じモデルを使ったローカルの ASI-Bench 評価で、B4 は Open-Science が **59.46**、Codex が **55.45** でした。B2 はほぼ同じスコアでした（**56.11** と **56.09**）。 |
+| ML・NLP の実験を再現する   | AstaBench SUPER-Expert | DeepSeek Flash/Max を使った 45 タスクのローカル評価で output_match/mean **46.30%**。                                                                             |
 | 科学研究のタスクを実行する | TB-Science 0.1         | 70 タスク、GPT-6 Astra/max：ローカル実行 210 回中 **145 回合格**（**69.05%**）。公式順位ではなく、各実行の記録は未公開です。                                     |
 | 生物医学データを分析する   | BiomniBench-DA         | BiomniBench-DA Public 50 で、2 つの評価モデルのスコアは **81.04** と **77.06**、等重み平均は **79.05** でした。                                                  |
 | 公表された結果の再現       | CORE-Bench-Hard        | CORE-Bench-Hard — ローカル評価ではテスト37件中36件に正答（97.30%）。最終集計には再試行を含みます。                                                               |
@@ -182,7 +190,7 @@ AIPOCH は AIPOCH Open-Science を、論文の検索から内容に関する質�
 
 **評価範囲：** 報告は、記載されたモデルとデータ分割による 2026 年 8 月から 11 月のローカル・内部実行を対象とし、現行リリース用に再実行したものではありません。参考スコアは過去のスナップショットであり、リアルタイムの順位ではありません。異なるベンチマーク系列のスコアは直接比較できず、数値の差は統計的有意性を示しません。
 
-詳細は [AstaBench と ASI-Bench のレポート](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA のレポート](https://aipoch.com/blog/open-science-biomnibench-da)、[TB-Science 0.1 のローカル結果](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)をご覧ください。
+詳細は [AstaBench と ASI-Bench のレポート](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA のレポート](https://aipoch.com/blog/open-science-biomnibench-da)、[TB-Science 0.1 のローカル結果](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)をご覧ください。 [SUPER-Expert のローカル結果](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)も参照してください。
 
 [CORE-Bench-Hard · 再現性評価レポート](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

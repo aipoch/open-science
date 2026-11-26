@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
-import { ClaudeAcpAgent } from '@agentclientprotocol/claude-agent-acp/dist/acp-agent.js'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -65,6 +64,149 @@ const createPermissionRequest = (sessionId = 'session-1'): RequestPermissionRequ
     { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
     { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' }
   ]
+})
+
+it('allows a Task to decide only the Notebook review for its live prompt and branch', async () => {
+  const broker = new AcpPermissionBroker(vi.fn())
+  const sessionId = 'session-1'
+  const promptMessageId = 'prompt-1'
+  const scope = { projectId: 'project-1', messageBranchId: 'branch-1' }
+  const hidden = broker.requestAppApproval({
+    sessionId,
+    title: 'Delete a Skill',
+    rawInput: { skillApproval: { kind: 'delete' } }
+  })
+  const pending = broker.requestAppApproval({
+    sessionId,
+    title: 'Confirm R runtime',
+    rawInput: {
+      notebookRuntimeSelection: {
+        ...scope,
+        promptMessageId,
+        language: 'r',
+        runtimeId: 'runtime-r'
+      }
+    }
+  })
+  const appRequests = broker.getPendingRequests()
+  expect(broker.getTaskPermissions(sessionId, promptMessageId)).toEqual([])
+  expect(
+    broker.getTaskPermissions(sessionId, promptMessageId, {
+      ...scope,
+      messageBranchId: 'other-branch'
+    })
+  ).toEqual([])
+  const reviews = broker.getTaskPermissions(sessionId, promptMessageId, scope)
+  expect(reviews).toEqual([appRequests[1]])
+  const record = vi.fn(async () => {})
+  const decision = {
+    source: 'user_relay' as const,
+    assertCurrent: () => {},
+    commit: async (release: () => Promise<boolean>) => release(),
+    record
+  }
+  expect(
+    await broker.respondTaskPermission(
+      sessionId,
+      promptMessageId,
+      appRequests[0].requestId,
+      appRequests[0].options[0].optionId,
+      decision,
+      scope
+    )
+  ).toBe(false)
+  expect(
+    await broker.respondTaskPermission(
+      sessionId,
+      promptMessageId,
+      reviews[0].requestId,
+      reviews[0].options[0].optionId,
+      decision,
+      scope
+    )
+  ).toBe(true)
+  await expect(pending).resolves.toBe(true)
+  expect(record.mock.calls).toEqual([['unconfirmed'], ['released']])
+  expect(broker.getPendingRequests()).toEqual([appRequests[0]])
+  await broker.respond({ requestId: appRequests[0].requestId, cancelled: true })
+  await expect(hidden).resolves.toBe(false)
+})
+
+it('keeps the original permission pending when task delegation is withdrawn before commit', async () => {
+  const broker = new AcpPermissionBroker(vi.fn())
+  const request = createPermissionRequest()
+  const waiting = broker.requestPermission(request, { profile: 'ask', promptMessageId: 'prompt-1' })
+  const [pending] = broker.getTaskPermissions(request.sessionId, 'prompt-1')
+  const record = vi.fn<(status: 'unconfirmed' | 'released') => Promise<void>>(async () => {})
+  const withdrawn = new Error('Task delegation was withdrawn.')
+
+  await expect(
+    broker.respondTaskPermission(request.sessionId, 'prompt-1', pending.requestId, 'stale-option', {
+      source: 'delegated_agent',
+      assertCurrent: () => {},
+      commit: async (release) => release(),
+      record
+    })
+  ).resolves.toBe(false)
+  await expect(
+    broker.respondTaskPermission(request.sessionId, 'prompt-1', pending.requestId, 'allow-once', {
+      source: 'delegated_agent',
+      assertCurrent: () => {},
+      commit: async () => {
+        throw withdrawn
+      },
+      record
+    })
+  ).rejects.toThrow(withdrawn.message)
+  expect(broker.getTaskPermissions(request.sessionId, 'prompt-1')).toEqual([pending])
+  expect(record).not.toHaveBeenCalled()
+
+  expect(
+    await broker.respondTaskPermission(
+      request.sessionId,
+      'prompt-1',
+      pending.requestId,
+      'allow-once',
+      {
+        source: 'user_relay',
+        assertCurrent: () => {},
+        commit: async (release) => release(),
+        record
+      }
+    )
+  ).toBe(true)
+  await expect(waiting).resolves.toEqual({
+    outcome: { outcome: 'selected', optionId: 'allow-once' }
+  })
+  expect(record.mock.calls).toEqual([['unconfirmed'], ['released']])
+  expect(broker.listGrants(request.sessionId)).toEqual([])
+})
+
+it.each(['generate_image', 'edit_image'])('asks once per %s call in Ask mode', async (tool) => {
+  const emit = vi.fn()
+  const grants = new ConversationPermissionGrantStore()
+  const identity = `open-science-images/${tool}`
+  const request = withTrustedMcpToolIdentity(createPermissionRequest(), identity)
+  grants.remember(request.sessionId, `mcp:${identity}`)
+  const broker = new AcpPermissionBroker(emit, grants)
+  const context = { profile: 'ask' as const, mcpServerNames: ['open-science-images'] }
+
+  await expect(broker.requestPermission(request, { ...context, profile: 'auto' })).resolves.toEqual(
+    {
+      outcome: { outcome: 'selected', optionId: 'allow-once' }
+    }
+  )
+  expect(emit).not.toHaveBeenCalled()
+
+  const waiting = broker.requestPermission(request, context)
+  const pending = broker.getPendingRequests()[0]
+  expect(emit).toHaveBeenCalledOnce()
+  expect(pending.mcpIdentity).toBe(identity)
+  expect(pending.options).toEqual([{ ...request.options[0], scope: 'once' }, request.options[1]])
+  await broker.respond({ requestId: pending.requestId, optionId: 'reject-once' })
+  await expect(waiting).resolves.toEqual({
+    outcome: { outcome: 'selected', optionId: 'reject-once' }
+  })
 })
 
 describe('issue #3284 shared permission boundary', () => {
@@ -360,26 +502,52 @@ const restoredContinuationFixture = async (): Promise<{
   return { permission, continuation, policy, providerRequest }
 }
 
-// Public SDK callback, with only the upstream in-memory Session fixture seeded. No model,
-// external process, tool execution, or production test seam is needed for these permission checks.
-const permissionAgent = (
-  requestPermission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>
-): ReturnType<ClaudeAcpAgent['canUseTool']> => {
-  const agent = new ClaudeAcpAgent({
-    requestPermission,
-    sessionUpdate: vi.fn().mockResolvedValue(undefined)
-  } as unknown as ConstructorParameters<typeof ClaudeAcpAgent>[0])
-  agent.sessions['issue-3284'] = {
-    cwd: process.cwd(),
-    modes: {
-      currentModeId: 'default',
-      availableModes: [{ id: 'default' }, { id: 'plan' }]
-    },
-    emittedToolCalls: new Set<string>(),
-    liveBackgroundTasks: new Map()
-  } as unknown as ClaudeAcpAgent['sessions'][string]
-  return agent.canUseTool('issue-3284')
-}
+type CanUseTool = (
+  toolName: string,
+  input: Record<string, unknown>,
+  options: { signal: AbortSignal; requestId: string; toolUseID: string }
+) => Promise<
+  | { behavior: 'allow'; updatedInput: Record<string, unknown> }
+  | { behavior: 'deny'; message: string }
+>
+
+// This is the small public callback contract exercised by the broker. The Claude adapter's
+// process and SDK are tested by the dedicated ACP runtime suite instead of being loaded here.
+const permissionAgent =
+  (
+    requestPermission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>
+  ): CanUseTool =>
+  async (toolName, input, options) => {
+    const response = await requestPermission({
+      ...createPermissionRequest('issue-3284'),
+      toolCall: {
+        toolCallId: options.toolUseID,
+        title: toolName,
+        status: 'pending'
+      },
+      options: [
+        { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+        { optionId: 'reject', name: 'Reject', kind: 'reject_once' }
+      ]
+    })
+    if (response.outcome.outcome === 'cancelled') throw new Error('Tool use aborted')
+    if (
+      response.outcome.outcome === 'selected' &&
+      /^(?:allow)(?:[-_]|$)/u.test(response.outcome.optionId ?? '')
+    )
+      return { behavior: 'allow', updatedInput: input }
+    const denial = response._meta?.['open-science/permission-denial']
+    const message =
+      typeof denial === 'object' &&
+      denial !== null &&
+      !Array.isArray(denial) &&
+      (denial as { version?: unknown }).version === 1 &&
+      typeof (denial as { reason?: unknown }).reason === 'string' &&
+      (denial as { reason: string }).reason.trim().length > 0
+        ? (denial as { reason: string }).reason.trim().slice(0, 2048)
+        : 'User refused permission to run tool'
+    return { behavior: 'deny', message }
+  }
 
 describe('issue #3284 permission rejection', () => {
   it.each(['Bash', 'ExitPlanMode'])(

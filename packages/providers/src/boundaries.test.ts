@@ -20,7 +20,7 @@ const allowed: Record<string, string[]> = {
   protocols: ['protocols'],
   transport: ['transport'],
   responses: ['responses', 'protocols', 'transport'],
-  discovery: ['discovery', 'transport.ts'],
+  discovery: ['discovery', 'protocols', 'transport.ts', 'errors.ts'],
   models: ['models', 'protocols', 'transport', 'errors.ts']
 }
 it('keeps internal responsibilities acyclic and independent of host source and facades', () => {
@@ -41,7 +41,9 @@ it('keeps internal responsibilities acyclic and independent of host source and f
       const target = resolve(dirname(file), spec + '.ts'),
         destination = relative(root, target).replaceAll('\\', '/')
       expect(destination, local).not.toMatch(/^\.\./)
-      if (allowed[owner])
+      if (owner === 'transport' && destination === 'protocols/gateway-policies.ts') {
+        expect(isImportDeclaration(node) && node.importClause?.isTypeOnly).toBe(true)
+      } else if (allowed[owner])
         expect(allowed[owner], `${local} -> ${destination}`).toContain(destination.split('/')[0])
       if (
         owner === 'providers' &&

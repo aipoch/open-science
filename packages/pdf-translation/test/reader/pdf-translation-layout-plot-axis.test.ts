@@ -84,3 +84,55 @@ it.each(
     expect(left.source).not.toContain('neighboring')
   }
 )
+
+it.each([false, true])(
+  'retains a contour minimum only on its native script rail (%s)',
+  (offset) => {
+    const row = (
+      str: string,
+      x: number,
+      y: number,
+      size: number,
+      width: number,
+      fontName = 'Body',
+      hasEOL = true
+    ): PdfLayoutPage['items'][number] => ({
+      str,
+      width,
+      height: str ? size : 0,
+      dir: 'ltr',
+      hasEOL,
+      transform: [size, 0, 0, size, x, y],
+      fontName,
+      fontAscent: 0.78,
+      fontDescent: -0.22,
+      fontVertical: false
+    })
+    const items = [
+      row('0 1 2 3 4 5 6', 100, 470, 8, 250, 'Chart'),
+      row('χ', 150, 670, 8, 4, 'Symbol', false),
+      row('2', 154, 674, 6.4, 3.5, 'Chart'),
+      row('min', offset ? 156 : 154, 666, 6.4, 10, 'Chart', false),
+      row('', 205, 505, 8, 0, 'Symbol'),
+      row('χ', 205, 505, 8, 4, 'Symbol', false),
+      row('2', 209, 509, 6.4, 3.5, 'Chart'),
+      row('min', 209, 501, 6.4, 10, 'Chart', false),
+      row('+1', 219, 505, 8, 9, 'Chart', false),
+      row('', 56, 420, 9, 0, 'Caption'),
+      row('Figure 2.', 56, 420, 9, 45, 'Caption', false),
+      row('Model contour. The curve labeled χ2min + 1 marks the threshold.', 104, 420, 9, 300)
+    ]
+    const { units } = groupPdfTranslationPages({
+      pages: [{ page: 1, width: 612, height: 792, rotation: 0, items }],
+      pageCount: 1
+    })
+    const label = units.find((unit) => unit.items.includes('1:3'))
+    expect(label?.items).toEqual(['1:3'])
+    expect(label?.sourceOnly).toBe(offset ? undefined : true)
+    expect(label?.preserve).toBe(offset ? undefined : 'formula')
+    expect(units.find((unit) => unit.items.includes('1:10'))?.sourceOnly).toBeUndefined()
+    expect(units.flatMap((unit) => unit.items).sort()).toEqual(
+      items.flatMap((item, index) => (item.str ? [`1:${index}`] : [])).sort()
+    )
+  }
+)

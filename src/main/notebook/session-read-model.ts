@@ -5,6 +5,9 @@ import {
   type NotebookDependencyProjection
 } from '@aipoch/notebook-analysis'
 import type {
+  NotebookBackgroundTaskSnapshot,
+  NotebookRunEvidenceSnapshot,
+  NotebookRunFigureRequest,
   NotebookCell,
   NotebookEnvironmentStatus,
   NotebookKernelInstanceIdentity,
@@ -18,6 +21,7 @@ import type {
   NotebookSessionRequest,
   NotebookSessionState
 } from '../../shared/notebook'
+import { NOTEBOOK_STATE_HISTORY_PAGE_LIMIT } from '../../shared/notebook'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookRuntimeBinding, NotebookRuntimeBindings } from '../../shared/notebook-runtime'
 import { resolveProjectId } from '../../shared/project-scope'
@@ -28,10 +32,12 @@ import {
   getNotebookRunJsonPath,
   getNotebookSessionRoot,
   getRuntimeRoot,
-  NotebookRunRepository
+  NotebookRunRepository,
+  type NotebookHistorySnapshot
 } from './repository'
 import type { NotebookSessionSnapshot } from './session-aggregate'
 
+const DEFAULT_HISTORY_BYTES = 63 * 1024 * 1024
 const DEFAULT_KERNEL_PROCESS_KEY = `python:${DEFAULT_PY_ENV}`
 
 const kernelInstanceProcessKey = (instance: NotebookKernelInstanceIdentity): string =>
@@ -161,47 +167,202 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
-  async state(
-    session: Session,
-    includeRunIds: readonly string[] = [],
-    historySummaryFrameId?: string,
-    historyBefore?: NotebookRunCursor,
-    historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT
-  ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
-    const document = await this.options.repository.loadOrCreate({
+  private loadSessionKernel(session: Session): Promise<NotebookKernelMetadata> {
+    return this.options.repository.loadSessionKernel({
       projectId: session.projectId,
       sessionId: session.sessionId,
       workspaceCwd: session.cwd,
       lane: session.lane
     })
-    const snapshot = session.snapshot()
+  }
+
+  private async historyWindow(
+    projectId: string,
+    sessionId: string,
+    limit: number,
+    runIds: readonly string[],
+    frameId?: string,
+    before?: NotebookRunCursor,
+    session?: Session,
+    budget?: { bytes: number; includeRecent: boolean },
+    evidenceOnly = false
+  ): Promise<NotebookHistorySnapshot> {
+    const trim = budget && !runIds.length && frameId === undefined ? budget : undefined
+    const cached = await this.options.repository.readCachedHistoryWindow(projectId, sessionId, {
+      limit,
+      runIds,
+      frameId,
+      before,
+      lane: session?.lane,
+      ...(evidenceOnly ? { evidenceOnly: true } : {}),
+      retain: trim && this.runBudget(trim.includeRecent, trim.bytes)
+    })
+    if (cached) return cached
+    const kernel = session ? await this.loadSessionKernel(session) : undefined
+    const window = await this.options.repository.readSessionRunWindow(
+      projectId,
+      sessionId,
+      limit,
+      runIds,
+      frameId,
+      before
+    )
+    return {
+      kernel,
+      window: trim ? this.limitRunWindow(window, trim.includeRecent, trim.bytes) : window
+    }
+  }
+
+  async runFigure(
+    projectId: string,
+    sessionId: string,
+    request: NotebookRunFigureRequest,
+    session?: Session
+  ): Promise<string | null> {
+    const { window } = await this.historyWindow(
+      projectId,
+      sessionId,
+      0,
+      [request.runId],
+      undefined,
+      undefined,
+      session
+    )
+    const output = window.runs.find((run) => run.runId === request.runId)?.outputs[
+      request.outputIndex
+    ]
+    return output?.type === 'display' && Object.hasOwn(output.data, request.mimeType)
+      ? output.data[request.mimeType]
+      : null
+  }
+
+  async runEvidence(
+    projectId: string,
+    sessionId: string,
+    runId: string,
+    session?: Session
+  ): Promise<NotebookRunEvidenceSnapshot | null> {
+    const { window } = await this.historyWindow(
+      projectId,
+      sessionId,
+      0,
+      [runId],
+      undefined,
+      undefined,
+      session,
+      undefined,
+      true
+    )
+    const run = window.runs.find((item) => item.runId === runId)
+    if (!run) return null
+    const {
+      kernelEpochId,
+      environmentCapture,
+      environmentManifestChecksum,
+      environmentManifest,
+      helperEvidenceStatus
+    } = this.toPublicRunRecord(run, true)
+    return {
+      runId,
+      kernelEpochId,
+      environmentCapture,
+      environmentManifestChecksum,
+      environmentManifest,
+      helperEvidenceStatus
+    }
+  }
+
+  async backgroundTasks(
+    projectId: string,
+    sessionId: string,
+    session?: Session
+  ): Promise<NotebookBackgroundTaskSnapshot> {
+    const foregroundOnly = (): Promise<boolean> =>
+      this.options.repository.hasCachedForegroundOnlyHistory(projectId, sessionId, session?.lane)
+    if (await foregroundOnly()) return { runs: [] }
+    const readCached = (): Promise<NotebookHistorySnapshot | undefined> =>
+      this.options.repository.readCachedHistoryWindow(projectId, sessionId, {
+        limit: NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
+        runIds: [],
+        lane: session?.lane,
+        backgroundTaskMetadata: true,
+        retain: this.runBudget(true, DEFAULT_HISTORY_BYTES)
+      })
+    let window = (await readCached())?.window
+    if (!window && session) {
+      // Loading the kernel waits for pending writes, including updates to background Runs.
+      await this.loadSessionKernel(session)
+      if (await foregroundOnly()) return { runs: [] }
+      window = (await readCached())?.window
+    }
+    if (!window) {
+      window = await this.options.repository.readSessionRunWindow(
+        projectId,
+        sessionId,
+        NOTEBOOK_STATE_HISTORY_PAGE_LIMIT
+      )
+      if (!window.runs.some((run) => run.executionMode === 'background')) return { runs: [] }
+      window = this.limitRunWindow(window, true)
+    }
+    return {
+      runs: window.runs
+        .filter((run) => run.executionMode === 'background')
+        .map((run) => ({
+          runId: run.runId,
+          agentFrameId: run.agentFrameId,
+          title:
+            run.script
+              .split(/\r?\n/u)
+              .find((line) => line.trim())
+              ?.trim()
+              .slice(0, 80) || run.runId,
+          status: run.status,
+          kernelKind: run.kernelKind,
+          environment: run.environment,
+          startedAt: run.startedAt,
+          endedAt: run.endedAt,
+          cancellationRequestedAt: run.cancellationRequestedAt,
+          shellConcurrency: run.shellConcurrency
+        }))
+    }
+  }
+
+  async state(
+    session: Session,
+    includeRunIds: readonly string[] = [],
+    historySummaryFrameId?: string,
+    historyBefore?: NotebookRunCursor,
+    historyLimit = NOTEBOOK_RENDERER_RUN_LIMIT,
+    historyByteLimit?: number,
+    deferImages = false
+  ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const targetedRunRead = includeRunIds.length > 0
     const summaryOnlyRead = historySummaryFrameId !== undefined && !targetedRunRead
     const pagedHistoryRead = historyBefore !== undefined
     const sparseRunRead = targetedRunRead || summaryOnlyRead || pagedHistoryRead
-    const requestedWindow = await this.options.repository.readSessionRunWindow(
+    const { window: runWindow, kernel } = await this.historyWindow(
       session.projectId,
       session.sessionId,
       targetedRunRead || summaryOnlyRead ? 0 : historyLimit,
       includeRunIds,
       historySummaryFrameId,
-      historyBefore
+      historyBefore,
+      session,
+      { bytes: historyByteLimit ?? DEFAULT_HISTORY_BYTES, includeRecent: !sparseRunRead }
     )
-    const runWindow =
-      targetedRunRead || summaryOnlyRead
-        ? requestedWindow
-        : this.limitRunWindow(requestedWindow, !sparseRunRead)
+    if (!kernel) throw new Error('Missing live Notebook kernel metadata.')
+    const snapshot = session.snapshot()
     const dependencyProjection = await this.options.dependencyAnalyzer
       .project({ projectId: session.projectId, sessionId: session.sessionId })
       .catch(() => unavailableNotebookDependencyProjection(runWindow.runs))
-    const terminatedKernelInstances = document.kernel.terminatedKernelInstances
+    const terminatedKernelInstances = kernel.terminatedKernelInstances
     const defaultKernelTerminated = terminatedKernelInstances?.some(
       (instance) => kernelInstanceProcessKey(instance) === DEFAULT_KERNEL_PROCESS_KEY
     )
     const legacyUnknownKernelTerminated =
-      document.kernel.lastKnownStatus === 'terminated' && terminatedKernelInstances === undefined
+      kernel.lastKnownStatus === 'terminated' && terminatedKernelInstances === undefined
     const onlyNonDefaultKernelTerminated =
-      document.kernel.lastKnownStatus === 'terminated' &&
+      kernel.lastKnownStatus === 'terminated' &&
       terminatedKernelInstances !== undefined &&
       !defaultKernelTerminated
     const liveDefaultKernelStatus = session.kernelStatus(DEFAULT_KERNEL_PROCESS_KEY)
@@ -213,7 +374,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
       runtimeRoot: session.runtimeRoot,
-      pythonPath: document.kernel.pythonPath,
+      pythonPath: kernel.pythonPath,
       // Backward-compatible coarse status represents only the default Python environment. Exact
       // named-environment/R/REPL terminations are projected through `environments` instead. Legacy
       // coarse terminations have unknown ownership and remain visible until an explicit restart.
@@ -223,7 +384,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
           ? 'terminated'
           : onlyNonDefaultKernelTerminated
             ? 'idle'
-            : document.kernel.lastKnownStatus),
+            : kernel.lastKnownStatus),
       runJsonPath: session.runJsonPath,
       cells: sparseRunRead
         ? []
@@ -231,6 +392,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       activeWrite: snapshot.activeWrite ? { ...snapshot.activeWrite } : undefined,
       activeRunId: snapshot.activeRunId,
       runCount: runWindow.total,
+      agentSummaries: runWindow.agentSummaries,
       latestRunEnvironments: runWindow.latestRunEnvironments,
       executionEnvironments: {
         python: this.options.runtimeEnvironment?.(session, 'python') ?? DEFAULT_PY_ENV,
@@ -240,10 +402,10 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       ...(!targetedRunRead && !summaryOnlyRead && runWindow.historyPage
         ? { historyPage: runWindow.historyPage }
         : {}),
-      runs: runWindow.runs.map((run) => this.toPublicRunRecord(run)),
+      runs: runWindow.runs.map((run) => this.toPublicRunRecord(run, targetedRunRead, deferImages)),
       recentRuns: sparseRunRead
         ? []
-        : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run)),
+        : runWindow.runs.slice(-20).map((run) => this.toPublicRunRecord(run, false, deferImages)),
       runStaleness: projectVisibleRunStaleness(dependencyProjection, runWindow.runs),
       environments: this.environmentStatuses(session, terminatedKernelInstances),
       runtimeBindings: this.options.runtimeBindings(session)
@@ -255,23 +417,25 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     runIds: readonly string[],
     historySummaryFrameId: string | undefined,
     historyBefore: NotebookRunCursor | undefined,
-    historyLimit: number
+    historyLimit: number,
+    historyByteLimit?: number,
+    deferImages = false
   ): Promise<NotebookSessionState & { runtimeBindings: NotebookRuntimeBindings }> {
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
-    const requestedWindow = await this.options.repository.readSessionRunWindow(
+    const { window } = await this.historyWindow(
       projectId,
       request.sessionId,
-      historyLimit,
+      runIds.length && deferImages ? 0 : historyLimit,
       runIds,
       historySummaryFrameId,
-      historyBefore
+      historyBefore,
+      undefined,
+      { bytes: historyByteLimit ?? DEFAULT_HISTORY_BYTES, includeRecent: true }
     )
-    const window =
-      runIds.length > 0 || historySummaryFrameId !== undefined
-        ? requestedWindow
-        : this.limitRunWindow(requestedWindow, true)
     const root = getNotebookSessionRoot(this.options.storageRoot, projectId, request.sessionId)
-    const runs = window.runs.map((run) => this.toPublicRunRecord(run))
+    const runs = window.runs.map((run) =>
+      this.toPublicRunRecord(run, runIds.length > 0, deferImages)
+    )
     return {
       id: request.sessionId,
       sessionId: request.sessionId,
@@ -283,11 +447,12 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       kernelStatus: 'idle',
       cells: [],
       runCount: window.total,
+      agentSummaries: window.agentSummaries,
       latestRunEnvironments: window.latestRunEnvironments,
       ...(window.historySummary ? { historySummary: window.historySummary } : {}),
       ...(window.historyPage ? { historyPage: window.historyPage } : {}),
       runs,
-      recentRuns: runs.slice(-20),
+      recentRuns: runIds.length && deferImages ? [] : runs.slice(-20),
       environments: [],
       runtimeBindings: {}
     }
@@ -302,10 +467,9 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       return this.toSessionReference(live)
     }
 
-    const document = await this.options.repository.findAnyExisting(projectId, request.sessionId)
+    const document = await this.options.repository.findReferenceHeader(projectId, request.sessionId)
     if (!document) return null
 
-    const rootDocument = await this.options.repository.findExisting(projectId, request.sessionId)
     const notebookSessionRoot = getNotebookSessionRoot(
       this.options.storageRoot,
       projectId,
@@ -315,10 +479,13 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     return {
       sessionId: request.sessionId,
       projectId,
-      workspaceCwd: rootDocument?.workspaceCwd ?? request.workspaceCwd,
+      workspaceCwd:
+        document.notebookSessionRoot === notebookSessionRoot
+          ? (document.workspaceCwd ?? request.workspaceCwd)
+          : request.workspaceCwd,
       notebookSessionRoot,
       dataRoot: getNotebookDataRoot(this.options.storageRoot, projectId, request.sessionId),
-      runtimeRoot: document.kernel.runtimeRoot,
+      runtimeRoot: getRuntimeRoot(this.options.storageRoot),
       runJsonPath: getNotebookRunJsonPath(this.options.storageRoot, projectId, request.sessionId)
     }
   }
@@ -346,7 +513,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       return publicInput as NotebookRunSummary['inputFiles'][number]
     })
     return {
-      ...this.toPublicRunRecord(run),
+      ...this.toPublicRunRecord(run, true),
       inputFiles,
       notebookSessionRoot: session.notebookSessionRoot,
       dataRoot: session.dataRoot,
@@ -362,7 +529,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
   }
 
   toRunSummaryFromDocument(
-    document: NotebookRunDocument,
+    document: Pick<NotebookRunDocument, 'notebookSessionRoot' | 'dataRoot' | 'kernel'>,
     run: NotebookRunRecord
   ): NotebookRunSummary {
     const inputFiles = (run.inputFiles ?? []).map((input) => {
@@ -371,7 +538,7 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
       return publicInput as NotebookRunSummary['inputFiles'][number]
     })
     return {
-      ...this.toPublicRunRecord(run),
+      ...this.toPublicRunRecord(run, true),
       inputFiles,
       notebookSessionRoot: document.notebookSessionRoot,
       dataRoot: document.dataRoot,
@@ -402,19 +569,24 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     })
   }
 
+  private runBudget(includeRecent: boolean, limit: number) {
+    let bytes = 0
+    return (run: NotebookRunRecord, index: number, count: number, omittedBytes = 0) => {
+      const runBytes = Buffer.byteLength(JSON.stringify(this.toPublicRunRecord(run))) + omittedBytes
+      bytes += runBytes * (includeRecent && index >= count - 20 ? 2 : 1)
+      return index === count - 1 || bytes <= limit
+    }
+  }
+
   private limitRunWindow(
     window: Awaited<ReturnType<NotebookRunRepository['readSessionRunWindow']>>,
-    includeRecentRuns: boolean
+    includeRecentRuns: boolean,
+    byteLimit = DEFAULT_HISTORY_BYTES
   ): Awaited<ReturnType<NotebookRunRepository['readSessionRunWindow']>> {
-    let bytes = 0
+    const retain = this.runBudget(includeRecentRuns, byteLimit)
     let start = window.runs.length
     for (let index = window.runs.length - 1; index >= 0; index--) {
-      const runBytes = Buffer.byteLength(JSON.stringify(this.toPublicRunRecord(window.runs[index])))
-      const projectedBytes =
-        runBytes * (includeRecentRuns && index >= window.runs.length - 20 ? 2 : 1)
-      // Always retain one complete run; byte transfer handles an individually large output.
-      if (start < window.runs.length && bytes + projectedBytes > 63 * 1024 * 1024) break
-      bytes += projectedBytes
+      if (!retain(window.runs[index], index, window.runs.length)) break
       start = index
     }
     if (start === 0) return window
@@ -429,8 +601,28 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     }
   }
 
-  private toPublicRunRecord(run: NotebookRunRecord): NotebookRunRecord {
+  private toPublicRunRecord(
+    run: NotebookRunRecord,
+    includeEnvironmentManifest = false,
+    deferImages = false
+  ): NotebookRunRecord {
     const publicRun = { ...run } as Partial<NotebookRunRecord>
+    if (deferImages) {
+      publicRun.outputs = run.outputs.map((output) => {
+        if (output.type !== 'display') return output
+        const deferredImageTypes = Object.keys(output.data).filter((mime) =>
+          mime.startsWith('image/')
+        )
+        if (!deferredImageTypes.length) return output
+        return {
+          ...output,
+          deferredImageTypes,
+          data: Object.fromEntries(
+            Object.entries(output.data).filter(([mime]) => !mime.startsWith('image/'))
+          )
+        }
+      })
+    }
     delete publicRun.runtimeId
     delete publicRun.helperModules
     delete publicRun.submissionIdentity
@@ -438,6 +630,14 @@ class NotebookSessionReadModel<Session extends NotebookSessionReadSource> {
     delete publicRun.admittedAt
     delete publicRun.frozenRuntimeTarget
     delete publicRun.frozenPermissionScope
+    const environmentManifestChecksum =
+      publicRun.environmentManifestChecksum ??
+      (publicRun.environmentCapture?.state === 'available' ||
+      publicRun.environmentCapture?.state === 'partial'
+        ? publicRun.environmentCapture.manifestChecksum
+        : undefined)
+    if (!includeEnvironmentManifest && environmentManifestChecksum)
+      delete publicRun.environmentManifest
     const inputFiles = (run.inputFiles ?? []).map((input) => {
       const publicInput = { ...input } as Partial<typeof input>
       delete publicInput.storageKey

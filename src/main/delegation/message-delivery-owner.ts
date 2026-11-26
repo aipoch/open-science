@@ -1,3 +1,8 @@
+import {
+  notebookExecutionIntent,
+  markNotebookExecutionIntent,
+  type NotebookExecutionIntent
+} from '../notebook/execution-intent'
 import { createHash } from 'node:crypto'
 
 import type { AuthenticatedDelegateCaller } from './authenticated-delegate-caller'
@@ -130,6 +135,7 @@ const laneOf = (command: Pick<DurableMessageCommand, 'sourceFrameId' | 'targetFr
   `${command.sourceFrameId}\u0000${command.targetFrameId}`
 
 export class ReliableMessageDeliveryOwner {
+  private readonly messageIntents = new Map<string, NotebookExecutionIntent>()
   private readonly preparedContinuations = new Map<string, PreparedContinuation>()
   private readonly lanePumps = new Map<string, Promise<void>>()
   private readonly upwardPumps = new Set<Promise<void>>()
@@ -368,6 +374,8 @@ export class ReliableMessageDeliveryOwner {
       receipt: { status: 'queued' }
     }
     await this.options.records.admitMessage(command)
+    const intent = notebookExecutionIntent(caller)
+    if (intent) this.messageIntents.set(command.messageId, intent)
     this.wakeLane(command, caller.session)
     return receiptOf(command)
   }
@@ -451,6 +459,8 @@ export class ReliableMessageDeliveryOwner {
         disposition: 'message'
       }
       await this.options.records.admitMessage(command)
+      const intent = notebookExecutionIntent(caller)
+      if (intent) this.messageIntents.set(command.messageId, intent)
       this.wakeLane(command, caller.session)
       return receiptOf(command)
     }
@@ -590,7 +600,7 @@ export class ReliableMessageDeliveryOwner {
         }
         let evidence: DelegateMessageAcceptanceEvidence
         try {
-          evidence = await this.options.deliverToParent({
+          const delivery: ParentMessageDelivery = {
             messageId: command.messageId,
             session,
             sourceFrameId: command.sourceFrameId,
@@ -617,7 +627,10 @@ export class ReliableMessageDeliveryOwner {
               dispatchStarted = started === 'started'
               return started
             }
-          })
+          }
+          const intent = this.messageIntents.get(command.messageId)
+          if (intent) markNotebookExecutionIntent(delivery, intent)
+          evidence = await this.options.deliverToParent(delivery)
         } catch (error) {
           if (error instanceof DelegateMessageParkedError) return false
           if (error instanceof DelegateMessagePreAcceptanceError) {
@@ -681,7 +694,7 @@ export class ReliableMessageDeliveryOwner {
       }
       let evidence: DelegateMessageAcceptanceEvidence
       try {
-        evidence = await active.deliver({
+        const pending: DurablePendingMessage = {
           id: command.messageId,
           sourceFrameId: command.sourceFrameId,
           targetFrameId: command.targetFrameId,
@@ -689,7 +702,11 @@ export class ReliableMessageDeliveryOwner {
           text: command.text,
           kind: command.kind,
           createdAt: command.queuedAt
-        })
+        }
+        const intent = this.messageIntents.get(command.messageId)
+        intent?.assertExecutable()
+        if (intent) markNotebookExecutionIntent(pending, intent)
+        evidence = await active.deliver(pending)
       } catch (error) {
         if (error instanceof DelegateMessagePreAcceptanceError) {
           await this.fail(command.messageId, 'provider_pre_accept_failure', error.message)
@@ -715,6 +732,7 @@ export class ReliableMessageDeliveryOwner {
     messageId: string,
     evidence: DelegateMessageAcceptanceEvidence
   ): Promise<void> {
+    this.messageIntents.delete(messageId)
     await this.options.records.settleMessage(messageId, {
       status: 'accepted',
       acceptedAt: this.options.now(),
@@ -723,6 +741,7 @@ export class ReliableMessageDeliveryOwner {
   }
 
   private async fail(messageId: string, code: string, message: string): Promise<void> {
+    this.messageIntents.delete(messageId)
     await this.options.records.settleMessage(messageId, {
       status: 'failed',
       failedAt: this.options.now(),

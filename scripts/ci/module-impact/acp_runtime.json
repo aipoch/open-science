@@ -149,6 +149,7 @@
     "src/main/acp/runtime-base-composition.test.ts",
     "src/main/acp/runtime-base-composition.ts",
     "src/main/acp/runtime-composition.test.ts",
+    "src/main/acp/runtime-web-search.integration.test.ts",
     "src/main/acp/specialist-capability-resolution.test.ts",
     "src/main/acp/runtime-composition.ts",
     "src/main/acp/runtime-coordinator.test.ts",
@@ -218,6 +219,7 @@
     "src/main/acp/side-chat-relay-owner.test.ts",
     "src/main/acp/side-chat-relay-owner.ts",
     "src/main/acp/task-agent-port.test.ts",
+    "src/main/acp/task-run-tracing.ts",
     "src/main/acp/task-agent-port.ts",
     "src/main/acp/turn-resource-snapshot-store.ts",
     "src/main/acp/turn-skill-owner.test.ts",
@@ -250,7 +252,11 @@
     "src/main/acp/opencode-store.test.ts",
     "src/main/acp/opencode-v2.integration.test.ts",
     "src/main/acp/harness-turn-adapter.ts",
-    "src/main/acp/harness-turn-adapter.test.ts"
+    "src/main/acp/harness-turn-adapter.test.ts",
+    "src/main/acp/permission-continuation-workflow.ts",
+    "src/main/acp/question-continuation-workflow.ts",
+    "src/main/acp/plan-continuation-workflow.ts",
+    "src/main/acp/runtime-continuation-composition.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -378,6 +384,7 @@
       "src/main/acp/runtime-activity.test.ts",
       "src/main/acp/runtime-base-composition.test.ts",
       "src/main/acp/runtime-composition.test.ts",
+      "src/main/acp/runtime-web-search.integration.test.ts",
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/acp/runtime-coordinator.test.ts",
       "src/main/acp/runtime-event-broadcast-coalescer.test.ts",

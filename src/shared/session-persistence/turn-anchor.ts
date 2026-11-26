@@ -33,6 +33,21 @@ export const turnAnchorInterval = <T extends TurnMessage>(
   return interval
 }
 
+// A saved question can belong to the independent prompt or to a continuation started by a reply.
+export const latestTurnPromptIds = (messages: readonly TurnMessage[]): ReadonlySet<string> => {
+  const anchor = latestTurnAnchor(messages)
+  if (!anchor) {
+    const reply = messages.findLast(({ role, relayedFrom }) => role === 'user' && !relayedFrom)
+    return new Set(reply ? [reply.id] : [])
+  }
+  return new Set([
+    anchor.id,
+    ...turnAnchorInterval(messages, anchor.id)
+      .filter(({ role }) => role === 'user')
+      .map(({ id }) => id)
+  ])
+}
+
 // True when the message is the latest anchor or one of its routed replies.
 export const isInLatestTurn = <T extends TurnMessage>(
   messages: readonly T[],

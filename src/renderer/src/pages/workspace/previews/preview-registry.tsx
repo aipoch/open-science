@@ -49,6 +49,10 @@ const NotebookFilePreview = lazy(() =>
 // Keeps the registry as the single routing point while avoiding dynamic component creation in render.
 export const renderPreviewFile = ({
   item,
+  imageEditPresentation,
+  onPinImageSource,
+  onImageEditorVersionChange,
+  onImageEditActionChange,
   presentation,
   readOnly,
   annotationVersionId,
@@ -93,7 +97,15 @@ export const renderPreviewFile = ({
     case 'html':
       return <HtmlPreviewRenderer {...props} />
     case 'image':
-      return <ImagePreviewRenderer {...props} />
+      return (
+        <ImagePreviewRenderer
+          {...props}
+          imageEditPresentation={imageEditPresentation}
+          onPinImageSource={onPinImageSource}
+          onImageEditorVersionChange={onImageEditorVersionChange}
+          onImageEditActionChange={onImageEditActionChange}
+        />
+      )
     case 'json':
       return <PlanJsonPreview item={item} readOnly={readOnly} />
     case 'markdown':

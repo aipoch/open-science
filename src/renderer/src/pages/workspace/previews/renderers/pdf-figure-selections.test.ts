@@ -1,8 +1,13 @@
 import { readFileSync } from 'node:fs'
-import { expect, it } from 'vitest'
-import { groupPdfFigureSelections } from './pdf-figure-selections'
+import { afterEach, expect, it, vi } from 'vitest'
+import {
+  createPdfPagePreviewCache,
+  groupPdfFigureSelections,
+  loadPdfFigurePreview
+} from './pdf-figure-selections'
 import { copyPdfTable } from '../../../../../../shared/pdf-table-copy'
 import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
+import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 const batch = (page: number): PdfStructureResult => {
   const region = { page, x: 0.1, y: 0.1, width: 0.8, height: 0.5 }
@@ -394,3 +399,281 @@ it.each([
 
 const readPdfFixture = (path: string): ReturnType<typeof JSON.parse> =>
   JSON.parse(readFileSync(path, 'utf8'))
+
+afterEach(() => vi.unstubAllGlobals())
+
+it('opens the uniquely captioned parent figure from the destination page and exact PDF version', async () => {
+  const result = batch(5)
+  const figure = {
+    ...result.elements[0],
+    kind: 'figure' as const,
+    caption: { ...result.elements[0].caption!, text: 'Figure 13. Growth.' }
+  }
+  result.elements = [
+    figure,
+    { ...figure, id: 'control', caption: { ...figure.caption, text: 'Fig. 3. Control.' } }
+  ]
+  result.elements.push({
+    ...figure,
+    id: 'combined',
+    thumbnailId: 'combined-crop',
+    caption: { ...figure.caption, text: 'Figure 3 and 4. Combined observations.' }
+  })
+  const readCached = vi.fn().mockResolvedValue(result)
+  const readThumbnail = vi.fn().mockResolvedValue('image')
+  vi.stubGlobal('window', { api: { pdfStructure: { readCached, readThumbnail } } })
+  const source = { attachmentVersionId: 'version' }
+  const destination = { pageNumber: 5, x: 0, y: 0 }
+  expect(await loadPdfFigurePreview(source, destination, 'Fig. 3(b)')).toEqual({
+    image: 'image',
+    caption: 'Fig. 3. Control.',
+    destination: { pageNumber: 5, x: figure.regions[0].x, y: figure.regions[0].y }
+  })
+  expect(readCached).toHaveBeenCalledWith({ ...source, page: 5 })
+  expect(readThumbnail).toHaveBeenCalledWith({
+    ...source,
+    page: 5,
+    extractionId: result.extractionId,
+    thumbnailId: 'crop-5'
+  })
+  result.elements.push({ ...result.elements[1], id: 'duplicate' })
+  expect(await loadPdfFigurePreview(source, destination, 'Fig. 3')).toBeUndefined()
+  readCached.mockResolvedValue(undefined)
+  expect(await loadPdfFigurePreview(source, destination, 'Fig. 3')).toBeUndefined()
+  expect(readThumbnail).toHaveBeenCalledTimes(1)
+})
+
+it.each([
+  ['Figure 3 and 4. Combined observations.', false],
+  ['Figure 3 至 5. Combined observations.', false],
+  ['图3．2 温度曲线', false],
+  ['图3．温度曲线', true],
+  ['Figure 3 Growth rate', true]
+])(
+  'selects a unique whole-figure crop for %s only when its label is unambiguous',
+  async (caption, eligible) => {
+    const result = batch(5)
+    result.elements[0].kind = 'figure'
+    result.elements[0].caption!.text = String(caption)
+    const readThumbnail = vi.fn().mockResolvedValue('crop')
+    vi.stubGlobal('window', {
+      api: {
+        pdfStructure: {
+          readCached: vi.fn().mockResolvedValue(result),
+          readThumbnail
+        }
+      }
+    })
+    const preview = await loadPdfFigurePreview(
+      { attachmentVersionId: 'version' },
+      { pageNumber: 5, x: 0, y: 0 },
+      'Fig. 3'
+    )
+    expect(preview?.image).toBe(eligible ? 'crop' : undefined)
+    expect(readThumbnail).toHaveBeenCalledTimes(eligible ? 1 : 0)
+  }
+)
+
+it('parses only a missing destination page when requested and removes its cancellation listener', async () => {
+  const result = batch(5)
+  result.elements[0].kind = 'figure'
+  result.elements[0].caption!.text = 'Figure 3. Growth.'
+  const readCached = vi.fn().mockResolvedValue(undefined)
+  const readThumbnail = vi.fn().mockResolvedValue('crop')
+  const parse = vi.fn().mockResolvedValue(result)
+  const cancel = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('window', { api: { pdfStructure: { readCached, readThumbnail, parse, cancel } } })
+  const source = { attachmentVersionId: 'version' }
+  const destination = { pageNumber: 5, x: 0, y: 0 }
+  const controller = new AbortController()
+  const onCacheMiss = vi.fn()
+  expect(await loadPdfFigurePreview(source, destination, 'Fig. 3')).toBeUndefined()
+  expect(parse).not.toHaveBeenCalled()
+  expect(
+    await loadPdfFigurePreview(source, destination, 'Fig. 3', controller.signal, onCacheMiss)
+  ).toEqual({
+    image: 'crop',
+    caption: 'Figure 3. Growth.',
+    destination: {
+      pageNumber: 5,
+      x: result.elements[0].regions[0].x,
+      y: result.elements[0].regions[0].y
+    }
+  })
+  expect(onCacheMiss).toHaveBeenCalledOnce()
+  expect(parse).toHaveBeenCalledWith({ ...source, page: 5, requestId: expect.any(String) })
+  controller.abort()
+  expect(cancel).not.toHaveBeenCalled()
+
+  readCached.mockResolvedValue({ ...result, elements: [...result.elements, ...result.elements] })
+  expect(
+    await loadPdfFigurePreview(source, destination, 'Fig. 3', new AbortController().signal)
+  ).toBeUndefined()
+  expect(parse).toHaveBeenCalledOnce()
+})
+
+it('cancels pending page analysis and discards its late result without loading the crop', async () => {
+  const result = batch(5)
+  result.elements[0].kind = 'figure'
+  result.elements[0].caption!.text = 'Figure 3. Growth.'
+  let complete!: (value: PdfStructureResult) => void
+  const parse = vi.fn().mockImplementation(() => new Promise((resolve) => (complete = resolve)))
+  const readThumbnail = vi.fn()
+  const cancel = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('window', {
+    api: {
+      pdfStructure: {
+        readCached: vi.fn().mockResolvedValue(undefined),
+        readThumbnail,
+        parse,
+        cancel
+      }
+    }
+  })
+  const controller = new AbortController()
+  const loading = loadPdfFigurePreview(
+    { attachmentVersionId: 'version' },
+    { pageNumber: 5, x: 0, y: 0 },
+    'Fig. 3',
+    controller.signal
+  )
+  await vi.waitFor(() => expect(parse).toHaveBeenCalledOnce())
+  controller.abort()
+  expect(cancel).toHaveBeenCalledWith(parse.mock.calls[0][0].requestId)
+  complete(result)
+  expect(await loading).toBeUndefined()
+  expect(readThumbnail).not.toHaveBeenCalled()
+})
+
+it('falls back when optional page analysis fails or the caller aborts before cache lookup finishes', async () => {
+  const parse = vi.fn().mockRejectedValue(new Error('Local model not installed'))
+  const cancel = vi.fn().mockResolvedValue(undefined)
+  const readCached = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('window', { api: { pdfStructure: { readCached, parse, cancel } } })
+  const source = { attachmentVersionId: 'version' }
+  const destination = { pageNumber: 5, x: 0, y: 0 }
+  const controller = new AbortController()
+  expect(
+    await loadPdfFigurePreview(source, destination, 'Fig. 3', controller.signal)
+  ).toBeUndefined()
+  controller.abort()
+  expect(cancel).not.toHaveBeenCalled()
+  const next = new AbortController()
+  const onCacheMiss = vi.fn()
+  const loading = loadPdfFigurePreview(source, destination, 'Fig. 3', next.signal, onCacheMiss)
+  next.abort()
+  expect(await loading).toBeUndefined()
+  expect(parse).toHaveBeenCalledOnce()
+  expect(onCacheMiss).not.toHaveBeenCalled()
+})
+
+const mockPagePreviewDocument = (): {
+  document: PDFDocumentProxy
+  getPage: ReturnType<typeof vi.fn>
+  render: ReturnType<typeof vi.fn>
+  cancel: ReturnType<typeof vi.fn>
+  canvases: Array<{ width: number; height: number; toDataURL: ReturnType<typeof vi.fn> }>
+} => {
+  const canvases: Array<{
+    width: number
+    height: number
+    toDataURL: ReturnType<typeof vi.fn>
+  }> = []
+  vi.stubGlobal('document', {
+    createElement: vi.fn().mockImplementation(() => {
+      const canvas = {
+        width: 0,
+        height: 0,
+        getContext: vi.fn().mockReturnValue({}),
+        toDataURL: vi.fn().mockReturnValue(`data:image/png;base64,page-${canvases.length}`)
+      }
+      canvases.push(canvas)
+      return canvas
+    })
+  })
+  const cancel = vi.fn()
+  const render = vi.fn().mockReturnValue({ promise: Promise.resolve(), cancel })
+  const getPage = vi.fn().mockResolvedValue({
+    getViewport: ({ scale }: { scale: number }) => ({ width: 6000 * scale, height: 8000 * scale }),
+    render
+  })
+  return {
+    document: { numPages: 8, getPage } as unknown as PDFDocumentProxy,
+    getPage,
+    render,
+    cancel,
+    canvases
+  }
+}
+
+it('renders bounded whole-page PNGs and keeps only the three most recently used pages', async () => {
+  const { document, getPage, render, canvases } = mockPagePreviewDocument()
+  const cache = createPdfPagePreviewCache(document)
+  const signal = new AbortController().signal
+  const first = await cache.load(1, signal)
+  expect(first).toBe('data:image/png;base64,page-0')
+  expect(render.mock.calls[0][0].viewport).toEqual({ width: 900, height: 1200 })
+  expect(canvases[0].toDataURL).toHaveBeenCalledWith('image/png')
+  expect(canvases[0].width).toBe(0)
+  expect(canvases[0].height).toBe(0)
+  await cache.load(2, signal)
+  await cache.load(3, signal)
+  expect(await cache.load(1, signal)).toBe(first)
+  await cache.load(4, signal)
+  expect(getPage).toHaveBeenCalledTimes(4)
+  expect(await cache.load(2, signal)).toBe('data:image/png;base64,page-4')
+  expect(getPage).toHaveBeenCalledTimes(5)
+  cache.clear()
+  await cache.load(2, signal)
+  expect(getPage).toHaveBeenCalledTimes(6)
+})
+
+it('cancels rendering on abort and clear, releases canvases, and never caches late page images', async () => {
+  const { document, getPage, render, cancel, canvases } = mockPagePreviewDocument()
+  const cache = createPdfPagePreviewCache(document)
+  let finish!: () => void
+  render.mockImplementation(() => ({
+    promise: new Promise<void>((resolve) => (finish = resolve)),
+    cancel
+  }))
+  const controller = new AbortController()
+  const loading = cache.load(1, controller.signal)
+  await vi.waitFor(() => expect(render).toHaveBeenCalledOnce())
+  controller.abort()
+  expect(cancel).toHaveBeenCalledOnce()
+  finish()
+  expect(await loading).toBeUndefined()
+  expect(canvases[0].width).toBe(0)
+  expect(canvases[0].toDataURL).not.toHaveBeenCalled()
+
+  const next = cache.load(1, new AbortController().signal)
+  await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(2))
+  cache.clear()
+  expect(cancel).toHaveBeenCalledTimes(2)
+  finish()
+  expect(await next).toBeUndefined()
+  render.mockReturnValue({ promise: Promise.resolve(), cancel })
+  expect(await cache.load(1, new AbortController().signal)).toBeDefined()
+  expect(getPage).toHaveBeenCalledTimes(3)
+})
+
+it('ignores invalid and aborted pages and discards a page acquired after clearing the cache', async () => {
+  const { document, getPage, render } = mockPagePreviewDocument()
+  const cache = createPdfPagePreviewCache(document)
+  const controller = new AbortController()
+  controller.abort()
+  expect(await cache.load(1, controller.signal)).toBeUndefined()
+  for (const number of [0, 9, 1.5, NaN])
+    expect(await cache.load(number, new AbortController().signal)).toBeUndefined()
+  expect(getPage).not.toHaveBeenCalled()
+  const page = await document.getPage(1)
+  let acquire!: (value: typeof page) => void
+  getPage.mockImplementationOnce(() => new Promise((resolve) => (acquire = resolve)))
+  const loading = cache.load(1, new AbortController().signal)
+  cache.clear()
+  acquire(page)
+  expect(await loading).toBeUndefined()
+  expect(render).not.toHaveBeenCalled()
+  getPage.mockRejectedValueOnce(new Error('Document destroyed'))
+  expect(await cache.load(1, new AbortController().signal)).toBeUndefined()
+})

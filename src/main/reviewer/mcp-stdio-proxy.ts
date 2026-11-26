@@ -10,13 +10,13 @@ import { REVIEWER_MCP_SERVER_NAME } from '../../shared/reviewer'
 import { fetchOverSocket } from '../local-rpc-transport'
 import { REVIEWER_MCP_PROXY_ARG } from '../mcp-server-args'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
+import {
+  REVIEWER_MCP_SOCKET_PATH_ENV,
+  REVIEWER_MCP_TOKEN_ENV,
+  type ReviewerMcpSocket
+} from '../agent-framework/reviewer-mcp-transport'
 
-type ReviewerMcpProxyEnvironment = {
-  socketPath: string
-  token: string
-}
-
-type ReviewerMcpProxyConfigRequest = ReviewerMcpProxyEnvironment & {
+type ReviewerMcpProxyConfigRequest = ReviewerMcpSocket & {
   command: string
   entryPath: string
 }
@@ -29,9 +29,9 @@ const requireEnvironmentVariable = (env: NodeJS.ProcessEnv, name: string): strin
 
 const createReviewerMcpProxyEnvironmentFromProcess = (
   env: NodeJS.ProcessEnv = process.env
-): ReviewerMcpProxyEnvironment => ({
-  socketPath: requireEnvironmentVariable(env, 'OPEN_SCIENCE_REVIEWER_MCP_SOCKET_PATH'),
-  token: requireEnvironmentVariable(env, 'OPEN_SCIENCE_REVIEWER_MCP_TOKEN')
+): ReviewerMcpSocket => ({
+  socketPath: requireEnvironmentVariable(env, REVIEWER_MCP_SOCKET_PATH_ENV),
+  token: requireEnvironmentVariable(env, REVIEWER_MCP_TOKEN_ENV)
 })
 
 const createReviewerMcpStdioProxyConfig = ({
@@ -45,8 +45,8 @@ const createReviewerMcpStdioProxyConfig = ({
   args: [entryPath, REVIEWER_MCP_PROXY_ARG],
   env: [
     ...nodeRuntimeEnvironmentEntries(),
-    { name: 'OPEN_SCIENCE_REVIEWER_MCP_SOCKET_PATH', value: socketPath },
-    { name: 'OPEN_SCIENCE_REVIEWER_MCP_TOKEN', value: token }
+    { name: REVIEWER_MCP_SOCKET_PATH_ENV, value: socketPath },
+    { name: REVIEWER_MCP_TOKEN_ENV, value: token }
   ]
 })
 
@@ -95,4 +95,3 @@ export {
   createReviewerMcpStdioProxyConfig,
   runReviewerMcpStdioProxy
 }
-export type { ReviewerMcpProxyEnvironment }

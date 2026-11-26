@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { PDFDocument, StandardFonts } from 'pdf-lib'
+import { PDFDict, PDFDocument, PDFName, StandardFonts } from 'pdf-lib'
 import { engine } from '../resources/pdfium.mjs'
 import { PdfTranslationWriter } from '../src/writer.js'
 import { resolve } from './paths.js'
@@ -223,24 +223,47 @@ it.each(['μ', 'µ'])('does not turn a body-sized micro unit into a script: %s',
 
 it.each([
   ['ℜ', 'ℜ', true],
+  ['ℎ', 'ℎ', true],
   ['ℑ', 'ℑ', true],
   ['ℜ', 'R', false],
   ['ℑ', 'ℜ', false]
-] as const)('preserves an owned native complex operator %s → %s', async (symbol, target, valid) => {
+] as const)('keeps an owned native math glyph %s → %s', async (symbol, target, valid) => {
   const pdf = await PDFDocument.create()
   const page = pdf.addPage([400, 500])
   const body = await pdf.embedFont(StandardFonts.Helvetica)
-  const symbols = await pdf.embedFont(StandardFonts.Symbol)
+  const symbols = await pdf.embedFont(
+    symbol === 'ℎ' ? StandardFonts.TimesRomanItalic : StandardFonts.Symbol
+  )
+  const code = symbol === 'ℎ' ? 'h' : symbol
   const left = 'Use '
   const at = 40 + body.widthOfTextAtSize(left, 10)
   page.drawText(left, { x: 40, y: 400, size: 10, font: body })
-  page.drawText(symbol, { x: at, y: 400, size: 10, font: symbols })
+  page.drawText(code, { x: at, y: 400, size: 10, font: symbols })
   page.drawText(' to select the component.', {
-    x: at + symbols.widthOfTextAtSize(symbol, 10),
+    x: at + symbols.widthOfTextAtSize(code, 10),
     y: 400,
     size: 10,
     font: body
   })
+  if (symbol === 'ℎ') {
+    // Supply the compatibility character's native Unicode identity for the italic outline.
+    await pdf.flush()
+    pdf.context
+      .lookup(symbols.ref, PDFDict)
+      .set(
+        PDFName.of('ToUnicode'),
+        pdf.context.register(
+          pdf.context.flateStream(
+            '/CIDInit /ProcSet findresource begin 12 dict begin begincmap ' +
+              '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def ' +
+              '/CMapName /ItalicLetter def /CMapType 2 def ' +
+              '1 begincodespacerange <00> <FF> endcodespacerange ' +
+              '1 beginbfchar <68> <210E> endbfchar ' +
+              'endcmap CMapName currentdict /CMap defineresource pop end end'
+          )
+        )
+      )
+  }
   const input = {
     data: await pdf.save(),
     source: 'Use ' + symbol + ' to select the component.',

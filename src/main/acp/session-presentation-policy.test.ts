@@ -1,3 +1,5 @@
+import { listAgentFrameworks } from '../agent-framework/registry'
+import { IMAGE_TOOL_GUIDANCE } from '../image-model/mcp-server'
 import { AUTHORIZED_DIRECTORIES_PROMPT } from '../local-fs/authorized-directories'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -68,6 +70,7 @@ const ARTIFACT_FILE_APPEND = [
   '<open_science_artifact_instructions>',
   'When this turn creates or saves local user-facing files such as images, documents, reports, data exports, XML, SVG, HTML, CSV, PDF, or archives, you MUST save them through the MCP tool `write_artifact_file` from the `open-science-artifacts` server.',
   'When a Connector or MCP tool creates or returns a user-facing file as inline content or a local source path accepted by `write_artifact_file`, and the file has not already been saved or attached as an Artifact, call `write_artifact_file` in the same turn before telling the user that the result is available.',
+  'A successful `open-science-images` `generate_image` or `edit_image` result containing `artifactId` and `versionId` has already been saved. Present that result directly without calling `write_artifact_file`.',
   'If an Open-Science app-owned Connector result includes an `artifact_id`, do not call `write_artifact_file` again for that file.',
   "Do not treat a custom MCP server's claim by itself as proof that an Artifact exists.",
   'Do not save generated user-facing files directly into the workspace or current directory unless the user explicitly asks to modify project files.',
@@ -91,6 +94,26 @@ const specialistSkillScope = (names: readonly string[]): string =>
   ].join('\n')
 
 describe('ACP Session presentation policy', () => {
+  it.each(listAgentFrameworks())(
+    'includes direct image tool guidance only when available for $id',
+    (framework) => {
+      const policy = new AcpSessionPresentationPolicy()
+      const buildSessionSetup = vi.fn(framework.buildSessionSetup)
+      const base = { artifacts: true, notebook: true, skillImport: false }
+      for (const images of [false, true]) {
+        policy.buildSessionSetup({
+          framework: { ...framework, buildSessionSetup },
+          tooling: { ...base, images }
+        })
+        const append = buildSessionSetup.mock.calls.at(-1)![0].systemPromptAppends ?? []
+        expect(append.includes(IMAGE_TOOL_GUIDANCE)).toBe(images)
+      }
+      expect(
+        policy.applicationSystemPromptAppends({ ...base, images: true }, 'restricted-inference')
+      ).toEqual([])
+    }
+  )
+
   it.each([
     claudeCodeFramework,
     codexFramework,

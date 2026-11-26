@@ -19,14 +19,16 @@ export async function engine() {
     m.HEAPU8.set(b, at)
     return at
   }
-  const readText = (obj, t) => {
-    const n = p.FPDFTextObj_GetText(obj, t, 0, 0),
-      at = alloc(n)
+  // PDFium returns the required UTF-16 byte count even when the buffer is too small.
+  const textBufferSize = 512
+  const readText = (obj, textPage, buffer) => {
+    const size = p.FPDFTextObj_GetText(obj, textPage, buffer, textBufferSize)
+    if (size <= textBufferSize)
+      return Buffer.from(m.HEAPU8.buffer, buffer, size).toString('utf16le').replace(/\0$/, '')
+    const at = alloc(size)
     try {
-      p.FPDFTextObj_GetText(obj, t, at, n)
-      return Buffer.from(m.HEAPU8.slice(at, at + n))
-        .toString('utf16le')
-        .replace(/\0$/, '')
+      if (p.FPDFTextObj_GetText(obj, textPage, at, size) !== size) throw Error('text size changed')
+      return Buffer.from(m.HEAPU8.buffer, at, size).toString('utf16le').replace(/\0$/, '')
     } finally {
       free(at)
     }
@@ -81,6 +83,7 @@ export async function engine() {
     },
     objects(page) {
       const text = p.FPDFText_LoadPage(page)
+      const buffer = alloc(textBufferSize)
       try {
         return Array.from({ length: p.FPDFPage_CountObjects(page) }, (_, i) => {
           const obj = p.FPDFPage_GetObject(page, i),
@@ -90,10 +93,11 @@ export async function engine() {
             obj,
             type,
             bounds: bounds(obj),
-            text: type === 1 ? readText(obj, text) : undefined
+            text: type === 1 ? readText(obj, text, buffer) : undefined
           }
         })
       } finally {
+        free(buffer)
         p.FPDFText_ClosePage(text)
       }
     }

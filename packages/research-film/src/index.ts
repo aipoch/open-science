@@ -1,6 +1,8 @@
 export * from './generation.js'
 export * from './screenplay.js'
+export { FILM_SCRIPT_REVIEW_PROMPT } from './script-review.js'
 export * from './source.js'
+export * from './session-app.js'
 export * from './replay-case.js'
 export {
   writeResearchVideoAnimations,
@@ -9,12 +11,16 @@ export {
 } from './animation-authoring.js'
 export * from './authoring.js'
 export {
+  ResearchFilmDraftError,
   ResearchFilmOutputLimitError,
   ResearchFilmIncompleteError,
+  writeWithResearchFilmCorrection,
+  type ResearchFilmCorrection,
   type FilmAuthoringCheckpoint
 } from './authoring-correction.js'
 export * from './resources.js'
 export * from './model-catalog.js'
+export * from './remote-speech.js'
 export * from './ffmpeg-catalog.js'
 export * from './ffmpeg.js'
 export * from './runtime.js'

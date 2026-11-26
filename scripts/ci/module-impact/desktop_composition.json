@@ -165,7 +165,17 @@
     "scripts/wsl2-build-flags.mjs",
     "scripts/wsl2-build-flags.d.mts",
     "scripts/stage-backend.mjs",
+    "scripts/desktop-film-compiler.mjs",
+    "scripts/desktop-package-modules.mjs",
+    "scripts/desktop-package-modules.d.mts",
+    "scripts/desktop-film-compiler.d.mts",
+    "scripts/pack-web-assets.mjs",
+    "scripts/pack-web-assets.d.mts",
     "scripts/stage-backend-preparation.test.ts",
+    "scripts/desktop-pdfjs.mjs",
+    "scripts/desktop-pdfjs.d.mts",
+    "scripts/desktop-pdfjs.test.ts",
+    "scripts/desktop-pdfjs-reader.mjs",
     "scripts/desktop-pdf-lib.mjs",
     "scripts/desktop-pdf-lib.d.mts",
     "scripts/desktop-pdf-lib.test.ts",
@@ -258,7 +268,10 @@
     "scripts/ocr/worker.mjs",
     "src/main/composition/research-film.ts",
     "src/main/composition/research-film.test.ts",
-    "src/main/composition/notebook-approvals.test.ts"
+    "src/main/composition/session-package-lifecycle.integration.test.ts",
+    "src/main/composition/notebook-approvals.test.ts",
+    "src/main/composition/image-model.ts",
+    "src/main/composition/image-tasks.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -324,7 +337,8 @@
     "src/main/desktop-recovery-readiness.ts",
     "src/main/desktop-runtime-info.ts",
     "src/main/desktop-startup-recovery.ts",
-    "src/main/desktop-update-integration.ts"
+    "src/main/desktop-update-integration.ts",
+    "src/main/composition/session-packages.ts"
   ],
   "consumerModules": ["main_web_service"],
   "testFiles": {
@@ -427,6 +441,7 @@
       "scripts/build-backend.integration.test.ts",
       "scripts/stage-backend-preparation.test.ts",
       "scripts/windows-dev-notebook-host.integration.test.ts",
+      "scripts/desktop-pdfjs.test.ts",
       "scripts/desktop-pdf-lib.test.ts",
       "scripts/desktop-dependency-chains.test.ts",
       "scripts/dev-build-watch.integration.test.ts",
@@ -461,6 +476,7 @@
       "src/main/local-service-stop-intent.integration.test.ts",
       "src/main/composition/research-film.test.ts",
       "src/main/composition/background-results.integration.test.ts",
+      "src/main/composition/session-package-lifecycle.integration.test.ts",
       "src/main/composition/notebook-approvals.test.ts"
     ],
     "contract": [

@@ -1,4 +1,5 @@
 import { reserveAcpSessionStorageCleanup } from '../acp/session-registry'
+import type { ImageTaskOwner } from '../image-model/tasks'
 import type { PromptOptimizationService } from '../projects/prompt-optimization'
 import { join } from 'node:path'
 import { HarnessStorageCleanup } from '../harness-acp/storage-cleanup'
@@ -55,6 +56,7 @@ import { createUploadCommandOwner } from '../uploads/command-owner'
 import { createDefaultUploadRepository } from '../uploads/ipc'
 
 export function composeProjectLifecycle({
+  imageTasks,
   promptOptimization,
   applicationEvents,
   notificationInbox,
@@ -83,6 +85,7 @@ export function composeProjectLifecycle({
   clearSessionCredentials,
   getNotebookService
 }: {
+  imageTasks?: Pick<ImageTaskOwner, 'isBusy' | 'cancelSessions' | 'cancelProject'>
   promptOptimization?: PromptOptimizationService
   applicationEvents: ApplicationEvents
   notificationInbox: ReturnType<typeof createNotificationInboxController>
@@ -205,6 +208,7 @@ export function composeProjectLifecycle({
         const owner = projectRuntimeQuiescenceRef.current
         if (!owner) throw new Error('Project runtime cleanup is not initialized.')
         await archiveCoordinator.withProjectDeletion(projectId, async () => {
+          imageTasks?.cancelProject(projectId)
           getNotebookService().beginProjectDeletion(projectId)
           await artifactReproducibilityAttemptOwnerRef.current?.cancelProject(projectId)
           await owner.quiesceProject(projectId)
@@ -223,13 +227,16 @@ export function composeProjectLifecycle({
         await owner.completeProjectDeletion(projectId)
         await getNotebookService().deleteProjectFileEvidence(projectId)
         await getNotebookService().deleteProjectInputs(projectId)
+        await getNotebookService().finishPendingRunDeletion({ projectId })
         await backgroundResultDelivery.commitProjectDeletion(projectId)
         await scheduleRepository?.deleteTarget(projectId)
         schedulesChanged(projectId, null)
       },
       completeProjectDeletion: (projectId) => {
+        const notebook = getNotebookService()
+        notebook.forgetDeletedExecutionIntents({ projectId })
         archiveCoordinator.releaseProjectDeletion(projectId)
-        getNotebookService().releaseProjectDeletion(projectId)
+        notebook.releaseProjectDeletion(projectId)
         reviewerProjectRuntime.releaseProjectDeletion(projectId)
       },
       abortProjectDeletion: async (projectId) => {
@@ -270,6 +277,7 @@ export function composeProjectLifecycle({
       isSessionLocallyBusy(projectId, sessionId) {
         const snapshot = runtimeRef.current?.getSnapshot()
         return (
+          imageTasks?.isBusy(projectId, sessionId) === true ||
           snapshot?.pendingPermissions?.some((request) => request.sessionId === sessionId) ===
             true ||
           snapshot?.pendingElicitations?.some((request) => request.sessionId === sessionId) ===
@@ -287,19 +295,27 @@ export function composeProjectLifecycle({
         // Read synchronous activity after the database await so a newly active runtime is visible.
         return jobs > 0 || this.isSessionLocallyBusy!(projectId, sessionId)
       },
-      isSessionExportBusy: async (projectId, sessionId) => {
+      getSessionExportBlocker: async (projectId, sessionId) => {
         const computeJobs = computeJobActivityRef.current
         if (!computeJobs) throw new Error('Compute Job activity is not initialized.')
         const jobs = await computeJobs.countNonTerminalBySession(sessionId)
-        return (
-          jobs > 0 ||
-          detectSessionExportBlockingSessions().some(
-            (session) => session.projectId === projectId && session.sessionId === sessionId
-          )
+        if (imageTasks?.isBusy(projectId, sessionId)) return 'image'
+        if (jobs > 0) return 'compute'
+        const activity = detectSessionExportBlockingSessions().find(
+          (session) => session.projectId === projectId && session.sessionId === sessionId
         )
+        if (activity?.kind === 'agent') {
+          const snapshot = runtimeRef.current?.getSnapshot()
+          if (snapshot?.pendingPermissions?.some((item) => item.sessionId === sessionId))
+            return 'permission'
+          if (snapshot?.pendingElicitations?.some((item) => item.sessionId === sessionId))
+            return 'question'
+        }
+        return activity?.kind
       },
       isProjectBusy: async (projectId) => {
         if (
+          imageTasks?.isBusy(projectId) === true ||
           reviewerProjectRuntime.isProjectBusy(projectId) ||
           detectArchiveBlockingSessions().some((session) => session.projectId === projectId)
         ) {
@@ -345,8 +361,11 @@ export function composeProjectLifecycle({
     inbox: notificationInbox,
     sessionPersistenceCoordinator,
     onSessionsDeleted: async (sessionIds) => {
+      getNotebookService().forgetDeletedExecutionIntents({ sessionIds })
+      imageTasks?.cancelSessions(sessionIds)
       for (const sessionId of sessionIds) clearSessionCredentials(sessionId)
       const results = await Promise.allSettled([
+        getNotebookService().finishPendingRunDeletion({ sessionIds }),
         sessionEnabledComputeHostsOwnerRef.current?.clear(sessionIds),
         sideChatOwnerRef.current?.invalidateParents(sessionIds),
         visionEvidenceRepository.deleteSessions(sessionIds),

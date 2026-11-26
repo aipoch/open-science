@@ -1,15 +1,28 @@
+import type { LocalProviderModel } from '../../shared/local-provider-preset'
+import type { ProviderModel } from '../../shared/configured-provider-model'
+import type { CatalogSnapshot, CatalogStatus } from '@aipoch/providers'
+import type { CodeBuddyAuthMode } from '../../shared/codebuddy-subscription'
 import type { McpOAuthConfig, McpOAuthState } from '@aipoch/connector-mcp-client'
 import type { ClassificationAdapter } from '@aipoch/providers'
 import type { ClassificationBinding } from '../../shared/classification'
+import type {
+  ImageModelBinding,
+  ImageServiceConfiguration
+} from '../../shared/image-model-settings'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type {
   ModelProtocol,
+  ModelReasoningEffort,
   OfficialVendorId,
+  CloudflareGateway,
+  LocalProviderPresetId,
+  ManualProviderConnection,
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { LabModelCapabilities } from '../../shared/lab'
 import type { ReasoningEffortPresetSetting } from '../../shared/reasoning-effort'
 import type { NetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
@@ -52,6 +65,7 @@ type StoredClassificationService = {
   keyMask?: string
 }
 type StoredClassificationBinding = ClassificationBinding & { modelId?: string }
+export type StoredImageService = ImageServiceConfiguration & { keyRef?: string; keyMask?: string }
 export type StoredClassificationSettings = {
   revision: number
   services: StoredClassificationService[]
@@ -74,6 +88,7 @@ export type StoredProvider = {
   type: ProviderType
   // Records whether the app-owned Codex profile came from an import or an in-app sign-in. Runtime
   // behavior still keys on the normalized codex-isolated provider type.
+  codeBuddyAuthMode?: CodeBuddyAuthMode
   codexAuthMode?: CodexSubscriptionAuthMode
   // Transport preference for the app-owned Codex subscription profile. Absence is Auto.
   codexTransport?: CodexSubscriptionTransport
@@ -99,9 +114,33 @@ export type StoredProvider = {
   // Set for official-vendor providers only.
   vendorId?: OfficialVendorId
   region?: string
+  cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
+  localPresetId?: LocalProviderPresetId
+  localModels?: readonly LocalProviderModel[]
+  manualModels?: readonly ProviderModel[]
   // Model ids fetched live from the vendor (via "refresh from vendor"). When present, these take
   // precedence over the bundled registry catalog for this provider.
   fetchedModels?: string[]
+  modelCatalog?: CatalogSnapshot
+  modelCatalogStatus?: CatalogStatus
+  catalogParameters?: Record<string, string>
+  // Per-model protocol sets for app-managed heterogeneous catalogs (Lab). Keys are the stored model
+  // ids (namespaced for Lab); absent means apiEndpoints applies to every model.
+  modelProtocols?: Record<string, ModelProtocol[]>
+  // Per-model streaming support for app-managed catalogs (Lab). Absent means the legacy
+  // assumption (streaming is supported).
+  modelStreaming?: Record<string, boolean>
+  // Exact Lab deployment address this record was derived from (non-secret). Used to bind the model
+  // catalog and host-owned credentials to one institution even when two deployments share an origin.
+  labServerUrl?: string
+  // Monotonic per-catalog-write identity used to conditionally clean up a stale Lab catalog without
+  // deleting a newer login's record at the same address.
+  labCatalogToken?: string
+  // Raw per-model capability documents from Lab, keyed by namespaced stored model id.
+  modelCapabilities?: Record<string, LabModelCapabilities>
+  // Per-model reasoning levels advertised by CodeBuddy's ACP catalog.
+  modelReasoningEfforts?: Record<string, ModelReasoningEffort[]>
   // Non-secret identity returned by xAI after device authorization.
   accountEmail?: string
   keyRef?: string
@@ -118,7 +157,7 @@ export type StoredProvider = {
   // Recorded when a validation fails; cleared on the next success or a credential change. Kept so the
   // "unverified" warning survives a restart.
   lastValidationFailure?: ProviderValidationFailure
-  // claude-shared credentials live in the user's global profile and cannot be removed safely by the
+  // Shared Claude and CodeBuddy credentials live in the user's personal profile and cannot be removed safely by the
   // app. This timestamp records an app-local disconnect so Open-Science stops using that profile
   // until the user explicitly signs in again.
   disconnectedAt?: number
@@ -204,7 +243,6 @@ export type StoredConnectors = {
   // OpenAlex is consumed by a subset of the bundled Literature Connector tools. Keep its secret
   // beside the other Connector-owned credentials so dispatch can resolve it immediately before use.
   openAlexApiKeyRef?: string
-  semanticScholarApiKeyRef?: string
   // Fully-qualified "<connector>/<method>" ids denied by policy; allow by default otherwise.
   blockedToolIds?: string[]
   // Fully-qualified "<connector>/<method>" ids that require per-call approval (opt-in). Tools default
@@ -229,8 +267,10 @@ export type StoredSettings = {
   huggingFaceRuntime?: import('../../shared/compute-python-runtime').ComputePythonSelection
   version: typeof SETTINGS_FILE_VERSION
   classification?: StoredClassificationSettings
+  imageServices?: StoredImageService[]
+  imageModel?: ImageModelBinding
   claude?: ClaudeInfo
-  // Selected agent backend. Absent means the default (Claude Code). Switching needs a reconnect.
+  // Selected agent backend. Absent means the built-in Open Science Agent. Switching needs a reconnect.
   agentFrameworkId?: AgentFrameworkId
   // Reasoning-effort preference. Absent (or 'default') means the agent keeps its own default.
   reasoningEffort?: ReasoningEffort
@@ -281,6 +321,8 @@ export type StoredSettings = {
   // Set once the first-run onboarding wizard has been completed (or auto-completed for an
   // already-configured install). Absent means onboarding has never finished.
   onboardingCompletedAt?: number
+  // Records Kilo initialization so a restart respects the user’s decision to remove it.
+  kiloDefaultInitialized?: true
   // Ids of bundled skills the user turned OFF. Absent/empty means every bundled skill is enabled
   // (default-on), so new bundled skills are enabled automatically.
   disabledSkillIds?: string[]

@@ -10,6 +10,7 @@ import type { AcpStateSnapshot } from '../../shared/acp'
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookRunRepository } from '../notebook/repository'
+import { healthyNotebookMemoryPolicy } from '../notebook/memory-policy.test-support'
 import {
   NotebookControlCompletionCapturedError,
   NotebookRuntimeService,
@@ -78,6 +79,7 @@ const createExecuteControlHarness = async (
     ...(options.deliverToOldPrompt ? { deliverToOldPrompt: options.deliverToOldPrompt } : {})
   })
   const service = new NotebookRuntimeService({
+    memoryPolicy: healthyNotebookMemoryPolicy(),
     configRoot: root,
     dataRoot: root,
     projectId: 'default-project',
@@ -413,7 +415,12 @@ describe('completion gate through the real host.agents SDK and executeControl se
     const connection = await harness.server.issueSessionConnection(
       'trusted-session',
       'default-project',
-      'root-frame-trusted-session'
+      'root-frame-trusted-session',
+      true,
+      harness.service.createExecutionIntent({
+        projectId: 'default-project',
+        sessionId: 'trusted-session'
+      })
     )
     harness.server.setArtifactTurnBinding('trusted-session', {
       ownerExecutionId: 'turn-1',

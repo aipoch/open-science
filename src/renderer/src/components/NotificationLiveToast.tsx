@@ -15,6 +15,7 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { RESEARCH_FILM_NOTIFICATION_PREFIX } from '../../../shared/notifications'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -135,7 +136,9 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
         item.sequence > previousSequence &&
         item.readAt === undefined &&
         item.targetInvalidatedAt === undefined &&
-        (!activeSessionId || item.sessionId !== activeSessionId)
+        (item.dedupeKey.startsWith(RESEARCH_FILM_NOTIFICATION_PREFIX) ||
+          !activeSessionId ||
+          item.sessionId !== activeSessionId)
     )
     if (added.length === 0) return
 
@@ -267,7 +270,7 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
       }}
       className={cn(
         noticeSurfaceClassName,
-        'pointer-events-auto fixed z-toast shadow-dialog motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 motion-reduce:animate-none',
+        'pointer-events-auto fixed z-toast shadow-notice motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-150 motion-reduce:animate-none',
         !position && 'invisible'
       )}
     >

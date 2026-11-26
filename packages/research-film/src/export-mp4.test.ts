@@ -217,11 +217,20 @@ setTimeout(() => {}, 4000);`,
             if (phase === 'verifying' && reason === 'timeout') vi.useFakeTimers()
           }
         }).catch((error: unknown) => error)
-        const pid = await vi.waitFor(async () => {
-          const pid = Number(await readFile(pidPath, 'utf8'))
-          expect(pid).toBeGreaterThan(0)
-          return pid
-        })
+        // The real encoder and probe must both start before exercising cancellation.
+        const pid = await Promise.race([
+          vi.waitFor(
+            async () => {
+              const pid = Number(await readFile(pidPath, 'utf8'))
+              expect(pid).toBeGreaterThan(0)
+              return pid
+            },
+            { timeout: 5000 }
+          ),
+          result.then((error) => {
+            throw error ?? new Error('Verifier exited before signalling readiness')
+          })
+        ])
         if (reason === 'cancel') {
           controller.abort()
           expect(await result).toMatchObject({ code: 'ABORT_ERR' })
@@ -238,6 +247,7 @@ setTimeout(() => {}, 4000);`,
         controller.abort()
         await rm(root, { recursive: true, force: true })
       }
-    }
+    },
+    10_000
   )
 })

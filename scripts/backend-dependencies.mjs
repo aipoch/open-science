@@ -53,6 +53,8 @@ export async function inlineDesktopDependencyMaps(manifest, directory) {
 }
 
 export const isElectronPackage = (name) =>
+  // Browserslist uses this data-only version map; it does not load the Electron runtime.
+  !/^electron-to-chromium(?:$|\/)/.test(name) &&
   /^(?:electron(?:$|\/|-)|@electron(?:-toolkit)?\/)/.test(name)
 
 // Claude always uses the detected executable; Prisma's optional peers generate clients at build time.
@@ -119,6 +121,7 @@ export function desktopBackendDependencies(dependencies, metafiles, allowed = ne
 // locates them by path for another process. Everything else is bundled. The closure is
 // computed so a package that stays on disk never depends on one that was bundled.
 const desktopExternalRoots = [
+  '@modelcontextprotocol/sdk',
   // Connector providers are resolved by subpath at runtime, so esbuild cannot record these
   // dynamic requires in its external import graph. Keep the published package staged.
   '@aipoch/connector-builtins',
@@ -139,8 +142,6 @@ const desktopExternalRoots = [
   '@napi-rs/canvas',
   '@aipoch/credential-identity-probe-native',
   '@prisma/client',
-  '@agentclientprotocol/claude-agent-acp',
-  '@anthropic-ai/claude-agent-sdk',
   '@aipoch/literature-citations',
   '@aipoch/pdf-translation',
   '@aipoch/pdf-structure',
@@ -245,17 +246,40 @@ export const isShippableDependencyPath = (relativePath) => {
   return parts[0] !== 'node_modules' && parts[0] !== '.git' && !parts.includes('obj.target')
 }
 
+export function usesPackedDesktopPdfJs(manifest) {
+  return manifest.name === 'pdfjs-dist' && manifest.version === '5.4.624'
+}
+
 // extraResources bypasses electron-builder's NodeModuleCopyHelper exclusions. Apply a
 // conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
 // See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
 export function createDesktopDependencyFilter(manifest) {
+  if (manifest.name === '@aipoch/research-film')
+    return (path) => includesPublishedFiles(manifest, path.split(/[\\/]/)[0])
   // These alternate distributions have no consumers in the packaged application. Keep the
   // npm/SDK closure intact, and re-audit whenever an upstream package version changes.
+  const packedPdfJs = usesPackedDesktopPdfJs(manifest)
   const unusedDistributions = {
+    '@pdf-lib/standard-fonts@1.0.0': /^(?:dist|es)\//,
+    '@pdf-lib/upng@1.0.1': /^(?:dist\/|yarn\.lock$)/,
+    '@xmldom/xmldom@0.8.15': /^lib\/\.eslintrc\.yml$/,
+    'ajv@8.20.0': /^\.runkit_example\.js$/,
+    'diff@9.0.0': /^dist\/diff(?:\.min)?\.js$/,
+    'fast-uri@3.1.9': /^(?:\.github\/|benchmark\/|\.gitattributes$|eslint\.config\.js$)/,
+    'is-url@1.2.4': /^\.travis\.yml$/,
+    'json-schema-traverse@1.0.0': /^(?:\.github\/|spec\/|\.eslintrc\.yml$)/,
+    'papaparse@5.7.0': /^(?:\.github\/|player\/|\.eslintrc\.js$|bower\.json$|Gruntfile\.js$)/,
+    'tesseract.js@6.0.1':
+      /^(?:dist\/[^/]+\.js(?:\.map)?$|docs\/|scripts\/|src\/worker(?:-script)?\/browser\/|karma\.conf\.js$)/,
+    'zlibjs@0.3.1': /^bin\/(?:[^/]+\.min\.js|node-zlib\.dev\.js|zlib\.pretty(?:\.dev)?\.js)$/,
     'openchemlib@9.25.0': /^dist\/openchemlib\.debug\.js(?:\.map)?$/,
+    // The Node OCR worker loads the paired .js and .wasm files for each kernel.
+    'tesseract.js-core@6.1.2': /^tesseract-core(?:-simd)?(?:-lstm)?\.wasm\.js$/,
     'web-tree-sitter@0.26.13': /^debug\/web-tree-sitter\.(?:js|cjs|wasm)(?:\.map)?$/,
     'styled-exceljs@0.21.6':
       /^dist\/xlsx\.(?:extendscript|(?:full|core|mini)\.min)\.(?:js(?:\.map)?|map)$/,
+    // Packaged Node loads legacy/build/pdf.mjs and its relative pdf.worker.mjs.
+    'pdfjs-dist@5.4.624': /^legacy\/build\/pdf(?:\.worker)?\.min\.mjs$/,
     '@embedpdf/pdfium@2.15.1': /^dist\/index\.browser\.js(?:\.map)?$/,
     'pako@0.2.9': /^dist\/[^/]+\.js(?:\.map)?$/,
     'pako@1.0.11': /^dist\/[^/]+\.js(?:\.map)?$/
@@ -294,6 +318,13 @@ export function createDesktopDependencyFilter(manifest) {
     const path = parts.join('/')
     if (parts.some((part) => /^(?:licen[cs]es?|notices?|copying|copyright)(?:[._-]|$)/i.test(part)))
       return true
+    if (
+      packedPdfJs &&
+      /^(?:cmaps\/[^/]+\.bcmap$|legacy\/(?:web\/|image_decoders\/|build\/pdf(?:\.worker)?\.min\.mjs$|build\/pdf\.sandbox(?:\.min)?\.mjs$))/.test(
+        path
+      )
+    )
+      return false
     if (unusedDistributions?.test(path)) return false
     // Zod's source condition is opt-in development only; its locale wildcard also matches
     // declarations. Neither is used by packaged Node's normal import/require resolution.
@@ -515,6 +546,11 @@ export function backendDependencyIncludes(manifest, relativePath) {
     !top
   )
     return true
+  return includesPublishedFiles(manifest, top)
+}
+
+function includesPublishedFiles(manifest, top) {
+  if (!top) return true
   if (
     !Array.isArray(manifest.files) ||
     manifest.files.some((path) => !/^[a-zA-Z0-9_.-]+$/.test(path))

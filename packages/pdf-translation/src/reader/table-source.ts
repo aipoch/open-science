@@ -3,7 +3,8 @@ import { getPdfTranslationTextContent } from './text-content.js'
 import { nativePartialNavigation } from './native-source-geometry.js'
 import type { PDFDocumentProxy, PDFPageProxy, getDocument } from 'pdfjs-dist'
 import type { TextItem, TextStyle } from 'pdfjs-dist/types/src/display/api.js'
-import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
+import { readPdfStructureEvidence } from './structure-evidence.js'
 import { createPdfTranslationSource, type PdfTranslationFragment } from './source.js'
 import type { PdfTranslationExtraction } from './extraction.js'
 
@@ -453,32 +454,15 @@ export async function applyCachedPdfTableSources({
       throw new Error('PDF source changed during table verification')
   }
   try {
-    const batches = new Map<string, string>(),
-      results: PdfStructureResult[] = []
-    let bytes = 0,
-      elements = 0
-    for (let page = 1; page <= document.numPages; page++) {
-      current()
-      const cached = await readCached({ sourceId, page })
-      current()
-      if (!cached) continue
-      // Schema decoding copies the response before any further await. Identity comes from the lease.
-      const result = parsePdfStructureResult(cached, { ...cached, ...identity })
-      if (result.pageCount !== document.numPages || !result.processedPages.includes(page))
-        return extraction
-      const serialized = JSON.stringify(result),
-        prior = batches.get(result.extractionId)
-      if (prior !== undefined) {
-        if (prior !== serialized) return extraction
-        continue
-      }
-      bytes += serialized.length * 2
-      elements += result.elements.length
-      // Same bounded cache inventory as the existing figures reader; never publish a partial replacement.
-      if (bytes > 32 * 1024 ** 2 || elements > 512) return extraction
-      batches.set(result.extractionId, serialized)
-      results.push(result)
-    }
+    const results = await readPdfStructureEvidence({
+      document,
+      sourceId,
+      identity,
+      readCached,
+      assertCurrent: current
+    })
+    if (!results) return extraction
+    current()
     const owners = new Map<string, string>(),
       originalUnits = new Map<string, (typeof source.units)[number]>(),
       // A PDF.js text item can contain two visually separate table values.  Keep

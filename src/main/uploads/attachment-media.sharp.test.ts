@@ -53,6 +53,38 @@ const withExifOrientation = (jpeg: Buffer, orientation: number): Buffer => {
 }
 
 describe('sharp image-processing adapter', () => {
+  it('reviews a 16.8 MP managed Version at bounded size and keeps the workspace guard', async () => {
+    root = await mkdtemp(join(tmpdir(), 'attachment-media-managed-'))
+    const filePath = join(root, 'mechanism.jpg')
+    await sharp({
+      create: { width: 5472, height: 3072, channels: 3, background: '#336699' }
+    })
+      .jpeg()
+      .toFile(filePath)
+    await expect(prepareImageContentData(filePath)).rejects.toThrow(/pixel processing limit/u)
+    await expect(
+      prepareImageContentData(filePath, { maxSize: 1200 }, undefined, undefined, true)
+    ).resolves.toMatchObject({
+      originalSize: { width: 5472, height: 3072 },
+      outputSize: { width: 1200, height: 674 }
+    })
+    await expect(
+      prepareImageContentData(
+        filePath,
+        {
+          crop: { unit: 'pixels', left: 3100, top: 1700, right: 3500, bottom: 1950 },
+          maxSize: 1200
+        },
+        undefined,
+        undefined,
+        true
+      )
+    ).resolves.toMatchObject({
+      crop: { left: 3100, top: 1700, right: 3500, bottom: 1950 },
+      outputSize: { width: 400, height: 250 }
+    })
+  })
+
   it('normalizes EXIF orientation before resolving crop coordinates', async () => {
     root = await mkdtemp(join(tmpdir(), 'attachment-media-sharp-'))
     const filePath = join(root, 'oriented.jpg')

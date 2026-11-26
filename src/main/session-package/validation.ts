@@ -1,5 +1,7 @@
+import { imageTaskEvidenceMatches } from '../../shared/image-task'
 import { validateResearchFilms } from './research-films'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PackageProgress, SessionPackageManifest } from '../../shared/session-package'
@@ -7,6 +9,10 @@ import { sha256 } from '../artifacts/provenance-canonical'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { decodeReviewScopeSnapshot } from '../artifacts/provenance-snapshot-decoder'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import {
+  environmentManifestChecksumForRun,
+  environmentManifestStorageKey
+} from '../notebook/repository'
 import { createPackageMaterializer } from './materialize'
 import { executionEvidenceKeys, hasComputeLogEvidence } from './execution-evidence'
 import { validatePackageLiterature } from './literature'
@@ -20,18 +26,78 @@ import type { PackageRecords } from './records-contract'
 import { installPackageReproducibility, validatePackageReproducibility } from './reproducibility'
 import { validatePackageRoCrateMetadata } from './ro-crate'
 import { assertNoExcludedContentCopies, validateExcludedFiles } from './selection'
+import { validatePackageWebEvidence } from './web-evidence'
+
+// A validation database contains only the current schema until package rows are published into it.
+// Build that immutable seed once per process, then copy it into each isolated validation directory.
+// This keeps every validation independent while avoiding a full migration walk for every import.
+const validationDatabaseSeeds = new Map<string, Promise<string>>()
+const validationDatabaseSeedRoots = new Set<string>()
+
+process.once('exit', () => {
+  for (const root of validationDatabaseSeedRoots) rmSync(root, { recursive: true, force: true })
+})
+
+const getValidationDatabaseSeed = (temporaryRoot: string): Promise<string> => {
+  const existing = validationDatabaseSeeds.get(temporaryRoot)
+  if (existing) return existing
+  const prune = async (): Promise<void> => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000
+    const entries = await readdir(temporaryRoot, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith('open-science-package-validation-seed-'))
+        continue
+      const root = join(temporaryRoot, entry.name)
+      if (validationDatabaseSeedRoots.has(root)) continue
+      try {
+        if ((await stat(root)).mtimeMs < cutoff)
+          await rm(root, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 })
+      } catch {
+        // A racing process or unreadable entry must not block validation.
+      }
+    }
+  }
+  const pending = (async () => {
+    await mkdir(temporaryRoot, { recursive: true, mode: 0o700 })
+    await prune()
+    const root = await mkdtemp(join(temporaryRoot, 'open-science-package-validation-seed-'))
+    validationDatabaseSeedRoots.add(root)
+    const client = createProjectDbClient(root)
+    try {
+      await migrateApplicationDatabase(client)
+      await client.$disconnect()
+      return join(root, 'open-science.db')
+    } catch (error) {
+      await client.$disconnect().catch(() => undefined)
+      validationDatabaseSeedRoots.delete(root)
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      throw error
+    }
+  })()
+  validationDatabaseSeeds.set(temporaryRoot, pending)
+  pending.catch(() => {
+    if (validationDatabaseSeeds.get(temporaryRoot) === pending)
+      validationDatabaseSeeds.delete(temporaryRoot)
+  })
+  return pending
+}
 
 export const assertPortablePackageStorageKey = (key: string): void => {
+  if (/^notebooks\/[^/]+\/[^/]+\/(?:frames\/[^/]+\/)?\.pending-runs(?:\/|$)/iu.test(key))
+    throw new Error('Reserved Notebook pending Run path.')
   const segments = key.split('/')
+  const isEnvironmentManifest =
+    /^runtime\/provenance\/environment-manifests\/[a-f0-9]{64}\.json$/u.test(key)
   if (
-    ![
-      'artifacts',
-      'uploads',
-      'notebooks',
-      'execution-file-evidence',
-      'notebook-file-evidence',
-      'file-evidence'
-    ].includes(segments[0]) ||
+    (!isEnvironmentManifest &&
+      ![
+        'artifacts',
+        'uploads',
+        'notebooks',
+        'execution-file-evidence',
+        'notebook-file-evidence',
+        'file-evidence'
+      ].includes(segments[0])) ||
     segments.length < 4 ||
     segments.some(
       (segment) =>
@@ -61,6 +127,22 @@ export const validatePackageRecords = async (
   onProgress?: (progress: PackageProgress) => void,
   destination = false
 ): Promise<void> => {
+  if (records.webEvidence) validatePackageWebEvidence(records.webEvidence)
+  if (
+    Boolean(records.webEvidence?.requiredCapabilities?.includes('web-result-v2')) !==
+    Boolean(manifest.requiredFeatures?.includes('web-evidence-v2'))
+  )
+    throw new Error('Web evidence reader capability declaration is invalid.')
+  if (
+    Boolean(records.webEvidence?.requiredCapabilities?.includes('web-restricted-result-v1')) !==
+    Boolean(manifest.requiredFeatures?.includes('web-restricted-result-v1'))
+  )
+    throw new Error('Restricted Web reader capability declaration is invalid.')
+  if (
+    Boolean(records.webEvidence?.requiredCapabilities?.includes('web-search-operations-v1')) !==
+    Boolean(manifest.requiredFeatures?.includes('web-search-operations-v1'))
+  )
+    throw new Error('Web operation protocol reader capability declaration is invalid.')
   if (Boolean(records.literature) !== Boolean(manifest.requiredFeatures?.includes('literature')))
     throw new Error('Literature package capability declaration is invalid.')
   if (
@@ -185,9 +267,22 @@ export const validatePackageRecords = async (
     reportValidation(0.35)
     // File and reproducibility checks still apply to conversation-only packages. With no
     // native rows, there are no database relationships or provenance records to validate.
-    if (Object.values(records.tables).every((rows) => rows.length === 0)) return
+    for (const document of notebooks) {
+      for (const run of document.runs) {
+        const checksum = environmentManifestChecksumForRun(run)
+        if (!checksum || run.environmentManifest) continue
+        const key = environmentManifestStorageKey(checksum)
+        const entry = files.get(key)
+        if (!entry || entry.checksum !== checksum)
+          throw new Error('Session package omits required environment manifest evidence.')
+      }
+    }
+    if (Object.values(records.tables).every((rows) => rows.length === 0)) {
+      if (records.imageTasks?.length) throw new Error('Image task source Version is missing.')
+      return
+    }
+    await copyFile(await getValidationDatabaseSeed(temporaryRoot), join(root, 'open-science.db'))
     client = createProjectDbClient(root)
-    await migrateApplicationDatabase(client)
     reportValidation(0.6)
     const projectIds = new Set([manifest.source.projectId])
     for (const rows of Object.values(records.tables))
@@ -198,6 +293,53 @@ export const validatePackageRecords = async (
         await transaction.project.create({ data: { id, name: 'Package validation' } })
       await publishRecords(transaction)
     })
+    const tasksById = new Map(records.imageTasks?.map((task) => [task.id, task]))
+    for (const task of records.imageTasks ?? []) {
+      if (
+        task.projectId !== manifest.source.projectId ||
+        task.sessionId !== manifest.source.sessionId ||
+        task.state === 'queued' ||
+        task.state === 'running'
+      )
+        throw new Error('Invalid Session image task ownership or state.')
+      const source = task.edit.source
+      const artifactSource = source.sourceKind === 'artifact-version'
+      const sourceVersion = records.tables[
+        artifactSource ? 'ArtifactVersion' : 'UploadVersion'
+      ].find((row) => row.id === source.sourceVersionId)
+      const sourceFile = records.tables[artifactSource ? 'ArtifactLineage' : 'UploadFile'].find(
+        (row) => row.id === source.sourceFileId
+      )
+      if (
+        !sourceVersion ||
+        !sourceFile ||
+        sourceVersion[artifactSource ? 'artifactId' : 'uploadFileId'] !== sourceFile.id ||
+        sourceFile.projectId !== source.projectId ||
+        sourceFile.sessionId !== source.sourceSessionId ||
+        sourceVersion.state !== (artifactSource ? 'finalized' : 'ready')
+      )
+        throw new Error('Image task source Version ownership does not match.')
+      if (task.result) {
+        const result = task.result
+        const output = records.tables.ArtifactVersion.find((row) => row.id === result.versionId)
+        const lineage = records.tables.ArtifactLineage.find((row) => row.id === result.artifactId)
+        if (
+          !output ||
+          !lineage ||
+          lineage.projectId !== task.projectId ||
+          lineage.sessionId !== task.sessionId ||
+          output.artifactId !== result.artifactId ||
+          output.artifactRunId !== task.id ||
+          output.state !== 'finalized' ||
+          output.checksum !== result.checksum ||
+          Number(output.sizeBytes) !== result.size ||
+          output.versionNumber !== result.versionNumber ||
+          output.filename !== result.name ||
+          (output.contentType ?? undefined) !== result.mimeType
+        )
+          throw new Error('Image task output Version does not match.')
+      }
+    }
     reportValidation(0.7)
     let validatedVersions = 0
     const repository = new ArtifactProvenanceRepository({
@@ -216,6 +358,12 @@ export const validatePackageRecords = async (
       }
       if (version.originKind === 'agent_generated') {
         const result = await repository.getVersionProvenance(identity)
+        const task = tasksById.get(String(version.artifactRunId))
+        if (
+          task &&
+          !imageTaskEvidenceMatches(result.evidence, task.id, task.edit.source.sourceVersionId)
+        )
+          throw new Error('Image task output does not match its source Version.')
         if (
           result.contentStatus.state !== 'available' &&
           !excluded.has(String(version.contentStorageKey))
@@ -235,7 +383,7 @@ export const validatePackageRecords = async (
     try {
       await client?.$disconnect()
     } finally {
-      await rm(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     }
   }
 }

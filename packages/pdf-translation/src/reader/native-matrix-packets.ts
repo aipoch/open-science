@@ -3,9 +3,9 @@ import {
   createAuxiliaryNativeNegativeReader,
   nativeInkPageIdentity
 } from './auxiliary-native-ink.js'
-import { readNativeGlyphSelection } from './native-selected-glyphs.js'
+import { readNativeGlyphSelection, type NativeSelectedGlyph } from './native-selected-glyphs.js'
 import { nativeOutlineBox } from './native-source-geometry.js'
-import { nativeMathAtom } from './native-display-packets.js'
+import { nativeMathAtom, nativePaints } from './native-display-packets.js'
 import { getPdfTranslationTextContent } from './text-content.js'
 import type { PdfTranslationSource } from './source.js'
 
@@ -13,7 +13,8 @@ type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
 type Item = Extract<Content['items'][number], { str: string }>
 type Viewport = ReturnType<PDFPageProxy['getViewport']>
 type Rect = { page: number; x: number; y: number; width: number; height: number }
-type Frame = { indices: number[]; signature: string }
+type MatrixAtom = { origin: number[]; dimensions: number[]; appearance: string }
+type Frame = { indices: number[]; bounds: number[]; atoms: MatrixAtom[] }
 const frames = new WeakMap<ReadonlyMap<number, Rect>, readonly Frame[]>()
 const currentFrames = new WeakMap<readonly Frame[], () => boolean>()
 const candidateCharacters = [String.fromCharCode(20), String.fromCharCode(21)]
@@ -192,21 +193,25 @@ async function readMatrixSelection(
         if (!ys.some((y) => Math.abs(y - i.transform[5]) < h * 0.1)) ys.push(i.transform[5])
       if (ys.length !== 2 || Math.abs(ys[0] - ys[1]) < h * 0.7 || Math.abs(ys[0] - ys[1]) > h * 1.8)
         continue
-      const indices = [...new Set([left.index, ...body, right.index])].sort((a, b) => a - b),
-        signature = JSON.stringify([
-          left.x,
-          left.top,
-          right.right,
-          right.bottom,
-          body
-            .sort((a, b) => {
-              const x = content.items[a] as Item,
-                y = content.items[b] as Item
-              return y.transform[5] - x.transform[5] || x.transform[4] - y.transform[4]
-            })
-            .map((n) => signatures.get(n))
-        ])
-      packets.push({ indices, signature })
+      const indices = [...new Set([left.index, ...body, right.index])].sort((a, b) => a - b)
+      body.sort((a, b) => {
+        const x = content.items[a] as Item,
+          y = content.items[b] as Item
+        return y.transform[5] - x.transform[5] || x.transform[4] - y.transform[4]
+      })
+      const atoms: MatrixAtom[] = []
+      for (const n of body) {
+        const item = content.items[n] as Item,
+          signature = signatures.get(n)
+        if (!Array.isArray(signature) || signature.length !== 9) return
+        const [scaleX, skewX, skewY, scaleY, x, y] = item.transform
+        atoms.push({
+          origin: [x, y],
+          dimensions: [scaleX, scaleY, item.width],
+          appearance: JSON.stringify([signature[0], signature[8], skewX, skewY])
+        })
+      }
+      packets.push({ indices, bounds: [left.x, left.top, right.right, right.bottom], atoms })
     }
     if (!packets.length || !current()) return
     const frozen = Object.freeze(packets)
@@ -267,6 +272,208 @@ async function observe(
   return packet
 }
 
+// A derivative and two repeated column vectors are literal math even when
+// their individual letters are left outside the original protected owners.
+const derivativePieces = [0, 1, 3, 4, 16, 17]
+const derivativeBrackets = [2, 5, 7, 15, 18]
+
+export function hasNativeDerivativeMatrixCandidate(content: Content): boolean {
+  return ['d', 'dt', '] ['].every((word) =>
+    content.items.some((item) => 'str' in item && item.str === word)
+  )
+}
+
+async function nativeDerivativeMatrixOwners(
+  units: PdfTranslationSource['units'],
+  page: PDFPageProxy,
+  content: Content,
+  viewport: Viewport,
+  pageNumber: number
+): Promise<ReadonlySet<string>> {
+  const result = new Set<string>()
+  try {
+    if (viewport.scale !== 1 || viewport.rotation !== 0) return result
+    const entries = content.items.flatMap((item, index) =>
+      'str' in item && item.str.trim() ? [{ item, index }] : []
+    )
+    const ownership = new Map<number, { owner: (typeof units)[number]; text: string } | null>()
+    for (const owner of units)
+      for (const f of owner.fragments)
+        if (f.pageNumber === pageNumber)
+          for (const i of f.items)
+            ownership.set(i.index, ownership.has(i.index) ? null : { owner, text: i.text })
+    const snapshot = JSON.stringify(units),
+      current: (() => boolean)[] = []
+    for (const [at, entry] of entries.entries()) {
+      if (entry.item.str !== 'd') continue
+      const packet = entries.slice(at, at + 21)
+      if (packet.length !== 21) continue
+      const items = packet.map(({ item }) => item),
+        text = items.map(({ str }) => str),
+        x = (i: number): number => items[i].transform[4],
+        y = (i: number): number => items[i].transform[5],
+        right = (i: number): number => x(i) + items[i].width,
+        h = items[6].height,
+        near = (a: number, b: number): boolean => Math.abs(a - b) < h * 0.05
+      if (
+        !/^d dt \[ ([a-z]) ([a-z]) \] = \[ 0 1 \/([a-z]) − \3\p{Script=Greek} 2 0 \] \[ \1 \2 \] \. \(([1-9]\d{0,3})\)$/u.test(
+          text.join(' ')
+        ) ||
+        text[3] === text[4] ||
+        !items[20].hasEOL ||
+        packet.some(
+          ({ item }, i) =>
+            item.dir !== 'ltr' ||
+            item.width <= 0 ||
+            item.transform.length !== 6 ||
+            ![item.width, item.height, ...item.transform].every(Number.isFinite) ||
+            item.transform[0] !== item.height ||
+            item.transform[3] !== item.height ||
+            item.transform[1] !== 0 ||
+            item.transform[2] !== 0 ||
+            !near(item.height, i === 13 ? h * 0.7 : h)
+        ) ||
+        !derivativeBrackets.every(
+          (i) => items[i].fontName === items[2].fontName && near(y(i), y(2))
+        ) ||
+        ![3, 4, 16, 17].every((i) => items[i].fontName === items[0].fontName) ||
+        items[0].fontName !== items[1].fontName ||
+        items[2].fontName === items[0].fontName ||
+        ![8, 9, 10, 16].every((i) => near(y(i), y(3))) ||
+        ![11, 12, 14, 17].every((i) => near(y(i), y(4))) ||
+        ![19, 20].every((i) => near(y(i), y(6))) ||
+        !near((y(3) + y(4)) / 2, y(6)) ||
+        y(3) - y(4) < h ||
+        y(3) - y(4) > h * 1.4 ||
+        y(0) <= y(3) ||
+        y(1) >= y(4) ||
+        y(13) <= y(4) ||
+        !near((x(0) + right(0)) / 2, (x(1) + right(1)) / 2) ||
+        right(1) >= x(2) ||
+        right(5) >= x(6) ||
+        right(6) >= x(7) ||
+        right(18) >= x(19) ||
+        right(19) + h >= x(20)
+      )
+        continue
+      const selected = new Set(packet.map(({ index }) => index)),
+        affected = new Set<string>()
+      if (
+        packet.some(({ index, item }, i) => {
+          const claim = ownership.get(index)
+          if (!claim || claim.text !== item.str) return true
+          const { owner } = claim
+          if (
+            !owner.fragments.length ||
+            owner.fragments.some(
+              (f) =>
+                f.pageNumber !== pageNumber || f.items.some((entry) => !selected.has(entry.index))
+            ) ||
+            owner.source.replace(/\s/gu, '') !==
+              owner.fragments
+                .flatMap((f) => f.items.map((entry) => entry.text))
+                .join('')
+                .replace(/\s/gu, '') ||
+            (owner.preserve && owner.preserve !== 'formula' && owner.preserve !== 'literal')
+          )
+            return true
+          if (!owner.sourceOnly) {
+            if (owner.preserve || !derivativePieces.includes(i)) return true
+            affected.add(owner.id)
+          }
+          return false
+        }) ||
+        !affected.size
+      )
+        continue
+
+      // The already-protected coefficient may span several showText operations.
+      // Verify whole-page operator identity but select only the brackets and newly
+      // protected glyphs for outline reading.
+      const scoped = { ...content, items },
+        identity = await nativeInkPageIdentity(page, scoped, viewport)
+      if (!identity) continue
+      const read = await readNativeGlyphSelection(
+        page,
+        content,
+        viewport,
+        pageNumber,
+        new Set([...derivativeBrackets, ...derivativePieces].map((i) => packet[i].index)),
+        identity.operators
+      )
+      if (!read) continue
+      const glyphs = (i: number): readonly NativeSelectedGlyph[] =>
+          read.glyphs.get(packet[i].index) ?? [],
+        outlines = derivativeBrackets.flatMap(glyphs)
+      if (
+        outlines.map((glyph) => bracketSide(glyph.path)).join(',') !==
+        'left,right,left,right,left,right'
+      )
+        continue
+      const [a, b, c, d, e, f] = outlines.map(({ box }) => box),
+        inside = (i: number, l: number[], r: number[]): boolean =>
+          glyphs(i).length > 0 &&
+          glyphs(i).every(
+            ({ box }) => box[0] >= l[2] && box[2] <= r[0] && box[1] >= l[1] && box[3] <= r[3]
+          )
+      if (
+        outlines.length !== 6 ||
+        outlines.some(
+          ({ box }, i) =>
+            !near(box[1], a[1]) ||
+            !near(box[3], a[3]) ||
+            (i > 0 && outlines[i - 1].box[2] >= box[0])
+        ) ||
+        !inside(3, a, b) ||
+        !inside(4, a, b) ||
+        !inside(16, e, f) ||
+        !inside(17, e, f) ||
+        x(11) < c[2] ||
+        right(10) > d[0] + h * 0.03 ||
+        !near(b[0] - a[2], f[0] - e[2]) ||
+        entries.some(
+          ({ index, item }) =>
+            !selected.has(index) &&
+            item.transform[4] < right(20) &&
+            item.transform[4] + item.width > x(1) - h * 0.1 &&
+            viewport.height - item.transform[5] + item.height * 0.25 > a[1] &&
+            viewport.height - item.transform[5] - item.height * 0.75 < a[3]
+        )
+      )
+        continue
+      const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+        paints = await nativePaints(identity.operators, viewport, true)
+      if (!paints) continue
+      const local = paints.filter(
+        ({ bounds: [l, t, r, b] }) =>
+          l < right(20) && r > x(1) - h * 0.1 && t < a[3] + h * 0.1 && b > a[1] - h * 0.1
+      )
+      const rule = local[0]
+      if (
+        local.length !== 1 ||
+        !rule.plainBlack ||
+        rule.kind !== OPS.paintSolidColorImageMask ||
+        !near(rule.bounds[0], x(1)) ||
+        !near(rule.bounds[2], right(1)) ||
+        rule.bounds[1] <= Math.max(...glyphs(0).map(({ box }) => box[3])) ||
+        rule.bounds[3] >= Math.min(...glyphs(1).map(({ box }) => box[1])) ||
+        rule.bounds[3] - rule.bounds[1] > h * 0.1 ||
+        identity.key !== (await nativeInkPageIdentity(page, scoped, viewport))?.key ||
+        snapshot !== JSON.stringify(units) ||
+        !read.current()
+      )
+        continue
+      for (const id of affected) result.add(id)
+      current.push(read.current)
+    }
+    return snapshot === JSON.stringify(units) && current.every((verify) => verify())
+      ? result
+      : new Set()
+  } catch {
+    return new Set()
+  }
+}
+
 export async function nativeMatrixOwners(
   units: PdfTranslationSource['units'],
   page: PDFPageProxy,
@@ -276,9 +483,16 @@ export async function nativeMatrixOwners(
   reader: ReturnType<typeof createNativeMatrixReader>
 ): Promise<ReadonlySet<string>> {
   const snapshot = JSON.stringify(units),
-    packet = await observe(reader, page, content, viewport, pageNumber),
-    result = new Set<string>()
-  if (!packet || snapshot !== JSON.stringify(units)) return result
+    result = new Set(
+      hasNativeDerivativeMatrixCandidate(content)
+        ? await nativeDerivativeMatrixOwners(units, page, content, viewport, pageNumber)
+        : []
+    ),
+    packet = hasNativeMatrixCandidate(content)
+      ? await observe(reader, page, content, viewport, pageNumber)
+      : []
+  if (snapshot !== JSON.stringify(units)) return new Set()
+  if (!packet) return result
   const counts = new Map<number, number>()
   for (const unit of units)
     for (const f of unit.fragments)
@@ -315,15 +529,38 @@ export async function nativeMatrixOwners(
   return result
 }
 
+// The native writer can round page coordinates when serializing unchanged text.
+// Compare positions within one hundredth of a point and keep glyph outlines and offsets exact.
+function sameMatrixFrame(before: Frame, after: Frame): boolean {
+  const near = (a: number[], b: number[], tolerance: number): boolean =>
+    a.length === b.length && a.every((value, i) => Math.abs(value - b[i]) <= tolerance)
+  return (
+    near(before.bounds, after.bounds, 0.01) &&
+    before.atoms.length === after.atoms.length &&
+    before.atoms.every((atom, i) => {
+      const written = after.atoms[i]
+      return (
+        atom.appearance === written.appearance &&
+        near(atom.origin, written.origin, 0.01) &&
+        near(atom.dimensions, written.dimensions, 0.00001)
+      )
+    })
+  )
+}
+
 /** A mismatch retains the entire original page, never repaints a matrix. */
 export async function sameNativeMatrixBody(
   original: PDFDocumentProxy,
   translated: PDFDocumentProxy,
   pageNumber: number,
-  options: { nativeDocumentFactory: typeof getDocument; signal: AbortSignal }
+  options: {
+    nativeDocumentFactory: typeof getDocument
+    signal: AbortSignal
+    pageText?: ReadonlyMap<PDFPageProxy, Content>
+  }
 ): Promise<boolean> {
   const sourcePage = await original.getPage(pageNumber),
-    content = await getPdfTranslationTextContent(sourcePage)
+    content = options.pageText?.get(sourcePage) ?? (await getPdfTranslationTextContent(sourcePage))
   if (!hasNativeMatrixCandidate(content)) return true
   const readers: ReturnType<typeof createNativeMatrixReader>[] = []
   try {
@@ -347,14 +584,16 @@ export async function sameNativeMatrixBody(
     const before = await read(original, sourcePage, content)
     if (!before?.length) return true
     const outputPage = await translated.getPage(pageNumber),
-      after = await read(translated, outputPage, await getPdfTranslationTextContent(outputPage))
+      outputText =
+        options.pageText?.get(outputPage) ?? (await getPdfTranslationTextContent(outputPage)),
+      after = await read(translated, outputPage, outputText)
     options.signal.throwIfAborted()
     return (
       !!after &&
       !!currentFrames.get(before)?.() &&
       !!currentFrames.get(after)?.() &&
-      JSON.stringify(before.map((f) => f.signature)) ===
-        JSON.stringify(after.map((f) => f.signature))
+      before.length === after.length &&
+      before.every((frame, i) => sameMatrixFrame(frame, after[i]))
     )
   } finally {
     await Promise.all(readers.map((reader) => reader.dispose()))

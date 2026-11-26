@@ -1,3 +1,5 @@
+import type { MacSparkleUpdate } from './mac-sparkle'
+import { basename } from 'node:path'
 import { app, shell } from 'electron'
 import { spawnSync } from 'node:child_process'
 import type { RuntimeStartupOptions } from '../runtime-startup-options'
@@ -22,6 +24,7 @@ import { fetchManifest } from './manifest'
 import {
   canStartUpdateDownload,
   toAvailableUpdateStatus,
+  type DownloadPreference,
   type InstallGate,
   type UpdateStrategy
 } from './strategy'
@@ -88,6 +91,8 @@ export type UpdateInstallationHooks = {
   recheckInstall?: () => Promise<Partial<UpdateStatus>>
 }
 export type ElectronUpdaterDeps = UpdateInstallationHooks & {
+  macSparkle?: Pick<MacSparkleUpdate, 'select' | 'prepare' | 'isReady' | 'install' | 'artifact'>
+  downloadPreference?: Promise<DownloadPreference | undefined>
   translate?: NativeTranslator
   prepareInstallHandoff?: () => Promise<WindowsUpdateHandoff>
   installationGuard?: (interactive: boolean, knownReadOnly?: boolean) => boolean
@@ -225,8 +230,8 @@ const extractArtifactSize = (
 
 // In-place auto-update strategy: wraps electron-updater for true download + restart on win/linux and
 // on signed stable macOS (Squirrel.Mac). Emits the same UpdateStatus shape as UpdateService, always
-// stamped applyKind:'restart'. Opt-in: autoDownload and autoInstallOnAppQuit are disabled so nothing
-// downloads/installs without a user action.
+// stamped applyKind:'restart'. The desktop policy schedules eligible background downloads.
+// Keep the SDK's automatic download and install-on-quit disabled so it cannot bypass that policy.
 export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly updater: MinimalAutoUpdater
   private readonly currentVersion: string
@@ -257,6 +262,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readyCheckError?: unknown
   private status: UpdateStatus
   private applying = false
+  private cancelledDownloadVersion?: string
   private installerStarted = false
   private pendingInstallRollback?: () => void
   // Pre-install backend-shutdown gate, owned immutably for the strategy lifetime.
@@ -290,6 +296,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         arch = ''
       }
     }
+    this.macSparkle = this.platform === 'darwin' && arch === rawArch ? deps.macSparkle : undefined
     this.arch = arch
     this.broadcast = deps.broadcast ?? defaultBroadcast
     this.fetchImpl = deps.fetchImpl
@@ -322,13 +329,23 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
           }
         : undefined)
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
+    void deps.downloadPreference?.then((preference) => {
+      if (preference) {
+        this.downloadPreference = preference
+        this.publishDownloadPreference()
+      }
+    })
 
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
     this.subscribe()
   }
 
+  private readonly macSparkle?: ElectronUpdaterDeps['macSparkle']
+  private patchDownload?: AbortController
+  private patchReadyVersion?: string
   private readonly installationHooks: UpdateInstallationHooks
+  private downloadPreference?: DownloadPreference
 
   private subscribe(): void {
     this.updater.on('checking-for-update', () => {
@@ -338,12 +355,21 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.updater.on('update-available', (info) => {
       const i = info as { version?: string; releaseNotes?: unknown; files?: UpdateFeedFile[] }
       const readyStatus = this.readyCheckStatus
+      const wasPatch = !!readyStatus && this.macSparkle?.isReady(readyStatus.latest)
+      if (
+        i.version &&
+        (!readyStatus?.latest ||
+          i.version === readyStatus.latest ||
+          isNewer(i.version, readyStatus.latest))
+      )
+        this.macSparkle?.select(this.currentVersion, i.version, i.files ?? [])
       const artifactChanged =
-        readyStatus &&
-        readyStatus.latest === i.version &&
-        readyStatus.artifactSha512 &&
-        i.files?.some((file) => file.sha512) &&
-        !i.files.some((file) => file.sha512 === readyStatus.artifactSha512)
+        (wasPatch && i.version === readyStatus?.latest && !this.macSparkle?.isReady(i.version)) ||
+        (readyStatus &&
+          readyStatus.latest === i.version &&
+          readyStatus.artifactSha512 &&
+          i.files?.some((file) => file.sha512) &&
+          !i.files.some((file) => file.sha512 === readyStatus.artifactSha512))
       if (
         readyStatus &&
         this.status === readyStatus &&
@@ -367,7 +393,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       ) {
         return
       }
-      const totalBytes = extractArtifactSize(i.files, this.platform, this.arch, this.updater)
+      this.patchReadyVersion = undefined
+      const totalBytes =
+        this.macSparkle?.artifact?.patchSize ??
+        extractArtifactSize(i.files, this.platform, this.arch, this.updater)
       this.setStatus({
         state: 'available',
         latest: i.version,
@@ -442,14 +471,24 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         downloaded?.files?.filter((file) =>
           file.url?.split('?')[0].toLowerCase().endsWith(`.${extension}`)
         ) ?? []
+      const selected =
+        candidates.length === 1
+          ? candidates[0]
+          : candidates.find(
+              (file) =>
+                file.url?.split('?')[0].split('/').pop() ===
+                basename(downloaded?.downloadedFile ?? '')
+            )
       const readyStatus: UpdateStatus = {
         ...this.status,
         state: 'ready',
         progress: 100,
-        artifactSha512: candidates.length === 1 ? candidates[0].sha512 : undefined,
+        artifactSha512: selected?.sha512,
         localPath: (info as { downloadedFile?: string } | undefined)?.downloadedFile
       }
+      this.patchReadyVersion = undefined
       delete readyStatus.installerMissing
+      delete readyStatus.backgroundDownload
       this.installerInvalidated = false
       this.confirmedInstaller = confirmInstaller(
         readyStatus,
@@ -457,6 +496,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         this.inspectInstallerFile
       )
       this.setStatus(readyStatus)
+      if (this.downloadPreference?.enabled && this.confirmedInstaller)
+        void this.downloadPreference.stageForNextLaunch?.(readyStatus).catch((error: unknown) =>
+          this.log.warn('Could not prepare the desktop update for next launch', {
+            message: String(error)
+          })
+        )
     })
     this.updater.on('error', (err) => {
       if (this.applying && !this.installerStarted) return
@@ -523,6 +568,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     if (this.applying && partial.state !== 'applying') return
     this.status = {
       ...partial,
+      ...(this.downloadPreference ? { automaticDownloads: this.downloadPreference.enabled } : {}),
       state: partial.state ?? this.status.state,
       current: this.currentVersion,
       applyKind: 'restart'
@@ -665,7 +711,49 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     }
   }
 
-  async download(options: UpdateDownloadOptions = {}): Promise<UpdateStatus> {
+  private publishDownloadPreference(): void {
+    const checkingReadyArtifact = this.readyCheckStatus === this.status
+    this.setStatus(this.status)
+    if (checkingReadyArtifact) this.readyCheckStatus = this.status
+  }
+
+  async setAutomaticDownloads(enabled: boolean): Promise<UpdateStatus> {
+    const preference = this.downloadPreference
+    if (!preference || typeof enabled !== 'boolean')
+      throw new Error('Unsupported download preference')
+    preference.setEnabled(enabled)
+    if (!enabled && this.status.state === 'downloading' && this.status.backgroundDownload) {
+      return this.cancel()
+    }
+    this.publishDownloadPreference()
+    return this.status
+  }
+
+  getBackgroundDownloadOffer(): UpdateStatus | undefined {
+    if (
+      this.downloadPreference?.enabled &&
+      !this.checkLifecycle &&
+      !this.downloadLifecycle &&
+      this.status.state === 'available' &&
+      this.status.latest !== this.cancelledDownloadVersion
+    )
+      return this.status
+    return undefined
+  }
+
+  async downloadInBackground(version: string): Promise<UpdateStatus> {
+    if (this.getBackgroundDownloadOffer()?.latest !== version) return this.status
+    return this.startDownload({ nonInteractive: true }, true)
+  }
+
+  download(options: UpdateDownloadOptions = {}): Promise<UpdateStatus> {
+    return this.startDownload(options, false)
+  }
+
+  private async startDownload(
+    options: UpdateDownloadOptions,
+    background: boolean
+  ): Promise<UpdateStatus> {
     // An active download is in flight; ignore repeat clicks / concurrent renderers. Starting a second
     // would overwrite downloadToken and orphan the first (cancel() could no longer stop it). This guard
     // and the token claim below are synchronous so a racing download()/cancel() sees a consistent slot.
@@ -706,6 +794,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.setStatus({
       ...this.status,
       state: 'downloading',
+      backgroundDownload: background || undefined,
       progress: 0,
       downloadedBytes: 0,
       downloadProgress: undefined,
@@ -723,6 +812,55 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         }
         // A cancel() during the drain means never start this download.
         if (token.cancelled) return
+        const artifact = this.macSparkle?.artifact
+        if (this.macSparkle && artifact) {
+          const cancellation = new AbortController()
+          this.patchDownload = cancellation
+          try {
+            const prepared = await this.macSparkle.prepare(
+              this.status.latest,
+              cancellation.signal,
+              (bytes) => {
+                if (!token.cancelled)
+                  this.setStatus({
+                    ...this.status,
+                    progress: Math.floor((bytes * 100) / artifact.patchSize),
+                    downloadedBytes: bytes
+                  })
+              }
+            )
+            if (token.cancelled) return
+            if (prepared) {
+              this.patchReadyVersion = this.status.latest
+              this.confirmedInstaller = undefined
+              this.installerInvalidated = false
+              this.setStatus({
+                ...this.status,
+                state: 'ready',
+                progress: 100,
+                localPath: undefined,
+                installerMissing: undefined,
+                backgroundDownload: undefined,
+                totalBytes: artifact.patchSize,
+                downloadedBytes: artifact.patchSize,
+                artifactSha512: artifact.zipSha512
+              })
+              operation.complete({ result: 'sparkle-patch' })
+              return
+            }
+          } catch (error) {
+            if (token.cancelled) return
+            this.log.warn('macOS patch unavailable; downloading ZIP', { error: String(error) })
+          } finally {
+            if (this.patchDownload === cancellation) this.patchDownload = undefined
+          }
+          this.setStatus({
+            ...this.status,
+            totalBytes: artifact.zipSize,
+            progress: 0,
+            downloadedBytes: 0
+          })
+        }
         if (this.installerInvalidated) {
           // The SDK's same-process cache shortcut checks existence only. Discard its invalidated
           // receipt through its own cleanup before another transfer may emit a completed artifact.
@@ -804,9 +942,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       }
     }
     if (this.applying) return this.status
+    this.patchDownload?.abort()
     this.downloadToken?.cancel()
     this.downloadToken = undefined
     if (this.status.state === 'downloading') {
+      this.cancelledDownloadVersion = this.status.latest
       this.setStatus(toAvailableUpdateStatus(this.status))
     }
     this.downloadOperation?.cancel({ reason: 'user' })
@@ -1035,7 +1175,14 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     const rollbackTrigger = this.markUpdateShutdown()
     this.pendingInstallRollback = rollbackTrigger
     this.installerStarted = true
+    const patchVersion = this.patchReadyVersion
     try {
+      if (patchVersion && this.macSparkle) {
+        await this.macSparkle.install(patchVersion, options.relaunch ?? true)
+        if (options.relaunch === false) app.quit()
+        operation.complete({ result: 'sparkle-handoff' })
+        return this.status
+      }
       // A supervised installer can exit the application before this hook returns.
       this.updateHandoff?.handoff()
       const executed = await this.installationHooks.executeInstall?.(this.status, options)
@@ -1050,6 +1197,35 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       rollbackTrigger()
       this.pendingInstallRollback = undefined
       this.releaseAbortedInstallHandoff()
+      if (patchVersion && this.installationHooks.recoverInstall) {
+        operation.fail(error, { result: 'sparkle-handoff-failed' })
+        this.log.warn('macOS patch handoff failed; restoring service before ZIP fallback', {
+          error: String(error)
+        })
+        try {
+          const recovered = await this.installationHooks.recoverInstall()
+          this.applying = false
+          this.installerStarted = false
+          if (recovered.recovery) {
+            this.setStatus({ ...this.status, state: 'ready', ...recovered })
+            return this.status
+          }
+        } catch (recoveryError) {
+          this.applying = false
+          this.installerStarted = false
+          this.setLifecycleFailure(recoveryError)
+          return this.status
+        }
+        this.setStatus(toAvailableUpdateStatus(this.status))
+        const downloaded = await this.download({ nonInteractive: true })
+        if (
+          downloaded.state === 'ready' &&
+          downloaded.localPath &&
+          downloaded.latest === patchVersion
+        )
+          return this.apply({ relaunch: options.relaunch })
+        return this.status
+      }
       this.applying = false
       this.installerStarted = false
       this.setStatus({

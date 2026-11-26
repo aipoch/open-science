@@ -73,9 +73,13 @@ const readCiphertexts = (options: { configRoot: string; profilePath?: string }):
     for (const provider of list(document.providers)) collectRef(record(provider).keyRef)
     for (const service of list(record(document.classification).services))
       collectRef(record(service).keyRef)
+    for (const service of list(document.imageServices)) collectRef(record(service).keyRef)
     const connectors = record(document.connectors)
     collectRef(connectors.ncbiApiKeyRef)
     collectRef(connectors.openAlexApiKeyRef)
+    // Retain retired refs in the startup inventory until an explicit migration removes them from
+    // settings.json. They are no longer exposed or writable, but skipping them could select a new
+    // credential identity before the encrypted legacy value is safely discarded.
     collectRef(connectors.semanticScholarApiKeyRef)
     for (const item of list(connectors.customMcpServers)) {
       const server = record(item)

@@ -4,7 +4,6 @@ import {
   LIFECYCLE_CHANNELS,
   MAIN_SESSION_DETAILS_LIFECYCLE_CLIENT_ID
 } from '../../shared/lifecycle-events'
-import type { LoadAllSessionsResult } from '../../shared/session-persistence'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import { createAcpRuntime } from '../acp/runtime-composition'
 import type { ApplicationEvents } from '../application-events'
@@ -45,7 +44,6 @@ export async function composeSessionSurfaces({
   sessionPersistenceCoordinator,
   uploadCommandOwner,
   reviewRepository,
-  startupSessionDetails,
   sessionPersistenceBackend,
   specialistService,
   specialistPackageService,
@@ -74,7 +72,6 @@ export async function composeSessionSurfaces({
   sessionPersistenceCoordinator: SessionPersistenceCommands
   uploadCommandOwner: ReturnType<typeof createUploadCommandOwner>
   reviewRepository: ReturnType<typeof createDefaultReviewRepository>
-  startupSessionDetails: { current: LoadAllSessionsResult['sessions'] | undefined }
   sessionPersistenceBackend: ReturnType<typeof coordinateSessionPersistenceWithProjectDeletions>
   specialistService: SpecialistService
   specialistPackageService: SpecialistPackageService
@@ -148,27 +145,7 @@ export async function composeSessionSurfaces({
       })
       const owner = createSessionDetailsOwner({
         sessions: {
-          listSessions: async () => {
-            const catalog = await dependencies.sessionPersistenceBackend.list!()
-            if (
-              catalog.diagnostics?.isComplete === false ||
-              catalog.diagnostics?.isProjectDeletionRecoveryComplete === false
-            )
-              return []
-            const sessions = await Promise.all(
-              catalog.sessions
-                .filter((session) => session.needsStartupRecovery)
-                .map((session) =>
-                  dependencies.sessionPersistenceBackend.loadOne({
-                    projectId: session.projectId,
-                    sessionId: session.id
-                  })
-                )
-            )
-            return sessions.filter(
-              (session): session is NonNullable<typeof session> => session !== undefined
-            )
-          },
+          listSessions: async () => [],
           mutateSession: (projectId, sessionId, mutation) =>
             dependencies.sessionPersistenceCoordinator.mutateSessionDetailsAuthority(
               projectId,
@@ -228,28 +205,47 @@ export async function composeSessionSurfaces({
         },
         log
       })
+      let disposed = false
       return {
         name: 'session-details',
         capability: owner,
         start: async () => {
+          disposed = false
           await inference
             .sweepStaleProfiles()
             .catch((error) =>
               log.warn('stale Session details profile cleanup failed', diagnosticErrorFields(error))
             )
           composition.phase('session-details-recovery')
-          const candidates = startupSessionDetails.current
-          startupSessionDetails.current = undefined
-          await owner.start(candidates)
+          const startInBackground = disposed ? Promise.resolve() : owner.start([])
+          void startInBackground.catch((error) =>
+            log.warn('Session details startup recovery failed', diagnosticErrorFields(error))
+          )
           composition.phase('session-details-ready')
         },
         dispose: async () => {
+          disposed = true
           await owner.shutdown()
           await inference.shutdown()
         }
       }
     }
   )
+  const loadOne = sessionPersistenceHandlers.loadOne
+  sessionPersistenceHandlers.loadOne = async (request) => {
+    const session = await loadOne(request)
+    if (session && request.recoverSessionDetails === true) {
+      void sessionDetailsOwner
+        .recoverSession(session)
+        .catch((error) =>
+          createLogger('session-details').warn(
+            'Session details recovery after opening failed',
+            diagnosticErrorFields(error)
+          )
+        )
+    }
+    return session
+  }
   const specialistApplicationOwner = createSpecialistApplicationOwner({
     service: specialistService,
     packages: specialistPackageService,

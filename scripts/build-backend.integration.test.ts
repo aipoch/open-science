@@ -38,6 +38,7 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
       `
       export * from '../shared/i18n/core';
       export { default as worker } from './locale-worker?nodeWorker';
+      export const diagnosticStack = () => new Error().stack;
     `
     )
     await put(
@@ -61,6 +62,14 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
       }
     }
     const cli = await readFile(join(root, 'out/backend/index.cjs'), 'utf8')
+    const cliMap = JSON.parse(await readFile(join(root, 'out/backend/index.cjs.map'), 'utf8'))
+    expect(cliMap.sourcesContent).toContainEqual(expect.stringContaining('diagnosticStack'))
+    const desktopOut = join(root, 'out/desktop-backend-build')
+    for (const file of (await readdir(desktopOut)).filter((name) => name.endsWith('.cjs.map'))) {
+      expect(JSON.parse(await readFile(join(desktopOut, file), 'utf8'))).not.toHaveProperty(
+        'sourcesContent'
+      )
+    }
     const metadata = JSON.parse(
       await readFile(join(root, 'out/desktop-backend-build/dependencies.json'), 'utf8')
     )
@@ -71,6 +80,8 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
         'utf8'
       )
     ).toContain((await readFile(join(packageRoot, 'LICENSE'), 'utf8')).trim())
+    // Stage only the build output, as the installed backend has no TypeScript source tree.
+    await cp(desktopOut, join(root, 'installed/resources/backend/out/backend'), { recursive: true })
     await put(
       'compare.cjs',
       `
@@ -85,7 +96,10 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
         return next(name, context);
       } });
       assert.throws(() => require('i18next'), /External translation dependency/);
-      const bundled = require('./out/desktop-backend-build/index.cjs');
+      const bundled = require('./installed/resources/backend/out/backend/index.cjs');
+      const mappedSource = path.join(__dirname, 'installed/resources/backend/src/main/node-entry.ts');
+      assert.equal(fs.existsSync(mappedSource), false);
+      assert.ok(bundled.diagnosticStack().includes(mappedSource + ':4:'));
       let comparisons = 0;
       for (const locale of ['en','de','es','fr','ja','ko','ru','zh-Hans','zh-Hant']) {
         const catalog = locale === 'en' ? { common: {}, native: {} } : JSON.parse(fs.readFileSync(path.join(__dirname, 'out/desktop-backend-build/native-locales', locale + '.json')));
@@ -112,7 +126,11 @@ it('isolates desktop bundles from CLI output and runs all native locales and wor
         OPEN_SCIENCE_INSTALLATION_STATE_ROOT: join(root, 'installation-state')
       }
     }
-    const comparisonOutput = execFileSync(process.execPath, [join(root, 'compare.cjs')], options)
+    const comparisonOutput = execFileSync(
+      process.execPath,
+      ['--enable-source-maps', join(root, 'compare.cjs')],
+      options
+    )
       .split(/\r?\n/)
       .filter((line) => line.startsWith('COMPARISON_RESULT='))
     expect(comparisonOutput).toHaveLength(1)

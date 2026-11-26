@@ -278,9 +278,14 @@ for (const concurrency of [1, 2, 4] as const) {
       await app.markResourceProfilePhase('translate-and-refresh')
       const translationStarted = performance.now()
       await panel.getByRole('button', { name: 'Translate document', exact: true }).click()
-      await expect(panel.getByRole('button', { name: 'New translation', exact: true })).toBeVisible(
-        { timeout: 300_000 }
-      )
+      const progress = panel.getByRole('group', { name: 'Translation progress' })
+      await expect(
+        progress.getByRole('button', {
+          name: `${pageCount * blocksPerPage} Translated`,
+          exact: true
+        })
+      ).toBeVisible({ timeout: 300_000 })
+      await expect(progress.getByRole('button', { name: '0 Failed', exact: true })).toBeVisible()
       const translationMs = performance.now() - translationStarted
       await expect(
         panel.getByRole('button', { name: 'View translated PDF', exact: true })
@@ -376,6 +381,12 @@ for (const concurrency of [1, 2, 4] as const) {
       await expect(paragraphButtons).toHaveAttribute('aria-expanded', 'false')
       await expect(paragraphButtons).toBeFocused()
       await page.screenshot({ path: testInfo.outputPath('sidebar-last-paragraph.png') })
+      await panel.locator('[data-translation-search]').press('Escape')
+      await expect(panel).toBeVisible()
+      await expect(
+        panel.getByRole('button', { name: 'Search translation', exact: true })
+      ).toBeFocused()
+      await expect(paragraphButtons).toHaveCount(pageCount * blocksPerPage)
       await app.markResourceProfilePhase('settled')
       await page.waitForTimeout(1000)
       await app.sampleResourceProfileNow()

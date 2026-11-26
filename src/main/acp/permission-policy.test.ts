@@ -1,5 +1,6 @@
 import type { RequestPermissionRequest, ToolKind } from '@agentclientprotocol/sdk'
 import { describe, expect, it } from 'vitest'
+import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
 
 import {
   isNativeWebFetchPermission,
@@ -40,6 +41,70 @@ const createPermissionRequest = (
 })
 
 describe('permission policy', () => {
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy', 'pi', 'open-science-agent'] as const)(
+    'allows mounted image tools in Auto and prompts in Ask on %s',
+    (frameworkId) => {
+      const server = 'open-science-images'
+      const context = {
+        profile: 'auto' as const,
+        frameworkId,
+        mcpServerNames: [server]
+      }
+      for (const tool of ['generate_image', 'edit_image']) {
+        const name = modelFacingAppMcpToolName(frameworkId, server, tool)
+        const titleOnly = createPermissionRequest('other', undefined, { title: name })
+        const reported = createPermissionRequest('other', undefined, { providerToolName: name })
+        const trusted = withTrustedMcpToolIdentity(titleOnly, `${server}/${tool}`)
+        expect(resolveAutomaticPermission(titleOnly, context)).toBeUndefined()
+        for (const request of [trusted, reported]) {
+          expect(resolveAutomaticPermission(request, context)).toBe('allow')
+          expect(
+            resolveAutomaticPermission(request, { ...context, profile: 'ask' })
+          ).toBeUndefined()
+          expect(
+            resolveAutomaticPermission(request, { ...context, mcpServerNames: [] })
+          ).toBeUndefined()
+        }
+        expect(
+          resolveAutomaticPermission(
+            withTrustedMcpToolIdentity(reported, `external/${tool}`),
+            context
+          )
+        ).toBeUndefined()
+        if (frameworkId === 'codex') {
+          const bridged = createPermissionRequest('other', undefined, {
+            providerToolName: modelFacingAppMcpToolName('codex', server, tool, true)
+          })
+          expect(
+            resolveAutomaticPermission(bridged, { ...context, modelRoute: 'codex-bridge' })
+          ).toBe('allow')
+        }
+      }
+    }
+  )
+
+  it('requires host route authority for automatic built-in Web permissions', () => {
+    const request = withTrustedMcpToolIdentity(
+      createPermissionRequest('fetch', undefined, {
+        providerToolName: 'mcp__open-science-web__web_fetch',
+        rawInput: { url: 'https://example.org' }
+      }),
+      'open-science-web/web_fetch'
+    )
+    const policy = {
+      profile: 'auto' as const,
+      frameworkId: 'open-science-agent' as const,
+      mcpServerNames: ['open-science-web']
+    }
+    expect(resolveAutomaticPermission(request, policy)).toBeUndefined()
+    expect(resolveAutomaticPermission(request, { ...policy, hostWebOperation: 'fetch' })).toBe(
+      'allow'
+    )
+    expect(
+      resolveAutomaticPermission(request, { ...policy, profile: 'ask', hostWebOperation: 'fetch' })
+    ).toBeUndefined()
+  })
+
   it('requires correlated Claude search identity and a text-only search input', () => {
     const raw = createPermissionRequest('fetch', undefined, {
       providerToolName: 'WebSearch',

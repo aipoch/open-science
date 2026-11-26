@@ -28,6 +28,7 @@ on:
           - e2e
           - source-regressions
           - macos-smoke
+          - update-occupancy
       comparison_base_sha:
         description: Test-selection diff base for module-coverage (full SHA; runs dispatch ref)
         type: string
@@ -55,6 +56,7 @@ jobs:
       lanes: ${{ steps.classify.outputs.lanes }}
       plan: ${{ steps.classify.outputs.plan }}
       windows_e2e_grep: ${{ steps.windows_mainline.outputs.grep }}
+      windows_e2e_groups: ${{ steps.windows_mainline.outputs.groups }}
       portable_matrix: ${{ steps.portable_matrix.outputs.matrix }}
       package_sources: ${{ steps.portable_matrix.outputs.package_sources }}
     steps:
@@ -181,6 +183,13 @@ jobs:
             echo "lanes=$(node -e 'console.log(JSON.stringify(JSON.parse(process.argv[1]).lanes))' "$plan")" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "update-occupancy" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:update-occupancy"],"lanes":["policy"],"bundles":["policy"],"reasonChains":["workflow_dispatch update-occupancy -> three native launch/admission checks"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "macos-smoke" ]]; then
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:macos-smoke"],"lanes":["policy","build","e2e_smoke_macos"],"bundles":["policy","macos_e2e"],"macosProfile":"smoke","macosGroups":["journeys"],"reasonChains":["focused single-runner macOS smoke"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
@@ -429,15 +438,43 @@ jobs:
             # The introducing PR cannot execute its own untrusted selection policy.
             # Conservatively run every mainline group, never complete regression suites.
             echo 'grep=@pr-mainline-(projects|conversation|files|notebook|windows)(\s|$)' >> "$GITHUB_OUTPUT"
+            echo 'groups=["projects","conversation","files","notebook","windows"]' >> "$GITHUB_OUTPUT"
             echo 'Windows E2E: all mainline groups (manual run or trusted selector not yet available).' >> "$GITHUB_STEP_SUMMARY"
           else
             git show "$TRUSTED_BASE_SHA:$selector" > "$TRUSTED_DIR/windows-e2e-mainline.mjs"
             node "$TRUSTED_DIR/windows-e2e-mainline.mjs"
           fi
+          # Older trusted selectors only emit the combined grep. Recover their group list so the
+          # matrix keeps the same selective coverage while the trusted script rolls forward.
+          if ! grep -q '^groups=.' "$GITHUB_OUTPUT"; then
+            GITHUB_OUTPUT="$GITHUB_OUTPUT" node --input-type=module <<'NODE'
+            import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
+
+            const output = readFileSync(process.env.GITHUB_OUTPUT, 'utf8')
+            const grep = output.split('\n').find((line) => line.startsWith('grep='))?.slice(5) ?? ''
+            const selected = grep || '@pr-mainline-(projects|conversation|files|notebook|windows)(\\s|$)'
+            const groups =
+              selected.match(/@pr-mainline-\(([^)]+)\)/)?.[1]?.split('|') ??
+              [selected.match(/@pr-mainline-([a-z]+)/)?.[1]].filter(Boolean)
+            const lines = output.split('\n')
+            const grepIndex = lines.findIndex((line) => line.startsWith('grep='))
+            if (grepIndex >= 0) lines[grepIndex] = `grep=${selected}`
+            else lines.push(`grep=${selected}`)
+            writeFileSync(
+              process.env.GITHUB_OUTPUT,
+              lines.join('\n') + (output.endsWith('\n') ? '' : '\n')
+            )
+            appendFileSync(
+              process.env.GITHUB_OUTPUT,
+              `groups=${JSON.stringify(groups.length ? groups : ['projects', 'conversation', 'files', 'notebook', 'windows'])}\n`
+            )
+          NODE
+          fi
           # Package documentation can retain domain checks while the focused selector skips Markdown.
           # Preserve every mainline group if the plan still selects the Windows E2E job.
           if ! grep -q '^grep=.' "$GITHUB_OUTPUT"; then
             echo 'grep=@pr-mainline-(projects|conversation|files|notebook|windows)(\s|$)' >> "$GITHUB_OUTPUT"
+            echo 'groups=["projects","conversation","files","notebook","windows"]' >> "$GITHUB_OUTPUT"
             echo 'Windows E2E: no focused journeys; retain all mainline groups if the job is selected.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -455,6 +492,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Check runtime helper registration
+        run: node scripts/ci/check-installation-helper-registration.mjs
       - name: Install registration toolchain
         # Static source/manifest checks only; no application install or native/package builds.
         run: npm ci --ignore-scripts --no-audit
@@ -548,6 +587,26 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Run ACP baseline coverage
+        id: acp_baseline
+        if: ${{ matrix.group == 'checks' }}
+        continue-on-error: true
+        run: npm run test:acp -- --scope=baseline
+      - name: Run ACP specialized coverage
+        id: acp_specialized
+        if: ${{ matrix.group == 'checks' }}
+        continue-on-error: true
+        run: npm run test:acp -- --scope=specialized
+      - name: Prepare representative ACP runtime
+        id: acp_runtime
+        if: ${{ matrix.group == 'checks' }}
+        continue-on-error: true
+        run: node scripts/ci/prepare-acp-test-runtime.mjs
+      - name: Run representative ACP coverage
+        id: acp_representative
+        if: ${{ matrix.group == 'checks' && (steps.acp_runtime.outcome == 'success') }}
+        continue-on-error: true
+        run: npm run test:acp -- --scope=representative
       - name: Check Markdown formatting
         id: docs
         if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'docs')) }}
@@ -651,6 +710,10 @@ jobs:
         shell: bash
         env:
           ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
+          ACP_BASELINE_OUTCOME: ${{ steps.acp_baseline.outcome }}
+          ACP_SPECIALIZED_OUTCOME: ${{ steps.acp_specialized.outcome }}
+          ACP_REPRESENTATIVE_OUTCOME: ${{ steps.acp_representative.outcome }}
+          ACP_RUNTIME_OUTCOME: ${{ steps.acp_runtime.outcome }}
           DOCS_OUTCOME: ${{ steps.docs.outcome }}
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           I18N_OUTCOME: ${{ steps.i18n.outcome }}
@@ -669,6 +732,10 @@ jobs:
             fi
           }
           check actionlint "$ACTIONLINT_OUTCOME"
+          check acp_baseline "$ACP_BASELINE_OUTCOME"
+          check acp_specialized "$ACP_SPECIALIZED_OUTCOME"
+          check acp_runtime "$ACP_RUNTIME_OUTCOME"
+          check acp_representative "$ACP_REPRESENTATIVE_OUTCOME"
           check docs "$DOCS_OUTCOME"
           check format "$FORMAT_OUTCOME"
           check lint "$LINT_OUTCOME"
@@ -1143,6 +1210,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify generated test dependencies
+        run: node scripts/check-prisma-client.mjs
       - name: Typecheck sandbox on Windows
         if: ${{ inputs.dry_run != 'windows-process' }}
         run: npm run typecheck:sandbox
@@ -1195,6 +1264,8 @@ jobs:
         id: windows_runtime
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_runtime')) }}
         continue-on-error: true
+        env:
+          RUN_KERNEL: '1'
         run: >-
           npx vitest run
           scripts/windows-dev-notebook-host.integration.test.ts
@@ -1226,6 +1297,12 @@ jobs:
           src/main/managed-preview-ipc.test.ts
           src/main/managed-preview-protocol.test.ts
           src/main/notebook/file-evidence-publication.integration.test.ts
+          src/main/notebook/resource-release.windows.integration.test.ts
+          src/main/notebook/memory-admission.windows.integration.test.ts
+          src/main/notebook/python-lifecycle.windows.integration.test.ts
+          src/main/composition/session-package-lifecycle.integration.test.ts
+          src/main/notebook/host-mcp.integration.test.ts
+          src/main/notebook/host-compute.integration.test.ts
           src/main/compute/compute-submission-evidence-recovery.integration.test.ts
           packages/specialists/src/repository.test.ts
           packages/environment/src/micromamba-cache-powershell.test.ts
@@ -1250,7 +1327,7 @@ jobs:
           VITEST_WINDOWS_FULL_TEST: '1'
         # Exercise the reported failures on a real Windows runner without expanding to its full suite.
         run: >-
-          npm test --
+          npx vitest run
           src/main/database/migration-service.test.ts
           scripts/ci/package-boundaries.test.ts
           src/main/desktop-startup-recovery.test.ts
@@ -1276,7 +1353,7 @@ jobs:
         run: |
           $env:OPEN_SCIENCE_TEST_PYTHON = python -c "import sys, pip, ensurepip; print(sys.executable)"
           if ($LASTEXITCODE -ne 0 -or -not $env:OPEN_SCIENCE_TEST_PYTHON) { throw 'Python with pip and ensurepip is required for wheel evidence tests.' }
-          npm test -- packages/environment/src/pip-wheel-evidence.test.ts packages/environment/src/pip-install-evidence.test.ts
+          npx vitest run packages/environment/src/pip-wheel-evidence.test.ts packages/environment/src/pip-install-evidence.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows notebook shell behavior
         id: windows_shell
@@ -1472,6 +1549,9 @@ jobs:
       - name: Install headless Chromium
         if: ${{ matrix.group == 'presentation' || (matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos')) }}
         run: npx playwright install chromium --only-shell
+      - name: Verify macOS ZIP differential downloads
+        if: matrix.group == 'journeys'
+        run: npx --no-install electron scripts/ci/macos-zip-differential.cjs
       - name: Test macOS-native behavior
         id: unit_macos_native
         if: ${{ matrix.group == 'journeys' && ((fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full') || (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') && fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded')) }}
@@ -1665,14 +1745,66 @@ jobs:
           if [[ "${E2E_GROUP:-}" == "delegation" && "${E2E_DELEGATION_OUTCOME:-}" != "success" ]]; then failed=1; fi
           exit "$failed"
 
-  windows_e2e:
-    name: Windows mainline E2E
+  windows_e2e_setup:
+    name: Prepare Windows E2E
     needs: [preflight, windows_notebook_runtime]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') && needs.windows_notebook_runtime.result == 'success' }}
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      node_version: ${{ steps.node.outputs.node-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        id: node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
+      - name: Build Electron application
+        # build:e2e includes the Web UI used by browser journeys.
+        run: npm run build:e2e
+      - name: Build Windows sandbox native host
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
+      - name: Download Windows Notebook runtime
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
+      - name: Test snapshot transport
+        run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
+      - name: Pack E2E setup
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
+      - name: Upload E2E setup
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: e2e-setup-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-setup/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  windows_e2e:
+    name: Windows mainline E2E (${{ matrix.group }})
+    needs: [preflight, windows_e2e_setup]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') && needs.windows_e2e_setup.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(needs.preflight.outputs.windows_e2e_groups) }}
     env:
-      E2E_GREP: ${{ needs.preflight.outputs.windows_e2e_grep }}
+      E2E_GREP: '@pr-mainline-${{ matrix.group }}(?:\s|$)'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1681,30 +1813,26 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
-          cache: npm
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
-      - name: Build Electron application
-        run: npm run build:e2e
-      - name: Build Windows sandbox native host
-        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
-      - name: Download Windows Notebook runtime
-        id: setup
+          node-version: ${{ needs.windows_e2e_setup.outputs.node_version }}
+          package-manager-cache: false
+      - name: Download E2E setup
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
-          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          artifact-ids: ${{ needs.windows_e2e_setup.outputs.artifact_id }}
+          path: ${{ runner.temp }}/e2e-setup/
           merge-multiple: true
+      - name: Restore E2E setup
+        id: setup
+        shell: bash
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Run mainline journeys
         id: e2e_functional_windows
         if: ${{ steps.setup.outcome == 'success' }}
         continue-on-error: true
         env:
-          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
-          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
-        # Mainline-only on every PR Gate entry point. Complete suites live in regression.
-        # All seven serial journeys already take ~10 minutes on hosted Windows runners.
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows_${{ matrix.group }}
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows_${{ matrix.group }}.json
+        # Each group gets an isolated Windows runner and keeps Playwright serial within its desktop.
         run: |
           if ([string]::IsNullOrWhiteSpace($env:E2E_GREP)) { throw 'Windows mainline selection is empty' }
           npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"
@@ -1713,7 +1841,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: functional-e2e-windows-failure
+          name: functional-e2e-windows-${{ matrix.group }}-failure
           path: |
             playwright-report/
             test-results/
@@ -1724,7 +1852,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: e2e-reports-windows
+          name: e2e-reports-windows-${{ matrix.group }}
           overwrite: true
           path: |
             blob-report/
@@ -1776,10 +1904,19 @@ jobs:
             test-results/e2e-timing.md
           retention-days: 5
 
+  # Keep this result inside the required PR Gate, not only the advisory lifecycle workflow.
+  update_occupancy:
+    needs: preflight
+    if: ${{ inputs.dry_run == 'update-occupancy' || ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.dry_run == 'classified' || !inputs.dry_run) && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'update_occupancy_source') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk'))) }}
+    uses: ./.github/workflows/update-occupancy.yml
+    with:
+      platform: all
+
   gate:
     name: PR Gate
     if: ${{ always() }}
     needs:
+      - update_occupancy
       - preflight
       - registration
       - policy
@@ -1791,6 +1928,7 @@ jobs:
       - linux_runtime
       - windows_core
       - macos_e2e
+      - windows_e2e_setup
       - windows_e2e
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1820,13 +1958,15 @@ jobs:
           PR_GATE_EXECUTION_MODE: bundles
           PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
           RUNTIME_REQUIRED: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'static') && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full') }}
+          UPDATE_OCCUPANCY_REQUIRED: ${{ inputs.dry_run == 'update-occupancy' || ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.dry_run == 'classified' || !inputs.dry_run) && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'update_occupancy_source') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk'))) }}
+          UPDATE_OCCUPANCY_RESULT: ${{ needs.update_occupancy.result }}
           RUNTIME_RESULT: ${{ needs.runtime_checks.result }}
           PACKAGE_RESULT: ${{ needs.package_verification.result }}
           PACKAGE_SOURCE_REQUIRED: ${{ needs.preflight.outputs.package_sources }}
           PACKAGE_SOURCE_RESULT: ${{ needs.package_source.result }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           REGISTRATION_RESULT: ${{ needs.registration.result }}
-          PR_GATE_NEEDS: '{"registration":{"result":"${{ needs.registration.result }}"},"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"runtime_checks":{"result":"${{ needs.runtime_checks.result }}"},"package_verification":{"result":"${{ needs.package_verification.result }}"},"package_source":{"result":"${{ needs.package_source.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
+          PR_GATE_NEEDS: '{"update_occupancy":{"result":"${{ needs.update_occupancy.result }}"},"registration":{"result":"${{ needs.registration.result }}"},"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"runtime_checks":{"result":"${{ needs.runtime_checks.result }}"},"package_verification":{"result":"${{ needs.package_verification.result }}"},"package_source":{"result":"${{ needs.package_source.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e_setup":{"result":"${{ needs.windows_e2e_setup.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
         run: |
           set -euo pipefail
           if [[ "$PREFLIGHT_RESULT" != "success" ]]; then
@@ -1835,6 +1975,10 @@ jobs:
           fi
           if [[ "$REGISTRATION_RESULT" != "success" ]]; then
             echo "Impact registration ended with $REGISTRATION_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$UPDATE_OCCUPANCY_REQUIRED" == "true" && "$UPDATE_OCCUPANCY_RESULT" != "success" ]]; then
+            echo "Selected update occupancy gate ended with $UPDATE_OCCUPANCY_RESULT" >&2
             exit 1
           fi
           if [[ "$RUNTIME_REQUIRED" == "true" && "$RUNTIME_RESULT" != "success" ]]; then

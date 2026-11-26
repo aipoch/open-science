@@ -32,9 +32,11 @@ const TASK_RUN_REQUEST_FIELDS = {
   project: true,
   prompt: true,
   cwd: true,
+  notebookRuntime: true,
   sessionId: true,
   permissionProfile: true,
   permissionPrompts: true,
+  interactionMode: true,
   skillIds: true,
   turnIntent: true,
   autoReviewEnabled: true,
@@ -173,6 +175,27 @@ const projectThroughRendererAdapters = (
 }
 
 describe('renderer surface compatibility matrix', () => {
+  it('exposes the Session catalog hydration completion event on Electron and Web', () => {
+    expect(
+      RENDERER_CONTRACT_CATALOG.find(({ publicPath }) => publicPath === 'sessions.onCatalogChanged')
+    ).toMatchObject({
+      channel: 'sessions:catalog-changed',
+      surfaceInstallation: {
+        electron: 'preload',
+        localWeb: 'web-event',
+        remoteWeb: 'web-event'
+      }
+    })
+    expect(WEB_EVENT_CHANNELS['sessions.onCatalogChanged']).toBe('sessions:catalog-changed')
+    expect(
+      projectThroughRendererAdapters(
+        'sessions.onCatalogChanged',
+        'sessions:catalog-changed',
+        undefined
+      )
+    ).toEqual({ electronPayload: undefined, webPayload: undefined })
+  })
+
   it('publishes the authoritative Session delegation mutation on Electron and both Web locations', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.find(
@@ -316,7 +339,9 @@ describe('renderer surface compatibility matrix', () => {
       'cwd',
       'delegationPolicy',
       'enabledComputeHostIds',
+      'interactionMode',
       'memoryEnabled',
+      'notebookRuntime',
       'permissionProfile',
       'permissionPrompts',
       'project',

@@ -249,7 +249,7 @@ const highlightNavigatedPanel = (panel: SettingsPanelId, anchor?: string): (() =
       }
       // Scroll first with the highlight's scroll-margin for breathing room, then move focus
       // without scrolling again.
-      target.scrollIntoView({ block: 'nearest' })
+      target.scrollIntoView?.({ block: 'nearest' })
       target.focus({ preventScroll: true })
       // The class's own animation fades the ring out; this timer just removes it afterwards.
       timers.push(window.setTimeout(stripRing, 1600))

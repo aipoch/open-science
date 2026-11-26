@@ -412,6 +412,9 @@ it.each([
   ['Polarisation Controller', '偏振控制器'],
   ['Polarization Controller', '偏振控制器'],
   ['Date Range', '日期范围'],
+  ['Scan Number', '扫描编号'],
+  ['Scan Count', '扫描次数'],
+  ['Planet Star Mass Ratio', '行星与恒星的质量比'],
   ['Chl Range', 'Chl 范围'],
   ['COMMUTATIVE ALGEBRA', '交换代数']
 ])('translates a complete ordinary scientific label: %s', (source, target) => {
@@ -424,6 +427,8 @@ it.each([
   ['Input Sequence NimbusNet', '输入序列'],
   ['Physical Validity Foundation', '物理有效性基金会'],
   ['Date Range Research', '日期范围研究'],
+  ['Scan Count Foundation', '扫描次数基金会'],
+  ['Mass Ratio Research', '质量比研究所'],
   ['Polarization Controller Institute', '偏振控制器研究所']
 ])('keeps names containing ordinary label words protected: %s', (source, target) => {
   expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(true)
@@ -454,6 +459,59 @@ it('rejects a translated standalone proper name', () => {
   )
 })
 
+it.each(['References', 'RE FER EN CES', ' RE\u00a0FER\nEN CES '])(
+  'restores the translated references heading regardless of PDF letter spacing: %s',
+  (source) => {
+    const translation = '参考文献'
+    expect(pdfTranslationDropsStandaloneProperName(source, translation)).toBe(false)
+    expect(pdfTranslationCopiesEnglishProse(source, source, 'Chinese')).toBe(true)
+    const checkpoint = {
+      ...saved,
+      sources: [source],
+      translations: [translation],
+      translatedSourceIndices: [0]
+    }
+    expect(reconcilePdfTranslationCheckpoint(checkpoint, saved.fingerprint, [source])).toBe(
+      checkpoint
+    )
+  }
+)
+
+it.each(['References Institute', 'REF ERENCES Institute', 'Nimbus Net'])(
+  'does not exempt a standalone name from checkpoint validation: %s',
+  (source) => {
+    const translation = '参考文献研究所'
+    expect(pdfTranslationDropsStandaloneProperName(source, translation)).toBe(true)
+    const checkpoint = {
+      ...saved,
+      sources: [source],
+      translations: [translation],
+      translatedSourceIndices: [0]
+    }
+    expect(
+      reconcilePdfTranslationCheckpoint(checkpoint, saved.fingerprint, [source])?.translations
+    ).toEqual([])
+  }
+)
+
+it('accepts a rubric criterion translation and preserves a containing organization name', () => {
+  const criterion = 'Algebraic Procedures'
+  const translation = '代数步骤'
+  expect(pdfTranslationDropsStandaloneProperName(criterion, translation)).toBe(false)
+  expect(pdfTranslationDropsStandaloneProperName(`${criterion} Institute`, '代数步骤研究所')).toBe(
+    true
+  )
+  const checkpoint = {
+    ...saved,
+    sources: [criterion],
+    translations: [translation],
+    translatedSourceIndices: [0]
+  }
+  expect(reconcilePdfTranslationCheckpoint(checkpoint, saved.fingerprint, [criterion])).toEqual(
+    checkpoint
+  )
+})
+
 it.each(
   readPdfTranslationCases<{
     name: string
@@ -472,6 +530,31 @@ it.each(
   ).toEqual([translation])
   if (negativeTranslation)
     expect(pdfTranslationDropsStandaloneProperName(source, negativeTranslation)).toBe(true)
+})
+
+it.each([
+  ['ASSESSING MODELING SKILLS', '评估建模技能', true],
+  ['EXAMINING COMMON ERRORS', '分析常见错误', true],
+  ['CLOSING REMARKS', '结束语', true],
+  ['RESULTS AND DISCUSSION', '结果与讨论', true],
+  ['BOUNDARY CONDITIONS', '边界条件', true],
+  ['CONCLUSIONS AND SCOPE', '结论与适用范围', true],
+  ['Sampling Positions', '采样位置', true],
+  ['Boundary Conditions Studio', '边界条件工作室', false],
+  ['Sampling Positions Foundation', '采样位置基金会', false],
+  ['Meadow Modeling Skills Institute', '草原建模技能研究所', false],
+  ['Common Errors Foundation', '常见错误基金会', false]
+])('distinguishes complete academic headings from names: %s', (source, translation, accepted) => {
+  expect(pdfTranslationDropsStandaloneProperName(source, translation)).toBe(!accepted)
+  const checkpoint = {
+    ...saved,
+    sources: [source],
+    translatedSourceIndices: [0],
+    translations: [translation]
+  }
+  expect(reconcilePdfTranslationCheckpoint(checkpoint, 'fp', [source])?.translations).toEqual(
+    accepted ? [translation] : []
+  )
 })
 
 it.each([
@@ -851,9 +934,13 @@ it.each([
   ['Additional Results', '补充结果'],
   ['Implementation Details', '实现细节'],
   ['Data Availability', '数据可用性'],
+  ['FUNDING INFORMATION', '资助信息'],
   ['Ethical Considerations', '伦理考量'],
   ['COMPUTATION DETAILS', '计算细节'],
   ['TARGET SIMULATIONS', '靶材模拟'],
+  ['BRIGHTNESS SIMULATION', '亮度模拟'],
+  ['SKY PREDICTIONS', '天空预测'],
+  ['FUTURE PLANS', '后续计划'],
   ['A.1 Ethics Statement', 'A.1 伦理声明'],
   ['A.2 Open Science Statement', 'A.2 开放科学声明'],
   ['3.1 Training Details', '3.1 训练细节'],
@@ -870,7 +957,8 @@ it.each([
 it.each([
   ['A.1 Ethics Statement', 'A.1 伦理 Statement'],
   ['Open Science Statement', 'Open Science 声明'],
-  ['Training Details', '训练 Details']
+  ['Training Details', '训练 Details'],
+  ['SKY PREDICTIONS', '天空 Predictions']
 ])('rejects an untranslated word within a known complete heading: %s', (source, target) => {
   expect(pdfTranslationCopiesEnglishProse(source, target, 'Chinese')).toBe(true)
 })
@@ -882,8 +970,12 @@ it.each([
   ['Additional Results Lab', '补充结果实验室'],
   ['Implementation Details Association', '实现细节协会'],
   ['Data Availability Foundation', '数据可用性基金会'],
+  ['Funding Information Foundation', '资助信息基金会'],
   ['Ablation Study Foundation', '消融研究基金会'],
   ['Outlook Research Institute', '展望研究所'],
+  ['Future Plans Foundation', '未来规划基金会'],
+  ['Brightness Simulation Lab', '亮度模拟实验室'],
+  ['Sky Predictions Foundation', '天空预测基金会'],
   ['EthicsStatement', '伦理声明'],
   ['OpenScience', '开放科学'],
   ['ABC Ethics Statement', 'ABC 伦理声明'],
@@ -1036,4 +1128,12 @@ it.each([
   ['Defense Setting Foundation', '防御设置基金会']
 ])('preserves complete identifiers and unknown names in %s', (source, target) => {
   expect(pdfTranslationDropsStandaloneProperName(source, target)).toBe(true)
+})
+
+it.each([
+  ['a resolution of 2.6 ˚A.', '分辨率为 2.6 ˚A。', '分辨率为 2.6 Å。'],
+  ['a resolution of 2.6 ˚A.', '分辨率为 2.8 ˚A。', '分辨率为 2.8 ˚A。'],
+  ['An arbitrary label reads 2.6 ˚A.', '标签是 2.6 ˚A。', '标签是 2.6 ˚A。']
+])('composes the admitted resolution unit in the translation', (source, target, expected) => {
+  expect(normalizePdfTranslationText(source, target)).toBe(expected)
 })

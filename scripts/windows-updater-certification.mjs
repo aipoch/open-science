@@ -1,12 +1,24 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
+import { rejects } from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
+import { setTimeout as delay } from 'node:timers/promises'
 import { basename, join, resolve, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
@@ -28,7 +40,9 @@ import {
   fetchWithTimeout,
   findSetupInstaller,
   installerVersion,
+  installApplication,
   installAndProbe,
+  launchAndExpectDatabaseBlocked,
   launchAndProbe,
   launchUninstallerLockHolder,
   runProcess,
@@ -55,6 +69,27 @@ const sha512Base64 = async (path) =>
   createHash('sha512')
     .update(await readFile(path))
     .digest('base64')
+
+// Model a cached package without duplicating a full extracted installer on the runner.
+const seedPreparedFixture = async (root, executable, version, fileName, marker) => {
+  const canonical = await realpath(executable)
+  const sha512 = createHash('sha512').update(randomUUID()).digest('base64')
+  const id = createHash('sha256')
+    .update(canonical.toLowerCase())
+    .update('\0')
+    .update(sha512)
+    .digest('hex')
+    .slice(0, 32)
+  const stage = join(root, id)
+  await mkdir(join(stage, 'payload'), { recursive: true })
+  await writeFile(join(stage, 'payload', 'sample'), 'prepared payload')
+  await writeFile(
+    join(stage, marker),
+    JSON.stringify({ executable: canonical, version, fileName, sha512 }),
+    { flag: 'wx' }
+  )
+  return stage
+}
 
 const verifyCachedInstaller = async (source, cached) => {
   const [sourceHash, cachedHash] = await Promise.all([sha512Base64(source), sha512Base64(cached)])
@@ -97,6 +132,8 @@ const parseArguments = (argv) => {
     currentDirectory: resolve(currentDirectory),
     previousDirectory: resolve(previousDirectory),
     output: resolve(output),
+    ...(argv.includes('--rollback') ? { rollback: true } : {}),
+    ...(argv.includes('--cold-launch') ? { coldLaunch: true } : {}),
     ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {}),
     ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {}),
     ...(argv.includes('--windows-recovery') ? { windowsRecovery: true } : {}),
@@ -443,13 +480,195 @@ exit $exitCode
   return { ready, exit }
 }
 
+const waitForInstalledApplicationsToExit = (installDirectory, env) =>
+  runProcess(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      [
+        "$ErrorActionPreference = 'Stop'",
+        "$prefix = $env:OPEN_SCIENCE_SMOKE_INSTALL_DIR + '\\'",
+        '$deadline = [DateTime]::UtcNow.AddSeconds(60)',
+        'do {',
+        '  $owners = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })',
+        '  if (!$owners.Count) { exit 0 }',
+        '  Start-Sleep -Milliseconds 250',
+        '} while ([DateTime]::UtcNow -lt $deadline)',
+        'throw ("Desktop quit left installation processes running: " + (($owners | Select-Object Name, ProcessId, ParentProcessId | ConvertTo-Json -Compress)))'
+      ].join('\n')
+    ],
+    { env: { ...env, OPEN_SCIENCE_SMOKE_INSTALL_DIR: installDirectory } }
+  )
+
+// The isolated profile survives successive launches. Keep only this launch's records,
+// including any that rotated while NSIS handed off to the new desktop.
+const readShortcutEvidence = async (env, since) => {
+  const directory = join(env.OPEN_SCIENCE_USER_DATA, 'desktop-logs')
+  const scans = []
+  const decisions = []
+  for (const name of await readdir(directory)) {
+    if (!/^main(?:\.\d+)?\.log$/.test(name)) continue
+    const lines = (await readFile(join(directory, name), 'utf8')).split('\n').slice(0, -1)
+    for (const line of lines) {
+      if (
+        !line.includes('Windows installation occupancy inspected') &&
+        !line.includes('"windows-prepared-update"')
+      )
+        continue
+      const { t, scope, msg, data } = JSON.parse(line)
+      if (!(Date.parse(t) >= since)) continue
+      if (scope === 'windows-prepared-update') decisions.push({ t, msg, data })
+      if (scope === 'update' && msg === 'Windows installation occupancy inspected') {
+        const { fileCount, resourceCount, enumMs, rmMs, durationMs } = data
+        scans.push({ t, fileCount, resourceCount, enumMs, rmMs, durationMs })
+      }
+    }
+  }
+  const byTime = (a, b) => a.t.localeCompare(b.t)
+  return { scans: scans.sort(byTime), decisions: decisions.sort(byTime) }
+}
+
+// A new cold launch can recheck on holder exit or after the product's one-minute cache expires.
+const shortcutBlockerCacheMs = 60_000
+const waitForShortcutRecheck = async (pids) => {
+  const deadline = performance.now() + shortcutBlockerCacheMs
+  while (
+    performance.now() < deadline &&
+    pids.some((pid) => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch (error) {
+        if (error.code === 'ESRCH') return false
+        if (error.code === 'EPERM') return true
+        throw error
+      }
+    })
+  )
+    await delay(250)
+}
+
+const certifyShortcutVersion = async (launch, expectedVersion, released) => {
+  let observation = await launch()
+  if (released && observation.current === released.previousVersion && observation.scans.length) {
+    const last = observation.decisions.at(-1)
+    const data = last?.data
+    const pids = Array.isArray(data?.blockers) ? data.blockers.map((blocker) => blocker?.pid) : []
+    if (
+      last?.msg === 'Prepared update deferred at startup' &&
+      data?.reason === 'installation-busy' &&
+      data.detail === 'foreign-process' &&
+      pids.length &&
+      pids.every((pid) => Number.isSafeInteger(pid) && pid > 0 && pid !== released.holderPid)
+    ) {
+      console.log('Released shortcut deferred by a different file holder:', JSON.stringify(last))
+      await released.waitForRecheck(pids)
+      observation = await launch()
+    }
+  }
+  if (observation.current !== expectedVersion)
+    throw new Error(
+      `Shortcut opened ${observation.current}, expected ${expectedVersion}. Handoff decisions: ${JSON.stringify(observation.decisions)}`
+    )
+  return observation.scans
+}
+
+// Launch the installer-created link itself. Its unchanged target and the version reported by
+// the healthy renderer distinguish activation from a harness that launched the staged exe.
+const launchInstalledShortcut = async (installDirectory, env, expectedVersion) => {
+  const portFile = join(env.OPEN_SCIENCE_USER_DATA, 'DevToolsActivePort')
+  await rm(portFile, { force: true })
+  const startedAt = Date.now()
+  await runProcess(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      [
+        "$ErrorActionPreference = 'Stop'",
+        "$shortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Open-Science.lnk'",
+        '$target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath',
+        "if ($target -ne $env:OPEN_SCIENCE_EXPECTED_SHORTCUT) { throw 'Unexpected desktop shortcut' }",
+        "Start-Process -FilePath $shortcut -ArgumentList '--remote-debugging-port=0'"
+      ].join('\n')
+    ],
+    { env: { ...env, OPEN_SCIENCE_EXPECTED_SHORTCUT: join(installDirectory, 'open-science.exe') } }
+  )
+  const browser = await waitFor(
+    'the workspace launched through the shortcut',
+    async () => {
+      const port = (await readFile(portFile, 'utf8')).split('\n')[0]
+      const pages = await (await fetchWithTimeout(`http://127.0.0.1:${port}/json/list`)).json()
+      if (!pages.some((target) => target.type === 'page' && target.url.startsWith('file:'))) return
+      return chromium.connectOverCDP(`http://127.0.0.1:${port}`)
+    },
+    UPDATE_TIMEOUT_MS
+  )
+  try {
+    const page = browser
+      .contexts()
+      .flatMap((context) => context.pages())
+      .find((page) => page.url().startsWith('file:'))
+    await page.waitForFunction(
+      async () => (await window.api?.databaseStartup.getState())?.phase === 'ready'
+    )
+    const { current } = await page.evaluate(() => window.api.update.getStatus())
+    const { scans, decisions } = await readShortcutEvidence(env, startedAt)
+    console.log('Shortcut occupancy scans:', JSON.stringify({ expectedVersion, current, scans }))
+    // The database can already be ready while the renderer is still hydrating. Quit from the
+    // interactive home screen so its normal persistence and confirmation handlers are mounted.
+    await page
+      .locator('[data-home-scroll]')
+      .waitFor({ state: 'attached', timeout: UPDATE_TIMEOUT_MS })
+    console.log(`Original shortcut opened the home screen on ${current}.`)
+    page.on('console', (message) => {
+      if (message.text().startsWith('Smoke quit confirmation:')) console.log(message.text())
+    })
+    await page.evaluate(() => {
+      window.api.window.onCloseConfirmRequest(({ requestId, variant }) => {
+        console.info('Smoke quit confirmation:', variant)
+        if (variant === 'quit')
+          window.api.window.sendCloseConfirmResponse({ requestId, choice: 'quit' })
+      })
+      void window.api.databaseStartup.quit()
+    })
+    try {
+      await waitForInstalledApplicationsToExit(installDirectory, env)
+    } catch (error) {
+      const dialogs = await page
+        .locator('[role="alertdialog"], [role="alert"]')
+        .allTextContents()
+        .catch(() => [])
+      throw new Error(
+        `Shortcut version ${current} did not exit. Visible notices: ${JSON.stringify(dialogs)}`,
+        { cause: error }
+      )
+    }
+    return { current, scans, decisions }
+  } finally {
+    await browser.close()
+  }
+}
+
+const probeInstalledShortcut = (installDirectory, env, expectedVersion, released) =>
+  certifyShortcutVersion(
+    () => launchInstalledShortcut(installDirectory, env, expectedVersion),
+    expectedVersion,
+    released
+  )
+
 const runElectronUpdater = async ({
   executable,
   env,
   expectedVersion,
   expectedInstaller,
   onDownloaded,
+  transferMetrics,
   beforeApply,
+  coldLaunch,
   ownedAgentFixture,
   windowsRecovery,
   notebook,
@@ -465,6 +684,23 @@ const runElectronUpdater = async ({
         PATH: ''
       }
     : env
+  const preparedRoot = join(
+    win32.dirname(win32.dirname(expectedInstaller)),
+    'open-science-prepared'
+  )
+  let claimedFixture
+  if (coldLaunch) {
+    // Model an already-claimed, superseded build of the same version. Only the SDK's current
+    // installer is genuine; the desktop must leave this receipt alone until the new app starts.
+    const directory = await seedPreparedFixture(
+      preparedRoot,
+      executable,
+      expectedVersion,
+      basename(expectedInstaller),
+      'installing.json'
+    )
+    claimedFixture = join(directory, 'installing.json')
+  }
   const child = spawn(executable, ['--remote-debugging-port=0'], {
     env: appEnv,
     windowsHide: true
@@ -541,20 +777,81 @@ const runElectronUpdater = async ({
       return status
     }
 
-    const checked = await withTimeout(invoke('check'), 'electron-updater check')
+    const checked = coldLaunch
+      ? await waitFor('scheduled startup offer', async () => {
+          const status = await page.evaluate(() => window.api.update.getStatus())
+          return status.state === 'available' && status.automaticDownloads ? status : undefined
+        })
+      : await withTimeout(invoke('check'), 'electron-updater check')
     if (checked.state !== 'available' || checked.latest !== expectedVersion) {
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
+    }
+    let admission
+    if (coldLaunch) {
+      // CI can start the desktop without a foreground HWND. The product admission rule is
+      // lack of focus. Use the actual tray action only when a foreground window needs hiding.
+      phase = 'background-download'
+      const connection = await runProcess(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          [
+            "$ErrorActionPreference = 'Stop'",
+            '$profileInfo = [Windows.Networking.Connectivity.NetworkInformation, Windows.Networking.Connectivity, ContentType=WindowsRuntime]::GetInternetConnectionProfile()',
+            "if (!$profileInfo) { throw 'Runner has no Internet connection profile' }",
+            '$cost = $profileInfo.GetConnectionCost()',
+            '$cost | Select-Object NetworkCostType, Roaming, OverDataLimit, ApproachingDataLimit, BackgroundDataUsageRestricted | ConvertTo-Json -Compress'
+          ].join('\n')
+        ],
+        { env }
+      )
+      console.log('Windows connection cost at download admission:', connection.stdout.trim())
+      const cost = JSON.parse(connection.stdout)
+      admission =
+        cost.NetworkCostType === 1 &&
+        !cost.Roaming &&
+        !cost.OverDataLimit &&
+        !cost.ApproachingDataLimit &&
+        !cost.BackgroundDataUsageRestricted
+          ? 'unrestricted'
+          : 'restricted-or-unknown'
+      if (await page.evaluate(() => document.hasFocus())) {
+        await page.evaluate(async () => {
+          await window.api.settings.setClosePreference({ preference: 'minimize' })
+          await window.api.window.close()
+        })
+      }
+      if (admission === 'restricted-or-unknown') {
+        // Hosted Windows Server commonly reports Unknown. Observe a full admission interval,
+        // then exercise the real user's Download action to certify preparation and cold launch.
+        await delay(65_000)
+        const status = await page.evaluate(() => window.api.update.getStatus())
+        if (
+          status.state !== 'available' ||
+          transferMetrics.blockmapRequests ||
+          transferMetrics.downloadedInstallerBytes
+        )
+          throw new Error(
+            'An ineligible connection started a background transfer: ' +
+              JSON.stringify(transferMetrics)
+          )
+        await invoke('download')
+      }
     }
     await waitFor(
       'electron-updater differential download',
       async () => {
-        const status = await invoke('download')
+        const status = coldLaunch
+          ? await page.evaluate(() => window.api.update.getStatus())
+          : await invoke('download')
         const classification = classifyUpdaterDownloadStatus(status, expectedVersion)
         if (classification === 'ready') return status
         if (classification === 'pending') return undefined
         throw new Error(`Unexpected updater download result: ${JSON.stringify(status)}`)
       },
-      UPDATE_TIMEOUT_MS
+      coldLaunch ? UPDATE_TIMEOUT_MS + 60_000 : UPDATE_TIMEOUT_MS
     )
     if (
       windowsRecovery &&
@@ -565,6 +862,43 @@ const runElectronUpdater = async ({
       )
     await onDownloaded(ownedEvidence)
     await beforeApply?.({ invoke, page })
+
+    if (coldLaunch) {
+      phase = 'background-extraction'
+      await waitFor(
+        'verified background extraction',
+        async () => {
+          const sdk = JSON.parse(
+            await readFile(join(win32.dirname(expectedInstaller), 'update-info.json'), 'utf8')
+          )
+          for (const name of await readdir(preparedRoot)) {
+            if (name === basename(win32.dirname(claimedFixture))) continue
+            const receipt = JSON.parse(
+              await readFile(join(preparedRoot, name, 'ready.json'), 'utf8')
+            )
+            if (
+              receipt.version === expectedVersion &&
+              receipt.fileName === basename(expectedInstaller) &&
+              receipt.sha512 === sdk.sha512
+            )
+              return true
+          }
+          return false
+        },
+        UPDATE_TIMEOUT_MS
+      )
+      await stat(claimedFixture)
+      await page.evaluate(() => {
+        void window.api.databaseStartup.quit()
+      })
+      const code = await waitForShutdownExit(exit, child, diagnosticOutput)
+      if (code !== 0) throw new Error(`Normal desktop quit failed (${code})`)
+      return {
+        normalQuit: true,
+        admission,
+        downloadInitiator: admission === 'unrestricted' ? 'scheduler' : 'manual'
+      }
+    }
 
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
     // installation handoff finished. Attach a read-only watcher before applying the update to avoid
@@ -579,10 +913,7 @@ const runElectronUpdater = async ({
     // handled immediately; the original promise is still awaited below or during failure cleanup.
     void installerExit.catch(() => undefined)
     await withTimeout(observer.ready, 'installer observer readiness', 60_000)
-    const applied = await invoke('apply')
-    if (applied.state !== 'applying') {
-      throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
-    }
+    await applyWithOccupancyRecheck(invoke)
     // Preflight can perform a cold resource scan. Its time must not consume the app-exit budget.
     const exitCode = await waitForShutdownExit(exit, child, diagnosticOutput)
     if (exitCode !== 0)
@@ -656,6 +987,41 @@ const runElectronUpdater = async ({
   }
 }
 
+const isForeignOccupancy = (status) =>
+  status.state === 'ready' &&
+  status.reason === 'installation-busy' &&
+  status.recovery?.detail === 'foreign-process'
+
+const isTransientRuntimeDisconnect = (status) =>
+  status.state === 'ready' &&
+  status.reason === 'runtime-not-controlled' &&
+  status.error === 'Desktop runtime is disconnected.'
+
+const waitForInstallRetry = async (invoke) => {
+  const status = await waitFor(
+    'external file holder to release installation files',
+    async () => {
+      const checked = await invoke('recheck')
+      return isForeignOccupancy(checked) || isTransientRuntimeDisconnect(checked)
+        ? undefined
+        : checked
+    },
+    30_000
+  )
+  if (status.state !== 'ready' || status.reason || !status.recovery?.canRetryInstall)
+    throw new Error(`Unexpected updater recheck result: ${JSON.stringify(status)}`)
+}
+
+const applyWithOccupancyRecheck = async (invoke) => {
+  let applied = await invoke('apply')
+  if (isForeignOccupancy(applied)) {
+    await waitForInstallRetry(invoke)
+    applied = await invoke('apply')
+  }
+  if (applied.state !== 'applying')
+    throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
+}
+
 const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked }) => {
   const lock = await acquireLock()
   const observations = []
@@ -686,19 +1052,7 @@ const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked })
   } finally {
     await lock.release()
   }
-  await waitFor(
-    'released file holder to allow retry',
-    async () => {
-      const status = await command('recheck')
-      if (status.state === 'ready' && !status.reason && status.recovery?.canRetryInstall)
-        return status
-      if (status.reason === 'installation-busy') return undefined
-      throw new Error(
-        `Released file holder returned an unexpected status: ${JSON.stringify(status)}`
-      )
-    },
-    30_000
-  )
+  await waitForInstallRetry(command)
   console.log(`External process recovery: ${JSON.stringify(observations)}`)
   return observations
 }
@@ -774,6 +1128,7 @@ const main = async () => {
   ])
 
   let installed = false
+  let nextPreparation
   let assetServer
   let primaryError
   let observation
@@ -867,6 +1222,8 @@ const main = async () => {
         basename(currentInstaller)
       ),
       onDownloaded: persistObservation,
+      transferMetrics: assetServer.metrics,
+      coldLaunch: options.coldLaunch,
       ownedAgentFixture,
       windowsRecovery: options.windowsRecovery,
       notebook: options.notebook,
@@ -934,7 +1291,66 @@ const main = async () => {
       },
       UPDATE_TIMEOUT_MS
     )
-    await terminateDirectoryProcesses(installDirectory)
+    if (options.coldLaunch) await waitForInstalledApplicationsToExit(installDirectory, env)
+    else await terminateDirectoryProcesses(installDirectory)
+    if (options.coldLaunch) {
+      // The upgrade's nested uninstall must leave a future preparation for this installation.
+      const nextVersion = currentVersion.replace(/\d+$/, (patch) => String(Number(patch) + 1))
+      const prepared = join(updaterCache, 'open-science-prepared')
+      nextPreparation = await seedPreparedFixture(
+        prepared,
+        installedExecutable,
+        nextVersion,
+        basename(currentInstaller),
+        'ready.json'
+      )
+      const { child } = await launchUninstallerLockHolder(
+        installDirectory,
+        env,
+        undefined,
+        undefined,
+        undefined,
+        'Read'
+      )
+      try {
+        const heldStart = performance.now()
+        successor.shortcutOccupancyScans = {
+          held: await probeInstalledShortcut(installDirectory, env, previousVersion)
+        }
+        successor.shortcutOccupancyScans.stillHeld = await probeInstalledShortcut(
+          installDirectory,
+          env,
+          previousVersion
+        )
+        if (
+          !successor.shortcutOccupancyScans.held.length ||
+          (performance.now() - heldStart < shortcutBlockerCacheMs &&
+            successor.shortcutOccupancyScans.stillHeld.length)
+        )
+          throw new Error(
+            'Expected one initial occupancy check and no rescan of the same live holder.'
+          )
+      } finally {
+        await terminateProcessTree(child)
+      }
+      successor.shortcutOccupancyScans.released = await probeInstalledShortcut(
+        installDirectory,
+        env,
+        currentVersion,
+        { previousVersion, holderPid: child.pid, waitForRecheck: waitForShortcutRecheck }
+      )
+      if (!successor.shortcutOccupancyScans.released.length)
+        throw new Error('The update must recheck occupancy after the holder exits.')
+      successor.nextDeltaBasisSha512 = await verifyCachedInstaller(
+        currentInstaller,
+        cachedInstaller
+      )
+      successor.shortcutVersions = [previousVersion, currentVersion]
+      const remaining = await readdir(prepared)
+      if (remaining.length !== 1 || remaining[0] !== basename(nextPreparation))
+        throw new Error('Expected only the future preparation to survive the upgrade.')
+      await stat(join(nextPreparation, 'payload', 'sample'))
+    }
     const currentConfigRoot = await launchAndProbe({
       installDirectory,
       expectedVersion: currentVersion,
@@ -944,6 +1360,33 @@ const main = async () => {
     await profileGuard.verifyCycle('current', currentConfigRoot)
     Object.assign(observation, successor)
     observation.installedVersionVerified = currentVersion
+    if (options.rollback) {
+      await installApplication(previousInstaller, installDirectory, env)
+      if (profileGuard.shouldExpectDowngradeBlock()) {
+        const record = await launchAndExpectDatabaseBlocked({
+          installDirectory,
+          env,
+          configRoot: currentConfigRoot,
+          expectedVersion: previousVersion
+        })
+        if (!record) throw new Error('Missing structured database block from the rollback launch.')
+        observation.rollback = {
+          version: previousVersion,
+          code: record.data.code,
+          runId: record.runId
+        }
+        await profileGuard.verifyCycle('rollback', currentConfigRoot)
+      } else {
+        const root = await launchAndProbe({
+          installDirectory,
+          env,
+          expectedVersion: previousVersion,
+          legacyConfigRoots
+        })
+        await profileGuard.verifyCycle('rollback', root)
+        observation.rollback = { version: previousVersion, healthy: true }
+      }
+    }
     await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`)
     console.log('Windows electron-updater differential certification completed successfully.')
   } catch (error) {
@@ -986,6 +1429,13 @@ const main = async () => {
         env
       })
       await uninstallAndVerify(installDirectory, env, { processRoot: root })
+      if (nextPreparation) {
+        await rejects(
+          stat(nextPreparation),
+          { code: 'ENOENT' },
+          'Manual uninstall retained the prepared update.'
+        )
+      }
     })
   // NSIS can leave its Un_A helper in this fixture's Temp after the installation and uninstall
   // have finished. Reap only executables inside our owned root before removing their files.
@@ -1007,6 +1457,8 @@ if (invokedAsScript) {
 }
 
 export {
+  certifyShortcutVersion,
+  applyWithOccupancyRecheck,
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   buildWindowsUninstallHelper,

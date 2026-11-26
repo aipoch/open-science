@@ -10,7 +10,7 @@ import type { PrismaClient } from '@prisma/client'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from '../database/migration-service'
 import { ProjectRepository } from '../projects/repository'
-import { PdfAnnotationRepository, deletePdfAnnotations } from './repository'
+import { PdfAnnotationRepository, deletePdfAnnotations, readAnnotations } from './repository'
 import type {
   PdfAnnotationSource,
   CreatePdfAnnotationRequest,
@@ -285,6 +285,23 @@ it('navigates via a live source when the creating Literature reference is trashe
   await client.literatureItem.update({ where: { id: 'item' }, data: { deletedAt: new Date() } })
   expect((await repository.get('library-created'))?.target.source.projectId).toBe('p')
   expect((await repository.list({ projectId: 'p' })).items).toHaveLength(1)
+})
+
+it('selects live and Trash routes independently for each document in a batch', async () => {
+  await repository.create(note('shared'))
+  await merge()
+  const isolated = { ...source, projectId: 'other', versionId: 'other-v', checksum: 'b'.repeat(64) }
+  await repository.create(note('isolated', isolated))
+  await client.project.update({ where: { id: 'other' }, data: { deletedAt: new Date() } })
+
+  const rows = await client.pdfAnnotation.findMany({ orderBy: { id: 'asc' } })
+  const versions = async (preferredProjectId: string): Promise<string[]> =>
+    (await readAnnotations(client, rows, preferredProjectId)).map(
+      (row) => row.target.source.versionId
+    )
+
+  expect(await versions('p')).toEqual([isolated.versionId, source.versionId])
+  expect(await versions('other')).toEqual([isolated.versionId, target.versionId])
 })
 
 it('rejects an old ID reconciled between the recovery read and create transaction', async () => {

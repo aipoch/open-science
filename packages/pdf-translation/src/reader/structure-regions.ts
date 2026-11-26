@@ -181,7 +181,7 @@ export async function verifiedPdfTableRegions(
           height: Math.max(1, Math.min(ph - y, Math.ceil((r.y + r.height) * ph) - y))
         }
       }
-    return !overlaps(pixels(region), pixels(ink))
+    return !structureRegionsOverlap(pixels(region), pixels(ink))
   })
   return { regions, current }
 }
@@ -193,7 +193,7 @@ export const structureRegionContains = (outer: Region, inner: Region): boolean =
   inner.x + inner.width <= outer.x + outer.width + 1e-6 &&
   inner.y + inner.height <= outer.y + outer.height + 1e-6
 
-const overlaps = (a: Region, b: Region): boolean =>
+export const structureRegionsOverlap = (a: Region, b: Region): boolean =>
   a.page === b.page &&
   a.x < b.x + b.width &&
   b.x < a.x + a.width &&
@@ -223,7 +223,11 @@ function verifyRegions(
       // Translation fragments include layout padding. Expand only from complete,
       // already owned units; the expanded crop still needs every check below.
       for (const unit of source.units) {
-        if (!unit.fragments.some((f) => overlaps(candidate, { page: f.pageNumber, ...f.rect })))
+        if (
+          !unit.fragments.some((f) =>
+            structureRegionsOverlap(candidate, { page: f.pageNumber, ...f.rect })
+          )
+        )
           continue
         if (
           unit.fragments.some(
@@ -257,7 +261,7 @@ function verifyRegions(
       )
         return []
       const page = pages.get(region.page)
-      if (!page || captions.some((caption) => overlaps(region, caption))) return []
+      if (!page || captions.some((caption) => structureRegionsOverlap(region, caption))) return []
       let found = false
       for (const [index, item] of page.content.items.entries()) {
         if (!('str' in item) || !item.str.trim()) continue
@@ -269,7 +273,7 @@ function verifyRegions(
         )
         // Unknown geometry cannot prove an item lies outside this crop.
         if (!native) return []
-        if (!overlaps(region, native)) continue
+        if (!structureRegionsOverlap(region, native)) continue
         if (!owners.has(`${region.page}:${index}`)) {
           if (foreignOutside?.(region, index)) continue
           return []
@@ -279,7 +283,11 @@ function verifyRegions(
       }
       if (!found) return []
       for (const unit of source.units) {
-        if (!unit.fragments.some((f) => overlaps(region, { page: f.pageNumber, ...f.rect })))
+        if (
+          !unit.fragments.some((f) =>
+            structureRegionsOverlap(region, { page: f.pageNumber, ...f.rect })
+          )
+        )
           continue
         // Never crop part of a mixed prose/label unit, including across pages.
         if (

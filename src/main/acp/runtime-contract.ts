@@ -2,6 +2,7 @@ import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-director
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type {
+  AcpCancelPromptRequest,
   AcpPermissionSettlementState,
   AcpRuntimeEvent,
   AcpStateUpdate
@@ -18,6 +19,7 @@ import type {
   ShellRuntimeBinding
 } from '../../shared/notebook'
 import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
+import type { TaskContinuationTracker } from '../../shared/task-continuation'
 import type { UploadedAttachment } from '../../shared/uploads'
 import type {
   AgentFramework,
@@ -36,8 +38,12 @@ import type {
   LiteratureLibraryScope,
   LiteratureLibrarySearchResult
 } from '../literature/library-mcp-server'
-import type { LiteratureReadDocumentRequest } from '../literature/mcp-server'
+import type { LiteratureReadDocumentRequest } from '../literature/mcp-contract'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
+import type {
+  NotebookExecutionIntent,
+  NotebookExecutionIntentScope
+} from '../notebook/execution-intent'
 import type { NotebookHandoffContext } from '../notebook/session-read-model'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type {
@@ -79,6 +85,7 @@ export type AcpRuntimeCallbacks = {
 }
 
 export type AcpRuntimeOptions = {
+  trackTaskContinuation?: TaskContinuationTracker
   schedules?: import('../schedules/mcp').ScheduleMcp
   prepareSessionReading?: PrepareSessionReading
   classifySkills?: import('../../shared/classification').ClassifySkills
@@ -165,6 +172,10 @@ export type AcpRuntimeOptions = {
       routingId: string,
       request: SideChatSendMessageRequest
     ) => Promise<SideChatSendMessageResult>
+  }>
+  web?: Readonly<{
+    handlerFor: (sessionId: string, projectId: string) => import('../web/mcp-server').WebMcpHandler
+    cancelSession?: (sessionId: string) => void
   }>
   literature?: Readonly<{
     annotations?: import('../pdf-annotations/agent-tools').PdfAnnotationAgentTools
@@ -277,8 +288,7 @@ export type AcpRuntimeOptions = {
       | undefined
   }>
   sessionCapabilityPolicy?: SessionCapabilityPolicy
-  // The agent backend to drive. Defaults to Claude Code; selecting another (opencode) swaps only the
-  // framework-coupled behavior (spawn, session meta, permission-mode mapping) via AgentFramework.
+  // The agent backend to drive. Defaults to the built-in Open Science Agent.
   framework?: AgentFramework
   // Local http host for app-owned session MCP servers, used for frameworks that reject stdio MCP.
   // Absent ⇒ those frameworks run without the corresponding app tooling.
@@ -316,6 +326,7 @@ export type AcpRuntimeOptions = {
   // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
   // projectId carries the Project id. Returns undefined when absent or on lookup failure.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
+  resolveProjectTracing?: (projectId: string) => Promise<boolean>
   // Reads the Session authority's current Compute execution targets at each Turn. The ids are used
   // only to decide whether the fixed execution directive applies; host inventory stays in the
   // runtime host.compute discovery seam.
@@ -330,6 +341,10 @@ export type AcpRuntimeArtifactOptions = {
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string
+  enableImageGeneration?: boolean
+  imageMcp?: {
+    getPresetId: () => Promise<string | undefined>
+  }
   repository?: ArtifactRepository
   runRegistry?: ArtifactRunRegistry
   getRpcConnection?: () => Promise<NotebookRpcConnection>
@@ -366,6 +381,20 @@ export type AcpRuntimeUploadOptions = {
 
 export type AcpRuntimeNotebookOptions = {
   dataDirectory?: (projectId: string, appSessionId: string) => string
+  bindTaskRuntime?: import('../notebook/runtime-service').NotebookRuntimeService['bindTaskRuntime']
+  createExecutionIntent?: (scope: NotebookExecutionIntentScope) => NotebookExecutionIntent
+  currentExecutionIntent?: (
+    scope: NotebookExecutionIntentScope
+  ) => NotebookExecutionIntent | undefined
+  rememberExecutionIntent?: (
+    scope: NotebookExecutionIntentScope,
+    promptId: string,
+    intent: NotebookExecutionIntent
+  ) => void
+  resolveExecutionIntent?: (
+    scope: NotebookExecutionIntentScope,
+    promptId: string
+  ) => NotebookExecutionIntent | undefined
   authorizeRuntimeBindingAdmission?: import('../notebook/local-rpc-server').NotebookLocalRpcServer['authorizeRuntimeBindingAdmission']
   canOwnRuntimeBindingDecision?: import('../notebook/runtime-service').NotebookRuntimeService['canOwnRuntimeBindingDecision']
   projectId: string
@@ -378,6 +407,7 @@ export type AcpRuntimeNotebookOptions = {
     sessionId: string
     projectId: string
     memoryTools: boolean
+    executionIntent?: NotebookExecutionIntent
   }) => Promise<NotebookRpcConnection>
   registerSessionAlias?: (aliasSessionId: string, sessionId: string) => void
   releaseSessionCapabilities?: (sessionId: string, capabilityTokens: readonly string[]) => void
@@ -452,3 +482,6 @@ export type AcpRuntimePlanOptions = {
   onApprovalRequested?: PlanServiceDependencies['onApprovalRequested']
   onApprovalSettled?: PlanServiceDependencies['onApprovalSettled']
 }
+
+// Set by the host command entry point, never persisted or sent to the provider.
+export type RuntimeCancelPromptRequest = AcpCancelPromptRequest & { userInitiated?: boolean }

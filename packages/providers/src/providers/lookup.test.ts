@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { getProviderModels, resolveProviderImageBaseUrl } from './definitions'
 import { OFFICIAL_VENDORS } from './data'
 import {
   getOfficialVendor,
@@ -58,17 +59,20 @@ describe('provider registry', () => {
     }
   )
 
-  it('defaults OpenAI to GPT-6.1 Sol with its published capabilities', () => {
-    expect(getVendorModelIds('openai')[0]).toBe('gpt-6.1-sol')
-
-    expect(getVendorModelContextWindow('openai', 'gpt-6.1-sol')).toBe(1_050_000)
-    expect(isVendorModelMultimodal('openai', 'gpt-6.1-sol')).toBe(true)
-    expect(resolveVendorModelApiEndpoints('openai', 'gpt-6.1-sol')).toEqual(['responses'])
-    expect(getVendorModelReasoningCapability('openai', 'gpt-6.1-sol')).toEqual({
-      supported: true,
-      values: ['low', 'medium', 'high', 'xhigh', 'max']
-    })
-  })
+  it.each(['gpt-6.2-sol', 'gpt-6.2-astra'])(
+    'offers %s with its published capabilities',
+    (model) => {
+      expect(getOfficialVendor('openai')?.models).toContainEqual(
+        expect.objectContaining({ id: model, contextWindow: 1_050_000, maxOutputTokens: 128_000 })
+      )
+      expect(isVendorModelMultimodal('openai', model)).toBe(true)
+      expect(resolveVendorModelApiEndpoints('openai', model)).toEqual(['responses'])
+      expect(getVendorModelReasoningCapability('openai', model)).toEqual({
+        supported: true,
+        values: ['low', 'medium', 'high', 'xhigh', 'max']
+      })
+    }
+  )
 
   it('offers GPT-6.1 Terra with its published capabilities', () => {
     const model = 'gpt-6.1-terra'
@@ -97,14 +101,19 @@ describe('provider registry', () => {
     }
   )
 
-  it('defines exactly one of baseUrl or regions per vendor, with a non-empty catalog', () => {
+  it('defines a static endpoint and catalog unless the connection supplies both', () => {
     for (const vendor of OFFICIAL_VENDORS) {
       const hasBaseUrl = Boolean(vendor.baseUrl)
       const hasRegions = (vendor.regions?.length ?? 0) > 0
 
+      expect(vendor.reasoningEffort).toBeDefined()
+      if (vendor.requiresConnectionConfiguration) {
+        expect(hasBaseUrl || hasRegions).toBe(false)
+        expect(vendor.models).toHaveLength(0)
+        continue
+      }
       expect(hasBaseUrl).not.toBe(hasRegions) // exactly one is set
       expect(vendor.models.length).toBeGreaterThan(0)
-      expect(vendor.reasoningEffort).toBeDefined()
       for (const region of vendor.regions ?? []) {
         if (!region.modelIds) continue
         expect(region.modelIds.length).toBeGreaterThan(0)
@@ -149,8 +158,8 @@ describe('provider registry', () => {
     expect(resolveVendorBaseUrl('opencode')).toBe('https://opencode.ai/zen/v1')
     expect(resolveVendorApiEndpoints('opencode-go')).toEqual(['chat-completions'])
     expect(resolveVendorApiEndpoints('opencode')).toEqual(['chat-completions'])
-    expect(resolveVendorModelsUrl('opencode-go')).toBeUndefined()
-    expect(resolveVendorModelsUrl('opencode')).toBeUndefined()
+    expect(resolveVendorModelsUrl('opencode-go')).toBe('https://opencode.ai/inference/go/v1/models')
+    expect(resolveVendorModelsUrl('opencode')).toBe('https://opencode.ai/inference/v1/models')
 
     expect(goModels).toEqual([
       'kimi-k2.7-code',
@@ -454,7 +463,7 @@ describe('provider registry', () => {
     expect(resolveVendorApiEndpoints('nvidia')).toEqual(['chat-completions'])
     expect(resolveVendorBaseUrl('nvidia')).toBe('https://integrate.api.nvidia.com/v1')
     expect(resolveVendorApiKeyUrl('nvidia')).toBe('https://build.nvidia.com/settings/api-keys')
-    expect(resolveVendorModelsUrl('nvidia')).toBeUndefined()
+    expect(resolveVendorModelsUrl('nvidia')).toBe('https://integrate.api.nvidia.com/v1/models')
 
     expect(getOfficialVendor('nvidia')?.models.map(({ id }) => id)).toEqual([
       'nvidia/nemotron-3.5-lightning-30b-a3b',
@@ -595,6 +604,11 @@ describe('provider registry', () => {
     expect(getOfficialVendor('glmcodingplan')?.models).toContainEqual(expected)
   })
 
+  it.each(['zhipu', 'glmcodingplan'] as const)('lists GLM-5.4 with vision for %s', (vendor) => {
+    expect(getVendorModelContextWindow(vendor, 'glm-5.4')).toBe(1_000_000)
+    expect(isVendorModelMultimodal(vendor, 'glm-5.4')).toBe(true)
+  })
+
   it('routes the GLM Coding Plan through the /api/coding OpenAI path, per region', () => {
     expect(vendorHasRegions('glmcodingplan')).toBe(true)
     expect(resolveVendorApiEndpoints('glmcodingplan')).toEqual(['messages', 'chat-completions'])
@@ -613,7 +627,6 @@ describe('provider registry', () => {
     // Quota-based plan: fixed catalog, no live model-list refresh.
     expect(resolveVendorModelsUrl('glmcodingplan')).toBeUndefined()
 
-    // The coding plan omits the older vision variant but serves the natively multimodal Flash model.
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5v-turbo')).toBe(false)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3-flash')).toBe(true)
     expect(isVendorModelMultimodal('glmcodingplan', 'glm-5.3')).toBe(false)
@@ -761,7 +774,7 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl('deepseek')).toBe('https://api.deepseek.com/v1/models')
     // GLM/MiniMax don't expose a model-list endpoint yet, so refresh is hidden for them.
     expect(resolveVendorModelsUrl('zhipu')).toBeUndefined()
-    expect(resolveVendorModelsUrl('minimax')).toBeUndefined()
+    expect(resolveVendorModelsUrl('minimax')).toBe('https://api.minimax.io/v1/models')
   })
 
   it('routes OpenRouter through both APIs with a curated catalog and no live refresh', () => {
@@ -778,7 +791,9 @@ describe('provider registry', () => {
   it('routes Requesty through both APIs after OpenRouter with a curated catalog', () => {
     const openRouterIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'openrouter')
 
-    expect(OFFICIAL_VENDORS[openRouterIndex + 1]?.id).toBe('requesty')
+    expect(
+      OFFICIAL_VENDORS.slice(openRouterIndex + 1, openRouterIndex + 3).map(({ id }) => id)
+    ).toEqual(['vectrust', 'requesty'])
     expect(resolveVendorApiEndpoints('requesty')).toEqual(['messages', 'chat-completions'])
     expect(resolveVendorBaseUrl('requesty')).toBe('https://router.requesty.ai')
     expect(resolveVendorChatCompletionsBaseUrl('requesty')).toBe('https://router.requesty.ai/v1')
@@ -937,7 +952,7 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('sensenova')).toBe('https://platform.sensenova.cn/console/keys')
     // The live list also serves the image-generation-only sensenova-u1-fast, which the refresh
     // cannot filter out — so refresh-from-vendor is hidden and the chat catalog stays curated.
-    expect(resolveVendorModelsUrl('sensenova')).toBeUndefined()
+    expect(resolveVendorModelsUrl('sensenova')).toBe('https://token.sensenova.cn/v1/models')
 
     expect(getVendorModelIds('sensenova')).toEqual([
       'sensenova-6.8-flash-lite',
@@ -1040,7 +1055,9 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('tencent', 'china')).toBe(
       'https://console.cloud.tencent.com/tokenhub/apikey'
     )
-    expect(resolveVendorModelsUrl('tencent')).toBeUndefined()
+    expect(resolveVendorModelsUrl('tencent')).toBe(
+      'https://tokenhub-intl.tencentcloudmaas.com/v1/models'
+    )
 
     expect(getOfficialVendor('tencent')?.models.map(({ id }) => id)).toEqual([
       'hy4',
@@ -1142,7 +1159,7 @@ describe('provider registry', () => {
     expect(resolveVendorApiKeyUrl('xai')).toBe('https://console.x.ai/team/default/api-keys')
     // xAI's live catalog also includes image, audio, and video generation models, so keep refresh
     // hidden and expose only the curated language-model catalog.
-    expect(resolveVendorModelsUrl('xai')).toBeUndefined()
+    expect(resolveVendorModelsUrl('xai')).toBe('https://api.x.ai/v1/language-models')
   })
 
   it('exposes Grok 4.7 with its documented capabilities and keeps existing xAI models', () => {
@@ -1220,6 +1237,8 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('bailian')).toBe(true)
     expect(resolveVendorApiEndpoints(bailianId)).toEqual(['messages', 'chat-completions'])
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.8-max')).toBe(true)
+    expect(isVendorModelResponsesSupported(bailianId, 'qwen4-max-preview')).toBe(true)
+    expect(isVendorModelResponsesSupported(bailianId, 'qwen4-max')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.7-max')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'qwen3.6-flash')).toBe(true)
     expect(isVendorModelResponsesSupported(bailianId, 'deepseek-v4-pro')).toBe(false)
@@ -1249,7 +1268,9 @@ describe('provider registry', () => {
     expect(
       getOfficialVendor(bailianId)?.models.map(({ id, contextWindow }) => ({ id, contextWindow }))
     ).toEqual([
+      { id: 'qwen4-max-preview', contextWindow: 1_000_000 },
       { id: 'qwen3.8-max', contextWindow: 983_616 },
+      { id: 'qwen4-max', contextWindow: 1_000_000 },
       { id: 'qwen3.7-plus', contextWindow: 1_000_000 },
       { id: 'qwen3.7-max', contextWindow: 1_000_000 },
       { id: 'qwen3.7-flash', contextWindow: 1_000_000 },
@@ -1260,7 +1281,9 @@ describe('provider registry', () => {
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 }
     ])
 
-    expect(resolveVendorModelsUrl(bailianId)).toBeUndefined()
+    expect(resolveVendorModelsUrl(bailianId)).toBe(
+      'https://{workspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/models'
+    )
   })
 
   it('defaults Bailian for Plan to Beijing and resolves the Singapore subscription separately', () => {
@@ -1290,8 +1313,9 @@ describe('provider registry', () => {
     )
     expect(getVendorModelIds(planId, 'global')).toEqual(getVendorModelIds(planId, 'china'))
     expect(getVendorModelIds(planId)).toEqual([
-      'qwen3.8-max',
       'qwen4-max-preview',
+      'qwen3.8-max',
+      'qwen4-max',
       'auto',
       'qwen3.8-flash',
       'qwen3.7-max',
@@ -1311,9 +1335,18 @@ describe('provider registry', () => {
       contextWindow: 1_000_000,
       maxOutputTokens: 393_216
     })
+    expect(getOfficialVendor(planId)?.models.find(({ id }) => id === 'qwen4-max')).toMatchObject({
+      contextWindow: 1_000_000,
+      maxOutputTokens: 262_144
+    })
     expect(resolveVendorModelsUrl(planId)).toBeUndefined()
 
     expect(resolveVendorModelApiEndpoints(planId, 'qwen4-max-preview')).toEqual([
+      'messages',
+      'chat-completions',
+      'responses'
+    ])
+    expect(resolveVendorModelApiEndpoints(planId, 'qwen4-max')).toEqual([
       'messages',
       'chat-completions',
       'responses'
@@ -1334,9 +1367,20 @@ describe('provider registry', () => {
     }
 
     expect(getVendorModelReasoningCapability('bailian', 'qwen3.8-max')).toEqual(expectedProfile)
+    expect(getVendorModelReasoningCapability('bailian', 'qwen4-max-preview')).toEqual(
+      expectedProfile
+    )
+    expect(getVendorModelReasoningCapability('bailianplan', 'qwen4-max')).toEqual({
+      supported: true,
+      values: ['low', 'high', 'xhigh']
+    })
     expect(getVendorModelReasoningCapability('bailianplan', 'qwen4-max-preview')).toEqual(
       expectedProfile
     )
+    expect(getVendorModelReasoningCapability('bailian', 'qwen4-max')).toEqual({
+      supported: true,
+      values: ['low', 'high', 'xhigh']
+    })
     expect(getVendorModelReasoningCapability('bailianplan', 'qwen3.8-max')).toEqual(expectedProfile)
     expect(getVendorModelReasoningCapability('bailianplan', 'qwen3.8-flash')).toEqual(
       expectedProfile
@@ -1453,6 +1497,7 @@ describe('provider registry', () => {
       const bailianId = 'bailian' as OfficialVendorId
 
       expect(isVendorModelMultimodal(bailianId, 'qwen3.8-max')).toBe(true)
+      expect(isVendorModelMultimodal(bailianId, 'qwen4-max')).toBe(true)
       expect(isVendorModelMultimodal(bailianId, 'qwen3.7-plus')).toBe(true)
       expect(isVendorModelMultimodal(bailianId, 'qwen3.7-flash')).toBe(true)
       expect(isVendorModelMultimodal(bailianId, 'qwen3.6-plus')).toBe(true)
@@ -1466,6 +1511,7 @@ describe('provider registry', () => {
 
       expect(isVendorModelMultimodal(planId, 'qwen3.8-max')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen4-max-preview')).toBe(true)
+      expect(isVendorModelMultimodal(planId, 'qwen4-max')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'deepseek-v4.1-flash-1017')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen3.7-plus')).toBe(true)
       expect(isVendorModelMultimodal(planId, 'qwen3.6-flash')).toBe(true)
@@ -1674,3 +1720,50 @@ it('protects provider metadata and query results from external mutation', () => 
   expect(getVendorModelIds('openai').length).toBeGreaterThan(0)
   expect(getVendorModelContextWindow('openai', 'unknown')).toBeUndefined()
 })
+
+describe('image provider capability', () => {
+  it.each([
+    ['china', 'https://api.minimax.cn/v1'],
+    ['global', 'https://api.minimax.io/v1'],
+    [undefined, 'https://api.minimax.io/v1']
+  ])('resolves MiniMax images for region %s independently of chat', (region, expected) => {
+    expect(resolveProviderImageBaseUrl('minimax', region)).toBe(expected)
+    expect(
+      getProviderModels('minimax', 'image-generation', region).map((model) => model.modelId)
+    ).toEqual(['MiniMax-H3-Image'])
+    expect(
+      getProviderModels('minimax', 'text-generation', region).map((model) => model.modelId)
+    ).not.toContain('MiniMax-H3-Image')
+  })
+  it('does not substitute another capability or region for an unavailable image connection', () => {
+    expect(resolveProviderImageBaseUrl('minimax', 'unknown-region')).toBeUndefined()
+    expect(getProviderModels('minimax', 'image-generation', 'unknown-region')).toEqual([])
+    for (const providerId of ['anthropic', 'typesafe', 'custom']) {
+      expect(resolveProviderImageBaseUrl(providerId)).toBeUndefined()
+      expect(getProviderModels(providerId, 'image-generation')).toEqual([])
+    }
+  })
+})
+
+it.each([
+  ['openai', undefined, 'https://api.openai.com/v1', 'gpt-image-2.6-sunburst'],
+  ['bailian', 'china', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'qwen-image-3.0-pro'],
+  [
+    'volcengine',
+    undefined,
+    'https://ark.cn-beijing.volces.com/api/v3',
+    'doubao-seedream-5-5-261028'
+  ]
+])(
+  'separates the %s image catalog and region from conversation models',
+  (vendor, region, url, model) => {
+    expect(resolveProviderImageBaseUrl(vendor, region)).toBe(url)
+    expect(
+      getProviderModels(vendor, 'image-generation', region).map((entry) => entry.modelId)
+    ).toContain(model)
+    expect(
+      getProviderModels(vendor, 'text-generation', region).map((entry) => entry.modelId)
+    ).not.toContain(model)
+    expect(resolveProviderImageBaseUrl('bailian', 'global')).toBeUndefined()
+  }
+)

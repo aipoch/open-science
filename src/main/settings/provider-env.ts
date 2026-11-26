@@ -1,8 +1,11 @@
+import type { ProviderRequestPolicy } from '@aipoch/providers/transport'
+import type { CodeBuddyAuthMode, CodeBuddySite } from '../../shared/codebuddy-subscription'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import {
   getOfficialVendor,
+  type CloudflareGateway,
   type ModelProtocol,
   type OfficialVendorId,
   type CustomReasoningEffortTransport
@@ -24,14 +27,20 @@ export type ResolvedProvider = {
   // Framework-local provider id used only for a generation's pre-registered transport routes.
   // It is derived from the persisted provider/model identity and never contains a credential.
   agentProviderId?: string
+  codeBuddyAuthMode?: CodeBuddyAuthMode
+  codeBuddySite?: CodeBuddySite
   codexAuthMode?: CodexSubscriptionAuthMode
   codexTransport?: CodexSubscriptionTransport
   codexAutoUseHttps?: boolean
   // Retained for official providers even though they use the custom credential path at runtime.
   // Transport adapters need this stable identity because `none` has vendor-specific wire semantics.
   vendorId?: OfficialVendorId
+  requestPolicy?: ProviderRequestPolicy
+  cloudflareMode?: CloudflareGateway['mode']
   // Anthropic /v1/messages base (also the sole base for a custom provider). Claude always uses this.
   baseUrl?: string
+  // Exact Lab deployment address; host-owned credential resolution must match this address.
+  labServerUrl?: string
   // Distinct OpenAI /v1/chat/completions base for a dual-endpoint vendor (e.g. DeepSeek). Used only
   // when the chosen endpoint is chat-completions; falls back to baseUrl when absent.
   chatCompletionsBaseUrl?: string
@@ -39,6 +48,10 @@ export type ResolvedProvider = {
   // when the chosen endpoint is responses; falls back to chatCompletionsBaseUrl and then baseUrl.
   responsesBaseUrl?: string
   model?: string
+  modelAllowsAnonymousAccess?: boolean
+  // False only when the selected Lab model explicitly does not support streaming. Absent means the
+  // provider's model is assumed streaming-capable.
+  streaming?: boolean
   // Model token limits. Context is the shared request/response budget; input/output are independent
   // provider-reported caps and remain absent when unknown.
   contextWindow?: number

@@ -14,7 +14,7 @@ import {
   findButton,
   storageInfo,
   fillRequiredProviderFields,
-  readyClaudeState,
+  readyBuiltInState,
   resetOnboardingStores,
   stubWindowApi
 } from './onboarding-test-utils'
@@ -54,8 +54,24 @@ const goToLocationStep = async (): Promise<void> => {
 }
 
 describe('OnboardingWizard flow', () => {
+  it('opens targeted Notebook settings and returns to the same onboarding step', async () => {
+    readyBuiltInState()
+    useSettingsStore.getState().openSettingsToPanel('runtimes')
+
+    await renderWizard()
+
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(dialog?.querySelector('[data-testid="runtimes-panel"]') ?? null).not.toBeNull()
+    await act(async () => {
+      dialog?.querySelector<HTMLButtonElement>('button[aria-label="Close"]')?.click()
+    })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(currentSection('Prepare environment')).not.toBeNull()
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+  })
+
   it('uses a single-column layout before the desktop breakpoint', async () => {
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
 
@@ -65,7 +81,7 @@ describe('OnboardingWizard flow', () => {
   })
 
   it('walks all five steps forward in order, tracking progress', async () => {
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
 
@@ -128,7 +144,7 @@ describe('OnboardingWizard flow', () => {
       dataRoot: 'D:\\OpenScience',
       targetWasAbsent: true
     })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -179,7 +195,7 @@ describe('OnboardingWizard flow', () => {
         dataRoot: 'F:\\OpenScience',
         targetWasAbsent: true
       })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -217,7 +233,7 @@ describe('OnboardingWizard flow', () => {
         dataRoot: 'E:\\OpenScience',
         targetWasAbsent: true
       })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -247,7 +263,7 @@ describe('OnboardingWizard flow', () => {
       dataRoot: 'D:\\OpenScience',
       error: 'The selected folder is not writable.'
     })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -274,7 +290,7 @@ describe('OnboardingWizard flow', () => {
       { path: 'D:\\', label: 'D:' },
       { path: 'E:\\', label: 'E:' }
     ])
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
 
@@ -294,7 +310,7 @@ describe('OnboardingWizard flow', () => {
         defaultParent: 'C:\\Users\\researcher'
       })
     )
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
 
@@ -321,7 +337,7 @@ describe('OnboardingWizard flow', () => {
       { path: 'C:\\', label: 'C:' },
       { path: 'D:\\', label: 'D:' }
     ])
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -355,7 +371,7 @@ describe('OnboardingWizard flow', () => {
       }
       return Promise.resolve({ kind: 'move', dataRoot: 'F:\\Research\\OpenScience' })
     })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -380,7 +396,7 @@ describe('OnboardingWizard flow', () => {
       })
     )
     window.api.localFs.listDrives = vi.fn().mockReturnValue(new Promise(() => undefined))
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -409,7 +425,7 @@ describe('OnboardingWizard flow', () => {
           resolveDrives = resolve
         })
     )
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -444,7 +460,7 @@ describe('OnboardingWizard flow', () => {
       { path: 'D:\\', label: 'D:' }
     ])
     window.api.storage.inspectDataRoot = vi.fn().mockReturnValue(new Promise(() => undefined))
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     vi.useFakeTimers()
@@ -486,7 +502,7 @@ describe('OnboardingWizard flow', () => {
             resolve({ kind: 'move', dataRoot: 'D:\\OpenScience', targetWasAbsent: true })
         })
     )
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -509,7 +525,7 @@ describe('OnboardingWizard flow', () => {
           resolveStorageInfo = resolve
         })
     )
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -530,7 +546,7 @@ describe('OnboardingWizard flow', () => {
           resolveStorageInfo = resolve
         })
     )
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -561,7 +577,7 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.inspectDataRoot = vi
       .fn()
       .mockResolvedValue({ kind: 'move', dataRoot: 'F:\\Research\\OpenScience' })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -587,7 +603,7 @@ describe('OnboardingWizard flow', () => {
   })
 
   it('does not probe alternate drives outside Windows', async () => {
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -597,7 +613,7 @@ describe('OnboardingWizard flow', () => {
   })
 
   it('Back walks the steps in reverse without losing the provider draft', async () => {
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -638,7 +654,7 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.inspectDataRoot = vi
       .fn()
       .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -655,7 +671,7 @@ describe('OnboardingWizard flow', () => {
   })
 
   it('initializes (detects) the env store on mount without auto-provisioning python', async () => {
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
 
@@ -677,7 +693,7 @@ describe('OnboardingWizard flow', () => {
           releaseRelaunch = () => resolve({ ok: true })
         })
     )
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -701,7 +717,7 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.setDataRootAndRelaunch = vi
       .fn()
       .mockResolvedValue({ ok: false, error: 'Disk is full.' })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -720,7 +736,7 @@ describe('OnboardingWizard flow', () => {
       .fn()
       .mockRejectedValueOnce(new Error('Storage is unavailable.'))
       .mockResolvedValueOnce(storageInfo())
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -754,7 +770,7 @@ describe('OnboardingWizard flow', () => {
             rejectRetry = reject
           })
       )
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -776,7 +792,7 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.inspectDataRoot = vi
       .fn()
       .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -797,7 +813,7 @@ describe('OnboardingWizard flow', () => {
     window.api.storage.inspectDataRoot = vi
       .fn()
       .mockResolvedValue({ kind: 'move', dataRoot: '/mnt/data/OpenScience' })
-    readyClaudeState()
+    readyBuiltInState()
 
     await renderWizard()
     await goToLocationStep()
@@ -814,7 +830,7 @@ describe('OnboardingWizard flow', () => {
 
   it('uses the startup storage loader supplied by App', async () => {
     const loadStorageInfo = vi.fn().mockResolvedValue(storageInfo())
-    readyClaudeState()
+    readyBuiltInState()
 
     await act(async () => {
       root.render(<OnboardingWizard loadStorageInfo={loadStorageInfo} />)
@@ -826,7 +842,7 @@ describe('OnboardingWizard flow', () => {
 })
 
 it('regression: step changes move focus to the new heading', async () => {
-  readyClaudeState()
+  readyBuiltInState()
   await renderWizard()
   act(() => {
     findButton(/^continue$/i)!.focus()
@@ -844,7 +860,7 @@ it('regression: step changes move focus to the new heading', async () => {
 })
 
 it('regression: every setup step exposes and focuses its own level-two heading', async () => {
-  readyClaudeState()
+  readyBuiltInState()
   await renderWizard()
   const expectHeading = (title: string): void => {
     expect(document.activeElement?.tagName).toBe('H2')

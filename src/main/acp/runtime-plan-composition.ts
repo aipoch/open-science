@@ -1,5 +1,8 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEventInput } from '../../shared/acp'
+import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import type {
   ActivePlanProjection,
   GeneratePlanContent,
@@ -27,7 +30,11 @@ import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpPromptSessionInteractionScope } from './session-interaction-owner'
-import type { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
+import { SessionPlanDeliveryOwner } from './session-plan-delivery-owner'
+import {
+  AcpPlanContinuationWorkflow,
+  type PlanContinuationDependencies
+} from './plan-continuation-workflow'
 
 type AcpSessionPlanCall = Readonly<{
   projectId: string
@@ -117,8 +124,10 @@ const composeAcpRuntimePlanWorkflow = (
   const pushEvent = (event: AcpRuntimeEventInput): void => session.publication.pushEvent(event)
   const withReviewIdentity = (
     sessionId: string,
-    projection: ActivePlanProjection
+    value: ActivePlanProjection
   ): ActivePlanProjection => {
+    const { externalResponse, ...projection } = value
+    void externalResponse
     const reviewRequestId = interactions.reviewRequestIdFor(sessionId, projection.artifactVersionId)
     return reviewRequestId ? { ...projection, reviewRequestId } : projection
   }
@@ -131,6 +140,9 @@ const composeAcpRuntimePlanWorkflow = (
         kind: 'plan',
         level: 'info',
         sessionId,
+        ...(projection.originatingTaskRunId && projection.originatingPromptMessageId
+          ? { promptMessageId: projection.originatingPromptMessageId }
+          : {}),
         title: 'Session Plan updated',
         planProjection: projection
       })
@@ -194,7 +206,9 @@ const composeAcpRuntimePlanWorkflow = (
       return {
         availability: 'available',
         reference: renderAppMcpToolReferences(
-          base.backendGeneration?.current.framework.id ?? options.framework?.id ?? 'claude-code',
+          base.backendGeneration?.current.framework.id ??
+            options.framework?.id ??
+            DEFAULT_AGENT_FRAMEWORK_ID,
           SESSION_PLAN_FILE_REFERENCE
         ),
         artifactVersionId: refreshed.artifactVersionId,
@@ -337,6 +351,7 @@ const composeAcpRuntimePlanWorkflow = (
           sessionId: input.sessionId,
           executionId: execution.turnToken,
           interactionId,
+          taskRunId: execution.provenanceContext?.taskRunId,
           content: input.input as GeneratePlanContent
         })
       } catch (error) {
@@ -650,7 +665,16 @@ const composeAcpRuntimePlanWorkflow = (
     Reflect.deleteProperty(response, 'deliveryCommandId')
     return response
   }
-  const respond = async (input: PlanResponseCommand): Promise<PlanResponseResult> => {
+  const respond = async (
+    input: PlanResponseCommand,
+    isAuthorizationCurrent?: () => boolean
+  ): Promise<PlanResponseResult> => {
+    if (input.source !== undefined && !isAuthorizationCurrent?.()) {
+      throw new PlanCommandError(
+        'interaction-mismatch',
+        'The external Plan authorization is no longer current.'
+      )
+    }
     if (!service) {
       throw new PlanCommandError(
         'plan-unavailable',
@@ -683,6 +707,27 @@ const composeAcpRuntimePlanWorkflow = (
     const current = await service.getProjection(input.projectId, input.sessionId)
     if (!current) throw new Error('The Session has no active Plan.')
     await assertVisibleToDurableBranch(input.projectId, input.sessionId, current)
+    const beforeExternalCommit =
+      input.source === undefined
+        ? undefined
+        : (record?: PersistedChatSession): void => {
+            const graph = record?.conversationGraph
+            const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+            if (
+              !isAuthorizationCurrent?.() ||
+              !graph ||
+              record?.packageOrigin ||
+              frame?.activeBranchId !== input.expectedBranchId ||
+              !resolveActiveConversationMessages(graph).some(
+                ({ id }) => id === current.originatingPromptMessageId
+              )
+            ) {
+              throw new PlanCommandError(
+                'interaction-mismatch',
+                'The active Message Branch or Plan response authorization changed before commit.'
+              )
+            }
+          }
     if (detachedFeedback) {
       const interactionId = current.originatingPromptMessageId
       if (!interactionId) {
@@ -738,6 +783,7 @@ const composeAcpRuntimePlanWorkflow = (
       result = await service.respond({
         ...input,
         interactionIsLive,
+        ...(beforeExternalCommit ? { decisionSource: input.source, beforeExternalCommit } : {}),
         ...(beforeDecisionCommit ? { beforeDecisionCommit } : {}),
         ...(beforeFeedbackPersist ? { beforeFeedbackPersist } : {})
       })
@@ -753,7 +799,8 @@ const composeAcpRuntimePlanWorkflow = (
       retriedAfterDecisionDetach = true
       result = await service.respond({
         ...input,
-        interactionIsLive: false
+        interactionIsLive: false,
+        ...(beforeExternalCommit ? { decisionSource: input.source, beforeExternalCommit } : {})
       })
     }
     if ('projection' in result) {
@@ -812,7 +859,7 @@ const composeAcpRuntimePlanWorkflow = (
         sessionId: input.sessionId,
         artifactVersionId: result.projection.artifactVersionId,
         revision: handedOffProjection.revision,
-        source: 'human-button',
+        source: input.source ?? 'human-button',
         decision: result.projection.approval,
         changed: result.changed
       })
@@ -905,7 +952,7 @@ const composeAcpRuntimePlanWorkflow = (
       sessionId: input.sessionId,
       artifactVersionId: result.artifactVersionId,
       revision: current.revision,
-      source: 'human-feedback'
+      source: input.source ?? 'human-feedback'
     })
     return handedOffFeedback
   }
@@ -1184,3 +1231,28 @@ type AcpRuntimePlanWorkflow = ReturnType<typeof composeAcpRuntimePlanWorkflow>
 
 export { composeAcpRuntimePlanWorkflow }
 export type { AcpRuntimePlanWorkflow, AcpSessionPlanCall }
+
+// Keep delivery authority and its preparation/retry workflow at the same composition boundary.
+export function composeAcpRuntimePlanContinuations(
+  options: AcpRuntimeOptions,
+  session: AcpRuntimeSessionOwners,
+  host: Pick<PlanContinuationDependencies, 'send' | 'scheduleContinuation' | 'projection'>
+): Readonly<{
+  deliveries: SessionPlanDeliveryOwner | undefined
+  workflow: AcpPlanContinuationWorkflow
+}> {
+  const deliveries = options.plan ? new SessionPlanDeliveryOwner(options.plan.sessions) : undefined
+  return Object.freeze({
+    deliveries,
+    workflow: new AcpPlanContinuationWorkflow({
+      ...host,
+      deliveries,
+      sessions: options.plan?.sessions,
+      hasActiveSession: (sessionId) =>
+        Boolean(session.sessionRegistry.lookup(sessionId)?.attachment?.session),
+      context: session.durableContinuationContext,
+      continuations: session.appContinuations,
+      publication: session.publication
+    })
+  })
+}

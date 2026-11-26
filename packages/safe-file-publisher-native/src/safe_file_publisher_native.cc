@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -955,6 +956,108 @@ napi_value RecoverAnchoredRemoval(napi_env env, napi_callback_info info) {
 #endif
 }
 
+// Windows cannot use a long path as the process cwd. Keep its path and ancestors bound while
+// the synchronous worker uses absolute paths instead. No delete sharing means none of those
+// directories can be renamed/replaced until the request returns and closes this lease.
+struct DirectoryLease {
+#ifdef _WIN32
+  std::vector<HANDLE> handles;
+  void Close() {
+    for (HANDLE handle : handles) CloseHandle(handle);
+    handles.clear();
+  }
+#else
+  void Close() {}
+#endif
+  ~DirectoryLease() { Close(); }
+};
+
+constexpr napi_type_tag kDirectoryLeaseTag{0x46737b826eb846b1, 0xb4f686f596963d7c};
+
+napi_value OpenDirectoryLease(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value argv[3];
+  std::string root;
+  uint64_t dev = 0, ino = 0;
+  bool dev_ok = false, ino_ok = false;
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 3 ||
+      !ReadString(env, argv[0], &root) || root.find('\0') != std::string::npos ||
+      napi_get_value_bigint_uint64(env, argv[1], &dev, &dev_ok) != napi_ok ||
+      napi_get_value_bigint_uint64(env, argv[2], &ino, &ino_ok) != napi_ok || !dev_ok || !ino_ok)
+    return ThrowError(env, "Invalid directory lease arguments.", "EINVAL");
+#ifdef _WIN32
+  // Only absolute DOS paths. UNC/device paths cannot prove local directory ownership.
+  if (root.compare(0, 4, "\\\\?\\") == 0) root.erase(0, 4);
+  if (root.size() < 3 || !((root[0] >= 'A' && root[0] <= 'Z') ||
+                         (root[0] >= 'a' && root[0] <= 'z')) || root[1] != ':' ||
+      (root[2] != '\\' && root[2] != '/'))
+    return ThrowError(env, "Directory leases require a local absolute path.", "ENOTSUP");
+  std::vector<std::string> components;
+  if (!SplitRelativePath(root.substr(3), &components))
+    return ThrowError(env, "Invalid directory lease path.", "EINVAL");
+  const auto wide_root = Utf8ToWide(root.substr(0, 3));
+  if (wide_root.empty()) return ThrowError(env, "Invalid directory lease path.", "EINVAL");
+  std::wstring path = L"\\\\?\\" + wide_root.substr(0, 2) + L"\\";
+  auto lease = std::make_unique<DirectoryLease>();
+  for (size_t index = 0; index <= components.size(); ++index) {
+    const auto parent = path;
+    if (index != 0) {
+      const auto component = Utf8ToWide(components[index - 1]);
+      if (component.empty()) return ThrowError(env, "Invalid directory lease path.", "EINVAL");
+      if (path.back() != L'\\') path.push_back(L'\\');
+      path.append(component);
+    }
+    HANDLE handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_TRAVERSE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+      return ThrowError(env, "Could not bind the evidence directory.", WindowsErrorCode(GetLastError()));
+    lease->handles.push_back(handle);
+    BY_HANDLE_FILE_INFORMATION attributes{};
+    if (!GetFileInformationByHandle(handle, &attributes) ||
+        (attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+        (attributes.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || IsRemoteHandle(handle))
+      return ThrowError(env, "Unsafe evidence directory.", "ELOOP");
+    const auto anchored = HandlePath(handle);
+    auto anchored_parent = ParentPath(anchored);
+    if (index == 1 && anchored_parent.size() == 6) anchored_parent.push_back(L'\\');
+    if (anchored.empty() || (index != 0 && !SamePath(anchored_parent, parent)))
+      return ThrowError(env, "Evidence directory escaped its parent.", "ELOOP");
+    if (index == components.size() &&
+        (attributes.dwVolumeSerialNumber != dev ||
+         ((static_cast<uint64_t>(attributes.nFileIndexHigh) << 32) | attributes.nFileIndexLow) != ino))
+      return ThrowError(env, "Evidence directory changed before binding.", "ESTALE");
+    path = anchored;
+  }
+  napi_value value;
+  if (napi_create_object(env, &value) != napi_ok ||
+      napi_type_tag_object(env, value, &kDirectoryLeaseTag) != napi_ok ||
+      napi_wrap(env, value, lease.get(), [](napi_env, void* data, void*) {
+        delete static_cast<DirectoryLease*>(data);
+      }, nullptr, nullptr) != napi_ok)
+    return ThrowError(env, "Could not create the directory lease.", "EIO");
+  lease.release();
+  return value;
+#else
+  return ThrowError(env, "Directory leases are only required on Windows.", "ENOTSUP");
+#endif
+}
+
+napi_value CloseDirectoryLease(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value value;
+  bool tagged = false;
+  DirectoryLease* lease = nullptr;
+  if (napi_get_cb_info(env, info, &argc, &value, nullptr, nullptr) != napi_ok || argc != 1 ||
+      napi_check_object_type_tag(env, value, &kDirectoryLeaseTag, &tagged) != napi_ok || !tagged ||
+      napi_unwrap(env, value, reinterpret_cast<void**>(&lease)) != napi_ok || !lease)
+    return ThrowError(env, "Invalid directory lease.", "EINVAL");
+  lease->Close();
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  return undefined;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   napi_value publish;
   napi_create_function(
@@ -970,6 +1073,12 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_value recover;
   napi_create_function(env, "recoverAnchoredRemoval", NAPI_AUTO_LENGTH, RecoverAnchoredRemoval, nullptr, &recover);
   napi_set_named_property(env, exports, "recoverAnchoredRemoval", recover);
+  napi_value open_lease;
+  napi_create_function(env, "openDirectoryLease", NAPI_AUTO_LENGTH, OpenDirectoryLease, nullptr, &open_lease);
+  napi_set_named_property(env, exports, "openDirectoryLease", open_lease);
+  napi_value close_lease;
+  napi_create_function(env, "closeDirectoryLease", NAPI_AUTO_LENGTH, CloseDirectoryLease, nullptr, &close_lease);
+  napi_set_named_property(env, exports, "closeDirectoryLease", close_lease);
   return exports;
 }
 

@@ -7,6 +7,7 @@ export {
   resolveVendorResponsesBaseUrl,
   resolveVendorApiKeyUrl,
   resolveVendorModelsUrl,
+  resolveVendorApiEndpoints,
   usesVendorMessagesApiKeyHeader,
   isVendorModelMultimodal,
   resolveVendorModelApiEndpoints
@@ -15,9 +16,55 @@ export type {
   OfficialVendorId,
   VendorRegion,
   OfficialModel,
-  OfficialVendor
+  OfficialVendor,
+  ImageGenerationProviderDefinition
 } from './providers/types'
 export { getVendorModelReasoningCapability } from './providers/lookup'
+export {
+  cloudflareGatewayAcceptsModel,
+  cloudflareGatewayBase,
+  cloudflareGatewayProtocol,
+  foundryGatewayBase,
+  parseCloudflareGateway,
+  parseFoundryLocation,
+  validCloudflareAccountId,
+  validCloudflareGatewayId,
+  type CloudflareGateway
+} from './protocols/gateway-endpoints'
+export {
+  CLOUDFLARE_GATEWAY_MODELS,
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  configuredProviderConnectionKind,
+  configuredProviderModelError,
+  configuredProviderPresetModels,
+  configuredProviderProtocol,
+  inferManualProviderProtocol,
+  modelAfterManualProtocolChange,
+  recoverConfiguredProviderModels,
+  resolveConfiguredProviderCatalog,
+  resolveConfiguredProviderConnection,
+  sameConfiguredProviderConnection,
+  sameProviderCredentialScope,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList,
+  type ConfiguredProviderConnectionInput,
+  type ResolvedConfiguredProviderConnection,
+  manualProviderDefaultContextWindow,
+  manualProviderDefinition,
+  manualProviderPresetModels,
+  publishedManualProviderContextWindow,
+  resolveManualProviderConnection,
+  sameManualProviderCredentialScope,
+  type ManualProviderConnection
+} from './providers/manual-connections'
+export {
+  LOCAL_MODEL_PRESETS,
+  isLocalProviderPresetId,
+  resolveLocalModelDiscoveryUrl,
+  type LocalModelPreset,
+  type LocalProviderPresetId
+} from './providers/local-connection'
+export { resolveProviderProbePolicy } from './providers/probe-policy'
 export type {
   ModelProtocol,
   ModelReasoningEffort,
@@ -30,6 +77,19 @@ export type {
   ClassificationAdapter,
   ClassificationModelDefinition
 } from './providers/classification'
-export { getProviderDefinition, getProviderModels } from './providers/definitions'
+export {
+  getProviderDefinition,
+  getProviderModels,
+  resolveProviderImageBaseUrl
+} from './providers/definitions'
 export type { ProviderDefinition } from './providers/definitions'
 export type { ModelCapability, ModelIdentity, ModelDefinition } from './models/types'
+
+export { resolveVendorModelCatalog } from './providers/lookup'
+export type {
+  CatalogModel,
+  CatalogSnapshot,
+  CatalogStatus,
+  CatalogErrorCode,
+  CatalogRequestOptions
+} from './protocols/catalog'

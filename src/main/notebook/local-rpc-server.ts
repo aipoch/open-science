@@ -1,3 +1,7 @@
+import { imageArtifactContent } from '../image-model/contract'
+import { isPixelLimitedRasterMimeType, readRasterImageDimensions } from '../raster-image-safety'
+import type { ArtifactProducerInputScope } from '../managed-file-versions/read-port'
+import type { ImageModelBinding } from '../../shared/image-model-settings'
 import type { AuthorizedDirectoriesSnapshot } from '../local-fs/authorized-directories'
 import { createHash, randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
@@ -8,6 +12,14 @@ import {
   notebookErrorRecovery
 } from '../../shared/notebook-execution-error'
 import { artifactSaveRequestSchema } from '../artifacts/save-request'
+import type { NotebookRunInputFile } from '../../shared/notebook'
+import {
+  ImageModelError,
+  ImageRequestConflictError,
+  type ImageModelRequest,
+  type ImageModelResult
+} from '../image-model/contract'
+import { z } from 'zod'
 import { executionRecoveryContext } from './execution-recovery'
 import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 
@@ -23,6 +35,7 @@ import {
 import type {
   ArtifactRpcCapabilityBinding,
   ArtifactRpcMethod,
+  ArtifactVersionCoreProvenance,
   ArtifactVersionFile,
   ArtifactWriteReservation,
   ArtifactWriteSourceScope,
@@ -32,6 +45,7 @@ import type {
   ReserveArtifactWriteRequest,
   SaveArtifactVersionRequest
 } from '../../shared/artifact-provenance'
+import type { ArtifactFile } from '../../shared/artifacts'
 import {
   createArtifactVersionLocator,
   parseArtifactVersionLocator
@@ -127,9 +141,17 @@ import {
   type NotebookLocalRpcCapability
 } from './local-rpc-notebook-adapter'
 import type { NotebookRpcConnection } from './mcp-server'
+import {
+  withNotebookExecutionIntent,
+  notebookExecutionIntent,
+  markNotebookExecutionIntent,
+  NotebookExecutionIntent,
+  type NotebookExecutionIntentScope
+} from './execution-intent'
 
 const log = createLogger('notebook:local-rpc')
 const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
+const MAX_CONTROL_INVOCATION_HISTORY = 256
 
 type NotebookLocalRpcServerOptions = {
   token?: string
@@ -142,6 +164,7 @@ type NotebookLocalRpcServerOptions = {
   resolveSpecialistSkillIds?: (specialistId: string) => Promise<readonly string[]>
   transport?: LocalRpcListenOptions['transport']
   connectorService?: {
+    errorCategory?(error: unknown): string | undefined
     call(
       server: string,
       method: string,
@@ -268,8 +291,21 @@ type NotebookLocalRpcServerOptions = {
     }): Promise<void>
     releaseAllWriteReservations?(): Promise<void>
   }
+  readImageArtifact?: (
+    binding: Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'>,
+    invocationId: string
+  ) => Promise<ArtifactVersionCoreProvenance | undefined>
+  writeImageArtifact?: (
+    binding: Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'>,
+    input: ReturnType<typeof imageArtifactContent>
+  ) => Promise<ArtifactFile>
+  imageModel?: {
+    capture(
+      selection?: ImageModelBinding
+    ): (request: ImageModelRequest) => Promise<ImageModelResult>
+  }
   inputRegistry?: Pick<NotebookInputRegistry, 'registerTurn' | 'getTurnInputs' | 'clearSession'> &
-    Partial<Pick<NotebookInputRegistry, 'openRun' | 'prepareTurn'>>
+    Partial<Pick<NotebookInputRegistry, 'openTurnContent' | 'openRun' | 'prepareTurn'>>
   hostArtifacts?: {
     list(options: unknown, context: { projectId: string; sessionId: string }): Promise<unknown>
     resolvePath(
@@ -396,8 +432,10 @@ type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'
   allowedMethods: Set<ArtifactRpcMethod>
   expiresAt: number
   isOwnerActive?: () => boolean
+  revoked: boolean
   inFlightRequests: number
   drainWaiters: Set<() => void>
+  executeImage?: (request: ImageModelRequest) => Promise<ImageModelResult>
 }
 
 type NotebookRpcSessionBinding = {
@@ -410,8 +448,19 @@ type NotebookRpcSessionBinding = {
   allowedMethods?: ReadonlySet<string>
   capabilityLifetime?: AbortController
   activeControlInvocation?: TrustedControlInvocationIdentity
+  controlInvocations?: Map<
+    string,
+    {
+      readonly identity: TrustedControlInvocationIdentity
+      readonly intent?: NotebookExecutionIntent
+      readonly credential?: string
+      active: boolean
+    }
+  >
   executionCwd?: string
   isControl?: true
+  executionReady?: boolean
+  executionIntent?: NotebookExecutionIntent
   delegatedNotebook?: {
     viewImageBackend?: HostViewImageBackend
     permissionPrompts?: 'none'
@@ -442,6 +491,7 @@ type ActiveArtifactTurnBinding = Readonly<{
 type DelegatedNotebookConnectionRequest = Readonly<{
   viewImageBackend?: HostViewImageBackend
   permissionPrompts?: 'none'
+  executionIntent?: NotebookExecutionIntent
   projectId: string
   sessionId: string
   rootFrameId: string
@@ -455,6 +505,7 @@ type DelegatedNotebookConnectionRequest = Readonly<{
 }>
 
 type DelegatedNotebookConnection = NotebookRpcConnection & {
+  refreshExecutionIntent(intent: NotebookExecutionIntent): Promise<NotebookRpcConnection>
   revoke(): Promise<void>
 }
 
@@ -474,6 +525,7 @@ type NotebookRpcRequestLifecycle = {
   settled: Promise<void>
   settle(): void
   method?: string
+  preserveProviderStoppedWork?: () => boolean
 }
 
 type NotebookRpcServerLifecycle = {
@@ -522,11 +574,29 @@ class BackgroundHostMethodUnsafeError extends RpcHttpError {
 
 const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
   'artifactSaveVersion',
+  'imageGenerate',
   'artifactReserveWrite',
   'artifactReleaseWrite',
   'artifactCreateVersion',
   'artifactReplayVersion'
 ])
+
+const imageGenerateRequestSchema = z.object({
+  operation: z.enum(['generate', 'edit']),
+  prompt: z.string().trim().min(1).max(32_000),
+  idempotencyKey: z.string().trim().min(1).max(256),
+  filename: z.string().trim().min(1).max(256).optional(),
+  options: z.unknown().optional(),
+  source: z
+    .object({
+      projectId: z.string().min(1),
+      sourceKind: z.enum(['upload-version', 'artifact-version']),
+      sourceFileId: z.string().min(1),
+      inputFileVersionId: z.string().min(1)
+    })
+    .strict()
+    .optional()
+})
 
 // Live turn-owned capabilities follow their owner, including long executions. Capabilities issued
 // without an owner remain time-bounded; all capabilities still support explicit revoke and drain.
@@ -557,6 +627,20 @@ const CONTROL_RPC_METHODS = new Set([
   'memoryRemember'
 ])
 const MEMORY_RPC_METHODS = new Set(['memoryListCategories', 'memorySearch', 'memoryRemember'])
+const NOTEBOOK_EXECUTION_METHODS = new Set([
+  'beginCodeCell',
+  'execute',
+  'runCell',
+  'executeControl',
+  'executeShell',
+  'restart',
+  'bindRuntime',
+  'switchRuntime',
+  'managePackages'
+])
+const startsNotebookExecution = (method: string, params: Record<string, unknown>): boolean =>
+  NOTEBOOK_EXECUTION_METHODS.has(method) ||
+  (method === 'manageEnvironments' && params.action !== 'list')
 const DELEGATED_CONTROL_RPC_METHODS = new Set([
   ...[...CONTROL_RPC_METHODS].filter((method) => !MEMORY_RPC_METHODS.has(method)),
   'delegatedOutputCall'
@@ -680,6 +764,9 @@ class NotebookLocalRpcServer {
   private readonly planService: NotebookLocalRpcServerOptions['planService']
   private readonly requestUserInput: NotebookLocalRpcServerOptions['requestUserInput']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
+  private readonly readImageArtifact: NotebookLocalRpcServerOptions['readImageArtifact']
+  private readonly writeImageArtifact: NotebookLocalRpcServerOptions['writeImageArtifact']
+  private readonly imageModel: NotebookLocalRpcServerOptions['imageModel']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly hostArtifacts: NotebookLocalRpcServerOptions['hostArtifacts']
   private readonly delegationInputCatalog: NotebookLocalRpcServerOptions['delegationInputCatalog']
@@ -727,6 +814,14 @@ class NotebookLocalRpcServer {
   private static readonly artifactRequestBudget = new PendingRequestBudget()
   private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
   private readonly drainingArtifactRpcCapabilities = new Map<string, Promise<void>>()
+  private readonly generatedImagePreviews = new Map<
+    string,
+    { artifactId: string; capability: ArtifactRpcCapability }
+  >()
+  private readonly imageGenerationInvocations = new Map<
+    string,
+    { fingerprint: string; result: Promise<unknown>; recheck?: boolean }
+  >()
   private readonly runtimeBindingAdmissions = new Map<
     string,
     Map<
@@ -779,6 +874,9 @@ class NotebookLocalRpcServer {
     this.planService = options.planService
     this.requestUserInput = options.requestUserInput
     this.artifactProvenance = options.artifactProvenance
+    this.readImageArtifact = options.readImageArtifact
+    this.writeImageArtifact = options.writeImageArtifact
+    this.imageModel = options.imageModel
     this.inputRegistry = options.inputRegistry
     this.hostArtifacts = options.hostArtifacts
     this.delegationInputCatalog = options.delegationInputCatalog
@@ -804,6 +902,9 @@ class NotebookLocalRpcServer {
     if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
       throw new Error('Artifact RPC capability lifetime must be positive.')
     }
+    const executeImage = binding.allowedMethods?.includes('imageGenerate')
+      ? this.imageModel?.capture.bind(this.imageModel)
+      : undefined
     const token = randomUUID()
     this.artifactRpcCapabilities.set(token, {
       ...binding,
@@ -818,12 +919,63 @@ class NotebookLocalRpcServer {
         : undefined,
       messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
       allowedMethods: new Set(binding.allowedMethods ?? ['artifactSaveVersion']),
+      executeImage: executeImage?.(),
       expiresAt: this.now() + ttlMs,
       isOwnerActive,
+      revoked: false,
       inFlightRequests: 0,
       drainWaiters: new Set()
     })
     return token
+  }
+
+  captureImageGenerationPreviewScope(request: {
+    projectId: string
+    sessionId: string
+    artifactId: string
+    versionId: string
+  }): ArtifactProducerInputScope | undefined {
+    const entry = this.generatedImagePreviews.get(request.versionId)
+    if (
+      !entry ||
+      entry.artifactId !== request.artifactId ||
+      entry.capability.projectId !== request.projectId ||
+      entry.capability.appSessionId !== request.sessionId
+    )
+      return undefined
+    const capability = entry.capability
+    const turn = this.activeArtifactTurnBindings.get(request.sessionId)
+    if (
+      !turn ||
+      turn.projectId !== request.projectId ||
+      turn.artifactRunId !== capability.artifactRunId ||
+      (
+        [
+          'rootFrameId',
+          'agentFrameId',
+          'messageBranchId',
+          'runtimeSegmentId',
+          'promptMessageId'
+        ] as const
+      ).some((key) => turn.provenanceContext[key] !== capability[key])
+    )
+      return undefined
+    const assertActive = (): void => {
+      this.assertImageGenerationActive(capability)
+      if (this.activeArtifactTurnBindings.get(request.sessionId) !== turn)
+        throw new Error('Image preview producer turn is no longer active.')
+    }
+    assertActive()
+    return {
+      appSessionId: capability.appSessionId,
+      artifactRunId: capability.artifactRunId,
+      rootFrameId: capability.rootFrameId,
+      agentFrameId: capability.agentFrameId,
+      messageBranchId: capability.messageBranchId,
+      runtimeSegmentId: capability.runtimeSegmentId,
+      promptMessageId: capability.promptMessageId,
+      assertActive
+    }
   }
 
   async revokeArtifactRunCapability(token: string): Promise<void> {
@@ -833,6 +985,14 @@ class NotebookLocalRpcServer {
     const capability = this.artifactRpcCapabilities.get(token)
     this.artifactRpcCapabilities.delete(token)
     if (!capability) return
+    capability.revoked = true
+    for (const [versionId, entry] of this.generatedImagePreviews) {
+      if (entry.capability === capability) this.generatedImagePreviews.delete(versionId)
+    }
+    for (const key of this.imageGenerationInvocations.keys()) {
+      if (key.startsWith(`${capability.artifactRunId}\0`))
+        this.imageGenerationInvocations.delete(key)
+    }
     const releaseReservations = (): Promise<void> =>
       this.artifactProvenance?.releaseRunWriteReservations?.({
         projectId: capability.projectId,
@@ -912,6 +1072,8 @@ class NotebookLocalRpcServer {
     this.serverLifecycle = undefined
     this.startPromise = undefined
     this.artifactRpcCapabilities.clear()
+    this.generatedImagePreviews.clear()
+    this.imageGenerationInvocations.clear()
     for (const binding of this.sessionRpcCapabilities.values()) {
       if (binding.activeControlInvocation) {
         this.hostViewImage?.discard(binding.activeControlInvocation.toolInvocationId)
@@ -1014,6 +1176,12 @@ class NotebookLocalRpcServer {
       ) {
         continue
       }
+      if (binding.projectId) {
+        this.service.adoptExecutionIntentScope?.(
+          { projectId: binding.projectId, sessionId: aliasSessionId },
+          sessionId
+        )
+      }
       binding.sessionId = sessionId
       binding.agentFrameId = canonicalRootFrameId
     }
@@ -1067,9 +1235,9 @@ class NotebookLocalRpcServer {
     }
   }
 
-  private revokeSessionCapability(token: string): void {
+  private revokeSessionCapability(token: string, preserveDispatchedWork = false): void {
     const capability = this.sessionRpcCapabilities.get(token)
-    capability?.capabilityLifetime?.abort()
+    if (!preserveDispatchedWork) capability?.capabilityLifetime?.abort()
     if (capability?.agentFrameId) {
       this.releaseRuntimeBindingAdmissions(
         capability.sessionId,
@@ -1077,7 +1245,7 @@ class NotebookLocalRpcServer {
         capability.delegatedNotebook?.attemptId
       )
     }
-    this.codeWriteProducers.get(token)?.controller.abort()
+    if (!preserveDispatchedWork) this.codeWriteProducers.get(token)?.controller.abort()
     this.codeWriteProducers.delete(token)
     this.sessionRpcCapabilities.delete(token)
   }
@@ -1429,11 +1597,35 @@ class NotebookLocalRpcServer {
     return Array.isArray(requestOrRequests) ? canonicalized : canonicalized[0]
   }
 
+  createExecutionIntent(scope: NotebookExecutionIntentScope): NotebookExecutionIntent {
+    return this.service.createExecutionIntent?.(scope) ?? new NotebookExecutionIntent(scope)
+  }
+
+  currentExecutionIntent(scope: NotebookExecutionIntentScope): NotebookExecutionIntent | undefined {
+    return this.service.currentExecutionIntent?.(scope)
+  }
+
+  rememberExecutionIntent(
+    scope: NotebookExecutionIntentScope,
+    promptId: string,
+    intent: NotebookExecutionIntent
+  ): void {
+    this.service.rememberExecutionIntent?.(scope, promptId, intent)
+  }
+
+  resolveExecutionIntent(
+    scope: NotebookExecutionIntentScope,
+    promptId: string
+  ): NotebookExecutionIntent | undefined {
+    return this.service.resolveExecutionIntent?.(scope, promptId)
+  }
+
   async issueSessionConnection(
     sessionId: string,
     projectId: string,
     agentFrameId: string,
-    memoryTools = true
+    memoryTools = true,
+    executionIntent?: NotebookExecutionIntent
   ): Promise<NotebookRpcConnection> {
     if (!agentFrameId.trim()) {
       throw new Error('Notebook RPC capabilities require an explicit Agent Frame owner.')
@@ -1451,26 +1643,88 @@ class NotebookLocalRpcServer {
         ? `root-frame-${resolvedSessionId}`
         : agentFrameId
     this.sessionRpcTokens.set(sessionId, token)
-    this.sessionRpcCapabilities.set(token, {
+    let intent =
+      executionIntent ??
+      this.service.currentExecutionIntent?.({ projectId, sessionId: resolvedSessionId })
+    if (intent)
+      this.service.bindExecutionIntent?.({ projectId, sessionId: resolvedSessionId }, intent)
+    else {
+      // Resume and capability discovery grant reads, never another user execution context.
+      // Keep this refusal local to the credential so the first trusted user prompt can mint.
+      intent = new NotebookExecutionIntent({ projectId, sessionId: resolvedSessionId })
+      intent.block('originating-execution-context-unavailable')
+    }
+    let binding: NotebookRpcSessionBinding = {
       sessionId: resolvedSessionId,
       projectId,
       agentFrameId: resolvedAgentFrameId,
       memoryTools,
+      executionIntent: intent,
       delegatedWorkRole: 'main'
-    })
-    return {
-      endpoint: connection.endpoint,
-      socketPath: connection.socketPath,
-      token,
-      release: () => {
-        // A stale startup may release after a same-ID successor has rotated the current token. Revoke
-        // only this concrete capability and clear the owner projection only while it still points here.
-        if (this.sessionRpcTokens.get(sessionId) === token) {
-          this.sessionRpcTokens.delete(sessionId)
-        }
-        this.revokeSessionCapability(token)
-      }
     }
+    this.sessionRpcCapabilities.set(token, binding)
+    return withNotebookExecutionIntent(
+      {
+        endpoint: connection.endpoint,
+        socketPath: connection.socketPath,
+        token,
+        prepareInitialExecution: (executionIntent) => {
+          if (this.sessionRpcCapabilities.get(token) !== binding)
+            throw new Error('Notebook execution capability was superseded.')
+          const currentSessionId = this.sessionAliases.get(binding.sessionId) ?? binding.sessionId
+          if (
+            executionIntent.scope.projectId !== binding.projectId ||
+            executionIntent.scope.sessionId !== currentSessionId
+          )
+            throw new Error('Notebook execution intent does not belong to this Session.')
+          // Replace the binding rather than mutating its intent: requests admitted before this
+          // preparation must never acquire the new user's authority after awaiting their body.
+          const prepared = { ...binding, executionIntent, executionReady: false }
+          binding = prepared
+          this.sessionRpcCapabilities.set(token, prepared)
+          let finalized = false
+          return {
+            commit: () => {
+              if (finalized || this.sessionRpcCapabilities.get(token) !== prepared)
+                throw new Error('Notebook execution preparation was superseded.')
+              this.service.bindExecutionIntent?.(
+                { projectId: executionIntent.scope.projectId, sessionId: currentSessionId },
+                executionIntent
+              )
+              prepared.executionReady = true
+              finalized = true
+            },
+            release: () => {
+              if (finalized) return
+              finalized = true
+              executionIntent.abandonUserExecution()
+              // Keep the installed connection dormant so a cancelled first send can be retried.
+              // A stale release cannot modify a successor's binding.
+              if (this.sessionRpcCapabilities.get(token) === prepared)
+                prepared.executionReady = false
+            }
+          }
+        },
+        deferExecution: () => {
+          const deferred = binding
+          deferred.executionReady = false
+          return () => {
+            if (this.sessionRpcCapabilities.get(token) !== deferred)
+              throw new Error('Notebook execution capability was superseded.')
+            deferred.executionReady = true
+          }
+        },
+        release: () => {
+          // A stale startup may release after a same-ID successor has rotated the current token. Revoke
+          // only this concrete capability and clear the owner projection only while it still points here.
+          if (this.sessionRpcTokens.get(sessionId) === token) {
+            this.sessionRpcTokens.delete(sessionId)
+          }
+          this.revokeSessionCapability(token)
+        }
+      },
+      intent
+    )
   }
 
   // Provisions one fail-closed child capability. The caller supplies the durable Attempt check;
@@ -1513,7 +1767,26 @@ class NotebookLocalRpcServer {
       inFlightRequests: 0,
       drainWaiters: new Set()
     }
-    this.sessionRpcCapabilities.set(token, {
+    let intent =
+      scope.executionIntent ??
+      this.service.resolveExecutionIntent?.(
+        { projectId: scope.projectId, sessionId: scope.sessionId },
+        scope.promptMessageId
+      )
+    if (!intent && this.service.createExecutionIntent) {
+      intent = new NotebookExecutionIntent({
+        projectId: scope.projectId,
+        sessionId: scope.sessionId
+      })
+      intent.block('originating-execution-context-unavailable')
+    }
+    if (intent)
+      this.service.rememberExecutionIntent?.(
+        { projectId: scope.projectId, sessionId: scope.sessionId },
+        scope.promptMessageId,
+        intent
+      )
+    const binding: NotebookRpcSessionBinding = {
       sessionId: scope.sessionId,
       projectId: scope.projectId,
       agentFrameId: scope.agentFrameId,
@@ -1528,13 +1801,18 @@ class NotebookLocalRpcServer {
       delegatedWorkRole: 'delegate',
       delegatedWorkAttemptId: scope.attemptId,
       capabilityLifetime: new AbortController(),
+      executionIntent: intent,
       delegatedNotebook
-    })
+    }
+    this.sessionRpcCapabilities.set(token, binding)
+    const ownedTokens = new Set([token])
     let revokePromise: Promise<void> | undefined
     const revoke = (): Promise<void> => {
       if (revokePromise) return revokePromise
       delegatedNotebook.revoked = true
-      this.revokeSessionCapability(token)
+      binding.capabilityLifetime?.abort()
+      for (const ownedToken of ownedTokens) this.revokeSessionCapability(ownedToken)
+      ownedTokens.clear()
       const drained =
         delegatedNotebook.inFlightRequests === 0
           ? Promise.resolve()
@@ -1559,13 +1837,75 @@ class NotebookLocalRpcServer {
       )
       return revokePromise
     }
-    return {
+    const result = {
       endpoint: connection.endpoint,
       socketPath: connection.socketPath,
       token,
-      release: () => void revoke().catch(() => undefined),
+      prepareInitialExecution: (nextIntent: NotebookExecutionIntent) => {
+        const assertCurrent = (): void => {
+          if (delegatedNotebook.revoked || this.sessionRpcCapabilities.get(token) !== binding)
+            throw new Error('Delegated Notebook execution authority expired.')
+          // The Attempt already owns this inherited grant. First dispatch cannot mint or replace
+          // the root user's authority; later delivered turns rotate their concrete credentials.
+          if (nextIntent !== binding.executionIntent)
+            throw new Error('Delegated Notebook execution intent does not belong to this Attempt.')
+        }
+        assertCurrent()
+        let finalized = false
+        return {
+          commit: () => {
+            if (finalized) throw new Error('Delegated Notebook preparation is already finalized.')
+            assertCurrent()
+            finalized = true
+          },
+          release: () => {
+            finalized = true
+          }
+        }
+      },
+      refreshExecutionIntent: async (
+        nextIntent: NotebookExecutionIntent
+      ): Promise<NotebookRpcConnection> => {
+        if (delegatedNotebook.revoked || !(await delegatedNotebook.isAttemptWritable()))
+          throw new RpcHttpError(403, 'Delegated Notebook execution authority expired.')
+        if (delegatedNotebook.revoked)
+          throw new RpcHttpError(403, 'Delegated Notebook execution authority expired.')
+        const nextToken = randomUUID()
+        // Credential retirement closes only future admission. The original Attempt still owns
+        // previously dispatched background work and revokes that shared lifetime at teardown.
+        for (const ownedToken of ownedTokens) this.revokeSessionCapability(ownedToken, true)
+        ownedTokens.clear()
+        ownedTokens.add(nextToken)
+        this.sessionRpcCapabilities.set(nextToken, {
+          ...binding,
+          executionIntent: nextIntent
+        })
+        this.service.rememberExecutionIntent?.(
+          { projectId: scope.projectId, sessionId: scope.sessionId },
+          `notebook-capability:${nextToken}`,
+          nextIntent
+        )
+        return withNotebookExecutionIntent(
+          {
+            endpoint: connection.endpoint,
+            socketPath: connection.socketPath,
+            token: nextToken,
+            release: () => {
+              ownedTokens.delete(nextToken)
+              this.revokeSessionCapability(nextToken)
+            }
+          },
+          nextIntent
+        )
+      },
+      release: () => {
+        // Session credential replacement must not revoke the Attempt's refreshed credentials.
+        ownedTokens.delete(token)
+        this.revokeSessionCapability(token, true)
+      },
       revoke
     }
+    return intent ? withNotebookExecutionIntent(result, intent) : result
   }
 
   async issueSkillImportConnection(sessionId: string): Promise<NotebookRpcConnection> {
@@ -1681,7 +2021,11 @@ class NotebookLocalRpcServer {
     executionCwd?: string
   ): Promise<
     NotebookRpcConnection & {
-      beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
+      beginControlInvocation(
+        context: TrustedControlInvocationIdentity,
+        intent?: NotebookExecutionIntent,
+        credential?: string
+      ): (() => void) & { readonly nonce: string }
       completeControlInvocation(
         controlInvocationId: string,
         signal?: AbortSignal
@@ -1724,14 +2068,29 @@ class NotebookLocalRpcServer {
       endpoint: connection.endpoint,
       socketPath: connection.socketPath,
       token,
-      beginControlInvocation: (context) => {
+      beginControlInvocation: (context, intent, credential) => {
+        const nonce = randomUUID()
+        const identity = Object.freeze({ ...context })
+        binding.controlInvocations ??= new Map()
+        const authority = { identity, intent, credential, active: true }
+        binding.controlInvocations.set(nonce, authority)
+        // Retain a bounded window for late callbacks from a persistent REPL. Expiring an entry
+        // closes future admission; requests that already captured it keep their own authority.
+        if (binding.controlInvocations.size > MAX_CONTROL_INVOCATION_HISTORY) {
+          const oldest = binding.controlInvocations.keys().next().value
+          if (oldest) binding.controlInvocations.delete(oldest)
+        }
         binding.activeControlInvocation = context
         ownedControlInvocationIds.add(context.toolInvocationId)
-        return () => {
-          if (binding.activeControlInvocation === context) {
-            delete binding.activeControlInvocation
-          }
-        }
+        return Object.assign(
+          () => {
+            authority.active = false
+            if (binding.activeControlInvocation === context) {
+              delete binding.activeControlInvocation
+            }
+          },
+          { nonce }
+        )
       },
       completeControlInvocation: async (controlInvocationId, signal) => {
         if (!ownedControlInvocationIds.has(controlInvocationId)) return []
@@ -1871,6 +2230,9 @@ class NotebookLocalRpcServer {
   }
 
   private assertArtifactCapabilityActive(token: string, capability: ArtifactRpcCapability): void {
+    if (capability.revoked) {
+      throw new RpcHttpError(401, 'Artifact RPC capability is no longer active.')
+    }
     if (capability.isOwnerActive ? capability.isOwnerActive() : capability.expiresAt > this.now()) {
       return
     }
@@ -1896,13 +2258,13 @@ class NotebookLocalRpcServer {
       throw new RpcHttpError(403, `Artifact RPC capability does not allow ${method}.`)
     }
 
-    if (method !== 'artifactSaveVersion') {
+    if (method !== 'artifactSaveVersion' && method !== 'imageGenerate') {
       throw new RpcHttpError(
         409,
         'ARTIFACT_PUBLICATION_UNAVAILABLE: Artifact save protocol changed. Do not retry this turn; tell the user to start a new conversation turn.'
       )
     }
-    if (!capability.sourceScope)
+    if (method === 'artifactSaveVersion' && !capability.sourceScope)
       throw new RpcHttpError(403, 'Artifact save requires a trusted source scope.')
     const boundFields = [
       'projectId',
@@ -1917,7 +2279,15 @@ class NotebookLocalRpcServer {
     ] as const
     for (const field of boundFields) {
       const expected = capability[field as keyof ArtifactRpcCapabilityBinding]
-      if (params[field] !== expected) {
+      // Artifact saves are emitted by the existing host protocol and must carry
+      // every binding field. Image requests are also exposed to MCP callers,
+      // so the runtime identity is injected from the bearer capability; reject
+      // an explicitly supplied conflicting value without requiring callers to
+      // know the internal turn envelope.
+      if (method === 'artifactSaveVersion' && params[field] !== expected) {
+        throw new RpcHttpError(403, `Artifact RPC capability does not match ${field}.`)
+      }
+      if (method === 'imageGenerate' && params[field] !== undefined && params[field] !== expected) {
         throw new RpcHttpError(403, `Artifact RPC capability does not match ${field}.`)
       }
     }
@@ -1957,8 +2327,259 @@ class NotebookLocalRpcServer {
     }
   }
 
+  private async readImageInput(
+    source: z.infer<typeof imageGenerateRequestSchema>['source'],
+    capability: ArtifactRpcCapability,
+    metadataOnly = false
+  ): Promise<{ bytes: Buffer; input: NotebookRunInputFile; pixels?: number }> {
+    const { projectId } = capability
+    if (!source) throw new RpcHttpError(400, 'Image editing requires a source Version.')
+    if (source.projectId !== projectId) {
+      throw new ImageModelError(
+        'SOURCE_UNAVAILABLE',
+        'Image source Version belongs to another Project. Use the source object returned by image generation or resolve the exact image Version in the current Project.',
+        403
+      )
+    }
+    if (!this.inputRegistry?.openTurnContent)
+      throw new Error('Image input resolution is unavailable.')
+    const opened = await this.inputRegistry.openTurnContent({
+      ...source,
+      scope: {
+        appSessionId: capability.appSessionId,
+        artifactRunId: capability.artifactRunId,
+        rootFrameId: capability.rootFrameId,
+        agentFrameId: capability.agentFrameId,
+        messageBranchId: capability.messageBranchId,
+        runtimeSegmentId: capability.runtimeSegmentId,
+        promptMessageId: capability.promptMessageId,
+        assertActive: () => this.assertImageGenerationActive(capability)
+      }
+    })
+    if (!opened)
+      throw new ImageModelError(
+        'SOURCE_UNAVAILABLE',
+        'Image source Version is not available in this turn. Ask the user to mention the exact image Version in this conversation, or use the right-side image editor.',
+        403
+      )
+    const { input, lease } = opened
+    try {
+      if (lease.size > 64 * 1024 * 1024) {
+        throw new RpcHttpError(413, 'Image source exceeds the 64 MiB limit.')
+      }
+      const bytes = Buffer.from(
+        await lease.readRange(0, metadataOnly ? Math.min(lease.size, 1024 * 1024) : lease.size)
+      )
+      const mime = input.contentType
+      const dimensions =
+        metadataOnly && mime && isPixelLimitedRasterMimeType(mime)
+          ? readRasterImageDimensions(bytes, mime)
+          : undefined
+      await lease.verifyUnchanged()
+      return {
+        bytes: metadataOnly ? Buffer.alloc(0) : bytes,
+        input,
+        pixels: dimensions ? dimensions.width * dimensions.height : undefined
+      }
+    } finally {
+      await lease.close()
+    }
+  }
+
+  private async imageGenerate(
+    params: Record<string, unknown>,
+    capability: ArtifactRpcCapability,
+    signal: AbortSignal
+  ): Promise<unknown> {
+    if (!capability.executeImage || !this.writeImageArtifact) {
+      throw new Error('Image generation is unavailable.')
+    }
+    const request = parseRpcParams(() => imageGenerateRequestSchema.parse(params))
+    if ((request.operation === 'edit') !== Boolean(request.source)) {
+      throw new RpcHttpError(400, 'Image editing requires exactly one source Version.')
+    }
+    this.assertImageGenerationActive(capability)
+    const invocationId = `${capability.artifactRunId}:${request.idempotencyKey}`
+    const fingerprint = createHash('sha256')
+      .update(
+        JSON.stringify([
+          // Legacy service receipts omitted the requested filename and full source reference.
+          'image-rpc',
+          request.operation,
+          request.prompt,
+          request.options ?? null,
+          request.source ?? null,
+          request.filename ?? null
+        ])
+      )
+      .digest('hex')
+    const key = `${capability.artifactRunId}\0${request.idempotencyKey}`
+    const existing = this.imageGenerationInvocations.get(key)
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new RpcHttpError(409, 'Image idempotency key was reused with different arguments.')
+      }
+      if (!existing.recheck || !this.readImageArtifact) return existing.result
+      try {
+        const recovered = await this.readImageArtifact(capability, invocationId)
+        this.assertImageGenerationActive(capability)
+        const args = recovered?.evidence.connector_execution?.normalized_arguments
+        if (
+          recovered &&
+          args &&
+          typeof args.width === 'number' &&
+          typeof args.height === 'number' &&
+          typeof args.model === 'string' &&
+          typeof args.presetId === 'string'
+        ) {
+          const descriptor = recovered.descriptor
+          this.generatedImagePreviews.set(descriptor.versionId, {
+            artifactId: descriptor.artifactId,
+            capability
+          })
+          const result = {
+            source: {
+              sourceKind: 'artifact-version',
+              sourceFileId: descriptor.artifactId,
+              inputFileVersionId: descriptor.versionId
+            },
+            artifactId: descriptor.artifactId,
+            versionId: descriptor.versionId,
+            versionNumber: descriptor.versionNumber,
+            filename: descriptor.name,
+            mimeType: descriptor.mimeType,
+            sizeBytes: descriptor.size,
+            width: args.width,
+            height: args.height,
+            model: args.model,
+            presetId: args.presetId,
+            parameters: args.parameters ?? {},
+            ...(args.usage ? { usage: args.usage } : {}),
+            ...(typeof args.generatedImages === 'number'
+              ? { generatedImages: args.generatedImages }
+              : {})
+          }
+          existing.recheck = false
+          existing.result = Promise.resolve(result)
+          return result
+        }
+      } catch (error) {
+        if (error instanceof RpcHttpError) throw error
+        // A failed local lookup preserves the original outcome. The provider is never called again.
+      }
+      return existing.result
+    }
+    const result = (async (): Promise<unknown> => {
+      const sourceMetadata = request.source
+        ? await this.readImageInput(request.source, capability, true)
+        : undefined
+      let sourceEvidence = sourceMetadata?.input
+      const publishResult = async (
+        generated: ImageModelResult
+      ): Promise<{ artifactId: string; versionId: string } & Record<string, unknown>> => {
+        const artifact = await this.writeImageArtifact!(
+          capability,
+          imageArtifactContent(generated, {
+            filename: request.filename ?? sourceEvidence?.filename ?? 'generated-image',
+            operation: request.operation,
+            invocationId,
+            prompt: request.prompt,
+            inputFiles: sourceEvidence ? [sourceEvidence] : undefined
+          })
+        )
+        if (!artifact.versionId) throw new Error('Image result was not published.')
+        if (artifact.versionId && !capability.revoked)
+          this.generatedImagePreviews.set(artifact.versionId, {
+            artifactId: artifact.artifactId ?? artifact.id,
+            capability
+          })
+        return {
+          source: {
+            sourceKind: 'artifact-version',
+            sourceFileId: artifact.artifactId ?? artifact.id,
+            inputFileVersionId: artifact.versionId
+          },
+          artifactId: artifact.artifactId ?? artifact.id,
+          versionId: artifact.versionId,
+          versionNumber: artifact.versionNumber,
+          filename: artifact.name,
+          mimeType: generated.mime,
+          width: generated.width,
+          height: generated.height,
+          sizeBytes: generated.bytes.length,
+          model: generated.model,
+          presetId: generated.presetId,
+          parameters: generated.parameters,
+          ...(generated.usage ? { usage: generated.usage } : {}),
+          ...(generated.generatedImages !== undefined
+            ? { generatedImages: generated.generatedImages }
+            : {})
+        }
+      }
+      let published: Awaited<ReturnType<typeof publishResult>> | undefined
+      await capability.executeImage!({
+        requestFingerprint: fingerprint,
+        onResult: async (result) => {
+          published = await publishResult(result)
+          return { artifactId: published.artifactId, versionId: published.versionId }
+        },
+        operation: request.operation,
+        prompt: request.prompt,
+        options: request.options,
+        ...(request.source
+          ? {
+              sourceIdentity: request.source.inputFileVersionId,
+              sourceSizeBytes: sourceEvidence?.sizeBytes,
+              sourcePixels: sourceMetadata?.pixels,
+              source: async () => {
+                const { input, bytes } = await this.readImageInput(request.source, capability)
+                sourceEvidence = input
+                return bytes
+              }
+            }
+          : {}),
+        signal,
+        context: {
+          projectId: capability.projectId,
+          sessionId: capability.appSessionId,
+          invocationId,
+          frameworkId: capability.agentName ?? 'open-science'
+        }
+      })
+
+      if (!published) throw new Error('Image result was not published.')
+      return published
+    })()
+    const invocation = { fingerprint, result, recheck: false }
+    this.imageGenerationInvocations.set(key, invocation)
+    try {
+      return await result
+    } catch (error) {
+      if (error instanceof ImageRequestConflictError) {
+        if (this.imageGenerationInvocations.get(key) === invocation)
+          this.imageGenerationInvocations.delete(key)
+      } else if (error instanceof ImageModelError && error.code === 'OUTCOME_UNKNOWN') {
+        invocation.recheck = true
+      }
+      throw error
+    }
+  }
+
+  private assertImageGenerationActive(capability: ArtifactRpcCapability): void {
+    const active = capability.isOwnerActive
+      ? capability.isOwnerActive()
+      : capability.expiresAt > this.now()
+    if (!active || capability.revoked) {
+      throw new RpcHttpError(
+        409,
+        'OUTCOME_UNKNOWN: The image request may have completed, but the turn ended before the result could be published. Do not retry automatically.'
+      )
+    }
+  }
+
   private async projectHostCapabilityState(
-    sessionBinding: NotebookRpcSessionBinding
+    sessionBinding: NotebookRpcSessionBinding,
+    controlInvocation?: TrustedControlInvocationIdentity
   ): Promise<Readonly<{ capabilities: HostCapabilityProjection; delegationAllowed: boolean }>> {
     const allowsMethod = (method: string): boolean =>
       !sessionBinding.allowedMethods || sessionBinding.allowedMethods.has(method)
@@ -1970,14 +2591,14 @@ class NotebookLocalRpcServer {
     )
     const hasDelegatedOrigin = sessionBinding.delegatedNotebook
       ? Boolean(sessionBinding.delegatedNotebook.provenanceContext.promptMessageId)
-      : Boolean(sessionBinding.activeControlInvocation?.originatingUserMessageId)
+      : Boolean(controlInvocation?.originatingUserMessageId)
     const delegatedWorkReady =
       hasDelegatedIdentity &&
       hasDelegatedOrigin &&
       (sessionBinding.delegatedNotebook
         ? !sessionBinding.delegatedNotebook.revoked &&
           (await sessionBinding.delegatedNotebook.isAttemptWritable())
-        : Boolean(sessionBinding.isControl && sessionBinding.activeControlInvocation))
+        : Boolean(sessionBinding.isControl && controlInvocation))
     let delegationAllowed = true
     if (
       callerRole === 'main' &&
@@ -1995,7 +2616,7 @@ class NotebookLocalRpcServer {
       capabilities: projectHostCapabilities({
         callerRole,
         isControl: Boolean(sessionBinding.isControl),
-        hasActiveControlInvocation: Boolean(sessionBinding.activeControlInvocation),
+        hasActiveControlInvocation: Boolean(controlInvocation),
         allowsMethod,
         delegatedWorkReady,
         delegationAllowed,
@@ -2057,6 +2678,7 @@ class NotebookLocalRpcServer {
       return events?.length ? { manualKernelTerminations: events } : {}
     }
     let writeProducerSignal: AbortSignal | undefined
+    let removeProducerCancellation: (() => void) | undefined
     let artifactAdmission: ReturnType<PendingRequestBudget['acquire']> | undefined
     let settle!: () => void
     const settled = new Promise<void>((resolve) => {
@@ -2081,9 +2703,12 @@ class NotebookLocalRpcServer {
       }
     }
     lifecycle.activeRequests.add(activeRequest)
-    const abortDisconnectedRequest = (): void => disconnect.abort()
+    const abortDisconnectedRequest = (): void => {
+      if (!activeRequest.preserveProviderStoppedWork?.()) disconnect.abort()
+    }
     const abortDisconnectedResponse = (): void => {
-      if (!response.writableFinished) disconnect.abort()
+      if (!response.writableFinished && !activeRequest.preserveProviderStoppedWork?.())
+        disconnect.abort()
     }
     const closeIdleResponseDuringShutdown = (): void => {
       if (lifecycle.closing) lifecycle.server.closeIdleConnections()
@@ -2124,7 +2749,16 @@ class NotebookLocalRpcServer {
       // A session capability can outlive its turn. Snapshot before reading the body so a
       // slow request cannot acquire a later turn's authority after cleanup has returned.
       const initialSessionBinding = this.sessionRpcCapabilities.get(bearerToken)
-      const initialControlInvocation = initialSessionBinding?.activeControlInvocation
+      const executionReady = initialSessionBinding?.executionReady !== false
+      const controlNonce = request.headers['x-open-science-control-invocation']
+      const controlAuthority =
+        typeof controlNonce === 'string'
+          ? initialSessionBinding?.controlInvocations?.get(controlNonce)
+          : undefined
+      if (initialSessionBinding?.isControl && controlNonce !== undefined && !controlAuthority) {
+        throw new RpcHttpError(403, 'The trusted control invocation has expired or is invalid.')
+      }
+      const initialControlInvocation = controlAuthority?.identity
       const initialSessionId = initialSessionBinding
         ? (this.sessionAliases.get(initialSessionBinding.sessionId) ??
           initialSessionBinding.sessionId)
@@ -2159,6 +2793,12 @@ class NotebookLocalRpcServer {
         throw new RpcHttpError(400, 'Notebook RPC params must be an object.')
       }
       let params = isRecord(payload.params) ? payload.params : {}
+      if (!executionReady && startsNotebookExecution(method, params)) {
+        throw new RpcHttpError(
+          409,
+          'Notebook execution authority is still being prepared. Execution was not started.'
+        )
+      }
       if (method === 'hostSdkHelp') delete params.view_image_available
       let hostCapabilities: HostCapabilityProjection | undefined
       let delegationAllowed: boolean | undefined
@@ -2169,6 +2809,11 @@ class NotebookLocalRpcServer {
       } else {
         const sessionBinding = this.sessionRpcCapabilities.get(bearerToken)
         if (sessionBinding) {
+          if (sessionBinding !== initialSessionBinding)
+            throw new RpcHttpError(
+              409,
+              'Notebook execution authority changed before request admission.'
+            )
           authenticatedSessionBinding = sessionBinding
           // Capture the authenticated turn before any awaited input resolution. A cancelled or
           // replaced turn cannot regain execution authority from a newer binding at dispatch.
@@ -2230,7 +2875,7 @@ class NotebookLocalRpcServer {
             }
             await checkMemoryAccess()
           }
-          if (sessionBinding.activeControlInvocation?.executionMode === 'background') {
+          if (initialControlInvocation?.executionMode === 'background') {
             if (method === 'requestUserInput') {
               throw new BackgroundHostMethodUnsafeError('host.requestUserInput')
             }
@@ -2297,7 +2942,7 @@ class NotebookLocalRpcServer {
             )
           }
           if (method === 'viewImageCall') {
-            if (!sessionBinding.isControl || !sessionBinding.activeControlInvocation) {
+            if (!sessionBinding.isControl || !controlAuthority?.active) {
               throw new RpcHttpError(
                 403,
                 'host.viewImage requires an active trusted control invocation.'
@@ -2307,22 +2952,25 @@ class NotebookLocalRpcServer {
             if (Object.hasOwn(source ?? {}, 'path') && !sessionBinding.executionCwd) {
               throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
             }
-            if (Object.keys(params).some((key) => key !== 'source' && key !== 'options')) {
+            if (
+              Object.keys(params).some(
+                (key) => key !== 'source' && key !== 'options' && key !== 'control_invocation_id'
+              )
+            ) {
               throw new RpcHttpError(400, 'host.viewImage RPC params are invalid.')
             }
           }
-          if (
-            method === 'agentsCall' &&
-            params.op === 'switch' &&
-            !sessionBinding.activeControlInvocation
-          ) {
+          if (method === 'agentsCall' && params.op === 'switch' && !initialControlInvocation) {
             throw new RpcHttpError(
               403,
               'host.agents.switch requires an active trusted control invocation.'
             )
           }
           if (method === 'capabilitiesCall' || method === 'hostSdkHelp') {
-            const state = await this.projectHostCapabilityState(sessionBinding)
+            const state = await this.projectHostCapabilityState(
+              sessionBinding,
+              initialControlInvocation
+            )
             hostCapabilities = state.capabilities
             delegationAllowed = state.delegationAllowed
           }
@@ -2337,7 +2985,7 @@ class NotebookLocalRpcServer {
             !sessionBinding.delegatedNotebook &&
             (!sessionBinding.projectId ||
               !sessionBinding.agentFrameId ||
-              sessionBinding.activeControlInvocation !== initialControlInvocation ||
+              !controlAuthority?.active ||
               !initialControlInvocation?.toolInvocationId ||
               !initialControlInvocation.originatingUserMessageId)
           ) {
@@ -2393,7 +3041,8 @@ class NotebookLocalRpcServer {
             ...(method === 'viewImageCall'
               ? {
                   executionCwd: sessionBinding.executionCwd,
-                  controlInvocationId: sessionBinding.activeControlInvocation?.toolInvocationId,
+                  controlInvocationId: initialControlInvocation?.toolInvocationId,
+                  promptMessageId: initialControlInvocation?.originatingUserMessageId,
                   agentFrameId: sessionBinding.agentFrameId,
                   attemptId: sessionBinding.delegatedWorkAttemptId,
                   role: sessionBinding.delegatedWorkRole ?? 'main'
@@ -2402,7 +3051,7 @@ class NotebookLocalRpcServer {
             ...(method === 'computeCall'
               ? {
                   // Bound by beginControlInvocation; an agent-controlled body value is overwritten.
-                  producerRunId: sessionBinding.activeControlInvocation?.toolInvocationId
+                  producerRunId: initialControlInvocation?.toolInvocationId
                 }
               : {}),
             ...(method === 'agentsCall' || method === 'skillsCall'
@@ -2410,10 +3059,11 @@ class NotebookLocalRpcServer {
                   session_id: sessionBinding.sessionId,
                   caller_role:
                     sessionBinding.delegatedWorkRole === 'delegate' ? 'delegate' : 'main',
-                  turn_id: sessionBinding.activeControlInvocation?.turnId,
+                  turn_id: initialControlInvocation?.turnId,
                   control_invocation_generation:
-                    sessionBinding.activeControlInvocation?.controlInvocationGeneration,
-                  control_invocation_id: sessionBinding.activeControlInvocation?.toolInvocationId
+                    initialControlInvocation?.controlInvocationGeneration,
+                  control_invocation_id: initialControlInvocation?.toolInvocationId,
+                  originating_user_message_id: initialControlInvocation?.originatingUserMessageId
                 }
               : {}),
             ...(method === 'delegatedWorkCall' || method === 'requestUserInput'
@@ -2427,12 +3077,12 @@ class NotebookLocalRpcServer {
                   permissionPrompts: sessionBinding.delegatedNotebook?.permissionPrompts,
                   origin_message_id:
                     sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
-                    sessionBinding.activeControlInvocation?.originatingUserMessageId,
+                    initialControlInvocation?.originatingUserMessageId,
                   tool_invocation_id:
                     delegatedQuestionInvocationId ??
                     (sessionBinding.delegatedNotebook
                       ? `delegated-notebook-capability:${randomUUID()}`
-                      : sessionBinding.activeControlInvocation?.toolInvocationId)
+                      : initialControlInvocation?.toolInvocationId)
                 }
               : method === 'delegatedOutputCall'
                 ? {
@@ -2443,7 +3093,7 @@ class NotebookLocalRpcServer {
                     root_execution_id: initialControlInvocation?.rootExecutionId,
                     origin_message_id:
                       sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
-                      sessionBinding.activeControlInvocation?.originatingUserMessageId
+                      initialControlInvocation?.originatingUserMessageId
                   }
                 : method === 'hostSdkHelp'
                   ? {
@@ -2458,7 +3108,7 @@ class NotebookLocalRpcServer {
                   projectId: sessionBinding.projectId,
                   agentId: this.sessionSpecialists.get(sessionBinding.sessionId),
                   turnId:
-                    sessionBinding.activeControlInvocation?.turnId ??
+                    initialControlInvocation?.turnId ??
                     this.activeArtifactTurnBindings.get(sessionBinding.sessionId)?.provenanceContext
                       .promptMessageId
                 }
@@ -2470,6 +3120,7 @@ class NotebookLocalRpcServer {
           }
           if (
             CONTROL_RPC_METHODS.has(method) ||
+            startsNotebookExecution(method, params) ||
             SKILL_IMPORT_RPC_METHODS.has(method) ||
             PLAN_RPC_METHODS.has(method) ||
             method === 'delegatedOutputCall'
@@ -2579,6 +3230,49 @@ class NotebookLocalRpcServer {
         )
       }
       writeProducerSignal?.throwIfAborted()
+      const executionIntent = authenticatedBinding?.isControl
+        ? controlAuthority?.intent
+        : authenticatedBinding?.executionIntent
+      const executionCredential = authenticatedBinding?.isControl
+        ? controlAuthority?.credential
+        : authenticatedBinding
+          ? bearerToken
+          : undefined
+      const userCancellation =
+        executionCredential && executionIntent?.userCancellationSignal(executionCredential)
+      const startsDerivedWork =
+        (method === 'agentsCall' && resolvedParams.op === 'switch') ||
+        (method === 'delegatedWorkCall' &&
+          resolvedParams.operation !== 'stop_children' &&
+          (resolvedParams.op === undefined ||
+            resolvedParams.op === 'delegate' ||
+            resolvedParams.op === 'send_message'))
+      if (authenticatedBinding?.isControl && startsDerivedWork && !controlAuthority?.active)
+        throw new RpcHttpError(403, 'New execution requires an exact trusted control invocation.')
+      if (startsDerivedWork) executionIntent?.assertDispatch(executionCredential)
+      if (executionIntent) {
+        if (startsNotebookExecution(method, resolvedParams))
+          executionIntent.assertDispatch(executionCredential)
+        markNotebookExecutionIntent(resolvedParams, executionIntent, executionCredential)
+        if (
+          ['execute', 'runCell', 'executeControl', 'executeShell'].includes(method) &&
+          executionCredential
+        )
+          activeRequest.preserveProviderStoppedWork =
+            executionIntent.captureProviderStopProof(executionCredential)
+      }
+      if (writeProducerSignal && activeRequest.preserveProviderStoppedWork) {
+        const producerSignal = writeProducerSignal
+        const executionCancellation = new AbortController()
+        const abortProducer = (): void => {
+          if (!activeRequest.preserveProviderStoppedWork?.())
+            executionCancellation.abort(producerSignal.reason)
+        }
+        producerSignal.addEventListener('abort', abortProducer, { once: true })
+        removeProducerCancellation = () =>
+          producerSignal.removeEventListener('abort', abortProducer)
+        writeProducerSignal = executionCancellation.signal
+      }
       // Host/control methods remain independent of the Notebook runtime, including feedback reads.
       if (
         isNotebookLocalRpcMethod(method) &&
@@ -2591,6 +3285,7 @@ class NotebookLocalRpcServer {
         }
       const dispatchSignals = [
         disconnect.signal,
+        ...(userCancellation ? [userCancellation] : []),
         ...(writeProducerSignal ? [writeProducerSignal] : []),
         ...(authenticatedBinding?.capabilityLifetime
           ? [authenticatedBinding.capabilityLifetime.signal]
@@ -2614,7 +3309,8 @@ class NotebookLocalRpcServer {
                         recordStopFailure(error)
                         activeRequest.settle()
                       }
-                    : undefined
+                    : undefined,
+                  artifactCapability
                 )
               )
             : await this.dispatch(
@@ -2622,7 +3318,9 @@ class NotebookLocalRpcServer {
                 resolvedParams,
                 dispatchSignal,
                 checkMemoryAccess,
-                artifactAdmission?.addBytes
+                artifactAdmission?.addBytes,
+                undefined,
+                artifactCapability
               )
 
       writeJson(response, 200, { result, ...terminationMetadata() })
@@ -2644,8 +3342,12 @@ class NotebookLocalRpcServer {
           ? { ...error.detail, message }
           : error instanceof BackgroundHostMethodUnsafeError
             ? error.detail
-            : error instanceof PlanCommandError
-              ? { code: error.code, message }
+            : error instanceof PlanCommandError || error instanceof ImageModelError
+              ? {
+                  code: error.code,
+                  message,
+                  ...(error instanceof ImageModelError ? { imageError: error.detail } : {})
+                }
               : error instanceof StructuredOutputError
                 ? {
                     code: error.code,
@@ -2666,22 +3368,35 @@ class NotebookLocalRpcServer {
         closeRequestAfterResponse(request, response)
       }
 
+      const connectorErrorCode =
+        activeRequest.method === 'mcpCall'
+          ? this.connectorService?.errorCategory?.(error)
+          : undefined
       writeJson(
         response,
         error instanceof RpcHttpError
           ? error.statusCode
-          : MEMORY_RPC_METHODS.has(activeRequest.method ?? '') &&
-              error instanceof Error &&
-              error.message === 'Memory is turned off.'
-            ? 403
-            : error instanceof ResourceBudgetExceededError
-              ? 413
-              : error instanceof PendingRequestLimitError
-                ? 429
-                : 500,
-        { error: serializedError, ...terminationMetadata() }
+          : error instanceof ImageModelError &&
+              error.httpStatus !== undefined &&
+              error.httpStatus >= 400
+            ? error.httpStatus
+            : MEMORY_RPC_METHODS.has(activeRequest.method ?? '') &&
+                error instanceof Error &&
+                error.message === 'Memory is turned off.'
+              ? 403
+              : error instanceof ResourceBudgetExceededError
+                ? 413
+                : error instanceof PendingRequestLimitError
+                  ? 429
+                  : 500,
+        {
+          error: serializedError,
+          ...(connectorErrorCode && { code: connectorErrorCode }),
+          ...terminationMetadata()
+        }
       )
     } finally {
+      removeProducerCancellation?.()
       request.off('aborted', abortDisconnectedRequest)
       response.off('close', abortDisconnectedResponse)
       lifecycle.activeRequests.delete(activeRequest)
@@ -2700,7 +3415,8 @@ class NotebookLocalRpcServer {
     signal: AbortSignal,
     checkMemoryAccess?: () => Promise<void>,
     onArtifactMetadataBytes?: (bytes: number) => void,
-    onExecutionSettled?: (error?: unknown) => void
+    onExecutionSettled?: (error?: unknown) => void,
+    artifactCapability?: ArtifactRpcCapability
   ): Promise<unknown> {
     if (WSL_SETUP_RPC_METHODS.has(method)) {
       if (!this.wslSetup || !this.wslSetupSessions) {
@@ -2825,6 +3541,12 @@ class NotebookLocalRpcServer {
       )
     }
 
+    if (method === 'imageGenerate') {
+      const capability = artifactCapability
+      if (!capability) throw new RpcHttpError(401, 'Invalid Artifact RPC capability.')
+      return this.imageGenerate(params, capability, signal)
+    }
+
     if (method === 'skillImport') {
       if (!this.skillImporter) throw new Error('Conversation Skill import is not configured.')
       if (
@@ -2905,19 +3627,18 @@ class NotebookLocalRpcServer {
         ) {
           throw new RpcHttpError(403, 'delegated user question capability identity is incomplete.')
         }
-        return this.delegatedWorkService.requestUserInput(
-          {
-            session: { projectId, sessionId },
-            frameId,
-            attemptId,
-            role: 'delegate',
-            permissionPrompts: params.permissionPrompts === 'none' ? 'none' : undefined,
-            originMessageId,
-            toolInvocationId
-          },
-          request,
+        const caller: AuthenticatedDelegateCaller = {
+          session: { projectId, sessionId },
+          frameId,
+          attemptId,
+          role: 'delegate',
+          permissionPrompts: params.permissionPrompts === 'none' ? 'none' : undefined,
+          originMessageId,
           toolInvocationId
-        )
+        }
+        const intent = notebookExecutionIntent(params)
+        if (intent) markNotebookExecutionIntent(caller, intent)
+        return this.delegatedWorkService.requestUserInput(caller, request, toolInvocationId)
       }
       if (!this.requestUserInput) throw new Error('User input is not configured.')
       return this.requestUserInput(request)
@@ -3033,7 +3754,25 @@ class NotebookLocalRpcServer {
       if (isRecord(params.source) && Object.hasOwn(params.source, 'path') && !executionCwd) {
         throw new RpcHttpError(403, 'host.viewImage requires a trusted execution workspace.')
       }
+      const boundTurn = this.activeArtifactTurnBindings.get(sessionId)
+      const producerScope =
+        params.role !== 'delegate' &&
+        boundTurn?.artifactRunId &&
+        params.promptMessageId === boundTurn.provenanceContext.promptMessageId &&
+        (!params.agentFrameId || params.agentFrameId === boundTurn.provenanceContext.agentFrameId)
+          ? {
+              ...boundTurn.provenanceContext,
+              appSessionId: sessionId,
+              artifactRunId: boundTurn.artifactRunId,
+              assertActive: (): void => {
+                signal.throwIfAborted()
+                if (this.activeArtifactTurnBindings.get(sessionId) !== boundTurn)
+                  throw new Error('Image inspection producer turn is no longer active.')
+              }
+            }
+          : undefined
       return this.hostViewImage.stage(params.source, params.options, {
+        producerScope,
         projectId,
         sessionId,
         agentFrameId: typeof params.agentFrameId === 'string' ? params.agentFrameId : undefined,
@@ -3439,11 +4178,13 @@ class NotebookLocalRpcServer {
         provenanceContext: _provenanceContext,
         registeredInputFiles: _registeredInputFiles,
         inputRunLeaseId: _inputRunLeaseId,
+        originating_user_message_id: _originatingUserMessageId,
         ...rest
       } = strippedParams
       void _provenanceContext
       void _registeredInputFiles
       void _inputRunLeaseId
+      void _originatingUserMessageId
       return this.agentsService.read(
         { op, params: rest },
         turnId && controlInvocationGeneration !== undefined && toolInvocationId
@@ -3453,10 +4194,10 @@ class NotebookLocalRpcServer {
               turnId,
               controlInvocationGeneration,
               toolInvocationId,
-              ...(provenanceContext
+              ...(typeof params.originating_user_message_id === 'string'
                 ? {
-                    originatingTurnId: provenanceContext.promptMessageId,
-                    originatingUserMessageId: provenanceContext.promptMessageId
+                    originatingTurnId: params.originating_user_message_id,
+                    originatingUserMessageId: params.originating_user_message_id
                   }
                 : {}),
               attachmentIds:
@@ -3545,6 +4286,8 @@ class NotebookLocalRpcServer {
           ? createNestedDelegateInvocationId(toolInvocationId, delegationCallId)
           : toolInvocationId
       }
+      const intent = notebookExecutionIntent(params)
+      if (intent) markNotebookExecutionIntent(caller, intent)
       if (params.operation === 'stop_children') {
         if (!this.delegatedWorkService.stopChildren) {
           throw new Error('host.stop_child is not configured.')

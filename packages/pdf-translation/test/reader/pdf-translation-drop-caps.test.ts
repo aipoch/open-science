@@ -200,3 +200,62 @@ test.each([true, false])(
     assert.deepEqual(runs, unchanged)
   }
 )
+
+test('joins a bundled small-cap opening to its native initial without an inserted word space', () => {
+  const runs = [
+    { ...item('V', 60, 132, 20, 30, 'initial'), hasEOL: false },
+    item('ISUAL systems combine several available signals in multi-', 81, 120, 249),
+    item('modal experiments recover useful evidence from independent observations', 81, 132, 249),
+    item('these methods remain useful across several controlled settings.', 60, 144, 270),
+    item('A separate neighboring paragraph starts below the completed opening.', 60, 180, 270)
+  ]
+  const result = extract(runs)
+  const paragraph = result.units.find((unit) => unit.items.includes('1:0'))!
+  assert.ok(paragraph.source.startsWith('VISUAL systems'), paragraph.source)
+  assert.ok(paragraph.source.includes('multi-modal experiments'), paragraph.source)
+  assert.ok(!paragraph.source.includes('V ISUAL'))
+  assert.deepEqual(paragraph.items, ['1:0', '1:1', '1:2', '1:3'])
+  assert.equal(result.units.find((unit) => unit.items.includes('1:4'))?.items.length, 1)
+})
+
+test.each(['inset', 'foreign row'])(
+  'joins a last-painted initial with its native opening: %s',
+  (shape) => {
+    const text = 'ingle entry measurements help calibration teams'
+    const rows = [
+      text,
+      'compare independent signals under controlled conditions',
+      'with calibrated references and repeated observations',
+      'to confirm the result across multiple sampling periods',
+      'and characterize changes across varied input conditions',
+      'for stable readings during routine measurement.'
+    ].flatMap((content, i) => [
+      { ...item('', i === 5 ? 40 : 67, 120 + i * 11.4, 0), height: 0 },
+      {
+        ...item(content, i === 5 ? 40 : 67, 120 + i * 11.4, i === 5 ? 257 : 230),
+        hasEOL: false,
+        fontName: i === 2 && shape === 'foreign row' ? 'foreign' : 'body'
+      }
+    ])
+    const runs = [
+      { ...item('I. INTRODUCTION', 140, 104, 80), hasEOL: false },
+      ...rows,
+      { ...item('', 40, 167, 0, 48.5), height: 0 },
+      { ...item('S', 40, 155.9, 27, 48.5), hasEOL: false }
+    ]
+    const result = extract(runs.map((run) => ({ ...run, fontVertical: false })))
+    const start = result.units.find((unit) => unit.items.includes('1:2'))!
+    if (shape === 'inset') {
+      assert.ok(start.source.startsWith('Single entry measurements'), start.source)
+      assert.ok(start.source.endsWith('during routine measurement.'), start.source)
+      assert.equal(start.sourceOnly, undefined)
+      assert.equal(start.items.length, 7)
+    } else {
+      assert.ok(!start.source.startsWith('Single entry measurements'), start.source)
+    }
+    assert.deepEqual(
+      result.units.flatMap((unit) => unit.items).sort(),
+      runs.flatMap((run, index) => (run.str.trim() ? [`1:${index}`] : [])).sort()
+    )
+  }
+)

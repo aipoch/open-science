@@ -213,6 +213,39 @@ describe('ActiveModelSelect', () => {
     expect(option?.getAttribute('data-disabled')).toBeNull()
   })
 
+  it.each([
+    ['codebuddy-subscription', 'CodeBuddy', 'chat-completions'],
+    ['claude-shared', 'Claude Code', 'messages'],
+    ['claude-isolated', 'Claude Code', 'messages'],
+    ['codex-shared', 'Codex or Open-Science Agent', 'responses'],
+    ['codex-isolated', 'Codex', 'responses']
+  ] as const)('explains the framework restriction for %s', (type, required, endpoint) => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: FRAMEWORKS,
+      providers: [
+        provider({
+          id: 'subscription',
+          type,
+          codexHarnessAvailable: type !== 'codex-isolated',
+          apiEndpoints: [endpoint],
+          models: ['subscription-model']
+        })
+      ]
+    })
+    render()
+    openSelect()
+
+    expect(document.body.querySelector('[data-slot="select-label"]')?.textContent).toContain(
+      `Requires ${required}`
+    )
+    const option = optionByText('subscription-model')
+    expect(option?.getAttribute('aria-disabled')).toBe('true')
+    expect(option?.getAttribute('aria-label')).toBe(
+      `Switch the agent framework to ${required} to use subscription-model with this subscription.`
+    )
+  })
+
   it('explains a model-specific endpoint mismatch on hover', async () => {
     const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({
@@ -303,5 +336,33 @@ describe('ActiveModelSelect', () => {
     expect(optionByText('opus')).toBeDefined()
     expect(optionByText('sonnet')).toBeDefined()
     expect(optionByText('gpt')).toBeDefined()
+  })
+
+  it('shows Lab models next to personal models and selects them', () => {
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: FRAMEWORKS,
+      providers: [
+        provider({ id: 'p1', name: 'Gateway', apiEndpoints: ['messages'], models: ['m1'] }),
+        provider({
+          id: 'builtin-lab',
+          type: 'lab',
+          name: 'Lab',
+          apiEndpoints: ['chat-completions', 'responses'],
+          models: ['lab:research-default'],
+          hasKey: false
+        })
+      ],
+      setActiveProvider
+    })
+    render()
+    openSelect()
+
+    const labOption = optionByText('research-default')
+    expect(labOption).toBeDefined()
+    expect(labOption?.getAttribute('aria-disabled')).not.toBe('true')
+    clickOption('research-default')
+    expect(setActiveProvider).toHaveBeenCalledWith('builtin-lab', 'lab:research-default')
   })
 })

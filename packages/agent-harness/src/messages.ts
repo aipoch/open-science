@@ -1,5 +1,12 @@
 import { mediaCapabilities, nativeMedia, requestBody, type InputCapabilities } from './media'
-import { dataEvents } from './chat-completions'
+import { ChatCompletionsError, dataEvents } from './chat-completions'
+import {
+  normalizeProviderError,
+  type SummarizeProviderError,
+  normalizeUpstreamError,
+  responseErrorDiagnostics,
+  type UpstreamErrorDiagnostics
+} from './errors/normalize-upstream-error'
 import { frozen, json } from './session-state'
 import type {
   AgentModel,
@@ -16,6 +23,7 @@ export type MessagesModelOptions = {
   id?: string
   apiKey(signal: AbortSignal): string | Promise<string>
   fetch?: typeof globalThis.fetch
+  summarizeProviderError?: SummarizeProviderError
   anthropicVersion?: string
   parameters?: Readonly<Record<string, Json>>
   maxResponseBytes?: number
@@ -25,12 +33,18 @@ export type MessagesModelOptions = {
   inputCapabilities?: InputCapabilities
 }
 export class MessagesError extends Error {
+  readonly diagnostics: UpstreamErrorDiagnostics
   constructor(
     public readonly code: 'http' | 'network' | 'protocol' | 'limit',
-    public readonly status?: number
+    public readonly status?: number,
+    diagnostics: UpstreamErrorDiagnostics = {}
   ) {
     super(status === undefined ? `Messages ${code} error` : `Messages HTTP ${status}`)
     this.name = 'MessagesError'
+    this.diagnostics = Object.freeze({
+      phase: code === 'http' || code === 'network' ? 'response' : 'provider',
+      ...diagnostics
+    })
   }
 }
 const fail = (): never => {
@@ -170,9 +184,19 @@ export function createMessagesModel(input: MessagesModelOptions): AgentModel {
         signal.throwIfAborted()
         throw new MessagesError('network')
       }
-      if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined)
-        throw new MessagesError('http', response.status)
+      if (
+        !response.ok ||
+        !response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')
+      ) {
+        const diagnostics = await normalizeUpstreamError(
+          response,
+          signal,
+          input.summarizeProviderError
+        )
+        throw new MessagesError(response.ok ? 'protocol' : 'http', response.status, {
+          ...diagnostics,
+          phase: 'response'
+        })
       }
       let content = '',
         thinking: { type: 'thinking'; thinking: string; signature: string } | undefined,
@@ -209,103 +233,134 @@ export function createMessagesModel(input: MessagesModelOptions): AgentModel {
         }
       }
 
-      for await (const raw of dataEvents(response, limit, signal)) {
-        if (raw === '[DONE]') continue
-        const event = object(JSON.parse(raw)),
-          type = event.type
-        if (type === 'message_start') {
-          const m = object(event.message)
-          if (m.usage) updateUsage(m.usage)
-          continue
-        }
-        if (type === 'content_block_start') {
-          const block = object(event.content_block)
-          if (block.type === 'tool_use') {
-            const id = typeof block.id === 'string' ? block.id : '',
-              name = typeof block.name === 'string' ? block.name : ''
-            if (!id || !name) return fail()
-            active = {
-              id,
-              name,
-              arguments: '',
-              input: block.input ?? {}
+      let phase: NonNullable<UpstreamErrorDiagnostics['phase']> = 'stream'
+      try {
+        for await (const raw of dataEvents(response, limit, signal)) {
+          if (raw === '[DONE]') continue
+          phase = 'event-json'
+          const event = object(JSON.parse(raw)),
+            type = event.type
+          phase = type === 'error' || type === 'response.failed' ? 'provider' : 'choice'
+          if (type === 'message_start') {
+            const m = object(event.message)
+            if (m.usage) updateUsage(m.usage)
+            continue
+          }
+          if (type === 'content_block_start') {
+            const block = object(event.content_block)
+            if (block.type === 'tool_use') {
+              const id = typeof block.id === 'string' ? block.id : '',
+                name = typeof block.name === 'string' ? block.name : ''
+              if (!id || !name) return fail()
+              active = {
+                id,
+                name,
+                arguments: '',
+                input: block.input ?? {}
+              }
+            } else if (block.type === 'thinking') {
+              thinking = {
+                type: 'thinking',
+                thinking: String(block.thinking ?? ''),
+                signature: String(block.signature ?? '')
+              }
+            } else if (block.type === 'redacted_thinking') {
+              if (typeof block.data !== 'string') return fail()
+              thinkingBlocks.push({ type: 'redacted_thinking', data: block.data })
             }
-          } else if (block.type === 'thinking') {
-            thinking = {
-              type: 'thinking',
-              thinking: String(block.thinking ?? ''),
-              signature: String(block.signature ?? '')
+            continue
+          }
+          if (type === 'content_block_delta') {
+            const delta = object(event.delta)
+            if (delta.type === 'text_delta') {
+              if (typeof delta.text !== 'string') return fail()
+              content += delta.text
+              yield { type: 'text-delta', text: delta.text }
+            } else if (delta.type === 'thinking_delta') {
+              if (!thinking || typeof delta.thinking !== 'string') return fail()
+              thinking.thinking += delta.thinking
+              yield { type: 'reasoning-delta', text: delta.thinking }
+            } else if (delta.type === 'signature_delta') {
+              if (!thinking || typeof delta.signature !== 'string') return fail()
+              thinking.signature += delta.signature
+            } else if (delta.type === 'input_json_delta') {
+              if (!active || typeof delta.partial_json !== 'string') return fail()
+              active.arguments += delta.partial_json
+              yield {
+                type: 'tool-delta',
+                index: calls.length,
+                arguments: delta.partial_json,
+                id: active.id,
+                name: active.name
+              }
             }
-          } else if (block.type === 'redacted_thinking') {
-            if (typeof block.data !== 'string') return fail()
-            thinkingBlocks.push({ type: 'redacted_thinking', data: block.data })
+            continue
           }
-          continue
-        }
-        if (type === 'content_block_delta') {
-          const delta = object(event.delta)
-          if (delta.type === 'text_delta') {
-            if (typeof delta.text !== 'string') return fail()
-            content += delta.text
-            yield { type: 'text-delta', text: delta.text }
-          } else if (delta.type === 'thinking_delta') {
-            if (!thinking || typeof delta.thinking !== 'string') return fail()
-            thinking.thinking += delta.thinking
-            yield { type: 'reasoning-delta', text: delta.thinking }
-          } else if (delta.type === 'signature_delta') {
-            if (!thinking || typeof delta.signature !== 'string') return fail()
-            thinking.signature += delta.signature
-          } else if (delta.type === 'input_json_delta') {
-            if (!active || typeof delta.partial_json !== 'string') return fail()
-            active.arguments += delta.partial_json
-            yield {
-              type: 'tool-delta',
-              index: calls.length,
-              arguments: delta.partial_json,
-              id: active.id,
-              name: active.name
+          if (type === 'content_block_stop') {
+            if (thinking) {
+              if (!thinking.signature) return fail()
+              thinkingBlocks.push(thinking)
+              thinking = undefined
             }
+            if (active) {
+              pendingCalls.push(active)
+              active = undefined
+            }
+            continue
           }
-          continue
-        }
-        if (type === 'content_block_stop') {
-          if (thinking) {
-            if (!thinking.signature) return fail()
-            thinkingBlocks.push(thinking)
-            thinking = undefined
+          if (type === 'message_delta') {
+            const delta = object(event.delta)
+            if (typeof delta.stop_reason === 'string') stop = delta.stop_reason
+            if (event.usage) updateUsage(event.usage)
+            continue
           }
-          if (active) {
-            pendingCalls.push(active)
-            active = undefined
+          if (type === 'message_stop') break
+          if (type === 'error') {
+            const diagnostics = normalizeProviderError(
+              event,
+              undefined,
+              input.summarizeProviderError
+            )
+            throw new MessagesError('protocol', response.status, diagnostics)
           }
-          continue
         }
-        if (type === 'message_delta') {
-          const delta = object(event.delta)
-          if (typeof delta.stop_reason === 'string') stop = delta.stop_reason
-          if (event.usage) updateUsage(event.usage)
-          continue
+        phase = 'missing-finish'
+        if (!stop || active || thinking) return fail()
+        phase = 'tool-arguments'
+        const lengthLimited = stop === 'max_tokens' || stop === 'model_context_window_exceeded'
+        if (stop !== 'end_turn' && stop !== 'tool_use' && !lengthLimited) return fail()
+        if (!lengthLimited) {
+          for (const call of pendingCalls) {
+            const args = call.arguments ? JSON.parse(call.arguments) : call.input
+            json(args)
+            calls.push({ id: call.id, name: call.name, arguments: args })
+          }
         }
-        if (type === 'message_stop') break
-        if (type === 'error') return fail()
-      }
-      if (!stop || active || thinking) return fail()
-      const lengthLimited = stop === 'max_tokens' || stop === 'model_context_window_exceeded'
-      if (stop !== 'end_turn' && stop !== 'tool_use' && !lengthLimited) return fail()
-      if (!lengthLimited) {
-        for (const call of pendingCalls) {
-          const args = call.arguments ? JSON.parse(call.arguments) : call.input
-          json(args)
-          calls.push({ id: call.id, name: call.name, arguments: args })
+        yield {
+          type: 'finish',
+          reason: stop === 'tool_use' ? 'tools' : lengthLimited ? 'length' : 'complete',
+          content: content ? [{ type: 'text', text: content }] : [],
+          ...(calls.length ? { calls } : {}),
+          ...(usage ? { usage } : {}),
+          ...(thinkingBlocks.length ? { providerState: { thinking_blocks: thinkingBlocks } } : {})
         }
-      }
-      yield {
-        type: 'finish',
-        reason: stop === 'tool_use' ? 'tools' : lengthLimited ? 'length' : 'complete',
-        content: content ? [{ type: 'text', text: content }] : [],
-        ...(calls.length ? { calls } : {}),
-        ...(usage ? { usage } : {}),
-        ...(thinkingBlocks.length ? { providerState: { thinking_blocks: thinkingBlocks } } : {})
+      } catch (error) {
+        signal.throwIfAborted()
+        if (error instanceof MessagesError)
+          throw new MessagesError(error.code, error.status, {
+            ...error.diagnostics,
+            ...responseErrorDiagnostics(response),
+            phase
+          })
+        if (error instanceof ChatCompletionsError)
+          throw new MessagesError(error.code, error.status, {
+            ...responseErrorDiagnostics(response),
+            phase: error.diagnostics?.phase ?? phase
+          })
+        throw new MessagesError('protocol', undefined, {
+          ...responseErrorDiagnostics(response),
+          phase
+        })
       }
     }
   }

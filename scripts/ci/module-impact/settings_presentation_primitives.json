@@ -26,6 +26,7 @@
     "src/renderer/src/pages/settings/provider-brand-icons.tsx",
     "src/renderer/src/pages/settings/provider-form-value.test.ts",
     "src/renderer/src/pages/settings/provider-form-value.ts",
+    "src/renderer/src/pages/settings/provider-model-form.ts",
     "src/renderer/src/pages/settings/provider-icons.render.test.tsx",
     "src/renderer/src/pages/settings/provider-icons.tsx",
     "src/renderer/src/pages/settings/settings-search-shortcut.ts",
@@ -72,6 +73,7 @@
     "src/renderer/src/pages/settings/credential-error-message.ts",
     "src/renderer/src/pages/settings/provider-brand-icons.tsx",
     "src/renderer/src/pages/settings/provider-form-value.ts",
+    "src/renderer/src/pages/settings/provider-model-form.ts",
     "src/renderer/src/pages/settings/provider-icons.tsx",
     "src/renderer/src/pages/settings/settings-search-shortcut.ts",
     "src/renderer/src/pages/settings/specialist-avatar.tsx",
@@ -308,5 +310,6 @@
   },
   "consumerModules": [],
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The provider icon map loads the new Kilo asset beyond its reviewed resource imports. Retain full validation for provider rendering and packaging."
 }

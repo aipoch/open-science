@@ -270,6 +270,7 @@ export const sanitizeSessionDelegatedWorkRuntimeContext = (
           'answers',
           'respondedAt',
           'continuationAttemptId',
+          'taskResponse',
           'failure'
         ])
       ) {
@@ -331,6 +332,16 @@ export const sanitizeSessionDelegatedWorkRuntimeContext = (
         (raw.answers !== undefined && !answers) ||
         (raw.respondedAt !== undefined && (respondedAt === undefined || respondedAt < askedAt)) ||
         (raw.continuationAttemptId !== undefined && !continuationAttemptId) ||
+        (raw.taskResponse !== undefined &&
+          (status !== 'confirmed' ||
+            !isRecord(raw.taskResponse) ||
+            !hasOnlyFields(raw.taskResponse, ['source', 'reviewedRevision', 'checksum']) ||
+            !['user_relay', 'known_context'].includes(String(raw.taskResponse.source)) ||
+            typeof raw.taskResponse.reviewedRevision !== 'number' ||
+            !Number.isSafeInteger(raw.taskResponse.reviewedRevision) ||
+            raw.taskResponse.reviewedRevision < 0 ||
+            typeof raw.taskResponse.checksum !== 'string' ||
+            !/^[a-f0-9]{64}$/u.test(raw.taskResponse.checksum))) ||
         (status === 'pending' &&
           (answers !== undefined ||
             respondedAt !== undefined ||

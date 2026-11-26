@@ -33,21 +33,27 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build:assets",
     "test": "vitest run --config vitest.config.ts",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "build:assets": "esbuild browser/playback-clock.ts --bundle --platform=browser --format=iife --target=es2022 --outfile=dist/browser/playback-clock.txt",
+    "pretest": "npm run build:assets"
   },
   "dependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/plugin-transform-modules-commonjs": "7.29.7",
     "zod": "^4.6.6",
     "papaparse": "^5.7.0",
     "fflate": "0.8.3",
     "sharp": "0.35.5"
   },
   "devDependencies": {
+    "@types/babel__core": "^7.20.5",
     "@types/node": "^22.19.1",
     "@types/papaparse": "^5.5.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
-    "jsdom": "^29.1.1"
+    "jsdom": "^29.1.1",
+    "esbuild": "0.25.12"
   }
 }

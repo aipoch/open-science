@@ -111,6 +111,8 @@ type SendWorkspaceMessageIntent = {
   attribution?: MessageAttribution
   requireExistingSession?: boolean
   turnIntent?: 'plan-first'
+  // One human click; consumed only by fresh prompt dispatch and never persisted.
+  notebookContinuation?: { refusalId: string; messageBranchId?: string; kind?: 'memory' }
   attachments?: UploadedAttachment[]
   annotations?: annotationProtocol.Annotation[]
   cwd?: string
@@ -182,7 +184,12 @@ type WorkspaceCommandRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'createSession' | 'resumeSession' | 'resetSessionContext' | 'sendPrompt'
 > &
-  Partial<Pick<ReturnType<typeof useAcpRuntime>, 'currentRuntimeEvents' | 'deleteSession'>>
+  Partial<
+    Pick<
+      ReturnType<typeof useAcpRuntime>,
+      'currentRuntimeEvents' | 'deleteSession' | 'continueNotebookExecution'
+    >
+  >
 type HistoryReplayContext = {
   historyPreamble?: string
   historyAttachments?: UploadedAttachment[]
@@ -247,7 +254,8 @@ const rejectPreparedPrompt = async (
   preparation: WorkspacePromptPreparation | undefined,
   rejected:
     ((error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void) | undefined,
-  providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined
+  providerTarget: Pick<SessionAgentConfiguration, 'providerId' | 'model'> | undefined,
+  showConversationError = true
 ): Promise<void> => {
   if (preparingSessionAttempts.get(sessionId)?.cancelled) return
   if (preparation && !ownsWorkspacePromptPreparation(preparation)) return
@@ -262,7 +270,7 @@ const rejectPreparedPrompt = async (
   if (attempt) attempt.rollback = cleanup
   if (preparation) withdrawWorkspacePrompt(preparation)
   markPendingSessionRetryable(sessionId)
-  reportWorkspaceOperationError(sessionId, message, { providerTarget })
+  if (showConversationError) reportWorkspaceOperationError(sessionId, message, { providerTarget })
   rejected?.(message, sessionId, restoredAttachments)
   void cleanup?.then(({ failure }) => {
     if (failure !== undefined) console.warn('Unsent prompt rollback failed', failure)
@@ -292,6 +300,29 @@ const promptContext = (
   return graph ? getActiveConversationContext(graph, messageId) : { promptMessageId: messageId }
 }
 
+const notebookBranchMatches = (
+  sessionId: string | undefined,
+  branchId: string | undefined
+): boolean => {
+  if (!branchId) return true
+  const graph = useSessionStore
+    .getState()
+    .sessions.find((session) => session.id === sessionId)?.conversationGraph
+  return (
+    graph?.frames.find((frame) => frame.id === graph.activeFrameId)?.activeBranchId === branchId
+  )
+}
+
+export class NotebookContinuationBranchError extends Error {
+  constructor() {
+    super(
+      i18next.t(
+        'Return to the conversation branch where Notebook execution stopped before continuing.'
+      )
+    )
+  }
+}
+
 const ownsPrompt = (sessionId: string, messageId: string): boolean => {
   const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId)
   return session?.status === 'running' && session.activeRun?.promptMessageId === messageId
@@ -313,6 +344,7 @@ type PromptDispatch = {
     contextReset?: boolean
   }
   turnIntent?: SendWorkspaceMessageIntent['turnIntent']
+  notebookContinuation?: { refusalId: string; projectId: string; kind?: 'memory' }
   accepted?: () => void
   onPromptAccepted?: SendWorkspaceMessageIntent['onPromptAccepted']
   preparation?: WorkspacePromptPreparation
@@ -348,8 +380,9 @@ const dispatchPrompt = (
   void admission.then((accepted) => {
     if (accepted) request.onPromptAccepted?.()
   })
+  const memoryRecheck = request.notebookContinuation?.kind === 'memory'
   const unsubscribe = useSessionStore.subscribe(() => {
-    if (!request.preparation) return
+    if (!request.preparation || memoryRecheck) return
     const session = useSessionStore
       .getState()
       .sessions.find((candidate) => candidate.id === request.sessionId)
@@ -392,12 +425,38 @@ const dispatchPrompt = (
   let result: ReturnType<WorkspaceCommandRuntime['sendPrompt']>
   try {
     request.beforeDispatch?.()
-    result =
-      currentImages?.length || request.parts?.length
-        ? runtime.sendPrompt(...args, referencedSessions, currentImages, request.parts)
-        : referencedSessions
-          ? runtime.sendPrompt(...args, referencedSessions)
-          : runtime.sendPrompt(...args)
+    if (request.notebookContinuation) {
+      if (!runtime.continueNotebookExecution)
+        throw new Error(
+          i18next.t('Notebook continuation is unavailable. Update the application before retrying.')
+        )
+      result = runtime.continueNotebookExecution({
+        projectId: request.notebookContinuation.projectId,
+        refusalId: request.notebookContinuation.refusalId,
+        sessionId: request.sessionId,
+        text: preparedAnnotations.promptText,
+        attachments: request.attachments,
+        forcedSkillIds: request.forcedSkillIds,
+        referencedArtifacts: preparedAnnotations.referencedArtifacts,
+        referencedSessions,
+        currentImages,
+        parts: request.parts,
+        historyPreamble: request.replay?.historyPreamble,
+        historyAttachments: request.replay?.historyAttachments,
+        historyImages: request.replay?.historyImages,
+        resumeFallback: request.replay?.resumeFallback,
+        contextReset: request.replay?.contextReset,
+        provenanceContext: promptContext(request.sessionId, request.messageId),
+        memoryEnabled: args[12]
+      })
+    } else {
+      result =
+        currentImages?.length || request.parts?.length
+          ? runtime.sendPrompt(...args, referencedSessions, currentImages, request.parts)
+          : referencedSessions
+            ? runtime.sendPrompt(...args, referencedSessions)
+            : runtime.sendPrompt(...args)
+    }
   } catch (error) {
     unsubscribe()
     throw error
@@ -425,7 +484,8 @@ const dispatchPrompt = (
           message,
           request.preparation,
           request.rejected,
-          request.providerTarget
+          request.providerTarget,
+          !memoryRecheck
         )
       }
       resolveAdmission(false)
@@ -1590,6 +1650,10 @@ const performSendWorkspaceMessage = async (
       }
       return undefined
     }
+    if (!notebookBranchMatches(sessionId, input.notebookContinuation?.messageBranchId)) {
+      await rollbackWorkspacePrompt(promptPreparation)
+      throw new NotebookContinuationBranchError()
+    }
     if (input.truncateFromMessageId) {
       useSessionStore
         .getState()
@@ -1701,6 +1765,14 @@ const performSendWorkspaceMessage = async (
           ? { ...replay, historyAttachments: promptMedia.historyAttachments }
           : replay,
         turnIntent: input.turnIntent,
+        notebookContinuation:
+          input.notebookContinuation && projectId
+            ? {
+                refusalId: input.notebookContinuation.refusalId,
+                kind: input.notebookContinuation.kind,
+                projectId
+              }
+            : undefined,
         onPromptAccepted: input.onPromptAccepted,
         accepted: () => prepared.acceptPrompt(appended.messageId),
         beforeDispatch: () => {
@@ -1721,8 +1793,9 @@ const performSendWorkspaceMessage = async (
         rejected: input.onPreparationRejected
       })
       if (attempt) attempt.promptAdmission = admission
-      if (lifecycle.awaitPromptAdmission && !(await admission))
-        return attempt?.cancelled && attempt.dispatched ? appended : undefined
+      const memoryRecheck = input.notebookContinuation?.kind === 'memory'
+      if ((lifecycle.awaitPromptAdmission || memoryRecheck) && !(await admission))
+        return !memoryRecheck && attempt?.cancelled && attempt.dispatched ? appended : undefined
     } catch (error) {
       if (ownsWorkspacePromptPreparation(promptPreparation)) {
         await rejectPreparedPrompt(
@@ -1859,6 +1932,19 @@ const sendWorkspaceMessage = async (
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const sessionId = input.sessionId
   const previousSession = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
+  if (!notebookBranchMatches(sessionId, input.notebookContinuation?.messageBranchId)) {
+    throw new NotebookContinuationBranchError()
+  }
+  if (
+    input.notebookContinuation &&
+    (!previousSession ||
+      previousSession.isPending ||
+      !input.projectId ||
+      input.messageId ||
+      input.truncateFromMessageId ||
+      input.branchSourceSessionId)
+  )
+    return undefined
   const existingAttempt = sessionId ? preparingSessionAttempts.get(sessionId) : undefined
   if (
     existingAttempt?.dispatched === false &&

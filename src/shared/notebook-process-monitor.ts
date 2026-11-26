@@ -40,6 +40,8 @@ export type NotebookProcessMonitorSnapshot = {
     cpuPercent?: number
     memoryTotalBytes: number
     memoryUsedBytes: number
+    memoryCommittedBytes?: number
+    memoryCommitLimitBytes?: number
     uptimeSeconds: number
   }
   processMetricsAvailable: boolean

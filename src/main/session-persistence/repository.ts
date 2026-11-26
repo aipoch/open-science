@@ -1,3 +1,4 @@
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   loadSessionHistoryPageRequestSchema,
   type LoadSessionHistoryPageRequest,
@@ -74,6 +75,7 @@ const SESSIONS_DIR = 'sessions'
 const DELETED_SESSIONS_DIR = 'deleted-sessions'
 const PROJECT_DELETION_COMMIT_MARKER = '.project-deletion-committed'
 const MANIFEST_FILE = 'manifest.json'
+const SESSION_LOCATOR_FILE = 'session-locator.json'
 const PRE_S2_BACKUP_SUFFIX = '.pre-s2-backup'
 const PRE_SUBAGENT_MODEL_BACKUP_SUFFIX = '.pre-subagent-model-backup'
 const RECOVERABLE_TEMPORARY_FILE_PATTERN =
@@ -192,6 +194,17 @@ export type SessionIdentityCatalog = {
   sessions: { projectId: string; id: string }[]
   isComplete: boolean
   generation: number
+}
+
+export type SessionLocation = {
+  sessionId: string
+  projectId: string
+  storagePath: string
+}
+
+type SessionLocatorDocument = {
+  version: 1
+  entries: SessionLocation[]
 }
 
 type PreparedSessionWrite = {
@@ -378,6 +391,9 @@ class SessionRepository {
   >()
   private suspendedProjectionCatalogMutation = false
   private readyIdentityCatalog: SessionIdentityCatalog | undefined
+  private sessionLocator: SessionLocatorDocument | undefined
+  private sessionLocatorTail: Promise<void> = Promise.resolve()
+  private readonly sessionLocatorRemovedSessionIds = new Set<string>()
   private projectionInitialization:
     | Promise<{
         result?: LoadAllSessionsResult
@@ -486,6 +502,10 @@ class SessionRepository {
 
   private get manifestPath(): string {
     return join(this.sessionsDir, MANIFEST_FILE)
+  }
+
+  private get sessionLocatorPath(): string {
+    return join(this.sessionsDir, SESSION_LOCATOR_FILE)
   }
 
   private get deletedSessionsDir(): string {
@@ -1014,7 +1034,7 @@ class SessionRepository {
     }
   }
 
-  private async listProjectionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
+  async listProjectionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
     const queuedAt = performance.now()
     return this.operationScheduler.runGlobal(async () => {
       // A caller cancelled while queued behind global work: skip the read instead of running it.
@@ -1036,6 +1056,23 @@ class SessionRepository {
     })
   }
 
+  async findArtifactSessions(
+    artifactId: string,
+    ensureProjection: () => Promise<{ result?: LoadAllSessionsResult }>
+  ): Promise<Array<{ projectId: string; sessionId: string }>> {
+    const { result } = await ensureProjection()
+    if (result) {
+      // Recovery may return readable authority while the index is incomplete. Reuse the
+      // sessions it already loaded, including legacy attachments keyed by Version id.
+      return result.sessions
+        .filter((session) => session.artifacts?.some((artifact) => artifact.id === artifactId))
+        .map(({ id: sessionId, projectId }) => ({ projectId, sessionId }))
+    }
+    return this.operationScheduler.runGlobal(() =>
+      this.projection!.findArtifactSessions(artifactId)
+    )
+  }
+
   async loadSessionSummaries(signal?: AbortSignal): Promise<SessionSummary[]> {
     if (!this.projection || !(await this.projection.isReady())) {
       throw new Error('Session projection is not ready.')
@@ -1055,20 +1092,36 @@ class SessionRepository {
   // than retaining the snapshot that existed when the initial review started.
   async loadSession(
     projectId: string,
-    sessionId: string
+    sessionId: string,
+    reportReadFailure = false
   ): Promise<PersistedChatSession | undefined> {
     const safeProjectId = assertSafeSegment(projectId)
     if ((await this.inspectActiveProjectBoundary(safeProjectId)) !== 'valid') return undefined
-    return (
-      await this.readSessionFile(
-        this.sessionFilePath(safeProjectId, assertSafeSegment(sessionId)),
-        safeProjectId
+    const safeSessionId = assertSafeSegment(sessionId)
+    const read = await this.readSessionFile(
+      this.sessionFilePath(safeProjectId, safeSessionId),
+      safeProjectId
+    )
+    if (read.session || !reportReadFailure) return read.session
+    if (read.warning && 'projectId' in read.warning)
+      throw new ApplicationCommandError(
+        `session-file-${read.warning.kind}`,
+        'Could not read the conversation file.'
       )
-    ).session
+    if (!read.isComplete) return undefined
+    const files = await this.listSessionFileNames(this.projectDir(safeProjectId), {
+      missingIsIncomplete: true
+    })
+    const fileName = `${safeSessionId}.json`
+    if (!files.isComplete || files.names.includes(fileName)) return undefined
+    if (files.quarantinedPrimaryFileNames.includes(fileName))
+      throw new ApplicationCommandError('session-file-corrupt', 'Conversation data is damaged.')
+    throw new ApplicationCommandError('session-file-missing', 'Conversation file not found.')
   }
 
   async loadSessionHistoryPage(
-    request: LoadSessionHistoryPageRequest
+    request: LoadSessionHistoryPageRequest,
+    reportReadFailure = false
   ): Promise<SessionHistoryPage | undefined> {
     const input = loadSessionHistoryPageRequestSchema.parse(request)
     const projectId = assertSafeSegment(input.projectId)
@@ -1091,7 +1144,7 @@ class SessionRepository {
       ) {
         // Old JSON already stores the full conversation. Keep its original read path without
         // creating a display index or rewriting the file just to open it.
-        const session = await this.loadSession(projectId, sessionId)
+        const session = await this.loadSession(projectId, sessionId, reportReadFailure)
         return session ? completePage(session) : undefined
       }
       if (!this.projection) return undefined
@@ -1107,7 +1160,7 @@ class SessionRepository {
         return page
       // Missing/stale JSONL indexes are admitted once through the existing full decoder.
       // Subsequent display pages query only their indexed rows.
-      const session = await this.loadSession(projectId, sessionId)
+      const session = await this.loadSession(projectId, sessionId, reportReadFailure)
       if (!session) return undefined
       const currentFingerprint = await this.historySourceFingerprint(projectId, sessionId)
       if (!currentFingerprint || currentFingerprint !== fingerprint)
@@ -1141,6 +1194,18 @@ class SessionRepository {
 
   hasLiveRuntimeSession(projectId: string, sessionId: string): boolean {
     return this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
+  }
+
+  hasActiveRuntimePrompt(projectId: string, sessionId: string): boolean {
+    return this.dependencies.hasActiveRuntimePrompt(projectId, sessionId)
+  }
+
+  shouldPreserveRuntimeState(projectId: string, sessionId: string): boolean {
+    return (
+      this.hasActiveRuntimePrompt(projectId, sessionId) ||
+      this.hasLiveRuntimeSession(projectId, sessionId) ||
+      this.retainedRuntimeState.has(JSON.stringify([projectId, sessionId]))
+    )
   }
 
   // Decode-only preservation for Main's live release after exhausted writes. This is not evidence
@@ -1310,6 +1375,221 @@ class SessionRepository {
       throw new Error('Cannot save a Session while its global identity ownership is unreadable.')
     if (ownership.projectIds.some((projectId) => projectId !== expectedProjectId))
       throw new Error('Cannot save a Session id that is already owned by another Project.')
+  }
+
+  // Lookups can rebuild the same file that independent project writers maintain.
+  private withSessionLocator<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.sessionLocatorTail.then(operation)
+    this.sessionLocatorTail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+
+  async locateSession(sessionIdValue: string): Promise<SessionLocation | undefined> {
+    const sessionId = assertSafeSegment(sessionIdValue)
+    return this.withSessionLocator(() => this.locateSessionLocked(sessionId))
+  }
+
+  private async locateSessionLocked(sessionId: string): Promise<SessionLocation | undefined> {
+    let locator = await this.ensureSessionLocator()
+    let entry = locator.entries.find((candidate) => candidate.sessionId === sessionId)
+    if (!entry && !this.sessionLocatorRemovedSessionIds.has(sessionId)) {
+      const ownership = await this.readSessionIdentityOwners(sessionId)
+      if (
+        ownership.isComplete &&
+        ownership.projectIds.length === 1 &&
+        (await isSessionPackagePending(this.storageDir, ownership.projectIds[0]))
+      )
+        return undefined
+      if (ownership.isComplete && !ownership.projectIds.length) return undefined
+      locator = await this.rebuildSessionLocator('missing-entry')
+      entry = locator.entries.find((candidate) => candidate.sessionId === sessionId)
+    }
+    if (!entry) return undefined
+
+    const expectedPath = this.sessionStoragePath(entry.projectId, entry.sessionId)
+    if (
+      entry.storagePath !== expectedPath ||
+      !(await this.hasSessionAuthorityFile(entry.projectId, entry.sessionId))
+    ) {
+      locator = await this.rebuildSessionLocator('stale')
+      entry = locator.entries.find((candidate) => candidate.sessionId === sessionId)
+    }
+    if (entry && (await isSessionPackagePending(this.storageDir, entry.projectId))) return undefined
+    return entry
+  }
+
+  private sessionStoragePath(projectId: string, sessionId: string): string {
+    return `${SESSIONS_DIR}/${assertSafeSegment(projectId)}/${assertSafeSegment(sessionId)}.json`
+  }
+
+  private async hasSessionAuthorityFile(projectId: string, sessionId: string): Promise<boolean> {
+    const logicalPath = this.sessionFilePath(projectId, sessionId)
+    return (
+      (await this.inspectFileBoundary(logicalPath)) === 'valid' ||
+      (await this.inspectFileBoundary(sessionJournalPath(logicalPath))) === 'valid'
+    )
+  }
+
+  private async readSessionLocatorFile(): Promise<SessionLocatorDocument | undefined> {
+    try {
+      const parsed = JSON.parse(await readFile(this.sessionLocatorPath, 'utf8')) as unknown
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+      const document = parsed as Record<string, unknown>
+      if (document.version !== 1 || !Array.isArray(document.entries)) return undefined
+      const entries = document.entries.flatMap((entry): SessionLocation[] => {
+        if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return []
+        const value = entry as Record<string, unknown>
+        if (
+          typeof value.sessionId !== 'string' ||
+          typeof value.projectId !== 'string' ||
+          typeof value.storagePath !== 'string'
+        )
+          return []
+        try {
+          const sessionId = assertSafeSegment(value.sessionId)
+          const projectId = assertSafeSegment(value.projectId)
+          const storagePath = this.sessionStoragePath(projectId, sessionId)
+          if (value.storagePath !== storagePath) return []
+          return [{ sessionId, projectId, storagePath }]
+        } catch {
+          return []
+        }
+      })
+      if (entries.length !== document.entries.length) return undefined
+      if (new Set(entries.map(({ sessionId }) => sessionId)).size !== entries.length)
+        return undefined
+      return { version: 1, entries }
+    } catch (error) {
+      if (isMissingFileError(error)) return undefined
+      return undefined
+    }
+  }
+
+  private async ensureSessionLocator(): Promise<SessionLocatorDocument> {
+    if (this.sessionLocator) return this.sessionLocator
+    const loaded = await this.readSessionLocatorFile()
+    if (loaded) {
+      this.sessionLocator = loaded
+      return loaded
+    }
+    if ((await this.inspectDirectoryBoundary(this.sessionsDir)) === 'missing') {
+      const empty = { version: 1 as const, entries: [] }
+      this.sessionLocator = empty
+      return empty
+    }
+    return this.rebuildSessionLocator('missing-or-invalid')
+  }
+
+  private async rebuildSessionLocator(
+    reason: 'missing-or-invalid' | 'missing-entry' | 'stale'
+  ): Promise<SessionLocatorDocument> {
+    try {
+      const scan = await this.scanSessionIdentities()
+      if (!scan.isComplete) {
+        throw new Error('Session locator rebuild requires a complete Session identity scan.')
+      }
+      const document: SessionLocatorDocument = {
+        version: 1,
+        entries: scan.sessions
+          .map(({ projectId, id: sessionId }) => ({
+            sessionId,
+            projectId,
+            storagePath: this.sessionStoragePath(projectId, sessionId)
+          }))
+          .sort((left, right) => left.sessionId.localeCompare(right.sessionId))
+      }
+      await this.atomicWrite(this.sessionLocatorPath, document)
+      this.sessionLocator = document
+      try {
+        createLogger('session-persistence').info('Session locator rebuilt', {
+          operation: 'session-locator-rebuild',
+          reason,
+          entryCount: document.entries.length
+        })
+      } catch {
+        // Diagnostics must not affect locator durability.
+      }
+      return document
+    } catch (error) {
+      try {
+        createLogger('session-persistence').warn('Session locator rebuild deferred', {
+          operation: 'session-locator-rebuild',
+          reason,
+          outcome: 'deferred',
+          ...diagnosticErrorFields(error)
+        })
+      } catch {
+        // Diagnostics must not affect Session authority.
+      }
+      throw error
+    }
+  }
+
+  private async maintainSessionLocator(
+    operation: (document: SessionLocatorDocument) => SessionLocatorDocument
+  ): Promise<void> {
+    await this.withSessionLocator(async () => {
+      try {
+        const current = await this.ensureSessionLocator()
+        const next = operation(current)
+        if (current === next) return
+        await this.atomicWrite(this.sessionLocatorPath, next)
+        this.sessionLocator = next
+      } catch (error) {
+        this.sessionLocator = undefined
+        try {
+          createLogger('session-persistence').warn('Session locator maintenance degraded', {
+            operation: 'session-locator-maintenance',
+            outcome: 'degraded',
+            ...diagnosticErrorFields(error)
+          })
+        } catch {
+          // Diagnostics must not affect Session authority.
+        }
+      }
+    })
+  }
+
+  private async upsertSessionLocator(
+    session: Pick<PersistedChatSession, 'id' | 'projectId'>
+  ): Promise<void> {
+    this.sessionLocatorRemovedSessionIds.delete(session.id)
+    await this.maintainSessionLocator((document) => {
+      const existing = document.entries.find((entry) => entry.sessionId === session.id)
+      if (existing?.projectId === session.projectId) return document
+      return {
+        version: 1,
+        entries: [
+          ...document.entries.filter((entry) => entry.sessionId !== session.id),
+          {
+            sessionId: session.id,
+            projectId: session.projectId,
+            storagePath: this.sessionStoragePath(session.projectId, session.id)
+          }
+        ].sort((left, right) => left.sessionId.localeCompare(right.sessionId))
+      }
+    })
+  }
+
+  private async removeSessionLocator(sessionId: string): Promise<void> {
+    this.sessionLocatorRemovedSessionIds.add(sessionId)
+    await this.maintainSessionLocator((document) => ({
+      version: 1,
+      entries: document.entries.filter((entry) => entry.sessionId !== sessionId)
+    }))
+  }
+
+  private async removeProjectSessionLocators(projectId: string): Promise<void> {
+    await this.maintainSessionLocator((document) => ({
+      version: 1,
+      entries: document.entries.filter((entry) => {
+        if (entry.projectId === projectId) this.sessionLocatorRemovedSessionIds.add(entry.sessionId)
+        return entry.projectId !== projectId
+      })
+    }))
   }
 
   // Complete identity evidence only: never parse, promote, or quarantine conversation bodies here.
@@ -1761,6 +2041,7 @@ class SessionRepository {
       }
       throw error
     }
+    await this.upsertSessionLocator(durableSession)
     // Only a completed durable publication (atomic JSON replacement or fsynced JSONL append)
     // proves a transcript durable. Catalog projection still runs in this lane before the next
     // write can enter.
@@ -1836,6 +2117,10 @@ class SessionRepository {
   }
 
   // Removes a single session file.
+  async deletedSessionScopes(): Promise<Map<string, boolean>> {
+    return this.projection?.deletedSessionScopes() ?? new Map()
+  }
+
   async deleteSession(projectId: string, sessionId: string): Promise<void> {
     return this.operationScheduler.runSession(projectId, sessionId, () =>
       this.deleteSessionNow(projectId, sessionId)
@@ -1980,6 +2265,7 @@ class SessionRepository {
       }
     }
     this.sessionRevisions.delete(revisionKey)
+    await this.removeSessionLocator(safeSessionId)
     try {
       const detached = await this.detachDiscussionChildren(safeProjectId, safeSessionId)
       if (this.projectionWritesSuspended) {
@@ -2036,6 +2322,7 @@ class SessionRepository {
         writeFile(join(liveProjectDir, PROJECT_DELETION_COMMIT_MARKER), '', 'utf8')
       )
       await this.dependencies.renameFile(liveProjectDir, deletedProjectDir)
+      await this.removeProjectSessionLocators(safeProjectId)
       if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
     })
   }
@@ -2117,6 +2404,7 @@ class SessionRepository {
         recursive: true,
         force: true
       })
+      await this.removeProjectSessionLocators(safeProjectId)
       if (this.projectionWritesSuspended) this.suspendedProjectionCatalogMutation = true
     })
   }
@@ -3038,10 +3326,7 @@ class SessionRepository {
       preserveRuntimeState:
         preserveRuntimeState !== undefined
           ? preserveRuntimeState
-          : (sessionId) =>
-              this.dependencies.hasActiveRuntimePrompt(projectId, sessionId) ||
-              this.dependencies.hasLiveRuntimeSession(projectId, sessionId) ||
-              this.retainedRuntimeState.has(JSON.stringify([projectId, sessionId]))
+          : (sessionId) => this.shouldPreserveRuntimeState(projectId, sessionId)
     })
     if (decoded.status === 'unsupported-version') throw new UnsupportedSessionFileError()
     if (decoded.status === 'invalid') throw new Error('Invalid Session file')

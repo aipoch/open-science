@@ -95,7 +95,9 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
     pdfTranslation: EMPTY_OWNER,
     acp: EMPTY_OWNER,
-    notebook: EMPTY_OWNER,
+    notebook: {
+      workflows: { configureResourceReleaseGuard: vi.fn() }
+    } as unknown as ApplicationCommandCompositionDependencies['notebook'],
     notebookEnvironment: EMPTY_OWNER,
     notebookRuntime: EMPTY_OWNER,
     settingsCore: EMPTY_OWNER,
@@ -256,6 +258,7 @@ describe('application command composition', () => {
       'lifecycle:claim-runtime-writer',
       'literature:add-pdf',
       'literature:cancel-pdf-import',
+      'literature:cancel-related',
       'literature:citation-styles',
       'literature:collect',
       'literature:complete-metadata',
@@ -339,6 +342,10 @@ describe('application command composition', () => {
       'sessions:import-package',
       'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
+      'sessions:org-case-cancel-import',
+      'sessions:org-case-detail',
+      'sessions:org-case-import',
+      'sessions:org-cases-list',
       'sessions:package-operation',
       'sessions:rename',
       'sessions:retry-runtime-terminal-commit',
@@ -610,6 +617,10 @@ describe('application command composition', () => {
       'settings:bootstrap',
       'cli:install',
       'settings:get-preflight',
+      'notebook-env:status',
+      'notebook-env:provision',
+      'settings:get-notebook-network-status',
+      'notebook:memory-policy-state',
       'settings:list-skills',
       'settings:list-connectors',
       'settings:get-connector-detail',
@@ -630,6 +641,7 @@ describe('application command composition', () => {
       'settings:get-settings',
       'settings:set-agent-routing',
       'sessions:load-all',
+      'sessions:load-one',
       'sessions:save-session',
       'sessions:bind-task-session',
       'sessions:admit-task-turn',
@@ -1475,4 +1487,114 @@ it('keeps real handoff admission held after renderer durability and releases it 
     composition.localWeb.invoke('acp:prompt', invocation()).catch((error) => error.message)
   ).resolves.not.toBe('The local service is stopping.')
   await composition.dispose()
+})
+
+it.each(
+  (['electron', 'localWeb', 'remoteWeb'] as const).flatMap((surface) =>
+    (['literature:related', 'literature:lookup-metadata'] as const).map((channel) => ({
+      surface,
+      channel
+    }))
+  )
+)('cancels $channel within its caller lease through $surface', async ({ surface, channel }) => {
+  const entered = Promise.withResolvers<AbortSignal>()
+  const related = vi.fn(async (_request: unknown, signal: AbortSignal) => {
+    entered.resolve(signal)
+    await new Promise<void>((_resolve, reject) =>
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+    )
+  })
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    literature: { related, lookupMetadata: related } as never
+  })
+  const call = invocation(surface === 'remoteWeb' ? 'remote' : 'local')
+  const requestId = '11111111-1111-4111-8111-111111111111'
+  const request = {
+    requestId,
+    itemId: 'paper',
+    expectedMetadataRevision: 1,
+    direction: 'references'
+  }
+  try {
+    const lookup = composition[surface].invoke(channel, {
+      ...call,
+      args: channel === 'literature:related' ? [request] : ['pmid:123', requestId]
+    })
+    const rejected = expect(lookup).rejects.toThrow()
+    const signal = await entered.promise
+    const other = {
+      ...call,
+      callerContext: { ...call.callerContext, leaseId: 'other' },
+      callerLease: { ...call.callerLease, leaseId: 'other' }
+    }
+    await composition[surface].invoke('literature:cancel-related', {
+      ...other,
+      args: [{ requestId }]
+    })
+    expect(signal.aborted).toBe(false)
+    await composition[surface].invoke('literature:cancel-related', {
+      ...call,
+      args: [{ requestId }]
+    })
+    expect(signal.aborted).toBe(true)
+    await rejected
+    const nextId = '22222222-2222-4222-8222-222222222222'
+    await composition[surface].invoke('literature:cancel-related', {
+      ...call,
+      args: [{ requestId: nextId }]
+    })
+    await expect(
+      composition[surface].invoke('literature:related', {
+        ...call,
+        args: [{ ...request, requestId: nextId }]
+      })
+    ).rejects.toThrow()
+    await expect(
+      composition[surface].invoke('literature:lookup-metadata', {
+        ...call,
+        args: ['pmid:123', nextId]
+      })
+    ).rejects.toThrow()
+    expect(related).toHaveBeenCalledTimes(1)
+    await expect(
+      composition[surface].invoke('literature:cancel-related', {
+        ...call,
+        args: [{ requestId: '../invalid' }]
+      })
+    ).rejects.toThrow()
+  } finally {
+    await composition.dispose()
+  }
+})
+
+it('shares citation lookup capacity with callers that omit the request ID', async () => {
+  const release = Promise.withResolvers<void>()
+  const lookupMetadata = vi.fn(async () => {
+    await release.promise
+    throw new Error('Provider unavailable')
+  })
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    literature: { lookupMetadata } as never
+  })
+  const invoke = (requestId?: string): Promise<unknown> =>
+    composition.localWeb.invoke('literature:lookup-metadata', {
+      ...invocation(),
+      args: requestId ? ['pmid:123', requestId] : ['pmid:123']
+    })
+  const active = Promise.allSettled(Array.from({ length: 200 }, () => invoke()))
+  try {
+    await vi.waitFor(() => expect(lookupMetadata).toHaveBeenCalledTimes(200))
+    await expect(invoke(crypto.randomUUID())).rejects.toThrow('Too many active citation requests.')
+    await expect(invoke()).rejects.toThrow('Too many active citation requests.')
+    release.resolve()
+    await active
+    await expect(invoke()).rejects.toThrow('Provider unavailable')
+    expect(lookupMetadata).toHaveBeenCalledTimes(201)
+  } finally {
+    release.resolve()
+    await active
+    await composition.dispose()
+  }
 })

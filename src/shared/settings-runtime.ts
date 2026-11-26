@@ -1,6 +1,8 @@
 import { ApplicationCommandError } from './application-command-contract'
-import { customProviderRequiresKey, isOfficialOpenAiResponsesBase } from './provider-url-policy'
+import { LAB_PROVIDER_ID } from './lab'
+import { providerAllowsAnonymousAccess, isOfficialOpenAiResponsesBase } from './provider-url-policy'
 export { DEFAULT_AGENT_FRAMEWORK_ID } from './agent-framework-id'
+export { LAB_PROVIDER_ID }
 import type { AgentFrameworkId, AgentModelRoute } from './agent-framework-id'
 import type { ModelProtocol, OfficialVendorId } from '@aipoch/providers'
 import type { ReasoningEffort } from './model-preference-contract'
@@ -68,8 +70,17 @@ export const xaiSubscriptionProviderIdentity = (): { id: string; name: string } 
 export const isXaiSubscriptionProvider = (type: ProviderType): type is 'xai-subscription' =>
   type === 'xai-subscription'
 
+// The optional Lab enterprise provider. One fixed record exists only while the user is signed in;
+// its models and base URL are derived from GET /api/me/bootstrap and never edited by hand.
+export const labProviderIdentity = (): { id: string; name: string } => ({
+  id: LAB_PROVIDER_ID,
+  name: 'Lab'
+})
+
+export const isLabProvider = (type: ProviderType): type is 'lab' => type === 'lab'
+
 export const usesAppProviderTransport = (type: ProviderType): boolean =>
-  type === 'custom' || type === 'xai-subscription'
+  type === 'custom' || type === 'xai-subscription' || type === 'lab'
 
 export const isCodexSubscriptionProvider = (
   type: ProviderType
@@ -143,33 +154,43 @@ export const ENDPOINT_PATHS: Record<ModelProtocol, string> = {
 }
 
 // Codex subscription records always use Responses, including older records without endpoint metadata.
-// Other absent/empty endpoints default to Messages for legacy provider compatibility.
-export const providerEndpoints = (provider: {
-  apiEndpoints?: readonly ModelProtocol[]
-  type?: ProviderType
-}): ModelProtocol[] =>
-  provider.type && isCodexSubscriptionProvider(provider.type)
-    ? ['responses']
-    : provider.apiEndpoints && provider.apiEndpoints.length > 0
-      ? [...provider.apiEndpoints]
-      : ['messages']
+// An official catalog may explicitly have no usable route. Legacy configurations default to Messages.
+export const providerEndpoints = (
+  provider: {
+    apiEndpoints?: readonly ModelProtocol[]
+    type?: ProviderType
+    modelProtocols?: Readonly<Record<string, readonly ModelProtocol[]>>
+  },
+  model?: string
+): ModelProtocol[] => {
+  if (provider.type && isCodexSubscriptionProvider(provider.type)) return ['responses']
+  const declared = provider.type === 'lab' && model ? provider.modelProtocols?.[model] : undefined
+  if (declared?.length) return [...declared]
+  if (provider.apiEndpoints && (provider.apiEndpoints.length > 0 || provider.type === 'official'))
+    return [...provider.apiEndpoints]
+  return provider.type === 'lab' ? ['chat-completions', 'responses'] : ['messages']
+}
+
+// App-managed providers keep separate transport families: an xAI OAuth bridge and a Lab bridge
+// cannot be reused across a model switch, while every API-key provider keeps sharing one family.
+const providerTransportFamily = (type: ProviderType): 'xai' | 'lab' | 'app' =>
+  isXaiSubscriptionProvider(type) ? 'xai' : isLabProvider(type) ? 'lab' : 'app'
 
 export const shareProviderTransportFamily = (left: ProviderType, right: ProviderType): boolean =>
-  isXaiSubscriptionProvider(left) === isXaiSubscriptionProvider(right)
+  providerTransportFamily(left) === providerTransportFamily(right)
 
 export const canUseClaudeProviderTransport = (provider: {
   type: ProviderType
   apiEndpoints?: readonly ModelProtocol[]
   key?: string
   baseUrl?: string
+  vendorId?: OfficialVendorId
+  model?: string
+  modelAllowsAnonymousAccess?: boolean
 }): boolean =>
   usesAppProviderTransport(provider.type) &&
   providerEndpoints(provider).includes('messages') &&
-  // A custom gateway needs credentials unless it is a loopback local model server, which serves the
-  // Anthropic route without one; the transport adapters already treat the key as optional.
-  (provider.type !== 'custom' ||
-    Boolean(provider.key) ||
-    !customProviderRequiresKey(provider.baseUrl))
+  (provider.type !== 'custom' || Boolean(provider.key) || providerAllowsAnonymousAccess(provider))
 
 // A provider's endpoints are compatible with a framework only when they share at least one endpoint.
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's
@@ -203,6 +224,18 @@ export const requiresChatCompletionsBridge = (
   )
 }
 
+export const subscriptionFrameworks = (provider: {
+  type: ProviderType
+  codexHarnessAvailable?: boolean
+}): readonly AgentFrameworkId[] | undefined => {
+  if (provider.type === 'codebuddy-subscription') return ['codebuddy']
+  if (isClaudeSubscriptionProvider(provider.type)) return ['claude-code']
+  if (isCodexSubscriptionProvider(provider.type)) {
+    return provider.codexHarnessAvailable === false ? ['codex'] : ['codex', 'open-science-agent']
+  }
+  return undefined
+}
+
 // Whether a provider can actually drive a given framework. Two axes: endpoint compatibility (above),
 // AND provider-type — a `claude-isolated` provider carries an app-owned Anthropic OAuth token
 // that no other framework can consume, so it is only usable by Claude Code regardless of endpoint.
@@ -216,20 +249,20 @@ export const isProviderUsableByFramework = (
   },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean => {
+  const owners = subscriptionFrameworks(provider)
+  if (owners) {
+    if (!owners.includes(framework.id)) return false
+    // Claude still requires the Messages protocol within its native framework.
+    if (!isClaudeSubscriptionProvider(provider.type)) return true
+  }
   if (
     framework.id === 'open-science-agent' &&
-    !['custom', 'official', 'xai-subscription'].includes(provider.type) &&
-    !isCodexSubscriptionProvider(provider.type)
+    !['custom', 'official', 'xai-subscription', 'lab'].includes(provider.type)
   )
     return false
-  if (isCodexSubscriptionProvider(provider.type))
-    return (
-      framework.id === 'codex' ||
-      (framework.id === 'open-science-agent' && provider.codexHarnessAvailable !== false)
-    )
-  // Both Claude subscription modes rely on the ~/.claude or app-owned credential that only
-  // claude-code knows how to read; OpenCode receives neither an endpoint nor a token.
-  if (isClaudeSubscriptionProvider(provider.type) && framework.id !== 'claude-code') return false
+  // Lab credentials cannot use the protocol conversion bridges.
+  if (isLabProvider(provider.type))
+    return isProviderCompatibleWith(providerEndpoints(provider), framework.supportedApiTypes)
 
   const endpoints = providerEndpoints(provider)
 
@@ -525,7 +558,8 @@ export const providerValidationRoute = (
       route = endpoints.includes('chat-completions') ? 'opencode-openai' : 'opencode-anthropic'
       break
     case 'codebuddy':
-      route = 'codebuddy-openai'
+      route =
+        provider.type === 'codebuddy-subscription' ? 'codebuddy-subscription' : 'codebuddy-openai'
       break
     case 'pi':
       route = 'pi'

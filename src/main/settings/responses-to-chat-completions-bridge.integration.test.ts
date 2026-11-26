@@ -8,6 +8,12 @@ import { createInterface } from 'node:readline'
 import * as acp from '@agentclientprotocol/sdk'
 import { expect, it, vi } from 'vitest'
 
+import {
+  ACP_MODEL_CALL_USAGE_META_KEY,
+  ACP_MODEL_TURN_COUNT_META_KEY,
+  ACP_TURN_TOKEN_USAGE_META_KEY
+} from '../../shared/acp'
+
 import { CODEX_BRIDGE_MODEL, createCodexFramework } from '../agent-framework/codex'
 import { CODEX_VERSION } from './managed-codex'
 import { toAcpRuntimeEvent } from '../acp/runtime-events'
@@ -41,7 +47,11 @@ const spawnAdapter = (cwd: string, env: NodeJS.ProcessEnv): ChildProcessWithoutN
   return spawn(
     adapterPath.endsWith('.js') ? process.execPath : adapterPath,
     adapterPath.endsWith('.js') ? [adapterPath] : [],
-    { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] }
+    {
+      cwd,
+      env: { ...env, INITIAL_AGENT_MODE: 'workspace-write', CODEX_ACP_PROMPT_SUGGESTIONS: 'false' },
+      stdio: ['pipe', 'pipe', 'pipe']
+    }
   )
 }
 
@@ -464,26 +474,23 @@ it.runIf(runLiveContract)(
       upstreamFetch
     )
     const connection = await bridge.start()
+    const config = createCodexFramework().prepareModelConfig(
+      {
+        type: 'custom',
+        model: 'probe-model',
+        apiEndpoints: ['chat-completions'],
+        contextWindow: 1_000_000
+      },
+      { storageRoot: tempRoot, executablePath: adapterPath!, responsesConnection: connection }
+    )
+    for (const file of config.configFiles ?? []) {
+      await mkdir(dirname(file.path), { recursive: true })
+      await writeFile(file.path, file.content)
+    }
     const child = spawnAdapter(workspace, {
       ...process.env,
-      CODEX_HOME: codexHome,
-      CODEX_PATH: nativeCodexPath!,
-      MODEL_PROVIDER: 'probe',
-      NO_BROWSER: '1',
-      CODEX_CONFIG: JSON.stringify({
-        model: CODEX_BRIDGE_MODEL,
-        model_context_window: 1_000_000,
-        model_auto_compact_token_limit: 950_000,
-        model_provider: 'probe',
-        model_providers: {
-          probe: {
-            name: 'Bridge MCP contract',
-            base_url: connection.baseUrl,
-            env_key: 'CODEX_API_KEY',
-            wire_api: 'responses'
-          }
-        }
-      })
+      ...config.env,
+      CODEX_PATH: nativeCodexPath!
     })
     const stderr: string[] = []
     child.stderr.on('data', (chunk) => stderr.push(chunk.toString('utf8')))
@@ -586,6 +593,11 @@ it.runIf(runLiveContract)(
         inputTokens: 15,
         cachedReadTokens: 0,
         outputTokens: 3
+      })
+      expect(result.initial.response._meta).toMatchObject({
+        [ACP_TURN_TOKEN_USAGE_META_KEY]: { inputTokens: 25, outputTokens: 5 },
+        [ACP_MODEL_TURN_COUNT_META_KEY]: 2,
+        [ACP_MODEL_CALL_USAGE_META_KEY]: [{ inputTokens: 10 }, { inputTokens: 15 }]
       })
       expect(result.initial.stopReason).toBe('end_turn')
       expect(
@@ -822,7 +834,10 @@ it.runIf(runLiveContract)(
           await ctx.request(acp.methods.agent.initialize, {
             protocolVersion: acp.PROTOCOL_VERSION,
             clientInfo: { name: 'open-science-reviewer-bridge-contract', version: '1.0.0' },
-            clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } }
+            clientCapabilities: {
+              fs: { readTextFile: true, writeTextFile: true },
+              _meta: { jetbrains: { air: { version: 1, capabilities: ['sessionFailure'] } } }
+            }
           })
           await ctx.request(acp.methods.agent.providers.set, {
             providerId: 'openai',

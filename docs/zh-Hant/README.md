@@ -53,18 +53,17 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-### 💡 AIPOCH Open-Science v1.2.2 更新
+### 💡 AIPOCH Open-Science v1.3.5 更新
 
-_2026 年 11 月 18 日_
+_2026 年 11 月 24 日_
 
-- **嚴格網路模式**：可為 Notebook 網路選用 Strict 白名單，請求必須在通訊協定、主機與埠號上都符合你的規則，未符合的請求會直接被封鎖，不會出現授權提示。
-- **影片繼續產生**：中斷的研究影片產生會從已驗證的檢查點繼續，並以五步驟檢視顯示進度；已完成的場景與旁白會重複使用。
-- **PDF 保真度**：外部 PDF 保留原生圖形、表格、圖註與閱讀順序；翻譯保留結構與版面，無法確認放置位置的內容保留原文。
-- **更安全的 Windows 授權**：受保護模式下的資料夾授權會在儲存前先檢查，更新、解除安裝與交接流程能更可靠地復原並保留診斷資訊。
-- **供應商更新**：Qwen4 Max Preview（1M 上下文）加入北京與新加坡的 Bailian Token Plans，官方連線的預設模型也已更新。
-- **可靠性修正**：工作階段匯入會回報結果、服務復原會在連線恢復前封鎖工作區，並在各介面上保留深色模式的對比度。
+- **macOS 更新更小**：應用程式內更新改為下載簽章差量，而非完整安裝程式，大多數更新只需傳輸一小部分資料。
+- **閱讀文獻不再打斷思路**：圖表可從內文引用處直接預覽，選取的段落會在 PDF 閱讀器中原位翻譯。
+- **更多模型連線方式**：雲端閘道（Cloudflare AI Gateway、AWS Bedrock Runtime、Microsoft Foundry、Vectrust）與本機預設（Ollama、LM Studio、llama.cpp、vLLM）加入供應商目錄。
+- **更輕、更穩的應用程式**：對話紀錄與 Notebook 圖表改為按需載入，Notebook 在繼續工作前會重新檢查記憶體准入。
+- **更可靠的復原**：工作階段復原在供應商無法使用時仍可繼續，PDF 翻譯更忠實地保留原生版面配置。
 
-[查看 v1.2.2 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.2.2)
+[查看 v1.3.5 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.3.5)
 
 <a id="share-your-research"></a>
 
@@ -89,6 +88,14 @@ _2026 年 11 月 18 日_
 | Linux ARM64                             | Linux ARM64 AppImage 或 Debian 套件       |
 
 安裝前的驗證方法見[驗證下載](../../SECURITY.md#verifying-your-download)。
+
+在 Windows 10/11 x64 上，可以從 [Microsoft Store](https://apps.microsoft.com/detail/XP99DM5G64X10X) 安裝桌面應用程式，也可以在 PowerShell 中使用 WinGet 安裝。
+
+```powershell
+winget install --id AIPOCH.Open-Science --exact --source winget
+```
+
+各發行管道提供的版本可能不同。詳情請參閱[安裝與更新指南](https://aipoch.com/docs/guides/installation/)。
 
 macOS 使用者也可以透過 [Homebrew](https://brew.sh) 安裝：
 
@@ -172,6 +179,7 @@ AIPOCH 對 AIPOCH Open-Science 進行了評測，任務涵蓋尋找論文、回�
 | 根據文獻回答問題 | LitQA2-FullText        | 在獨立的 LitQA2-FullText 測試中，Open-Science **答對 75 題中的 70 題**（**準確率 93.33%**，deepseek-flash，Max 推理）。                     |
 | 綜合附引用的答案 | ScholarQA-CS2          | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道驗證題上獲得 **0.9289/1 的綜合品質分數**。官方測試參考結果使用不同的題目。                |
 | 執行研究流程     | ASI-Bench              | 在使用相同模型的本機 ASI-Bench 測試中，Open-Science 的 B4 得分為 **59.46**，Codex 為 **55.45**。B2 得分幾乎相同（**56.11** 與 **56.09**）。 |
+| 重現 ML/NLP 實驗 | AstaBench SUPER-Expert | 使用 DeepSeek Flash/Max 在 45 題本機測試中取得 **46.30%** output_match/mean。                                                               |
 | 執行科研工作流程 | TB-Science 0.1         | 70 道任務，GPT-6 Astra/max：210 次本機執行中 **145 次通過**（**69.05%**）；非官方排行榜名次，逐次紀錄未公開。                               |
 | 分析生物醫學資料 | BiomniBench-DA         | 在 BiomniBench-DA Public 50 上，兩個評審模型的評分分別為 **81.04** 和 **77.06**，等權平均為 **79.05**。                                     |
 | 重現已發表的結果 | CORE-Bench-Hard        | CORE-Bench-Hard — 本機評測答對 37 項測試任務中的 36 項（97.30%），最終統計包含複測。                                                        |
@@ -182,7 +190,7 @@ AIPOCH 對 AIPOCH Open-Science 進行了評測，任務涵蓋尋找論文、回�
 
 **評測範圍：** 報告涵蓋 2026 年 8 月至 11 月、使用所列模型與資料劃分進行的本機或內部測試，並未針對目前版本重新執行。參考成績是歷史快照，並非即時排名。不同基準系列的分數不能直接比較，數值差距不代表統計顯著性。
 
-評測詳情見 [AstaBench 與 ASI-Bench 報告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 報告](https://aipoch.com/blog/open-science-biomnibench-da)及 [TB-Science 0.1 本機測試報告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。
+評測詳情見 [AstaBench 與 ASI-Bench 報告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 報告](https://aipoch.com/blog/open-science-biomnibench-da)及 [TB-Science 0.1 本機測試報告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。另見 [SUPER-Expert 本機測試報告](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)。
 
 [CORE-Bench-Hard · 重現性評測報告](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
 

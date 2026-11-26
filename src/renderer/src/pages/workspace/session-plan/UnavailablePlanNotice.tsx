@@ -1,8 +1,7 @@
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle } from 'lucide-react'
 import type { PlanResponseIdentity } from '../../../../../shared/session-plan/contract'
-import { ErrorNotice } from '@/components/error-notice'
+import { ComposerNoticeSlot } from '@/components/notices/ComposerNoticeSlot'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import type { ChatSession } from '@/stores/session-store-contract'
 
@@ -39,15 +38,25 @@ const UnavailablePlanNotice = ({ session }: { session: ChatSession }): React.JSX
     }
   }
   return (
-    <div role="alert" className="mb-2">
-      <ErrorNotice
-        icon={AlertTriangle}
-        tone="amber"
-        title={t('Unable to restore plan state. Retrying…')}
-        description={t(
-          'This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.'
-        )}
-        content={error ? <p>{error}</p> : undefined}
+    <>
+      <ComposerNoticeSlot
+        notices={[
+          {
+            id: 'plan-restore',
+            source: 'operation',
+            occurredAt: 0,
+            failure: { category: 'internal', diagnostics: error ? { raw: error } : {} },
+            summary: {
+              title: t('Unable to restore plan state. Retrying…'),
+              description:
+                error ??
+                t(
+                  'This conversation cannot continue until its Plan is restored or explicitly discarded. You can switch to another conversation while recovery continues.'
+                )
+            }
+          }
+        ]}
+        handlers={{}}
         primaryButton={
           canDiscard
             ? {
@@ -78,7 +87,7 @@ const UnavailablePlanNotice = ({ session }: { session: ChatSession }): React.JSX
         onCancel={() => setConfirmation(undefined)}
         onConfirm={() => void discard()}
       />
-    </div>
+    </>
   )
 }
 

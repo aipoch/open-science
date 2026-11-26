@@ -2235,3 +2235,74 @@ it.each([false, true])(
     }
   }
 )
+
+describe('large scientific powers', () => {
+  const source = 'We report a mass of 2.5 × 10²⁶ kg and a calibration factor of 0.025.'
+  const target = '报告的质量为 2.5 × 10^26 kg，校准系数为 0.025。'
+
+  it.each([
+    ['raised exponent', '2.5 × 10²⁶ kg', true],
+    ['caret exponent', '2.5 × 10^26 kg', true],
+    ['changed mantissa', '2.6 × 10^26 kg', false],
+    ['changed exponent', '2.5 × 10^27 kg', false],
+    ['changed unit', '2.5 × 10^26 mg', false],
+    ['negative exponent', '2.5 × 10^(-26) kg', false],
+    ['fractional exponent', '2.5 × 10^26.5 kg', false],
+    ['flattened exponent', '2.5 × 1026 kg', false],
+    ['unbound factors', '2.5，10，26 kg', false],
+    ['omitted measurement', '该质量', false]
+  ] as const)('checks exactly one complete quantity with %s', async (_, quantity, accepted) => {
+    const h = setup()
+    const text = target.replace('2.5 × 10^26 kg', quantity)
+    h.runner.run.mockResolvedValue({ text, stopReason: 'end_turn' })
+    const { operationId } = await h.owner.begin({ ...input, sources: [source] }, h.caller.lease)
+    try {
+      const translation = h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+      if (accepted) await expect(translation).resolves.toBe(target)
+      else await expect(translation).rejects.toMatchObject({ code: 'incomplete-output' })
+    } finally {
+      h.owner.close(operationId, h.caller.lease)
+    }
+  })
+
+  it('checks unitless powers without losing distinct values or their multiplicity', async () => {
+    const h = setup()
+    const source = 'The estimated counts were 2.5 × 10²⁶ and 2.6 × 10²⁶.'
+    const requestSource = { ...input, sources: [source] }
+    const { operationId } = await h.owner.begin(requestSource, h.caller.lease)
+    h.runner.run.mockResolvedValue({
+      text: '估计计数为 2.5 × 10^26 和 2.5 × 10^26。',
+      stopReason: 'end_turn'
+    })
+    try {
+      await expect(
+        h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller.lease)
+      ).rejects.toMatchObject({ code: 'incomplete-output' })
+    } finally {
+      h.owner.close(operationId, h.caller.lease)
+    }
+  })
+
+  it('keeps the full quantity inside its retry marker', async () => {
+    const h = setup()
+    h.runner.run
+      .mockResolvedValueOnce({ text: target.replace('^26', '^27'), stopReason: 'end_turn' })
+      .mockImplementationOnce(async ({ prompt }) => {
+        expect(JSON.parse(prompt).source).toContain('<q0>2.5 × 10²⁶</q0>')
+        return {
+          text: '报告的质量为 <q0>2.5 × 10^26</q0> kg，校准系数为 <q1>0.025</q1>。',
+          stopReason: 'end_turn'
+        }
+      })
+    const { operationId } = await h.owner.begin({ ...input, sources: [source] }, h.caller.lease)
+    const request = { operationId, sourceIndex: 0, source }
+    try {
+      await expect(h.owner.translate(request, h.caller.lease)).rejects.toMatchObject({
+        code: 'incomplete-output'
+      })
+      await expect(h.owner.translate(request, h.caller.lease)).resolves.toBe(target)
+    } finally {
+      h.owner.close(operationId, h.caller.lease)
+    }
+  })
+})

@@ -1,10 +1,13 @@
 import { fork, type ChildProcess } from 'node:child_process'
-import { EventEmitter, once } from 'node:events'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { EventEmitter, getEventListeners, once } from 'node:events'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Worker } from 'node:worker_threads'
 import { describe, expect, it, vi } from 'vitest'
+import { unzipSync } from 'fflate'
+import { researchFilmResources } from './resources.js'
 import {
   createResearchVideoGenerator,
   generateResearchVideoInWorker,
@@ -101,6 +104,8 @@ it('times out a build worker that stops sending progress', async () => {
   const result = generate(input(root), controller.signal, () => building.resolve()).catch(failed)
   try {
     await building.promise
+    await vi.advanceTimersByTimeAsync(4 * 60_000)
+    expect(worker.terminate).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(4 * 60_000)
     expect(worker.terminate).toHaveBeenCalledOnce()
     await result
@@ -235,7 +240,7 @@ it('bounds a stuck request and fences the generator until the child reports exit
     })
     const result = generate(input(root), controller.signal).catch((error) => error)
     await entered.promise
-    await vi.advanceTimersByTimeAsync(180_000)
+    await vi.advanceTimersByTimeAsync(6 * 60_000)
     expect(child.disconnect).toHaveBeenCalledOnce()
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
     await vi.advanceTimersByTimeAsync(5000)
@@ -291,6 +296,105 @@ it('rejects a missing session image before any speech inference', async () => {
   }
 })
 
+it('generates an approved session-app film from frozen bytes through the real worker pipeline', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-approved-app-'))
+  try {
+    const appPath = join(root, 'libs', 'app.js')
+    const app = 'window.APP = { position(t) { return t * 2; } };'
+    await mkdir(join(root, 'libs'))
+    await writeFile(appPath, app)
+    await writeFile(join(root, 'libs', 'unapproved.js'), 'private unrelated code')
+    await writeFile(
+      join(root, 'video.json'),
+      JSON.stringify({
+        title: 'Evidence',
+        session: 'session.json',
+        libs: ['libs/app.js'],
+        scenes: [{ id: 's', msg: 0, lines: [{ caption: 'Evidence.' }], panels: [] }]
+      })
+    )
+    await writeFile(join(root, 'session.json'), JSON.stringify({ messages: [{ md: 'Evidence.' }] }))
+    const provenance = { sessionAppSha256: createHash('sha256').update(app).digest('hex') }
+    const synthesize = vi.fn(async () => {
+      // A source edit after preflight must not replace the bytes the user approved.
+      await writeFile(appPath, 'changed after freezing')
+      return { samples: new Float32Array(2400), sampleRate: 24000 }
+    })
+    const result = await generateResearchVideoInWorker(
+      {
+        specPath: join(root, 'video.json'),
+        temporaryDirectory: root,
+        engineDirectory: researchFilmResources().stageDirectory,
+        modelDirectory: root,
+        outputDirectory: join(root, 'output'),
+        provenance
+      },
+      () => {},
+      [{ identity: 'approved-app-test', synthesize }]
+    )
+    const bundle = unzipSync(await readFile(result.sourcePath))
+    expect(Buffer.from(bundle['libs/app.js']).toString()).toBe(app)
+    expect(bundle).not.toHaveProperty('libs/unapproved.js')
+    expect(JSON.parse(Buffer.from(bundle['manifest.json']).toString()).provenance).toEqual(
+      provenance
+    )
+    expect(await readFile(result.playerPath, 'utf8')).toContain(app)
+    expect(await readFile(join(root, 'source', 'libs', 'app.js'), 'utf8')).toBe(app)
+    expect(synthesize).toHaveBeenCalledOnce()
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it.each(['missing-approval', 'changed-app', 'extra-library', 'external-path'])(
+  'rejects a session app before narration when its approval boundary fails: %s',
+  async (failure) => {
+    const root = await mkdtemp(join(tmpdir(), 'film-app-preflight-'))
+    try {
+      const app = 'window.APP = { position(t) { return t; } };'
+      const digest = createHash('sha256').update(app).digest('hex')
+      await mkdir(join(root, 'libs'))
+      await writeFile(join(root, 'libs', 'app.js'), failure === 'changed-app' ? 'changed' : app)
+      const libs =
+        failure === 'external-path'
+          ? ['../app.js']
+          : failure === 'extra-library'
+            ? ['libs/app.js', 'libs/other.js']
+            : ['libs/app.js']
+      await writeFile(
+        join(root, 'video.json'),
+        JSON.stringify({
+          title: 'Evidence',
+          session: 'session.json',
+          libs,
+          // Model-authored metadata cannot stand in for the host's consent receipt.
+          provenance: { sessionAppSha256: digest },
+          scenes: [{ id: 's', msg: 0, lines: [{ caption: 'Evidence.' }], panels: [] }]
+        })
+      )
+      const synthesize = vi.fn()
+      await expect(
+        generateResearchVideoInWorker(
+          {
+            specPath: join(root, 'video.json'),
+            temporaryDirectory: root,
+            engineDirectory: researchFilmResources().stageDirectory,
+            modelDirectory: root,
+            outputDirectory: join(root, 'output'),
+            provenance: failure === 'missing-approval' ? undefined : { sessionAppSha256: digest }
+          },
+          () => {},
+          [{ identity: 'app-boundary-test', synthesize }]
+        )
+      ).rejects.toThrow(failure === 'changed-app' ? 'approved session app changed' : 'approval')
+      expect(synthesize).not.toHaveBeenCalled()
+      expect((await readdir(root)).sort()).toEqual(['libs', 'video.json'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
 it('routes scalar probes without PCM and transfers owned audio buffers to the generation worker', async () => {
   const root = await mkdtemp(join(tmpdir(), 'probe-worker-'))
   try {
@@ -339,7 +443,170 @@ it('routes scalar probes without PCM and transfers owned audio buffers to the ge
   }
 })
 
-it('reuses complete speech after a player build fails and replaces a damaged mix', async () => {
+it('serves remote speech in-process through the injected transport without forking a speech process', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-remote-speech-'))
+  const worker = stubWorker()
+  const createSpeechProcess = vi.fn()
+  const controller = new AbortController()
+  const speech = {
+    kind: 'remote-http' as const,
+    style: 'audio-speech' as const,
+    endpoint: 'https://api.example.com/v1/audio/speech',
+    model: 'tts-1',
+    apiKey: 'secret'
+  }
+  // Minimal mono 16-bit 24 kHz WAV with one silent frame.
+  const wav = Buffer.alloc(46)
+  wav.write('RIFF', 0)
+  wav.writeUInt32LE(38, 4)
+  wav.write('WAVEfmt ', 8)
+  wav.writeUInt32LE(16, 16)
+  wav.writeUInt16LE(1, 20)
+  wav.writeUInt16LE(1, 22)
+  wav.writeUInt32LE(24000, 24)
+  wav.writeUInt32LE(48000, 28)
+  wav.writeUInt16LE(2, 32)
+  wav.writeUInt16LE(16, 34)
+  wav.write('data', 36)
+  wav.writeUInt32LE(2, 40)
+  const remoteFetch = vi.fn(async () => new Response(new Uint8Array(wav)))
+  try {
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess,
+      remoteFetch: remoteFetch as unknown as typeof fetch,
+      createWorker: () => {
+        queueMicrotask(() => worker.emit('message', { kind: 'synthesize', lane: 0, text: 'one' }))
+        return worker as unknown as Worker
+      }
+    })
+    const result = generate(
+      {
+        speechConcurrency: 1,
+        specPath: 'unused',
+        modelDirectory: 'unused',
+        engineDirectory: 'unused',
+        outputDirectory: join(root, 'output'),
+        speech
+      },
+      controller.signal
+    ).catch((error) => error)
+    // The transport ran in this process: it received the endpoint and decoded WAV audio.
+    await vi.waitFor(() =>
+      expect(remoteFetch).toHaveBeenCalledWith(
+        'https://api.example.com/v1/audio/speech',
+        expect.objectContaining({ method: 'POST' })
+      )
+    )
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'speech-result', lane: 0 }),
+      expect.any(Array)
+    )
+    // Remote synthesis never reaches the speech child process.
+    expect(createSpeechProcess).not.toHaveBeenCalled()
+    controller.abort(new Error('finished remote serving check'))
+    expect(await result).toMatchObject({ message: 'finished remote serving check' })
+    expect(await readdir(root)).toEqual([])
+  } finally {
+    controller.abort()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('leaves no abort listener behind when remote setup fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-remote-setup-fail-'))
+  const controller = new AbortController()
+  try {
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess: vi.fn()
+    })
+    // The credential-bearing endpoint fails eager validation before scratch allocation.
+    const outcome = await generate(
+      {
+        speechConcurrency: 1,
+        specPath: 'unused',
+        modelDirectory: 'unused',
+        engineDirectory: 'unused',
+        outputDirectory: join(root, 'output'),
+        speech: {
+          kind: 'remote-http',
+          style: 'audio-speech',
+          endpoint: 'https://user:pass@example.com/v1/audio/speech',
+          model: 'tts-1'
+        }
+      },
+      controller.signal
+    ).catch((error) => error)
+    expect(outcome).toBeInstanceOf(Error)
+    // A failed setup must not leave a listener (and the state it captures) on a reused signal.
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+    expect(await readdir(root)).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('cancels in-flight remote synthesis when the generation aborts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-remote-cancel-'))
+  const worker = stubWorker()
+  const createSpeechProcess = vi.fn()
+  const controller = new AbortController()
+  let observedSignal: AbortSignal | undefined
+  const remoteFetch = vi.fn(
+    (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        observedSignal = init?.signal ?? undefined
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+          { once: true }
+        )
+      })
+  )
+  try {
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess,
+      remoteFetch: remoteFetch as unknown as typeof fetch,
+      createWorker: () => {
+        queueMicrotask(() => worker.emit('message', { kind: 'synthesize', lane: 0, text: 'one' }))
+        return worker as unknown as Worker
+      }
+    })
+    const result = generate(
+      {
+        speechConcurrency: 1,
+        specPath: 'unused',
+        modelDirectory: 'unused',
+        engineDirectory: 'unused',
+        outputDirectory: join(root, 'output'),
+        speech: {
+          kind: 'remote-http',
+          style: 'audio-speech',
+          endpoint: 'https://api.example.com/v1/audio/speech',
+          model: 'tts-1'
+        }
+      },
+      controller.signal
+    ).catch((error) => error)
+    // Wait until the request is actually in flight, then abort the generation.
+    await vi.waitFor(() => expect(remoteFetch).toHaveBeenCalledOnce())
+    expect(observedSignal?.aborted).toBe(false)
+    controller.abort(new Error('user cancelled'))
+    const outcome = await result
+    expect(outcome).toMatchObject({ message: 'user cancelled' })
+    // The in-flight request's signal fired before cleanup settled.
+    expect(observedSignal?.aborted).toBe(true)
+    expect(createSpeechProcess).not.toHaveBeenCalled()
+    expect(await readdir(root)).toEqual([])
+  } finally {
+    controller.abort()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('remixes verified speech after a visual edit and resynthesizes damaged recordings', async () => {
   const root = await mkdtemp(join(tmpdir(), 'film-speech-checkpoint-'))
   try {
     const specPath = join(root, 'video.json')
@@ -353,8 +620,15 @@ it('reuses complete speech after a player build fails and replaces a damaged mix
     )
     await writeFile(join(root, 'session.json'), JSON.stringify({ messages: [{ md: 'Evidence.' }] }))
     const synthesize = vi.fn(async () => ({ samples: new Float32Array(2400), sampleRate: 24000 }))
-    for (const expectedCalls of [1, 1, 2]) {
-      if (expectedCalls === 2) await writeFile(join(root, 'speech', 'mix.wav'), 'damaged')
+    for (const attempt of ['initial', 'longer-outro', 'corrupt-audio']) {
+      if (attempt === 'longer-outro') {
+        const spec = JSON.parse(await readFile(specPath, 'utf8'))
+        spec.scenes[0].role = 'outro'
+        spec.scenes[0].panels = [{ type: 'end_card' }]
+        await writeFile(specPath, JSON.stringify(spec))
+      }
+      if (attempt === 'corrupt-audio')
+        await writeFile(join(root, 'speech', 'voice', 's_0.wav'), 'damaged')
       const temporaryDirectory = await mkdtemp(join(root, 'attempt-'))
       const progress = vi.fn()
       await expect(
@@ -372,7 +646,9 @@ it('reuses complete speech after a player build fails and replaces a damaged mix
         )
       ).rejects.toThrow()
       expect(progress).toHaveBeenCalledWith({ phase: 'build' })
-      expect(synthesize).toHaveBeenCalledTimes(expectedCalls)
+      expect(synthesize).toHaveBeenCalledTimes(attempt === 'corrupt-audio' ? 2 : 1)
+      const mix = await readFile(join(temporaryDirectory, 'mix.wav'))
+      expect(mix.length > 48000 * 4 * 5).toBe(attempt !== 'initial')
     }
   } finally {
     await rm(root, { recursive: true, force: true })

@@ -10,6 +10,32 @@ import type {
 } from '../../../../shared/session-persistence'
 import { hydrateSession, useSessionStore, type ChatSession } from '../../stores/session-store'
 
+// Only reviewed messages reach the UI. Native and Web errors may contain filesystem paths.
+export const sessionReadErrorMessage = (error: unknown): string => {
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+  switch (code) {
+    case 'session-file-missing':
+      return 'The conversation file could not be found.'
+    case 'session-file-corrupt':
+      return 'Conversation data is damaged.'
+    case 'session-file-unsupported-version':
+      return 'This version of Open-Science cannot read this conversation format.'
+    case 'session-file-too-large':
+      return 'The conversation file exceeds the storage read limit.'
+    case 'session-file-unreadable':
+      return 'The conversation file could not be read.'
+    case 'response-too-large':
+      return 'The requested conversation history exceeds the transfer limit.'
+    case 'desktop-runtime-disconnected':
+    case 'desktop-runtime-not-submitted':
+      return 'The local service disconnected. Reconnect and try again.'
+    case SESSION_HISTORY_CURSOR_STALE:
+      return 'The conversation changed while loading. Try again to load the latest history.'
+    default:
+      return 'Could not load this conversation. Please try again.'
+  }
+}
+
 type HistoryApi = {
   loadHistoryPage?: (
     request: LoadSessionHistoryPageRequest
@@ -150,7 +176,7 @@ export const ensureSessionContentLoaded = (
         throw new Error('Session content could not be loaded.')
       const current = findSession(request)
       if (current && (authority.revision ?? 0) < (current.revision ?? 0))
-        throw new Error('Session history changed. Reload its first page.')
+        throw new SessionHistoryCursorStaleError()
       if (current?.contentLoaded === false)
         useSessionStore.getState().upsertPersistedSession(authority)
       return findSession(request)
@@ -160,10 +186,13 @@ export const ensureSessionContentLoaded = (
   return load
 }
 
+export const SESSION_OPEN_PAGE_SIZE = 8
+
 export const loadSessionHistoryPage = (
   request: LoadSessionRequest,
   earlier = false,
-  api: HistoryApi = window.api.sessions
+  api: HistoryApi = window.api.sessions,
+  limit = earlier ? undefined : SESSION_OPEN_PAGE_SIZE
 ): Promise<void> => {
   const source = findSession(request)
   if (
@@ -181,10 +210,15 @@ export const loadSessionHistoryPage = (
   if (pending) return pending
   const beforeCursor = earlier ? source.historyPage?.beforeCursor : undefined
   const load = (async (): Promise<void> => {
+    const pageRequest = { projectId: source.projectId, sessionId: source.id }
     let page: SessionHistoryPage | undefined
     let append = earlier
     try {
-      page = await api.loadHistoryPage!({ ...request, ...(beforeCursor ? { beforeCursor } : {}) })
+      page = await api.loadHistoryPage!({
+        ...pageRequest,
+        ...(limit === undefined ? {} : { limit }),
+        ...(beforeCursor ? { beforeCursor } : {})
+      })
     } catch (error) {
       const stale =
         error &&
@@ -194,7 +228,7 @@ export const loadSessionHistoryPage = (
             typeof error.message === 'string' &&
             error.message.includes(SESSION_HISTORY_CURSOR_STALE)))
       if (!beforeCursor || !stale) throw error
-      page = await api.loadHistoryPage!(request)
+      page = await api.loadHistoryPage!({ ...pageRequest, limit: SESSION_OPEN_PAGE_SIZE })
       append = false
     }
     if (!page) throw new Error('Session content could not be loaded.')
@@ -203,7 +237,7 @@ export const loadSessionHistoryPage = (
       return
     }
     if (append && page.revision !== source.historyPage?.revision)
-      throw new Error('Session history changed. Reload its first page.')
+      throw new SessionHistoryCursorStaleError()
     installHistoryPage(page, source, append)
   })().finally(() => pendingPages.delete(key))
   pendingPages.set(key, load)

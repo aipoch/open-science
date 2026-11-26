@@ -1,13 +1,22 @@
 import type { ResearchVideoStep } from './progress.js'
-import { mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { buildVideoTimeline, type VideoSpec, type VoiceTiming } from './timeline.js'
+import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from './source.js'
+import {
+  buildVideoTimeline,
+  estimateWordTimings,
+  type VideoSpec,
+  type VoiceTiming
+} from './timeline.js'
 
 export type SpeechSynthesizer = {
   identity: string
+  proportionalTiming?: boolean
   measureDuration?(text: string): Promise<number>
   synthesize(text: string): Promise<{ samples: Float32Array; sampleRate: number }>
 }
+
+const pcm16WavBytes = (sampleCount: number): number => 44 + sampleCount * 2
 
 export function encodeVideoWav(samples: Float32Array, sampleRate: number, channels = 1): Buffer {
   if (
@@ -17,7 +26,7 @@ export function encodeVideoWav(samples: Float32Array, sampleRate: number, channe
     samples.length % channels
   )
     throw new Error('Invalid PCM format')
-  const buffer = Buffer.alloc(44 + samples.length * 2)
+  const buffer = Buffer.alloc(pcm16WavBytes(samples.length))
   buffer.write('RIFF')
   buffer.writeUInt32LE(buffer.length - 8, 4)
   buffer.write('WAVEfmt ', 8)
@@ -129,7 +138,6 @@ export async function prepareVideoNarration(options: {
   // Validate all identities and lengths before constructing filenames or allocating long audio.
   buildVideoTimeline(options.spec, {}, true)
   const voices: Record<string, VoiceTiming> = {}
-  const recordings = new Map<string, { samples: Float32Array; sampleRate: number }>()
   const says: Record<string, string> = {}
   const jobs = options.spec.scenes.flatMap((scene) =>
     scene.lines.map((line, n) => ({
@@ -214,16 +222,13 @@ export async function prepareVideoNarration(options: {
       report()
       return duration
     }
-    for (let task = queue[next++]; task && !failure; task = queue[next++]) {
-      options.signal.throwIfAborted()
-      const { text, lineIndex, chunkIndex } = task
-      const audio = await synthesize(text)
-      const duration = durationOf(audio)
-      if (!Number.isFinite(duration) || duration > 300)
-        throw new Error('Narration exceeds five minutes per line')
+    const probeWordTimings = async (
+      text: string,
+      words: string[],
+      duration: number
+    ): Promise<VoiceTiming['words']> => {
       const durationKey = JSON.stringify([synthesizer.identity, text])
       if (!durations.has(durationKey)) remember(durationKey, Promise.resolve(duration))
-      const words = text.split(' ')
       const boundaries: number[] = [0]
       for (let i = 1; i < words.length; i++) {
         const prefix = await measure(words.slice(0, i).join(' '))
@@ -233,10 +238,21 @@ export async function prepareVideoNarration(options: {
         boundaries.push(Math.min(duration, Math.max(boundaries.at(-1)!, estimate)))
       }
       boundaries.push(duration)
-      chunksByLine[lineIndex][chunkIndex] = {
-        ...audio,
-        words: words.map((_, i): [number, number] => [boundaries[i], boundaries[i + 1]])
-      }
+      return words.map((_, i) => [boundaries[i], boundaries[i + 1]])
+    }
+    for (let task = queue[next++]; task && !failure; task = queue[next++]) {
+      options.signal.throwIfAborted()
+      const { text, lineIndex, chunkIndex } = task
+      const audio = await synthesize(text)
+      const duration = durationOf(audio)
+      if (!Number.isFinite(duration) || duration > 300)
+        throw new Error('Narration exceeds five minutes per line')
+      const words = text.split(' ')
+      const timings = synthesizer.proportionalTiming
+        ? estimateWordTimings(words, duration)
+        : await probeWordTimings(text, words, duration)
+      if (synthesizer.proportionalTiming) completed += 2 * (words.length - 1)
+      chunksByLine[lineIndex][chunkIndex] = { ...audio, words: timings }
       if (--remaining[lineIndex] === 0) completedLines++
       report()
     }
@@ -290,7 +306,6 @@ export async function prepareVideoNarration(options: {
         return span
       })
       voices[key] = { duration: sampleCount / sampleRate, words: captionTimes }
-      recordings.set(key, audio)
       says[key] = line.say || line.caption
       await writeFile(
         join(options.outputDirectory, `${key}.wav`),
@@ -300,24 +315,6 @@ export async function prepareVideoNarration(options: {
       chunksByLine[index] = []
     }
     options.onProgress?.({ phase: 'mixing' })
-    const timeline = buildVideoTimeline(options.spec, voices)
-    const mix = new Float32Array(Math.ceil(timeline.duration * 48000) * 2)
-    for (const scene of timeline.scenes)
-      for (const line of scene.lines) {
-        const audio = recordings.get(line.key)!
-        const start = Math.round((scene.start + line.t0) * 48000)
-        const count = Math.ceil((audio.samples.length * 48000) / audio.sampleRate)
-        for (let i = 0; i < count && start + i < mix.length / 2; i++) {
-          const at = (i * audio.sampleRate) / 48000,
-            index = Math.floor(at),
-            fraction = at - index
-          const value =
-            audio.samples[index] * (1 - fraction) +
-            (audio.samples[index + 1] ?? audio.samples[index]) * fraction
-          mix[(start + i) * 2] += value
-          mix[(start + i) * 2 + 1] += value
-        }
-      }
     options.signal.throwIfAborted()
     await writeFile(
       join(options.outputDirectory, 'timings.json'),
@@ -334,9 +331,46 @@ export async function prepareVideoNarration(options: {
       JSON.stringify(Object.fromEntries(Object.entries(voices).map(([k, v]) => [k, v.words]))),
       { flag: 'wx', signal: options.signal }
     )
-    return { voices, mix: encodeVideoWav(mix, 48000, 2) }
+    return {
+      voices,
+      mix: await mixFilmNarration(options.spec, voices, options.outputDirectory, options.signal)
+    }
   } catch (error) {
     await rm(options.outputDirectory, { recursive: true, force: true })
     throw error
   }
+}
+
+export async function mixFilmNarration(
+  spec: VideoSpec,
+  voices: Record<string, VoiceTiming>,
+  voiceDirectory: string,
+  signal: AbortSignal
+): Promise<Buffer> {
+  const timeline = buildVideoTimeline(spec, voices)
+  const sampleCount = Math.ceil(timeline.duration * 48000) * 2
+  if (pcm16WavBytes(sampleCount) > RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES)
+    throw new Error('Shorten the film to fit the narration audio limit.')
+  const mix = new Float32Array(sampleCount)
+  for (const scene of timeline.scenes)
+    for (const line of scene.lines) {
+      signal.throwIfAborted()
+      // Line files are mono 16-bit PCM written by encodeVideoWav above.
+      const wav = await readFile(join(voiceDirectory, line.key + '.wav'), { signal })
+      const sampleRate = wav.readUInt32LE(24)
+      const length = (wav.length - 44) / 2
+      const sample = (i: number): number => wav.readInt16LE(44 + i * 2) / 32767
+      const start = Math.round((scene.start + line.t0) * 48000)
+      const count = Math.ceil((length * 48000) / sampleRate)
+      for (let i = 0; i < count && start + i < mix.length / 2; i++) {
+        const at = (i * sampleRate) / 48000,
+          index = Math.floor(at),
+          fraction = at - index
+        const value =
+          sample(index) * (1 - fraction) + sample(Math.min(index + 1, length - 1)) * fraction
+        mix[(start + i) * 2] += value
+        mix[(start + i) * 2 + 1] += value
+      }
+    }
+  return encodeVideoWav(mix, 48000, 2)
 }

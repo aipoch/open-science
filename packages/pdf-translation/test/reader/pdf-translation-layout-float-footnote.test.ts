@@ -770,3 +770,292 @@ it.each(['end matter', 'unmatched label font', 'missing companion'] as const)(
     }
   }
 )
+
+it.each([false, true])(
+  'resumes a full-width measurement below the opening figure when the body rail matches (shifted=%s)',
+  (shifted) => {
+    const text = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL = true,
+      size = 12,
+      fontName = 'Body'
+    ): PdfLayoutPage['items'][number] => ({
+      str,
+      width,
+      height: size,
+      dir: 'ltr',
+      hasEOL,
+      transform: [size, 0, 0, size, x, 800 - y],
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false
+    })
+    const header = (number: string): PdfLayoutPage['items'] => [
+      text('Notes on sample measurements', 70, 64, 251, false, 12, 'Running'),
+      text(number, 504, 64, 6, false)
+    ]
+    const x = shifted ? 95 : 70
+    const pages = [
+      [text('Experimental measurements', 70, 90, 330, true, 18, 'Title')],
+      [
+        ...header('2'),
+        text('Results.', 94, 729, 45, false, 12, 'Label'),
+        text('The observations are recorded after all samples have stabilized.', 144, 729, 366),
+        text(
+          'The same procedure is repeated for successive settings, allowing us to',
+          70,
+          745,
+          440
+        ),
+        text('compare the curves and determine how to measure the peak', 70, 761, 440, false)
+      ],
+      [
+        ...header('3'),
+        text('Figure 1.', 140, 319, 48, false, 10, 'Label'),
+        text(
+          'A schematic showing the layout of the recording equipment',
+          195,
+          319,
+          315,
+          true,
+          10,
+          'Caption'
+        ),
+        text('and the position of the sensor.', 140, 332, 160, false, 10, 'Caption'),
+        text(
+          'response for each setting. In Fig. 2, the values are shown as a function',
+          x,
+          378,
+          440
+        ),
+        text('of the adjustment applied before each independent observation.', x, 394, 440)
+      ]
+    ].map((items, index): PdfLayoutPage => ({
+      page: index + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    }))
+    const { units } = extract(pages)
+    const owner = (key: string): (typeof units)[number] =>
+      units.find((unit) => unit.items.includes(key))!
+    expect(owner('2:5')).toBeDefined()
+    expect(owner('3:5')).toBeDefined()
+    expect(owner('2:5') === owner('3:5')).toBe(!shifted)
+    expect(owner('3:2')).not.toBe(owner('2:5'))
+    if (!shifted) {
+      expect(owner('2:5').source).toContain('peak response for each setting.')
+      expect(owner('2:5').fragments.map(({ page }) => page)).toEqual([2, 3])
+    }
+  }
+)
+
+it.each([false, true])(
+  'continues a conclusion past a web footnote and an opening caption (shifted=%s)',
+  (shifted) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      hasEOL = true,
+      size = 10,
+      fontName = 'Body'
+    ): PdfLayoutPage['items'][number] => ({
+      str,
+      width,
+      height: size,
+      dir: 'ltr',
+      hasEOL,
+      transform: [size, 0, 0, size, x, y],
+      fontName,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false
+    })
+    const data = [
+      [item('Observations of the sample motion', 56, 745, 300, true, 16, 'Title')],
+      [
+        item('3 Conclusions and outlook', 56, 119, 227, false, 14, 'Heading'),
+        item(
+          'The measured path depends on both settings in the experiment, which are discussed above.',
+          56,
+          96,
+          499
+        ),
+        item(
+          'On a longer interval the measured paths might change, but for the same conditions their relative',
+          56,
+          84,
+          499,
+          false
+        ),
+        item('1', 68, 68, 4, false, 6, 'Note'),
+        item('https://example.org/observations', 72, 65, 140, false, 8, 'Note'),
+        item('2', 303.5, 27, 5, false)
+      ],
+      [
+        item('Time interval', 220, 625, 40, false, 7, 'Axis'),
+        item(
+          'Figure 1: Left panel: the range of the baseline measurements in the selected samples.',
+          56,
+          542,
+          499
+        ),
+        item(
+          'Right panel: the corresponding variation after standardizing the output records.',
+          56,
+          530,
+          499
+        ),
+        item('Both curves use the same units.', 56, 518, 136),
+        item(
+          'speed will remain very low during the first stage of the test.',
+          shifted ? 82 : 56,
+          475,
+          420
+        ),
+        item(
+          'Further observations will establish whether the trend extends to a larger group of samples.',
+          shifted ? 97 : 71,
+          463,
+          480
+        ),
+        item('Acknowledgment', 56, 420, 135, false, 14, 'Heading')
+      ]
+    ]
+    const pages = data.map((items, i): PdfLayoutPage => ({
+      page: i + 1,
+      width: 612,
+      height: 792,
+      rotation: 0,
+      items
+    }))
+    const { units } = extract(pages)
+    const head = units.find((unit) => unit.items.includes('2:2'))
+    expect(head).toBeDefined()
+    expect(head?.items.includes('3:4')).toBe(!shifted)
+    expect(head?.fragments.map(({ page }) => page)).toEqual(shifted ? [2] : [2, 3])
+    expect(units.find((unit) => unit.items.includes('3:1'))).not.toBe(head)
+    expect(units.find((unit) => unit.items.includes('2:4'))).not.toBe(head)
+  }
+)
+
+it.each(['complete', 'foreign-prose', 'unmatched-topic'])(
+  'requires the native float stack and topic before joining a page sentence (%s)',
+  (variant) => {
+    const line = (
+      str: string,
+      x: number,
+      baseline: number,
+      width: number,
+      size = 9,
+      fontName = 'body',
+      hasEOL = true
+    ): PdfLayoutPage['items'][number] => ({
+      str,
+      width,
+      height: size,
+      dir: 'ltr',
+      fontName,
+      fontVertical: false,
+      fontAscent: 0.84,
+      fontDescent: -0.26,
+      transform: [size, 0, 0, size, x, 792 - baseline],
+      hasEOL
+    })
+    const page = (number: number, items: PdfLayoutPage['items']): PdfLayoutPage => ({
+      page: number,
+      width: 612,
+      height: 792,
+      rotation: 0,
+      items
+    })
+    const head = 'Figure 2 illustrates how the three procedures respond to the same observation.'
+    const breakLine =
+      'One procedure produces a clear signal in the trial. Despite recovering most of the'
+    const tail =
+      'seasonal variation removed by the simpler procedure, the adjusted estimate remains stable'
+    const ending = 'across repeated trials, preserving the measurement accuracy of the study.'
+    const title = 'Paired Observations of Coastal Currents'
+    const caption = (
+      text: string,
+      x: number,
+      y: number,
+      w: number,
+      eol = true
+    ): PdfLayoutPage['items'][number] => line(text, x, y, w, 8, 'caption', eol)
+    const rows = [545, 556, 567, 582, 593, 604].flatMap((y, r) =>
+      [151, 240, 295, 350, 406, 461].map((x, c) =>
+        line(c ? `${2 + r}.${81 - c}` : `Protocol ${r + 1}`, x, y, c ? 18 : 50, 9, 'body', c === 5)
+      )
+    )
+    const floats = [
+      line(title, 73, 78, 184, 9, 'body', false),
+      line('2', 498, 78, 4, 9, 'body', false),
+      caption('(a) Early sample', 128, 214, 53, false),
+      caption('(b) Later sample', 256, 214, 55, false),
+      caption('(c) Matched sample', 416, 214, 66),
+      caption(
+        'Fig. 1. Profiles for the three tidal intervals at the sampled stations.',
+        73,
+        236,
+        429
+      ),
+      caption('The uncertainty is shown for each profile.', 73, 246, 177, false),
+      ...(variant === 'foreign-prose'
+        ? [line('An independent paragraph separates the figures.', 73, 318, 260)]
+        : []),
+      caption('(a) Interval totals', 132, 416, 63, false),
+      caption('(b) Corrected estimates', 321, 416, 96),
+      caption('Fig. 2. The corrected estimate retains the pattern across trials.', 73, 438, 429),
+      caption(
+        variant === 'unmatched-topic'
+          ? 'It recovers most of the lost measurement precision.'
+          : 'It recovers most of the lost seasonal variation.',
+        73,
+        448,
+        227
+      ),
+      caption('Table 1. Summary of the measurements.', 178, 492, 219),
+      ...['Sample', 'Procedure', 'Mean', 'Median', 'Range', 'Spread', 'Score'].map((s, i) =>
+        line(s, [78, 151, 240, 295, 350, 406, 461][i], 518, 23, 9, 'bold', i === 6)
+      ),
+      line('Coast', 78, 556, 24),
+      line('Inlet', 78, 593, 20),
+      ...rows
+    ]
+    const pages = [
+      page(1, [
+        line(
+          'A separate preceding paragraph documents the native measurement baseline.',
+          110,
+          599,
+          429
+        ),
+        line('This paragraph closes before the results are interpreted.', 110, 612, 367),
+        line(head, 120, 639, 419),
+        line(breakLine, 110, 653, 429, 9, 'body', false)
+      ]),
+      page(2, [...floats, line(tail, 73, 639, 429), line(ending, 73, 653, 330, 9, 'body', false)]),
+      page(3, [line('The next leaf has a separate, complete paragraph.', 110, 105, 310)]),
+      page(4, [line(title, 73, 78, 184, 9, 'body', false), line('4', 498, 78, 4)])
+    ]
+    const { units } = extract(pages)
+    const first = units.find((unit) => unit.items.includes('1:2'))
+    const second = units.find((unit) => unit.items.includes(`2:${floats.length}`))
+    if (variant === 'complete') {
+      expect(first).toBe(second)
+      expect(first?.source).toBe(`${head} ${breakLine} ${tail} ${ending}`)
+      expect(first?.items).toEqual(['1:2', '1:3', `2:${floats.length}`, `2:${floats.length + 1}`])
+      expect(first?.fragments.map((fragment) => fragment.page)).toEqual([1, 2])
+    } else {
+      expect(first).not.toBe(second)
+    }
+  }
+)

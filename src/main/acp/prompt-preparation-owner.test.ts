@@ -11,6 +11,7 @@ import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { codexFramework } from '../agent-framework/codex'
 import { opencodeFramework } from '../agent-framework/opencode'
 import { harnessFramework } from '../agent-framework/harness'
+import { HARNESS_USER_TEXT_RANGE } from '../harness-acp/config'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
@@ -101,7 +102,9 @@ const setup = (
   const owner = new AcpPromptPreparationOwner({
     promptContent,
     classificationImages,
-    imageInputCompatibility,
+    imageInputCompatibility: imageInputCompatibility
+      ? { isAvailable: async () => true, ...imageInputCompatibility }
+      : undefined,
     presentation: new AcpSessionPresentationPolicy(),
     contextUsage,
     selectBridgeSkills: vi.fn(async () => []),
@@ -190,6 +193,48 @@ const setup = (
 }
 
 describe('AcpPromptPreparationOwner', () => {
+  it('marks only the original user text in a prepared built-in Agent prompt', async () => {
+    const userText = 'Analyze the result.'
+    const fixture = setup(undefined, { recallForPrompt: async () => 'recalled memory' })
+    fixture.turnSkill.prepareProvider.mockResolvedValueOnce({
+      text: 'Skill guidance\n\n' + userText,
+      codexSkillInputs: []
+    })
+    const preview = { type: 'text' as const, text: 'Attachment preview file:///example/data.csv' }
+    fixture.promptContent.prepare.mockImplementationOnce(async (input) => ({
+      content: [{ type: 'text', text: (input as { text: string }).text }, preview],
+      historyImageCount: 0,
+      close: fixture.promptClose
+    }))
+    const handle = await fixture.prepare({
+      request: request({ text: userText, historyPreamble: 'replayed history' }),
+      markUserPromptText: true,
+      backend: {
+        framework: harnessFramework,
+        session: { modelRequired: false },
+        prompt: { systemPromptAppends: [], persistentSystemPrompt: 'system instructions' },
+        context: { window: 100_000, supportsImageInput: true },
+        adapter: {}
+      }
+    })
+    try {
+      if (handle.status !== 'ready' || !Array.isArray(handle.content))
+        throw new Error('Expected a prepared prompt')
+      const [first, attachment] = handle.content
+      if (first.type !== 'text') throw new Error('Expected a prepared text block')
+      expect(first.text).toContain('replayed history')
+      expect(first.text).toContain('recalled memory')
+      expect(first.text).toContain('Skill guidance')
+      expect(first._meta?.[HARNESS_USER_TEXT_RANGE]).toEqual([
+        first.text.length - userText.length,
+        first.text.length
+      ])
+      expect(attachment).toEqual(preview)
+    } finally {
+      handle.close()
+    }
+  })
+
   it.each([
     { framework: harnessFramework, bridge: false },
     { framework: claudeCodeFramework, bridge: false },

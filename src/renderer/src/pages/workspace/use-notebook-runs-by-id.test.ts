@@ -45,6 +45,7 @@ const makeState = (runs: NotebookRunRecord[]): NotebookSessionState => ({
   runJsonPath: reference.runJsonPath,
   cells: [],
   runCount: runs.length,
+  agentSummaries: [],
   latestRunEnvironments: {},
   runs,
   recentRuns: runs,
@@ -72,13 +73,14 @@ describe('useNotebookRunsById', () => {
   it('keeps full run data in local renderer state and refreshes only for the same notebook', async () => {
     const { result, unmount } = renderHook(() => useNotebookRunsById(reference))
 
-    await waitFor(() => expect(result.current.get('run-1')).toBeDefined())
+    await waitFor(() => expect(result.current.runsById.get('run-1')).toBeDefined())
     expect(window.api.notebook.state).toHaveBeenCalledWith({
       sessionId: 'session-1',
       projectId: 'project-1',
+      deferImages: true,
       workspaceCwd: '/workspace'
     })
-    expect(result.current.get('run-1')?.outputs).toEqual([
+    expect(result.current.runsById.get('run-1')?.outputs).toEqual([
       { type: 'display', data: { 'image/png': 'RklSU1Q=' } }
     ])
 
@@ -94,8 +96,8 @@ describe('useNotebookRunsById', () => {
     await act(async () => {
       changedListener?.(reference)
     })
-    await waitFor(() => expect(result.current.get('run-2')).toBeDefined())
-    expect(result.current.has('run-1')).toBe(false)
+    await waitFor(() => expect(result.current.runsById.get('run-2')).toBeDefined())
+    expect(result.current.runsById.has('run-1')).toBe(false)
 
     unmount()
     expect(stopChanged).toHaveBeenCalledOnce()
@@ -125,9 +127,9 @@ describe('useNotebookRunsById', () => {
     await waitFor(() => expect(window.api.notebook.state).toHaveBeenCalledTimes(2))
 
     await act(async () => resolveChanged?.(makeState([makeRun('new-run', 'TkVX')])))
-    await waitFor(() => expect(result.current.has('new-run')).toBe(true))
-    expect(result.current.has('first-run')).toBe(false)
-    expect(result.current.has('new-run')).toBe(true)
+    await waitFor(() => expect(result.current.runsById.has('new-run')).toBe(true))
+    expect(result.current.runsById.has('first-run')).toBe(false)
+    expect(result.current.runsById.has('new-run')).toBe(true)
   })
 
   it('hydrates transcript-referenced runs outside the recent state window only once', async () => {
@@ -138,18 +140,19 @@ describe('useNotebookRunsById', () => {
 
     const { result } = renderHook(() => useNotebookRunsById(reference, ['old-run']))
 
-    await waitFor(() => expect(result.current.get('old-run')).toBeDefined())
+    await waitFor(() => expect(result.current.runsById.get('old-run')).toBeDefined())
     expect(window.api.notebook.state).toHaveBeenNthCalledWith(2, {
       sessionId: 'session-1',
       projectId: 'project-1',
+      deferImages: true,
       workspaceCwd: '/workspace',
       runIds: ['old-run']
     })
 
     await act(async () => changedListener?.(reference))
-    await waitFor(() => expect(result.current.get('new-run')).toBeDefined())
+    await waitFor(() => expect(result.current.runsById.get('new-run')).toBeDefined())
     expect(window.api.notebook.state).toHaveBeenCalledTimes(3)
-    expect(result.current.get('old-run')).toBeDefined()
+    expect(result.current.runsById.get('old-run')).toBeDefined()
   })
 
   it('retains historical cache and requests only newly expanded run IDs', async () => {
@@ -162,19 +165,20 @@ describe('useNotebookRunsById', () => {
       ({ runIds }) => useNotebookRunsById(reference, runIds),
       { initialProps: { runIds: ['old-run-1'] } }
     )
-    await waitFor(() => expect(result.current.get('old-run-1')).toBeDefined())
+    await waitFor(() => expect(result.current.runsById.get('old-run-1')).toBeDefined())
 
     rerender({ runIds: ['old-run-1', 'old-run-2'] })
-    await waitFor(() => expect(result.current.get('old-run-2')).toBeDefined())
+    await waitFor(() => expect(result.current.runsById.get('old-run-2')).toBeDefined())
 
     expect(window.api.notebook.state).toHaveBeenCalledTimes(3)
     expect(window.api.notebook.state).toHaveBeenNthCalledWith(3, {
       sessionId: 'session-1',
       projectId: 'project-1',
+      deferImages: true,
       workspaceCwd: '/workspace',
       runIds: ['old-run-2']
     })
-    expect(result.current.get('old-run-1')).toBeDefined()
+    expect(result.current.runsById.get('old-run-1')).toBeDefined()
   })
 
   it('batches targeted hydration requests at the server-enforced limit', async () => {
@@ -189,7 +193,7 @@ describe('useNotebookRunsById', () => {
     )
 
     const { result } = renderHook(() => useNotebookRunsById(reference, runIds))
-    await waitFor(() => expect(result.current.get('old-run-20')).toBeDefined())
+    await waitFor(() => expect(result.current.runsById.get('old-run-20')).toBeDefined())
 
     expect(window.api.notebook.state).toHaveBeenCalledTimes(3)
     expect(vi.mocked(window.api.notebook.state).mock.calls[1]?.[0].runIds).toHaveLength(20)
@@ -220,13 +224,15 @@ it('AUDIT: historical in-flight run refreshes after its completion event', async
   } as unknown as Window['api']
   const { result, unmount } = renderHook(() => useNotebookRunsById(reference, ['old-running']))
   try {
-    await waitFor(() => expect(result.current.get('old-running')?.status).toBe('running'))
+    await waitFor(() => expect(result.current.runsById.get('old-running')?.status).toBe('running'))
     completed = true
     await act(async () => {
       listener(reference)
     })
-    await waitFor(() => expect(result.current.has('new-recent')).toBe(true))
-    await waitFor(() => expect(result.current.get('old-running')?.status).toBe('completed'))
+    await waitFor(() => expect(result.current.runsById.has('new-recent')).toBe(true))
+    await waitFor(() =>
+      expect(result.current.runsById.get('old-running')?.status).toBe('completed')
+    )
   } finally {
     unmount()
   }
@@ -255,11 +261,11 @@ it('AUDIT: refreshes a running record evicted from the recent window by the comp
   } as unknown as Window['api']
   const { result, unmount } = renderHook(() => useNotebookRunsById(reference, ['long-run']))
   try {
-    await waitFor(() => expect(result.current.get('long-run')?.status).toBe('running'))
+    await waitFor(() => expect(result.current.runsById.get('long-run')?.status).toBe('running'))
     completed = true
     await act(async () => listener(reference))
-    await waitFor(() => expect(result.current.get('long-run')?.status).toBe('completed'))
-    expect(result.current.get('long-run')?.outputs).toEqual(
+    await waitFor(() => expect(result.current.runsById.get('long-run')?.status).toBe('completed'))
+    expect(result.current.runsById.get('long-run')?.outputs).toEqual(
       makeRun('long-run', 'final-figure').outputs
     )
   } finally {
@@ -295,11 +301,11 @@ it('AUDIT: discards an older historical response after a completion notification
     await waitFor(() => expect(state.mock.calls.some(([request]) => request.runIds)).toBe(true))
     completed = true
     await act(async () => listener(reference))
-    await waitFor(() => expect(result.current.get('long-run')?.status).toBe('completed'))
+    await waitFor(() => expect(result.current.runsById.get('long-run')?.status).toBe('completed'))
     await act(async () =>
       resolveOld(makeState([{ ...makeRun('long-run', ''), status: 'running' }]))
     )
-    expect(result.current.get('long-run')?.status).toBe('completed')
+    expect(result.current.runsById.get('long-run')?.status).toBe('completed')
   } finally {
     unmount()
   }
