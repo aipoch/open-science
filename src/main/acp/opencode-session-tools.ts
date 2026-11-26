@@ -38,7 +38,7 @@ const configureNotebookDirectory = async (
   providerSessionId: string,
   notebookDirectory: string
 ): Promise<void> => {
-  // OpenCode 的路径规则支持通配符。无法精确表示的目录仍通过 Notebook 工具访问。
+  // OpenCode path rules support wildcards. Use Notebook tools for paths that cannot be matched literally.
   const directory = notebookDirectory.split(sep).join('/')
   if (/[\\*?]/u.test(directory)) return
   const path = '/session/' + encodeURIComponent(providerSessionId)
@@ -71,7 +71,7 @@ const configureNotebookDirectory = async (
 
 type OpenCodeNotebookReadiness = { directoryReady: boolean; toolsReady: boolean }
 
-/** 核对 OpenCode 1.x 的 Notebook 工具，并为本会话原稿启用逐次目录检查。 */
+/** Verifies OpenCode 1.x Notebook tools and configures per-request checks for session drafts. */
 const prepareOpenCodeSessionTools = async (
   input: SessionToolsInput
 ): Promise<OpenCodeNotebookReadiness> => {
@@ -118,14 +118,14 @@ const prepareOpenCodeSessionTools = async (
     throw new Error('OpenCode returned an invalid Notebook MCP status.')
   }
 
-  // 上游已刷新 Notebook 时，复用这次工具发现。未刷新时主动验证，避免复用旧工具列表。
+  // Reuse the discovery result when the provider has already refreshed the Notebook connection.
   let status: string | undefined
   if (input.providerRefreshed) {
     try {
       status = statusFor(await request('/mcp'))
     } catch {
       signal.throwIfAborted()
-      // 查询失败时，只有重新注册本轮配置才能确认提供方实际使用的连接。
+      // Register this turn's configuration to verify the connection when the status check fails.
       log.warn('OpenCode Notebook MCP status unavailable', { sessionId: input.providerSessionId })
     }
   }
@@ -151,7 +151,7 @@ const prepareOpenCodeSessionTools = async (
     if (registered !== 'failed') break
   }
 
-  // 发现失败时本轮仍可使用原生文件工具，下轮会重新核对 Notebook。
+  // Keep native file tools available and check Notebook again on the next turn.
   log.warn('OpenCode Notebook MCP discovery failed', { sessionId: input.providerSessionId })
   return { directoryReady, toolsReady: false }
 }
@@ -220,7 +220,7 @@ export class AcpOpenCodeNotebook {
     const { rawInput, kind } = params.toolCall
     if (!isRecord(rawInput) || typeof rawInput.filepath !== 'string') return request(params)
 
-    // OpenCode 1.x 依次请求外部目录访问和实际编辑授权。目录授权本身不能批准写入。
+    // OpenCode 1.x requests directory access before edit approval. Only edit approval grants write access.
     const directoryAccess = kind === 'other' && typeof rawInput.parentDir === 'string'
     const edit = kind === 'edit' && typeof rawInput.diff === 'string'
     if (!directoryAccess && !edit) return request(params)
@@ -252,7 +252,7 @@ export class AcpOpenCodeNotebook {
     return decision
   }
 
-  /** 只兑现本轮对目标原稿的一次编辑授权。 */
+  /** Consumes a single write approval for this draft in the current turn. */
   consumeDraftWrite(providerSessionId: string, path: string): NotebookDraftWrite | undefined {
     if (!isAbsolute(path)) return
     const scope = this.resolveScope(providerSessionId)

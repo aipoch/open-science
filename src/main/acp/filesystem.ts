@@ -223,7 +223,7 @@ const writeWorkspaceTextFile = async (
   grantedRoots: readonly GrantedRoot[] = [],
   draftWrite?: NotebookDraftWrite
 ): Promise<WriteTextFileResponse> => {
-  // 原稿写入只允许更新已有文件，不能在审批后补建消失的路径。
+  // Draft approvals authorize updates to existing files only.
   const root = draftWrite ? undefined : workspaceRoot
   const grants: readonly GrantedRoot[] = draftWrite
     ? [{ path: draftWrite.root, access: 'rw' }]
@@ -258,7 +258,7 @@ const writeWorkspaceTextFile = async (
   return {}
 }
 
-// 原生 read 在提供方进程中执行。目录请求到达时必须检查实际文件，不能只信任父目录。
+// The provider runs native reads. Check the target file when handling a directory request.
 const isNotebookDraftFile = async (root: string, filePath: string): Promise<boolean> => {
   if (!isPathInsideWorkspace(root, filePath)) return false
   try {

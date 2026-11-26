@@ -408,7 +408,7 @@ export function projectDiagnosticLog(
   const data = object(source.data)
   const diagnostic = fields(data, options)
   if (source.msg === 'tool call failed') {
-    // 工具失败事件本身是诊断边界；保留安全身份，继续丢弃调用参数和返回值。
+    // Tool failure diagnostics retain allowlisted identifiers and presence flags.
     diagnostic.toolCallObserved = true
     if (typeof data.tool === 'string') {
       diagnostic.hasReportedToolName = true
