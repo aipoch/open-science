@@ -4,6 +4,7 @@ import { CirclePlus, FlaskConical, Server, Sparkles } from 'lucide-react'
 
 import {
   AipochMono,
+  AnthropicMono,
   ClaudeColor,
   CodexMono,
   NvidiaColor,
@@ -13,7 +14,6 @@ import {
 } from './provider-brand-icons'
 
 import { cn } from '@/lib/utils'
-import anthropicLogo from '@/assets/provider-icons/anthropic.svg'
 import apodexLogo from '@/assets/provider-icons/apodex.svg'
 import awsLogo from '@/assets/provider-icons/aws.svg'
 import azureLogo from '@/assets/provider-icons/azure.svg'
@@ -89,7 +89,6 @@ export const TypeSafeIcon = ({ className }: { className?: string }): React.JSX.E
 // Custom uses a plus-in-circle.
 const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
   openai: openaiLogo,
-  anthropic: anthropicLogo,
   xai: grokLogo,
   apodex: apodexLogo,
   deepseek: deepseekLogo,
@@ -124,12 +123,18 @@ const LOCAL_LOGO: Record<LocalProviderPresetId, string> = {
 
 export const ProviderKindIcon = ({
   kindKey,
+  monochromeOnDark = false,
   className
 }: {
   kindKey: string
+  monochromeOnDark?: boolean
   className?: string
 }): React.JSX.Element => {
-  const iconClass = cn('size-5 shrink-0', darkLogoBacking, className)
+  const iconClass = cn(
+    'size-5 shrink-0',
+    monochromeOnDark ? 'brightness-0 invert-92' : darkLogoBacking,
+    className
+  )
 
   if (kindKey === 'custom') {
     return <CirclePlus className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />
@@ -149,6 +154,12 @@ export const ProviderKindIcon = ({
 
   if (kindKey === 'xai-subscription') {
     return <img src={grokLogo} alt="" className={iconClass} />
+  }
+
+  if (kindKey === 'official:anthropic') {
+    return (
+      <AnthropicMono size={20} className={cn('text-foreground', iconClass)} aria-hidden="true" />
+    )
   }
 
   if (kindKey === 'lab') {

@@ -76,6 +76,16 @@ const installFromManagedSource = async (frameworkName: string): Promise<void> =>
 }
 
 describe('AgentStep', () => {
+  it('keeps the operation bar fixed while the runtime cards scroll', async () => {
+    await renderStep()
+
+    const footer = container.querySelector('[data-slot="card-footer"]')
+    expect(footer).not.toBeNull()
+    expect(footer?.classList.contains('sticky')).toBe(true)
+    expect(footer?.classList.contains('bottom-0')).toBe(true)
+    expect(footer?.classList.contains('z-10')).toBe(true)
+  })
+
   it('keeps an incompatible Claude installation visible and requires an update', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
@@ -375,27 +385,39 @@ describe('AgentStep', () => {
     expect(onContinue).toHaveBeenCalledOnce()
   })
 
-  it('disables Continue when the latest check belongs to another framework', async () => {
-    useSettingsStore.setState({
-      agentFrameworkId: 'opencode',
-      agentFrameworks: twoFrameworks,
-      opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      preflight: {
-        claudeReady: true,
-        opencodeReady: true,
-        codexReady: true,
-        codebuddyReady: false,
-        agentFrameworkId: 'opencode',
-        agentReady: true,
-        activeProviderReady: false
-      },
-      environmentCheck: environment(true)
-    })
+  it.each(['missing', 'for the previous framework'] as const)(
+    'checks the preselected runtime on entry when the last result is %s',
+    async (lastResult) => {
+      const pending = Promise.withResolvers<void>()
+      const checkEnvironment = vi.fn(async () => {
+        await pending.promise
+        const result = environment(true)
+        useSettingsStore.setState({ environmentCheck: result })
+        return result
+      })
+      useSettingsStore.setState({
+        agentFrameworkId: 'claude-code',
+        claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
+        preflight: { ...useSettingsStore.getState().preflight, claudeReady: true },
+        environmentCheck:
+          lastResult === 'missing'
+            ? undefined
+            : { ...environment(true), agentFrameworkId: 'codex' },
+        checkEnvironment
+      })
 
-    await renderStep()
+      await renderStep()
 
-    expect(continueButton()?.disabled).toBe(true)
-  })
+      expect(
+        container.querySelector('[aria-label="Use Claude Agent"]')?.getAttribute('aria-checked')
+      ).toBe('true')
+      expect(continueButton()?.disabled).toBe(true)
+      expect(checkEnvironment).toHaveBeenCalledOnce()
+      await act(async () => pending.resolve())
+      expect(continueButton()?.disabled).toBe(false)
+      expect(checkEnvironment).toHaveBeenCalledOnce()
+    }
+  )
 
   it('blocks continuation while the selected agent is not ready', async () => {
     useSettingsStore.setState({

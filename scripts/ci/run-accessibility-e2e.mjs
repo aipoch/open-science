@@ -6,7 +6,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const DEFAULT_RESULT_PATH = 'test-results/accessibility/accessibility-summary.json'
-const EXPECTED_TESTS = 11
+const EXPECTED_TESTS = 12
 export const EXPECTED_ACCESSIBILITY_SURFACES = [
   'Onboarding',
   'Home',

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 
@@ -31,6 +31,8 @@ type CategoryFilter = ProviderPickerCategory | 'all'
 type ProviderKindPickerProps = ProviderKindAvailability & {
   // The kind matching the active agent framework, marked as recommended.
   recommendedKey?: string
+  stickyControls?: boolean
+  children?: ReactNode
   onSelect: (key: string) => void
 }
 
@@ -103,11 +105,15 @@ const ProviderPicker = <Key extends string>({
   recommendedKey,
   searchLabel,
   searchPlaceholder = searchLabel,
+  stickyControls,
+  children,
   onSelect
 }: {
   entries: ProviderPickerEntry<Key>[]
   recommendedKey?: Key
   searchLabel: string
+  stickyControls?: boolean
+  children?: ReactNode
   searchPlaceholder?: string
   onSelect: (key: Key) => void
 }): React.JSX.Element => {
@@ -155,42 +161,50 @@ const ProviderPicker = <Key extends string>({
 
   return (
     <div data-slot="provider-picker" className="flex flex-col gap-4">
-      <SettingsSearchInput
-        autoFocus
-        aria-label={searchLabel}
-        placeholder={searchPlaceholder}
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' || event.nativeEvent.isComposing || !query.trim()) return
-          if (!firstMatch) return
-          event.preventDefault()
-          onSelect(firstMatch.entry.key)
-        }}
-      />
+      <div
+        className={cn(
+          'flex flex-col gap-4',
+          stickyControls && 'sticky top-0 z-10 -my-3 bg-bg-000 py-3'
+        )}
+      >
+        <SettingsSearchInput
+          autoFocus
+          aria-label={searchLabel}
+          placeholder={searchPlaceholder}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.nativeEvent.isComposing || !query.trim()) return
+            if (!firstMatch) return
+            event.preventDefault()
+            onSelect(firstMatch.entry.key)
+          }}
+        />
 
-      <div role="group" aria-label={t('Provider category')} className="flex flex-wrap gap-1.5">
-        {filterOptions.map((id) => {
-          const selected = category === id
-          const count = id === 'all' ? sectioned.length + custom.length : countFor(id)
-          return (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={selected}
-              onClick={() => setCategory(id)}
-              className={cn(
-                'inline-flex min-h-7 items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium text-muted-foreground outline-none transition-colors duration-150 motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 [@media(hover:hover)]:hover:text-foreground',
-                selected && 'border-foreground/30 bg-muted text-foreground'
-              )}
-            >
-              {id === 'all' ? t('All') : t(CATEGORY_LABEL_KEYS[id])}
-              <span className="tabular-nums text-muted-foreground">{count}</span>
-            </button>
-          )
-        })}
+        <div role="group" aria-label={t('Provider category')} className="flex flex-wrap gap-1.5">
+          {filterOptions.map((id) => {
+            const selected = category === id
+            const count = id === 'all' ? sectioned.length + custom.length : countFor(id)
+            return (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setCategory(id)}
+                className={cn(
+                  'inline-flex min-h-7 items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium text-muted-foreground outline-none transition-colors duration-150 motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 [@media(hover:hover)]:hover:text-foreground',
+                  selected && 'border-foreground/30 bg-muted text-foreground'
+                )}
+              >
+                {id === 'all' ? t('All') : t(CATEGORY_LABEL_KEYS[id])}
+                <span className="tabular-nums text-muted-foreground">{count}</span>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
+      {children}
       {category === 'all' && custom.length > 0 ? (
         <ul className={gridClassName}>{custom.map(renderCard)}</ul>
       ) : null}
@@ -226,17 +240,22 @@ const ProviderPicker = <Key extends string>({
 const ProviderKindPicker = ({
   recommendedKey,
   onSelect,
+  stickyControls,
+  children,
   ...availability
 }: ProviderKindPickerProps): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <ProviderPicker
       entries={providerPickerEntries(availability)}
+      stickyControls={stickyControls}
       recommendedKey={recommendedKey}
       searchLabel={t('Search providers')}
       searchPlaceholder={t('Search by name or website, e.g. kimi, openrouter')}
       onSelect={onSelect}
-    />
+    >
+      {children}
+    </ProviderPicker>
   )
 }
 

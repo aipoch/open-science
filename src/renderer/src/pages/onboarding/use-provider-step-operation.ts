@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 export type ProviderStepOperation = {
   pending: boolean
@@ -11,17 +11,15 @@ export function useProviderStepOperation(): ProviderStepOperation {
   const [pending, setPending] = useState(false)
   const inFlight = useRef(false)
 
-  return {
-    pending,
-    begin(): boolean {
-      if (inFlight.current) return false
-      inFlight.current = true
-      setPending(true)
-      return true
-    },
-    finish(): void {
-      inFlight.current = false
-      setPending(false)
-    }
-  }
+  const begin = useCallback(() => {
+    if (inFlight.current) return false
+    inFlight.current = true
+    setPending(true)
+    return true
+  }, [])
+  const finish = useCallback(() => {
+    inFlight.current = false
+    setPending(false)
+  }, [])
+  return { pending, begin, finish }
 }

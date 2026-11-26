@@ -204,7 +204,7 @@ beforeEach(() => {
     orgCaseDraft: null,
     retryOrgCaseUpload: false
   })
-  useSettingsStore.setState({ lab: undefined })
+  useSettingsStore.setState({ lab: undefined, isLoaded: true, onboardingCompletedAt: 1 })
   useOrgCaseStore.getState().reset()
 })
 
@@ -2135,6 +2135,38 @@ it('opens newly launched receipt progress even after the previous package dialog
     ]
   })
   expect(usePackageOperationStore.getState().open).toBe(true)
+})
+
+it('keeps an incoming import pending until onboarding finishes, then shows the destination picker', async () => {
+  const incoming: PackageOperationSnapshot = {
+    id: 'first-launch-import',
+    kind: 'import',
+    state: 'running',
+    progress: { phase: 'validating' },
+    importFilename: 'research.science'
+  }
+  let notify!: (value: PackageOperationSnapshot) => void
+  vi.stubGlobal('api', {
+    packagePresentation: {
+      getState: async () => incoming,
+      onStateChanged: (listener: typeof notify) => {
+        notify = listener
+        return () => undefined
+      }
+    }
+  })
+  useSettingsStore.setState({ isLoaded: false, onboardingCompletedAt: undefined })
+  await act(async () => root.render(<ApplicationStartup>{null}</ApplicationStartup>))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async () => {
+    useSettingsStore.setState({ isLoaded: true })
+    notify({ ...incoming, state: 'awaiting-selection', progress: { phase: 'selecting' } })
+  })
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async () => useSettingsStore.setState({ onboardingCompletedAt: 42 }))
+  const dialog = document.querySelector('[role="dialog"]')
+  expect(dialog?.textContent).toContain('research.science')
+  expect(dialog?.textContent).toContain('Destination project')
 })
 
 it('shows native preparation before backend readiness and keeps one dialog through fast receipt', async () => {

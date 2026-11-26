@@ -7,6 +7,7 @@ import { Readable, Writable } from 'node:stream'
 
 import * as acp from '@agentclientprotocol/sdk'
 
+import { CODEX_IMPORT_FILE_MISSING_MESSAGE } from '../../shared/codex-runtime'
 import type { CodexSubscriptionTransport } from '../../shared/settings'
 import {
   createPosixProcessTreeOwnership,
@@ -786,9 +787,7 @@ const readCodexAuthenticationSnapshot = async (
       // A missing auth.json most often means Codex keeps its credential in the OS credential store
       // (macOS Keychain / Windows Credential Manager / Linux keyring). Name that boundary instead of
       // surfacing a generic import failure that reads like a required second sign-in.
-      throw new Error(
-        'Open-Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open-Science cannot import from. Continue with the Open-Science Codex sign-in instead.'
-      )
+      throw new Error(CODEX_IMPORT_FILE_MISSING_MESSAGE)
     }
     throw new Error('The selected Codex profile does not contain importable authentication.')
   }

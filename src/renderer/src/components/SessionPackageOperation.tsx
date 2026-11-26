@@ -592,7 +592,11 @@ const WebPackageDownloadButton = ({ filePath }: { filePath: string }): React.JSX
   )
 }
 
-export const SessionPackageOperation = (): React.JSX.Element | null => {
+export const SessionPackageOperation = ({
+  deferImports = false
+}: {
+  deferImports?: boolean
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const speedId = useId()
   const riskId = useId()
@@ -717,6 +721,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
       .catch(() => undefined)
   }, [sourceOperation, isWeb])
   if (isRemoteWeb || !operation) return null
+  const presentationOpen = open && !(operation.kind === 'import' && deferImports)
   const errorId = operation.browserReceiptOnly
     ? (primaryBrowserTransfer(operation)?.id ?? operation.id)
     : operation.id
@@ -1040,7 +1045,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   )
   return (
     <>
-      <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Root open={presentationOpen} onOpenChange={setOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className={dialogOverlayClassName} />
           <Dialog.Content

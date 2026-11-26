@@ -492,6 +492,7 @@
       "runner": "playwright",
       "paths": [
         "e2e/brand-storage.spec.ts",
+        "e2e/onboarding-silk.spec.ts",
         "e2e/electron-foundation.spec.ts",
         "e2e/settings-persistence.spec.ts",
         "e2e/windows-window-system.spec.ts",
@@ -502,7 +503,8 @@
         "e2e/session-fork.spec.ts",
         "e2e/session-diagnostics.spec.ts",
         "e2e/specialist-marketplace-redirect.spec.ts",
-        "e2e/fixtures/localized-settings.ts"
+        "e2e/fixtures/localized-settings.ts",
+        "e2e/fixtures/web-model.ts"
       ],
       "capabilities": ["desktop_e2e_source", "e2e_functional"]
     },
@@ -719,8 +721,7 @@
         "e2e/startup-performance.spec.ts",
         "e2e/builtin-web-fetch.spec.ts",
         "e2e/builtin-web-evidence-lifecycle.spec.ts",
-        "e2e/builtin-web-package.spec.ts",
-        "e2e/fixtures/web-model.ts"
+        "e2e/builtin-web-package.spec.ts"
       ],
       "capabilities": ["desktop_e2e_source"]
     },

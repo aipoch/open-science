@@ -1,5 +1,8 @@
 import { compareVersions } from './update'
 
+export const CODEX_IMPORT_FILE_MISSING_MESSAGE =
+  'Open-Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open-Science cannot import from. Continue with the Open-Science Codex sign-in instead.'
+
 // Open-Science's supported baseline, not a universal provider minimum for every model.
 export const MINIMUM_CODEX_CLI_VERSION = '0.166.0'
 // Keep optional future download upgrades independent from the supported baseline.
