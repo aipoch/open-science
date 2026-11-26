@@ -192,7 +192,7 @@ export const artifactCapabilities = [
     inputSchema: z.strictObject({
       sessionId,
       runId: runId.optional(),
-      timeoutMs: z.number().int().positive().max(MAX_TIMER_DELAY_MS).optional()
+      timeoutMs: z.number().int().positive().max(MAX_TIMER_DELAY_MS).default(transferBudget)
     }),
     annotations: readOnly,
     async handler({ sessionId, runId, timeoutMs }, { getClient, signal }) {

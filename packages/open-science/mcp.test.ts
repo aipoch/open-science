@@ -32,6 +32,20 @@ it.each(['list_artifacts', 'download_artifact'])(
   }
 )
 
+it('uses the five-minute Artifact listing deadline for MCP callers by default', async () => {
+  const sdk = { listArtifacts: vi.fn().mockResolvedValue([]) }
+  const { client } = await harness(vi.fn().mockResolvedValue(sdk))
+  const result = await client.callTool({
+    name: 'list_artifacts',
+    arguments: { sessionId: 'session-1' }
+  })
+  expect(result.isError).not.toBe(true)
+  expect(sdk.listArtifacts).toHaveBeenCalledWith(
+    'session-1',
+    expect.objectContaining({ timeoutMs: 300_000 })
+  )
+})
+
 afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((close) => close()))
 })
