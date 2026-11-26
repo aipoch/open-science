@@ -9115,18 +9115,21 @@ describe('workspace agent message sending', () => {
       cwd: '/workspace/project'
     })
 
-    await expect(second).resolves.toBeUndefined()
-    expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'idle',
-      activeRun: undefined,
-      messages: [expect.objectContaining({ content: 'Previous prompt' })]
-    })
-    expect(runtime.resumeSession).toHaveBeenCalledTimes(1)
-    expect(preparationChanged).toHaveBeenCalledWith('session-1', true)
+    try {
+      await expect(second).resolves.toBeUndefined()
+      await vi.waitFor(() => expect(runtime.resumeSession).toHaveBeenCalledTimes(1))
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        status: 'idle',
+        activeRun: undefined,
+        messages: [expect.objectContaining({ content: 'Previous prompt' })]
+      })
+      expect(preparationChanged).toHaveBeenCalledWith('session-1', true)
+    } finally {
+      resumeCanFinish.resolve({ sessionId: 'session-1', cwd: '/workspace/project' })
+      await first
+    }
 
-    resumeCanFinish.resolve({ sessionId: 'session-1', cwd: '/workspace/project' })
-    const firstResult = await first
-    expect(firstResult).toMatchObject({ sessionId: 'session-1' })
+    await expect(first).resolves.toMatchObject({ sessionId: 'session-1' })
     expect(preparationChanged).toHaveBeenLastCalledWith('session-1', false)
     expect(runtime.sendPrompt).toHaveBeenCalledTimes(1)
   })
