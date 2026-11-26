@@ -90,6 +90,7 @@ const useAcpRuntime = (): {
   currentRuntimeEvents: () => readonly AcpRuntimeEvent[]
   actionErrorCode?: ApplicationCommandErrorCode
   actionError: string | null
+  clearActionError: () => void
   isConnecting: boolean
   isDisconnecting: boolean
   connect: (cwd?: string) => Promise<AcpRuntimeState | undefined>
@@ -323,16 +324,24 @@ const useAcpRuntime = (): {
     []
   )
 
-  const beginAction = useCallback((setPending?: PendingSetter): number => {
-    const generation = ++actionGenerationRef.current
+  // A fresh draft must also ignore failures from actions still running in the previous conversation.
+  const clearActionError = useCallback((): void => {
+    actionGenerationRef.current += 1
     setActionError(null)
-    if (setPending) {
-      const count = (pendingActionCountsRef.current.get(setPending) ?? 0) + 1
-      pendingActionCountsRef.current.set(setPending, count)
-      if (count === 1) setPending(true)
-    }
-    return generation
   }, [])
+
+  const beginAction = useCallback(
+    (setPending?: PendingSetter): number => {
+      clearActionError()
+      if (setPending) {
+        const count = (pendingActionCountsRef.current.get(setPending) ?? 0) + 1
+        pendingActionCountsRef.current.set(setPending, count)
+        if (count === 1) setPending(true)
+      }
+      return actionGenerationRef.current
+    },
+    [clearActionError]
+  )
 
   const finishPendingAction = useCallback((setPending?: PendingSetter): void => {
     if (!setPending) return
@@ -683,6 +692,7 @@ const useAcpRuntime = (): {
     currentRuntimeEvents: runtimeEventOwner.currentEvents,
     actionError: actionError?.message ?? null,
     actionErrorCode: actionError?.code,
+    clearActionError,
     isConnecting,
     isDisconnecting,
     connect,

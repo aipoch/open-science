@@ -125,8 +125,23 @@ test('enforces a saved HTTP model grant and explains revocation across restart',
     page = await app.restart()
     await openProjectSession(page, project, prompt)
     await assertNotice()
-    await page.getByRole('button', { name: 'New', exact: true }).click()
-    await submitPromptViaUi(page, 'Start a new conversation after revocation.')
+    const startCleanConversation = async (): Promise<void> => {
+      await page.getByRole('button', { name: 'New', exact: true }).click()
+      await expect(
+        page.getByText('What would you like to research?', { exact: true })
+      ).toBeVisible()
+      await expect(page.getByTestId('composer-notice-slot')).toHaveCount(0)
+    }
+    await startCleanConversation()
+    const blockedPrompt = 'Start a new conversation after revocation.'
+    await submitPromptViaUi(page, blockedPrompt)
+    await assertNotice()
+    await startCleanConversation()
+    await page
+      .getByRole('navigation', { name: 'Sessions' })
+      .locator('button[data-slot="session-open-button"]')
+      .filter({ hasText: blockedPrompt.slice(0, 36) })
+      .click()
     await assertNotice()
     expect(probes).toBe(beforeDenial)
     const restored = await page.evaluate(

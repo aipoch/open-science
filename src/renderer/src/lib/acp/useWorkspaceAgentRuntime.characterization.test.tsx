@@ -71,6 +71,7 @@ type RuntimeMock = {
   state: AcpStateSnapshot
   reconcileSnapshot: Mock
   actionError: string | null
+  clearActionError: Mock
   isConnecting: boolean
   createSession: Mock
   resumeSession: Mock
@@ -92,6 +93,7 @@ const createRuntime = (state: AcpStateSnapshot): RuntimeMock => ({
   state,
   reconcileSnapshot: vi.fn(),
   actionError: null as string | null,
+  clearActionError: vi.fn(),
   isConnecting: false,
   createSession: vi.fn(),
   resumeSession: vi.fn(),
@@ -300,8 +302,9 @@ describe('workspace Agent Runtime hook contract', () => {
       promptInFlightSessionIds: ['session-1'],
       nativeContextCompactionSessionIds: ['session-1']
     })
+    const runtime = createRuntime(snapshot)
     runtimeMock.current = {
-      ...createRuntime(snapshot),
+      ...runtime,
       actionError: 'runtime warning',
       isConnecting: true
     }
@@ -313,6 +316,8 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(Object.keys(latest).sort()).toEqual(
       [
         'actionError',
+        'actionErrorCode',
+        'clearActionError',
         'isConnecting',
         'pendingPermissions',
         'permissionProfiles',
@@ -344,6 +349,7 @@ describe('workspace Agent Runtime hook contract', () => {
     )
     expect(latest).toMatchObject({
       actionError: 'runtime warning',
+      clearActionError: runtime.clearActionError,
       isConnecting: true,
       pendingPermissions: snapshot.pendingPermissions,
       permissionProfiles: snapshot.permissionProfiles,
