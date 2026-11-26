@@ -4,7 +4,6 @@ import { resolve, relative, isAbsolute, dirname, extname, join } from 'node:path
 import { createHash } from 'node:crypto'
 import { Script } from 'node:vm'
 import Papa from 'papaparse'
-import { ResearchVideoPlaybackClock } from './playback.js'
 import { zipSync } from 'fflate'
 import { buildVideoTimeline, type VideoSpec, type VoiceTiming } from './timeline.js'
 
@@ -352,7 +351,10 @@ export async function buildResearchVideoPlayer(options: {
       '\nconst sessionApp=window.APP; Object.defineProperty(window,"APP",{get(){window.__filmAppUsed=true;return sessionApp}});' +
       '\n} catch(error) {window.__filmAppError=String(error.message || error)}\n;\n'
   }
-  scripts += `window.ResearchVideoPlaybackClock=${ResearchVideoPlaybackClock.toString()};`
+  // Embed the browser bundle so the player has its own copy of any compiler helpers.
+  scripts +=
+    '\n;\n' +
+    (await readFile(new URL('../dist/browser/playback-clock.txt', import.meta.url), 'utf8'))
   for (const [key, code] of Object.entries(codes)) {
     const factory = `function(k,Math,Date,performance,requestAnimationFrame,setTimeout,setInterval){${code}\n}`
     new Script(`(${factory})`) // Compile without executing imported animation code.

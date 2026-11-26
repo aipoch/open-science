@@ -2,6 +2,7 @@
   "ownerPaths": [
     "packages/research-film/LICENSE",
     "packages/research-film/README.md",
+    "packages/research-film/browser/playback-clock.ts",
     "packages/research-film/package.json",
     "packages/research-film/resources/authoring/KIT.md",
     "packages/research-film/resources/authoring/README.md",
