@@ -1148,7 +1148,7 @@ const ProviderStep = ({
 
         <div className="onboarding-provider-viewport mt-10 -mx-10 overflow-visible onboarding-narrow:-mx-[1.15rem] onboarding-short:mt-5">
           {/* Leave room inside the scrollport for the raised card and its shadow. */}
-          <div className="flex gap-4 overflow-x-auto -mt-8 -mb-9 px-10 pt-8 pb-12 snap-x snap-mandatory scrollbar-thin onboarding-narrow:px-[1.15rem]">
+          <div className="flex gap-4 overflow-x-auto -mt-8 px-10 pt-8 pb-6 snap-x snap-mandatory scrollbar-thin onboarding-narrow:px-[1.15rem]">
             {QUICK_PROVIDER_CARDS.map((card) => {
               const isKeyMode = quickCardId === card.id && quickMode === 'key'
               const isAuthorizing =
@@ -1452,7 +1452,7 @@ const ProviderStep = ({
               onDismiss={skipError.onDismiss}
             />
           ) : null}
-          <footer className="flex flex-none items-end justify-between gap-4 pt-5 [[data-notice-level=warning]+&]:pt-1">
+          <footer className="flex flex-none items-end justify-between gap-4 pt-2 [[data-notice-level=warning]+&]:pt-1">
             <Button
               className="min-h-[1.9rem] text-[0.75rem] leading-(--text-sm--line-height)"
               type="button"

@@ -342,6 +342,31 @@ test('keeps the agent setup actions and Notebook actions pinned while their runt
   await expect(dialog.getByRole('button', { name: 'Start exploring' })).toBeVisible()
 })
 
+test('leaves space between a visible horizontal scrollbar and the quick-connect actions', async ({
+  app
+}, info) => {
+  const { page } = app
+  await page.setViewportSize({ width: 960, height: 740 })
+  await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'dark' })
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  const connect = page.locator('[data-onboarding-entry="connect"]')
+  const scroller = connect.locator('.onboarding-provider-viewport > div')
+  // Reserve a classic scrollbar on hosts that normally use overlay scrollbars.
+  await page.addStyleTag({
+    content: `
+    .onboarding-provider-viewport > div { scrollbar-width: auto; }
+    .onboarding-provider-viewport > div::-webkit-scrollbar { height: 12px; }
+    .onboarding-provider-viewport > div::-webkit-scrollbar-thumb { background: gray; border-radius: 6px; }
+  `
+  })
+  expect(await scroller.evaluate((el) => el.offsetHeight - el.clientHeight)).toBeGreaterThan(0)
+  const skip = connect.getByRole('button', { name: /Skip to access free Kilo models/ })
+  const track = (await scroller.boundingBox())!
+  expect((await skip.boundingBox())!.y - (track.y + track.height)).toBeGreaterThanOrEqual(8)
+  await connect.screenshot({ path: info.outputPath('quick-connect-scrollbar.png') })
+  await skip.click({ trial: true })
+})
+
 test('exposes quick-connect actions on the first tap on touch-only devices', async ({ app }) => {
   const { page } = app
   const cdp = await page.context().newCDPSession(page)
