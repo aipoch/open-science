@@ -359,7 +359,9 @@ test('leaves space between a visible horizontal scrollbar and the quick-connect 
     .onboarding-provider-viewport > div::-webkit-scrollbar-thumb { background: gray; border-radius: 6px; }
   `
   })
-  expect(await scroller.evaluate((el) => el.offsetHeight - el.clientHeight)).toBeGreaterThan(0)
+  expect(
+    await scroller.evaluate((el: HTMLDivElement) => el.offsetHeight - el.clientHeight)
+  ).toBeGreaterThan(0)
   const skip = connect.getByRole('button', { name: /Skip to access free Kilo models/ })
   const track = (await scroller.boundingBox())!
   expect((await skip.boundingBox())!.y - (track.y + track.height)).toBeGreaterThanOrEqual(8)
