@@ -38,6 +38,7 @@ import {
   WORKBUDDY_PROFILE_MESSAGE,
   type CodeBuddySite
 } from '../../../../shared/codebuddy-subscription'
+import { useFileCredentialNotice } from '../settings/use-file-credential-notice'
 import { ProviderKindPicker } from '../settings/ProviderKindPicker'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { XaiOAuthSignInDialog } from '../settings/XaiOAuthSignInDialog'
@@ -264,6 +265,14 @@ const ProviderStep = ({
     state.providers.find((provider) => provider.id === state.activeProviderId)
   )
   const encryptionAvailable = useSettingsStore((state) => state.encryptionAvailable)
+  const fileCredentialNotice = useFileCredentialNotice()
+  const keychainWarning =
+    !fileCredentialNotice && !encryptionAvailable
+      ? t(
+          'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
+        )
+      : undefined
+  const quickKeyStorageNotice = fileCredentialNotice ?? keychainWarning
   const saveAndActivateProvider = useSettingsStore((state) => state.saveAndActivateProvider)
   const refreshProviderModels = useSettingsStore((state) => state.refreshProviderModels)
   const addOnboardingKiloProvider = useSettingsStore((state) => state.addOnboardingKiloProvider)
@@ -1215,6 +1224,14 @@ const ProviderStep = ({
                             handleQuickKeySubmit(card)
                           }}
                         >
+                          {quickKeyStorageNotice && (
+                            <p
+                              id={`onboarding-key-storage-${card.id}`}
+                              className="mb-2 text-xs text-text-100"
+                            >
+                              {quickKeyStorageNotice}
+                            </p>
+                          )}
                           <label
                             className="mb-[0.45rem] block text-[0.7rem] text-text-200"
                             htmlFor={`onboarding-key-${card.id}`}
@@ -1225,6 +1242,11 @@ const ProviderStep = ({
                             <input
                               className="box-border h-[2.3rem] min-w-0 flex-1 rounded-lg border border-text-300/35 bg-bg-10 px-[0.65rem] py-[0.55rem] text-[0.72rem] text-text-000"
                               id={`onboarding-key-${card.id}`}
+                              aria-describedby={
+                                quickKeyStorageNotice
+                                  ? `onboarding-key-storage-${card.id}`
+                                  : undefined
+                              }
                               type="password"
                               value={quickKeys[card.id] ?? ''}
                               disabled={quickBusy}
@@ -1523,15 +1545,8 @@ const ProviderStep = ({
             />
           ) : (
             <>
-              {!encryptionAvailable ? (
-                <ErrorNotice
-                  inline
-                  className="mb-4"
-                  tone="amber"
-                  description={t(
-                    'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
-                  )}
-                />
+              {keychainWarning ? (
+                <ErrorNotice inline className="mb-4" tone="amber" description={keychainWarning} />
               ) : null}
               <ProviderForm
                 key={savedProviderId ?? 'new-provider'}

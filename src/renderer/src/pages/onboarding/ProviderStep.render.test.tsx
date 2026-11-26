@@ -613,6 +613,27 @@ describe('ProviderStep', () => {
     ).toBe(false)
   })
 
+  it.each([
+    ['file', false, 'File credential storage is enabled.'],
+    ['os', false, 'Secure key storage is unavailable.'],
+    ['os', true, undefined]
+  ] as const)(
+    'describes quick API key storage for %s with encryption available=%s',
+    async (credentialStore, encryptionAvailable, warning) => {
+      useSettingsStore.setState({ credentialStore, encryptionAvailable })
+      await renderStep({ variant: 'quick' })
+      const input = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
+      const notice = input.ownerDocument.getElementById(
+        input.getAttribute('aria-describedby') ?? ''
+      )
+      if (warning) expect(notice?.textContent).toContain(warning)
+      else expect(notice).toBeNull()
+      expect(
+        input.closest('form')?.textContent?.includes('Secure key storage is unavailable.')
+      ).toBe(credentialStore === 'os' && !encryptionAvailable)
+    }
+  )
+
   it('keeps the Claude API-key option without changing the framework', async () => {
     const setAgentFramework = vi.fn()
     useSettingsStore.setState({ agentFrameworkId: 'open-science-agent', setAgentFramework })
