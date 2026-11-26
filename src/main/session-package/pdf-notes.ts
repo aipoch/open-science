@@ -82,7 +82,8 @@ export const capturePackagePdfNotes = async (
         )
           throw new Error('Resolve historical PDF note conflicts before exporting shared notes.')
         const rows = await tx.pdfAnnotation.findMany({
-          where: { documentId: binding.documentId },
+          // Saved figures belong to the library attachment and its gallery, even for shared PDF bytes.
+          where: { documentId: binding.documentId, figure: null },
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
         })
         const receipt = await tx.pdfAnnotationImport.findUnique({
