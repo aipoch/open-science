@@ -4,6 +4,7 @@ import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/tool-error-recovery'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { executionRecoveryContext } from './execution-recovery'
 import { notebookDiagnosticPreview } from './content-limits'
@@ -2083,9 +2084,25 @@ const createNotebookMcpServer = (
 ): ModelContextProtocolServer => {
   const tools = notebookRpcToolsForEnvironment(environment)
   const server = installToolErrorRecovery(
-    new ModelContextProtocolServer({ name: NOTEBOOK_MCP_SERVER_NAME, version: '1.0.0' }),
-    tools.map((tool) => tool.name)
+    new ModelContextProtocolServer({ name: NOTEBOOK_MCP_SERVER_NAME, version: '1.0.0' })
   )
+  const protocol = server.server
+  const setHandler = protocol.setRequestHandler.bind(protocol)
+  protocol.setRequestHandler = (schema, handler) => {
+    if (!Object.is(schema, ListToolsRequestSchema)) return setHandler(schema, handler)
+    setHandler(schema, async (request, extra) => {
+      const result = await handler(request, extra)
+      const listed = 'tools' in result && Array.isArray(result.tools) ? result.tools : []
+      const names = new Set(listed.map((tool) => tool.name))
+      if (
+        listed.length !== tools.length ||
+        names.size !== tools.length ||
+        tools.some(({ name }) => !names.has(name))
+      )
+        throw new Error('The Notebook MCP tool list does not match the active configuration.')
+      return result
+    })
+  }
 
   for (const tool of tools) {
     registerNotebookRpcTool(server, environment, tool)

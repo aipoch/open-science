@@ -38,7 +38,11 @@ import type {
   AcpConnectionResourceAttempt,
   AcpConnectionResourceOwner
 } from './connection-resource-owner'
-import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
+import {
+  readWorkspaceTextFile,
+  writeWorkspaceTextFile,
+  type NotebookDraftWrite
+} from './filesystem'
 
 type ResponsesTransportLease = ResolvedAgentBackend['responsesTransportLease']
 type MessagesBridgeLease = ResolvedAgentBackend['messagesBridgeLease']
@@ -69,9 +73,8 @@ type AcpAgentConnectionHooks = Readonly<{
   filesystem: Readonly<{
     resolveSessionCwd: (sessionId: string) => string
     protectedReadRoots: () => readonly string[]
-    listGrantedRoots?: (
-      providerSessionId: string
-    ) => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
+    listGrantedRoots?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
+    consumeNotebookDraftWrite?: (params: acp.WriteTextFileRequest) => NotebookDraftWrite | undefined
   }>
   onBackendResolved: (framework: AgentFramework['id']) => void
   onProcessSpawned: (framework: AgentFramework['id']) => void
@@ -428,16 +431,19 @@ class AcpAgentConnectionAdapter {
                 hooks.filesystem.resolveSessionCwd(context.params.sessionId),
                 context.params,
                 [...hooks.filesystem.protectedReadRoots()],
-                (await hooks.filesystem.listGrantedRoots?.(context.params.sessionId)) ?? []
+                (await hooks.filesystem.listGrantedRoots?.()) ?? []
               )
             )
-            .onRequest(acp.methods.client.fs.writeTextFile, async (context) =>
-              writeWorkspaceTextFile(
+            .onRequest(acp.methods.client.fs.writeTextFile, async (context) => {
+              const roots = (await hooks.filesystem.listGrantedRoots?.()) ?? []
+              const draftWrite = hooks.filesystem.consumeNotebookDraftWrite?.(context.params)
+              return writeWorkspaceTextFile(
                 hooks.filesystem.resolveSessionCwd(context.params.sessionId),
                 context.params,
-                (await hooks.filesystem.listGrantedRoots?.(context.params.sessionId)) ?? []
+                roots,
+                draftWrite
               )
-            )
+            })
     ).connect(stream)
     void connection.closed.then(() => abort.abort())
     return connection

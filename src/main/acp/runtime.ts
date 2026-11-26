@@ -17,11 +17,7 @@ import * as acp from '@agentclientprotocol/sdk'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { isAbsolute, join } from 'node:path'
-import { isRecord } from '../value-guards'
-import { isNotebookDraftFile } from './filesystem'
-import { prepareOpenCodeSessionTools } from './opencode-session-tools'
-import { NOTEBOOK_MCP_SERVER_NAME } from '../notebook/mcp-server'
+import { join } from 'node:path'
 import {
   ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
@@ -69,6 +65,7 @@ import type {
 } from '../agent-framework/types'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import { LITERATURE_MCP_SERVER_NAME } from '../literature/mcp-contract'
+import { NOTEBOOK_MCP_SERVER_NAME } from '../notebook/mcp-server'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -85,6 +82,7 @@ import type {
   AcpBackendGenerationView
 } from './backend-generation-owner'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
+import { AcpOpenCodeNotebook, type OpenCodeNotebookScope } from './opencode-session-tools'
 import type { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import type {
   AcpConnectionResourceAttempt,
@@ -289,10 +287,9 @@ class AcpRuntime {
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
-  private readonly verifiedOpenCodeTools = new WeakMap<
-    ActiveSession,
-    { revision: number; ready: boolean }
-  >()
+  private readonly openCodeNotebook = new AcpOpenCodeNotebook((id) =>
+    this.openCodeNotebookScope(id)
+  )
   private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly sessionUpdateProjector: AcpSessionUpdateProjector
   private readonly providerPromptExecutor: AcpProviderPromptExecutor
@@ -463,7 +460,7 @@ class AcpRuntime {
       }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
-      prepareOpenCodeTools: (id, cwd, servers) => this.prepareOpenCodeTools(id, cwd, servers),
+      verifyNotebookConnection: this.openCodeNotebook.verify,
       refreshNotebookConnection: (input) =>
         this.providerSessionResumer.refreshNotebookConnection(input),
       onProviderPromptAccepted: (sessionId) => {
@@ -592,6 +589,7 @@ class AcpRuntime {
       session,
       lifecycle,
       {
+        verifyNotebookConnection: this.openCodeNotebook.verify,
         clearUserChoiceProvenanceForSession: (sessionId) =>
           this.questionContinuations.clearSession(sessionId),
         releasePromptResourcesForSession: (sessionId) =>
@@ -1069,7 +1067,7 @@ class AcpRuntime {
       )
       const session = this.activeSessionFor(request.sessionId)
       if (session) {
-        this.verifiedOpenCodeTools.delete(session)
+        this.openCodeNotebook.invalidate(session)
         await this.options.authorizedDirectories?.initialize(session)
       }
       if (resumed.contextReset) {
@@ -1513,10 +1511,18 @@ class AcpRuntime {
     identity: AcpConnectionResourceAttempt,
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ): Promise<AcpAgentConnectionCandidate> {
+    const requestPermission = (
+      params: acp.RequestPermissionRequest
+    ): Promise<acp.RequestPermissionResponse> => this.clientInteractions.requestPermission(params)
     const hooks: AcpAgentConnectionHooks = {
       toolLess: this.sessionEnvironment.role() === 'restricted-inference',
       createElicitation: (params) => this.clientInteractions.createElicitation(params),
-      requestPermission: (params) => this.requestProviderPermission(params),
+      requestPermission: (params) => {
+        const api = this.backendGeneration.openCodeUsageApi()
+        return api && api.version !== 2 && this.framework.id === 'opencode'
+          ? this.openCodeNotebook.requestPermission(params, requestPermission)
+          : requestPermission(params)
+      },
       captureUserStop: (providerSessionId) => {
         const appSessionId = this.sessionRegistry.resolveAppSessionId(providerSessionId)
         const scope = this.sessionInteractions.current(appSessionId)
@@ -1532,11 +1538,9 @@ class AcpRuntime {
       filesystem: {
         resolveSessionCwd: (sessionId) => this.resolveSessionCwd(sessionId),
         protectedReadRoots: () => this.protectedReadRoots(),
-        listGrantedRoots: async (providerSessionId) => {
-          const roots = (await this.options.grantedRoots?.list?.()) ?? []
-          const scope = this.openCodeNotebookScope(providerSessionId)
-          return scope ? [...roots, { path: scope.directory, access: 'rw' as const }] : roots
-        }
+        listGrantedRoots: () => this.options.grantedRoots?.list?.() ?? Promise.resolve([]),
+        consumeNotebookDraftWrite: ({ sessionId, path }) =>
+          this.openCodeNotebook.consumeDraftWrite(sessionId, path)
       },
       onBackendResolved: (framework) => {
         onFrameworkResolved(framework)
@@ -2378,15 +2382,7 @@ class AcpRuntime {
     this.providerPromptExecutor.observeProviderMessage(params)
   }
 
-  private openCodeNotebookScope(providerSessionId: string):
-    | {
-        api: NonNullable<ResolvedAgentBackend['opencodeUsageApi']>
-        directory: string
-        id: string
-        session: ActiveSession
-        revision: number
-      }
-    | undefined {
+  private openCodeNotebookScope(providerSessionId: string): OpenCodeNotebookScope | undefined {
     const api = this.backendGeneration.openCodeUsageApi()
     const directoryFor = this.options.notebook?.dataDirectory
     if (!api || api.version === 2 || !directoryFor || this.sessionEnvironment.role() !== 'primary')
@@ -2405,78 +2401,11 @@ class AcpRuntime {
     return {
       api,
       directory: directoryFor(snapshot.projectId, id),
-      id,
       session: entry.attachment.session,
-      revision: entry.aggregate.specialistBindingRevision()
+      revision: entry.aggregate.specialistBindingRevision(),
+      servers: this.sessionCapabilities.mcpServersFor(id),
+      interaction: this.sessionInteractions.current(id)
     }
-  }
-
-  private async prepareOpenCodeTools(
-    providerSessionId: string,
-    cwd: string,
-    pendingServers?: readonly acp.McpServer[]
-  ): Promise<void> {
-    const scope = this.openCodeNotebookScope(providerSessionId)
-    if (!scope) return
-    const cached = this.verifiedOpenCodeTools.get(scope.session)
-    if (cached?.ready && cached.revision === scope.revision) return
-    const check = { revision: scope.revision, ready: false }
-    this.verifiedOpenCodeTools.set(scope.session, check)
-    const ready = await prepareOpenCodeSessionTools({
-      api: scope.api,
-      cwd,
-      providerSessionId,
-      servers: pendingServers ?? this.sessionCapabilities.mcpServersFor(scope.id),
-      notebookDirectory: scope.directory,
-      signal: this.sessionInteractions.current(scope.id)?.signal
-    })
-    if (
-      this.verifiedOpenCodeTools.get(scope.session) !== check ||
-      this.openCodeNotebookScope(providerSessionId)?.session !== scope.session ||
-      this.sessionRegistry.lookup(scope.id)?.aggregate.specialistBindingRevision() !==
-        scope.revision
-    ) {
-      throw new Error('OpenCode session changed during tool discovery.')
-    }
-    check.ready = ready
-  }
-
-  private async requestProviderPermission(
-    params: acp.RequestPermissionRequest
-  ): Promise<acp.RequestPermissionResponse> {
-    const input = params.toolCall.rawInput
-    // 1.x 将 external_directory 上报为 other；edit 随后的独立审批仍按会话档位处理。
-    if (
-      this.framework.id === 'opencode' &&
-      params.toolCall.kind === 'other' &&
-      isRecord(input) &&
-      typeof input.parentDir === 'string' &&
-      typeof input.filepath === 'string'
-    ) {
-      const scope = this.openCodeNotebookScope(params.sessionId)
-      const filepath = input.filepath
-      if (
-        !scope ||
-        !isAbsolute(filepath) ||
-        !(await isNotebookDraftFile(scope.directory, filepath)) ||
-        this.openCodeNotebookScope(params.sessionId)?.session !== scope.session
-      ) {
-        return { outcome: { outcome: 'cancelled' } }
-      }
-      const decision = await this.clientInteractions.requestPermission({
-        ...params,
-        options: params.options.filter((option) => option.kind !== 'allow_always')
-      })
-      if (
-        decision.outcome.outcome === 'selected' &&
-        (this.openCodeNotebookScope(params.sessionId)?.directory !== scope.directory ||
-          !(await isNotebookDraftFile(scope.directory, filepath)))
-      ) {
-        return { outcome: { outcome: 'cancelled' } }
-      }
-      return decision
-    }
-    return this.clientInteractions.requestPermission(params)
   }
 
   // Looks up the workspace root bound to a session for filesystem operations.

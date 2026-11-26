@@ -12,6 +12,7 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { isPathInsideWorkspace } from './workspace-path'
 
 type GrantedRoot = Pick<GrantedLocalRoot, 'path' | 'access'>
+type NotebookDraftWrite = Readonly<{ root: string; signal: AbortSignal }>
 
 // Resolve the existing portion of a path so a symlink inside an authorized root cannot escape
 // that root. Writes may target a new file, so walk up to the nearest existing parent first.
@@ -39,17 +40,16 @@ const resolvePhysicalPath = async (candidatePath: string): Promise<string> => {
 }
 
 const assertAuthorizedPath = async (
-  workspaceRoot: string,
+  workspaceRoot: string | undefined,
   candidatePath: string,
   grantedRoots: readonly GrantedRoot[],
   requiredAccess: GrantedLocalRoot['access']
 ): Promise<{ path: string; physicalPath: string }> => {
   const path = resolve(candidatePath)
   const physicalPath = await resolvePhysicalPath(path)
-  const physicalWorkspaceRoot = await resolvePhysicalPath(resolve(workspaceRoot))
-
-  if (isPathInsideWorkspace(physicalWorkspaceRoot, physicalPath)) {
-    return { path, physicalPath }
+  if (workspaceRoot !== undefined) {
+    const physicalWorkspaceRoot = await resolvePhysicalPath(resolve(workspaceRoot))
+    if (isPathInsideWorkspace(physicalWorkspaceRoot, physicalPath)) return { path, physicalPath }
   }
 
   for (const root of grantedRoots) {
@@ -220,12 +220,19 @@ const readWorkspaceTextFile = async (
 const writeWorkspaceTextFile = async (
   workspaceRoot: string,
   params: WriteTextFileRequest,
-  grantedRoots: readonly GrantedRoot[] = []
+  grantedRoots: readonly GrantedRoot[] = [],
+  draftWrite?: NotebookDraftWrite
 ): Promise<WriteTextFileResponse> => {
-  const authorized = await assertAuthorizedPath(workspaceRoot, params.path, grantedRoots, 'rw')
-
-  await mkdir(dirname(authorized.physicalPath), { recursive: true })
-  const reopened = await assertAuthorizedPath(workspaceRoot, params.path, grantedRoots, 'rw')
+  // 原稿写入只允许更新已有文件，不能在审批后补建消失的路径。
+  const root = draftWrite ? undefined : workspaceRoot
+  const grants: readonly GrantedRoot[] = draftWrite
+    ? [{ path: draftWrite.root, access: 'rw' }]
+    : grantedRoots
+  if (!draftWrite) {
+    const authorized = await assertAuthorizedPath(root, params.path, grants, 'rw')
+    await mkdir(dirname(authorized.physicalPath), { recursive: true })
+  }
+  const reopened = await assertAuthorizedPath(root, params.path, grants, 'rw')
   const existing = await lstat(reopened.physicalPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return undefined
     throw error
@@ -233,9 +240,15 @@ const writeWorkspaceTextFile = async (
   if (existing?.isSymbolicLink()) {
     throw new Error(`Cannot authorize a symbolic link: ${params.path}`)
   }
-  const flags = constants.O_WRONLY | (existing ? 0 : constants.O_CREAT | constants.O_EXCL)
+  if (draftWrite && !existing?.isFile())
+    throw new Error('The approved Notebook draft is unavailable.')
+  const flags =
+    constants.O_WRONLY | (existing || draftWrite ? 0 : constants.O_CREAT | constants.O_EXCL)
   const file = await openAuthorizedFile(reopened.physicalPath, flags, 0o666)
   try {
+    if (draftWrite && !(await file.stat()).isFile())
+      throw new Error('The approved Notebook draft is unavailable.')
+    draftWrite?.signal.throwIfAborted()
     await file.truncate(0)
     await file.writeFile(params.content, 'utf8')
   } finally {
@@ -263,3 +276,4 @@ const isNotebookDraftFile = async (root: string, filePath: string): Promise<bool
 }
 
 export { isNotebookDraftFile, readWorkspaceTextFile, writeWorkspaceTextFile }
+export type { NotebookDraftWrite }

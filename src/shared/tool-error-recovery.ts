@@ -50,24 +50,13 @@ type RequestHandlerHost = {
 // Wraps the tools/call handler an MCP server registers after this call. Pass the SDK McpServer
 // before its first registerTool so the handler is installed through the wrapped method.
 export const installToolErrorRecovery = <Server extends { server: object }>(
-  server: Server,
-  expectedToolNames?: readonly string[]
+  server: Server
 ): Server => {
   const protocol = server.server as RequestHandlerHost
   const setRequestHandler = protocol.setRequestHandler.bind(protocol)
   protocol.setRequestHandler = (schema, handler) =>
     setRequestHandler(schema, async (request, extra) => {
       const result = await handler(request, extra)
-      if (request.method === 'tools/list' && expectedToolNames) {
-        const tools = (result as { tools?: Array<{ name: string }> } | null)?.tools
-        const names = new Set(tools?.map((tool) => tool.name))
-        if (
-          names.size !== expectedToolNames.length ||
-          !expectedToolNames.every((name) => names.has(name))
-        ) {
-          throw new Error('The Notebook MCP tool list does not match the active configuration.')
-        }
-      }
       return request.method === 'tools/call' ? withToolErrorRecovery(result) : result
     })
   return server

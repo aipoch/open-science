@@ -299,6 +299,34 @@ describe('ACP workspace filesystem adapter', () => {
     }
   )
 
+  it('only updates an existing Notebook draft with a live approval', async () => {
+    workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-acp-')))
+    const workspace = join(workspaceRoot, 'workspace')
+    const notebook = join(workspaceRoot, 'notebook')
+    const draft = join(notebook, 'draft.md')
+    const controller = new AbortController()
+    const approval = { root: notebook, signal: controller.signal }
+    const request = { sessionId: 'session-1', path: draft, content: 'updated' }
+    await mkdir(notebook)
+    await writeFile(draft, 'original')
+
+    await expect(writeWorkspaceTextFile(workspace, request, [], approval)).resolves.toEqual({})
+    await expect(readFile(draft, 'utf8')).resolves.toBe('updated')
+    controller.abort()
+    await expect(
+      writeWorkspaceTextFile(workspace, { ...request, content: 'after cancel' }, [], approval)
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(readFile(draft, 'utf8')).resolves.toBe('updated')
+    await rm(draft)
+    await expect(
+      writeWorkspaceTextFile(workspace, request, [], {
+        ...approval,
+        signal: new AbortController().signal
+      })
+    ).rejects.toThrow('The approved Notebook draft is unavailable.')
+    await expect(readFile(draft)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('rejects writes outside the workspace', async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-'))
 

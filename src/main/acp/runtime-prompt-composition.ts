@@ -28,7 +28,10 @@ import {
   notebookExecutionIntent,
   notebookUserOperation
 } from '../notebook/execution-intent'
-import type { AcpProviderSessionResumer } from './provider-session-resumer'
+import type {
+  AcpNotebookConnectionVerifier,
+  AcpProviderSessionResumer
+} from './provider-session-resumer'
 import { shellRuntimeAgentContract } from '../notebook/shell-runtime'
 import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
 
@@ -39,11 +42,7 @@ type AcpRuntimePromptReloadHost = Readonly<{
 }>
 
 type AcpRuntimePromptHost = Readonly<{
-  prepareOpenCodeTools?: (
-    providerSessionId: string,
-    cwd: string,
-    servers?: readonly acp.McpServer[]
-  ) => Promise<void>
+  verifyNotebookConnection?: AcpNotebookConnectionVerifier
   refreshNotebookConnection?: AcpProviderSessionResumer['refreshNotebookConnection']
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
@@ -267,10 +266,16 @@ const composeAcpRuntimePromptOwners = (
           : {})
       })
     }
-    const verifyOpenCodeTools = async (servers?: readonly acp.McpServer[]): Promise<void> => {
-      if (input.framework.id === 'opencode')
-        await host.prepareOpenCodeTools?.(input.providerSessionId, input.cwd, servers)
-    }
+    const verifyAttachedNotebookConnection = (
+      mcpServers?: readonly acp.McpServer[]
+    ): Promise<void> | undefined =>
+      host.verifyNotebookConnection?.({
+        providerSessionId: input.providerSessionId,
+        cwd: input.cwd,
+        mcpServers,
+        providerRefreshed: false,
+        signal: input.signal
+      })
     const intent = input.request && notebookExecutionIntent(input.request)
     // A distinct Provider dispatch has its own credential even when it inherits the same stopped
     // intent. A late callback from its predecessor must never stop a newer explanatory branch.
@@ -310,10 +315,9 @@ const composeAcpRuntimePromptOwners = (
           // CodeBuddy selects its process-global native Session and validates its shared login.
           // Keep the framework hook; only the generic Notebook-driven resume is unnecessary.
           await prepareFramework()
+          assertCurrent()
+          await verifyAttachedNotebookConnection(refresh.mcpServers)
         }
-        assertCurrent()
-        // 新凭据提交前，按本轮待启用的配置校验工具，避免重新注册已经退役的连接。
-        await verifyOpenCodeTools(refresh.mcpServers)
         assertCurrent()
         refresh.commit()
       } catch (error) {
@@ -326,7 +330,7 @@ const composeAcpRuntimePromptOwners = (
       return
     }
     await prepareFramework()
-    await verifyOpenCodeTools()
+    await verifyAttachedNotebookConnection()
   }
   const contextCompactionWorkflow = new AcpContextCompactionWorkflow({
     sessions: { activeSession, currentFramework },
