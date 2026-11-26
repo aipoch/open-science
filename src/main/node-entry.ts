@@ -114,6 +114,7 @@ const captureOptions =
     ? {
         mirrorToConsole: (scope: string, message: string) =>
           (scope === 'main' && message.startsWith('database runtime verified: sqlite_version=')) ||
+          (scope === 'credential-identity' && message === 'Secret Service metadata probe failed') ||
           (scope === 'node-runtime' &&
             (message === 'startup failed' || message === 'fatal local service failure'))
       }
