@@ -64,6 +64,9 @@ const LocationStep = ({
 }: LocationStepProps): React.JSX.Element => {
   const { t } = useTranslation()
   const { chosenDataRoot, chosenKind } = locationDraft
+  const defaultLocationError =
+    dataRootError ?? (dataRootInfo?.dataRootMissing ? t('Data folder not found') : undefined)
+  const canKeepLocation = Boolean(dataRootInfo && !defaultLocationError)
   const isLoadingDefaultLocation = isResolvingDefaultLocation && dataRootInfo === null
   const [locationError, setLocationError] = useState<string | undefined>(undefined)
   const [confirmRestart, setConfirmRestart] = useState(false)
@@ -126,7 +129,7 @@ const LocationStep = ({
 
     if (chosenDataRoot) {
       setConfirmRestart(true)
-    } else if (dataRootInfo) {
+    } else if (canKeepLocation) {
       onRelaunchErrorChange(undefined)
       onContinue()
     }
@@ -137,7 +140,7 @@ const LocationStep = ({
     onLocationDraftChange({ chosenDataRoot: '', chosenKind: null })
     onRelaunchErrorChange(undefined)
     setLocationError(undefined)
-    if (dataRootInfo) onContinue()
+    if (canKeepLocation) onContinue()
   }
 
   const handleRestart = async (): Promise<void> => {
@@ -191,12 +194,12 @@ const LocationStep = ({
           aria-busy={requestInFlight || isResolvingDefaultLocation}
           className="space-y-5"
         >
-          {dataRootError ? (
+          {defaultLocationError ? (
             <ErrorNotice
               role="alert"
               tone="amber"
               title={t('Could not load the default data location:')}
-              description={dataRootError}
+              description={defaultLocationError}
               primaryButton={{
                 label: t('Retry'),
                 onClick: onRetryDataRootInfo,
@@ -281,7 +284,7 @@ const LocationStep = ({
           type="button"
           onClick={handleContinueLocation}
           disabled={
-            requestInFlight || isLoadingDefaultLocation || (!dataRootInfo && !chosenDataRoot)
+            requestInFlight || isLoadingDefaultLocation || (!canKeepLocation && !chosenDataRoot)
           }
           className="px-4"
         >

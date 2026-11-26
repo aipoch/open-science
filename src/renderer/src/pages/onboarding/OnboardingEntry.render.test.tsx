@@ -79,18 +79,103 @@ describe('Onboarding entry flow', () => {
     expect(container.textContent).toContain('Advanced options')
   })
 
-  it('opens the advanced form with the gateway selected from its quick-connect card', async () => {
+  it('applies the defaults and opens the full provider picker from the last card', async () => {
+    useSettingsStore.setState(codexReadyState())
+    const pending = Promise.withResolvers<void>()
+    const checkEnvironment = vi.fn(async () => {
+      await pending.promise
+      readyBuiltInState()
+      return useSettingsStore.getState().environmentCheck
+    })
+    useSettingsStore.setState({ checkEnvironment })
     await renderEntry()
     await finishWelcomeAnimation()
     await clickButton(/^Next$/)
-    const card = container.querySelector('.onboarding-provider-card-cloudflare-ai-gateway')!
-    expect(card.querySelector('input')).toBeNull()
-    const configure = card.querySelector('button')!
-    expect(configure.textContent).toBe('Configure')
-    await act(async () => configure.click())
-    await clickButton(/^Continue$/)
-    await clickButton(/^Continue$/)
+    await clickButton(/^Advanced mode$/)
+
+    expect(useSettingsStore.getState().setAgentFramework).toHaveBeenCalledWith('open-science-agent')
+    expect(checkEnvironment).toHaveBeenCalledOnce()
+    for (const label of [/^Advanced mode$/, /^Advanced options$/, /^Back$/, /free Kilo models/]) {
+      expect(findButton(label)?.disabled).toBe(true)
+    }
+    await act(async () =>
+      fireEvent.keyDown(container.querySelector('[role="dialog"]')!, { key: 'Escape' })
+    )
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    await act(async () => pending.resolve())
+    expect(window.api.storage.setDataRootAndRelaunch).not.toHaveBeenCalled()
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain(
+      'Model provider'
+    )
+    const picker = container.querySelector('[data-slot="provider-picker"]')!
+    for (const id of ['cloudflare-ai-gateway', 'aws-bedrock', 'microsoft-foundry', 'vectrust']) {
+      expect(picker.querySelector(`[data-provider-kind="official:${id}"]`), id).not.toBeNull()
+    }
+    await act(async () =>
+      picker
+        .querySelector<HTMLButtonElement>('[data-provider-kind="official:cloudflare-ai-gateway"]')!
+        .click()
+    )
     expect(container.querySelector('#provider-cloudflare-mode')).not.toBeNull()
+  })
+
+  it('opens the Agent step for repair when the default runtime fails its check', async () => {
+    useSettingsStore.setState((state) => ({
+      environmentCheck: { ...state.environmentCheck!, ready: false }
+    }))
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/^Advanced mode$/)
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain('Agent runtime')
+    expect(findButton(/^Continue$/)?.disabled).toBe(true)
+  })
+
+  it('keeps an older success from unlocking Agent repair after a failed check', async () => {
+    useSettingsStore.setState({ environmentCheckError: 'The latest check failed.' })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/^Advanced mode$/)
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain('Agent runtime')
+    expect(findButton(/^Continue$/)?.disabled).toBe(true)
+  })
+
+  it('requires the runtime to remain ready before continuing from the provider picker', async () => {
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/^Advanced mode$/)
+    expect(findButton(/^Skip$/)?.disabled).toBe(false)
+    await act(async () => useSettingsStore.setState({ environmentCheckError: 'Check failed.' }))
+    expect(findButton(/^Skip$/)?.disabled).toBe(true)
+    await clickButton(/^Skip$/)
+    expect(useSettingsStore.getState().addOnboardingKiloProvider).not.toHaveBeenCalled()
+  })
+
+  it('requires the missing active data folder to recover before continuing', async () => {
+    vi.mocked(window.api.storage.getInfo)
+      .mockResolvedValueOnce(storageInfo({ dataRootMissing: true, isDefault: false }))
+      .mockResolvedValue(storageInfo())
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/^Advanced mode$/)
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain('Data location')
+    expect(findButton(/^Continue$/)?.disabled).toBe(true)
+    await clickButton(/^Retry$/)
+    expect(findButton(/^Continue$/)?.disabled).toBe(false)
+  })
+
+  it('opens data location for recovery when the default is unavailable', async () => {
+    vi.mocked(window.api.storage.getInfo).mockRejectedValue(new Error('Storage unavailable'))
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/^Advanced mode$/)
+    expect(container.querySelector('[aria-current="step"]')?.textContent).toContain('Data location')
+    expect(findButton(/^Continue$/)?.disabled).toBe(true)
+    expect(useSettingsStore.getState().setAgentFramework).not.toHaveBeenCalled()
   })
 
   it('returns to quick connect after closing targeted Notebook settings', async () => {
@@ -451,6 +536,7 @@ describe('Onboarding entry flow', () => {
       key.form!.querySelector('button')!,
       findButton(/^Back$/)!,
       findButton(/Advanced options/)!,
+      findButton(/^Advanced mode$/)!,
       findButton(/Import existing Codex sign-in/)!,
       skip
     ]

@@ -5,10 +5,11 @@ import { useTranslation } from 'react-i18next'
 import { Card } from '@/components/ui/card'
 import { WorkflowDialogFrame } from '@/components/ui/workflow-dialog-frame'
 import { cn } from '@/lib/utils'
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../../shared/agent-framework-id'
 import { APP } from '../../../../shared/app-config'
 import type { StorageInfo } from '../../../../shared/storage'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
-import { useSettingsStore } from '@/stores/settings-store'
+import { selectAgentEnvironmentReady, useSettingsStore } from '@/stores/settings-store'
 import {
   createEmptyProviderFormValue,
   selectedKindKey,
@@ -32,6 +33,11 @@ type OnboardingWizardProps = {
 }
 
 type EntryPhase = 'welcome' | 'connect' | 'ready' | 'advanced'
+
+const defaultAgentReady = (): boolean => {
+  const state = useSettingsStore.getState()
+  return state.agentFrameworkId === DEFAULT_AGENT_FRAMEWORK_ID && selectAgentEnvironmentReady(state)
+}
 
 // Storage is chosen before either runtime step so a recommended Windows data drive is active when
 // the app-managed Notebook environment is installed.
@@ -216,11 +222,7 @@ const OnboardingWizard = ({
   const [entryPhase, setEntryPhase] = useState<EntryPhase>(showWelcome ? 'welcome' : 'advanced')
   const [advancedKind, setAdvancedKind] = useState<string>()
   const [readySource, setReadySource] = useState<'connect' | 'advanced'>('connect')
-  const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
-  const runtimeReady =
-    !isCheckingEnvironment &&
-    environmentCheck?.ready === true &&
-    environmentCheck.agentFrameworkId === agentFrameworkId
+  const runtimeReady = useSettingsStore(selectAgentEnvironmentReady)
   const [skipError, setSkipError] = useState<OnboardingFailure>()
   const dialogRef = useRef<HTMLDivElement>(null)
   const previousDialogFocus = useRef<HTMLElement | null>(null)
@@ -300,13 +302,36 @@ const OnboardingWizard = ({
   // unmounts (and the layout disappears) while it is in flight.
   const [isRelaunching, setIsRelaunching] = useState(false)
 
-  const openAdvancedEntry = useCallback((kind?: string): void => {
-    setAdvancedKind(kind)
-    // Advanced setup starts with the user-controlled data location. The environment summary is
-    // still available from the original setup surface when this wizard is mounted directly.
-    setStep('location')
+  const openAdvancedEntry = (nextStep: 'location' | 'agent' | 'provider'): void => {
+    setAdvancedKind(undefined)
+    setStep(nextStep)
     setEntryPhase('advanced')
-  }, [])
+  }
+
+  const browseProviders = async (): Promise<void> => {
+    if (!dataRootInfo || dataRootError || dataRootInfo.dataRootMissing) {
+      openAdvancedEntry('location')
+      return
+    }
+    if (!beginProviderOperation()) return
+    try {
+      // Keep the active data folder. A different drive or an adopted folder requires a restart
+      // and explicit confirmation in LocationStep.
+      handleLocationDraftChange({ chosenDataRoot: '', chosenKind: null })
+      setRelaunchError(undefined)
+      const settings = useSettingsStore.getState()
+      if (settings.agentFrameworkId !== DEFAULT_AGENT_FRAMEWORK_ID) {
+        await settings.setAgentFramework(DEFAULT_AGENT_FRAMEWORK_ID)
+      }
+      if (!defaultAgentReady()) await settings.checkEnvironment({ force: true })
+      openAdvancedEntry(defaultAgentReady() ? 'provider' : 'agent')
+    } catch {
+      // AgentStep owns framework selection and recovery from a failed switch or check.
+      openAdvancedEntry('agent')
+    } finally {
+      finishProviderOperation()
+    }
+  }
   const openReadyEntry = useCallback((): void => {
     setReadySource('connect')
     setEntryPhase('ready')
@@ -603,7 +628,8 @@ const OnboardingWizard = ({
               onProviderSaved={recordSavedProvider}
               onBack={() => setEntryPhase('welcome')}
               onAdvance={openReadyEntry}
-              onAdvanced={openAdvancedEntry}
+              onAdvanced={() => openAdvancedEntry('location')}
+              onBrowseProviders={dataRootInfo || dataRootError ? browseProviders : undefined}
               onSkip={skipEntry}
               skipError={skipError && { ...skipError, onDismiss: () => setSkipError(undefined) }}
             />

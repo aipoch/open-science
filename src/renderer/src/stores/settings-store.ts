@@ -316,6 +316,14 @@ export const selectFrameworkApiEndpoints = (state: SettingsStoreData): ModelProt
   state.agentFrameworks.find((framework) => framework.id === state.agentFrameworkId)
     ?.supportedApiTypes ?? DEFAULT_FRAMEWORK_API_ENDPOINTS
 
+// A failed refresh preserves the previous report for diagnostics. Only a current, successful
+// check may unlock onboarding for the selected runtime.
+export const selectAgentEnvironmentReady = (state: SettingsStoreData): boolean =>
+  !state.isCheckingEnvironment &&
+  !state.environmentCheckError &&
+  state.environmentCheck?.ready === true &&
+  state.environmentCheck.agentFrameworkId === state.agentFrameworkId
+
 // The currently-selected agent framework's descriptor; undefined before the framework list has
 // loaded. Returns the stored view object (stable reference), never a fresh literal.
 export const selectActiveAgentFramework = (

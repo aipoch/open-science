@@ -81,6 +81,7 @@ const Harness = ({
   return (
     <ProviderStep
       operation={operation}
+      onBrowseProviders={vi.fn()}
       formValue={value}
       setFormValue={setValue}
       onBack={onBack}
@@ -135,18 +136,23 @@ const submitClaudeFallbackToken = async (token: string): Promise<void> => {
 }
 
 describe('ProviderStep', () => {
-  it('lists every official vendor as a distinct quick-connect card', async () => {
+  it('lists quick-connect vendors and ends with an advanced provider picker action', async () => {
     await renderStep({ variant: 'quick' })
 
     for (const vendor of OFFICIAL_VENDORS) {
       const cards = container.querySelectorAll(`.onboarding-provider-card-${vendor.id}`)
-      expect(cards, vendor.label).toHaveLength(1)
-      expect(cards[0].querySelector('h2')?.textContent).toBe(vendor.label)
+      expect(cards, vendor.label).toHaveLength(vendor.requiresConnectionConfiguration ? 0 : 1)
+      if (!vendor.requiresConnectionConfiguration) {
+        expect(cards[0].querySelector('h2')?.textContent).toBe(vendor.label)
+      }
     }
-    expect(container.querySelectorAll('.onboarding-provider-card')).toHaveLength(
-      OFFICIAL_VENDORS.length + 1
-    )
-    expect(container.textContent).toContain('Custom Gateway')
+    const cards = container.querySelectorAll('.onboarding-provider-card')
+    const last = cards[cards.length - 1]
+    expect(last.querySelector('h2')?.textContent).toBe('Looking for another provider?')
+    expect(Array.from(last.querySelectorAll('button'), (button) => button.textContent)).toEqual([
+      'Advanced mode'
+    ])
+    expect(last.querySelector('input')).toBeNull()
   })
 
   it('keeps Silk mounted across hover and pause', async () => {

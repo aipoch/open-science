@@ -115,7 +115,8 @@ type ProviderStepProps = {
   variant?: 'form' | 'quick'
   picker?: { kind?: string; select: (kind?: string) => void }
   canContinue?: boolean
-  onAdvanced?: (kind?: string) => void
+  onAdvanced?: () => void
+  onBrowseProviders?: () => void
   onSkip?: () => void | Promise<void>
   skipError?: OnboardingFailure & { onDismiss: () => void }
   operation: ProviderStepOperation
@@ -133,7 +134,6 @@ type QuickProviderCard = {
   subscriptionKind?: string
   title: string
   description?: string
-  requiresConnectionConfiguration?: boolean
   subscriptionLabel?: (t: TFunction) => string
   accent: string
 }
@@ -195,20 +195,19 @@ const bundledModelCount = new Set(
 ).size
 
 const QUICK_PROVIDER_CARDS: QuickProviderCard[] = [
-  ...OFFICIAL_VENDORS.map((vendor) => ({
+  ...OFFICIAL_VENDORS.filter((vendor) => !vendor.requiresConnectionConfiguration).map((vendor) => ({
     id: vendor.id,
     kindKey: `official:${vendor.id}`,
     title: vendor.label,
-    description: vendor.requiresConnectionConfiguration ? undefined : 'API key — models provided',
-    requiresConnectionConfiguration: vendor.requiresConnectionConfiguration,
+    description: 'API key — models provided',
     accent: PROVIDER_ACCENTS[vendor.id] ?? '#dce3ea',
     ...QUICK_SUBSCRIPTIONS[vendor.id]
   })),
   {
     id: 'more',
     kindKey: 'custom',
-    title: 'Custom Gateway',
-    description: 'Use a compatible endpoint or connect another model provider.',
+    title: 'Looking for another provider?',
+    description: 'Browse more providers or configure a custom gateway in advanced mode.',
     accent: '#dbe8ff'
   }
 ]
@@ -226,6 +225,7 @@ const ProviderStep = ({
   picker,
   canContinue = true,
   onAdvanced,
+  onBrowseProviders,
   onSkip,
   skipError,
   operation
@@ -511,7 +511,7 @@ const ProviderStep = ({
   }
 
   const handleSkip = async (): Promise<void> => {
-    if (!operation.begin()) return
+    if (!canContinue || !operation.begin()) return
     setIsSkipping(true)
     setValidationMessage(undefined)
     try {
@@ -967,25 +967,11 @@ const ProviderStep = ({
     advanceIfMounted()
   }
 
-  const openProviderConfiguration = (card: QuickProviderCard): void => {
-    setFormValue({
-      ...createEmptyProviderFormValue(
-        providerKindPatch(card.kindKey, customApiEndpoint, activeFramework?.supportedApiTypes)
-      ),
-      providerFormTouched: true
-    })
-    onAdvanced?.(card.kindKey)
-  }
-
   const chooseQuickProvider = async (
     card: QuickProviderCard,
     mode: 'account' | 'key' | CodexAuthMode
   ): Promise<void> => {
     if (quickBusy || quickAuth.current) return
-    if (card.kindKey === 'custom') {
-      openProviderConfiguration(card)
-      return
-    }
 
     const kindKey = mode === 'key' ? card.kindKey : card.subscriptionKind
     if (!kindKey || (mode !== 'key' && !operation.begin())) return
@@ -1156,7 +1142,7 @@ const ProviderStep = ({
               const isAuthorizing =
                 isSaving && quickCardId === card.id && !isKeyMode && Boolean(card.subscriptionKind)
               const subscriptionAvailable = Boolean(card.subscriptionKind)
-              const showKeyForm = isKeyMode || (card.id !== 'more' && !subscriptionAvailable)
+              const showKeyForm = isKeyMode || !subscriptionAvailable
 
               return (
                 <article
@@ -1183,16 +1169,20 @@ const ProviderStep = ({
                       active={hoveredQuickCardId === card.id}
                     />
                     <div className="relative z-1 flex-1 p-[1.45rem] onboarding-short:py-[0.85rem]">
-                      <ProviderKindIcon
-                        kindKey={card.kindKey}
-                        className={clsx(
-                          'size-9',
-                          ['openai', 'anthropic', 'xai'].includes(card.id) &&
-                            'brightness-0 invert-92'
-                        )}
-                      />
+                      {card.id === 'more' ? (
+                        <Settings2 className="size-9" aria-hidden="true" />
+                      ) : (
+                        <ProviderKindIcon
+                          kindKey={card.kindKey}
+                          className={clsx(
+                            'size-9',
+                            ['openai', 'anthropic', 'xai'].includes(card.id) &&
+                              'brightness-0 invert-92'
+                          )}
+                        />
+                      )}
                       <h2 className="mt-[1.1rem] font-onboarding-serif text-[1.65rem] font-normal tracking-[-0.035em] text-text-000">
-                        {card.id === 'more' ? t('Custom Gateway') : card.title}
+                        {card.id === 'more' ? t(card.title) : card.title}
                       </h2>
                       {card.description && (
                         <p className="mt-2 text-[0.78rem] leading-[1.65] text-text-100">
@@ -1209,13 +1199,13 @@ const ProviderStep = ({
                         '[@media(hover:none),(any-pointer:coarse)]:opacity-100 [@media(hover:none),(any-pointer:coarse)]:pointer-events-auto [@media(hover:none),(any-pointer:coarse)]:transform-none'
                       )}
                     >
-                      {card.requiresConnectionConfiguration ? (
+                      {card.id === 'more' ? (
                         <Button
                           type="button"
-                          disabled={quickBusy}
-                          onClick={() => openProviderConfiguration(card)}
+                          disabled={quickBusy || !onBrowseProviders}
+                          onClick={onBrowseProviders}
                         >
-                          {t('Configure')}
+                          {t('Advanced mode')}
                         </Button>
                       ) : showKeyForm ? (
                         <form
@@ -1475,7 +1465,7 @@ const ProviderStep = ({
                 type="button"
                 variant="ghost"
                 data-onboarding-action="advanced"
-                onClick={() => onAdvanced?.()}
+                onClick={onAdvanced}
                 disabled={quickBusy}
               >
                 <Settings2 className="h-4 w-[0.9rem]! shrink-0 text-center" aria-hidden="true" />
@@ -1649,7 +1639,7 @@ const ProviderStep = ({
           type="button"
           variant="outline"
           onClick={() => void handleSkip()}
-          disabled={busy}
+          disabled={busy || !canContinue}
           aria-busy={isSkipping}
         >
           {canReuseExistingProvider ? t('Use configured provider') : t('Skip')}

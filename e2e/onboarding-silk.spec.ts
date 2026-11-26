@@ -160,6 +160,52 @@ test('keeps the provider tray translucent in both themes and sizes each step to 
   ).toBe('auto')
 })
 
+test('opens the full provider picker with the defaults and completes onboarding', async ({
+  app
+}) => {
+  const { page } = app
+  // A cancelled subscription can leave a different framework active before using the shortcut.
+  await page.evaluate(() => window.api.settings.setAgentFramework({ id: 'codex' }))
+  await page.reload()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const dialog = page.getByRole('dialog', { name: 'Open-Science onboarding' })
+  await dialog.getByRole('button', { name: 'Next', exact: true }).click()
+  const storage = await page.evaluate(() => window.api.storage.getInfo())
+  expect(storage.isDefault).toBe(true)
+  expect(
+    await page.evaluate(async () => (await window.api.settings.getSettings()).agentFrameworkId)
+  ).toBe('codex')
+
+  const card = dialog
+    .getByRole('article')
+    .filter({ has: page.getByRole('heading', { name: 'Looking for another provider?' }) })
+  const action = card.getByRole('button', { name: 'Advanced mode' })
+  await card.hover()
+  await expect(action).toBeVisible()
+  await action.focus()
+  await action.press('Enter')
+
+  await expect(dialog.locator('[aria-current="step"]')).toHaveText('3Model provider')
+  await expect(dialog.getByRole('searchbox', { name: 'Search providers' })).toBeVisible()
+  expect(await page.evaluate(async () => (await window.api.storage.getInfo()).dataRoot)).toBe(
+    storage.defaultDataRoot
+  )
+  expect(
+    await page.evaluate(async () => (await window.api.settings.getSettings()).agentFrameworkId)
+  ).toBe('open-science-agent')
+  for (const id of ['cloudflare-ai-gateway', 'aws-bedrock', 'microsoft-foundry', 'vectrust']) {
+    await expect(dialog.locator(`[data-provider-kind="official:${id}"]`)).toBeVisible()
+  }
+  await dialog.locator('[data-provider-kind="official:cloudflare-ai-gateway"]').click()
+  await expect(dialog.locator('#provider-cloudflare-mode')).toBeVisible()
+  await dialog.getByRole('button', { name: 'Change provider' }).click()
+  await dialog.getByRole('button', { name: 'Skip', exact: true }).click()
+  await expect(dialog.locator('[aria-current="step"]')).toHaveText('4Notebook runtime')
+  await dialog.getByRole('button', { name: 'Finish', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Start exploring', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
+})
+
 test('keeps the agent setup actions at the dialog bottom while the runtime list scrolls', async ({
   app
 }) => {
@@ -208,15 +254,19 @@ test('exposes quick-connect actions on the first tap on touch-only devices', asy
     const tray = card.locator('.onboarding-provider-card-actions')
     await expect(tray).toHaveCSS('opacity', '1')
     await expect(tray).toHaveCSS('pointer-events', 'auto')
-    const action = card.getByRole('button', { name: 'Have an API key?' })
-    await action.scrollIntoViewIfNeeded()
-    const bounds = (await action.boundingBox())!
-    await cdp.send('Input.dispatchTouchEvent', {
-      type: 'touchStart',
-      touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }]
-    })
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    const tap = async (action: Locator): Promise<void> => {
+      await action.scrollIntoViewIfNeeded()
+      const bounds = (await action.boundingBox())!
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }]
+      })
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    }
+    await tap(card.getByRole('button', { name: 'Have an API key?' }))
     await expect(card.getByLabel('API key', { exact: true })).toBeVisible()
+    await tap(page.getByRole('button', { name: 'Advanced mode', exact: true }))
+    await expect(page.getByRole('searchbox', { name: 'Search providers' })).toBeVisible()
   } finally {
     await cdp.detach()
   }
