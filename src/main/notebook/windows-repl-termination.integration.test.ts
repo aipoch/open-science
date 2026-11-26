@@ -37,7 +37,6 @@ import { NotebookNetworkSandbox } from '../../../packages/notebook-network-sandb
 import { NotebookKernelExecutor } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import type { NotebookProcessSandbox } from './process-sandbox'
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
 configureTestRuntimeMetadata()
@@ -471,15 +470,11 @@ it
       timeoutMs: 10_000
     }
     try {
-      const failed = executor.execute(request)
-      if (proof === 'valid') {
-        await expect(failed).resolves.toMatchObject({
-          status: 'failed',
-          stderr: expect.stringContaining('Notebook kernel process exited with exit code 1.')
-        })
-      } else {
-        await expect(failed).rejects.toBeInstanceOf(NotebookExecutionStopError)
-      }
+      await expect(executor.execute(request)).resolves.toMatchObject({
+        status: 'failed',
+        recovery: { execution: 'may-have-run', retryAfter: 'runtime-ready' },
+        stderr: expect.stringContaining('Notebook kernel process exited with exit code 1.')
+      })
       const oldReceipts = lifecycle ? await readdir(join(root, 'runtime', 'kernel-processes')) : []
       if (lifecycle) expect(oldReceipts).toHaveLength(1)
       recoveryAllowed = true
@@ -487,23 +482,23 @@ it
       if (recovery === 'shutdown') {
         await expect(executor.shutdown()).resolves.toEqual({ reaped: recoverable })
       } else if (recovery === 'restart') {
-        if (recoverable) await expect(executor.restart()).resolves.toBeUndefined()
-        else await expect(executor.restart()).rejects.toThrow('restart refused')
+        await expect(executor.restart()).resolves.toBeUndefined()
       }
       for (let attempt = 0; attempt < 3; attempt++) {
-        if (recoverable) {
-          await expect(executor.execute(request)).resolves.toMatchObject({
-            status: 'completed',
-            stdout: expect.stringContaining('REPL_RECOVERED')
-          })
-        } else {
-          await expect(executor.execute(request)).rejects.toBeInstanceOf(NotebookExecutionStopError)
-        }
+        await expect(executor.execute(request)).resolves.toMatchObject({
+          status: 'completed',
+          stdout: expect.stringContaining('REPL_RECOVERED')
+        })
       }
       if (lifecycle) {
-        const receipts = await readdir(join(root, 'runtime', 'kernel-processes'))
-        expect(receipts).toHaveLength(1)
-        expect(receipts).not.toContain(oldReceipts[0])
+        await vi.waitFor(
+          async () => {
+            const receipts = await readdir(join(root, 'runtime', 'kernel-processes'))
+            expect(receipts).toHaveLength(1)
+            expect(receipts).not.toContain(oldReceipts[0])
+          },
+          { timeout: 10_000 }
+        )
       }
     } finally {
       await executor.shutdown()

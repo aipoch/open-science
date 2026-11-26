@@ -23,16 +23,14 @@ export const executionRecoveryContext = (
     (candidate.exitCode === null || Number.isInteger(candidate.exitCode)) &&
     ['unknown', 'os-memory-pressure', 'nul-initialization-unavailable'].includes(
       String(candidate.cause)
-    ) &&
-    ['verified', 'unverified'].includes(String(candidate.cleanup))
+    )
       ? {
           kind: candidate.kind as 'python' | 'r' | 'repl',
           ...(candidate.kind !== 'repl' ? { environment: candidate.environment as string } : {}),
           signal: candidate.signal as string | null,
           exitCode: candidate.exitCode as number | null,
           cause: candidate.cause as
-            'unknown' | 'os-memory-pressure' | 'nul-initialization-unavailable',
-          cleanup: candidate.cleanup as 'verified' | 'unverified'
+            'unknown' | 'os-memory-pressure' | 'nul-initialization-unavailable'
         }
       : undefined
   const prerequisite =
@@ -44,25 +42,17 @@ export const executionRecoveryContext = (
       ? 'This command was not started.'
       : 'This command may have changed files or external state; its output is not verified completion. Review its effects before deciding whether to rerun it.'
   if (kernel) {
-    const target =
-      kernel.kind === 'repl'
-        ? '{"kernel":"repl"}'
-        : JSON.stringify({ language: kernel.kind, environment: kernel.environment })
     const cause =
       kernel.cause === 'os-memory-pressure'
         ? 'OS logs confirm memory pressure; consider reducing memory demand.'
         : kernel.cause === 'nul-initialization-unavailable'
           ? 'Electron could not initialize the Windows NUL device inside the restricted process.'
           : 'Exit cause: unknown.'
-    const recovery =
-      kernel.cleanup === 'unverified'
-        ? `At failure, cleanup was unverified. If still unresolved, notebook_restart with ${target} can recheck cleanup for this interpreter. A subsequent execution also rechecks cleanup before starting; if it succeeds, preserve its rebuilt state without restarting.`
-        : 'Cleanup was verified; no extra restart is needed for this exit.'
     return {
       execution,
-      retryAfter,
+      retryAfter: 'runtime-ready',
       kernel,
-      guidance: `${effects} ${cause} ${recovery} The exited interpreter's variables were lost; rebuild required state if it has not already been restored.`
+      guidance: `${effects} ${cause} The next execution starts a fresh interpreter if needed. Rebuild the exited interpreter's in-memory state as needed.`
     }
   }
   return {

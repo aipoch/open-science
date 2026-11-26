@@ -1917,7 +1917,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_restart',
     title: 'Restart notebook interpreter',
     description:
-      'Verify cleanup and reset variables; a fresh process starts on next execution. Preserves saved history/files. Pass language with environment, kernel:"repl" alone, or nothing to reset all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
+      'Reset interpreter state and start fresh on the next execution. Preserves saved history and files. Pass language with environment, kernel:"repl" alone, or nothing to reset all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
     method: 'restart',
     inputSchema: {
       kernel: z

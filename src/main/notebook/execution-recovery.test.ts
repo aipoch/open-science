@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { executionRecoveryContext } from './execution-recovery'
 
 describe('execution recovery context', () => {
-  it('allows a verified cleanup to proceed without an extra restart or an inferred OOM', () => {
+  it('describes fresh execution and state loss without inferring an OOM', () => {
     const result = executionRecoveryContext({
       execution: 'may-have-run',
       retryAfter: 'runtime-ready',
@@ -17,9 +17,9 @@ describe('execution recovery context', () => {
     })!
     expect(result.kernel).toMatchObject({ signal: 'SIGKILL', cause: 'unknown' })
     expect(result.guidance).not.toContain('notebook_restart')
-    expect(result.guidance).toContain('no extra restart is needed for this exit')
+    expect(result.guidance).toContain('The next execution starts a fresh interpreter if needed.')
     expect(result.guidance).toContain('Exit cause: unknown.')
-    expect(result.guidance).toContain('variables')
+    expect(result.guidance).toContain('in-memory state')
     expect(result.guidance).not.toContain('report this error to the user')
     expect(result.guidance).not.toContain('out of memory')
   })
@@ -46,33 +46,27 @@ describe('execution recovery context', () => {
   })
 
   it.each([
-    {
-      kind: 'python',
-      environment: 'analysis',
-      target: '{"language":"python","environment":"analysis"}'
-    },
-    { kind: 'r', environment: 'stats', target: '{"language":"r","environment":"stats"}' },
-    { kind: 'repl', target: '{"kernel":"repl"}' }
-  ])(
-    'offers the exact $kind recovery target only while cleanup remains unresolved',
-    ({ target, ...kernel }) => {
-      const result = executionRecoveryContext({
-        execution: 'not-started',
-        retryAfter: 'cleanup-verified',
-        kernel: {
-          ...kernel,
-          signal: 'SIGKILL',
-          exitCode: null,
-          cause: 'unknown',
-          cleanup: 'unverified'
-        }
-      })!
-      expect(result.guidance).toContain('This command was not started.')
-      expect(result.guidance).toContain(`If still unresolved, notebook_restart with ${target}`)
-      expect(result.guidance).not.toContain('Review its effects')
-      expect(result.guidance).not.toMatch(/once|corrected code|stop Notebook tools|do not.*rerun/i)
-    }
-  )
+    { kind: 'python', environment: 'analysis' },
+    { kind: 'r', environment: 'stats' },
+    { kind: 'repl' }
+  ])('allows $kind to continue after a historical cleanup failure', (kernel) => {
+    const result = executionRecoveryContext({
+      execution: 'not-started',
+      retryAfter: 'cleanup-verified',
+      kernel: {
+        ...kernel,
+        signal: 'SIGKILL',
+        exitCode: null,
+        cause: 'unknown',
+        cleanup: 'unverified'
+      }
+    })!
+    expect(result).toMatchObject({ retryAfter: 'runtime-ready', kernel })
+    expect(result.kernel).not.toHaveProperty('cleanup')
+    expect(result.guidance).toContain('This command was not started.')
+    expect(result.guidance).toContain('The next execution starts a fresh interpreter if needed.')
+    expect(result.guidance).not.toMatch(/notebook_restart|cleanup|Review its effects/)
+  })
 
   it('suggests memory mitigation only when the cause is confirmed', () => {
     const result = executionRecoveryContext({

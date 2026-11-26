@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchLocalRpc } from '../local-rpc-transport'
+import { terminateProcessTree } from '../process-tree'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookRunRepository } from './repository'
@@ -35,6 +36,9 @@ async function harness(
     onExecute?: (request: NotebookExecutionRequest) => Promise<void>
     realExecutor?: boolean
     onSpawn?: () => Promise<void>
+    terminateTree?: NonNullable<
+      ConstructorParameters<typeof NotebookKernelExecutor>[0]
+    >['terminateTree']
     serverOptions?: ConstructorParameters<typeof NotebookLocalRpcServer>[1]
   } = {}
 ): Promise<{
@@ -65,7 +69,10 @@ async function harness(
     executorFactory: (_sessionId, lifecycle) => {
       lifecycles.push(lifecycle)
       if (options.realExecutor) {
-        const executor = new NotebookKernelExecutor(lifecycle)
+        const executor = new NotebookKernelExecutor({
+          ...lifecycle,
+          terminateTree: options.terminateTree
+        })
         const execute = executor.execute.bind(executor)
         vi.spyOn(executor, 'execute').mockImplementation(async (request) => {
           requests.push(request)
@@ -142,6 +149,117 @@ async function harness(
 }
 
 describe('REPL process RPC ownership', () => {
+  it('retries an older monitor row while the replacement REPL keeps its execution and RPC', async () => {
+    const retryEntered = deferred()
+    const finishRetry = deferred()
+    let oldPid: number | undefined
+    let attempts = 0
+    const { authorityStatus, execute, requests, root, service } = await harness({
+      realExecutor: true,
+      terminateTree: async (child) => {
+        oldPid ??= child.pid
+        if (child.pid !== oldPid) return terminateProcessTree(child)
+        if (++attempts === 1) {
+          await terminateProcessTree(child)
+          return { reaped: false }
+        }
+        retryEntered.resolve()
+        await finishRetry.promise
+        return { reaped: true }
+      }
+    })
+    const scope = { projectId: 'default-project', sessionId: 'session-1', workspaceCwd: root }
+    try {
+      await expect(execute()).resolves.toMatchObject({ status: 'completed' })
+      await service.restart({ ...scope, kernel: 'repl' })
+      await expect(execute()).resolves.toMatchObject({ status: 'completed' })
+      const replacement = requests.at(-1)!
+      expect(replacement.kernelEpochId).not.toBe(requests[0].kernelEpochId)
+
+      // Monitoring caches snapshots briefly. Obtain the row once cleanup has settled.
+      let oldId: string | undefined
+      await vi.waitFor(
+        async () => {
+          const { instances } = await service.getProcessMonitor()
+          oldId = instances.find(
+            (instance) => instance.pid === oldPid && instance.status === 'cleanup-failed'
+          )?.id
+          expect(oldId).toBeDefined()
+        },
+        { timeout: 3000 }
+      )
+      const stop = service.terminateMonitoredProcess({ ...scope, id: oldId! })
+      // Always release the monitor's cleanup if an execution assertion fails.
+      try {
+        await retryEntered.promise
+        let status: NotebookControlResult['status'] | undefined
+        const execution = execute().then((result) => (status = result.status))
+        try {
+          await vi.waitFor(() => expect(status).toBe('completed'), { timeout: 3000 })
+          expect(requests.at(-1)?.kernelEpochId).toBe(replacement.kernelEpochId)
+        } finally {
+          finishRetry.resolve()
+          await execution
+        }
+      } finally {
+        finishRetry.resolve()
+        await stop
+      }
+      expect(await authorityStatus(replacement)).toBe(200)
+      await expect(execute()).resolves.toMatchObject({ status: 'completed' })
+      expect(requests.at(-1)?.kernelEpochId).toBe(replacement.kernelEpochId)
+    } finally {
+      finishRetry.resolve()
+    }
+  }, 20_000)
+
+  it.each(['shutdownAll', 'notebook_shutdown'] as const)(
+    'continues with a fresh REPL after %s retains an unreaped owner',
+    async (stop) => {
+      let oldPid: number | undefined
+      let reapingConfirmed = false
+      const { authorityStatus, execute, lifecycles, requests, root, service } = await harness({
+        realExecutor: true,
+        terminateTree: async (child) => {
+          oldPid ??= child.pid
+          const result = await terminateProcessTree(child)
+          return child.pid === oldPid && !reapingConfirmed ? { reaped: false } : result
+        }
+      })
+      const scope = { projectId: 'default-project', sessionId: 'session-1', workspaceCwd: root }
+
+      try {
+        await expect(execute()).resolves.toMatchObject({ status: 'completed' })
+        const oldRequest = requests[0]
+        if (stop === 'shutdownAll') {
+          await expect(service.shutdownAll()).resolves.toEqual({ reaped: false })
+        } else {
+          await expect(service.shutdown(scope)).rejects.toThrow('was not reaped')
+          await expect(service.restart({ ...scope, kernel: 'repl' })).resolves.toBeDefined()
+        }
+        await expect(execute()).resolves.toMatchObject({ status: 'completed' })
+        const replacement = requests.at(-1)!
+        expect(lifecycles).toHaveLength(2)
+        expect(replacement.kernelEpochId).not.toBe(oldRequest.kernelEpochId)
+        expect(await authorityStatus(oldRequest)).not.toBe(200)
+        await lifecycles[0].onTerminated('repl', '')
+        expect(await authorityStatus(replacement)).toBe(200)
+        await expect(execute()).resolves.toMatchObject({ status: 'completed' })
+        expect(requests.at(-1)?.kernelEpochId).toBe(replacement.kernelEpochId)
+        expect((await service.getProcessMonitor()).instances).toContainEqual(
+          expect.objectContaining({ pid: oldPid, status: 'cleanup-failed' })
+        )
+
+        await expect(service.shutdownAll()).resolves.toEqual({ reaped: false })
+        reapingConfirmed = true
+        await expect(service.shutdownAll()).resolves.toEqual({ reaped: true })
+      } finally {
+        reapingConfirmed = true
+      }
+    },
+    20_000
+  )
+
   it.each(['starting', 'running'] as const)(
     'waits for a %s REPL and fences later calls until targeted restart completes',
     async (phase) => {

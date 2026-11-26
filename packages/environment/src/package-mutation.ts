@@ -62,6 +62,7 @@ export type EnvironmentPackageMutationOptions<Target extends EnvironmentMutation
   packageSpawn?: (target: Target, mirror: PackageMirror) => InstallSpawn
   micromambaRunner?: Pick<MicromambaRunner, 'resolve'>
   canSkipInstall: (target: Target) => boolean
+  recheckProcessOwnership?: (target: Target) => InstallResult | undefined
   recheckRepair: (target: Target) => { status: 'refused'; result: InstallResult } | undefined
   recheckAuthorization: (
     target: Target
@@ -197,6 +198,11 @@ class EnvironmentPackageMutationOwner<
           const authorizationRefusal = await this.options.recheckAuthorization(target)
           if (authorizationRefusal) {
             result = authorizationRefusal.result
+            return result
+          }
+          const processRefusal = this.options.recheckProcessOwnership?.(target)
+          if (processRefusal) {
+            result = processRefusal
             return result
           }
           releaseWorkingCache = archiveCacheTransaction

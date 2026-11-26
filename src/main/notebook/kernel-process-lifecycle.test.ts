@@ -1,7 +1,8 @@
 import { processBirthIdentity } from '../process-birth-identity'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -54,6 +55,24 @@ describe('KernelProcessLifecycleOwner', () => {
     reapWindowsOwnedJob.mockReset()
     if (root) await rm(root, { recursive: true, force: true })
     root = undefined
+  })
+
+  it('exempts only active epochs owned by the current service from an environment receipt check', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-environment-'))
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const scope = {
+      laneKey: 'lane',
+      processKey: 'python:default-python',
+      kernelEpochId: 'epoch'
+    }
+    owner.recordSpawned(owner.beginSpawn(scope), { pid: 4242, posixBirthToken: 'fixture' })
+    const active = { activeEpochIds: new Set([scope.kernelEpochId]) }
+    expect(owner.hasReceiptsForEnvironment('default-python', active)).toBe(false)
+    expect(owner.hasReceiptsForEnvironment('default-python')).toBe(true)
+    expect(owner.hasReceiptsForEnvironment('default-r')).toBe(false)
+
+    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root })
+    expect(restarted.hasReceiptsForEnvironment('default-python', active)).toBe(true)
   })
 
   it('does not fence admission on unpublished temporary records left by a failed write', async () => {
@@ -481,16 +500,107 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(() => restarted.beginSpawn(pending!.record)).toThrow('KERNEL_STARTUP_FENCE')
   })
 
-  it('keeps tolerant recovery fail-closed for a receipt whose scope cannot be trusted', async () => {
+  it('reports an unreadable receipt in the background and keeps strict recovery fail-closed', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-invalid-receipt-'))
     const directory = join(root, 'runtime', 'kernel-processes')
     await mkdir(directory, { recursive: true })
     await writeFile(join(directory, 'unparseable.json'), '{"processKey":"r:default-r"}')
-    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const onRecoveryDeferred = vi.fn()
+    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, onRecoveryDeferred })
 
-    await expect(restarted.recover({ allowUnverifiedReceipts: true })).rejects.toThrow(
-      'KERNEL_STARTUP_FENCE'
+    await expect(restarted.recover({ allowUnverifiedReceipts: true })).resolves.toBeUndefined()
+    expect(onRecoveryDeferred).toHaveBeenCalledExactlyOnceWith({ reason: 'invalid-receipt' })
+    await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    expect(await readdir(directory)).toEqual(['unparseable.json'])
+  })
+
+  it('preserves an invalid pending intent outside the active ledger after cancelling it', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-invalid-intent-'))
+    const scope = { laneKey: 'lane-a', processKey: 'repl', kernelEpochId: 'epoch-a' }
+    const first = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const intent = first.beginSpawn(scope)
+    const invalidContents = '{'
+    await writeFile(intent.path, invalidContents)
+    const onRecoveryDeferred = vi.fn()
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'restart-owner',
+      onRecoveryDeferred
+    })
+
+    await restarted.ensureReady()
+
+    expect(restarted.hasReceipts()).toBe(false)
+    await expect(readFile(intent.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(`${intent.path}.cancelled-restart-owner`, 'utf8')).resolves.toBe(
+      invalidContents
     )
+    expect(onRecoveryDeferred).toHaveBeenCalledExactlyOnceWith({ reason: 'invalid-receipt' })
+    restarted.abandonSpawn(restarted.beginSpawn(scope))
+  })
+
+  it('rejects a mismatched epoch hash without accepting its filename as legacy', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-invalid-epoch-'))
+    const first = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const scope = { laneKey: 'lane-a', processKey: 'repl', kernelEpochId: 'epoch-a' }
+    const receipt = first.recordSpawned(first.beginSpawn(scope), {
+      pid: 4242,
+      posixBirthToken: 'fixture-birth'
+    })
+    const epochHash = createHash('sha256').update(scope.kernelEpochId).digest('hex')
+    const wrongHash = createHash('sha256').update('wrong-epoch').digest('hex')
+    const mismatchedPath = receipt.path.replace(`.${epochHash}.active.`, `.${wrongHash}.active.`)
+    await rename(receipt.path, mismatchedPath)
+
+    const onRecoveryDeferred = vi.fn()
+    const probe = vi.fn(async () => 'dead' as const)
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      onRecoveryDeferred,
+      controller: { probe, terminate: vi.fn() }
+    })
+    await restarted.ensureReadyForLane(scope.laneKey)
+    expect(onRecoveryDeferred).toHaveBeenCalledExactlyOnceWith({ reason: 'invalid-receipt' })
+    expect(probe).not.toHaveBeenCalled()
+    expect(restarted.hasReceipts()).toBe(true)
+    const permitted = restarted.beginSpawn(scope)
+    restarted.abandonSpawn(permitted)
+    await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+  })
+
+  it('retries an owned process whose termination is still unconfirmed', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-termination-unconfirmed-'))
+    const scope = { laneKey: 'lane-a', processKey: 'repl', kernelEpochId: 'epoch-a' }
+    const first = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const receipt = first.recordSpawned(first.beginSpawn(scope, 'private-fixture-owner-token'), {
+      pid: 4242,
+      posixBirthToken: 'fixture-birth'
+    })
+    const terminate = vi.fn().mockResolvedValue({ reaped: false })
+    const onRecoveryDeferred = vi.fn()
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      controller: { probe: async () => 'owned', terminate },
+      onRecoveryDeferred
+    })
+
+    await restarted.ensureReadyForLane(scope.laneKey)
+    await restarted.ensureReadyForLane(scope.laneKey)
+    expect(terminate).toHaveBeenCalledTimes(2)
+    expect(restarted.hasReceipts()).toBe(true)
+    expect(onRecoveryDeferred).toHaveBeenCalledExactlyOnceWith({
+      reason: 'termination-unconfirmed',
+      lane: scope.laneKey,
+      processKey: scope.processKey,
+      kernelEpochId: scope.kernelEpochId,
+      receiptId: receipt.receiptId,
+      probe: 'owned',
+      reaped: false
+    })
+
+    terminate.mockResolvedValueOnce({ reaped: true })
+    await restarted.ensureReadyForLane(scope.laneKey)
+    expect(restarted.hasReceipts()).toBe(false)
   })
 
   it('drops a reboot-stale POSIX group receipt without terminating its recycled numeric id', async () => {
@@ -569,6 +679,27 @@ describe('KernelProcessLifecycleOwner', () => {
     await expect(controller.probe(record)).resolves.toBe('unknown')
     await expect(controller.terminate(record)).resolves.toEqual({ reaped: false })
     expect(kill).not.toHaveBeenCalled()
+  })
+
+  it('keeps a legacy Windows receipt until the proven workload and its outer host have exited', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-windows-outer-host-'))
+    const proofPath = join(root, '.open-science-process-tree-terminated-fixture.proof')
+    const proof = { path: proofPath, requestPath: `${proofPath}.request`, token: 'fixture' }
+    await writeFile(
+      proofPath,
+      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
+    )
+    const scope = { laneKey: 'lane-a', processKey: 'repl', kernelEpochId: 'epoch-a' }
+    const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    const intent = first.beginSpawn(scope, undefined, proof)
+    const record = { ...intent.record, pid: process.pid }
+    const controller = defaultController('win32')
+    windowsProcessIsAlive.mockReturnValueOnce(true)
+
+    await expect(controller.probe(record)).resolves.toBe('unknown')
+    await expect(controller.terminate(record)).resolves.toMatchObject({ reaped: false })
+    windowsProcessIsAlive.mockReturnValueOnce(false)
+    await expect(controller.probe(record)).resolves.toBe('dead')
   })
 
   it('admits the original Windows kernel only after observing a later boot on the same host', async () => {
@@ -723,7 +854,7 @@ describe('KernelProcessLifecycleOwner', () => {
       proof
     )
     first.recordSpawned(intent, { pid: 4242, posixBirthToken: 'fixture-birth' })
-    windowsProcessIsAlive.mockReturnValueOnce(false).mockReturnValueOnce(false)
+    windowsProcessIsAlive.mockReturnValueOnce(false)
     const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
     await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
     await writeFile(
@@ -739,6 +870,59 @@ describe('KernelProcessLifecycleOwner', () => {
     await new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' }).ensureReady()
     expect(retryError).toBeUndefined()
     expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+  })
+
+  it('rechecks late Windows proof on the same lane without a ledger directory change', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-scoped-late-proof-'))
+    const scope = { laneKey: 'lane-a', processKey: 'repl', kernelEpochId: 'epoch-a' }
+    const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
+    const proof = { path: proofPath, token: 'proof-token', requestPath: `${proofPath}.request` }
+    const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    const receipt = first.recordSpawned(first.beginSpawn(scope, undefined, proof), { pid: 4242 })
+    const unresolvedProof = JSON.stringify({
+      version: 1,
+      token: proof.token,
+      processState: 'termination-unknown'
+    })
+    await writeFile(proof.path, unresolvedProof)
+    const ledger = join(root, 'runtime', 'kernel-processes')
+    const ledgerMtime = (await stat(ledger)).mtimeMs
+    const onRecoveryDeferred = vi.fn()
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      platform: 'win32',
+      readWindowsBootObservation: async () => undefined,
+      onRecoveryDeferred
+    })
+
+    windowsProcessIsAlive.mockReturnValueOnce(false)
+    vi.useFakeTimers()
+    try {
+      const recovery = restarted.ensureReadyForLane(scope.laneKey)
+      await vi.runAllTimersAsync()
+      await expect(recovery).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(onRecoveryDeferred).toHaveBeenCalledExactlyOnceWith({
+      reason: 'unverified-process',
+      lane: scope.laneKey,
+      processKey: scope.processKey,
+      kernelEpochId: scope.kernelEpochId,
+      receiptId: receipt.receiptId,
+      probe: 'unknown'
+    })
+    expect(restarted.hasReceipts()).toBe(true)
+    await expect(readFile(proof.path, 'utf8')).resolves.toBe(unresolvedProof)
+
+    await writeFile(
+      proof.path,
+      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
+    )
+    expect((await stat(ledger)).mtimeMs).toBe(ledgerMtime)
+    await restarted.ensureReadyForLane(scope.laneKey)
+    expect(restarted.hasReceipts()).toBe(false)
+    await expect(readFile(proof.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('keeps a Windows reused-PID receipt fenced until its tree proof is terminal', async () => {

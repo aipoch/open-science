@@ -346,6 +346,9 @@ it.skipIf(process.platform === 'win32')(
       expect((await service.getProjectResources(scope)).groups[0].resources).toEqual([
         expect.objectContaining({ id: group.resources[0].id, phase: 'cleanup-pending' })
       ])
+      expect((await service.state(scope)).environments).toContainEqual(
+        expect.objectContaining({ processKey: 'repl', status: 'terminated' })
+      )
       await expect(service.waitForSessionTeardown(scope)).rejects.toThrow(/cleanup.*incomplete/i)
       const freshIntent = service.createExecutionIntent(scope)
       await service.executeShell(
@@ -355,6 +358,9 @@ it.skipIf(process.platform === 'win32')(
       await service.retryResourceRelease(request, () => undefined)
       await service.waitForSessionTeardown(scope)
       expect(service.getResourceRelease(request).status).toBe('released')
+      expect((await service.state(scope)).environments).toContainEqual(
+        expect.objectContaining({ processKey: 'repl', status: 'terminated' })
+      )
       await expect(
         service.executeShell(
           withNotebookExecutionIntent(
