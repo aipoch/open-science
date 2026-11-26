@@ -1159,6 +1159,16 @@ const ProviderStep = ({
               return (
                 <article
                   key={card.id}
+                  tabIndex={-1}
+                  onPointerUp={(event) => {
+                    // A tap on a hybrid device reveals just this card; controls keep their own focus.
+                    if (
+                      event.pointerType === 'touch' &&
+                      !(event.target as Element).closest('button, input')
+                    ) {
+                      event.currentTarget.focus({ preventScroll: true })
+                    }
+                  }}
                   className={clsx(
                     'onboarding-provider-card group/provider onboarding-card-palette relative isolate flex min-h-104 flex-none basis-70 snap-center flex-col overflow-hidden rounded-2xl border',
                     'border-[color-mix(in_oklab,var(--provider-accent)_24%,var(--border))] bg-bg-10 bg-onboarding-card bg-size-[180%_180%] shadow-(--shadow-card)',
@@ -1206,7 +1216,7 @@ const ProviderStep = ({
                         card.id === 'more' && 'flex items-center justify-center',
                         !(isKeyMode || isAuthorizing || installError?.cardId === card.id) &&
                           'pointer-events-none opacity-0 transform-[translateY(0.65rem)] group-[:is(:hover,:focus-within)]/provider:pointer-events-auto group-[:is(:hover,:focus-within)]/provider:opacity-100 group-[:is(:hover,:focus-within)]/provider:transform-none',
-                        '[@media(hover:none),(any-pointer:coarse)]:opacity-100 [@media(hover:none),(any-pointer:coarse)]:pointer-events-auto [@media(hover:none),(any-pointer:coarse)]:transform-none'
+                        '[@media(any-hover:none)]:opacity-100 [@media(any-hover:none)]:pointer-events-auto [@media(any-hover:none)]:transform-none'
                       )}
                     >
                       {card.id === 'more' ? (

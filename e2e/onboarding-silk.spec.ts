@@ -1,5 +1,5 @@
 import { expect } from '@playwright/test'
-import type { Locator } from 'playwright'
+import type { CDPSession, Locator } from 'playwright'
 import sharp from 'sharp'
 import { test } from './fixtures/electron-app'
 import { startWebModel } from './fixtures/web-model'
@@ -388,6 +388,60 @@ test('shows the monochrome brand silhouettes in both card themes', async ({ app 
   }
 })
 
+const tap = async (cdp: CDPSession, action: Locator): Promise<void> => {
+  await action.scrollIntoViewIfNeeded()
+  const bounds = (await action.boundingBox())!
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }]
+  })
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+}
+
+test('reveals individual actions on a hybrid mouse and touchscreen', async ({ app }) => {
+  const page = await app.openAdditionalRenderer({ mouseAndTouch: true })
+  expect(
+    await page.evaluate(
+      () =>
+        matchMedia('(any-hover: hover) and (any-pointer: coarse) and (any-pointer: fine)').matches
+    )
+  ).toBe(true)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  const connect = page.locator('[data-onboarding-entry="connect"]')
+  const card = connect.locator('.onboarding-provider-card-anthropic')
+  const tray = card.locator('.onboarding-provider-card-actions')
+  const control = connect.locator(
+    '.onboarding-provider-card-openai .onboarding-provider-card-actions'
+  )
+  await connect.locator('header').hover()
+  await expect(tray).toHaveCSS('opacity', '0')
+  await expect(control).toHaveCSS('opacity', '0')
+  await card.hover()
+  await expect(tray).toHaveCSS('opacity', '1')
+  await expect(control).toHaveCSS('opacity', '0')
+  await connect.locator('header').hover()
+  await expect(tray).toHaveCSS('opacity', '0')
+  const useKey = card.getByRole('button', { name: 'Have an API key?' })
+  await useKey.focus()
+  await expect(tray).toHaveCSS('opacity', '1')
+  await connect.getByRole('button', { name: 'Advanced options' }).focus()
+  await expect(tray).toHaveCSS('opacity', '0')
+  const cdp = await page.context().newCDPSession(page)
+  try {
+    await tap(cdp, card.getByRole('heading'))
+    await expect(tray).toHaveCSS('opacity', '1')
+    await expect(control).toHaveCSS('opacity', '0')
+    await tap(cdp, useKey)
+  } finally {
+    await cdp.detach()
+  }
+  await connect.getByRole('button', { name: 'Advanced options' }).focus()
+  await expect(tray).toHaveCSS('opacity', '1')
+  await expect(card.getByLabel('API key', { exact: true })).toBeVisible()
+  await expect(control).toHaveCSS('opacity', '0')
+})
+
 test('exposes quick-connect actions on the first tap on touch-only devices', async ({ app }) => {
   const { page } = app
   const cdp = await page.context().newCDPSession(page)
@@ -402,18 +456,9 @@ test('exposes quick-connect actions on the first tap on touch-only devices', asy
     const tray = card.locator('.onboarding-provider-card-actions')
     await expect(tray).toHaveCSS('opacity', '1')
     await expect(tray).toHaveCSS('pointer-events', 'auto')
-    const tap = async (action: Locator): Promise<void> => {
-      await action.scrollIntoViewIfNeeded()
-      const bounds = (await action.boundingBox())!
-      await cdp.send('Input.dispatchTouchEvent', {
-        type: 'touchStart',
-        touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }]
-      })
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-    }
-    await tap(card.getByRole('button', { name: 'Have an API key?' }))
+    await tap(cdp, card.getByRole('button', { name: 'Have an API key?' }))
     await expect(card.getByLabel('API key', { exact: true })).toBeVisible()
-    await tap(page.getByRole('button', { name: 'Advanced mode', exact: true }))
+    await tap(cdp, page.getByRole('button', { name: 'Advanced mode', exact: true }))
     await expect(page.getByRole('searchbox', { name: 'Search providers' })).toBeVisible()
   } finally {
     await cdp.detach()

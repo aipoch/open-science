@@ -395,7 +395,7 @@ type ElectronApp = {
   ) => Promise<Page>
 
   readonly page: Page
-  openAdditionalRenderer: () => Promise<Page>
+  openAdditionalRenderer: (options?: { mouseAndTouch?: boolean }) => Promise<Page>
   readNotebookFixtureRuns: (projectId: string, sessionId: string) => Promise<NotebookRunRecord[]>
   authenticatedWebUrl: () => Promise<string>
   allowRendererConsoleError: (text: string) => void
@@ -1255,9 +1255,9 @@ class ElectronAppHarness implements ElectronApp {
     })
   }
 
-  async openAdditionalRenderer(): Promise<Page> {
+  async openAdditionalRenderer({ mouseAndTouch = false } = {}): Promise<Page> {
     const next = this.runningApplication.waitForEvent('window')
-    await this.runningApplication.evaluate(({ app }) => {
+    await this.runningApplication.evaluate(({ app }, mixedInput) => {
       const { createRequire } = process.getBuiltinModule('node:module')
       const { join, sep } = process.getBuiltinModule('node:path')
       const { realpathSync } = process.getBuiltinModule('node:fs')
@@ -1270,11 +1270,22 @@ class ElectronAppHarness implements ElectronApp {
           typeof entry.exports?.createMainWindow === 'function'
       )
       if (!module) throw new Error('Built main-window factory is not loaded.')
+      if (mixedInput) {
+        // Blink bit masks: the primary pointer is a hovering mouse; a coarse pointer is also available.
+        app.commandLine.appendSwitch(
+          'blink-settings',
+          'primaryPointerType=4,availablePointerTypes=6,primaryHoverType=2,availableHoverTypes=2'
+        )
+      }
       module.exports.createMainWindow()
-    })
+    }, mouseAndTouch)
     const page = await next
     await page.waitForFunction(() => Boolean(window.api?.databaseStartup))
     await waitForRendererReady(page)
+    if (mouseAndTouch)
+      await this.runningApplication.evaluate(({ app }) =>
+        app.commandLine.removeSwitch('blink-settings')
+      )
     return page
   }
 
