@@ -124,6 +124,9 @@ try {
       '--approval-profile',
       'auto',
       '--wait',
+      // Shared runners can exceed the 10s default while the fake agent drives MCP and Notebook.
+      '--timeout-ms',
+      '30000',
       '--json'
     )
   )
