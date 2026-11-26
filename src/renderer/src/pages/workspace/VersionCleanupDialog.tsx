@@ -233,6 +233,7 @@ export function VersionCleanupDialog({
               {t('Cancel')}
             </Button>
             <Button
+              variant={confirm ? 'destructive' : 'default'}
               disabled={busy || loading || selected.size === 0}
               onClick={() => {
                 if (confirm) void remove()
