@@ -336,7 +336,8 @@ it.runIf(executablePath)(
         ]
       })
       const modelRequestsBeforeCheck = modelRequests.length
-      const check = () => prompt(session.sessionId, '/' + OPENCODE_NOTEBOOK_CHECK_COMMAND)
+      const check = (): Promise<acp.PromptResponse> =>
+        prompt(session.sessionId, '/' + OPENCODE_NOTEBOOK_CHECK_COMMAND)
       await expect(check()).rejects.toThrow()
       discoveryUnavailable = false
       await expect(check()).resolves.toMatchObject({ stopReason: 'end_turn' })
