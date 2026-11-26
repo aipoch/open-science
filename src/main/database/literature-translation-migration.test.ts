@@ -43,7 +43,8 @@ it('upgrades the prior schema with empty unified tables and is idempotent', asyn
       '0057_project_optimization_prompt',
       '0058_session_schedules',
       '0059_session_history',
-      '0060_image_models'
+      '0060_image_models',
+      '0061_pdf_figures'
     ]
   })
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toEqual({

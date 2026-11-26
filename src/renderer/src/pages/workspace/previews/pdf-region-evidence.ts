@@ -53,7 +53,8 @@ const pdfProseRegionFromRect = (
 
 const cropPdfCanvasRegion = (
   source: HTMLCanvasElement,
-  rect: PdfNormalizedRect
+  rect: PdfNormalizedRect,
+  maxBytes = Number.POSITIVE_INFINITY
 ): AcpMessageImage | undefined => {
   if (source.width <= 0 || source.height <= 0) return undefined
   const sourceX = Math.round(rect.x * source.width)
@@ -86,7 +87,7 @@ const cropPdfCanvasRegion = (
       mimeType: 'image/png',
       data: dataUrl.slice(separator + 1)
     })
-    if (image) return image
+    if (image && image.byteLength <= maxBytes) return image
   }
   return undefined
 }

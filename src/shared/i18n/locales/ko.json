@@ -8947,6 +8947,20 @@
     "No providers match your search.": "검색과 일치하는 모델 제공업체가 없습니다.",
     "{{count}} regions_other": "리전 {{count}}개",
     "Sign in with your CodeBuddy account": "CodeBuddy 계정으로 로그인",
-    "Already added": "이미 추가됨"
+    "Already added": "이미 추가됨",
+    "Saved figures": "저장한 그림",
+    "All tags": "모든 태그",
+    "Saved figures could not be loaded.": "저장한 그림을 불러오지 못했습니다.",
+    "Select a region in a library PDF to save a figure or table here.": "라이브러리 PDF에서 영역을 선택해 그림이나 표를 여기에 저장하세요.",
+    "Open {{figure}} in {{source}}, {{page}}": "{{source}}의 {{page}}에서 {{figure}} 열기",
+    "Saved figure": "저장한 그림",
+    "Save to figure collection": "그림 모음에 저장",
+    "Selected PDF area": "선택한 PDF 영역",
+    "The selected area could not be captured.": "선택한 영역을 캡처하지 못했습니다.",
+    "Figure number": "그림 번호",
+    "Caption": "캡션",
+    "Figure could not be saved. Try again.": "그림을 저장하지 못했습니다. 다시 시도하세요.",
+    "Save area to figure collection": "영역을 그림 모음에 저장",
+    "Drag to save an area to the figure collection · Esc to cancel": "드래그하여 영역을 그림 모음에 저장 · Esc로 취소"
   }
 }

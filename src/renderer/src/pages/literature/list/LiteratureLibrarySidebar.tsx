@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+import { useLiteratureChanges } from '../useLiteratureChanges'
 import { useLiteratureHost } from '../renderer-host'
 import { SmartCollectionIcon } from '@/components/app-icons/custom-glyphs'
 import {
@@ -9,6 +11,7 @@ import {
   FolderPlus,
   GalleryVerticalEnd,
   Inbox,
+  Images,
   LibraryBig,
   PanelLeft,
   Plus,
@@ -32,16 +35,41 @@ import {
   LiteratureSidebarState
 } from './LiteratureSidebarGroups'
 
+function SavedFigureCount(): React.JSX.Element | null {
+  const { api } = useLiteratureHost()
+  const [revision, setRevision] = useState(0)
+  const [count, setCount] = useState<number>()
+  useLiteratureChanges(() => setRevision((value) => value + 1))
+  useEffect(() => api.pdfAnnotations?.onChanged?.(() => setRevision((value) => value + 1)), [api])
+  useEffect(() => {
+    let active = true
+    void api.pdfAnnotations?.listFigures?.({ countOnly: true }).then(
+      ({ total }) => {
+        if (active) setCount(total)
+      },
+      () => {
+        if (active) setCount(undefined)
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [api, revision])
+  return count === undefined ? null : (
+    <span className="ml-auto text-xs tabular-nums text-muted-foreground">{count}</span>
+  )
+}
+
 export type LibrarySection = 'inbox' | 'library' | 'trash'
 
 type SidebarNavigation = {
-  section: LibrarySection
+  section: LibrarySection | 'figures'
   collectionId?: string
   projectId?: string
   citationStylesOpen: boolean
   journalsOpen: boolean
   duplicatesOpen: boolean
-  selectSection: (section: Exclude<LibrarySection, 'library'>) => void
+  selectSection: (section: 'inbox' | 'trash' | 'figures') => void
   selectLibrary: (collectionId?: string) => void
   selectProject: (projectId: string) => void
   openDuplicates: () => void
@@ -242,6 +270,33 @@ export function LiteratureLibrarySidebar({
                       revision={libraryCountRevision}
                       hidden={sidebarCollapsed}
                     />
+                  </button>
+                </LiteratureSidebarHint>
+                <LiteratureSidebarHint label={t('Saved figures')} collapsed={sidebarCollapsed}>
+                  <button
+                    type="button"
+                    className={cn(
+                      navButtonClassName,
+                      section === 'figures' &&
+                        !citationStylesOpen &&
+                        !journalsOpen &&
+                        !duplicatesOpen &&
+                        'bg-bg-300 font-medium'
+                    )}
+                    aria-current={
+                      section === 'figures' &&
+                      !citationStylesOpen &&
+                      !journalsOpen &&
+                      !duplicatesOpen
+                        ? 'page'
+                        : undefined
+                    }
+                    aria-label={t('Saved figures')}
+                    onClick={() => selectSection('figures')}
+                  >
+                    <Images className="size-4" aria-hidden="true" />
+                    {!sidebarCollapsed && <span>{t('Saved figures')}</span>}
+                    {!sidebarCollapsed && <SavedFigureCount />}
                   </button>
                 </LiteratureSidebarHint>
                 <LiteratureSidebarHint label={t('Duplicates')} collapsed={sidebarCollapsed}>

@@ -444,7 +444,7 @@ const PdfAnnotationsProvider = ({
   )
 
   const create = useCallback<PdfAnnotationPort['create']>(
-    (id, target, kind, color, tagIds, note) =>
+    (id, target, kind, color, tagIds, note, figure) =>
       enqueue(async () => {
         if (runtime.current.readonlyIds.has(id)) throw unavailableError()
         const before = runtime.current.items.get(id)
@@ -455,6 +455,7 @@ const PdfAnnotationsProvider = ({
           kind,
           color,
           tagIds: [...tagIds],
+          ...(figure && { figure }),
           note
         })
         record(before, created)
@@ -496,13 +497,19 @@ const PdfAnnotationsProvider = ({
         if (runtime.current.readonlyIds.has(id)) throw unavailableError()
         const before = runtime.current.items.get(id)
         if (!before) throw new Error('PDF annotation not found. Reload annotations and try again.')
+        const retained =
+          before.isFigure && !before.figure
+            ? (await window.api.pdfAnnotations.list({ ...scope, id, limit: 1 })).items[0]
+            : before
+        if (!retained || (before.isFigure && !retained.figure))
+          throw new Error('PDF annotation changed. Reload annotations and try again.')
         const result = await window.api.pdfAnnotations.delete({
           ...scope,
           id,
           expectedUpdatedAt: before.updatedAt
         })
         if (result.deleted) {
-          record(before)
+          record(retained)
           commit(id)
         }
         return result.deleted
@@ -543,16 +550,25 @@ const PdfAnnotationsProvider = ({
           result = await window.api.pdfAnnotations.create({
             id,
             ...scope,
-            target: to.target,
+            ...(to.figureSource
+              ? {
+                  literatureVersionId: to.figureSource.versionId,
+                  projectId: undefined,
+                  sessionId: undefined
+                }
+              : {}),
+            target: to.figureSource ? { ...to.target, source: to.figureSource } : to.target,
             kind: to.kind,
             color: to.color,
             origin: to.origin,
             externalSubtype: to.externalSubtype,
             tagIds,
             note: to.note,
+            ...(to.figure && { figure: to.figure }),
             createdAt: to.createdAt,
-            createdInSessionId: to.sessionId ?? null
+            createdInSessionId: to.figureSource ? null : (to.sessionId ?? null)
           })
+          if (to.figureSource) result = { ...to, updatedAt: result.updatedAt }
         } else {
           result = await window.api.pdfAnnotations.update({
             ...scope,

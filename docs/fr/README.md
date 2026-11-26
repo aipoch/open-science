@@ -167,6 +167,10 @@ L’ancien onglet Modèle devient **Capacités locales** et regroupe l’extract
 | Enrichir un processus             | Activez des connecteurs de données scientifiques, choisissez des compétences intégrées ou installez des compétences et des spécialistes depuis les catalogues.                |
 | Choisir un modèle                 | Connectez un fournisseur compatible, une passerelle personnalisée ou un abonnement Claude ou Codex pris en charge. Les protocoles disponibles dépendent du moteur de l’agent. |
 
+### Figures enregistrées
+
+Sélectionnez une figure ou un tableau dans un PDF de la bibliothèque pour en enregistrer un extrait. Dans **Figures enregistrées**, parcourez les extraits de plusieurs articles, filtrez-les par étiquette ou revenez à la zone sélectionnée.
+
 <a id="performances-aux-benchmarks"></a>
 
 ## Résultats des benchmarks

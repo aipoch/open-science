@@ -6997,6 +6997,154 @@ describe('PdfPreviewContent', () => {
     expect(onAddAnnotation).not.toHaveBeenCalled()
   })
 
+  it.each([1, 2])(
+    'captures and reveals a literature figure in a %i-page PDF',
+    async (pageCount) => {
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: pageCount,
+          getPage: readerGetPage,
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+      const drawImage = vi.fn()
+      vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
+        drawImage
+      } as unknown as CanvasRenderingContext2D)
+      vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(
+        'data:image/png;base64,AQID'
+      )
+      const source = {
+        kind: 'literature-attachment-version' as const,
+        sourceFileId: 'attachment-1',
+        versionId: 'literature-version-1',
+        name: 'paper.pdf',
+        path: 'literature-attachment-version:literature-version-1',
+        checksum: 'a'.repeat(64)
+      }
+      const create = vi.fn(async (input) => ({
+        ...input,
+        version: 1,
+        origin: 'user',
+        createdAt: '2026-09-19T00:00:00.000Z',
+        updatedAt: '2026-09-19T00:00:00.000Z'
+      }))
+      window.api = {
+        ...window.api,
+        pdfAnnotations: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }), create }
+      } as unknown as Window['api']
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <PdfAnnotationsProvider literatureVersionId={source.versionId}>
+              <PdfPreviewContent
+                path={source.path}
+                name={source.name}
+                source="literature"
+                pdfBookmarkSource={source}
+              />
+            </PdfAnnotationsProvider>
+          </TooltipProvider>
+        )
+        await flush()
+      })
+      await act(async () =>
+        fireEvent.keyDown(container.querySelector('[aria-label="Area selection actions"]')!, {
+          key: 'Enter'
+        })
+      )
+      await act(async () =>
+        screen.getByRole('menuitem', { name: 'Save area to figure collection' }).click()
+      )
+      await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+      const overlay = container.querySelector<HTMLElement>('[data-pdf-region-selection]')!
+      expect(overlay).not.toBeNull()
+      overlay.setPointerCapture = vi.fn()
+      overlay.hasPointerCapture = vi.fn(() => true)
+      overlay.releasePointerCapture = vi.fn()
+      overlay.getBoundingClientRect = () => new DOMRect(0, 0, 400, 560)
+      await act(async () =>
+        dispatchPointer(overlay, 'pointerdown', { clientX: 40, clientY: 56, button: 0 })
+      )
+      await act(async () =>
+        dispatchPointer(overlay, 'pointerup', { clientX: 200, clientY: 280, button: 0 })
+      )
+      expect(screen.getByRole('img', { name: 'Selected PDF area' }).getAttribute('src')).toBe(
+        'data:image/png;base64,AQID'
+      )
+      expect(drawImage).toHaveBeenCalled()
+      expect(create).not.toHaveBeenCalled()
+      await act(async () => {
+        fireEvent.change(screen.getByLabelText('Figure number'), { target: { value: 'Fig. 1' } })
+        fireEvent.change(screen.getByLabelText('Caption'), {
+          target: { value: 'Measured response' }
+        })
+        fireEvent.change(screen.getByLabelText('Note (optional)'), {
+          target: { value: 'Compare with paper B' }
+        })
+      })
+      await act(async () => screen.getByRole('button', { name: 'Save' }).click())
+      expect(create).toHaveBeenCalledOnce()
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          literatureVersionId: source.versionId,
+          kind: 'area',
+          note: 'Compare with paper B',
+          figure: {
+            image: { mimeType: 'image/png', data: 'AQID' },
+            figureNumber: 'Fig. 1',
+            caption: 'Measured response'
+          },
+          target: {
+            source,
+            selector: {
+              kind: 'region',
+              pageNumber: 1,
+              pageRotation: 0,
+              coordinateVersion: 1,
+              rect: { x: 0.1, y: 0.1, width: 0.4, height: 0.4 }
+            }
+          }
+        })
+      )
+      await waitFor(() => expect(container.querySelector('[data-pdf-region-selection]')).toBeNull())
+      expect(document.querySelector('[data-pdf-figure-collection-editor]')).toBeNull()
+      expect(container.querySelector('[aria-label="Select"]')?.getAttribute('aria-pressed')).toBe(
+        'true'
+      )
+      const annotation = await create.mock.results[0].value
+      // Reopen the PDF before revealing so this assertion proves the persisted selector,
+      // rather than an overlay left in the previous renderer instance.
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <PdfAnnotationsProvider key="reopen-figure" literatureVersionId={source.versionId}>
+              <PdfPreviewContent
+                key="reopen-figure-content"
+                path={source.path}
+                name={source.name}
+                source="literature"
+                pdfBookmarkSource={source}
+              />
+            </PdfAnnotationsProvider>
+          </TooltipProvider>
+        )
+        await flush()
+      })
+      expect(container.querySelector(`[data-pdf-bookmark-highlight="${annotation.id}"]`)).toBeNull()
+      let outcome: string | undefined
+      await act(async () => {
+        outcome = await requestPdfAnnotationReveal(annotation, { activatePreview: false })
+      })
+      expect(outcome).toBe('revealed')
+      expect(
+        container.querySelector(`[data-pdf-bookmark-highlight="${annotation.id}"]`)
+      ).not.toBeNull()
+    }
+  )
+
   it('keeps area-to-Agent immediate and routes area annotations independently, then resets the mode', async () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({

@@ -51,6 +51,10 @@ const importReceiptId = (scope: PdfAnnotationScope, source: PdfAnnotationSource)
 import { z } from 'zod'
 import {
   createPdfAnnotationRequestSchema,
+  listPdfFiguresRequestSchema,
+  pdfFigureSchema,
+  PDF_FIGURE_LIMITS,
+  type ListPdfFiguresRequest,
   pdfAnnotationSchema,
   type CreatePdfAnnotationRequest,
   type DeletePdfAnnotationRequest,
@@ -70,6 +74,7 @@ type Client = Pick<
   | 'pdfAnnotationDocument'
   | 'pdfAnnotationSourceBinding'
   | 'pdfAnnotationAlias'
+  | 'pdfFigure'
   | 'pdfAnnotation'
   | 'pdfAnnotationImport'
   | 'tagAssignment'
@@ -87,6 +92,7 @@ type Transaction = Pick<
   | 'pdfAnnotationDocument'
   | 'pdfAnnotationSourceBinding'
   | 'pdfAnnotationAlias'
+  | 'pdfFigure'
   | 'pdfAnnotation'
   | 'pdfAnnotationImport'
   | 'tagAssignment'
@@ -130,6 +136,8 @@ const annotationFromRow = (row: PdfAnnotationRow, tagIds: string[]): PdfAnnotati
 const recover = (existing: PdfAnnotation, request: CreatePdfAnnotationRequest): PdfAnnotation => {
   const content = {
     ...request,
+    ...(existing.isFigure ? { isFigure: true } : {}),
+    ...(request.figure ? { isFigure: true } : {}),
     createdInSessionId: undefined,
     sessionId:
       request.createdInSessionId === undefined
@@ -153,6 +161,7 @@ const readAnnotations = async (
   client: Pick<
     Transaction,
     | 'tagAssignment'
+    | 'pdfFigure'
     | 'pdfAnnotationSourceBinding'
     | 'project'
     | 'projectDeletionIntent'
@@ -162,6 +171,11 @@ const readAnnotations = async (
   preferredProjectId?: string
 ): Promise<PdfAnnotation[]> => {
   if (!rows.length) return []
+  const figures = await client.pdfFigure.findMany({
+    where: { annotationId: { in: rows.map(({ id }) => id) } },
+    select: { annotationId: true }
+  })
+  const figureIds = new Set(figures.map(({ annotationId }) => annotationId))
   const assignments = await client.tagAssignment.findMany({
     where: { resourceType: 'pdf.annotation', resourceId: { in: rows.map(({ id }) => id) } },
     orderBy: { tagId: 'asc' }
@@ -216,7 +230,14 @@ const readAnnotations = async (
         (source) => source.projectId === row.projectId && source.versionId === row.versionId
       ) ??
       candidates[0]
-    return source ? [annotationFromRow(projectAnnotation(row, source), byId.get(row.id) ?? [])] : []
+    return source
+      ? [
+          {
+            ...annotationFromRow(projectAnnotation(row, source), byId.get(row.id) ?? []),
+            ...(figureIds.has(row.id) ? { isFigure: true as const } : {})
+          }
+        ]
+      : []
   })
 }
 const replaceTags = async (
@@ -499,6 +520,114 @@ class PdfAnnotationRepository {
     })
   }
 
+  async listFigures(input: ListPdfFiguresRequest): Promise<PdfAnnotationListResult> {
+    const request = listPdfFiguresRequestSchema.parse(input)
+    const client = await this.getClient()
+    return client.$transaction(async (tx) => {
+      // Select the page in SQLite. Neither the catalog nor all tag assignments are loaded into JS.
+      // Pin each saved image to its original attachment even when byte-identical PDFs share notes.
+      const conditions: Prisma.Sql[] = [
+        Prisma.sql`i."deletedAt" IS NULL AND i."mergedIntoItemId" IS NULL`
+      ]
+      for (const tagId of request.tagIds ?? []) {
+        conditions.push(
+          Prisma.sql`EXISTS (SELECT 1 FROM "TagAssignment" t WHERE t."resourceType" = 'pdf.annotation' AND t."resourceId" = a.id AND t."tagId" = ${tagId})`
+        )
+      }
+      if (request.query)
+        conditions.push(Prisma.sql`(
+        instr(lower(f.caption), lower(${request.query})) > 0 OR
+        instr(lower(f."figureNumber"), lower(${request.query})) > 0 OR
+        instr(lower(a.note), lower(${request.query})) > 0 OR
+        instr(lower(v.filename), lower(${request.query})) > 0 OR
+        instr(lower(i.title), lower(${request.query})) > 0
+      )`)
+      const from = Prisma.sql`FROM "PdfFigure" f JOIN "PdfAnnotation" a ON a.id = f."annotationId"
+        JOIN "LiteratureAttachmentVersion" v ON v.id = f."literatureVersionId"
+        JOIN "LiteratureAttachment" attachment ON attachment.id = v."attachmentId"
+        JOIN "LiteratureItem" i ON i.id = attachment."itemId"`
+      const where = Prisma.join(conditions, ' AND ')
+      const [count] = await tx.$queryRaw<Array<{ total: bigint }>>(
+        Prisma.sql`SELECT count(*) AS total ${from} WHERE ${where}`
+      )
+      const total = Number(count.total)
+      if (request.countOnly) return { items: [], total }
+      const after = request.cursor
+        ? Prisma.sql`AND (a."createdAt" > ${new Date(request.cursor.createdAt)} OR
+        (a."createdAt" = ${new Date(request.cursor.createdAt)} AND a.id > ${request.cursor.id}))`
+        : Prisma.empty
+      const ids = await tx.$queryRaw<
+        Array<{ id: string; imageLength: bigint }>
+      >(Prisma.sql`SELECT a.id, length(f."imageData") AS "imageLength" ${from}
+        WHERE ${where} ${after} ORDER BY a."createdAt", a.id LIMIT ${(request.limit ?? 12) + 1}`)
+      // Fetch image bodies only for the bounded response. Reserve room for notes, captions,
+      // tags and source metadata before loading raster data into memory.
+      const pageIds: string[] = []
+      let estimatedBytes = 0
+      for (const candidate of ids.slice(0, request.limit ?? 12)) {
+        const bytes = Number(candidate.imageLength) + 512 * 1024
+        if (estimatedBytes + bytes > PDF_FIGURE_LIMITS.responseBytes) break
+        pageIds.push(candidate.id)
+        estimatedBytes += bytes
+      }
+      const found = await tx.pdfAnnotation.findMany({
+        where: { id: { in: pageIds } },
+        include: {
+          figure: {
+            include: { literatureVersion: { include: { attachment: { include: { item: true } } } } }
+          }
+        }
+      })
+      const rowMap = new Map(found.map((row) => [row.id, row]))
+      const rows = pageIds.map((id) => rowMap.get(id)!)
+      const sources = await tx.pdfAnnotationSourceBinding.findMany({
+        where: {
+          sourceKind: 'literature-attachment-version',
+          projectId: null,
+          versionId: { in: rows.map((row) => row.figure!.literatureVersionId) }
+        }
+      })
+      const sourcesByVersion = new Map(sources.map((source) => [source.versionId, source]))
+      const annotations = await readAnnotations(
+        tx,
+        rows.map((row) =>
+          projectAnnotation(row, sourcesByVersion.get(row.figure!.literatureVersionId)!)
+        )
+      )
+      const byId = new Map(annotations.map((annotation) => [annotation.id, annotation]))
+      const items: PdfAnnotation[] = []
+      let bytes = 0
+      for (const row of rows.slice(0, request.limit ?? 12)) {
+        const annotation = byId.get(row.id)
+        if (!annotation || !row.figure) continue
+        const source = sourcesByVersion.get(row.figure.literatureVersionId)!
+        const item: PdfAnnotation = {
+          ...annotation,
+          literatureVersionId: source.versionId,
+          projectId: undefined,
+          sessionId: undefined,
+          target: { ...annotation.target, source: bindingSource(source) },
+          sourceTitle: row.figure.literatureVersion.attachment.item.title,
+          figure: pdfFigureSchema.parse({
+            image: { mimeType: 'image/png', data: row.figure.imageData },
+            figureNumber: row.figure.figureNumber,
+            caption: row.figure.caption
+          })
+        }
+        const itemBytes = Buffer.byteLength(JSON.stringify(item))
+        if (bytes + itemBytes > PDF_FIGURE_LIMITS.responseBytes) break
+        items.push(item)
+        bytes += itemBytes
+      }
+      const last = items.length < ids.length ? items.at(-1) : undefined
+      return {
+        items,
+        total,
+        ...(last ? { nextCursor: { createdAt: last.createdAt, id: last.id } } : {})
+      }
+    })
+  }
+
   async list(request: ListPdfAnnotationsRequest): Promise<PdfAnnotationListResult> {
     const client = await this.getClient()
     const limit = request.limit ?? 50
@@ -563,10 +692,36 @@ class PdfAnnotationRepository {
           )
         )
       )
-      const page = await readAnnotations(
+      let page = await readAnnotations(
         transaction,
         pageRows.map((row) => projectAnnotation(row, scopedSources.get(row.documentId)!))
       )
+      if (request.id && page[0]?.isFigure) {
+        const figure = await transaction.pdfFigure.findUnique({
+          where: { annotationId: page[0].id }
+        })
+        const originalSource = figure
+          ? await transaction.pdfAnnotationSourceBinding.findFirst({
+              where: {
+                sourceKind: 'literature-attachment-version',
+                projectId: null,
+                versionId: figure.literatureVersionId
+              }
+            })
+          : null
+        if (figure)
+          page = [
+            {
+              ...page[0],
+              ...(originalSource ? { figureSource: bindingSource(originalSource) } : {}),
+              figure: pdfFigureSchema.parse({
+                image: { mimeType: 'image/png', data: figure.imageData },
+                figureNumber: figure.figureNumber,
+                caption: figure.caption
+              })
+            }
+          ]
+      }
       const last = rows.length > limit ? page.at(-1) : undefined
       const receipt =
         !request.cursor &&
@@ -597,14 +752,22 @@ class PdfAnnotationRepository {
         throw new Error('PDF annotation was reconciled. Reload annotations and try again.')
       const existing = await transaction.pdfAnnotation.findUnique({ where: { id: request.id } })
       if (existing) await scopedRow(transaction, existing, request)
-      return existing
-        ? recover(
-            (
-              await readAnnotations(transaction, [await scopedRow(transaction, existing, request)])
-            )[0],
-            request
-          )
-        : undefined
+      if (!existing) return undefined
+      const annotation = (
+        await readAnnotations(transaction, [await scopedRow(transaction, existing, request)])
+      )[0]
+      if (request.figure) {
+        const figure = await transaction.pdfFigure.findUnique({
+          where: { annotationId: existing.id }
+        })
+        if (figure)
+          annotation.figure = pdfFigureSchema.parse({
+            image: { mimeType: 'image/png', data: figure.imageData },
+            figureNumber: figure.figureNumber,
+            caption: figure.caption
+          })
+      }
+      return recover(annotation, request)
     })
   }
 
@@ -655,12 +818,27 @@ class PdfAnnotationRepository {
             origin: request.origin ?? 'user',
             externalSubtype: request.externalSubtype,
             note: request.note,
+            ...(request.figure
+              ? {
+                  figure: {
+                    create: {
+                      literatureVersionId: request.literatureVersionId!,
+                      imageData: request.figure.image.data,
+                      figureNumber: request.figure.figureNumber,
+                      caption: request.figure.caption
+                    }
+                  }
+                }
+              : {}),
             createdAt: request.createdAt ? new Date(request.createdAt) : undefined
           }
         })
         await touchDocument(transaction, binding.documentId)
         await replaceTags(transaction, row.id, request.tagIds)
-        return (await readAnnotations(transaction, [row]))[0]
+        return {
+          ...(await readAnnotations(transaction, [row]))[0],
+          ...(request.figure ? { figure: request.figure } : {})
+        }
       })
       await this.notifyChanged(
         { scope: request, id: created.id, updatedAt: created.updatedAt },

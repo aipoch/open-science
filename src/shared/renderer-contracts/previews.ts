@@ -81,6 +81,7 @@ import type {
   DeletePdfAnnotationRequest,
   DeletePdfAnnotationResult,
   ListPdfAnnotationsRequest,
+  ListPdfFiguresRequest,
   PdfAnnotation,
   PdfAnnotationListResult,
   PdfNativeAnnotationCancelRequest,
@@ -252,6 +253,15 @@ export const pdfAnnotationsListContracts = {
     (request: PdfReconcileRequest) => Promise<PdfSharingPreview | null>
   >()('pdf-annotations', [
     'pdf-annotations:reconcile',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'pdfAnnotations.listFigures': callable<
+    (request: ListPdfFiguresRequest) => Promise<PdfAnnotationListResult>
+  >()('pdf-annotations', [
+    'pdf-annotations:list-figures',
     WEB,
     undefined,
     undefined,

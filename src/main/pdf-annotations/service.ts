@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import type { SetTagAssignmentRequest } from '../../shared/tags'
 import {
   createPdfAnnotationRequestSchema,
+  listPdfFiguresRequestSchema,
   updatePdfAnnotationRequestSchema
 } from '../../shared/pdf-annotations'
 import type { PdfAnnotationRepository } from './repository'
@@ -25,6 +26,7 @@ import type {
   CreatePdfAnnotationRequest,
   DeletePdfAnnotationRequest,
   ListPdfAnnotationsRequest,
+  ListPdfFiguresRequest,
   UpdatePdfAnnotationRequest,
   PdfAnnotation,
   PdfReconcileRequest,
@@ -48,6 +50,7 @@ type Options = Readonly<{
     PdfAnnotationRepository,
     | 'get'
     | 'list'
+    | 'listFigures'
     | 'create'
     | 'recoverCreate'
     | 'update'
@@ -175,6 +178,10 @@ class PdfAnnotationService {
       await this.requireSession(scope.projectId!, scope.sessionId!, true)
       return operation()
     })
+  }
+
+  listFigures(request: ListPdfFiguresRequest): Promise<PdfAnnotationListResult> {
+    return this.options.repository.listFigures(listPdfFiguresRequestSchema.parse(request))
   }
 
   async list(request: ListPdfAnnotationsRequest): Promise<PdfAnnotationListResult> {

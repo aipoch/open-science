@@ -9125,6 +9125,20 @@
     "{{count}} regions_one": "{{count}} Region",
     "{{count}} regions_other": "{{count}} Regionen",
     "Sign in with your CodeBuddy account": "Mit Ihrem CodeBuddy-Konto anmelden",
-    "Already added": "Bereits hinzugefügt"
+    "Already added": "Bereits hinzugefügt",
+    "Saved figures": "Gespeicherte Abbildungen",
+    "All tags": "Alle Tags",
+    "Saved figures could not be loaded.": "Gespeicherte Abbildungen konnten nicht geladen werden.",
+    "Select a region in a library PDF to save a figure or table here.": "Wählen Sie in einem Bibliotheks-PDF einen Bereich aus, um hier eine Abbildung oder Tabelle zu speichern.",
+    "Open {{figure}} in {{source}}, {{page}}": "{{figure}} in {{source}}, {{page}} öffnen",
+    "Saved figure": "Gespeicherte Abbildung",
+    "Save to figure collection": "In Abbildungssammlung speichern",
+    "Selected PDF area": "Ausgewählter PDF-Bereich",
+    "The selected area could not be captured.": "Der ausgewählte Bereich konnte nicht erfasst werden.",
+    "Figure number": "Abbildungsnummer",
+    "Caption": "Bildunterschrift",
+    "Figure could not be saved. Try again.": "Die Abbildung konnte nicht gespeichert werden. Versuchen Sie es erneut.",
+    "Save area to figure collection": "Bereich in Abbildungssammlung speichern",
+    "Drag to save an area to the figure collection · Esc to cancel": "Ziehen Sie, um einen Bereich in der Abbildungssammlung zu speichern · Esc zum Abbrechen"
   }
 }

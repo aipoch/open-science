@@ -48,6 +48,7 @@ import {
 } from './journals/journal-attribute-store'
 import { LiteratureCandidateDialog } from './list/LiteratureCandidateDialog'
 import { LiteratureInboxList } from './list/LiteratureInboxList'
+import { FigureLibrary } from './FigureLibrary'
 import { LiteratureLibraryHeader } from './list/LiteratureLibraryHeader'
 import { LiteratureLibrarySidebar, type LibrarySection } from './list/LiteratureLibrarySidebar'
 import { LiteratureOversizedNotice } from './list/LiteratureOversizedNotice'
@@ -228,7 +229,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const listenTags = useTagStore((state) => state.listen)
   const tagRevision = useTagStore((state) => state.revision)
   const [relatedDirection, setRelatedDirection] = useState<'references' | 'citations'>('references')
-  const [section, setSection] = useState<LibrarySection>('inbox')
+  const [selectedSection, setSection] = useState<LibrarySection | 'figures'>('inbox')
+  const section = selectedSection === 'figures' ? 'library' : selectedSection
   const [inboxState, setInboxState] = useState<'pending' | 'dismissed'>('pending')
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
   const [shouldCueLiteratureReview, setShouldCueLiteratureReview] = useState(
@@ -350,6 +352,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [citationStylesOpen, setCitationStylesOpen] = useState(false)
   const [journalsOpen, setJournalsOpen] = useState(false)
   const [journalsVisited, setJournalsVisited] = useState(false)
+  const figuresOpen =
+    selectedSection === 'figures' && !citationStylesOpen && !journalsOpen && !duplicatesOpen
   const closeJournals = useCallback(() => setJournalsOpen(false), [])
   const pdfInputRef = useRef<HTMLInputElement>(null)
   const importPdfInputRef = useRef<HTMLInputElement>(null)
@@ -1143,7 +1147,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     clearSelection()
   }
 
-  const selectSection = (nextSection: Exclude<LibrarySection, 'library'>): void => {
+  const selectSection = (nextSection: 'inbox' | 'trash' | 'figures'): void => {
     setCitationStylesOpen(false)
     setJournalsOpen(false)
     setDuplicatesOpen(false)
@@ -1663,7 +1667,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       >
         <LiteratureLibrarySidebar
           navigation={{
-            section,
+            section: selectedSection,
             collectionId,
             projectId,
             citationStylesOpen,
@@ -1700,6 +1704,25 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         />
 
         <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          {figuresOpen && (
+            <FigureLibrary
+              revealError={error}
+              onOpen={(annotation) => {
+                setError(undefined)
+                const preview = createBookmarkPreviewItem({
+                  id: annotation.id,
+                  kind: 'pdf',
+                  ...annotation.target
+                })
+                if (!preview) {
+                  setError(t('PDF annotations are unavailable for this source.'))
+                  return
+                }
+                setPreviewItem(preview)
+                setAnnotationToReveal(annotation)
+              }}
+            />
+          )}
           <LiteratureDuplicatesView
             active={duplicatesOpen && !citationStylesOpen && !journalsOpen}
             revision={duplicatesRevision}
@@ -1749,6 +1772,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             onFiles={receiveImportFiles}
             dropLabel={t('Drop PDFs or reference files to import')}
             disabled={
+              figuresOpen ||
               section !== 'library' ||
               Boolean(
                 selectedCollection?.smart ||
@@ -1764,7 +1788,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             }
             className={cn(
               'flex h-full min-h-0 w-full max-w-none flex-col px-4 py-6 lg:px-6 lg:py-8',
-              (citationStylesOpen || journalsOpen || duplicatesOpen) && 'hidden'
+              (figuresOpen || citationStylesOpen || journalsOpen || duplicatesOpen) && 'hidden'
             )}
           >
             <LiteratureLibraryHeader

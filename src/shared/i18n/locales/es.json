@@ -9309,6 +9309,20 @@
     "{{count}} regions_many": "{{count}} regiones",
     "{{count}} regions_other": "{{count}} regiones",
     "Sign in with your CodeBuddy account": "Iniciar sesión con su cuenta de CodeBuddy",
-    "Already added": "Ya agregado"
+    "Already added": "Ya agregado",
+    "Saved figures": "Figuras guardadas",
+    "All tags": "Todas las etiquetas",
+    "Saved figures could not be loaded.": "No se pudieron cargar las figuras guardadas.",
+    "Select a region in a library PDF to save a figure or table here.": "Seleccione una región de un PDF de la biblioteca para guardar aquí una figura o una tabla.",
+    "Open {{figure}} in {{source}}, {{page}}": "Abrir {{figure}} en {{source}}, {{page}}",
+    "Saved figure": "Figura guardada",
+    "Save to figure collection": "Guardar en la colección de figuras",
+    "Selected PDF area": "Área seleccionada del PDF",
+    "The selected area could not be captured.": "No se pudo capturar el área seleccionada.",
+    "Figure number": "Número de figura",
+    "Caption": "Leyenda",
+    "Figure could not be saved. Try again.": "No se pudo guardar la figura. Vuelva a intentarlo.",
+    "Save area to figure collection": "Guardar área en la colección de figuras",
+    "Drag to save an area to the figure collection · Esc to cancel": "Arrastre para guardar un área en la colección de figuras · Esc para cancelar"
   }
 }

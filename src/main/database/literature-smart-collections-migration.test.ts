@@ -68,7 +68,8 @@ it('adds empty smart storage while preserving ordinary collections, membership a
         '0057_project_optimization_prompt',
         '0058_session_schedules',
         '0059_session_history',
-        '0060_image_models'
+        '0060_image_models',
+        '0061_pdf_figures'
       ]
     })
     expect(await client.literatureCollection.findMany({ include: { items: true } })).toEqual(before)

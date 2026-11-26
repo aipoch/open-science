@@ -8949,6 +8949,20 @@
     "No providers match your search.": "一致するプロバイダーはありません。",
     "{{count}} regions_other": "{{count}} リージョン",
     "Sign in with your CodeBuddy account": "CodeBuddy アカウントでサインイン",
-    "Already added": "追加済み"
+    "Already added": "追加済み",
+    "Saved figures": "保存した図表",
+    "All tags": "すべてのタグ",
+    "Saved figures could not be loaded.": "保存した図表を読み込めませんでした。",
+    "Select a region in a library PDF to save a figure or table here.": "ライブラリ内の PDF で範囲を選択すると、図表をここに保存できます。",
+    "Open {{figure}} in {{source}}, {{page}}": "{{source}}の{{page}}で{{figure}}を開く",
+    "Saved figure": "保存した図表",
+    "Save to figure collection": "図表コレクションに保存",
+    "Selected PDF area": "選択した PDF の範囲",
+    "The selected area could not be captured.": "選択した範囲をキャプチャできませんでした。",
+    "Figure number": "図番号",
+    "Caption": "キャプション",
+    "Figure could not be saved. Try again.": "図表を保存できませんでした。もう一度お試しください。",
+    "Save area to figure collection": "範囲を図表コレクションに保存",
+    "Drag to save an area to the figure collection · Esc to cancel": "ドラッグして範囲を図表コレクションに保存 · Esc でキャンセル"
   }
 }

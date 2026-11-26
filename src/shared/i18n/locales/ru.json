@@ -9466,6 +9466,20 @@
     "{{count}} regions_many": "{{count}} регионов",
     "{{count}} regions_other": "{{count}} региона",
     "Sign in with your CodeBuddy account": "Войти с аккаунтом CodeBuddy",
-    "Already added": "Уже добавлен"
+    "Already added": "Уже добавлен",
+    "Saved figures": "Сохранённые иллюстрации",
+    "All tags": "Все теги",
+    "Saved figures could not be loaded.": "Не удалось загрузить сохранённые иллюстрации.",
+    "Select a region in a library PDF to save a figure or table here.": "Выберите область в PDF из библиотеки, чтобы сохранить здесь иллюстрацию или таблицу.",
+    "Open {{figure}} in {{source}}, {{page}}": "Открыть {{figure}} в {{source}}, {{page}}",
+    "Saved figure": "Сохранённая иллюстрация",
+    "Save to figure collection": "Сохранить в коллекцию иллюстраций",
+    "Selected PDF area": "Выбранная область PDF",
+    "The selected area could not be captured.": "Не удалось захватить выбранную область.",
+    "Figure number": "Номер иллюстрации",
+    "Caption": "Подпись",
+    "Figure could not be saved. Try again.": "Не удалось сохранить иллюстрацию. Повторите попытку.",
+    "Save area to figure collection": "Сохранить область в коллекцию иллюстраций",
+    "Drag to save an area to the figure collection · Esc to cancel": "Перетащите, чтобы сохранить область в коллекцию иллюстраций · Esc — отмена"
   }
 }

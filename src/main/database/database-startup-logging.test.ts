@@ -153,7 +153,8 @@ describe('database startup logging', () => {
               '0057_project_optimization_prompt',
               '0058_session_schedules',
               '0059_session_history',
-              '0060_image_models'
+              '0060_image_models',
+              '0061_pdf_figures'
             ],
             adoptedLegacy: true
           })

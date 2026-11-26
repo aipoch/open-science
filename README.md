@@ -249,6 +249,10 @@ for a separate installation, where you configure your own model provider.
 | Extend a workflow | Enable scientific data connectors, choose built-in skills, or install additional skills and specialists from the marketplaces.                         |
 | Choose a model    | Connect a supported provider or custom gateway, or use a supported Claude or Codex subscription. Available protocols depend on the agent backend.      |
 
+### Saved figures
+
+Select a figure or table in a library PDF to save it. Open **Saved figures** to browse across papers, filter by tag, or return to the original region.
+
 <a id="benchmark-performance"></a>
 
 ## Benchmark Results

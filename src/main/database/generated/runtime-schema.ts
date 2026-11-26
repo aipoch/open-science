@@ -98,6 +98,15 @@ const RUNTIME_SCHEMA_TABLE_DDLS = [
     CONSTRAINT "PdfAnnotation_content_check" CHECK (length("note") <= 20000),
     CONSTRAINT "PdfAnnotation_scope_check" CHECK (("projectId" IS NOT NULL AND "sourceKind" <> 'literature-attachment-version') OR ("projectId" IS NULL AND "sessionId" IS NULL AND "sourceKind" = 'literature-attachment-version' AND "sourceSessionId" IS NULL))
 );`,
+  `CREATE TABLE IF NOT EXISTS "PdfFigure" (
+    "literatureVersionId" TEXT NOT NULL,
+    "annotationId" TEXT NOT NULL PRIMARY KEY,
+    "imageData" TEXT NOT NULL,
+    "figureNumber" TEXT NOT NULL DEFAULT '',
+    "caption" TEXT NOT NULL DEFAULT '',
+    CONSTRAINT "PdfFigure_literatureVersionId_fkey" FOREIGN KEY ("literatureVersionId") REFERENCES "LiteratureAttachmentVersion" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "PdfFigure_annotationId_fkey" FOREIGN KEY ("annotationId") REFERENCES "PdfAnnotation" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);`,
   `CREATE TABLE IF NOT EXISTS "PdfAnnotationImport" (
     "documentId" TEXT NOT NULL,
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -1557,6 +1566,7 @@ const RUNTIME_SCHEMA_TABLES = [
   'PdfAnnotationSourceBinding',
   'PdfAnnotationAlias',
   'PdfAnnotation',
+  'PdfFigure',
   'PdfAnnotationImport',
   'SessionNumberSequence',
   'Session',

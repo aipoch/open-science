@@ -2,6 +2,7 @@ import type { TagView } from '../../../../../shared/tags'
 import { EMPTY_PDF_ANNOTATIONS } from './pdf-annotation-index'
 import { createContext, useContext } from 'react'
 import type {
+  CreatePdfAnnotationRequest,
   PdfAnnotation,
   PdfAnnotationTarget,
   PdfAnnotationSource
@@ -34,7 +35,8 @@ type PdfAnnotationPort = Readonly<{
     kind: PdfAnnotation['kind'],
     color: PdfAnnotation['color'],
     tagIds: readonly string[],
-    note: string
+    note: string,
+    figure?: CreatePdfAnnotationRequest['figure']
   ) => Promise<PdfAnnotation>
   update: (
     id: string,

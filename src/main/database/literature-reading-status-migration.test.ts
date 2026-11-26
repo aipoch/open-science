@@ -15,7 +15,7 @@ import {
 } from './migration-service'
 
 const migrationId = '0051_literature_reading_status'
-const currentMigrationId = '0060_image_models'
+const currentMigrationId = '0061_pdf_figures'
 const historicalManifest = MIGRATION_MANIFEST.filter(({ id }) => id < migrationId)
 let root: string
 let client: PrismaClient
@@ -66,6 +66,7 @@ it('upgrades the 0050 schema with unread defaults while preserving items, relati
       '0057_project_optimization_prompt',
       '0058_session_schedules',
       '0059_session_history',
+      '0060_image_models',
       currentMigrationId
     ]
   })
@@ -155,6 +156,7 @@ it('rolls back the added column and ledger entry if migration verification fails
       '0057_project_optimization_prompt',
       '0058_session_schedules',
       '0059_session_history',
+      '0060_image_models',
       currentMigrationId
     ]
   })

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   createPdfAnnotationRequestSchema,
+  listPdfFiguresRequestSchema,
+  pdfFigureSchema,
   updatePdfAnnotationRequestSchema,
   deletePdfAnnotationRequestSchema,
   listPdfAnnotationsRequestSchema,
@@ -171,3 +173,32 @@ it.each([undefined, 'session-1'])(
     ).toBe(false)
   }
 )
+
+it('bounds gallery inputs and accepts only PNG payloads within the figure budget', () => {
+  const figure = {
+    image: { mimeType: 'image/png', data: 'iVBORw0KGgo=' },
+    figureNumber: '',
+    caption: ''
+  }
+  expect(pdfFigureSchema.safeParse(figure).success).toBe(true)
+  expect(
+    pdfFigureSchema.safeParse({ ...figure, image: { mimeType: 'image/png', data: 'arbitrary' } })
+      .success
+  ).toBe(false)
+  expect(pdfFigureSchema.safeParse({ ...figure, figureNumber: 'x'.repeat(129) }).success).toBe(
+    false
+  )
+  expect(
+    pdfFigureSchema.safeParse({
+      ...figure,
+      image: { mimeType: 'image/png', data: 'iVBORw0KGgoA' + 'A'.repeat(4 * 1024 * 1024) }
+    }).success
+  ).toBe(false)
+  expect(createPdfAnnotationRequestSchema.safeParse({ ...annotationRequest, figure }).success).toBe(
+    false
+  )
+  expect(listPdfFiguresRequestSchema.safeParse({ limit: 25 }).success).toBe(false)
+  expect(listPdfFiguresRequestSchema.safeParse({ tagIds: ['review', 'review'] }).success).toBe(
+    false
+  )
+})

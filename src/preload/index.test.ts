@@ -545,6 +545,7 @@ describe('preload bridge — public surface inventory', () => {
       'pdfAnnotations.delete',
       'pdfAnnotations.importNative',
       'pdfAnnotations.list',
+      'pdfAnnotations.listFigures',
       'pdfAnnotations.onChanged',
       'pdfAnnotations.onImportProgress',
       'pdfAnnotations.reconcile',
