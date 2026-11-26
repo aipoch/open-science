@@ -2042,7 +2042,7 @@ const WorkspaceMessageScrollerImpl = ({
                     ? legacyRuntimeIdentity
                     : runtimeSegment
                   const isHumanUser = isHumanUserMessage(item.message)
-                  const isPendingSend = item.message === optimisticMessage
+                  const isPendingSend = item.message.id === optimisticMessage?.id
                   const revisionRootMessageId = isHumanUser
                     ? messageNode?.revisionRootMessageId
                     : undefined
