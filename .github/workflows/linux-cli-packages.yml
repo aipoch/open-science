@@ -115,6 +115,8 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           python3 -m venv "$RUNNER_TEMP/cli-package-python"
           "$RUNNER_TEMP/cli-package-python/bin/pip" install ipykernel
+          export OPEN_SCIENCE_TEST_CRASH_ATTEMPTS=60
+          export NODE_OPTIONS="--require=$PWD/scripts/trace-cli-probe.cjs"
           export OPEN_SCIENCE_TEST_PYTHON="$RUNNER_TEMP/cli-package-python/bin/python"
           export OPEN_SCIENCE_TEST_FAKE_AGENT="$PWD/e2e/fixtures/fake-opencode.mjs"
           export OPEN_SCIENCE_PACKAGE_PAYLOAD="$PWD/out/cli-prepared/payload"

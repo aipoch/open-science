@@ -191,18 +191,28 @@ try {
   assert.ok(JSON.stringify(history).includes(first.runId))
   passed('session/Notebook recovery and OS-encrypted credentials after restart')
 
-  const owner = JSON.parse(await readFile(join(root, 'runtime-owner.json'), 'utf8'))
-  const current = JSON.parse(await cli('status', '--json'))
-  assert.equal(owner.pid, current.pid)
-  process.kill(owner.pid, 'SIGKILL') // Only this authenticated test-owned process inside the container.
-  await new Promise((resolve) => setTimeout(resolve, 100))
-  await start()
-  state = JSON.parse(await readFile(join(root, 'web-service.json'), 'utf8'))
-  assert.notEqual(state.pid, owner.pid)
-  assert.equal(
-    (await rpc('sessions:load-one', { projectId, sessionId: task.sessionId })).id,
-    task.sessionId
-  )
+  // Reuse the already-installed, authorized profile across crash recoveries.
+  const crashAttempts = Number(process.env.OPEN_SCIENCE_TEST_CRASH_ATTEMPTS ?? 1)
+  for (let attempt = 1; attempt <= crashAttempts; attempt++) {
+    const owner = JSON.parse(await readFile(join(root, 'runtime-owner.json'), 'utf8'))
+    const current = JSON.parse(await cli('status', '--json'))
+    assert.equal(owner.pid, current.pid)
+    process.kill(owner.pid, 'SIGKILL') // Only this authenticated test-owned process inside the container.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    await start()
+    state = JSON.parse(await readFile(join(root, 'web-service.json'), 'utf8'))
+    assert.notEqual(state.pid, owner.pid)
+    assert.equal(
+      (await rpc('sessions:load-one', { projectId, sessionId: task.sessionId })).id,
+      task.sessionId
+    )
+    assert.equal(
+      (await rpc('settings:detect-opencode')).providers.find((item) => item.id === provider.id)
+        .hasKey,
+      true
+    )
+    passed(`crash restart ${attempt}/${crashAttempts} with original credential`)
+  }
   passed('abnormal exit releases ownership; stale records do not prevent recovery')
 } catch (error) {
   for (const file of await readdir(root)) {
