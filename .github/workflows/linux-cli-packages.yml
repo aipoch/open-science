@@ -122,6 +122,16 @@ jobs:
           # shellcheck disable=SC2016
           dbus-run-session -- bash -euo pipefail -c '
             printf "cli-package-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+            for attempt in {1..50}; do
+              if gdbus introspect --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets >/dev/null 2>&1; then
+                break
+              fi
+              if [ "$attempt" = 50 ]; then
+                echo "Secret Service did not become available after unlocking the test keyring." >&2
+                exit 1
+              fi
+              sleep 0.1
+            done
             node scripts/test-linux-cli-package.mjs deb "$PWD"/out/linux-cli-packages/*.deb
           '
       - name: Build and verify RPM in native Fedora
@@ -145,6 +155,16 @@ jobs:
               chown -R package-test:package-test out/linux-cli-packages
               runuser -u package-test -- dbus-run-session -- bash -euo pipefail -c '\''
                 printf "cli-package-ci-vault\n" | gnome-keyring-daemon --unlock --components=secrets
+                for attempt in {1..50}; do
+                  if gdbus introspect --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets >/dev/null 2>&1; then
+                    break
+                  fi
+                  if [ "$attempt" = 50 ]; then
+                    echo "Secret Service did not become available after unlocking the test keyring." >&2
+                    exit 1
+                  fi
+                  sleep 0.1
+                done
                 /workspace/out/cli-prepared/payload/node-runtime/node scripts/test-linux-cli-package.mjs rpm /workspace/out/linux-cli-packages/*.rpm
               '\''
             '
