@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { MINIMUM_CODEX_CLI_VERSION } from '../../shared/codex-runtime'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
 import type { ClaudeDetectResult } from '../../shared/settings'
 import {
@@ -214,6 +215,7 @@ const createService = (
     codebuddyDetected?: { path: string; version: string }
     allocateOpenCodeUsagePort?: () => Promise<number>
     codexDetected?: { path: string; version: string; nativePath?: string; nativeVersion?: string }
+    codexDetectDeps?: Partial<NonNullable<SettingsServiceOptions['codexDetectDeps']>>
     managedCodexAdapterPath?: string
     managedCodexNativePath?: string
     // Simulates an external native Codex CLI reachable only via the augmented PATH (e.g. Homebrew),
@@ -322,7 +324,8 @@ const createService = (
       smokeInitialize: () => Promise.resolve(options.codexSmokeOk ?? true),
       resolveNpmBinDirs: () => Promise.resolve([]),
       managedAdapterPath: options.managedCodexAdapterPath ?? options.codexDetected?.path,
-      managedCodexPath: options.managedCodexNativePath ?? options.codexDetected?.nativePath
+      managedCodexPath: options.managedCodexNativePath ?? options.codexDetected?.nativePath,
+      ...options.codexDetectDeps
     },
     codexAuth: options.codexAuth,
     resolveCodexProxyEnvironment:
@@ -6066,7 +6069,7 @@ describe('installCodex', () => {
     const nativePath = '/usr/local/bin/codex'
     const service = createService(undefined, {
       managedCodexAdapterPath: adapterPath,
-      codexExternalNative: { path: nativePath, version: 'codex-cli 0.157.1' },
+      codexExternalNative: { path: nativePath, version: `codex-cli ${MINIMUM_CODEX_CLI_VERSION}` },
       installManagedCodexImpl: install
     })
     expect((await repository.getSettings()).codex?.nativePath).toBeUndefined()
@@ -6083,29 +6086,87 @@ describe('installCodex', () => {
   })
 
   it('cancels only the matching sign-in installation when the managed adapter is missing', async () => {
-    const started = Promise.withResolvers<void>()
+    const started = Promise.withResolvers<Parameters<ManagedCodexInstallImpl>[0]>()
     const nativePath = '/usr/local/bin/codex'
-    let signal: AbortSignal | undefined
     const service = createService(undefined, {
-      codexExternalNative: { path: nativePath, version: 'codex-cli 0.157.1' },
+      codexExternalNative: { path: nativePath, version: `codex-cli ${MINIMUM_CODEX_CLI_VERSION}` },
       installManagedCodexImpl: async (options) => {
-        expect(options.existingCodexPath).toBe(nativePath)
-        signal = options.signal
-        started.resolve()
+        started.resolve(options)
         await new Promise<void>((resolve) =>
-          signal!.addEventListener('abort', () => resolve(), { once: true })
+          options.signal!.addEventListener('abort', () => resolve(), { once: true })
         )
         return { result: { installId: options.installId, ok: false } }
       }
     })
     const pending = service.installCodex({ source: 'managed', signInAttemptId: 'owner' }, vi.fn())
-    await started.promise
-    await service.cancelCodexLogin('other')
-    expect(signal?.aborted).toBe(false)
-    await service.cancelCodexLogin('owner')
+    const options = await Promise.race([
+      started.promise,
+      pending.then(() => {
+        throw new Error('Codex preparation finished before installation started')
+      })
+    ])
+    try {
+      expect(options.existingCodexPath).toBe(nativePath)
+      await service.cancelCodexLogin('other')
+      expect(options.signal?.aborted).toBe(false)
+    } finally {
+      await service.cancelCodexLogin('owner')
+    }
     await expect(pending).resolves.toMatchObject({ ok: false, error: 'Installation cancelled.' })
     expect((await repository.getSettings()).codex?.nativePath).toBeUndefined()
   })
+
+  it.each([
+    { adapter: true, supportedCli: true },
+    { adapter: false, supportedCli: true },
+    { adapter: true, supportedCli: false }
+  ])(
+    'prepares sign-in with an older bundled CLI (adapter=$adapter, supported PATH CLI=$supportedCli)',
+    async ({ adapter, supportedCli }) => {
+      const bundled = '/Applications/ChatGPT.app/Contents/Resources/codex'
+      const nativePath = '/opt/test/bin/codex'
+      const adapterPath = '/managed/adapter/index.js'
+      const install = vi.fn<ManagedCodexInstallImpl>(async ({ installId }) => ({
+        result: { installId, ok: false, error: 'installer called' }
+      }))
+      const smokeInitialize = vi.fn(async () => true)
+      const service = createService(undefined, {
+        managedCodexAdapterPath: adapter ? adapterPath : undefined,
+        codexDetectDeps: {
+          platform: 'darwin',
+          env: { PATH: dirname(nativePath) },
+          getCodexVersion: async (path) =>
+            path === bundled
+              ? 'codex-cli 0.157.1'
+              : supportedCli && path === nativePath
+                ? MINIMUM_CODEX_CLI_VERSION
+                : undefined,
+          smokeInitialize
+        },
+        installManagedCodexImpl: install
+      })
+      const result = await service.installCodex(
+        { source: 'managed', signInAttemptId: 'login' },
+        vi.fn()
+      )
+      if (adapter && supportedCli) {
+        expect(result.ok).toBe(true)
+        expect(smokeInitialize).toHaveBeenCalledWith(
+          adapterPath,
+          { codexPath: nativePath },
+          expect.any(AbortSignal)
+        )
+        expect((await repository.getSettings()).codex?.nativePath).toBe(nativePath)
+        expect(install).not.toHaveBeenCalled()
+      } else {
+        expect(install).toHaveBeenCalledOnce()
+        expect(install.mock.calls[0][0].existingCodexPath).toBe(
+          supportedCli ? nativePath : undefined
+        )
+        expect(result.error).toBe('installer called')
+      }
+    }
+  )
 
   it('persists the managed adapter and native Codex pair', async () => {
     const service = createService(undefined, {

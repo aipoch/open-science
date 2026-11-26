@@ -1246,46 +1246,49 @@ export class AgentRuntimeManager {
         if (request.source === 'managed') {
           this.signInInstallId = request.signInAttemptId
           const settings = await this.repository.getSettings()
-          let configuredCodexPath = settings.codex?.nativePath
+          const configuredCodexPath = settings.codex?.nativePath
+          const managedCodexPath =
+            this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.configRoot)
+          let existingCodexPath: string | undefined
           if (request.signInAttemptId) {
-            const deps = {
-              ...this.codexDetectDeps,
-              managedAdapterPath:
-                this.codexDetectDeps.managedAdapterPath ??
-                managedCodexAdapterEntry(this.configRoot),
-              managedCodexPath: configuredCodexPath ?? this.codexDetectDeps.managedCodexPath
-            }
-            const pair = await detectCodex(deps, signal)
-            signal.throwIfAborted()
-            if (pair?.nativeCodexPath && pair.nativeCodexVersion) {
-              await this.repository.setCodexInfo({
-                resolvedPath: pair.adapterPath,
-                version: pair.adapterVersion,
-                nativePath: pair.nativeCodexPath,
-                nativeVersion: pair.nativeCodexVersion
-              })
-              return { ok: true, installId }
-            }
-            // When only the adapter is missing, keep a supported CLI found on PATH.
-            if (!configuredCodexPath) {
-              const native = await detectNativeCodex(deps, signal)
-              if (native && isSupportedCodexCliVersion(native.version))
-                configuredCodexPath = native.path
+            // An older ChatGPT-bundled CLI can precede a supported CLI on PATH. Use the same
+            // supported executable for the ACP handshake and for an adapter-only installation.
+            const native = await detectNativeCodex(this.codexDetectDeps, signal, {
+              supportedOnly: true,
+              preferredPaths: [configuredCodexPath, managedCodexPath]
+            })
+            if (native) {
+              const pair = await detectCodex(
+                {
+                  ...this.codexDetectDeps,
+                  managedAdapterPath:
+                    this.codexDetectDeps.managedAdapterPath ??
+                    managedCodexAdapterEntry(this.configRoot),
+                  managedCodexPath: native.path
+                },
+                signal
+              )
+              signal.throwIfAborted()
+              if (pair?.nativeCodexPath && pair.nativeCodexVersion) {
+                await this.repository.setCodexInfo({
+                  resolvedPath: pair.adapterPath,
+                  version: pair.adapterVersion,
+                  nativePath: pair.nativeCodexPath,
+                  nativeVersion: pair.nativeCodexVersion
+                })
+                return { ok: true, installId }
+              }
+              if (native.path !== managedCodexPath) existingCodexPath = native.path
             }
             signal.throwIfAborted()
             onEvent({ kind: 'progress', phase: 'resolving', installId })
+          } else if (
+            configuredCodexPath &&
+            configuredCodexPath !== managedCodexPath &&
+            (await this.codexDetectDeps.getCodexVersion(configuredCodexPath, signal))
+          ) {
+            existingCodexPath = configuredCodexPath
           }
-          const managedCodexPath =
-            this.codexDetectDeps.managedCodexPath ?? managedCodexBinary(this.configRoot)
-          const externalCodexPath =
-            configuredCodexPath && configuredCodexPath !== managedCodexPath
-              ? configuredCodexPath
-              : undefined
-          const existingCodexPath =
-            externalCodexPath &&
-            (await this.codexDetectDeps.getCodexVersion(externalCodexPath, signal))
-              ? externalCodexPath
-              : undefined
           signal.throwIfAborted()
           const registries = await this.resolveManagedRegistries('codex', signal)
           const outcome = await this.installManagedCodexImpl({
