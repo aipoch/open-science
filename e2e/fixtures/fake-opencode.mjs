@@ -4089,6 +4089,38 @@ if (process.argv.includes('--version')) {
             return
           }
           const url = new URL(request.url, 'http://127.0.0.1')
+          if (url.pathname === '/mcp') {
+            // The ACP fixture registers servers in session/new and session/resume. Reflect
+            // those routes in the native discovery API as OpenCode 1.x does.
+            const directory = url.searchParams.get('directory')
+            const statuses = Object.fromEntries(
+              [...sessionRoutes.values()]
+                .filter((route) => route.cwd === directory)
+                .flatMap((route) =>
+                  route.mcpServers.map(({ name }) => [name, { status: 'connected' }])
+                )
+            )
+            if (request.method === 'POST') {
+              try {
+                const chunks = []
+                for await (const chunk of request) chunks.push(chunk)
+                const { name } = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+                if (typeof name !== 'string' || !Object.hasOwn(statuses, name)) {
+                  response.writeHead(400).end()
+                  return
+                }
+              } catch {
+                response.writeHead(400).end()
+                return
+              }
+            } else if (request.method !== 'GET') {
+              response.writeHead(405).end()
+              return
+            }
+            response.writeHead(200, { 'content-type': 'application/json' })
+            response.end(JSON.stringify(statuses))
+            return
+          }
           const match = /^\/session\/([^/]+)\/message\/([^/]+)$/.exec(url.pathname)
           const sessionId = match && decodeURIComponent(match[1])
           const messageId = match && decodeURIComponent(match[2])
