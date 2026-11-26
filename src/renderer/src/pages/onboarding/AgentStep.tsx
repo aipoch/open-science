@@ -6,6 +6,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { AgentPanel } from '../settings/AgentPanel'
 
 type AgentStepProps = {
+  inDialog?: boolean
   onBack: () => void
   onContinue: () => void
 }
@@ -26,13 +27,13 @@ const useEnvironmentReady = (): boolean => {
 
 // The first-run step reuses the same runtime cards and repair/install behavior as Settings. Only the
 // surrounding Back/Continue gate is onboarding-specific.
-const AgentStep = ({ onBack, onContinue }: AgentStepProps): React.JSX.Element => {
+const AgentStep = ({ onBack, onContinue, inDialog }: AgentStepProps): React.JSX.Element => {
   const { t } = useTranslation()
   const environmentReady = useEnvironmentReady()
 
   return (
     <>
-      <CardContent className="flex-1 p-0">
+      <CardContent className={inDialog ? 'flex-1 px-6 py-5' : 'flex-1 p-0'}>
         <AgentPanel
           variant="onboarding"
           title={t('Set up the agent runtime')}

@@ -9470,7 +9470,6 @@
     "{{count}} regions_other": "{{count}} региона",
     "Sign in with your CodeBuddy account": "Войти с аккаунтом CodeBuddy",
     "Already added": "Уже добавлен",
-    "Model and Agent": "Модель и агент",
     "Could not install Claude Code. Try again.": "Не удалось установить Claude Code. Попробуйте ещё раз.",
     "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "Файл входа Codex для импорта не найден. Выберите «{{signIn}}», чтобы подключить ту же учётную запись.",
     "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "Не удалось импортировать данные входа Codex. Повторите попытку или выберите «{{signIn}}», чтобы подключить учётную запись.",

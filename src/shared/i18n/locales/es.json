@@ -9313,7 +9313,6 @@
     "{{count}} regions_other": "{{count}} regiones",
     "Sign in with your CodeBuddy account": "Iniciar sesión con su cuenta de CodeBuddy",
     "Already added": "Ya agregado",
-    "Model and Agent": "Modelo y agente",
     "Could not install Claude Code. Try again.": "No se pudo instalar Claude Code. Vuelva a intentarlo.",
     "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "No se encontró ningún archivo de inicio de sesión de Codex para importar. Seleccione «{{signIn}}» para conectar la misma cuenta.",
     "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "No se pudo importar el inicio de sesión de Codex. Inténtelo de nuevo o seleccione «{{signIn}}» para conectar su cuenta.",

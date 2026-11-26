@@ -8953,7 +8953,6 @@
     "{{count}} regions_other": "{{count}} リージョン",
     "Sign in with your CodeBuddy account": "CodeBuddy アカウントでサインイン",
     "Already added": "追加済み",
-    "Model and Agent": "モデルとエージェント",
     "Could not install Claude Code. Try again.": "Claude Code をインストールできませんでした。もう一度お試しください。",
     "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "インポートできる Codex のサインインファイルが見つかりません。「{{signIn}}」を選ぶと、同じアカウントを接続できます。",
     "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "Codex のサインイン情報をインポートできませんでした。もう一度試すか、「{{signIn}}」を選んでアカウントを接続してください。",

@@ -10,6 +10,7 @@ import {
   findButton,
   fillRequiredProviderFields,
   readyBuiltInState,
+  selectOption,
   resetOnboardingStores,
   storageInfo,
   codexReadyState,
@@ -88,6 +89,7 @@ describe('Onboarding entry flow', () => {
     expect(configure.textContent).toBe('Configure')
     await act(async () => configure.click())
     await clickButton(/^Continue$/)
+    await clickButton(/^Continue$/)
     expect(container.querySelector('#provider-cloudflare-mode')).not.toBeNull()
   })
 
@@ -106,7 +108,7 @@ describe('Onboarding entry flow', () => {
     expect(container.querySelector('[data-onboarding-entry="connect"]')).not.toBeNull()
   })
 
-  it('embeds three compact advanced steps in the same dialog', async () => {
+  it('walks four advanced steps and keeps the model draft when returning from agent selection', async () => {
     await renderEntry()
     await finishWelcomeAnimation()
     await act(async () => {
@@ -122,20 +124,28 @@ describe('Onboarding entry flow', () => {
 
     expect(container.querySelector('[data-onboarding-layout="split"]')).toBeNull()
     expect(container.querySelector('[role="dialog"]')).toBe(dialog)
-    expect(container.querySelectorAll('ol[aria-label="Setup progress"] > li')).toHaveLength(3)
+    expect(container.querySelectorAll('ol[aria-label="Setup progress"] > li')).toHaveLength(4)
     expect(container.textContent).toContain('Where should Open-Science store your data?')
     await clickButton(/^Continue$/)
     expect(container.textContent).toContain('Set up the agent runtime')
-    const model = container.querySelector('section[aria-label="Configure model"]')!
-    const agent = container.querySelector('.onboarding-advanced-agent')!
-    expect(model.compareDocumentPosition(agent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(agent.querySelector('.onboarding-agent-panel')).not.toBeNull()
-    expect(agent.querySelector('.onboarding-agent-panel')?.classList.contains('p-5')).toBe(false)
-    expect(container.querySelector('[role="dialog"]')).toBe(dialog)
+    expect(container.querySelector('[data-slot="provider-picker"]')).toBeNull()
+    await clickButton(/^Continue$/)
+    const pick = async (key: string): Promise<void> => {
+      const card = container.querySelector<HTMLButtonElement>(`[data-provider-kind="${key}"]`)!
+      await act(async () => card.click())
+    }
+    expect(container.querySelector('[data-provider-kind="codex-subscription"]')).not.toBeNull()
+    expect(container.querySelector('[data-provider-kind="claude-subscription"]')).toBeNull()
+    await pick('custom')
+    await clickButton(/^Change$/)
+    await pick('custom')
     await fillRequiredProviderFields(container)
     await clickButton(/^Back$/)
-    expect(container.textContent).toContain('Where should Open-Science store your data?')
+    expect(container.querySelector('[data-slot="provider-picker"]')).not.toBeNull()
+    await clickButton(/^Back$/)
+    expect(container.textContent).toContain('Set up the agent runtime')
     await clickButton(/^Continue$/)
+    await pick('custom')
     expect(container.querySelector<HTMLInputElement>('#provider-base-url')?.value).toBe(
       'https://gateway.example'
     )
@@ -149,6 +159,67 @@ describe('Onboarding entry flow', () => {
     await clickButton(/^Finish$/)
     expect(container.querySelector('[data-onboarding-entry="ready"]')).not.toBeNull()
     expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+  })
+
+  it('uses the selected framework’s subscription options and authorizes the selected CodeBuddy site', async () => {
+    const codeBuddyAccount = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, category: 'auth' })
+      .mockResolvedValueOnce({ ok: true, category: 'ok' })
+    const setActiveProvider = vi.fn()
+    useSettingsStore.setState({ codeBuddyAccount, setActiveProvider })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/Advanced options/)
+    await clickButton(/^Continue$/)
+    const chooseAgent = async (agentFrameworkId: 'claude-code' | 'codebuddy'): Promise<void> => {
+      await act(async () =>
+        useSettingsStore.setState((state) => ({
+          agentFrameworkId,
+          environmentCheck: { ...state.environmentCheck!, ready: true, agentFrameworkId }
+        }))
+      )
+      await clickButton(/^Continue$/)
+    }
+    await chooseAgent('claude-code')
+    expect(container.querySelector('[data-provider-kind="claude-subscription"]')).not.toBeNull()
+    expect(container.querySelector('[data-provider-kind="codex-subscription"]')).toBeNull()
+    expect(container.querySelector('[data-provider-kind="builtin-codebuddy-china"]')).toBeNull()
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-provider-kind="claude-subscription"]')!
+        .click()
+    )
+    await clickButton(/^Back$/)
+    await clickButton(/^Back$/)
+    await chooseAgent('codebuddy')
+    expect(container.querySelector('[data-provider-kind="claude-subscription"]')).toBeNull()
+    expect(container.querySelector('[data-provider-kind="builtin-codebuddy-china"]')).not.toBeNull()
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[data-provider-kind="builtin-codebuddy-international"]')!
+        .click()
+    )
+    await clickButton(/^Sign in & continue$/)
+    expect(codeBuddyAccount).toHaveBeenCalledWith({
+      site: 'external',
+      action: 'login',
+      mode: 'isolated'
+    })
+    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'CodeBuddy account request failed.'
+    )
+    await selectOption('Authentication', 'Use existing CodeBuddy CLI sign-in')
+    await clickButton(/^Sign in & continue$/)
+    expect(codeBuddyAccount).toHaveBeenLastCalledWith({
+      site: 'external',
+      action: 'login',
+      mode: 'shared'
+    })
+    expect(setActiveProvider).toHaveBeenCalledWith('builtin-codebuddy-international')
+    expect(container.textContent).toContain('Notebook runtime (optional)')
   })
 
   it('returns from Ready to quick connect and can advance again', async () => {
@@ -199,6 +270,7 @@ describe('Onboarding entry flow', () => {
       await clickButton(/^Next$/)
       await clickButton(/Advanced options/)
       await clickButton(/^Continue$/)
+      await clickButton(/^Continue$/)
       await clickButton(provisionFree ? /^Skip$/ : /^Use configured provider$/)
       await clickButton(/^Finish$/)
       const badge = container.querySelector('.onboarding-connection-summary')
@@ -220,22 +292,20 @@ describe('Onboarding entry flow', () => {
     expect(container.querySelector('[role="dialog"]')).toBe(dialog)
   })
 
-  it('keeps model submission blocked while the selected runtime checks are incomplete', async () => {
+  it('requires the selected agent to pass its checks before opening the model picker', async () => {
     await renderEntry()
     await finishWelcomeAnimation()
     await clickButton(/^Next$/)
     await clickButton(/Advanced options/)
     await clickButton(/^Continue$/)
     await act(async () => useSettingsStore.setState({ isCheckingEnvironment: true }))
-    const submit = Array.from(container.querySelectorAll('button')).find((button) =>
-      /Test & continue/.test(button.textContent ?? '')
-    )!
-    expect(submit.disabled).toBe(true)
-    await clickButton(/Test & continue/)
+    expect(findButton(/^Continue$/)?.disabled).toBe(true)
+    await clickButton(/^Continue$/)
+    expect(container.querySelector('[data-slot="provider-picker"]')).toBeNull()
     expect(useSettingsStore.getState().saveAndActivateProvider).not.toHaveBeenCalled()
   })
 
-  it('resumes Model and Agent after restarting from the welcome entry with a new data location', async () => {
+  it('resumes agent selection after restarting from the welcome entry with a new data location', async () => {
     const dataRoot = '/mnt/research/OpenScience'
     vi.mocked(window.api.storage.pickDirectory).mockResolvedValue('/mnt/research')
     vi.mocked(window.api.storage.inspectDataRoot).mockResolvedValue({ kind: 'move', dataRoot })
@@ -260,8 +330,8 @@ describe('Onboarding entry flow', () => {
     expect(
       container.querySelector('[data-onboarding-entry="advanced"] [aria-current="step"]')
         ?.textContent
-    ).toContain('Model and Agent')
-    expect(container.querySelector('section[aria-label="Configure model"]')).not.toBeNull()
+    ).toContain('Agent runtime')
+    expect(container.querySelector('section[aria-label="Set up the agent runtime"]')).not.toBeNull()
   })
 
   it.each(['account', 'api-key'] as const)(

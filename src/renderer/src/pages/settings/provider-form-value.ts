@@ -580,6 +580,17 @@ export type ProviderKindAvailability = {
   showClaudeIsolated?: boolean
 }
 
+export const providerKindAvailability = (
+  frameworkId: AgentFrameworkId,
+  providers: readonly { id: string }[],
+  desktop: boolean
+): ProviderKindAvailability => ({
+  codeBuddyProviders:
+    frameworkId === 'codebuddy' && desktop ? providers.map(({ id }) => id) : undefined,
+  showCodexSubscriptions: frameworkId === 'codex' || frameworkId === 'open-science-agent',
+  showClaudeIsolated: frameworkId === 'claude-code'
+})
+
 // Whether a provider kind is offered for the active framework. The type dropdown and the Add provider
 // picker share this so both surfaces list the same kinds.
 export const isProviderKindAvailable = (

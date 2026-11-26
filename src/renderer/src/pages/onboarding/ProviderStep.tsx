@@ -32,11 +32,23 @@ import {
 } from '@/stores/settings-store'
 import { ClaudeIsolatedSignInModal } from '../settings/ClaudeIsolatedSignInModal'
 import { ProviderForm, type CodexAuthMode } from '../settings/ProviderForm'
+import { isDesktopRenderer } from '@/lib/interface-scale'
+import {
+  codeBuddyAccounts,
+  WORKBUDDY_PROFILE_MESSAGE,
+  type CodeBuddySite
+} from '../../../../shared/codebuddy-subscription'
+import { ProviderKindPicker } from '../settings/ProviderKindPicker'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { XaiOAuthSignInDialog } from '../settings/XaiOAuthSignInDialog'
 import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
+  defaultProviderKindKey,
+  providerKindAvailability,
+  isProviderKindAvailable,
+  PROVIDER_KINDS,
+  selectedKindKey,
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
@@ -63,7 +75,8 @@ const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
   type === 'codex-isolated' ||
   type === 'claude-isolated' ||
   type === 'claude-shared' ||
-  type === 'xai-subscription'
+  type === 'xai-subscription' ||
+  type === 'codebuddy-subscription'
 
 // Converts a form value into the upsert request the main process expects.
 const toUpsertRequest = (value: ProviderFormValue, id?: string): UpsertProviderRequest => ({
@@ -99,10 +112,9 @@ type ProviderStepProps = {
   onBack: () => void
   onAdvance: () => void
   variant?: 'form' | 'quick'
-  children?: React.ReactNode
+  picker?: { kind?: string; select: (kind?: string) => void }
   canContinue?: boolean
-  onBusyChange?: (busy: boolean) => void
-  onAdvanced?: () => void
+  onAdvanced?: (kind?: string) => void
   onSkip?: () => void | Promise<void>
   skipError?: OnboardingFailure & { onDismiss: () => void }
   operation: ProviderStepOperation
@@ -209,9 +221,8 @@ const ProviderStep = ({
   onBack,
   onAdvance,
   variant = 'form',
-  children,
+  picker,
   canContinue = true,
-  onBusyChange,
   onAdvanced,
   onSkip,
   skipError,
@@ -223,6 +234,30 @@ const ProviderStep = ({
   const { t: tSettings } = useTranslation()
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const frameworkEndpoints = useSettingsStore(selectFrameworkApiEndpoints)
+  const providers = useSettingsStore((state) => state.providers)
+  const availability = providerKindAvailability(agentFrameworkId, providers, isDesktopRenderer())
+  const currentKindKey = selectedKindKey(formValue)
+  const pickedKind = picker?.kind && PROVIDER_KINDS.find((kind) => kind.key === picker.kind)
+  const showPicker =
+    !!picker &&
+    (!picker.kind ||
+      picker.kind !== currentKindKey ||
+      (!!pickedKind && !isProviderKindAvailable(pickedKind, availability)))
+  const modelHeading = useRef<HTMLHeadingElement>(null)
+  const wasShowingPicker = useRef(showPicker)
+  useEffect(() => {
+    if (wasShowingPicker.current && !showPicker) modelHeading.current?.focus()
+    wasShowingPicker.current = showPicker
+  }, [showPicker])
+  const codeBuddyLogin = useRef<CodeBuddySite | undefined>(undefined)
+  const codeBuddyAccount = useSettingsStore((state) => state.codeBuddyAccount)
+  const cancelCodeBuddy = (): void => {
+    const site = codeBuddyLogin.current
+    if (site) {
+      codeBuddyLogin.current = undefined
+      void codeBuddyAccount({ site, action: 'cancel' }).catch(() => undefined)
+    }
+  }
   const activeModel = useSettingsStore((state) => state.activeModel)
   const existingProvider = useSettingsStore((state) =>
     state.providers.find((provider) => provider.id === state.activeProviderId)
@@ -327,11 +362,6 @@ const ProviderStep = ({
       ? { [formValue.vendorId]: formValue.key }
       : {}
   )
-  // Combined advanced setup locks runtime selection while its provider is being tested.
-  useEffect(() => {
-    onBusyChange?.(isSaving)
-    return () => onBusyChange?.(false)
-  }, [isSaving, onBusyChange])
   const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   const activeFramework = useSettingsStore(selectActiveAgentFramework)
   const canReuseExistingProvider =
@@ -357,6 +387,10 @@ const ProviderStep = ({
 
   useEffect(
     () => () => {
+      if (codeBuddyLogin.current)
+        void codeBuddyAccount({ site: codeBuddyLogin.current, action: 'cancel' }).catch(
+          () => undefined
+        )
       quickAuth.current?.abort()
       if (pendingInstall.current) void pendingInstall.current.cancel(pendingInstall.current.id)
       if (codexLoginPendingRef.current) void cancelCodexLogin()
@@ -364,7 +398,13 @@ const ProviderStep = ({
       if (claudeSharedLoginPendingRef.current) void cancelSharedClaudeLogin()
       if (xaiLoginPendingRef.current) void cancelXaiOAuthLogin()
     },
-    [cancelCodexLogin, cancelIsolatedClaudeLogin, cancelSharedClaudeLogin, cancelXaiOAuthLogin]
+    [
+      cancelCodexLogin,
+      cancelIsolatedClaudeLogin,
+      cancelSharedClaudeLogin,
+      cancelXaiOAuthLogin,
+      codeBuddyAccount
+    ]
   )
 
   // Seed an untouched draft from the active framework. Codex starts with its subscription provider;
@@ -547,6 +587,31 @@ const ProviderStep = ({
             { framework: label }
           )
         )
+        return
+      }
+
+      if (value.type === 'codebuddy-subscription' && value.codeBuddySite) {
+        const site = value.codeBuddySite
+        const mode = value.codeBuddyAuthMode ?? 'isolated'
+        codeBuddyLogin.current = site
+        const result = await codeBuddyAccount({ action: 'login', site, mode })
+        if (!mounted.current || codeBuddyLogin.current !== site) return
+        if (!result.ok) {
+          setValidationOk(false)
+          setValidationMessage(
+            result.message === WORKBUDDY_PROFILE_MESSAGE
+              ? t('WorkBuddy profile found. Sign in to the selected site in CodeBuddy CLI.')
+              : mode === 'shared' && result.category === 'auth'
+                ? t('Sign in to the selected site in CodeBuddy CLI.')
+                : t('CodeBuddy account request failed.')
+          )
+          return
+        }
+        const id = codeBuddyAccounts[site].id
+        await setActiveProvider(id)
+        if (!mounted.current || codeBuddyLogin.current !== site) return
+        onProviderSaved?.(id)
+        advanceIfMounted()
         return
       }
 
@@ -774,6 +839,7 @@ const ProviderStep = ({
         )
       }
     } finally {
+      codeBuddyLogin.current = undefined
       if (!signal) {
         operation.finish()
         setIsSaving(false)
@@ -891,13 +957,23 @@ const ProviderStep = ({
     advanceIfMounted()
   }
 
+  const openProviderConfiguration = (card: QuickProviderCard): void => {
+    setFormValue({
+      ...createEmptyProviderFormValue(
+        providerKindPatch(card.kindKey, customApiEndpoint, activeFramework?.supportedApiTypes)
+      ),
+      providerFormTouched: true
+    })
+    onAdvanced?.(card.kindKey)
+  }
+
   const chooseQuickProvider = async (
     card: QuickProviderCard,
     mode: 'account' | 'key' | CodexAuthMode
   ): Promise<void> => {
     if (quickBusy || quickAuth.current) return
     if (card.kindKey === 'custom') {
-      onAdvanced?.()
+      openProviderConfiguration(card)
       return
     }
 
@@ -1127,13 +1203,7 @@ const ProviderStep = ({
                         <Button
                           type="button"
                           disabled={quickBusy}
-                          onClick={() => {
-                            setFormValue({
-                              ...createEmptyProviderFormValue(providerKindPatch(card.kindKey)),
-                              providerFormTouched: true
-                            })
-                            onAdvanced?.()
-                          }}
+                          onClick={() => openProviderConfiguration(card)}
                         >
                           {t('Configure')}
                         </Button>
@@ -1382,7 +1452,7 @@ const ProviderStep = ({
                 type="button"
                 variant="ghost"
                 data-onboarding-action="advanced"
-                onClick={onAdvanced}
+                onClick={() => onAdvanced?.()}
                 disabled={quickBusy}
               >
                 <Settings2 className="h-4 w-[0.9rem]! shrink-0 text-center" aria-hidden="true" />
@@ -1410,7 +1480,7 @@ const ProviderStep = ({
   return (
     <>
       <CardHeader className="gap-1 rounded-t-lg px-6 pt-5 pb-3">
-        <h2 tabIndex={-1} className="text-[15px] font-semibold">
+        <h2 ref={modelHeading} tabIndex={-1} className="text-[15px] font-semibold">
           {t('Connect a model')}
         </h2>
         <CardDescription className="text-xs leading-5">
@@ -1431,44 +1501,72 @@ const ProviderStep = ({
 
       <CardContent className="flex-1 px-6 pt-5 pb-6">
         <section aria-label={t('Configure model')}>
-          {!encryptionAvailable ? (
-            <ErrorNotice
-              inline
-              className="mb-4"
-              tone="amber"
-              description={t(
-                'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
-              )}
-            />
-          ) : null}
-          <ProviderForm
-            key={savedProviderId ?? 'new-provider'}
-            value={formValue}
-            onChange={(patch) => {
-              if ('baseUrl' in patch || 'localPresetId' in patch || 'key' in patch)
+          {showPicker ? (
+            <ProviderKindPicker
+              {...availability}
+              recommendedKey={defaultProviderKindKey(agentFrameworkId)}
+              onSelect={(kind) => {
+                if (!formValue.providerFormTouched || selectedKindKey(formValue) !== kind) {
+                  setFormValue({
+                    ...createEmptyProviderFormValue(
+                      providerKindPatch(kind, customApiEndpoint, activeFramework?.supportedApiTypes)
+                    ),
+                    providerFormTouched: true
+                  })
+                }
+                picker.select(kind)
+                setShowProviderErrors(false)
                 setCatalogError(undefined)
-              setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
-            }}
-            errors={showProviderErrors ? formErrors : undefined}
-            disabled={isSaving || isSkipping || isRefreshingModels}
-            onRefreshModels={formValue.localPresetId ? handleRefreshModels : undefined}
-            isRefreshingModels={isRefreshingModels}
-            catalogError={catalogError}
-            encryptionAvailable={encryptionAvailable}
-            showCodexSubscriptions={
-              agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent'
-            }
-            showClaudeIsolated={agentFrameworkId === 'claude-code'}
-            defaultCustomApiEndpoint={customApiEndpoint}
-            framework={activeFramework}
-          />
-          {formValue.type === 'claude-isolated' ? (
-            <p className="mt-4 text-sm text-muted-foreground">
-              {t(
-                "Sign in with your browser to connect your Claude subscription. We'll open Claude in your browser to authorize, then bring you right back."
-              )}
-            </p>
-          ) : null}
+                setValidationMessage(undefined)
+              }}
+            />
+          ) : (
+            <>
+              {!encryptionAvailable ? (
+                <ErrorNotice
+                  inline
+                  className="mb-4"
+                  tone="amber"
+                  description={t(
+                    'Secure key storage is unavailable. API keys cannot be saved until the system keychain is unlocked or authorized.'
+                  )}
+                />
+              ) : null}
+              <ProviderForm
+                key={savedProviderId ?? 'new-provider'}
+                value={formValue}
+                onChange={(patch) => {
+                  if ('baseUrl' in patch || 'localPresetId' in patch || 'key' in patch)
+                    setCatalogError(undefined)
+                  setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
+                }}
+                errors={showProviderErrors ? formErrors : undefined}
+                disabled={isSaving || isSkipping || isRefreshingModels}
+                onRefreshModels={formValue.localPresetId ? handleRefreshModels : undefined}
+                isRefreshingModels={isRefreshingModels}
+                catalogError={catalogError}
+                encryptionAvailable={encryptionAvailable}
+                {...availability}
+                onChangeProviderKind={
+                  picker
+                    ? () => {
+                        picker.select()
+                        setValidationMessage(undefined)
+                      }
+                    : undefined
+                }
+                defaultCustomApiEndpoint={customApiEndpoint}
+                framework={activeFramework}
+              />
+              {formValue.type === 'claude-isolated' ? (
+                <p className="mt-4 text-sm text-muted-foreground">
+                  {t(
+                    "Sign in with your browser to connect your Claude subscription. We'll open Claude in your browser to authorize, then bring you right back."
+                  )}
+                </p>
+              ) : null}
+            </>
+          )}
           {validationMessage ? (
             <p
               className={`mt-4 text-sm ${validationOk ? 'text-primary' : 'text-destructive'}`}
@@ -1479,14 +1577,17 @@ const ProviderStep = ({
           ) : null}
         </section>
       </CardContent>
-      {children}
       <CardFooter className="sticky bottom-0 z-10 mt-auto flex-wrap justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-[0.8rem]">
         {!canContinue ? (
           <p className="mr-auto text-xs text-text-100">
             {t('Complete every required item above to continue.')}
           </p>
         ) : null}
-        {isSaving && formValue.type === 'codex-isolated' ? (
+        {isSaving && formValue.type === 'codebuddy-subscription' ? (
+          <Button type="button" variant="outline" onClick={cancelCodeBuddy}>
+            {t('Cancel sign-in')}
+          </Button>
+        ) : isSaving && formValue.type === 'codex-isolated' ? (
           <Button type="button" variant="outline" onClick={() => void cancelCodexLogin()}>
             {t('Cancel sign-in')}
           </Button>
@@ -1514,10 +1615,15 @@ const ProviderStep = ({
           <Button
             type="button"
             variant="outline"
-            disabled={isSkipping}
+            disabled={isSkipping || (!!picker && busy)}
             onClick={() => {
-              mounted.current = false
-              onBack()
+              if (picker && !showPicker) {
+                picker.select()
+                setValidationMessage(undefined)
+              } else {
+                mounted.current = false
+                onBack()
+              }
             }}
           >
             {t('Back', { context: 'step' })}
@@ -1532,23 +1638,25 @@ const ProviderStep = ({
         >
           {canReuseExistingProvider ? t('Use configured provider') : t('Skip')}
         </Button>
-        <Button
-          type="button"
-          onClick={() => void handleSaveProvider()}
-          disabled={busy || !canContinue}
-          className="px-4"
-          aria-busy={Boolean(isSaving)}
-        >
-          <span key={String(isSaving)} className="button-feedback">
-            {isSaving
-              ? isBrowserSignInProvider(formValue.type)
-                ? t('Waiting for sign-in…')
-                : t('Testing connection…')
-              : isBrowserSignInProvider(formValue.type)
-                ? t('Sign in & continue')
-                : t('Test & continue')}
-          </span>
-        </Button>
+        {!showPicker && (
+          <Button
+            type="button"
+            onClick={() => void handleSaveProvider()}
+            disabled={busy || !canContinue}
+            className="px-4"
+            aria-busy={Boolean(isSaving)}
+          >
+            <span key={String(isSaving)} className="button-feedback">
+              {isSaving
+                ? isBrowserSignInProvider(formValue.type)
+                  ? t('Waiting for sign-in…')
+                  : t('Testing connection…')
+                : isBrowserSignInProvider(formValue.type)
+                  ? t('Sign in & continue')
+                  : t('Test & continue')}
+            </span>
+          </Button>
+        )}
       </CardFooter>
       <ClaudeIsolatedSignInModal
         open={isClaudeSignInOpen}

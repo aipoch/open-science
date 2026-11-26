@@ -11,11 +11,11 @@ import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import {
   createEmptyProviderFormValue,
+  selectedKindKey,
   type ProviderFormValue
 } from '../settings/provider-form-value'
 import { RuntimesPanel } from '../settings/RuntimesPanel'
 import { AgentStep } from './AgentStep'
-import { AgentPanel } from '../settings/AgentPanel'
 import { EnvironmentStep } from './EnvironmentStep'
 import { LocationStep, type LocationDraft } from './LocationStep'
 import { NotebookStep } from './NotebookStep'
@@ -143,8 +143,8 @@ const OnboardingProgress = ({
   compact?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const steps: WizardStep[] = compact ? ['location', 'provider', 'notebook'] : STEP_ORDER
-  const currentIndex = steps.indexOf(compact && step === 'agent' ? 'provider' : step)
+  const steps: WizardStep[] = compact ? ['location', 'agent', 'provider', 'notebook'] : STEP_ORDER
+  const currentIndex = steps.indexOf(step)
 
   return (
     <ol
@@ -178,11 +178,7 @@ const OnboardingProgress = ({
             >
               {state === 'done' ? <Check className="size-3" strokeWidth={2.4} /> : index + 1}
             </span>
-            <span>
-              {compact && wizardStep === 'provider'
-                ? t('Model and Agent')
-                : t(STEP_LABELS[wizardStep])}
-            </span>
+            <span>{t(STEP_LABELS[wizardStep])}</span>
           </li>
         )
       })}
@@ -218,8 +214,8 @@ const OnboardingWizard = ({
 
   const [step, setStep] = useState<WizardStep>('environment')
   const [entryPhase, setEntryPhase] = useState<EntryPhase>(showWelcome ? 'welcome' : 'advanced')
+  const [advancedKind, setAdvancedKind] = useState<string>()
   const [readySource, setReadySource] = useState<'connect' | 'advanced'>('connect')
-  const [isAdvancedProviderBusy, setIsAdvancedProviderBusy] = useState(false)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const runtimeReady =
     !isCheckingEnvironment &&
@@ -255,7 +251,8 @@ const OnboardingWizard = ({
         const value = typeof update === 'function' ? update(current.value) : update
         if (value === current.value) return current
         const changedKind =
-          value.type !== current.value.type || value.vendorId !== current.value.vendorId
+          value.type !== current.value.type ||
+          selectedKindKey(value) !== selectedKindKey(current.value)
         return changedKind ? { value, generation: current.generation + 1 } : { ...current, value }
       })
     },
@@ -290,7 +287,7 @@ const OnboardingWizard = ({
   const suppressStorageResume = useCallback((): void => {
     didResolveStorageResume.current = true
   }, [])
-  const leaveLocation = useCallback((nextStep: 'environment' | 'agent' | 'provider'): void => {
+  const leaveLocation = useCallback((nextStep: 'environment' | 'agent'): void => {
     // Leaving freezes the displayed choice. The effect cleanup stops the renderer-side probe, and
     // marking it resolved prevents Back/return loops from accumulating uncancellable IPC requests.
     didResolveStorageResume.current = true
@@ -303,7 +300,8 @@ const OnboardingWizard = ({
   // unmounts (and the layout disappears) while it is in flight.
   const [isRelaunching, setIsRelaunching] = useState(false)
 
-  const openAdvancedEntry = useCallback((): void => {
+  const openAdvancedEntry = useCallback((kind?: string): void => {
+    setAdvancedKind(kind)
     // Advanced setup starts with the user-controlled data location. The environment summary is
     // still available from the original setup surface when this wizard is mounted directly.
     setStep('location')
@@ -409,7 +407,7 @@ const OnboardingWizard = ({
         didResolveStorageResume.current = true
         if (!info.isDefault && !info.dataRootMissing && !locationDraftTouched.current) {
           if (showWelcome) setEntryPhase('advanced')
-          setStep(showWelcome ? 'provider' : 'agent')
+          setStep('agent')
         }
       }
     },
@@ -506,39 +504,28 @@ const OnboardingWizard = ({
             leaveLocation('environment')
             if (showWelcome) setEntryPhase('connect')
           }}
-          onContinue={() => leaveLocation(showWelcome ? 'provider' : 'agent')}
+          onContinue={() => leaveLocation('agent')}
           isResolvingDefaultLocation={isResolvingStorageDefault}
           setIsRelaunching={setIsRelaunching}
         />
       ) : step === 'agent' ? (
-        <AgentStep onBack={() => setStep('location')} onContinue={() => setStep('provider')} />
+        <AgentStep
+          inDialog={showWelcome}
+          onBack={() => setStep('location')}
+          onContinue={() => setStep('provider')}
+        />
       ) : step === 'provider' ? (
-        <>
-          <ProviderStep
-            operation={providerOperation}
-            formValue={providerDraft.value}
-            setFormValue={setFormValue}
-            providerId={providerDraft.providerId}
-            onProviderSaved={recordSavedProvider}
-            onBack={() => setStep(showWelcome ? 'location' : 'agent')}
-            onAdvance={() => setStep('notebook')}
-            canContinue={!showWelcome || runtimeReady}
-            onBusyChange={showWelcome ? setIsAdvancedProviderBusy : undefined}
-          >
-            {showWelcome ? (
-              <div
-                className="onboarding-advanced-agent border-t border-t-border pt-5 px-6 pb-6"
-                inert={isAdvancedProviderBusy}
-              >
-                <AgentPanel
-                  variant="onboarding"
-                  title={t('Set up the agent runtime')}
-                  description={null}
-                />
-              </div>
-            ) : null}
-          </ProviderStep>
-        </>
+        <ProviderStep
+          operation={providerOperation}
+          formValue={providerDraft.value}
+          setFormValue={setFormValue}
+          providerId={providerDraft.providerId}
+          onProviderSaved={recordSavedProvider}
+          picker={showWelcome ? { kind: advancedKind, select: setAdvancedKind } : undefined}
+          onBack={() => setStep('agent')}
+          onAdvance={() => setStep('notebook')}
+          canContinue={!showWelcome || runtimeReady}
+        />
       ) : step === 'notebook' ? (
         <NotebookStep
           onBack={() => setStep('provider')}

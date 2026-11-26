@@ -8953,7 +8953,6 @@
     "{{count}} regions_other": "{{count}} 个区域",
     "Sign in with your CodeBuddy account": "使用 CodeBuddy 账号登录",
     "Already added": "已添加",
-    "Model and Agent": "模型与智能体",
     "Could not install Claude Code. Try again.": "无法安装 Claude Code。请重试。",
     "No Codex sign-in file was found to import. Choose “{{signIn}}” to connect the same account.": "没有找到可导入的 Codex 登录文件。你可以选择「{{signIn}}」连接同一个账号。",
     "Your Codex sign-in could not be imported. Try again or choose “{{signIn}}” to connect your account.": "未能导入已有的 Codex 登录。你可以重试，或选择「{{signIn}}」连接账号。",
