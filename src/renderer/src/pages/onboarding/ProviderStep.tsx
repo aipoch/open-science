@@ -14,12 +14,11 @@ import { CardContent, CardDescription, CardFooter, CardHeader } from '@/componen
 import { Separator } from '@/components/ui/separator'
 import type {
   ClaudeInstallResult,
-  ProviderView,
   UpsertProviderRequest,
   ValidateProviderResult,
   XaiOAuthDeviceAuthorization
 } from '../../../../shared/settings'
-import { KILO_FREE_MODEL_ID } from '../../../../shared/provider-model-catalog'
+import { selectFreeKiloActive } from './onboarding-readiness'
 import { CODEX_IMPORT_FILE_MISSING_MESSAGE } from '../../../../shared/codex-runtime'
 import { unwrapIpcErrorDetail } from '../../../../shared/failure/messages'
 import {
@@ -74,11 +73,6 @@ import {
 import { mergeLocalModels } from '../settings/provider-model-form'
 import { modelCatalogErrorMessage } from '../settings/model-catalog-feedback'
 import type { ProviderStepOperation } from './use-provider-step-operation'
-
-const isFreeKiloModel = (provider: ProviderView | undefined, model?: string): boolean =>
-  provider?.type === 'official' &&
-  provider.vendorId === 'kilo' &&
-  (model ?? provider.model) === KILO_FREE_MODEL_ID
 
 const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
   type === 'codex-isolated' ||
@@ -302,7 +296,7 @@ const ProviderStep = ({
   const waitXaiOAuthLogin = useSettingsStore((state) => state.waitXaiOAuthLogin)
   const cancelXaiOAuthLogin = useSettingsStore((state) => state.cancelXaiOAuthLogin)
 
-  const [authStage, setAuthStage] = useState<'detect' | 'install' | 'auth'>()
+  const [authStage, setAuthStage] = useState<'detect' | 'install' | 'auth' | 'import'>()
   const [installError, setInstallError] = useState<{
     cardId: 'openai' | 'anthropic'
     retryMode?: CodexAuthMode
@@ -383,22 +377,24 @@ const ProviderStep = ({
   )
   const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   const activeFramework = useSettingsStore(selectActiveAgentFramework)
-  const freeKiloActive = isFreeKiloModel(existingProvider, activeModel)
+  const freeKiloActive = useSettingsStore(selectFreeKiloActive)
   const keepConfiguredProvider =
     !freeKiloActive &&
     existingProvider !== undefined &&
     existingProvider.lastValidatedAt !== undefined &&
     existingProvider.lastValidationFailure === undefined &&
     !existingProvider.needsKey &&
-    isProviderUsableByFramework(
-      { apiEndpoints: existingProvider.apiEndpoints, type: existingProvider.type },
-      { id: agentFrameworkId, supportedApiTypes: frameworkEndpoints }
-    )
+    isProviderUsableByFramework(existingProvider, {
+      id: agentFrameworkId,
+      supportedApiTypes: frameworkEndpoints
+    })
   // Mirrors the Settings teardown: a pending isolated sign-in lives in the main process for up to
   // five minutes, and its guard rejects a second attempt as "already in progress". If the wizard
   // unmounts mid-flow (app quit, relaunch, forced navigation), cancel it so the next attempt starts
   // clean. The ref is written only from event handlers/effects, never during render.
-  const quickAuth = useRef<AbortController | undefined>(undefined)
+  const quickAuth = useRef<{ controller: AbortController; canCancel: boolean } | undefined>(
+    undefined
+  )
   const codexLoginPendingRef = useRef(false)
   const claudeLoginPendingRef = useRef(false)
   const claudeSharedLoginPendingRef = useRef(false)
@@ -411,7 +407,7 @@ const ProviderStep = ({
         void codeBuddyAccount({ site: codeBuddyLogin.current, action: 'cancel' }).catch(
           () => undefined
         )
-      quickAuth.current?.abort()
+      quickAuth.current?.controller.abort()
       if (pendingInstall.current) void pendingInstall.current.cancel(pendingInstall.current.id)
       if (codexLoginPendingRef.current) void cancelCodexLogin()
       if (claudeLoginPendingRef.current) void cancelIsolatedClaudeLogin()
@@ -527,9 +523,7 @@ const ProviderStep = ({
     try {
       if (!keepConfiguredProvider && !freeKiloActive) {
         await addOnboardingKiloProvider()
-        const settings = useSettingsStore.getState()
-        const selected = settings.providers.find(({ id }) => id === settings.activeProviderId)
-        if (!isFreeKiloModel(selected, settings.activeModel)) {
+        if (!selectFreeKiloActive(useSettingsStore.getState())) {
           setValidationOk(false)
           setValidationMessage(t('Could not save provider.'))
           return
@@ -1003,14 +997,15 @@ const ProviderStep = ({
     setFormValue(nextValue)
     if (mode === 'key') return
 
-    const attempt = new AbortController()
+    const attempt = { controller: new AbortController(), canCancel: true }
+    const { signal } = attempt.controller
     quickAuth.current = attempt
     // Quick setup chooses the provider first, so resolve its subscription runtime before login.
     setIsSaving(true)
     setValidationMessage(undefined)
     try {
       if (card.subscriptionKind === 'claude-subscription') {
-        await connectQuickClaude(nextValue, attempt.signal)
+        await connectQuickClaude(nextValue, signal)
         return
       }
       const settings = useSettingsStore.getState()
@@ -1018,17 +1013,19 @@ const ProviderStep = ({
         setAuthStage('detect')
         await prepareQuickRuntime(
           mode,
-          attempt.signal,
+          signal,
           (id) => settings.installCodex('managed', id),
           cancelCodexLogin,
           t('Could not prepare Codex. Try again.')
         )
-        setAuthStage('auth')
+        signal.throwIfAborted()
+        // The import commits credentials and activates the provider through non-cancellable IPC.
+        attempt.canCancel = mode !== 'codex-shared'
+        setAuthStage(attempt.canCancel ? 'auth' : 'import')
       }
-      if (mounted.current && !attempt.signal.aborted)
-        await handleSaveProvider(nextValue, attempt.signal)
+      if (mounted.current && !signal.aborted) await handleSaveProvider(nextValue, signal)
     } catch (error) {
-      if (!mounted.current || attempt.signal.aborted) return
+      if (!mounted.current || signal.aborted) return
       if (mode === 'codex-shared') {
         setValidationOk(false)
         setValidationMessage(codexImportFailure(error))
@@ -1043,7 +1040,7 @@ const ProviderStep = ({
         details: onboardingErrorMessage(error, card.id)
       })
     } finally {
-      if (quickAuth.current === attempt && (!attempt.signal.aborted || !mounted.current)) {
+      if (quickAuth.current === attempt && (!signal.aborted || !mounted.current)) {
         quickAuth.current = undefined
         setAuthStage(undefined)
         operation.finish()
@@ -1054,8 +1051,8 @@ const ProviderStep = ({
 
   const cancelQuickAuthorization = async (): Promise<void> => {
     const attempt = quickAuth.current
-    if (!attempt || attempt.signal.aborted) return
-    attempt.abort()
+    if (!attempt?.canCancel || attempt.controller.signal.aborted) return
+    attempt.controller.abort()
     try {
       const install = pendingInstall.current
       if (install) {
@@ -1368,10 +1365,12 @@ const ProviderStep = ({
                                     ? t('Installing…')
                                     : authStage === 'detect'
                                       ? t('Detecting…')
-                                      : t('Signing in…')
+                                      : authStage === 'import'
+                                        ? t('Importing…')
+                                        : t('Signing in…')
                                   : t('Continue with {{provider}}', { provider: card.title })}
                               </Button>
-                              {isAuthorizing && (
+                              {isAuthorizing && authStage !== 'import' && (
                                 <Button
                                   type="button"
                                   variant="secondary"

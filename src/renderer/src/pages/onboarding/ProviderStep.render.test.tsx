@@ -741,8 +741,38 @@ describe('ProviderStep', () => {
     expect(addOnboardingKiloProvider).not.toHaveBeenCalled()
   })
 
+  it('stops offering native-only Codex credentials after switching to the built-in Agent', async () => {
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      activeProviderId: 'native-codex',
+      activeModel: 'gpt-5',
+      providers: [
+        {
+          id: 'native-codex',
+          name: 'Native Codex',
+          type: 'codex-isolated',
+          codexHarnessAvailable: false,
+          lastValidatedAt: 1,
+          needsKey: false,
+          hasKey: true,
+          model: 'gpt-5',
+          models: ['gpt-5'],
+          supportsImageInput: true
+        }
+      ]
+    })
+    await renderStep()
+    expect(container.textContent).toContain('Already configured: Native Codex')
+    await act(async () => useSettingsStore.setState({ agentFrameworkId: 'open-science-agent' }))
+    expect(container.textContent).not.toContain('Already configured:')
+    expect(container.textContent).toContain('Continue with free Kilo Gateway')
+  })
+
   it('stays on the provider step when free Kilo could not be activated', async () => {
     const onAdvance = vi.fn()
+    vi.mocked(useSettingsStore.getState().addOnboardingKiloProvider).mockResolvedValueOnce(
+      undefined
+    )
     await renderStep({ onAdvance })
     await clickButton(/^Continue with free Kilo Gateway$/)
     expect(useSettingsStore.getState().addOnboardingKiloProvider).toHaveBeenCalledOnce()

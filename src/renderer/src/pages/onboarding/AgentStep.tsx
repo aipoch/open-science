@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { CardContent, CardFooter } from '@/components/ui/card'
-import { selectAgentEnvironmentReady, useSettingsStore } from '@/stores/settings-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { selectAgentEnvironmentReady } from './onboarding-readiness'
 import { AgentPanel } from '../settings/AgentPanel'
 
 type AgentStepProps = {

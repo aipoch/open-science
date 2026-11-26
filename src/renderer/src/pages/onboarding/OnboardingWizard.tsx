@@ -9,7 +9,8 @@ import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../../shared/agent-framework-i
 import { APP } from '../../../../shared/app-config'
 import type { StorageInfo } from '../../../../shared/storage'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
-import { selectAgentEnvironmentReady, useSettingsStore } from '@/stores/settings-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { selectAgentEnvironmentReady, selectFreeKiloActive } from './onboarding-readiness'
 import {
   createEmptyProviderFormValue,
   selectedKindKey,
@@ -341,6 +342,9 @@ const OnboardingWizard = ({
     setSkipError(undefined)
     try {
       await addOnboardingKiloProvider()
+      if (!selectFreeKiloActive(useSettingsStore.getState())) {
+        throw new Error(t('Could not save provider.'))
+      }
       await completeOnboarding()
     } catch (error) {
       setSkipError({

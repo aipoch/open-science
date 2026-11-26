@@ -526,6 +526,65 @@ describe('Onboarding entry flow', () => {
     expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
   })
 
+  it('keeps import and activation locked until Codex finishes committing', async () => {
+    const write = Promise.withResolvers<{ providerId: string; validation: { ok: true } }>()
+    const activate = Promise.withResolvers<void>()
+    const saveProvider = vi.fn().mockReturnValue(write.promise)
+    const setActiveProvider = vi.fn().mockReturnValue(activate.promise)
+    useSettingsStore.setState({ ...codexReadyState(), saveProvider, setActiveProvider })
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/^Import existing Codex sign-in$/)
+    expect(saveProvider).toHaveBeenCalledOnce()
+
+    const assertLocked = async (): Promise<void> => {
+      const cancel = container.querySelector<HTMLButtonElement>('[aria-label="Cancel sign-in"]')
+      expect(cancel).toBeNull()
+      expect(findButton(/^Importing…$/)?.disabled).toBe(true)
+      for (const label of [
+        /^Back$/,
+        /Advanced options/,
+        /free Kilo models/,
+        /Continue with Anthropic/
+      ]) {
+        expect(findButton(label)?.disabled).toBe(true)
+        await clickButton(label)
+      }
+      await act(async () =>
+        fireEvent.keyDown(container.querySelector('[role="dialog"]')!, { key: 'Escape' })
+      )
+      expect(container.querySelector('[data-onboarding-entry="connect"]')).not.toBeNull()
+      expect(useSettingsStore.getState().cancelCodexLogin).not.toHaveBeenCalled()
+      expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    }
+    await assertLocked()
+    await act(async () => write.resolve({ providerId: 'imported', validation: { ok: true } }))
+    expect(setActiveProvider).toHaveBeenCalledOnce()
+    await assertLocked()
+    await act(async () => activate.resolve())
+    expect(container.querySelector('[data-onboarding-entry="ready"]')).not.toBeNull()
+    await clickButton(/^Back$/)
+    expect(findButton(/^Import existing Codex sign-in$/)?.disabled).toBe(false)
+  })
+
+  it('allows retry when Kilo provisioning resolves without activating the free model', async () => {
+    const provision = vi.mocked(useSettingsStore.getState().addOnboardingKiloProvider)
+    provision.mockResolvedValueOnce(undefined)
+    await renderEntry()
+    await finishWelcomeAnimation()
+    await clickButton(/^Next$/)
+    await clickButton(/free Kilo models/)
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Could not skip setup.'
+    )
+    expect(useSettingsStore.getState().completeOnboarding).not.toHaveBeenCalled()
+    expect(findButton(/free Kilo models/)?.disabled).toBe(false)
+    await clickButton(/free Kilo models/)
+    expect(provision).toHaveBeenCalledTimes(2)
+    expect(useSettingsStore.getState().completeOnboarding).toHaveBeenCalledOnce()
+  })
+
   it('blocks competing quick actions until a pending Kilo skip settles', async () => {
     const pending = Promise.withResolvers<void>()
     const addOnboardingKiloProvider = vi.fn().mockReturnValue(pending.promise)
@@ -569,7 +628,7 @@ describe('Onboarding entry flow', () => {
 
   it('provisions free Kilo after an invalid quick key and Skip', async () => {
     const setActiveProvider = vi.fn()
-    const addOnboardingKiloProvider = vi.fn().mockResolvedValue(undefined)
+    const addOnboardingKiloProvider = useSettingsStore.getState().addOnboardingKiloProvider
     const saveValidatedProvider = vi
       .fn()
       .mockResolvedValue({ validation: { ok: false, category: 'auth', status: 401 } })
