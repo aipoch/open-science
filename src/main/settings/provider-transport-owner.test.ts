@@ -1343,11 +1343,11 @@ describe('ProviderTransportOwner generations', () => {
   })
 
   it('passes live HTTP authorization to Pi messages and protocol bridges', async () => {
-    const allow = vi.fn(async () => false)
+    let allowed = true
     let messageTargets: readonly MessagesBridgeTarget[] = []
     let protocolTargets: readonly ProtocolForwardingBridgeTarget[] = []
     const owner = new ProviderTransportOwner({
-      isProviderHttpAllowed: allow,
+      isProviderHttpAllowed: async () => allowed,
       createMessagesBridge: (targets) => {
         messageTargets = targets
         return makeMessagesBridge()
@@ -1396,11 +1396,12 @@ describe('ProviderTransportOwner generations', () => {
       }
     })
 
-    expect(messageTargets[0]).toEqual(expect.objectContaining({ isInsecureHttpAllowed: allow }))
-    expect(protocolTargets[0]).toEqual(expect.objectContaining({ isInsecureHttpAllowed: allow }))
-    expect(await messageTargets[0]?.isInsecureHttpAllowed?.('http://gateway.example/v1')).toBe(
-      false
-    )
+    for (const expected of [true, false]) {
+      allowed = expected
+      for (const target of [messageTargets[0], protocolTargets[0]]) {
+        expect(await target?.isInsecureHttpAllowed?.('http://gateway.example/v1')).toBe(expected)
+      }
+    }
     await generation.release()
   })
 
