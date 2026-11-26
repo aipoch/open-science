@@ -120,6 +120,7 @@ vi.mock('pdfjs-dist/web/pdf_viewer.mjs', () => ({
 vi.mock('../pdfjs', () => ({
   pdfjsLib: {
     getDocument: vi.fn(),
+    OPS: { constructPath: 91 },
     AnnotationMode: { ENABLE_STORAGE: 3 },
     TextLayer: class {
       constructor(
@@ -325,6 +326,80 @@ describe('PdfPreviewContent', () => {
         expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
       }
     )
+
+    it('shows a low-resolution poster before refining a dense single-page PDF', async () => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+      vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(2)
+      const render = vi.fn((parameters: { viewport: { width: number; height: number } }) => {
+        void parameters
+        return { promise: Promise.resolve(), cancel: vi.fn() }
+      })
+      const densePage = {
+        getViewport: vi.fn(({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale
+        })),
+        getOperatorList: vi.fn().mockResolvedValue({
+          fnArray: Array.from({ length: 10_001 }, () => 91),
+          argsArray: []
+        }),
+        getTextContent: vi.fn().mockResolvedValue({ items: [], styles: {} }),
+        render,
+        cleanup: vi.fn()
+      }
+      getPage.mockResolvedValue(densePage)
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          getPage,
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+
+      await act(async () => {
+        root.render(<PdfPreviewContent path="dense.pdf" name="dense.pdf" />)
+      })
+      await waitFor(() => expect(render).toHaveBeenCalledTimes(2))
+
+      const firstViewport = render.mock.calls[0][0].viewport
+      const refinedViewport = render.mock.calls[1][0].viewport
+      expect(firstViewport.width).toBeLessThan(refinedViewport.width)
+      expect(densePage.getOperatorList).toHaveBeenCalledOnce()
+    })
+
+    it('does not render a duplicate poster when the target fits the poster scale', async () => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+      vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(1)
+      const render = vi.fn((parameters: { viewport: { width: number; height: number } }) => {
+        void parameters
+        return { promise: Promise.resolve(), cancel: vi.fn() }
+      })
+      const densePage = {
+        getViewport: vi.fn(({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale
+        })),
+        getOperatorList: vi.fn().mockResolvedValue({
+          fnArray: Array.from({ length: 10_001 }, () => 91),
+          argsArray: []
+        }),
+        getTextContent: vi.fn().mockResolvedValue({ items: [], styles: {} }),
+        render,
+        cleanup: vi.fn()
+      }
+      getPage.mockResolvedValue(densePage)
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({ numPages: 1, getPage, destroy: destroyDocument }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+
+      await act(async () => root.render(<PdfPreviewContent path="fits.pdf" name="fits.pdf" />))
+      await waitFor(() => expect(render).toHaveBeenCalledOnce())
+      expect(render.mock.calls[0][0].viewport.width).toBe(600)
+    })
 
     it('cancels a pending single-page render before destroying its document and resource', async () => {
       const cancel = vi.fn()
