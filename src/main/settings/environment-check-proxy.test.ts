@@ -44,6 +44,43 @@ describe('proxy-aware registry reachability', () => {
       'HTTP 502 while checking npmmirror'
     )
   })
+
+  it('rejects before fetching when caller signal is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort(new Error('caller aborted'))
+
+    await expect(
+      probeRegistryReachability('npmjs', '/opencode-ai/latest', controller.signal)
+    ).rejects.toThrow('caller aborted')
+    expect(netFetch).not.toHaveBeenCalled()
+  })
+
+  it('propagates caller abort instead of misclassifying it as a probe timeout', async () => {
+    const controller = new AbortController()
+    netFetch.mockImplementation(
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        })
+    )
+
+    const pending = probeRegistryReachability('npmjs', '/opencode-ai/latest', controller.signal)
+    controller.abort(new Error('caller cancelled'))
+
+    await expect(pending).rejects.toThrow('caller cancelled')
+  })
+
+  it('throws caller abort if fetch resolves despite an aborted signal', async () => {
+    const controller = new AbortController()
+    netFetch.mockImplementation(async () => {
+      controller.abort(new Error('aborted mid-flight'))
+      return new Response(null, { status: 200 })
+    })
+
+    await expect(
+      probeRegistryReachability('npmmirror', '/opencode-ai/latest', controller.signal)
+    ).rejects.toThrow('aborted mid-flight')
+  })
 })
 
 await configureTestElectronHost(await import('electron'))

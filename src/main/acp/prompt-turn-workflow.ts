@@ -1,5 +1,6 @@
 import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
+import { taskPromptOwnerOf } from '../../shared/task-continuation'
 import { SessionPromptAdmissionError } from './runtime-activity-port'
 import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import type {
@@ -158,8 +159,17 @@ type AcpPromptTurnEnvironment = Readonly<{
     signal?: AbortSignal
     assertCurrent?: () => void
   }) => Promise<void>
+  prepareTaskNotebookRuntime?: (
+    request: AcpPromptRequest,
+    cwd: string,
+    signal: AbortSignal
+  ) => Promise<void>
   commitNotebookDispatch?: (appSessionId: string) => void
-  prepareNotebookIntent?: (request: AcpPromptRequest, mode: AcpPromptTurnMode) => void
+  prepareNotebookIntent?: (
+    request: AcpPromptRequest,
+    mode: AcpPromptTurnMode,
+    signal: AbortSignal
+  ) => void | Promise<{ signal: AbortSignal; assertCurrent(): void; commit(): void }>
   observeNotebookExecutionLoop?: (input: {
     appSessionId: string
     providerSessionId: string
@@ -484,6 +494,7 @@ class AcpPromptTurnWorkflow {
     const traceThisRun =
       mode.kind === 'user' && mode.runtimeReviewOwner === 'task' && requiresTaskRunTracing(request)
     let admittedRequest = request
+    let preDispatchOutcome: AcpPromptFinalizationOutcome | undefined
     try {
       interaction = this.options.interactions.activatePrompt(reservation)
       // Activate the prompt before releasing startup protection so reconnect never sees an idle gap.
@@ -509,10 +520,23 @@ class AcpPromptTurnWorkflow {
       // rejected commit releases ownership below without publishing prompt start or dispatching.
       const admittedProvenanceContext = await onPromptAdmitted?.()
       if (admittedProvenanceContext) {
-        this.options.interactions.updatePromptProvenance(interaction, admittedProvenanceContext)
+        this.options.interactions.updatePromptProvenance(
+          interaction,
+          this.taskProvenance(request, admittedProvenanceContext)
+        )
         admittedRequest = { ...request, provenanceContext: admittedProvenanceContext }
       }
-      this.options.environment.prepareNotebookIntent?.(admittedRequest, mode)
+      const notebookPreparation = this.options.environment.prepareNotebookIntent?.(
+        admittedRequest,
+        mode,
+        interaction.signal
+      )
+      const notebookContinuation = notebookPreparation && (await notebookPreparation)
+      const assertInteractionCurrent = (): void => {
+        if (this.options.interactions.current(request.sessionId) !== interaction)
+          throw new Error('ACP prompt interaction is no longer active')
+        notebookContinuation?.assertCurrent()
+      }
       // The coordinator retains the original object for automatic Reviewer/settlement work.
       // Copy only Main-owned symbols, never wire metadata, onto that retained request.
       const intent = notebookExecutionIntent(admittedRequest)
@@ -535,13 +559,10 @@ class AcpPromptTurnWorkflow {
                 }
               : undefined,
             mode.kind === 'app-continuation',
-            mode.kind === 'app-continuation'
+            mode.kind === 'app-continuation' || notebookContinuation
               ? {
-                  signal: interaction.signal,
-                  assertCurrent: () => {
-                    if (this.options.interactions.current(request.sessionId) !== interaction)
-                      throw new Error('ACP prompt interaction is no longer active')
-                  }
+                  signal: notebookContinuation?.signal ?? interaction.signal,
+                  assertCurrent: assertInteractionCurrent
                 }
               : undefined
           )
@@ -553,8 +574,23 @@ class AcpPromptTurnWorkflow {
           throw error
         }
       }
-      this.options.registry.select(admittedRequest.sessionId)
-      this.options.recordAdmittedPrompt(admittedRequest)
+      if (notebookContinuation) {
+        try {
+          assertInteractionCurrent()
+          notebookContinuation.commit()
+          const continuation = notebookExecutionIntent(admittedRequest)
+          if (continuation) markNotebookExecutionIntent(request, continuation)
+        } catch (error) {
+          if (!this.options.beginRuntimeSessionTurn) throw error
+          preDispatchOutcome = notebookContinuation.signal.aborted
+            ? { kind: 'not-dispatched' }
+            : { kind: 'failed', error }
+        }
+      }
+      if (!preDispatchOutcome) {
+        this.options.registry.select(admittedRequest.sessionId)
+        this.options.recordAdmittedPrompt(admittedRequest)
+      }
     } catch (error) {
       notebookExecutionIntent(admittedRequest)?.abandonUserExecution()
       const scope = interaction ?? reservation
@@ -575,27 +611,35 @@ class AcpPromptTurnWorkflow {
       throw error
     }
 
-    this.safeCallback('prompt-start callback failed', () =>
-      this.options.onPromptStarted(request.sessionId, interaction.turnToken, mode.promptAttemptId)
+    if (!preDispatchOutcome) {
+      this.safeCallback('prompt-start callback failed', () =>
+        this.options.onPromptStarted(request.sessionId, interaction.turnToken, mode.promptAttemptId)
+      )
+      this.options.emitState()
+      log.info('prompt start', {
+        sessionId: request.sessionId,
+        textLength: request.text?.length ?? 0
+      })
+    }
+    return this.executeTurn(
+      {
+        request: admittedRequest,
+        traceThisRun,
+        connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
+        mode,
+        session: activeSession,
+        interaction,
+        skill,
+        plan
+      },
+      preDispatchOutcome
     )
-    this.options.emitState()
-    log.info('prompt start', {
-      sessionId: request.sessionId,
-      textLength: request.text?.length ?? 0
-    })
-    return this.executeTurn({
-      request: admittedRequest,
-      traceThisRun,
-      connectionGeneration: this.options.environment.connectionGeneration?.() ?? 0,
-      mode,
-      session: activeSession,
-      interaction,
-      skill,
-      plan
-    })
   }
 
-  private async executeTurn(turn: AcpActivatedPromptTurn): Promise<PromptResponse> {
+  private async executeTurn(
+    turn: AcpActivatedPromptTurn,
+    preDispatchOutcome?: AcpPromptFinalizationOutcome
+  ): Promise<PromptResponse> {
     const { request, session, interaction, skill } = turn
     const {
       artifacts,
@@ -662,6 +706,12 @@ class AcpPromptTurnWorkflow {
           }
         : request
       const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
+      if (turn.mode.kind === 'user' && turn.mode.runtimeReviewOwner === 'task')
+        await env.prepareTaskNotebookRuntime?.(
+          request,
+          snapshot?.cwd ?? this.options.currentCwd(),
+          interaction.signal
+        )
       const backend = env.backend()
       promptBackend = backend
       const visibleUserPrompt =
@@ -1032,7 +1082,8 @@ class AcpPromptTurnWorkflow {
     }
     let outcome: AcpPromptFinalizationOutcome
     try {
-      outcome = await execute()
+      if (preDispatchOutcome?.kind === 'not-dispatched') await this.checkpoint(interaction)
+      outcome = preDispatchOutcome ?? (await execute())
     } catch (error) {
       outcome = Object.freeze({ kind: 'failed', error })
     } finally {
@@ -1121,7 +1172,7 @@ class AcpPromptTurnWorkflow {
       kind: 'prompt',
       ...(request.permissionPrompts ? { permissionPrompts: request.permissionPrompts } : {}),
       promptMessageId: request.provenanceContext?.promptMessageId,
-      provenanceContext: request.provenanceContext,
+      provenanceContext: this.taskProvenance(request, request.provenanceContext),
       ...(request.memoryEnabled !== undefined ? { memoryEnabled: request.memoryEnabled } : {}),
       turnToken: request.continuation?.originatingTurnToken,
       ...(request.referencedSessions?.length
@@ -1130,6 +1181,17 @@ class AcpPromptTurnWorkflow {
           }
         : {})
     })
+  }
+
+  private taskProvenance(
+    request: AcpPromptRequest,
+    provenance: AcpPromptRequest['provenanceContext']
+  ): AcpPromptRequest['provenanceContext'] {
+    if (!provenance) return undefined
+    const { taskRunId: _untrusted, ...context } = provenance
+    void _untrusted
+    const taskRunId = taskPromptOwnerOf(request)
+    return taskRunId ? { ...context, taskRunId } : context
   }
 
   private checkpoint(

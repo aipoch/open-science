@@ -366,6 +366,7 @@ export async function generateResearchFilm(
     modelRevision: string
     drawnSessionApp?: boolean
     engineDirectory: string
+    speech?: import('./remote-speech.js').RemoteSpeechConfig
     onProgress?: (progress: import('./progress.js').ResearchVideoStep) => void
     reviewPlayer?: (
       source: ResearchVideoSessionSource,
@@ -434,6 +435,7 @@ export async function generateResearchFilm(
           modelDirectory: options.modelDirectory,
           engineDirectory: options.engineDirectory,
           outputDirectory: join(options.directory, 'output'),
+          ...(options.speech ? { speech: options.speech } : {}),
           provenance: {
             ...options.source.provenance,
             kind: 'session-source-snapshot',

@@ -10,6 +10,7 @@ import { ProviderForm } from './ProviderForm'
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import {
   createEmptyProviderFormValue,
+  providerKindPatch,
   type ProviderFormErrors,
   type ProviderFormValue
 } from './provider-form-value'
@@ -335,6 +336,64 @@ describe('ProviderForm field switching', () => {
     ).toBeNull()
     // The auth style selector was removed; custom always uses a bearer token.
     expect(container.querySelector('[aria-label="Auth style"]')).toBeNull()
+  })
+
+  it.each([
+    ['cloudflare-ai-gateway', '#provider-cloudflare-mode', '@cf/openai/gpt-oss-120b'],
+    ['aws-bedrock', '#provider-manual-format', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0']
+  ])(
+    'shows editable default model rows without a refresh control for %s',
+    (vendorId, formatSelector, modelId) => {
+      render(createEmptyProviderFormValue(providerKindPatch(`official:${vendorId}`)))
+      const format = container.querySelector(formatSelector)!
+      const key = container.querySelector('#provider-key')!
+      const model = container.querySelector<HTMLInputElement>('[aria-label="Model ID"]')!
+
+      expect(format.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(key.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(model.value).toBe(modelId)
+      expect(container.textContent).toContain('Add model')
+      expect(container.textContent).not.toContain('Refresh model list')
+      expect(container.textContent).not.toContain('Advanced settings')
+    }
+  )
+
+  it('shows the Vectrust API format up front and selects models directly from the shortlist', () => {
+    const onChange = vi.fn()
+    render(createEmptyProviderFormValue(providerKindPatch('official:vectrust')), { onChange })
+    const format = container.querySelector('#provider-manual-format')!
+    const key = container.querySelector('#provider-key')!
+
+    expect(format.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelector('#provider-model')).toBeNull()
+    expect(container.querySelector('#provider-manual-context-window')).toBeNull()
+    expect(container.querySelector('[aria-label="Model ID"]')).toBeNull()
+    expect(container.textContent).not.toContain('Add model')
+    expect(container.textContent).not.toContain('Advanced settings')
+    expect(container.textContent).not.toContain('Refresh model list')
+
+    act(() => {
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === 'glm-5.3')
+        ?.click()
+    })
+    expect(onChange).toHaveBeenCalledWith({ model: 'glm-5.3', contextWindow: '' })
+  })
+
+  it('shows the required Foundry resource and deployment with the API key', () => {
+    render(createEmptyProviderFormValue(providerKindPatch('official:microsoft-foundry')))
+    const location = container.querySelector('#provider-manual-location')!
+    const key = container.querySelector('#provider-key')!
+    const deployment = container.querySelector('[aria-label="Deployment name"]')!
+    expect(location.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(key.compareDocumentPosition(deployment) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(container.querySelector('#provider-manual-format')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Context window"]')).not.toBeNull()
+    expect((deployment as HTMLInputElement).value).toBe('')
+    expect(deployment.getAttribute('placeholder')).toBe('claude-sonnet-5-5')
+    expect(container.textContent).not.toContain('Advanced settings')
+    expect(container.textContent).toContain('Add model')
+    expect(container.textContent).not.toContain('Refresh model list')
   })
 
   it('opens Advanced settings when saved model limits would otherwise be hidden', () => {

@@ -84,6 +84,14 @@ export const noticeCatalog = {
 
 // Unknown reasons retain category copy.
 export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> = {
+  'configuration/selected-provider-unavailable': {
+    level: 'warning',
+    titleKey: 'Session model unavailable',
+    descriptionKey:
+      "Choose an available model in this conversation's model picker, then try again.",
+    secondaryActions: [],
+    feedback: 'none'
+  },
   'configuration/model-unavailable': {
     level: 'warning',
     titleKey: 'Model configuration needs attention',
@@ -164,7 +172,7 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     titleKey: 'The input is too long',
     descriptionKey: 'Shorten the conversation or remove some attachments, then retry.',
     primaryAction: 'compact',
-    secondaryActions: ['remove-attachments']
+    secondaryActions: ['remove-attachments', 'open-provider-settings']
   },
   'configuration/vision-model': {
     level: 'warning',

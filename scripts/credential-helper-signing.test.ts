@@ -104,6 +104,7 @@ it('preserves pinned credential signatures while signing other resources and the
     exports,
     Buffer,
     __dirname: '/fixture/build',
+    process: { env: {} },
     console: { log: vi.fn() },
     require: (id: string) => {
       if (id === './verify-native-components.cjs') return async () => new Set()

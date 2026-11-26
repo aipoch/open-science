@@ -1,23 +1,25 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- Worker-only native helper. */
-import { PDFDocument, PDFDict, PDFName, PDFRawStream } from 'pdf-lib'
+import { PDFDict, PDFName, PDFRawStream } from 'pdf-lib'
 
 // Publishers sometimes wrap an entire page in one scaled Form. Expose only
 // unambiguous page containers; ordinary figures and transparency groups stay Forms.
-export async function unwrapPageContainers(e, doc, data, pageCount, selectedPages) {
+export function unwrapPageContainers(e, doc, metadata, selectedPages) {
   const p = e.p
-  let metadata
+  const pages = metadata.getPages()
   const at = e.alloc(24)
   try {
-    for (let index = 0; index < pageCount; index++) {
+    for (let index = 0; index < pages.length; index++) {
       if (selectedPages && !selectedPages.has(index + 1)) continue
       const page = p.FPDF_LoadPage(doc, index)
       if (!page) throw Error('Could not open PDF page container')
       try {
-        const objects = e.objects(page),
-          forms = objects.filter((o) => o.type === 5)
+        const objects = Array.from({ length: p.FPDFPage_CountObjects(page) }, (_, i) =>
+          p.FPDFPage_GetObject(page, i)
+        )
+        const forms = objects.filter((object) => p.FPDFPageObj_GetType(object) === 5)
         if (forms.length !== 1) continue
-        metadata ??= await PDFDocument.load(data, { updateMetadata: false })
-        const node = metadata.getPages()[index].node,
+        const form = forms[0]
+        const node = pages[index].node,
           resources = node.Resources()
         const xobjects = resources?.lookup(PDFName.of('XObject'))
         if (
@@ -55,10 +57,9 @@ export async function unwrapPageContainers(e, doc, data, pageCount, selectedPage
           bbox[3] <= bbox[1]
         )
           continue
-        const form = forms[0]
         if (
-          p.FPDFClipPath_CountPaths(p.FPDFPageObj_GetClipPath(form.obj)) !== -1 ||
-          !p.FPDFPageObj_GetMatrix(form.obj, at)
+          p.FPDFClipPath_CountPaths(p.FPDFPageObj_GetClipPath(form)) !== -1 ||
+          !p.FPDFPageObj_GetMatrix(form, at)
         )
           continue
         const matrix = [...e.m.HEAPF32.slice(at / 4, at / 4 + 6)]
@@ -85,39 +86,33 @@ export async function unwrapPageContainers(e, doc, data, pageCount, selectedPage
           continue
         // Page-level clipping must not hide a sibling (e.g. an arXiv margin label).
         if (
-          objects.some(
-            (o) =>
-              o !== form &&
-              (o.bounds[0] < clip[0] ||
-                o.bounds[1] < clip[1] ||
-                o.bounds[2] > clip[2] ||
-                o.bounds[3] > clip[3])
-          )
+          objects.some((object) => {
+            if (object === form) return false
+            const [left, bottom, right, top] = e.bounds(object)
+            return left < clip[0] || bottom < clip[1] || right > clip[2] || top > clip[3]
+          })
         )
           continue
-        const count = p.FPDFFormObj_CountObjects(form.obj)
+        const count = p.FPDFFormObj_CountObjects(form)
         if (count <= 0 || count > 100000) continue
-        const children = Array.from({ length: count }, (_, i) =>
-          p.FPDFFormObj_GetObject(form.obj, i)
-        )
+        const children = Array.from({ length: count }, (_, i) => p.FPDFFormObj_GetObject(form, i))
         // A page container contains native body text; a lone chart/image stays protected.
         if (children.filter((o) => p.FPDFPageObj_GetType(o) === 1).length < 2) continue
         for (const object of objects)
-          if (!p.FPDFPage_RemoveObject(page, object.obj))
-            throw Error('Could not detach PDF container')
+          if (!p.FPDFPage_RemoveObject(page, object)) throw Error('Could not detach PDF container')
         for (const object of objects) {
           if (object !== form) {
-            p.FPDFPage_InsertObject(page, object.obj)
+            p.FPDFPage_InsertObject(page, object)
             continue
           }
           for (const child of children) {
-            if (!p.FPDFFormObj_RemoveObject(form.obj, child))
+            if (!p.FPDFFormObj_RemoveObject(form, child))
               throw Error('Could not detach PDF content')
             p.FPDFPageObj_Transform(child, ...matrix)
             p.FPDFPageObj_TransformClipPath(child, ...matrix)
             p.FPDFPage_InsertObject(page, child)
           }
-          p.FPDFPageObj_Destroy(form.obj)
+          p.FPDFPageObj_Destroy(form)
         }
         if (!p.FPDFPage_GenerateContent(page)) throw Error('Could not generate PDF page content')
         const path = p.FPDF_CreateClipPath(...clip)

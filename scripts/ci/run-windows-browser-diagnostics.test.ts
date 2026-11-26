@@ -288,7 +288,7 @@ it.each([
     'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/6 --fail-on-flaky-tests'
   ]
 ])(
-  'wraps only the Windows layout shell in %s and preserves its selected command',
+  'wraps Windows browser diagnostics in %s and preserves their selected commands',
   (file, command) => {
     const workflow = load(readFileSync(`.github/workflows/${file}`, 'utf8')) as {
       jobs: Record<string, { steps?: Array<{ id?: string; shell?: string; run?: string }> }>
@@ -304,6 +304,12 @@ it.each([
         id: 'renderer_layout',
         shell: 'node scripts/ci/run-windows-browser-diagnostics.mjs {0}',
         run: command
+      }),
+      expect.objectContaining({
+        job: 'windows_e2e',
+        id: 'browser_diagnostic',
+        shell: 'node scripts/ci/run-windows-browser-diagnostics.mjs {0}',
+        run: expect.stringContaining('npm run test:e2e:browser')
       })
     ])
   }

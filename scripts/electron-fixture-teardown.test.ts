@@ -265,6 +265,21 @@ it.each(['not reaped', 'rejected', 'timeout'])(
   }
 )
 
+it('retries a transient forced process-tree reap failure', async () => {
+  close.mockRejectedValue(new Error('graceful close failed'))
+  boundary.reap.mockResolvedValueOnce({ reaped: false }).mockResolvedValueOnce({ reaped: true })
+
+  await expect(
+    boundary.fixture({ windowMode: 'hidden' }, async () => undefined, {
+      status: 'passed',
+      expectedStatus: 'passed',
+      attach
+    })
+  ).rejects.toThrow('graceful close failed')
+
+  expect(boundary.reap).toHaveBeenCalledTimes(2)
+})
+
 it('preserves test-body and cleanup errors together', async () => {
   const bodyError = new Error('original assertion failed')
   close.mockRejectedValue(new Error('graceful close failed'))

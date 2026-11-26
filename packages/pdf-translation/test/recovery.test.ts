@@ -459,6 +459,59 @@ it('rejects a translated standalone proper name', () => {
   )
 })
 
+it.each(['References', 'RE FER EN CES', ' RE\u00a0FER\nEN CES '])(
+  'restores the translated references heading regardless of PDF letter spacing: %s',
+  (source) => {
+    const translation = '参考文献'
+    expect(pdfTranslationDropsStandaloneProperName(source, translation)).toBe(false)
+    expect(pdfTranslationCopiesEnglishProse(source, source, 'Chinese')).toBe(true)
+    const checkpoint = {
+      ...saved,
+      sources: [source],
+      translations: [translation],
+      translatedSourceIndices: [0]
+    }
+    expect(reconcilePdfTranslationCheckpoint(checkpoint, saved.fingerprint, [source])).toBe(
+      checkpoint
+    )
+  }
+)
+
+it.each(['References Institute', 'REF ERENCES Institute', 'Nimbus Net'])(
+  'does not exempt a standalone name from checkpoint validation: %s',
+  (source) => {
+    const translation = '参考文献研究所'
+    expect(pdfTranslationDropsStandaloneProperName(source, translation)).toBe(true)
+    const checkpoint = {
+      ...saved,
+      sources: [source],
+      translations: [translation],
+      translatedSourceIndices: [0]
+    }
+    expect(
+      reconcilePdfTranslationCheckpoint(checkpoint, saved.fingerprint, [source])?.translations
+    ).toEqual([])
+  }
+)
+
+it('accepts a rubric criterion translation and preserves a containing organization name', () => {
+  const criterion = 'Algebraic Procedures'
+  const translation = '代数步骤'
+  expect(pdfTranslationDropsStandaloneProperName(criterion, translation)).toBe(false)
+  expect(pdfTranslationDropsStandaloneProperName(`${criterion} Institute`, '代数步骤研究所')).toBe(
+    true
+  )
+  const checkpoint = {
+    ...saved,
+    sources: [criterion],
+    translations: [translation],
+    translatedSourceIndices: [0]
+  }
+  expect(reconcilePdfTranslationCheckpoint(checkpoint, saved.fingerprint, [criterion])).toEqual(
+    checkpoint
+  )
+})
+
 it.each(
   readPdfTranslationCases<{
     name: string

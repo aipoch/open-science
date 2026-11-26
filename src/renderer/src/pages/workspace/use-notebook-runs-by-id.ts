@@ -9,16 +9,19 @@ import { resolveProjectId } from '../../../../shared/project-scope'
 
 type NotebookRunSnapshot = {
   scopeKey?: string
+  retries: ReadonlyMap<string, () => void>
   runsById: ReadonlyMap<string, NotebookRunRecord>
 }
 
 const EMPTY_RUNS_BY_ID: ReadonlyMap<string, NotebookRunRecord> = new Map()
+const EMPTY_RETRIES: ReadonlyMap<string, () => void> = new Map()
 const MAX_HISTORICAL_RUN_CACHE = 20
 
 type NotebookRunCache = {
   scopeKey?: string
   recentRunsById: Map<string, NotebookRunRecord>
   historicalRunsById: Map<string, NotebookRunRecord>
+  failedRunIds: Set<string>
   protectedRunIds: ReadonlySet<string>
 }
 
@@ -32,15 +35,15 @@ const trimHistoricalRuns = (
   }
 }
 
-// Keeps the recent full-run window in this mounted renderer, then hydrates only historical runIds
-// requested by transcript surfaces (expanded details or near-viewport figures). Image payloads never
-// enter session messages or agent context. Historical records use a small LRU, except currently
-// requested records remain protected.
+// Completed receipts identify their own runs. Live and older activities also need the recent
+// window for invocation correlation. Both paths keep captured image bytes outside this cache.
 const useNotebookRunsById = (
   reference: NotebookSessionReference | undefined,
-  referencedRunIds: readonly string[] = []
-): ReadonlyMap<string, NotebookRunRecord> => {
+  referencedRunIds: readonly string[] = [],
+  loadRecentRuns = true
+): NotebookRunSnapshot => {
   const [snapshot, setSnapshot] = useState<NotebookRunSnapshot>({
+    retries: EMPTY_RETRIES,
     runsById: EMPTY_RUNS_BY_ID
   })
   const [historicalRevision, setHistoricalRevision] = useState(0)
@@ -55,22 +58,29 @@ const useNotebookRunsById = (
   const cacheRef = useRef<NotebookRunCache>({
     recentRunsById: new Map(),
     historicalRunsById: new Map(),
+    failedRunIds: new Set(),
     protectedRunIds: new Set()
   })
 
-  const publish = useCallback((cache: NotebookRunCache): void => {
-    if (cacheRef.current !== cache || !cache.scopeKey) return
-    setSnapshot({
-      scopeKey: cache.scopeKey,
-      runsById: new Map([...cache.historicalRunsById, ...cache.recentRunsById])
-    })
-  }, [])
+  const retry = useCallback(() => setHistoricalRevision((revision) => revision + 1), [])
+  const publish = useCallback(
+    (cache: NotebookRunCache): void => {
+      if (cacheRef.current !== cache || !cache.scopeKey) return
+      setSnapshot({
+        scopeKey: cache.scopeKey,
+        retries: new Map([...cache.failedRunIds].map((id) => [id, retry])),
+        runsById: new Map([...cache.historicalRunsById, ...cache.recentRunsById])
+      })
+    },
+    [retry]
+  )
 
   useEffect(() => {
     if (!sessionId || !projectId || workspaceCwd === undefined) {
       cacheRef.current = {
         recentRunsById: new Map(),
         historicalRunsById: new Map(),
+        failedRunIds: new Set(),
         protectedRunIds: new Set()
       }
       return undefined
@@ -80,6 +90,7 @@ const useNotebookRunsById = (
       scopeKey,
       recentRunsById: new Map(),
       historicalRunsById: new Map(),
+      failedRunIds: new Set(),
       protectedRunIds: new Set()
     }
     cacheRef.current = cache
@@ -96,7 +107,12 @@ const useNotebookRunsById = (
       do {
         reloadQueued = false
         try {
-          const state = await window.api.notebook.state({ sessionId, projectId, workspaceCwd })
+          const state = await window.api.notebook.state({
+            sessionId,
+            projectId,
+            workspaceCwd,
+            deferImages: true
+          })
 
           if (!active) return
           const nextRecentRunsById = new Map(state.runs.map((run) => [run.runId, run]))
@@ -122,9 +138,9 @@ const useNotebookRunsById = (
       loading = false
     }
 
-    void load()
+    if (loadRecentRuns) void load()
     const stopChanged = window.api.notebook.onChanged((event) => {
-      if (event.sessionId === sessionId) {
+      if (event.sessionId === sessionId && loadRecentRuns) {
         refreshHistorical = true
         void load()
       }
@@ -134,7 +150,7 @@ const useNotebookRunsById = (
       active = false
       stopChanged()
     }
-  }, [projectId, publish, scopeKey, sessionId, workspaceCwd])
+  }, [loadRecentRuns, projectId, publish, scopeKey, sessionId, workspaceCwd])
 
   useEffect(() => {
     if (!sessionId || !projectId || workspaceCwd === undefined) return undefined
@@ -143,6 +159,7 @@ const useNotebookRunsById = (
 
     const requestedRunIds = JSON.parse(referencedRunIdsKey) as string[]
     const protectedRunIds = new Set(requestedRunIds)
+    cache.failedRunIds.clear()
     cache.protectedRunIds = protectedRunIds
     trimHistoricalRuns(cache, protectedRunIds)
     publish(cache)
@@ -166,10 +183,13 @@ const useNotebookRunsById = (
             sessionId,
             projectId,
             workspaceCwd,
+            deferImages: true,
             runIds: batch
           })
           if (!active || cacheRef.current !== cache) return
           const batchIds = new Set(batch)
+          const found = new Set(targetedState.runs.map((run) => run.runId))
+          for (const id of batch) if (!found.has(id)) cache.failedRunIds.add(id)
           for (const run of targetedState.runs) {
             if (!batchIds.has(run.runId)) continue
             cache.historicalRunsById.delete(run.runId)
@@ -179,6 +199,8 @@ const useNotebookRunsById = (
           publish(cache)
         } catch (error) {
           if (!active) return
+          for (const id of batch) cache.failedRunIds.add(id)
+          publish(cache)
           console.warn('Notebook historical run hydration failed', error)
         }
       }
@@ -190,6 +212,7 @@ const useNotebookRunsById = (
     }
   }, [
     historicalRevision,
+    loadRecentRuns,
     projectId,
     publish,
     referencedRunIdsKey,
@@ -198,7 +221,9 @@ const useNotebookRunsById = (
     workspaceCwd
   ])
 
-  return snapshot.scopeKey === scopeKey ? snapshot.runsById : EMPTY_RUNS_BY_ID
+  return snapshot.scopeKey === scopeKey
+    ? snapshot
+    : { runsById: EMPTY_RUNS_BY_ID, retries: EMPTY_RETRIES }
 }
 
 export { useNotebookRunsById }

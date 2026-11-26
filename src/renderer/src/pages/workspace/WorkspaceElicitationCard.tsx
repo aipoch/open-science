@@ -35,6 +35,11 @@ import {
   type ElicitationValue,
   type PendingElicitationRequest
 } from '../../../../shared/acp'
+import { classifyFailure } from '../../../../shared/failure/classify'
+import {
+  NO_ACTIVE_PROVIDER_MESSAGE,
+  unwrapIpcErrorDetail
+} from '../../../../shared/failure/messages'
 import type { ElicitationEditDraft } from '@/stores/session-store-contract'
 import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
@@ -1450,11 +1455,11 @@ const WorkspaceElicitationCard = ({
 const WorkspaceElicitationRecovery = ({
   elicitation,
   request,
-  onRespond
-}: Pick<
-  WorkspaceElicitationCardProps,
-  'elicitation' | 'request' | 'onRespond'
->): React.JSX.Element => {
+  onRespond,
+  hasModelConfiguration
+}: Pick<WorkspaceElicitationCardProps, 'elicitation' | 'request' | 'onRespond'> & {
+  hasModelConfiguration?: boolean
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<{ ending: boolean; detail: string }>()
@@ -1483,10 +1488,23 @@ const WorkspaceElicitationRecovery = ({
       setBusy(false)
     }
   }
+  const detail = error?.detail ?? elicitation.continuationRecovery?.error
+  const providerUnavailable =
+    !error?.ending &&
+    detail !== undefined &&
+    (classifyFailure({ origin: 'operation', text: detail }).reason ===
+      'configuration/selected-provider-unavailable' ||
+      (hasModelConfiguration && unwrapIpcErrorDetail(detail) === NO_ACTIVE_PROVIDER_MESSAGE))
   return (
     <div data-testid="elicitation-recovery" className="rounded-2xl bg-bg-000 p-4 shadow-sm">
       <ErrorNotice
-        title={error?.ending ? t('Could not end this wait.') : t('Could not continue the task')}
+        title={
+          error?.ending
+            ? t('Could not end this wait.')
+            : providerUnavailable
+              ? t('Session model unavailable')
+              : t('Could not continue the task')
+        }
         description={
           elicitation.state === 'answered' || elicitation.state === 'declined'
             ? t('Your response was saved.')
@@ -1507,9 +1525,14 @@ const WorkspaceElicitationRecovery = ({
             : undefined
         }
       >
+        {providerUnavailable ? (
+          <p className="text-sm">
+            {t('Select “End this wait”, then choose an available model in the message composer.')}
+          </p>
+        ) : null}
         <details className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs">
           <summary>{t('Error details')}</summary>
-          {error?.detail ?? elicitation.continuationRecovery?.error}
+          {detail}
         </details>
       </ErrorNotice>
     </div>

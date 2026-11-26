@@ -136,7 +136,7 @@ const DEFAULT_FRAMEWORK_ENDPOINTS = ['messages'] as const
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
 // Vendor names and the Codex identity are proper nouns and stay as the registry supplies them.
 const describeType = (provider: ProviderView, t: TFunction): string => {
-  if (provider.type === 'custom') return t('Custom')
+  if (provider.type === 'custom') return provider.localPresetId ? t('Local') : t('Custom')
   if (provider.type === 'claude-isolated' || provider.type === 'claude-shared')
     return t('Claude subscription')
   if (isCodexSubscriptionProvider(provider.type)) return codexSubscriptionProviderIdentity().name
@@ -290,12 +290,14 @@ const ProviderList = ({
           // A pairing the active framework cannot drive stays visible with a tag (and the route
           // mismatch on hover): hiding the card would look like data loss, and the tag is the
           // discoverable path to "switch the framework to use this provider".
-          const frameworkIncompatible = !isProviderUsableByFramework(
-            { apiEndpoints: provider.apiEndpoints, type: provider.type },
-            activeFramework
-          )
+          const frameworkIncompatible = !isProviderUsableByFramework(provider, activeFramework)
           const incompatibilityMessage = frameworkIncompatible
-            ? incompatibilityReason(provider, frameworkLabel, frameworkEndpoints, t)
+            ? incompatibilityReason(
+                provider,
+                { id: agentFrameworkId, displayName: frameworkLabel },
+                frameworkEndpoints,
+                t
+              )
             : undefined
 
           return (
@@ -305,7 +307,11 @@ const ProviderList = ({
               badge={
                 <>
                   <ProviderKindIcon
-                    kindKey={providerKindKey(provider.type, provider.vendorId)}
+                    kindKey={providerKindKey(
+                      provider.type,
+                      provider.vendorId,
+                      provider.localPresetId
+                    )}
                     className="size-3"
                   />
                   {describeType(provider, t)}

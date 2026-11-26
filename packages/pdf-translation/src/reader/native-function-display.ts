@@ -480,10 +480,14 @@ export async function sameNativeFunctionDisplay(
   original: PDFDocumentProxy,
   translated: PDFDocumentProxy,
   pageNumber: number,
-  options: { nativeDocumentFactory: typeof getDocument; signal: AbortSignal }
+  options: {
+    nativeDocumentFactory: typeof getDocument
+    signal: AbortSignal
+    pageText?: ReadonlyMap<PDFPageProxy, Content>
+  }
 ): Promise<boolean> {
   const page = await original.getPage(pageNumber),
-    content = await getPdfTranslationTextContent(page)
+    content = options.pageText?.get(page) ?? (await getPdfTranslationTextContent(page))
   if (!hasNativeFunctionDisplay(content) || !packets(content).length) return true
   const readers: ReturnType<typeof createNativeFunctionDisplayReader>[] = []
   try {
@@ -510,7 +514,8 @@ export async function sameNativeFunctionDisplay(
     const before = await read(original, page, content)
     if (!before?.length) return true
     const target = await translated.getPage(pageNumber),
-      after = await read(translated, target, await getPdfTranslationTextContent(target))
+      targetText = options.pageText?.get(target) ?? (await getPdfTranslationTextContent(target)),
+      after = await read(translated, target, targetText)
     options.signal.throwIfAborted()
     for (const frame of [before, after]) {
       const annotation = frame && annotationsByFrame.get(frame)

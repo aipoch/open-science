@@ -1,3 +1,4 @@
+import { configuredProviderConnectionKind, selectConfiguredModelId } from '@aipoch/providers'
 import { computePythonSelectionSchema } from '../../shared/compute-python-runtime'
 import { isAbsolute } from 'node:path'
 import { classificationSettingsSchema } from './classification-config'
@@ -10,6 +11,7 @@ import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import { isPermissionProfileId } from '../../shared/permission-profiles'
+import { availableOfficialModelIds } from '../../shared/provider-model-catalog'
 import type { ProjectFilesFilterPreference } from '../../shared/settings'
 import type {
   SessionDetailsModelConfiguration,
@@ -292,10 +294,19 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
       : legacyActiveProviderId
   if (claude) settings.claude = claude
   if (codex) settings.codex = codex
-  if (activeProviderId && providers.some((provider) => provider.id === activeProviderId)) {
-    settings.activeProviderId = activeProviderId
-    const activeProvider = providers.find((provider) => provider.id === activeProviderId)
-    const activeModel = asString(value.activeModel) ?? activeProvider?.model
+  const activeProvider = providers.find((provider) => provider.id === activeProviderId)
+  if (activeProvider) {
+    settings.activeProviderId = activeProvider.id
+    let activeModel = asString(value.activeModel) ?? activeProvider.model
+    if (
+      activeProvider.type === 'official' &&
+      configuredProviderConnectionKind(activeProvider.vendorId)
+    ) {
+      // Recover the current settings selection from the catalog. Runtime checks session pins separately.
+      const availableIds = availableOfficialModelIds(activeProvider)
+      if (!activeModel || !availableIds.includes(activeModel))
+        activeModel = selectConfiguredModelId(activeProvider.model, availableIds)
+    }
     if (activeModel) settings.activeModel = activeModel
   }
 

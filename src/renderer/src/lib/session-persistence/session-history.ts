@@ -186,10 +186,13 @@ export const ensureSessionContentLoaded = (
   return load
 }
 
+export const SESSION_OPEN_PAGE_SIZE = 8
+
 export const loadSessionHistoryPage = (
   request: LoadSessionRequest,
   earlier = false,
-  api: HistoryApi = window.api.sessions
+  api: HistoryApi = window.api.sessions,
+  limit = earlier ? undefined : SESSION_OPEN_PAGE_SIZE
 ): Promise<void> => {
   const source = findSession(request)
   if (
@@ -207,12 +210,13 @@ export const loadSessionHistoryPage = (
   if (pending) return pending
   const beforeCursor = earlier ? source.historyPage?.beforeCursor : undefined
   const load = (async (): Promise<void> => {
-    const pageRequest = { projectId: request.projectId, sessionId: request.sessionId }
+    const pageRequest = { projectId: source.projectId, sessionId: source.id }
     let page: SessionHistoryPage | undefined
     let append = earlier
     try {
       page = await api.loadHistoryPage!({
         ...pageRequest,
+        ...(limit === undefined ? {} : { limit }),
         ...(beforeCursor ? { beforeCursor } : {})
       })
     } catch (error) {
@@ -224,7 +228,7 @@ export const loadSessionHistoryPage = (
             typeof error.message === 'string' &&
             error.message.includes(SESSION_HISTORY_CURSOR_STALE)))
       if (!beforeCursor || !stale) throw error
-      page = await api.loadHistoryPage!(pageRequest)
+      page = await api.loadHistoryPage!({ ...pageRequest, limit: SESSION_OPEN_PAGE_SIZE })
       append = false
     }
     if (!page) throw new Error('Session content could not be loaded.')

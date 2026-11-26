@@ -31,3 +31,39 @@ export function pdfTranslationMissingProtectedLiterals(
     return []
   })
 }
+
+// Limit placeholders to closed expressions whose boundaries survive PDF text extraction.
+const inlineFormula =
+  /(?<![\p{L}\p{N}_])(?:\[-?\d+(?:\.\d+)?,[ \t]*-?\d+(?:\.\d+)?\][a-z]|ℓ∞|[1-9]\d{0,2}−[a-z]|[A-Za-z][ \t]+′{1,2}(?:\([a-z]\))?(?![′(]))(?![\p{L}\p{N}_])/gu
+
+export function pdfTranslationProtectInlineFormulas(
+  source: string
+): { source: string; onlyFormulas: boolean; restore: (text: string) => string } | undefined {
+  const formulas = [...source.matchAll(inlineFormula)]
+  if (!formulas.length) return
+  const stem = '⟦PDFMATH'
+  const letters = (index: number): string =>
+    String(index).replace(/\d/gu, (digit) => 'ABCDEFGHIJ'[Number(digit)])
+  let prefix = stem
+  if (source.includes(stem)) {
+    const occupied = new Set(source.match(/⟦PDFMATHZ[A-J]+Z/gu))
+    let namespace = 0
+    do {
+      prefix = stem + 'Z' + letters(namespace++) + 'Z'
+    } while (occupied.has(prefix))
+  }
+  const marker = (index: number): string => prefix + letters(index) + '⟧'
+  let index = 0
+  const masked = source.replace(inlineFormula, () => marker(index++))
+  return {
+    source: masked,
+    onlyFormulas: !/[^\s,.，。]/u.test(source.replace(inlineFormula, '')),
+    restore: (text) => {
+      let next = 0
+      const restored = text.replace(new RegExp(prefix + '[A-J]+⟧', 'gu'), (token) =>
+        token === marker(next) && next < formulas.length ? formulas[next++][0] : token
+      )
+      return next === formulas.length && !restored.includes(prefix) ? restored : ''
+    }
+  }
+}

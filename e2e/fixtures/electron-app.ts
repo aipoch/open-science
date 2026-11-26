@@ -16,6 +16,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   writeFile
 } from 'node:fs/promises'
@@ -341,6 +342,7 @@ const CLEANUP_GRACEFUL_TIMEOUT_MS =
   process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 30_000 : 10_000
 const CLEANUP_FORCED_TIMEOUT_MS =
   process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
+const CLEANUP_REAP_RETRY_DELAY_MS = 100
 
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
@@ -418,6 +420,10 @@ type ElectronApp = {
     crossFramework?: boolean
     providerBaseUrl?: string
   }) => Promise<Page>
+  setNotebookMemorySample: (
+    status: 'healthy' | 'pressured' | 'unavailable',
+    delayMs?: number
+  ) => Promise<void>
   configureLiveAgent: (
     settingsPath: string,
     model: string,
@@ -427,6 +433,7 @@ type ElectronApp = {
   createTestDirectory: (name: string) => Promise<string>
   holdNextFakeSessionCreate: () => Promise<{ started: string; release: string; closed: string }>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
+  observeSensitiveExportDialog: () => Promise<JSHandle<Electron.MessageBoxOptions[]>>
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
   emitBrowserImport: (url: string) => Promise<void>
@@ -1470,6 +1477,20 @@ class ElectronAppHarness implements ElectronApp {
     return path
   }
 
+  async setNotebookMemorySample(
+    status: 'healthy' | 'pressured' | 'unavailable',
+    delayMs = 0
+  ): Promise<void> {
+    if (process.platform !== 'win32' || process.env.OPEN_SCIENCE_E2E_EXECUTABLE)
+      throw new Error('Notebook memory samples can only be controlled in source Windows E2E.')
+    if (!Number.isSafeInteger(delayMs) || delayMs < 0 || delayMs > 10_000)
+      throw new Error('Invalid Notebook memory sample delay.')
+    const path = join(this.roots.storageRoot, 'e2e-notebook-memory-sample.json')
+    const next = `${path}.next`
+    await writeFile(next, JSON.stringify({ status, delayMs }), 'utf8')
+    await rename(next, path)
+  }
+
   async holdNextFakeSessionCreate(): Promise<{ started: string; release: string; closed: string }> {
     const directory = await this.createTestDirectory('session-create-gate')
     const gate = {
@@ -1523,6 +1544,21 @@ class ElectronAppHarness implements ElectronApp {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [archive] })
     }, archive)
     return archive
+  }
+
+  async observeSensitiveExportDialog(): Promise<JSHandle<Electron.MessageBoxOptions[]>> {
+    return this.runningApplication.evaluateHandle(({ dialog }) => {
+      const seen: Electron.MessageBoxOptions[] = []
+      const original = dialog.showMessageBox
+      dialog.showMessageBox = ((...args: unknown[]) => {
+        const options = args.at(-1) as Electron.MessageBoxOptions
+        if (!options.detail?.includes('SHA-256:')) return Reflect.apply(original, dialog, args)
+        seen.push({ ...options, signal: undefined })
+        dialog.showMessageBox = original
+        return Promise.resolve({ response: 1, checkboxChecked: false })
+      }) as typeof dialog.showMessageBox
+      return seen
+    })
   }
 
   async enableFakeRemoteIt(): Promise<Page> {
@@ -2406,7 +2442,11 @@ class ElectronAppHarness implements ElectronApp {
                 await application.close()
               },
               forceClose: async () => {
-                const result = await terminateProcessTree(child)
+                let result = await terminateProcessTree(child)
+                if (!result.reaped) {
+                  await new Promise((resolve) => setTimeout(resolve, CLEANUP_REAP_RETRY_DELAY_MS))
+                  result = await terminateProcessTree(child)
+                }
                 if (!result.reaped)
                   throw new Error('Electron E2E forced close did not reap the process tree.')
               }

@@ -40,6 +40,23 @@ export const annotationRequest: CreatePdfAnnotationRequest = {
 }
 
 describe('PDF annotation contract', () => {
+  it('accepts a reading-order preview only for a whole Literature attachment', () => {
+    const base = { literatureVersionId: 'v1', readingOrderPreview: true }
+    expect(listPdfAnnotationsRequestSchema.safeParse(base).success).toBe(true)
+    for (const override of [
+      { literatureVersionId: undefined, projectId: 'p1' },
+      { projectId: 'p1' },
+      { sessionId: 's1' },
+      { id: 'a1' },
+      { sourceFileId: 'file1' },
+      { versionId: 'v1' },
+      { cursor: { createdAt: '2026-09-19T00:00:00.000Z', id: 'a1' } }
+    ])
+      expect(listPdfAnnotationsRequestSchema.safeParse({ ...base, ...override }).success).toBe(
+        false
+      )
+  })
+
   it.each(['highlight', 'underline', 'squiggly', 'strikethrough'])(
     'accepts a %s text mark',
     (kind) => {

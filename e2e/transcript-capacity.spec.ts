@@ -57,7 +57,9 @@ test('bounds history scrolling and preserves native find across the transcript',
   await openProjectSession(page, 'Transcript capacity', 'Capacity history')
   const viewport = page.locator('[data-slot="message-scroller-viewport"]')
   const rows = viewport.locator('[data-message-id^="capacity-"]')
-  await expect(rows).toHaveCount(80)
+  // Cold opens now use the small display page. Full authority loading below expands the
+  // transcript window to its normal bounded size.
+  await expect(rows).toHaveCount(8)
   const openMs = performance.now() - openedAt
   await page.getByRole('button', { name: 'Load full conversation', exact: true }).click()
   await expect(
@@ -165,8 +167,8 @@ test('does not force unannotated transcript geometry during native layout change
   await expect(
     page.getByRole('button', { name: 'Load full conversation', exact: true })
   ).toHaveCount(0)
-  // Completion and history-loading rows have their own scroll anchors. Count the fixture messages.
-  await expect(page.locator('[data-message-id^="layout-"]')).toHaveCount(80)
+  // The window includes completion rows. Wait for the offscreen fixture message used below.
+  await expect(page.locator('[data-message-id="layout-380"]')).toBeAttached()
   await expect(page.locator('[data-annotation-surface]').first()).toBeAttached()
 
   // Count the synchronous geometry reads identified by the issue's CPU reproduction.

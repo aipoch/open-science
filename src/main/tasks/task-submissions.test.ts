@@ -2,7 +2,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { TaskSubmissions } from './task-submissions'
+import { TaskSubmissions, taskContinuationRequestId } from './task-submissions'
+import { TaskRunnerError } from './task-runner-error'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import type { TaskRun } from '../../shared/task-api'
 
@@ -33,6 +34,79 @@ const run: TaskRun = {
   artifacts: [],
   preferredComputeHostIds: []
 }
+
+it('records one canonical app continuation before permitting dispatch, including after restart', async () => {
+  const path = await root()
+  const scope = {
+    kind: 'plan',
+    projectId: 'project',
+    sessionId: 'session',
+    attemptId: 'decision-1'
+  } as const
+  const startRun = vi.fn()
+  const createRun = vi.fn(async (requestId: string) => {
+    expect(await readFile(join(path, 'task-submissions.json'), 'utf8')).toContain(
+      '"status":"pending"'
+    )
+    return { ...run, requestId, id: 'continued-run' }
+  })
+  const owner = new TaskSubmissions(path, { loadRuns: async () => [], startRun })
+  const admitted = await owner.admitContinuation(scope, createRun)
+  expect(admitted).toMatchObject({
+    admitted: true,
+    receipt: { status: 'accepted', runId: 'continued-run' }
+  })
+  await owner.dispose()
+
+  const restarted = new TaskSubmissions(path, { loadRuns: async () => [], startRun })
+  expect(await restarted.get(admitted.receipt.requestId)).toEqual(admitted.receipt)
+  expect(await restarted.admitContinuation(scope, createRun)).toEqual({
+    admitted: false,
+    receipt: admitted.receipt
+  })
+  expect(createRun).toHaveBeenCalledOnce()
+  expect(startRun).not.toHaveBeenCalled()
+})
+
+it.each([true, false])(
+  'does not repeat continuation admission after a Run write error (known rejection: %s)',
+  async (knownRejection) => {
+    const path = await root()
+    const scope = {
+      kind: 'delegation_settlement',
+      projectId: 'project',
+      sessionId: 'session',
+      attemptId: 'wake-1'
+    } as const
+    const requestId = taskContinuationRequestId(scope)
+    const createRun = vi.fn(async () => {
+      if (knownRejection) throw new TaskRunnerError('session_busy', 'Another Run owns the Session.')
+      throw new Error('Run journal flush failed after the write.')
+    })
+    const startRun = vi.fn()
+    const loadRuns = async (): Promise<TaskRun[]> => (knownRejection ? [] : [{ ...run, requestId }])
+    const owner = new TaskSubmissions(path, { loadRuns, startRun })
+    await expect(owner.admitContinuation(scope, createRun)).rejects.toThrow()
+    const original = await owner.get(requestId)
+    expect(original).toMatchObject(
+      knownRejection ? { status: 'failed', error: { code: 'session_busy' } } : { status: 'pending' }
+    )
+    expect(original.runId).toBeUndefined()
+    await expect(owner.admitContinuation(scope, createRun)).resolves.toEqual({
+      admitted: false,
+      receipt: original
+    })
+    await owner.dispose()
+
+    const restarted = new TaskSubmissions(path, { loadRuns, startRun })
+    await expect(restarted.admitContinuation(scope, createRun)).resolves.toEqual({
+      admitted: false,
+      receipt: knownRejection ? original : { ...original, status: 'accepted', runId: run.id }
+    })
+    expect(createRun).toHaveBeenCalledOnce()
+    expect(startRun).not.toHaveBeenCalled()
+  }
+)
 
 it('persists admission before slow preparation and deduplicates across retry and restart', async () => {
   const path = await root()
@@ -66,6 +140,33 @@ it('persists admission before slow preparation and deduplicates across retry and
   })
   expect(startRun).toHaveBeenCalledTimes(1)
   expect(await readFile(join(path, 'task-submissions.json'), 'utf8')).not.toContain('Research')
+})
+
+it('recovers a sanitized provider sign-in failure on the original request after restart', async () => {
+  const path = await root()
+  const startRun = vi.fn(async () => {
+    throw Object.assign(
+      new Error('Authentication required', { cause: 'private provider detail' }),
+      { name: 'RequestError', code: -32000 }
+    )
+  })
+  const owner = new TaskSubmissions(path, { loadRuns: async () => [], startRun })
+  await owner.submit('request-1', request)
+  await vi.waitFor(async () => {
+    expect(await owner.get('request-1')).toMatchObject({ status: 'failed' })
+  })
+  await owner.dispose()
+
+  const restarted = new TaskSubmissions(path, { loadRuns: async () => [], startRun })
+  const recovered = await restarted.submit('request-1', request)
+  expect(recovered).toMatchObject({
+    requestId: 'request-1',
+    status: 'failed',
+    error: { code: 'provider_auth_required' }
+  })
+  expect(recovered.runId).toBeUndefined()
+  expect(JSON.stringify(recovered)).not.toContain('private provider detail')
+  expect(startRun).toHaveBeenCalledOnce()
 })
 
 it.each([true, false])(

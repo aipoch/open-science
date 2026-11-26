@@ -760,7 +760,12 @@ it('keeps a current refused decision visible after memory recovers even when no 
       groups: [],
       releases: [],
       pendingDecisions: [
-        { projectId: scope.projectId, sessionId: scope.sessionId, refusalId: intent.refusalId }
+        {
+          projectId: scope.projectId,
+          sessionId: scope.sessionId,
+          refusalId: intent.refusalId,
+          kind: 'memory'
+        }
       ]
     })
     expect(service.currentExecutionIntent(scope)).toBe(intent)

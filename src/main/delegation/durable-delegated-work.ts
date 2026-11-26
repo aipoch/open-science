@@ -1044,8 +1044,8 @@ const createDurableDelegatedWork = (
     async rootPermissionRequests(session) {
       return permissionOwner.requests(session)
     },
-    async respondToPermission(session, response) {
-      await permissionOwner.respond(session, response)
+    async respondToPermission(session, response, decision) {
+      await permissionOwner.respond(session, response, decision)
     },
     async setPermissionProfile(session, profile) {
       const snapshot = await options.records.snapshot()

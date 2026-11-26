@@ -23,6 +23,7 @@ import { load } from 'js-yaml'
 import {
   artifactHash,
   validateArtifactName,
+  validateMacBlockmap,
   validateUpdateFeed
 } from './release-artifact-validation.mjs'
 
@@ -45,6 +46,7 @@ const IGNORED = [
   /^version\.json$/,
   /\.ya?ml$/,
   /\.blockmap$/,
+  /-mac-(arm64|x64)\.zip\.from-\d+\.\d+\.\d+\.delta$/,
   /\.wex$/
 ]
 
@@ -208,8 +210,12 @@ export function buildManifest({
               ? ['-linux-arm64.AppImage', '_arm64.deb']
               : ['.AppImage', '_amd64.deb']
       for (const suffix of required) {
-        if (!feed.files.some((file) => file.url.endsWith(suffix)))
-          throw new Error(`Missing ${suffix} in ${name}`)
+        const entry = feed.files.find((file) => file.url.endsWith(suffix))
+        if (!entry) throw new Error(`Missing ${suffix} in ${name}`)
+        if (name === 'latest-mac.yml') {
+          const path = join(dir, entry.url + '.blockmap')
+          validateMacBlockmap(readFileSync(path), path, entry.size)
+        }
       }
     }
   }

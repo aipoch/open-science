@@ -1,6 +1,7 @@
 import { open, statfs } from 'node:fs/promises'
 import { endianness } from 'node:os'
 import { posix } from 'node:path'
+import type { NotebookMemoryPolicyDiagnostic } from '../../shared/notebook-memory'
 import {
   MemoryPolicyError,
   type MemoryCgroupConstraint,
@@ -50,8 +51,8 @@ const cgroupV2Magic = 0x63677270n
 // alone is not proof: the opened descriptor must also belong to genuine nsfs.
 const initialCgroupNamespaceInode = 0xeffffffbn
 
-function fail(detail: string): never {
-  throw new MemoryPolicyError('linux-memory-unavailable', detail)
+function fail(detail: string, diagnostic?: NotebookMemoryPolicyDiagnostic): never {
+  throw new MemoryPolicyError('linux-memory-unavailable', detail, diagnostic)
 }
 
 const boundedReadBuffer = async (
@@ -65,7 +66,10 @@ const boundedReadBuffer = async (
   try {
     const filesystem = await statfs(`${procRoot}/self/fd/${file.fd}`, { bigint: true })
     if (filesystem.type !== expectedFs)
-      fail('A required memory fact is not backed by its expected kernel filesystem.')
+      fail(
+        'A required memory fact is not backed by its expected kernel filesystem.',
+        expectedFs === procfsMagic ? 'linux-procfs' : 'linux-cgroup-visibility'
+      )
     const buffer = Buffer.allocUnsafe(maxFileBytes + 1)
     let offset = 0
     while (offset < buffer.length) {
@@ -87,8 +91,10 @@ const pinInitialNamespace = async (
   signal: AbortSignal
 ): Promise<NamespaceProof> => {
   signal.throwIfAborted()
-  const proc = await statfs(procRoot, { bigint: true })
-  if (proc.type !== procfsMagic) fail('The memory reader has no authenticated procfs.')
+  const proc = await statfs(procRoot, { bigint: true }).catch(() => undefined)
+  signal.throwIfAborted()
+  if (proc?.type !== procfsMagic)
+    fail('The memory reader has no authenticated procfs.', 'linux-procfs')
   const handle = await open(`${procRoot}/self/ns/cgroup`, 'r')
   try {
     const [identity, filesystem] = await Promise.all([
@@ -97,7 +103,8 @@ const pinInitialNamespace = async (
     ])
     if (filesystem.type !== nsfsMagic || identity.ino !== initialCgroupNamespaceInode) {
       fail(
-        'The reader cgroup namespace may hide limiting ancestors; this deployment requires certification.'
+        'The reader cgroup namespace may hide limiting ancestors; this deployment requires certification.',
+        'linux-cgroup-visibility'
       )
     }
     return { identity: `${identity.dev}:${identity.ino}`, close: () => handle.close() }
@@ -265,7 +272,8 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
       } catch (error) {
         if (signal.aborted || error instanceof MemoryPolicyError) throw error
         return fail(
-          'The reader cgroup namespace could not be authenticated; repair the runtime or certify this deployment.'
+          'The reader cgroup namespace could not be authenticated; repair the runtime or certify this deployment.',
+          'linux-cgroup-visibility'
         )
       }
     }
@@ -294,11 +302,12 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
         )
         const unified = memberships.filter((group) => group.hierarchy === 'v2')
         if (memoryV1.length > 1 || unified.length > 1)
-          fail('The target memory cgroup membership is ambiguous.')
+          fail('The target memory cgroup membership is ambiguous.', 'linux-cgroup-visibility')
         const group = memoryV1[0] ?? unified[0]
         if (!group) {
           // A mount without matching membership is an incomplete observation, never an unlimited domain.
-          if (mounts.length > 0) fail('The target memory cgroup membership is unknown.')
+          if (mounts.length > 0)
+            fail('The target memory cgroup membership is unknown.', 'linux-cgroup-visibility')
           const [afterMembership, afterMountinfo] = await Promise.all([
             this.read(`${processRoot}/cgroup`, signal),
             this.read(`${processRoot}/mountinfo`, signal)
@@ -319,11 +328,13 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
             (mount.hierarchy === 'v2' || mount.controllers.includes('memory')) &&
             isWithin(group.path, mount.root)
         )
-        if (matching.length !== 1) fail('The target memory cgroup mount is missing or ambiguous.')
+        if (matching.length !== 1)
+          fail('The target memory cgroup mount is missing or ambiguous.', 'linux-cgroup-visibility')
         const mount = matching[0]
         if (mount.root !== '/' && visibility !== 'certified') {
           fail(
-            'Cgroup ancestor visibility is not certified; expose all limiting ancestors or repair the runtime.'
+            'Cgroup ancestor visibility is not certified; expose all limiting ancestors or repair the runtime.',
+            'linux-cgroup-visibility'
           )
         }
         const relative = posix.relative(mount.root, group.path)
@@ -450,7 +461,10 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
     const after = await this.pinNamespace(signal)
     try {
       if (proof.identity !== after.identity)
-        fail('The reader cgroup namespace changed while memory was sampled.')
+        fail(
+          'The reader cgroup namespace changed while memory was sampled.',
+          'linux-cgroup-visibility'
+        )
     } finally {
       await after.close()
     }
@@ -495,7 +509,8 @@ export class LinuxMemoryPolicyAdapter implements MemoryPolicyAdapter {
       if (signal.aborted) throw error
       if (error instanceof MemoryPolicyError) throw error
       return fail(
-        'Required Linux memory facts could not be read; repair execution-domain permissions or the runtime.'
+        'Required Linux memory facts could not be read; repair execution-domain permissions or the runtime.',
+        expectedFs === procfsMagic ? 'linux-procfs' : 'linux-cgroup-visibility'
       )
     }
   }

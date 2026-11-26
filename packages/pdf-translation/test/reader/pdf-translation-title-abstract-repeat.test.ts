@@ -604,3 +604,65 @@ it.each([true, false])(
     expect(units.find((unit) => unit.items.includes('1:3'))?.source).toContain('STONE')
   }
 )
+
+it.each([true, false])(
+  'joins a dated title with a mixed-font parameter repeated in the abstract (%s)',
+  (confirmed) => {
+    const item = (
+      str: string,
+      x: number,
+      y: number,
+      width: number,
+      height = 17,
+      fontName = 'Title',
+      hasEOL = false
+    ): PdfLayoutTextItem => ({
+      str,
+      width,
+      height,
+      fontName,
+      hasEOL,
+      dir: 'ltr',
+      transform: [height, 0, 0, height, x, y],
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false
+    })
+    const head = 'A note on Geometric and Structural Bounds'
+    const items = [
+      item(head, 155, 706, 280, 17, 'Title', true),
+      item('for the', 185, 682, 45),
+      item('r', 235, 682, 8, 17, 'MathItalic'),
+      item('-Covering Number', 243.5, 682, 161.5),
+      item('', 0, 0, 0, 0, 'Break', true),
+      item('Dana Reader', 178, 645, 46, 12, 'Byline'),
+      item('∗', 224, 649.2, 4.2, 8, 'Mark'),
+      item('Nari Sample', 262, 645, 54, 12, 'Byline'),
+      item('†', 316, 649.2, 3.7, 8, 'Mark'),
+      item('Remy Author', 357, 645, 55, 12, 'Byline'),
+      item('∗', 412, 649.2, 4.2, 8, 'Mark'),
+      item('', 0, 0, 0, 0, 'Break', true),
+      item('April 12, 2024', 262.5, 613, 65, 12, 'Byline'),
+      item('Abstract', 273, 554, 44, 10, 'Abstract'),
+      item(
+        confirmed
+          ? 'The r-covering number satisfies a structural bound for this procedure.'
+          : 'Our main result gives a structural bound for this procedure.',
+        100,
+        531,
+        390,
+        10,
+        'Body',
+        true
+      )
+    ]
+    const { units } = groupPdfTranslationPages({
+      pageCount: 1,
+      pages: [{ page: 1, width: 595, height: 842, rotation: 0, items }]
+    })
+    const suffix = 'for the r-Covering Number'
+    expect(units[0].source).toBe(confirmed ? head + ' ' + suffix : head)
+    expect(units[0].fragments).toHaveLength(confirmed ? 2 : 1)
+    expect(units[confirmed ? 1 : 2].items).toEqual(['1:5', '1:6', '1:7', '1:8', '1:9', '1:10'])
+  }
+)

@@ -1864,18 +1864,28 @@ test.each(['matched', 'unrelated footer'])(
   }
 )
 
-test.each([true, false])(
-  'joins title rows when the running title includes its folio (%s)',
-  (matched) => {
-    const head = 'A SHORT PROOF FOR FINITE PARTITIONS OF',
+test.each([
+  ['spaced', true],
+  ['spaced', false],
+  ['inset', true],
+  ['inset', false]
+] as const)(
+  'joins title rows for the %s running folio (correct page number=%s)',
+  (shape, matched) => {
+    const inset = shape === 'inset',
+      leadWidth = inset ? 312 : 404,
+      headerTop = inset ? 100 : 40,
+      bylineTop = inset ? 136.2 : 139,
+      folio = (inset ? '' : ' ') + (matched ? '3' : '4'),
+      head = 'A SHORT PROOF FOR FINITE PARTITIONS OF',
       tail = 'REGIONS IN PLANAR GRAPHS',
-      authors = 'ALEX SAMPLE AND ELLA READER'
+      authors = inset ? 'A.B. SAMPLE AND ELLA READER' : 'ALEX SAMPLE AND ELLA READER'
     const content = [
       [
-        native(head, 98, 95, 404, 10, 'Title'),
+        native(head, (600 - leadWidth) / 2, 95, leadWidth, 10, 'Title'),
         native(tail, 198, 109, 204, 10, 'Title'),
-        native('', 220, 139, 0, 8, 'Author'),
-        native(authors, 220, 139, 160, 8, 'Author'),
+        native('', 220, bylineTop, 0, 8, 'Author'),
+        native(authors, 220, bylineTop, 160, 8, 'Author'),
         native('', 121, 168, 0, 8, 'Abstract'),
         native('Abstract.', 121, 168, 41, 8, 'Abstract'),
         native(
@@ -1888,20 +1898,27 @@ test.each([true, false])(
         )
       ],
       [
-        native('2', 85, 40, 4, 7),
-        native(authors, 226, 40, 148, 7),
+        native('2', 85, headerTop, 4, 7),
+        native(authors, 226, headerTop, 148, 7),
         native(
           'The next argument considers the remaining independent regions.',
           95,
-          64,
+          headerTop + 24,
           400,
           10,
           'Body'
         )
       ],
       [
-        native(head + ' ' + tail + (matched ? ' 3' : ' 4'), 90, 40, 425, 7),
-        native('The proof continues by choosing a representative region.', 85, 64, 401, 10, 'Body')
+        native(head + ' ' + tail + folio, 90, headerTop, 425, 7),
+        native(
+          'The proof continues by choosing a representative region.',
+          85,
+          headerTop + 24,
+          401,
+          10,
+          'Body'
+        )
       ]
     ]
     const pages = content.map((items, index) => ({
@@ -2000,3 +2017,204 @@ test.each([
     ).toBeUndefined()
   }
 })
+
+test.each([true, false])(
+  'retains repeated facing headers only when the detached title accent also repeats (%s)',
+  (matched) => {
+    const lead = 'A NOTE ON KU '
+    const tail = 'LNER-TYPE BOUNDS FOR FINITE REGIONS'
+    const author = 'MIRA READER'
+    const body = native('The proof considers each region in turn.', 60, 65, 250, 11, 'Body')
+    const cover = [
+      native(lead + '˝', 90, 92, 60, 11, 'Title'),
+      native(tail, 142, 92, 368, 11, 'Title'),
+      native(author, 240, 126, 120, 9, 'Author'),
+      native('Abstract.', 60, 179, 49, 9, 'Section'),
+      native('We give a bound for ordered collections.', 60, 191, 250, 9, 'Body')
+    ]
+    const margins = [2, 3, 4, 5].map((page) =>
+      page % 2 === 0
+        ? [native(String(page), 60, 38, 4, 8), native(author, 240, 38, 120, 8), body]
+        : [
+            native(lead, 155, 38, 36, 8),
+            native('˝', !matched && page === 5 ? 193 : 191, 36, 4, 8),
+            native(tail, 190, 38, 255, 8),
+            native(String(page), 536, 38, 4, 8),
+            body
+          ]
+    )
+    const pages: PdfLayoutPage[] = [cover, ...margins].map((items, i) => ({
+      page: i + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: items.map((item, at) => ({ ...item, hasEOL: at === items.length - 1 }))
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const retained = (key: string): boolean =>
+      units.some((unit) => unit.sourceOnly && unit.items.includes(key))
+    const labels = ['2:1', '3:0', '3:1', '3:2', '4:1', '5:0', '5:1', '5:2']
+    expect(labels.map(retained)).toEqual(Array(labels.length).fill(matched))
+    expect(['1:0', '1:1', '2:2', '3:4', '4:2', '5:4'].some(retained)).toBe(false)
+  }
+)
+
+test.each([
+  { pageCount: 4, shift: 0, expected: true },
+  { pageCount: 4, shift: 4, expected: undefined },
+  { pageCount: 5, shift: 0, expected: true },
+  { pageCount: 5, shift: 4, expected: true }
+])(
+  'protects offset running labels over $pageCount pages at cover shift $shift',
+  ({ pageCount, shift, expected }) => {
+    const title = 'INDEPENDENT COUNTS FOR FINITE PARTITIONS'
+    const byline = 'MIRA READER AND ORIN SAMPLE'
+    const cover = [
+      native(title, 160 + shift, 151, 294, 10, 'Title'),
+      native(byline, 225 + shift, 181, 164, 8, 'Byline'),
+      native('Abstract.', 112, 207, 40, 8, 'Abstract'),
+      native('The same comparison applies across all partitions.', 112, 219, 278, 8, 'Body')
+    ]
+    const inner = [2, 3, 4, 5].slice(0, pageCount - 1).map((page) => {
+      const even = page % 2 === 0
+      const label = even ? native(byline, 229, 103, 156, 7) : native(title, 202, 103, 210, 7)
+      const folio = native(String(page), even ? 75 : 535, 103, 4, 7)
+      return [
+        ...(even ? [folio, label] : [label, folio]),
+        native(
+          'These independent measurements agree with all previously reported results.',
+          75,
+          130,
+          445,
+          10,
+          'Body'
+        )
+      ]
+    })
+    const pages = [cover, ...inner].map((items, n) => ({
+      page: n + 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    expect(units.find((unit) => unit.items.includes('1:0'))?.sourceOnly).toBeUndefined()
+    for (let page = 2; page <= pageCount; page++) {
+      const key = `${page}:${page % 2 === 0 ? 1 : 0}`
+      expect(units.find((unit) => unit.items.includes(key))?.sourceOnly).toBe(expected)
+    }
+  }
+)
+
+test.each([true, false])(
+  'preserves alternating running titles with a matching Greek glyph (%s)',
+  (matches) => {
+    const title = 'AN INDEPENDENT RESULT IS NOT'
+    const cover = [
+      native(title + ' GAMMA-STABLE', 133, 137, 346, 11, 'Title'),
+      native('MIRA REED', 256, 166, 100, 9, 'Author'),
+      native('Abstract.', 140, 198, 45, 9, 'Label')
+    ]
+    const inner = [2, 3, 4, 5].map((page) => {
+      const isEven = page % 2 === 0
+      const folio = native(String(page), isEven ? 72 : 536, 80, 4, 8)
+      const label = isEven
+        ? [native('M. REED', 276, 80, 60, 8)]
+        : [
+            native(title, 192, 80, 160, 8),
+            native(matches || page === 3 ? 'γ' : 'β', 356, 80, 4, 8, 'Greek'),
+            native('-STABLE', 361, 80, 59, 8)
+          ]
+      return [
+        ...(isEven ? [folio, ...label] : [...label, folio]),
+        native(
+          'An independent calculation verifies the primary result in each case.',
+          72,
+          105,
+          468,
+          11,
+          'Body'
+        )
+      ]
+    })
+    const pages = [cover, ...inner].map((items, i) => ({
+      page: i + 1,
+      width: 612,
+      height: 800,
+      rotation: 0,
+      items
+    }))
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    for (const key of ['2:1', '3:0', '4:1', '5:0']) {
+      expect(units.find((unit) => unit.items.includes(key))?.sourceOnly === true).toBe(matches)
+    }
+    expect(units.find((unit) => unit.items.includes('1:0'))?.sourceOnly).toBeUndefined()
+  }
+)
+
+test.each(['complete', 'different cover imprint', 'different peer', 'crowded margin'] as const)(
+  'keeps repeated facing submission labels only with a native cover and empty gutter (%s)',
+  (shape) => {
+    const label = 'Submitted to QX FORUM ’28'
+    const city = 'Elm City'
+    const imprint = `${label}, April 3–5, 2028, ${city}`
+    const page = (number: number, items: PdfLayoutTextItem[]): PdfLayoutPage => ({
+      page: number,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items
+    })
+    const cover = page(1, [
+      native('A Guide to Measuring Native', 95, 94, 410, 17, 'Title'),
+      native('Signals Under Independent Conditions', 78, 114, 444, 17, 'Title'),
+      native('Avery Reed', 92, 139, 79, 12, 'Author'),
+      native('Robin Lane', 264, 139, 72, 12, 'Author'),
+      native('Morgan Holt', 420, 139, 78, 12, 'Author'),
+      native('Abstract', 50, 224, 50, 11, 'Body'),
+      native(
+        `${label}, ${shape === 'different cover imprint' ? 'Bay City' : city}`,
+        50,
+        690,
+        125,
+        7
+      )
+    ])
+    const interior = Array.from({ length: 6 }, (_, index) => {
+      const even = index % 2 === 0
+      const left = native(even ? imprint : 'Native Signals', 50, 68, even ? 190 : 60, 7)
+      const right = native(
+        even
+          ? shape === 'different peer' && index === 4
+            ? 'Reed, Shaw, Holt'
+            : 'Reed, Lane, Holt'
+          : imprint,
+        even ? 465 : 360,
+        68,
+        even ? 85 : 190,
+        7
+      )
+      const gap = native(' ', left.transform[4] + left.width, 68, 30, 0)
+      const body = native(
+        'The native body begins on an independent baseline below the margin.',
+        50,
+        shape === 'crowded margin' && index === 3 ? 85 : 105,
+        230,
+        10,
+        'Body'
+      )
+      return page(index + 2, [left, gap, right, body])
+    })
+    const pages = [cover, ...interior]
+    const { units } = groupPdfTranslationPages({ pages, pageCount: pages.length })
+    const owner = (key: string): (typeof units)[number] | undefined =>
+      units.find((unit) => unit.items.includes(key))
+    for (const { page: number } of interior) {
+      expect(Boolean(owner(`${number}:0`)?.sourceOnly)).toBe(shape === 'complete')
+      expect(Boolean(owner(`${number}:2`)?.sourceOnly)).toBe(shape === 'complete')
+      expect(owner(`${number}:3`)?.sourceOnly).toBeUndefined()
+    }
+    expect(owner('1:0')?.sourceOnly).toBeUndefined()
+  }
+)

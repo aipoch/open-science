@@ -1,3 +1,8 @@
+import {
+  sameConfiguredProviderConnection,
+  sameProviderCredentialScope,
+  supportsConfiguredProviderModelList
+} from '@aipoch/providers'
 import { modelCatalogErrorMessage } from './model-catalog-feedback'
 import type { RefreshProviderModelsResult } from '../../../../shared/settings'
 import { codeBuddySiteForId } from '../../../../shared/codebuddy-subscription'
@@ -112,10 +117,15 @@ import {
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
+  providerFormLocalModels,
+  providerFormManualModels,
+  providerFormModel,
+  cloudModelFormRows,
   providerFormTokenLimits,
   providerKindPatch,
   type ProviderFormValue
 } from './provider-form-value'
+import { providerModelFormRow, mergeLocalModels } from './provider-model-form'
 import { SettingsPanelLoadingBoundary } from './SettingsPanelLoadingBoundary'
 import { localizeProviderResourceMessage } from './validation-message'
 import { ProviderTestResultCard } from './ProviderTestResultCard'
@@ -255,6 +265,25 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     reasoningEffortTransport: provider.reasoningEffortTransport ?? 'reasoning-effort',
     vendorId: provider.vendorId,
     region: provider.region,
+    cloudflare: provider.cloudflare,
+    manualConnection: provider.manualConnection,
+    localPresetId: provider.localPresetId,
+    manualModels:
+      provider.type === 'official' && supportsConfiguredProviderModelList(provider.vendorId)
+        ? (provider.manualModels?.map(providerModelFormRow) ?? cloudModelFormRows(provider))
+        : undefined,
+    localModels: provider.localPresetId
+      ? (provider.localModels?.map(providerModelFormRow) ??
+        (provider.model
+          ? [
+              providerModelFormRow({
+                id: provider.model,
+                contextWindow: provider.contextWindow,
+                reasoningEffortPreset: provider.reasoningEffortPreset
+              })
+            ]
+          : []))
+      : undefined,
     catalogParameters: provider.catalogParameters
   })
 
@@ -267,7 +296,9 @@ const toUpsertRequest = (
   codexTransport: value.codexTransport,
   name: value.name,
   baseUrl: value.baseUrl,
-  model: value.model,
+  model: providerFormModel(value),
+  localModels: providerFormLocalModels(value),
+  manualModels: providerFormManualModels(value),
   ...providerFormTokenLimits(value),
   apiEndpoints: providerFormApiEndpoints(value),
   supportsImageInput: value.supportsImageInput,
@@ -275,6 +306,9 @@ const toUpsertRequest = (
   reasoningEffortTransport: value.type === 'custom' ? value.reasoningEffortTransport : undefined,
   vendorId: value.vendorId,
   region: value.region,
+  cloudflare: value.cloudflare,
+  manualConnection: value.manualConnection,
+  localPresetId: value.type === 'custom' ? (value.localPresetId ?? null) : undefined,
   catalogParameters: value.catalogParameters,
   key: value.key || undefined
 })
@@ -1093,7 +1127,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const providerEditTargetMissing = modelView.kind === 'edit' && editingProvider === undefined
   // Required-field errors for the open draft; a custom provider must be complete before it can save.
   const credentialSource =
-    editingProvider?.type === formValue.type && editingProvider.vendorId === formValue.vendorId
+    editingProvider && sameProviderCredentialScope(editingProvider, formValue)
       ? editingProvider
       : undefined
   const regionalCredential =
@@ -1130,6 +1164,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     formValue.type,
     formValue.vendorId,
     formValue.region,
+    formValue.localPresetId,
+    formValue.localPresetId ? formValue.baseUrl : undefined,
     parameters,
     formValue.key
   ])
@@ -1145,7 +1181,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     setSeededModelView(modelViewKey)
     if (modelView.kind === 'create' && modelView.providerKindKey) {
       const initial = createEmptyProviderFormValue(
-        providerKindPatch(modelView.providerKindKey, customApiEndpoint)
+        providerKindPatch(
+          modelView.providerKindKey,
+          customApiEndpoint,
+          activeFramework?.supportedApiTypes
+        )
       )
       setFormValue(initial)
       setProviderDraftBaseline(initial)
@@ -1165,9 +1205,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const catalogNeedsSave = Boolean(visibleCatalogPreview?.draftToken)
   const providerFormDirty =
     catalogNeedsSave ||
+    !sameConfiguredProviderConnection(providerDraftBaseline, formValue) ||
     Object.entries({ ...providerDraftBaseline, ...formValue }).some(
       ([key, value]) =>
         key !== 'providerFormTouched' &&
+        key !== 'cloudflare' &&
+        key !== 'manualConnection' &&
         (key === 'catalogParameters'
           ? parameters !== catalogParameterKey(providerDraftBaseline.catalogParameters)
           : value !== providerDraftBaseline[key as keyof ProviderFormValue])
@@ -1346,8 +1389,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     if (!canRunProviderOperation) return
     const generation = ++catalogOperationGeneration.current
     setIsRefreshingModels(true)
+    const localPresetId = formValue.localPresetId
     const refreshSavedProvider =
-      modelView.kind === 'edit' && Boolean(editingProvider?.id) && !providerFormDirty
+      !localPresetId &&
+      modelView.kind === 'edit' &&
+      Boolean(editingProvider?.id) &&
+      !providerFormDirty
     try {
       const savedTarget = editingProvider
         ? {
@@ -1367,7 +1414,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             }
       )
       if (generation !== catalogOperationGeneration.current) return
-      if (refreshSavedProvider && result.ok && !result.refreshFailed) {
+      if (localPresetId && result.ok) {
+        setFormValue((current) => {
+          if (
+            current.localPresetId !== localPresetId ||
+            current.baseUrl !== formValue.baseUrl ||
+            current.key !== formValue.key
+          )
+            return current
+          const localModels = mergeLocalModels(current.localModels ?? [], result.models ?? [])
+          return localModels === current.localModels ? current : { ...current, localModels }
+        })
+        setCatalogPreview(undefined)
+      } else if (refreshSavedProvider && result.ok && !result.refreshFailed) {
         setCatalogPreview(undefined)
       } else {
         setCatalogPreview({

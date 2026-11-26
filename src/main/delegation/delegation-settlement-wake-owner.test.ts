@@ -95,6 +95,13 @@ describe('DelegationSettlementWakeOwner', () => {
     expect(dispatched[0].text).toContain('attempt=attempt-alpha')
     expect(dispatched[0].text).toContain('status=completed')
     expect(dispatched[0].text).toContain('All watched Subagent Attempts have settled')
+    expect(dispatched[0].text).toContain(
+      'await host.collect([{"frameId":"alpha","attemptId":"attempt-alpha"}], { timeoutSeconds: 0 })'
+    )
+    expect(dispatched[0].text).toContain('await host.children()')
+    expect(dispatched[0].text).toContain('Do not use Notebook background_run or host.agents.switch')
+    expect(dispatched[0].text).toContain('awaiting_user')
+    expect(dispatched[0].text).toContain('the existing child question needs an answer')
     vi.useRealTimers()
   })
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { OFFICIAL_VENDORS } from '@aipoch/providers'
 
-import { LOCAL_MODEL_PRESETS, providerKindPatch } from './provider-form-value'
+import { LOCAL_MODEL_PRESETS } from '@aipoch/providers'
+import { providerKindPatch } from './provider-form-value'
 import { matchesProviderPickerQuery, providerPickerEntries } from './provider-picker-catalog'
 
 const keysMatching = (query: string, entries = providerPickerEntries({})): string[] =>
@@ -102,11 +103,15 @@ describe('matchesProviderPickerQuery', () => {
 })
 
 describe('providerKindPatch for local presets', () => {
-  it('seeds a custom chat-completions provider pointed at the local server', () => {
-    expect(providerKindPatch('local:vllm', 'messages')).toMatchObject({
+  it.each([
+    ['vllm', 'vLLM', 'http://localhost:8000'],
+    ['magpie', 'Magpie', 'http://127.0.0.1:3425/v1']
+  ])('seeds the %s connection with its local endpoint', (id, name, baseUrl) => {
+    expect(providerKindPatch(`local:${id}`, 'messages')).toMatchObject({
       type: 'custom',
-      name: 'vLLM',
-      baseUrl: 'http://localhost:8000',
+      localPresetId: id,
+      name,
+      baseUrl,
       apiEndpoint: 'chat-completions'
     })
   })

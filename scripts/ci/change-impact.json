@@ -133,6 +133,7 @@
         "build/node-runtime.json",
         "build/macos-service-launcher.c",
         "build/mac-open-after-update.m",
+        "build/mac-sparkle/**",
         "build/mac-quit-handoff.cjs",
         "build/mac-update-network.c"
       ],
@@ -281,6 +282,7 @@
         "src/main/local-rpc-transport.ts",
         "packages/notebook-code-risk/src/index.ts",
         "src/main/notebook/runtime-service.ts",
+        "src/main/web-service/task-notebook-readiness.ts",
         "src/main/notebook/memory-policy.ts",
         "src/main/notebook/memory-policy-platform.ts",
         "src/main/notebook/resource-memory.ts",

@@ -5,7 +5,7 @@ import type { SessionPackageInventoryEntry } from '../../shared/session-package'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import { assertWithinResourceBudget } from '../resource-budget'
-import { packageCapacityChecker } from './capacity'
+import { packageCapacityChecker, packageDiskReserveBytes } from './capacity'
 
 // Only immutable execution blobs may share an inode. Working files and metadata are rewritten.
 const blobIdentity = (entry: SessionPackageInventoryEntry): string | undefined => {
@@ -52,7 +52,7 @@ export const createPackageMaterializer = async (
   }
   signal?.throwIfAborted()
   await mkdir(destinationRoot, { recursive: true })
-  const checkCapacity = await packageCapacityChecker(destinationRoot)
+  const checkCapacity = await packageCapacityChecker(destinationRoot, packageDiskReserveBytes)
   checkCapacity(allocatedBudget)
   const verifyContent = createPackageContentVerifier()
   const copies = new Map<string, { path: string; stats: Stats }>()

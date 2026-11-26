@@ -2,7 +2,8 @@ export type CallerSurface = 'electron' | 'web' | 'task'
 export type CallerLocation = 'local' | 'remote'
 export type CallerPrincipalKind = 'human' | 'automation' | 'agent-session'
 export type CallerActionOrigin = 'human' | 'automation' | 'agent-session'
-export type CallerAuthority = 'manage-remote-pairing' | 'import-local-package-path'
+export type CallerAuthority =
+  'manage-remote-pairing' | 'import-local-package-path' | 'relay-task-interactions'
 
 export type CallerContext = Readonly<{
   clientId: string
@@ -29,6 +30,7 @@ type CreateWebCallerContextOptions = Partial<
 }
 
 type CreateTaskCallerContextOptions = Partial<Pick<CallerContext, 'clientId' | 'location'>> & {
+  authenticatedLocalBearer?: boolean
   isAuthorizationCurrent?: () => boolean
 }
 
@@ -78,6 +80,10 @@ const createTaskCallerContext = (options: CreateTaskCallerContextOptions = {}): 
     location: options.location ?? 'local',
     principalKind: 'automation',
     actionOrigin: 'automation',
+    authorities:
+      options.authenticatedLocalBearer && options.location !== 'remote'
+        ? ['relay-task-interactions']
+        : [],
     isAuthorizationCurrent: options.isAuthorizationCurrent
   })
 }
@@ -89,6 +95,13 @@ const canSatisfyHumanApproval = (context: CallerContext): boolean =>
   context.isAuthorizationCurrent() &&
   context.principalKind === 'human' &&
   context.actionOrigin === 'human'
+
+const canRelayTaskInteraction = (context: CallerContext): boolean =>
+  context.surface === 'task' &&
+  context.location === 'local' &&
+  context.principalKind === 'automation' &&
+  context.actionOrigin === 'automation' &&
+  hasCallerAuthority(context, 'relay-task-interactions')
 
 const canAccessSessionPlan = (context: CallerContext): boolean =>
   context.isAuthorizationCurrent() &&
@@ -177,6 +190,7 @@ export {
   callerContextForEvent,
   canAccessSessionPlan,
   canMutateSessionDelegationPolicy,
+  canRelayTaskInteraction,
   canSatisfyHumanApproval,
   createCallerContext,
   createElectronCallerContext,

@@ -289,7 +289,7 @@ describe('AgentStep', () => {
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       preflight: {
         claudeReady: true,
         opencodeReady: true,
@@ -321,7 +321,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       preflight: {
         claudeReady: true,
         opencodeReady: false,
@@ -463,7 +463,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       setAgentFramework,
       preflight: {
         claudeReady: false,
@@ -483,9 +483,9 @@ describe('AgentStep', () => {
   })
 
   it.each([
-    ['1.1.4', '0.157.1'],
-    ['1.6.2', '0.153.4'],
-    ['1.6.2', undefined]
+    ['1.6.2', '0.166.0'],
+    ['2.6.0', '0.157.1'],
+    ['2.6.0', undefined]
   ])(
     'does not auto-select unsupported Codex %s / %s from a stale ready preflight',
     async (version, nativeVersion) => {
@@ -511,7 +511,7 @@ describe('AgentStep', () => {
 
       expect(setAgentFramework).not.toHaveBeenCalled()
       expect(container.querySelector('[aria-label="Use Codex"]')).toBeNull()
-      expect(container.textContent).toContain('Update required')
+      expect(container.textContent).toContain('Needs repair')
     }
   )
 
@@ -527,7 +527,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       setAgentFramework,
       preflight: {
         claudeReady: false,
@@ -573,7 +573,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       installOpencode,
       setAgentFramework,
       checkEnvironment,
@@ -709,7 +709,7 @@ describe('AgentStep', () => {
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/bin/opencode' },
-      codex: { resolvedPath: '/bin/codex-acp', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', nativeVersion: '0.166.0' },
       isDetectingCodex: true,
       preflight: {
         claudeReady: true,

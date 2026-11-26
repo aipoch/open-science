@@ -13,12 +13,14 @@ test('limits image catalog refresh to official providers and saves custom model 
   await settings.locator('[data-scenario-model="image-generation"]').click()
   await settings.getByRole('button', { name: 'Image services', exact: true }).click()
   await settings.getByRole('button', { name: 'Add image service', exact: true }).click()
+  await settings.locator('[data-provider-kind="custom"]').click()
 
   const refresh = settings.getByRole('button', { name: 'Refresh model list', exact: true })
   const providerType = settings.getByRole('combobox', { name: 'Provider type', exact: true })
   const format = settings.getByRole('combobox', { name: 'API format', exact: true })
   const modelId = settings.getByLabel('Model ID', { exact: true })
   const baseUrl = 'http://127.0.0.1:9/v1'
+  await expect(settings.getByLabel('Name', { exact: true })).toBeVisible({ timeout: 60_000 })
   await settings.getByLabel('Name', { exact: true }).fill('Manual image service')
   await settings.getByLabel('Base URL', { exact: true }).fill(baseUrl)
   for (const label of ['MiniMax', 'Qwen Images', 'Seedream', 'OpenAI Images']) {

@@ -41,12 +41,15 @@ import {
   isPdfGenerationFailure,
   type PdfGenerationFailure,
   pdfTranslationLayoutFailureSchema,
+  pdfTranslationLinkLocationSchema,
   type PdfTranslationPdfResult,
   pdfTranslationReflowLayoutSchema,
   type PdfTranslationPdfRequest as CachedPdfRequest
 } from './contracts.js'
 
 type PdfTranslationPdfRequest = Omit<CachedPdfRequest, 'cache'>
+
+const linkLocations = z.array(pdfTranslationLinkLocationSchema).max(10000)
 
 class PdfWorkerMemoryError extends PdfGenerationError {
   constructor() {
@@ -259,6 +262,7 @@ export class PdfTranslationWriter {
     return new Promise((resolve, reject) => {
       let layoutFailures: PdfTranslationPdfResult['layoutFailures'] = []
       let reflow: PdfTranslationPdfResult['reflow']
+      let omittedLinks: PdfTranslationPdfResult['omittedLinks']
       let measurements: Omit<z.infer<typeof workerDiagnostics>, 'retained'> | undefined
       let settled = false
       const finish = (
@@ -296,7 +300,12 @@ export class PdfTranslationWriter {
             else
               resolve(
                 caller.isCurrent() && data
-                  ? { data, layoutFailures, ...(reflow ? { reflow } : {}) }
+                  ? {
+                      data,
+                      layoutFailures,
+                      ...(reflow ? { reflow } : {}),
+                      ...(omittedLinks?.length ? { omittedLinks } : {})
+                    }
                   : null
               )
           })
@@ -346,6 +355,17 @@ export class PdfTranslationWriter {
           return
         }
         layoutFailures = reports.data
+
+        const omitted = linkLocations.safeParse(value?.omittedLinks ?? [])
+        if (
+          !omitted.success ||
+          (omitted.data.length > 0 && !input.allowLinkOmission) ||
+          omitted.data.some((link) => link.pageNumber > input.pages.length)
+        ) {
+          finish(null, { code: 'worker-failed' })
+          return
+        }
+        omittedLinks = omitted.data
 
         const diagnostic = workerDiagnostics.safeParse(value?.diagnostics)
         if (diagnostic.success) {
@@ -415,6 +435,12 @@ export class PdfTranslationWriter {
       (input.preserveUnmatched !== undefined &&
         (typeof input.preserveUnmatched !== 'boolean' ||
           (input.preserveUnmatched && input.preserveUnsupported !== true))) ||
+      (input.allowLinkOmission !== undefined && typeof input.allowLinkOmission !== 'boolean') ||
+      (input.allowLinkOmission && (input.layout === 'reflow' || !input.preserveUnsupported)) ||
+      (input.dropLinks !== undefined &&
+        (!input.allowLinkOmission ||
+          !linkLocations.safeParse(input.dropLinks).success ||
+          input.dropLinks.some((link) => link.pageNumber > input.pages?.length))) ||
       typeof input.id !== 'string' ||
       !/^[\w-]{1,64}$/.test(input.id) ||
       !(input.data instanceof Uint8Array) ||

@@ -20,6 +20,7 @@ export {
 } from './authoring-correction.js'
 export * from './resources.js'
 export * from './model-catalog.js'
+export * from './remote-speech.js'
 export * from './ffmpeg-catalog.js'
 export * from './ffmpeg.js'
 export * from './runtime.js'

@@ -585,6 +585,7 @@ class NotebookNetworkSandbox {
 }
 
 export { NotebookNetworkSandbox, NotebookSandboxPreparationError }
+export { probeLinuxIsolation } from '../runtime/src/platform/linux-isolation.js'
 export { mapWsl2Path, wslUncDistro } from '../runtime/src/platform/wsl2-isolation.js'
 // Shared transport accepts an already validated numeric destination, preserving DNS pinning.
 export {

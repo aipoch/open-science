@@ -19,13 +19,23 @@ import { gzipSync } from 'node:zlib'
 import { Agent, fetch as nodeFetch } from 'undici'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { netFetchWithManualRedirect, nonRegularMarkerPaths, markerReplacementsOnRead } = vi.hoisted(
-  () => ({
-    netFetchWithManualRedirect: vi.fn(),
-    nonRegularMarkerPaths: new Set<string>(),
-    markerReplacementsOnRead: new Map<string, string>()
-  })
-)
+const {
+  netFetchWithManualRedirect,
+  nonRegularMarkerPaths,
+  markerReplacementsOnRead,
+  piBootstrapDir
+} = vi.hoisted(() => ({
+  netFetchWithManualRedirect: vi.fn(),
+  nonRegularMarkerPaths: new Set<string>(),
+  markerReplacementsOnRead: new Map<string, string>(),
+  piBootstrapDir: { value: '' }
+}))
+
+vi.mock('../agent-framework/pi-runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../agent-framework/pi-runtime')>()),
+  piBootstrapPath: () => piBootstrapDir.value,
+  resolvePiExecutable: vi.fn(async () => '/pi')
+}))
 
 vi.mock('../network-fetch', () => ({
   netFetchWithManualRedirect,
@@ -1072,5 +1082,144 @@ describe('isManagedClaudePath / uninstallManagedClaude', () => {
 
   it('is a no-op (never rejects) when nothing is installed', async () => {
     await expect(uninstallManagedClaude(root)).resolves.toBeUndefined()
+  })
+})
+
+describe('installManagedPi', () => {
+  beforeEach(() => {
+    netFetchWithManualRedirect.mockReset()
+    piBootstrapDir.value = ''
+  })
+
+  afterEach(() => {
+    netFetchWithManualRedirect.mockReset()
+    piBootstrapDir.value = ''
+  })
+
+  it('rewrites locked tarball URLs per registry and falls back on registry failure', async () => {
+    const { installManagedPi } = await import('./managed-pi')
+    const root = await mkdtemp(join(tmpdir(), 'open-science-managed-pi-'))
+    const bootstrap = join(root, 'pi-bootstrap')
+    const configRoot = join(root, 'config')
+    piBootstrapDir.value = bootstrap
+    await mkdir(bootstrap, { recursive: true })
+    await mkdir(configRoot, { recursive: true })
+
+    const tgz = buildTgz([
+      { name: 'package/index.js', content: Buffer.from('console.log("pi")\n') }
+    ])
+    const integrity = sha512(tgz)
+
+    await writeFile(
+      join(bootstrap, 'package-lock.json'),
+      JSON.stringify({
+        packages: {
+          '': {},
+          'node_modules/@openma/pi-acp': {
+            resolved: 'https://registry.npmjs.org/@openma/pi-acp/-/pi-acp-0.1.8.tgz',
+            integrity
+          }
+        }
+      })
+    )
+    await writeFile(join(bootstrap, 'bootstrap.mjs'), 'process.exit(0)\n')
+
+    const requestedUrls: string[] = []
+    netFetchWithManualRedirect.mockImplementation(async (url: string) => {
+      requestedUrls.push(url)
+      if (url.startsWith('https://mirror.example.test/')) {
+        return new Response(null, { status: 502 })
+      }
+      return new Response(new Uint8Array(tgz), {
+        status: 200,
+        headers: { 'content-length': String(tgz.length) }
+      })
+    })
+
+    try {
+      const result = await installManagedPi({
+        configRoot,
+        installId: 'pi-fallback',
+        onEvent: () => undefined,
+        registries: ['https://mirror.example.test', 'https://official.example.test'],
+        signal: new AbortController().signal
+      })
+
+      expect(result).toEqual({ installId: 'pi-fallback', ok: true })
+      expect(requestedUrls).toEqual([
+        'https://mirror.example.test/@openma/pi-acp/-/pi-acp-0.1.8.tgz',
+        'https://official.example.test/@openma/pi-acp/-/pi-acp-0.1.8.tgz'
+      ])
+      await expect(
+        readFile(join(configRoot, 'pi-managed', 'node_modules/@openma/pi-acp/index.js'), 'utf8')
+      ).resolves.toBe('console.log("pi")\n')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('returns an explicit error when registries is empty instead of throwing undefined', async () => {
+    const { installManagedPi } = await import('./managed-pi')
+    const root = await mkdtemp(join(tmpdir(), 'open-science-managed-pi-empty-'))
+    const bootstrap = join(root, 'pi-bootstrap')
+    const configRoot = join(root, 'config')
+    piBootstrapDir.value = bootstrap
+    await mkdir(bootstrap, { recursive: true })
+    await mkdir(configRoot, { recursive: true })
+    await writeFile(
+      join(bootstrap, 'package-lock.json'),
+      JSON.stringify({
+        packages: {
+          '': {},
+          'node_modules/@openma/pi-acp': {
+            resolved: 'https://registry.npmjs.org/@openma/pi-acp/-/pi-acp-0.1.8.tgz',
+            integrity: 'sha512-deadbeef'
+          }
+        }
+      })
+    )
+
+    try {
+      const result = await installManagedPi({
+        configRoot,
+        installId: 'pi-empty',
+        onEvent: () => undefined,
+        registries: [],
+        signal: new AbortController().signal
+      })
+
+      expect(result).toEqual({
+        installId: 'pi-empty',
+        ok: false,
+        error: 'no registries configured'
+      })
+      expect(netFetchWithManualRedirect).not.toHaveBeenCalled()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('describeManagedInstallError', () => {
+  it('extracts nested POSIX and undici error codes from cause chains', async () => {
+    const { describeManagedInstallError } = await import('./managed-claude')
+    const dnsError = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('dns failed'), { code: 'ENOTFOUND' })
+    })
+    const timeoutError = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect timeout'), { code: 'UND_ERR_CONNECT_TIMEOUT' })
+    })
+    const spaceError = new Error('write failed', {
+      cause: Object.assign(new Error('no space left on device'), { code: 'ENOSPC' })
+    })
+
+    expect(describeManagedInstallError(dnsError)).toContain('Network error (ENOTFOUND)')
+    expect(describeManagedInstallError(timeoutError)).toContain(
+      'Network error (UND_ERR_CONNECT_TIMEOUT)'
+    )
+    expect(describeManagedInstallError(spaceError)).toContain('Insufficient disk space (ENOSPC)')
+    expect(describeManagedInstallError(new Error('Request timed out for https://x'))).toBe(
+      'Request timed out for https://x'
+    )
   })
 })

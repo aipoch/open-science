@@ -14,6 +14,7 @@
     "src/renderer/src/pages/settings/ProviderForm.tsx",
     "src/renderer/src/pages/settings/ProviderKindPicker.render.test.tsx",
     "src/renderer/src/pages/settings/ProviderKindPicker.tsx",
+    "src/renderer/src/pages/settings/ProviderModelsEditor.tsx",
     "src/renderer/src/pages/settings/ProviderList.render.test.tsx",
     "src/renderer/src/pages/settings/ProviderList.tsx",
     "src/renderer/src/pages/settings/ProvidersPanel.race.test.tsx",

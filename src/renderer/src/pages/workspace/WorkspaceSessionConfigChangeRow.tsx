@@ -32,7 +32,9 @@ const WorkspaceSessionConfigChangeRow = ({
     agentFrameworks.find((candidate) => candidate.id === agentTarget.frameworkId)?.displayName ??
     agentTarget.frameworkId
   const provider = providers.find((candidate) => candidate.id === agentTarget.providerId)
-  const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
+  const kindKey = provider
+    ? providerKindKey(provider.type, provider.vendorId, provider.localPresetId)
+    : undefined
   // An omitted model is the provider default; the Composer model picker labels that entry with
   // the provider name rather than pinning a concrete catalog model.
   const model = agentTarget.model ?? provider?.name ?? t('Default')

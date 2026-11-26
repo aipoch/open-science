@@ -362,6 +362,10 @@ FunctionEnd
   !insertmacro stageProgramEntry vk_swiftshader.dll
   !insertmacro stageProgramEntry vulkan-1.dll
   !insertmacro stageProgramEntry uninstallerIcon.ico
+  # The installer's --install-cli run inherits the updater's working directory, so Chromium can
+  # leave its debug.log in $INSTDIR after updater-driven upgrades. Reserve the name so uninstall
+  # removes it; the entry is skipped when the file was never written.
+  !insertmacro stageProgramEntry debug.log
   !insertmacro stageProgramEntry "${APP_EXECUTABLE_FILENAME}"
   # A direct uninstaller cannot move its own executable while it is running. During an update the
   # old uninstaller runs from $PLUGINSDIR, so the installed copy is safe to stage and replace.

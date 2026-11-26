@@ -883,6 +883,8 @@ const WorkspacePage = ({
     return false
   })
   const handleReviewUpdate = useReviewStore((state) => state.handleReviewUpdate)
+  const canMentionArtifact =
+    canEditDraft && docArtifactCount(draftDoc) < MAX_COMPOSER_ARTIFACT_MENTIONS
   // Make the composer-owned mention capability available to Global Search without exposing its draft.
   // The value is transient and Project-scoped; cleanup prevents a stale Project from accepting an
   // Artifact after navigation.
@@ -893,10 +895,10 @@ const WorkspacePage = ({
     }
     setArtifactMentionAvailability({
       projectId: activeProjectId,
-      canMention: canEditDraft && docArtifactCount(draftDoc) < MAX_COMPOSER_ARTIFACT_MENTIONS
+      canMention: canMentionArtifact
     })
     return () => setArtifactMentionAvailability(undefined)
-  }, [activeProjectId, canEditDraft, draftDoc, setArtifactMentionAvailability])
+  }, [activeProjectId, canMentionArtifact, setArtifactMentionAvailability])
 
   // Global Search can only request a same-Project mention. Consume it once in the composer owner so
   // a palette never reaches into this page's local draft state or carries a reference across routing.
@@ -1656,42 +1658,22 @@ const WorkspacePage = ({
         <NotebookMemoryNoticeBridge
           projectId={activeProjectId}
           canManage={isSessionPersistenceReady && canOpenProjectCompute}
-          onContinue={async (event) => {
-            if (event.source === 'reproduction') {
-              const session = useSessionStore
-                .getState()
-                .sessions.find(
-                  ({ id, projectId }) => id === event.sessionId && projectId === event.projectId
-                )
-              if (!session)
-                throw new Error(
-                  t('Open the affected project to retry or manage its Notebook resources.')
-                )
-              setCheckSession(session)
-              return
-            }
-            if (!event.refusalId) return
-            if (typeof window.api.acp?.continueNotebookExecution !== 'function') {
+          sendMessage={
+            typeof window.api.acp?.continueNotebookExecution === 'function'
+              ? runtime.sendMessage
+              : undefined
+          }
+          onContinue={(event) => {
+            const session = useSessionStore
+              .getState()
+              .sessions.find(
+                ({ id, projectId }) => id === event.sessionId && projectId === event.projectId
+              )
+            if (!session)
               throw new Error(
-                t('Notebook continuation is unavailable. Update the application before retrying.')
+                t('Open the affected project to retry or manage its Notebook resources.')
               )
-            }
-            const result = await conversation.actions.submit.notebookContinuation({
-              projectId: event.projectId,
-              sessionId: event.sessionId,
-              cwd: event.workspaceCwd,
-              refusalId: event.refusalId,
-              messageBranchId: event.messageBranchId,
-              text: t(
-                'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
-              )
-            })
-            if (!result)
-              throw new Error(
-                t(
-                  'Notebook continuation could not be started. The previous request remains stopped.'
-                )
-              )
+            setCheckSession(session)
           }}
         />
         {projectSessionCleanups.map((cleanup) => (

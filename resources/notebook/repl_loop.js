@@ -3329,7 +3329,19 @@ const hostAgents = {
   // Privileged: switch binds only the trusted calling session (server-captured). After approval the
   // outer control tool finishes, then the same task continues under the target; null reverts to Main.
   async switch(nameOrNull) {
-    return agentsRpc('switch', { name: nameOrNull === undefined ? null : nameOrNull })
+    if (nameOrNull !== null && (typeof nameOrNull !== 'string' || !nameOrNull.trim())) {
+      const childHandle =
+        nameOrNull &&
+        typeof nameOrNull === 'object' &&
+        typeof nameOrNull.frameId === 'string' &&
+        typeof nameOrNull.attemptId === 'string'
+      throw new Error(
+        childHandle
+          ? 'host.agents.switch: To read a Subagent Attempt, use host.collect([{ frameId, attemptId }], { timeoutSeconds: 0 }).'
+          : 'host.agents.switch: Pass a Specialist name or explicit null to return to Main Agent.'
+      )
+    }
+    return agentsRpc('switch', { name: nameOrNull })
   },
   // Privileged and revision-guarded: bound conversations become unavailable (not Main) after delete.
   async delete(name, options) {

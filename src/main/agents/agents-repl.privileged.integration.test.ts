@@ -362,6 +362,25 @@ gate('host.agents repl privileged integration', () => {
     })
   })
 
+  it('rejects malformed SDK switch targets before approval and points child handles to collect', async () => {
+    const approvalsBefore = approvalCount()
+    const notificationsBefore = notified.length
+    await withLoop('invalid-switch', async (send) => {
+      const child = await send(
+        "return await host.agents.switch({ frameId: 'child-frame', attemptId: 'child-attempt' })"
+      )
+      expect(child.error).toContain('host.collect([{ frameId, attemptId }], { timeoutSeconds: 0 })')
+      for (const target of ['', 'NaN', '123', "'  '", '{ specialist: "Other" }']) {
+        const response = await send(`return await host.agents.switch(${target})`)
+        expect(response.error).toContain('explicit null')
+        expect(response.error).not.toContain('host.collect')
+      }
+    })
+    expect(approvalCount()).toBe(approvalsBefore)
+    expect(notified).toHaveLength(notificationsBefore)
+    expect(durableBindings.has('invalid-switch')).toBe(false)
+  })
+
   it('rejects Specialist switching through a real delegate capability before approval or mutation despite forged Main fields', async () => {
     await agentsService.dispatch({
       op: 'create',

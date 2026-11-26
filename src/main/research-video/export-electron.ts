@@ -200,11 +200,11 @@ async function openFilmPlayer<T>(
     signal.throwIfAborted()
     const metadata = (await renderCall(() =>
       window.webContents.executeJavaScript('window.__ready')
-    )) as {
-      duration: number
-      W: number
-      H: number
-    }
+    )) as FilmStage | null | undefined
+    if (metadata == null)
+      throw new Error(
+        'The research film player did not initialize. Regenerate the film and try again.'
+      )
     if (
       metadata.W !== width ||
       metadata.H !== height ||

@@ -205,6 +205,8 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Reviewed: scoped manual-stop feedback only decorates successful/error tool responses.
         // Strict inputs, RPC method selection and Auto authorization dispositions are unchanged.
         // Main-only initial connection preparation changes no tool schemas, handlers or Auto dispositions.
+        // Reviewed: default runtime advice and no-retry guidance for declines and stops only change
+        // tool text. RPC dispatch, input schemas and Auto authorization remain unchanged.
         // Reviewed: terminal status and diagnostics are projected after RPC dispatch. Background
         // query and cancel still require the registered action and its validated Run identity.
         // The read-only state request limits history to the ten runs its response can display.
@@ -212,7 +214,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Output paging reads one persisted Run through the existing session-scoped state route.
         // Paging and handoff extraction project results only; no Auto operation branch changed.
         'notebook/mcp-server.ts':
-          '50084b6f6d7bfdc5660aa65dbe33147c52d24a0301c237f0c68fb2520fdca81a',
+          '246821c41c360ed03b33b39d42dd5600d2339edc245814f1acb4949b052b187e',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.
@@ -238,7 +240,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         activityDeclaration: '1739b6cfadd2912aa53f4d11bf69d908da37d5f822476a998b928e9de7ddffdc',
         literatureDiscovery: '3ded9eab859b472f0d20d7a232c8971a517f3b493db318efb0a07753278fdee6',
         planSchema: '16f6ba38e7ae9320c2fb9d1a215592c11ada256781882e5e3f16336eb303cfb7',
-        planValidation: 'fb649e539cdd8f71abd34ec329ca7ee378cf7605fcbe8d0123b7703ed7dedddb',
+        // Reviewed: Task decision receipts and branch identity extend the Plan response types.
+        // The generated Plan schema and Auto operation classifier still validate the same inputs.
+        planValidation: 'c20f73fec42da43bccadf93b575910aebf4820a826730da53e0a1db1036c5495',
         // Reviewed: strict search/fetch inputs reject provider, network and replay options.
         // Bounded attempts, usage and provenance fields grant no permission or execution authority.
         // The saved-envelope reader validates results for evidence and presentation.

@@ -4,7 +4,17 @@ import {
   resolveOfficialModelCatalog
 } from '../../../../shared/provider-model-catalog'
 import {
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  LOCAL_MODEL_PRESETS,
+  configuredProviderPresetModels,
+  inferManualProviderProtocol,
+  manualProviderDefinition,
+  modelAfterManualProtocolChange,
+  publishedManualProviderContextWindow,
+  sameProviderCredentialScope,
+  supportsConfiguredProviderModelList,
   resolveVendorModelCatalog,
+  type CatalogModel,
   type CatalogSnapshot,
   type CatalogStatus
 } from '@aipoch/providers'
@@ -27,7 +37,8 @@ import {
   SelectGroup,
   SelectItem,
   SelectLabel,
-  SelectTrigger
+  SelectTrigger,
+  SelectValue
 } from '@/components/ui/select'
 import {
   getOfficialVendor,
@@ -39,19 +50,24 @@ import {
   CUSTOM_REASONING_EFFORT_TRANSPORTS,
   type ReasoningEffortPresetId
 } from '../../../../shared/reasoning-effort'
-import { customProviderRequiresKey } from '../../../../shared/provider-url-policy'
+import {
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError
+} from '../../../../shared/provider-url-policy'
 
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { SelectedProviderCard } from './ProviderKindPicker'
 import { ProviderKindIcon } from './provider-icons'
+import { ProviderModelsEditor } from './ProviderModelsEditor'
 import {
   LOCAL_MODEL_KIND_PREFIX,
-  LOCAL_MODEL_PRESETS,
   PROVIDER_KIND_GROUPS,
   PROVIDER_KINDS,
   isProviderKindAvailable,
   localModelPresetPatch,
   providerFormApiEndpoints,
+  cloudflareModePatch,
+  cloudModelRoutePatch,
   providerKindPatch,
   selectedKindKey,
   type ProviderFormErrors,
@@ -146,6 +162,79 @@ const RequiredMark = (): React.JSX.Element => (
   </span>
 )
 
+function SupportedModelTags({
+  models,
+  selectedModel,
+  onSelect,
+  disabled
+}: {
+  models: readonly CatalogModel[]
+  selectedModel?: string
+  onSelect?: (id: string) => void
+  disabled?: boolean
+}): React.JSX.Element {
+  const tagClassName = 'rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs'
+  return (
+    <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
+      {models.map((model) =>
+        onSelect ? (
+          <button
+            key={model.id}
+            type="button"
+            aria-pressed={model.id === selectedModel}
+            disabled={disabled}
+            onClick={() => onSelect(model.id)}
+            className={cn(
+              tagClassName,
+              'text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50',
+              model.id === selectedModel && 'border-primary/50 bg-primary/10 text-foreground'
+            )}
+          >
+            {model.id}
+          </button>
+        ) : (
+          <span
+            key={model.id}
+            title={[
+              ...Object.keys(model.routes ?? {}),
+              model.contextWindow,
+              model.reasoningEffort?.supported ? model.reasoningEffort.values.join(' / ') : ''
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            className={cn(tagClassName, 'text-muted-foreground')}
+          >
+            {model.id}
+          </span>
+        )
+      )}
+    </div>
+  )
+}
+
+function RefreshModelListButton({
+  onClick,
+  disabled,
+  refreshing
+}: {
+  onClick?: () => void
+  disabled?: boolean
+  refreshing?: boolean
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || refreshing || !onClick}
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary/35 px-2.5 text-xs font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 disabled:pointer-events-none disabled:opacity-50"
+    >
+      <RefreshCw aria-hidden="true" className={cn('size-3.5', refreshing && 'animate-spin')} />
+      {refreshing ? t('Refreshing…') : t('Refresh model list')}
+    </button>
+  )
+}
+
 type SettingsDisclosureProps = {
   expanded: boolean
   label: string
@@ -237,26 +326,28 @@ const TokenLimitField = ({
       onChange={(event) => onValueChange(event.target.value)}
       className="tabular-nums"
     />
-    <div role="group" aria-labelledby={`${id}-label`} className="flex flex-wrap gap-1">
-      {presets.map((preset) => {
-        const selected = value === String(preset)
-        return (
-          <button
-            key={preset}
-            type="button"
-            aria-pressed={selected}
-            disabled={disabled}
-            onClick={() => onValueChange(String(preset))}
-            className={cn(
-              'min-h-7 rounded-md border border-transparent px-2 text-xs tabular-nums text-muted-foreground outline-none transition-[color,background-color,border-color,transform] duration-150 motion-reduce:transition-none active:translate-y-px disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-3 focus-visible:ring-ring/50 [@media(hover:hover)]:hover:bg-muted [@media(hover:hover)]:hover:text-foreground',
-              selected && 'border-border bg-muted text-foreground'
-            )}
-          >
-            {tokenPresetLabel(preset)}
-          </button>
-        )
-      })}
-    </div>
+    {presets.length > 0 && (
+      <div role="group" aria-labelledby={`${id}-label`} className="flex flex-wrap gap-1">
+        {presets.map((preset) => {
+          const selected = value === String(preset)
+          return (
+            <button
+              key={preset}
+              type="button"
+              aria-pressed={selected}
+              disabled={disabled}
+              onClick={() => onValueChange(String(preset))}
+              className={cn(
+                'min-h-7 rounded-md border border-transparent px-2 text-xs tabular-nums text-muted-foreground outline-none transition-[color,background-color,border-color,transform] duration-150 motion-reduce:transition-none active:translate-y-px disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:ring-3 focus-visible:ring-ring/50 [@media(hover:hover)]:hover:bg-muted [@media(hover:hover)]:hover:text-foreground',
+                selected && 'border-border bg-muted text-foreground'
+              )}
+            >
+              {tokenPresetLabel(preset)}
+            </button>
+          )
+        })}
+      </div>
+    )}
     {error ? (
       <p id={`${id}-error`} className={fieldErrorClassName} role="alert">
         {t(error)}
@@ -265,10 +356,9 @@ const TokenLimitField = ({
   </div>
 )
 
-// Provider fields switch by type: pick a type first, then reveal its options. Custom exposes an
-// Anthropic-compatible gateway/key/model; an official vendor exposes a key (+ region) and picks a
-// model from the registry catalog. Stored plaintext keys are never rendered; users can reveal only
-// a replacement key currently held in this form draft.
+// The form shares credential and model fields across custom, official, and preset connections.
+// Local presets keep the custom transport; cloud forms collect the coordinates their vendor needs.
+// The reveal control applies only to newly typed credentials held in the current draft.
 const ProviderForm = ({
   value,
   onChange,
@@ -327,6 +417,35 @@ const ProviderForm = ({
   // A loopback custom gateway starts with the local-server presets visible, but the user can still
   // collapse them after that automatic reveal.
   const loopbackCustomGateway = isCustom && !customProviderRequiresKey(value.baseUrl)
+  const cloudflare =
+    vendor?.id === 'cloudflare-ai-gateway'
+      ? (value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY)
+      : undefined
+  const isFoundry = vendor?.id === 'microsoft-foundry'
+  const modelLabel = t('Model')
+  const manualProvider = manualProviderDefinition(vendor?.id)
+  const usesPresetModelPicker =
+    Boolean(manualProvider) && !supportsConfiguredProviderModelList(vendor?.id)
+  const manualLocationLabel = isFoundry
+    ? t('Azure resource name or endpoint')
+    : manualProvider?.locations
+      ? t('Endpoint')
+      : t('Region')
+  const manualConnection = value.manualConnection ?? manualProvider?.defaultConnection
+  const presetModels =
+    usesPresetModelPicker && manualConnection
+      ? configuredProviderPresetModels(vendor?.id, { manualConnection })
+      : []
+  const configuredModel = value.model.trim()
+  const visibleModelIds =
+    configuredModel && !presetModels.includes(configuredModel)
+      ? [configuredModel, ...presetModels]
+      : presetModels
+  const keyLabel = cloudflare
+    ? cloudflare.mode === 'rest'
+      ? t('Cloudflare API token')
+      : t('AI Gateway token')
+    : t('API key')
   const [advancedOpen, setAdvancedOpen] = useState(
     () =>
       value.codexTransport !== 'auto' ||
@@ -337,6 +456,9 @@ const ProviderForm = ({
       Boolean(value.maxOutputTokens.trim())
   )
   const [localModelOpen, setLocalModelOpen] = useState(loopbackCustomGateway)
+  const selectedLocalPreset = value.localPresetId
+    ? LOCAL_MODEL_PRESETS.find(({ id }) => id === value.localPresetId)
+    : undefined
   const selectedKey = selectedKindKey(value)
   // Scope reveal state to the exact provider kind and draft value. Input events advance that scope
   // only while already revealed, so an externally replaced provider record starts masked.
@@ -363,11 +485,20 @@ const ProviderForm = ({
     Boolean(errors.contextWindow) ||
     Boolean(errors.maxInputTokens) ||
     Boolean(errors.maxOutputTokens)
+  const advancedSettingsProps = {
+    expanded: advancedVisible,
+    label: t('Advanced settings'),
+    onToggle: () => setAdvancedOpen((open) => !open)
+  }
 
   const selectedKind = PROVIDER_KINDS.find((kind) => kind.key === selectedKey)
-  // A local preset opens as a custom gateway; the header keeps showing the preset that was picked.
+  // Keep the selected local preset's name and icon when its endpoint changes.
   const localPreset = isCustom
-    ? LOCAL_MODEL_PRESETS.find((preset) => preset.baseUrl === value.baseUrl.trim())
+    ? LOCAL_MODEL_PRESETS.find((preset) =>
+        value.localPresetId
+          ? preset.id === value.localPresetId
+          : preset.baseUrl === value.baseUrl.trim()
+      )
     : undefined
   const selectedKindIconKey = localPreset
     ? `${LOCAL_MODEL_KIND_PREFIX}${localPreset.id}`
@@ -379,15 +510,70 @@ const ProviderForm = ({
       : undefined
   // Where to get a key for an official vendor (region-specific console); custom providers have none.
   const apiKeyUrl =
-    isOfficial && value.vendorId ? resolveVendorApiKeyUrl(value.vendorId, value.region) : undefined
+    cloudflare?.mode === 'anthropic'
+      ? 'https://dash.cloudflare.com/?to=/:account/ai/ai-gateway'
+      : isOfficial && value.vendorId
+        ? resolveVendorApiKeyUrl(value.vendorId, value.region)
+        : undefined
   const securityCopyKeys = getApiKeySecurityCopyKeys(encryptionAvailable)
+
+  const changeCustomBaseUrl = (baseUrl: string): void => {
+    if (!loopbackCustomGateway && !customProviderRequiresKey(baseUrl)) setLocalModelOpen(true)
+    onChange({
+      baseUrl,
+      ...(!sameProviderCredentialScope(value, { ...value, baseUrl }) && { key: '' })
+    })
+  }
+
+  const changeModel = (model: string): void =>
+    onChange({
+      model,
+      ...((cloudflare || manualProvider) &&
+        model.trim() !== configuredModel && {
+          contextWindow: ''
+        })
+    })
+
+  const modelField = (
+    <div className="space-y-1.5">
+      <label className={fieldLabelClassName} htmlFor="provider-model">
+        {modelLabel}
+        <RequiredMark />
+      </label>
+      <Input
+        id="provider-model"
+        aria-label={modelLabel}
+        aria-required="true"
+        aria-invalid={Boolean(errors.model) || undefined}
+        aria-describedby={errors.model ? 'provider-model-error' : undefined}
+        value={value.model}
+        disabled={disabled}
+        placeholder={t('e.g. deepseek-v4-flash')}
+        onChange={(event) => changeModel(event.target.value)}
+      />
+      {errors.model ? (
+        <p id="provider-model-error" className={fieldErrorClassName} role="alert">
+          {t(errors.model)}
+        </p>
+      ) : null}
+    </div>
+  )
+
+  const apiFormatHelp = (
+    <FieldHelp
+      label={t('API format')}
+      content={t(
+        'Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.'
+      )}
+    />
+  )
 
   const keyField = (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1">
           <label className={fieldLabelClassName} htmlFor="provider-key">
-            {t('API key')}
+            {keyLabel}
             {keyOptional ? (
               <span className="ml-0.5 font-normal text-muted-foreground">{t('(optional)')}</span>
             ) : (
@@ -395,13 +581,22 @@ const ProviderForm = ({
             )}
           </label>
           <FieldHelp
-            label={t('API key')}
+            label={keyLabel}
             content={
               <>
                 <span className="block font-medium">{t(securityCopyKeys.title)}</span>
                 <span className="block text-bg-000/80">
                   {fileCredentialNotice ?? t(securityCopyKeys.description)}
                 </span>
+                {cloudflare ? (
+                  <span className="block text-bg-000/80">
+                    {cloudflare.mode === 'rest'
+                      ? t('Use a token with Workers AI Read permission.')
+                      : t(
+                          'Use an AI Gateway Run token. Configure stored credentials or Unified Billing in Cloudflare.'
+                        )}
+                  </span>
+                ) : null}
                 {loopbackCustomGateway ? (
                   <span className="block text-bg-000/80">
                     {t('Local model servers do not require an API key.')}
@@ -413,14 +608,14 @@ const ProviderForm = ({
         </div>
         {apiKeyUrl ? (
           <ExternalTextLink href={apiKeyUrl} className="text-xs">
-            {t('Get an API key')}
+            {cloudflare ? t('Get an API token') : t('Get an API key')}
           </ExternalTextLink>
         ) : null}
       </div>
       <div className="relative">
         <Input
           id="provider-key"
-          aria-label={t('API key')}
+          aria-label={keyLabel}
           aria-required={keyRequired || undefined}
           aria-invalid={Boolean(needsKey || errors.key) || undefined}
           aria-describedby={needsKey || errors.key ? 'provider-key-error' : undefined}
@@ -436,7 +631,9 @@ const ProviderForm = ({
                 ? t('Leave blank for a local server')
                 : vendor?.supportsAnonymousAccess
                   ? t('Free models work without an API key.')
-                  : t('Paste API key')
+                  : cloudflare
+                    ? undefined
+                    : t('Paste API key')
           }
           className="pe-9"
           onChange={(event) => {
@@ -474,6 +671,158 @@ const ProviderForm = ({
     </div>
   )
 
+  const presetModelList = visibleModelIds.length ? (
+    <div className="space-y-1.5">
+      <span className={fieldLabelClassName}>{t('Supported models')}</span>
+      <SupportedModelTags
+        models={visibleModelIds.map((id) => ({ id }))}
+        selectedModel={configuredModel}
+        onSelect={changeModel}
+        disabled={disabled}
+      />
+      {errors.model ? (
+        <p className={fieldErrorClassName} role="alert">
+          {t(errors.model)}
+        </p>
+      ) : null}
+    </div>
+  ) : null
+
+  const manualLocationField =
+    manualProvider && manualConnection ? (
+      <div className="space-y-1.5">
+        <label className={fieldLabelClassName} htmlFor="provider-manual-location">
+          {manualLocationLabel}
+          <RequiredMark />
+        </label>
+        {manualProvider.locations ? (
+          <Select
+            value={manualConnection.location}
+            disabled={disabled}
+            onValueChange={(location) =>
+              onChange({
+                manualConnection: { ...manualConnection, location },
+                ...(!usesPresetModelPicker && { contextWindow: '' })
+              })
+            }
+          >
+            <SelectTrigger id="provider-manual-location" aria-label={manualLocationLabel}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {manualProvider.locations.map((location) => (
+                <SelectItem key={location} value={location}>
+                  {location}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Input
+            id="provider-manual-location"
+            aria-label={manualLocationLabel}
+            aria-required="true"
+            aria-invalid={Boolean(errors.location) || undefined}
+            aria-describedby={errors.location ? 'provider-manual-location-error' : undefined}
+            value={manualConnection.location}
+            disabled={disabled}
+            onChange={(event) => {
+              const next = { ...manualConnection, location: event.target.value }
+              if (vendor) next.protocol = inferManualProviderProtocol(vendor.id, next)
+              onChange({
+                manualConnection: next,
+                ...cloudModelRoutePatch(value, { manualConnection: next }),
+                ...(!sameProviderCredentialScope(value, { ...value, manualConnection: next }) && {
+                  key: ''
+                })
+              })
+            }}
+          />
+        )}
+        {errors.location ? (
+          <p id="provider-manual-location-error" className={fieldErrorClassName} role="alert">
+            {t(errors.location)}
+          </p>
+        ) : null}
+      </div>
+    ) : null
+
+  const manualFormatField =
+    manualProvider && manualConnection ? (
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1">
+          <label className={fieldLabelClassName} htmlFor="provider-manual-format">
+            {t('API format')}
+          </label>
+          {apiFormatHelp}
+        </div>
+        <Select
+          value={manualConnection.protocol}
+          disabled={disabled}
+          onValueChange={(nextProtocol) => {
+            const protocol = manualProvider.protocols.find((option) => option === nextProtocol)
+            if (!protocol) return
+            const next = { ...manualConnection, protocol }
+            if (!usesPresetModelPicker) {
+              onChange({
+                manualConnection: next,
+                ...cloudModelRoutePatch(value, { manualConnection: next })
+              })
+              return
+            }
+            if (!vendor) return
+            const model = modelAfterManualProtocolChange(
+              vendor.id,
+              manualConnection,
+              next,
+              configuredModel
+            )
+            onChange({
+              manualConnection: next,
+              ...(model !== configuredModel && { contextWindow: '' }),
+              model: model === configuredModel ? value.model : model
+            })
+          }}
+        >
+          <SelectTrigger id="provider-manual-format" aria-label={t('API format')}>
+            <span>{API_FORMAT_LABELS[manualConnection.protocol]}</span>
+          </SelectTrigger>
+          <SelectContent>
+            {manualProvider.protocols.map((protocol) => (
+              <SelectItem key={protocol} value={protocol}>
+                {API_FORMAT_LABELS[protocol]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    ) : null
+
+  const cloudModelsEditor = (
+    <ProviderModelsEditor
+      rows={value.manualModels ?? []}
+      onChange={(manualModels) => onChange({ manualModels })}
+      disabled={disabled}
+      modelError={errors.model ? t(errors.model) : undefined}
+      contextError={errors.contextWindow ? t(errors.contextWindow) : undefined}
+      modelIdLabel={isFoundry ? t('Deployment name') : undefined}
+      modelIdPlaceholder={
+        isFoundry
+          ? manualConnection?.protocol === 'messages'
+            ? 'claude-sonnet-5-5'
+            : 'gpt-4.1-mini'
+          : undefined
+      }
+      contextPlaceholder={(model) =>
+        publishedManualProviderContextWindow(
+          vendor?.id,
+          providerFormApiEndpoints(value)[0],
+          model.trim()
+        )?.toString()
+      }
+    />
+  )
+
   return (
     <div className="space-y-4">
       {fileCredentialNotice &&
@@ -503,7 +852,12 @@ const ProviderForm = ({
           <Select
             value={selectedKey}
             disabled={disabled || (isCodeBuddySubscription && !codeBuddyProviders)}
-            onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
+            onValueChange={(key) => {
+              setAdvancedOpen(false)
+              onChange(
+                providerKindPatch(key, defaultCustomApiEndpoint, framework?.supportedApiTypes)
+              )
+            }}
           >
             <SelectTrigger aria-label={t('Provider type')}>
               <span className="flex items-center gap-2">
@@ -758,44 +1112,50 @@ const ProviderForm = ({
         </>
       ) : isCustom ? (
         <>
-          <SettingsDisclosure
-            expanded={localModelOpen}
-            label={t('Local model server')}
-            onToggle={() => setLocalModelOpen((open) => !open)}
-            contentClassName="mt-2 flex min-w-0 flex-col gap-2 pl-6"
-            contentId="provider-local-model-server"
-          >
-            <div className="flex flex-wrap gap-2" role="group" aria-label={t('Local model server')}>
-              {LOCAL_MODEL_PRESETS.map((preset) => {
-                const active = value.baseUrl.trim() === preset.baseUrl
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    aria-pressed={active}
-                    disabled={disabled}
-                    onClick={() => {
-                      setLocalModelOpen(true)
-                      onChange(localModelPresetPatch(preset, value, defaultCustomApiEndpoint))
-                    }}
-                    className={cn(
-                      'inline-flex min-h-8 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150 outline-none motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
-                      active
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border bg-transparent text-foreground hover:bg-muted/60'
-                    )}
-                  >
-                    {preset.label}
-                  </button>
-                )
-              })}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {t(
-                'Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.'
-              )}
-            </p>
-          </SettingsDisclosure>
+          {selectedLocalPreset ? null : (
+            <SettingsDisclosure
+              expanded={localModelOpen}
+              label={t('Local model server')}
+              onToggle={() => setLocalModelOpen((open) => !open)}
+              contentClassName="mt-2 flex min-w-0 flex-col gap-2 pl-6"
+              contentId="provider-local-model-server"
+            >
+              <div
+                className="flex flex-wrap gap-2"
+                role="group"
+                aria-label={t('Local model server')}
+              >
+                {LOCAL_MODEL_PRESETS.map((preset) => {
+                  const active = value.baseUrl.trim() === preset.baseUrl
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      aria-pressed={active}
+                      disabled={disabled}
+                      onClick={() => {
+                        setLocalModelOpen(true)
+                        onChange(localModelPresetPatch(preset, value, defaultCustomApiEndpoint))
+                      }}
+                      className={cn(
+                        'inline-flex min-h-8 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150 outline-none motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
+                        active
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-transparent text-foreground hover:bg-muted/60'
+                      )}
+                    >
+                      {preset.label}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  'Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.'
+                )}
+              </p>
+            </SettingsDisclosure>
+          )}
 
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
@@ -823,14 +1183,24 @@ const ProviderForm = ({
               value={value.baseUrl}
               disabled={disabled}
               placeholder={t('https://gateway.example')}
-              onChange={(event) => {
-                const baseUrl = event.target.value
-                if (!loopbackCustomGateway && !customProviderRequiresKey(baseUrl)) {
-                  setLocalModelOpen(true)
-                }
-                onChange({ baseUrl })
-              }}
+              onChange={(event) => changeCustomBaseUrl(event.target.value)}
             />
+            {selectedLocalPreset?.endpointCandidates && (
+              <div className="flex flex-wrap gap-2">
+                {selectedLocalPreset.endpointCandidates.map((baseUrl) => (
+                  <button
+                    key={baseUrl}
+                    type="button"
+                    aria-pressed={value.baseUrl === baseUrl}
+                    className="rounded-md border border-border px-2 py-1 font-mono text-xs hover:bg-muted"
+                    disabled={disabled}
+                    onClick={() => changeCustomBaseUrl(baseUrl)}
+                  >
+                    {baseUrl}
+                  </button>
+                ))}
+              </div>
+            )}
             {errors.baseUrl ? (
               <p id="provider-base-url-error" className={fieldErrorClassName} role="alert">
                 {t(errors.baseUrl)}
@@ -841,12 +1211,7 @@ const ProviderForm = ({
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
               <span className={fieldLabelClassName}>{t('API format')}</span>
-              <FieldHelp
-                label={t('API format')}
-                content={t(
-                  'Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.'
-                )}
-              />
+              {apiFormatHelp}
             </div>
             <Select
               value={value.apiEndpoint}
@@ -868,7 +1233,7 @@ const ProviderForm = ({
             </Select>
           </div>
 
-          {frameworkCanDriveDraft === false && framework ? (
+          {!selectedLocalPreset && frameworkCanDriveDraft === false && framework ? (
             <p
               role="status"
               className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-foreground"
@@ -890,227 +1255,317 @@ const ProviderForm = ({
 
           {keyField}
 
-          <div className="space-y-1.5">
-            <label className={fieldLabelClassName} htmlFor="provider-model">
-              {t('Model')}
-              <RequiredMark />
-            </label>
-            <Input
-              id="provider-model"
-              aria-label={t('Model')}
-              aria-required="true"
-              aria-invalid={Boolean(errors.model) || undefined}
-              aria-describedby={errors.model ? 'provider-model-error' : undefined}
-              value={value.model}
-              disabled={disabled}
-              placeholder={t('e.g. deepseek-v4-flash')}
-              onChange={(event) => onChange({ model: event.target.value })}
-            />
-            {errors.model ? (
-              <p id="provider-model-error" className={fieldErrorClassName} role="alert">
-                {t(errors.model)}
-              </p>
-            ) : null}
-          </div>
-
-          <SettingsDisclosure
-            expanded={advancedVisible}
-            label={t('Advanced settings')}
-            onToggle={() => setAdvancedOpen((open) => !open)}
-          >
-            <TokenLimitField
-              id="provider-context-window"
-              label={t('Context window')}
-              help={t('Total tokens shared by the request and response.')}
-              value={value.contextWindow}
-              presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
-              disabled={disabled}
-              error={errors.contextWindow}
-              onValueChange={(contextWindow) => onChange({ contextWindow })}
-              t={t}
-            />
-
-            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-              <div className="flex items-start justify-between gap-3">
-                <label className="space-y-0.5" htmlFor="provider-image-input">
-                  <span className="block text-xs font-medium">{t('Image input')}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t('The gateway and model accept image content.')}
-                  </span>
-                </label>
-                <Switch
-                  id="provider-image-input"
-                  aria-label={t('Supports image input')}
-                  checked={value.supportsImageInput}
-                  disabled={disabled}
-                  onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
+          {selectedLocalPreset ? (
+            <>
+              <ProviderModelsEditor
+                rows={value.localModels ?? []}
+                onChange={(localModels) => onChange({ localModels })}
+                disabled={disabled}
+                modelError={errors.model ? t(errors.model) : undefined}
+                contextError={errors.contextWindow ? t(errors.contextWindow) : undefined}
+                refreshButton={
+                  <RefreshModelListButton
+                    onClick={onRefreshModels}
+                    refreshing={isRefreshingModels}
+                    disabled={
+                      disabled ||
+                      Boolean(getCustomProviderBaseUrlError(value.baseUrl.trim())) ||
+                      (keyRequired && !value.key.trim())
+                    }
+                  />
+                }
+              />
+              {catalogError ? (
+                <ErrorNotice
+                  inline
+                  role="alert"
+                  title={t('Model refresh failed. The previous list is kept.')}
+                  description={catalogError}
                 />
+              ) : null}
+            </>
+          ) : (
+            modelField
+          )}
+
+          {!selectedLocalPreset && (
+            <SettingsDisclosure {...advancedSettingsProps}>
+              <TokenLimitField
+                id="provider-context-window"
+                label={t('Context window')}
+                help={t('Total tokens shared by the request and response.')}
+                value={value.contextWindow}
+                presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
+                disabled={disabled}
+                error={errors.contextWindow}
+                onValueChange={(contextWindow) => onChange({ contextWindow })}
+                t={t}
+              />
+
+              <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                <div className="flex items-start justify-between gap-3">
+                  <label className="space-y-0.5" htmlFor="provider-image-input">
+                    <span className="block text-xs font-medium">{t('Image input')}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {t('The gateway and model accept image content.')}
+                    </span>
+                  </label>
+                  <Switch
+                    id="provider-image-input"
+                    aria-label={t('Supports image input')}
+                    checked={value.supportsImageInput}
+                    disabled={disabled}
+                    onCheckedChange={(supportsImageInput) => onChange({ supportsImageInput })}
+                  />
+                </div>
+
+                <div className="flex items-start justify-between gap-3">
+                  <label className="space-y-0.5" htmlFor="provider-thinking-mode">
+                    <span className="block text-xs font-medium">{t('Thinking mode')}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {t('The gateway and model accept thinking or effort controls.')}
+                    </span>
+                  </label>
+                  <Switch
+                    id="provider-thinking-mode"
+                    aria-label={t('Supports thinking mode')}
+                    checked={value.reasoningEffortPreset !== 'unsupported'}
+                    disabled={disabled}
+                    onCheckedChange={(supported) =>
+                      onChange({
+                        reasoningEffortPreset: supported ? 'standard-5' : 'unsupported'
+                      })
+                    }
+                  />
+                </div>
               </div>
 
-              <div className="flex items-start justify-between gap-3">
-                <label className="space-y-0.5" htmlFor="provider-thinking-mode">
-                  <span className="block text-xs font-medium">{t('Thinking mode')}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t('The gateway and model accept thinking or effort controls.')}
-                  </span>
-                </label>
-                <Switch
-                  id="provider-thinking-mode"
-                  aria-label={t('Supports thinking mode')}
-                  checked={value.reasoningEffortPreset !== 'unsupported'}
-                  disabled={disabled}
-                  onCheckedChange={(supported) =>
-                    onChange({
-                      reasoningEffortPreset: supported ? 'standard-5' : 'unsupported'
-                    })
-                  }
-                />
-              </div>
-            </div>
-
-            {value.reasoningEffortPreset !== 'unsupported' ? (
-              <div className="space-y-3 border-t border-border-200 pt-3">
-                <div
-                  className={cn(
-                    'grid gap-3',
-                    value.apiEndpoint === 'chat-completions' && 'sm:grid-cols-2'
-                  )}
-                >
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-1">
-                      <span className={fieldLabelClassName}>{t('Supported effort levels')}</span>
-                      <FieldHelp
-                        label={t('Supported effort levels')}
-                        content={
-                          <>
-                            <span className="block">
-                              {t(
-                                'Open-Science maps five relative strengths onto the exact levels accepted by this model.'
-                              )}
-                            </span>
-                            <span className="mt-1 block">
-                              {t(
-                                'Examples reflect common native model APIs. A gateway may use different mappings.'
-                              )}
-                            </span>
-                            {value.apiEndpoint === 'messages' ? (
-                              <span className="mt-1 block">
-                                {t(
-                                  "Messages API uses the framework's Anthropic-compatible thinking request automatically."
-                                )}
-                              </span>
-                            ) : value.apiEndpoint === 'responses' ? (
-                              <span className="mt-1 block">
-                                {t(
-                                  'Responses API uses its native reasoning request automatically.'
-                                )}
-                              </span>
-                            ) : null}
-                          </>
-                        }
-                      />
-                    </div>
-                    <Select
-                      value={value.reasoningEffortPreset}
-                      disabled={disabled}
-                      onValueChange={(reasoningEffortPreset) =>
-                        onChange({
-                          reasoningEffortPreset: reasoningEffortPreset as ReasoningEffortPresetId
-                        })
-                      }
-                    >
-                      <SelectTrigger aria-label={t('Reasoning effort levels')} disabled={disabled}>
-                        <span>
-                          {
-                            CUSTOM_REASONING_EFFORT_PRESETS.find(
-                              (preset) => preset.id === value.reasoningEffortPreset
-                            )?.label
-                          }
-                        </span>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
-                          <SelectItem key={preset.id} value={preset.id}>
-                            {preset.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {value.apiEndpoint === 'chat-completions' ? (
+              {value.reasoningEffortPreset !== 'unsupported' ? (
+                <div className="space-y-3 border-t border-border-200 pt-3">
+                  <div
+                    className={cn(
+                      'grid gap-3',
+                      value.apiEndpoint === 'chat-completions' && 'sm:grid-cols-2'
+                    )}
+                  >
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-1">
-                        <span className={fieldLabelClassName}>{t('Reasoning request format')}</span>
+                        <span className={fieldLabelClassName}>{t('Supported effort levels')}</span>
                         <FieldHelp
-                          label={t('Reasoning request format')}
-                          content={t(
-                            'The JSON fields sent to a Chat Completions gateway. Follow the gateway documentation; OpenAI-compatible services commonly use {{parameter}}.',
-                            { parameter: 'reasoning_effort' }
-                          )}
+                          label={t('Supported effort levels')}
+                          content={
+                            <>
+                              <span className="block">
+                                {t(
+                                  'Open-Science maps five relative strengths onto the exact levels accepted by this model.'
+                                )}
+                              </span>
+                              <span className="mt-1 block">
+                                {t(
+                                  'Examples reflect common native model APIs. A gateway may use different mappings.'
+                                )}
+                              </span>
+                              {value.apiEndpoint === 'messages' ? (
+                                <span className="mt-1 block">
+                                  {t(
+                                    "Messages API uses the framework's Anthropic-compatible thinking request automatically."
+                                  )}
+                                </span>
+                              ) : value.apiEndpoint === 'responses' ? (
+                                <span className="mt-1 block">
+                                  {t(
+                                    'Responses API uses its native reasoning request automatically.'
+                                  )}
+                                </span>
+                              ) : null}
+                            </>
+                          }
                         />
                       </div>
                       <Select
-                        value={value.reasoningEffortTransport}
+                        value={value.reasoningEffortPreset}
                         disabled={disabled}
-                        onValueChange={(reasoningEffortTransport) =>
+                        onValueChange={(reasoningEffortPreset) =>
                           onChange({
-                            reasoningEffortTransport:
-                              reasoningEffortTransport as CustomReasoningEffortTransport
+                            reasoningEffortPreset: reasoningEffortPreset as ReasoningEffortPresetId
                           })
                         }
                       >
                         <SelectTrigger
-                          aria-label={t('Reasoning effort request format')}
+                          aria-label={t('Reasoning effort levels')}
                           disabled={disabled}
                         >
                           <span>
                             {
-                              CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
-                                (transport) => transport.id === value.reasoningEffortTransport
+                              CUSTOM_REASONING_EFFORT_PRESETS.find(
+                                (preset) => preset.id === value.reasoningEffortPreset
                               )?.label
                             }
                           </span>
                         </SelectTrigger>
                         <SelectContent>
-                          {CUSTOM_REASONING_EFFORT_TRANSPORTS.map((transport) => (
-                            <SelectItem key={transport.id} value={transport.id}>
-                              {transport.label}
+                          {CUSTOM_REASONING_EFFORT_PRESETS.map((preset) => (
+                            <SelectItem key={preset.id} value={preset.id}>
+                              {preset.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {value.apiEndpoint === 'chat-completions' ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1">
+                          <span className={fieldLabelClassName}>
+                            {t('Reasoning request format')}
+                          </span>
+                          <FieldHelp
+                            label={t('Reasoning request format')}
+                            content={t(
+                              'The JSON fields sent to a Chat Completions gateway. Follow the gateway documentation; OpenAI-compatible services commonly use {{parameter}}.',
+                              { parameter: 'reasoning_effort' }
+                            )}
+                          />
+                        </div>
+                        <Select
+                          value={value.reasoningEffortTransport}
+                          disabled={disabled}
+                          onValueChange={(reasoningEffortTransport) =>
+                            onChange({
+                              reasoningEffortTransport:
+                                reasoningEffortTransport as CustomReasoningEffortTransport
+                            })
+                          }
+                        >
+                          <SelectTrigger
+                            aria-label={t('Reasoning effort request format')}
+                            disabled={disabled}
+                          >
+                            <span>
+                              {
+                                CUSTOM_REASONING_EFFORT_TRANSPORTS.find(
+                                  (transport) => transport.id === value.reasoningEffortTransport
+                                )?.label
+                              }
+                            </span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CUSTOM_REASONING_EFFORT_TRANSPORTS.map((transport) => (
+                              <SelectItem key={transport.id} value={transport.id}>
+                                {transport.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid gap-4 border-t border-border-200 pt-3 sm:grid-cols-2">
+                <TokenLimitField
+                  id="provider-max-input-tokens"
+                  label={t('Maximum input tokens')}
+                  help={t('Optional provider-reported input cap.')}
+                  value={value.maxInputTokens}
+                  presets={CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS}
+                  disabled={disabled}
+                  error={errors.maxInputTokens}
+                  onValueChange={(maxInputTokens) => onChange({ maxInputTokens })}
+                  t={t}
+                />
+                <TokenLimitField
+                  id="provider-max-output-tokens"
+                  label={t('Maximum output tokens')}
+                  help={t('Optional provider-reported output cap.')}
+                  value={value.maxOutputTokens}
+                  presets={CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS}
+                  disabled={disabled}
+                  error={errors.maxOutputTokens}
+                  onValueChange={(maxOutputTokens) => onChange({ maxOutputTokens })}
+                  t={t}
+                />
+              </div>
+            </SettingsDisclosure>
+          )}
+        </>
+      ) : cloudflare ? (
+        <>
+          <div className="space-y-1.5">
+            <label className={fieldLabelClassName} htmlFor="provider-cloudflare-mode">
+              {t('Connection mode')}
+            </label>
+            <Select
+              value={cloudflare.mode}
+              onValueChange={(mode) => {
+                if (mode === 'rest' || mode === 'anthropic')
+                  onChange(cloudflareModePatch(value, mode))
+              }}
+              disabled={disabled}
+            >
+              <SelectTrigger id="provider-cloudflare-mode" aria-label={t('Connection mode')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="rest">{t('Cloudflare REST API')}</SelectItem>
+                <SelectItem value="anthropic">{t('Anthropic Messages')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {(['accountId', 'gatewayId'] as const).map((field) => {
+              const inputId = `provider-cloudflare-${field}`
+              const error = errors[field]
+              return (
+                <div key={field} className="space-y-1.5">
+                  <label className={fieldLabelClassName} htmlFor={inputId}>
+                    {field === 'accountId' ? t('Account ID') : t('Gateway ID')}
+                    <RequiredMark />
+                  </label>
+                  <Input
+                    id={inputId}
+                    value={cloudflare[field]}
+                    disabled={disabled}
+                    aria-required="true"
+                    aria-invalid={Boolean(error) || undefined}
+                    aria-describedby={error ? `${inputId}-error` : undefined}
+                    onChange={(event) => {
+                      const next = { ...cloudflare, [field]: event.target.value }
+                      onChange({
+                        cloudflare: next,
+                        ...(!sameProviderCredentialScope(value, { ...value, cloudflare: next }) && {
+                          key: '',
+                          contextWindow: ''
+                        })
+                      })
+                    }}
+                  />
+                  {error ? (
+                    <p id={`${inputId}-error`} className={fieldErrorClassName} role="alert">
+                      {t(error)}
+                    </p>
                   ) : null}
                 </div>
-              </div>
-            ) : null}
-
-            <div className="grid gap-4 border-t border-border-200 pt-3 sm:grid-cols-2">
-              <TokenLimitField
-                id="provider-max-input-tokens"
-                label={t('Maximum input tokens')}
-                help={t('Optional provider-reported input cap.')}
-                value={value.maxInputTokens}
-                presets={CUSTOM_PROVIDER_MAX_INPUT_TOKEN_PRESETS}
-                disabled={disabled}
-                error={errors.maxInputTokens}
-                onValueChange={(maxInputTokens) => onChange({ maxInputTokens })}
-                t={t}
-              />
-              <TokenLimitField
-                id="provider-max-output-tokens"
-                label={t('Maximum output tokens')}
-                help={t('Optional provider-reported output cap.')}
-                value={value.maxOutputTokens}
-                presets={CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS}
-                disabled={disabled}
-                error={errors.maxOutputTokens}
-                onValueChange={(maxOutputTokens) => onChange({ maxOutputTokens })}
-                t={t}
-              />
-            </div>
-          </SettingsDisclosure>
+              )
+            })}
+          </div>
+          {keyField}
+          {cloudModelsEditor}
+        </>
+      ) : usesPresetModelPicker ? (
+        <>
+          {manualFormatField}
+          {manualLocationField}
+          {keyField}
+          {presetModelList}
+        </>
+      ) : manualProvider && manualConnection ? (
+        <>
+          {manualLocationField}
+          {manualFormatField}
+          {keyField}
+          {cloudModelsEditor}
         </>
       ) : isOfficial ? (
         <>
@@ -1225,23 +1680,11 @@ const ProviderForm = ({
                     />
                   </div>
                   {catalog ? (
-                    <button
-                      type="button"
+                    <RefreshModelListButton
                       onClick={onRefreshModels}
-                      disabled={
-                        disabled ||
-                        isRefreshingModels ||
-                        Boolean(disabledReason) ||
-                        !onRefreshModels
-                      }
-                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary/35 px-2.5 text-xs font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-primary/10 disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <RefreshCw
-                        aria-hidden="true"
-                        className={`size-3.5 ${isRefreshingModels ? 'animate-spin' : ''}`}
-                      />
-                      {isRefreshingModels ? t('Refreshing…') : t('Refresh model list')}
-                    </button>
+                      refreshing={isRefreshingModels}
+                      disabled={disabled || Boolean(disabledReason)}
+                    />
                   ) : null}
                 </div>
                 {disabledReason ? (
@@ -1269,25 +1712,7 @@ const ProviderForm = ({
                     {t('Save to apply the refreshed model list.')}
                   </p>
                 ) : null}
-                <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
-                  {models.map((model) => (
-                    <span
-                      key={model.id}
-                      title={[
-                        ...Object.keys(model.routes ?? {}),
-                        model.contextWindow,
-                        model.reasoningEffort?.supported
-                          ? model.reasoningEffort.values.join(' / ')
-                          : ''
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                      className="rounded-md border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
-                    >
-                      {model.id}
-                    </span>
-                  ))}
-                </div>
+                <SupportedModelTags models={models} />
               </div>
             )
           })()}

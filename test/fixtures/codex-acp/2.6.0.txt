@@ -1,0 +1,308 @@
+// Excerpts of @agentclientprotocol/codex-acp 2.6.0 dist/index.js (Apache-2.0).
+function startCodexConnection(codexPath, env, appServerStartupArgs = ["app-server"], options = {}) {
+  const spawnEnv = env ?? process.env;
+  let codex;
+  if (codexPath) {
+    codex = process.platform === "win32" ? (0, import_cross_spawn.default)(codexPath, appServerStartupArgs, { env: spawnEnv }) : spawn(codexPath, appServerStartupArgs, { env: spawnEnv });
+  } else {
+    const bundledCodexPath = require2.resolve("@openai/codex/bin/codex.js");
+    codex = spawn(process.execPath, [bundledCodexPath, ...appServerStartupArgs], { env: spawnEnv });
+  }
+  attachLogs(codex);
+// …
+    return {
+      ...terminalInfo(facts4),
+      ...output2 === void 0 ? {} : this.outputChunk(terminalId, output2.data, output2.terminal),
+      ...end === void 0 ? {} : this.commandEndMeta(terminalId, end),
+// …
+    if (params.threadId === this.sessionState.sessionId) {
+      this.handleTokenUsageUpdated(params);
+      used = this.sessionState.lastTokenUsage?.totalTokens;
+      size = this.sessionState.modelContextWindow;
+    } else if (this.subagents.isNativeSubagentThread(params.threadId)) {
+      used = params.tokenUsage.last.totalTokens;
+      size = params.tokenUsage.modelContextWindow;
+// …
+  async getAuthenticationStatus() {
+    const modelProvider = await this.getCurrentModelProvider();
+    if (modelProvider) {
+      return {
+        type: "gateway",
+        name: modelProvider
+      };
+    }
+    const account = (await this.getAccount()).account;
+    if (account === null) {
+      return {
+// …
+        "mcp_servers": Object.fromEntries(serversToConfigure.map((mcp) => [mcp.name, toCodexMcpServerConfig(mcp.server)]))
+// …
+function buildPromptItems(prompt) {
+  return prompt.map((block) => {
+    switch (block.type) {
+      case "text":
+        return { type: "text", text: block.text, text_elements: [] };
+// …
+  async runCompact(params, onTurnStarted, onAccepted) {
+    let compactTurnId = null;
+    let resolveCompleted = () => {
+    };
+    let rejectCompleted = () => {
+    };
+    const completed = new Promise((resolve, reject) => {
+      resolveCompleted = resolve;
+      rejectCompleted = reject;
+    });
+    void completed.catch(() => {
+    });
+    const rejectClosed = () => rejectCompleted(new Error("Codex connection closed during compaction."));
+    const closed = this.connection.onClose?.(rejectClosed);
+    const disposed = this.connection.onDispose?.(rejectClosed);
+    const releaseTurnCapture = this.captureTurnCompletions(params.threadId, (event) => {
+      if (compactTurnId === null || event.turn.id !== compactTurnId) return;
+      if (event.turn.status !== "inProgress") {
+        resolveCompleted(event);
+      }
+    });
+    const releaseRoutingCapture = this.captureTurnRoutings(params.threadId, (turnId, notification) => {
+      if (compactTurnId !== null) return;
+      if (notification.method !== "turn/started" && !(notification.method === "item/started" && notification.params.item.type === "contextCompaction")) return;
+      compactTurnId = turnId;
+      onTurnStarted?.(turnId);
+    });
+    try {
+      await this.threadCompactStart(params);
+      onAccepted?.();
+      return await completed;
+    } finally {
+      releaseTurnCapture();
+      releaseRoutingCapture();
+      closed?.dispose();
+      disposed?.dispose();
+    }
+  }
+// …
+      if (isAccountReadUnavailableError(error62)) {
+        logger.log("Account read unavailable, so the authentication status uses the last known account", { error: String(error62) });
+        const account = this.lastReadAccount;
+        return { type: "chat-gpt", email: account?.type === "chatgpt" ? account.email ?? "" : "" };
+      }
+// …
+      const promptText = params.prompt.filter((b) => b.type === "text").map((b) => b.text).join(" ").trim();
+      sessionState.titleGen?.onTurnCompleted(promptText);
+// …
+function prepareCodexHookConfig(config2) {
+// …
+  const hookConfig = prepareCodexHookConfig(config2);
+// …
+// Executable usage and failure methods
+function toTokenCount(usage) {
+  return {
+    totalTokens: usage.totalTokens,
+    inputTokens: Math.max(0, usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteInputTokens),
+    cachedInputTokens: usage.cachedInputTokens,
+    cacheWriteInputTokens: usage.cacheWriteInputTokens,
+    outputTokens: usage.outputTokens,
+    reasoningOutputTokens: usage.reasoningOutputTokens
+  };
+}
+function toPromptUsage(tokenCount) {
+  return {
+    totalTokens: tokenCount.totalTokens,
+    inputTokens: tokenCount.inputTokens,
+    cachedReadTokens: tokenCount.cachedInputTokens,
+    cachedWriteTokens: tokenCount.cacheWriteInputTokens,
+    outputTokens: tokenCount.outputTokens,
+    thoughtTokens: tokenCount.reasoningOutputTokens
+  };
+}
+var ZERO_TOKEN_COUNT = Object.freeze({
+  totalTokens: 0,
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  cacheWriteInputTokens: 0,
+  outputTokens: 0,
+  reasoningOutputTokens: 0
+});
+var TOKEN_COUNT_FIELDS = [
+  "totalTokens",
+  "inputTokens",
+  "cachedInputTokens",
+  "cacheWriteInputTokens",
+  "outputTokens",
+  "reasoningOutputTokens"
+];
+function combine(a, b, op) {
+  const result = {};
+  for (const field of TOKEN_COUNT_FIELDS) result[field] = op(a[field], b[field]);
+  return result;
+}
+function sameCount(a, b) {
+  return TOKEN_COUNT_FIELDS.every((field) => a[field] === b[field]);
+}
+var PromptTokenUsage = class {
+  startTotal;
+  previousTotal;
+  latestTotal = null;
+  summedLast = null;
+  totalWentBack = false;
+  modelOutputSeen = false;
+  /** @param startTotal the thread total when the prompt started, or null when it is unknown. */
+  constructor(startTotal) {
+    this.startTotal = startTotal;
+    this.previousTotal = startTotal;
+  }
+  /** Records that the model produced output in this prompt, so a later update is one of its requests. */
+  observeModelOutput() {
+    this.modelOutputSeen = true;
+  }
+  observe(total, last) {
+    const previous = this.previousTotal;
+    if (previous !== null && sameCount(total, previous)) return;
+    if (previous === null && !this.modelOutputSeen) {
+      this.startTotal = total;
+      this.previousTotal = total;
+      return;
+    }
+    if (previous !== null && TOKEN_COUNT_FIELDS.some((field) => total[field] < previous[field])) {
+      this.totalWentBack = true;
+    }
+    this.summedLast = this.summedLast === null ? { ...last } : combine(this.summedLast, last, (x, y) => x + y);
+    this.previousTotal = total;
+    this.latestTotal = total;
+  }
+  /** The usage of the prompt so far, or null when Codex reported none. */
+  usage() {
+    const start = this.startTotal;
+    const latest = this.latestTotal;
+    if (latest === null) return null;
+    if (start !== null && !this.totalWentBack) {
+      return combine(latest, start, (x, y) => x - y);
+    }
+    return this.summedLast;
+  }
+};
+class Adapter {
+  async handleFailedTurn(turn) {
+    if (turn.status === "failed" && this.isAuthenticationRequiredError(turn.error?.codexErrorInfo ?? null)) {
+      this.failure = RequestError.authRequired();
+      return;
+    }
+    const activeFailure = this.sessionState.sessionFailure;
+    if (!this.supportsTypedSessionFailures || turn.status !== "failed" || this.failure !== null || this.failureTurnIdById.get(activeFailure?.id ?? "") === turn.id && activeFailure?.severity === "error") {
+      return;
+    }
+    const error62 = turn.error ?? {
+      message: "Turn failed",
+      codexErrorInfo: null,
+      additionalDetails: null,
+      misalignment: null
+    };
+    this.recordTypedSessionFailure({
+      threadId: this.sessionState.sessionId,
+      turnId: turn.id,
+      willRetry: false,
+      error: error62
+    });
+  }
+  async createErrorEvent(params) {
+    const error62 = params.error.codexErrorInfo;
+    if (this.sessionState.currentTurnId === null) {
+      this.pendingErrors.push(params);
+      logger.log("Buffered app-server error until the active turn is known", {
+        sessionId: this.sessionState.sessionId,
+        turnId: params.turnId,
+        willRetry: params.willRetry
+      });
+      return null;
+    }
+    if (this.isAuthenticationRequiredError(error62)) {
+      if (!params.willRetry && params.turnId === this.sessionState.currentTurnId) {
+        this.failure = RequestError.authRequired();
+      }
+      return null;
+    }
+    if (params.turnId !== this.sessionState.currentTurnId) {
+      if (this.supportsTypedSessionFailures) {
+        const failure3 = params.willRetry ? this.recordRetryWarning(params) : this.recordSessionFailure(
+          this.sessionFailureKind(params.error),
+          params.turnId,
+          "error",
+          params.error.message
+        );
+        return this.createSessionFailureUpdate(failure3);
+      }
+      return this.createCodexSessionInfoUpdate({
+        error: { ...params.error, turnId: params.turnId, willRetry: params.willRetry }
+      });
+    }
+    if (params.willRetry) {
+      if (this.supportsTypedSessionFailures) {
+        return this.createSessionFailureUpdate(this.recordRetryWarning(params));
+      }
+      return this.createCodexSessionInfoUpdate({
+        error: {
+          ...params.error,
+          turnId: params.turnId,
+          willRetry: true
+        }
+      });
+    }
+    if (this.supportsTypedSessionFailures) {
+      this.recordTypedSessionFailure(params);
+      return null;
+    }
+    if (error62 === "usageLimitExceeded") {
+      this.failure = RequestError.internalError(
+        this.createTurnErrorData(params.error)
+      );
+    }
+    if (this.failure !== null) {
+      failuresShownAsMessages.add(this.failure);
+    }
+    return createAgentTextMessageChunk(`${readableServiceErrorMessage(params.error.message)}
+
+`);
+  }
+  isAuthenticationRequiredError(error62) {
+    return error62 === "unauthorized" || this.getHttpStatusCode(error62) === 401;
+  }
+  getHttpStatusCode(error62) {
+    if (error62 === null || typeof error62 !== "object") return null;
+    const details = Object.values(error62)[0];
+    if (details === null || typeof details !== "object" || !("httpStatusCode" in details)) return null;
+    return typeof details.httpStatusCode === "number" ? details.httpStatusCode : null;
+  }
+  createTurnErrorData(error62) {
+    const data = {
+      message: error62.additionalDetails ?? error62.message
+    };
+    if (error62.codexErrorInfo !== null) {
+      data.codexErrorInfo = error62.codexErrorInfo;
+    }
+    if (error62.additionalDetails !== null) {
+      data.additionalDetails = error62.additionalDetails;
+    }
+    return data;
+  }
+  buildQuotaMeta(sessionState) {
+    const promptTokenUsage = sessionState.promptTokenUsage?.usage() ?? null;
+    const modelName = sessionState.currentModelId.replace(/\[.*?]$/, "");
+    const modelUsage = promptTokenUsage != null ? [{ model: modelName, token_count: promptTokenUsage }] : [];
+    return {
+      quota: {
+        token_count: promptTokenUsage,
+        model_usage: modelUsage
+      }
+    };
+  }
+  beginPromptTokenUsage(sessionState) {
+    sessionState.lastTokenUsage = null;
+    const startTotal = sessionState.totalTokenUsage ?? (sessionState.threadHasHistory ? null : ZERO_TOKEN_COUNT);
+    sessionState.promptTokenUsage = new PromptTokenUsage(startTotal);
+  }
+  buildPromptUsage(sessionState) {
+    const usage = sessionState.promptTokenUsage?.usage() ?? null;
+    return usage === null ? null : toPromptUsage(usage);
+  }
+}

@@ -1,4 +1,5 @@
 import type { ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
+import type { NotebookLanguage } from './notebook-language-contract'
 
 export type AcpPermissionScope = 'once' | 'session' | 'project' | 'global'
 
@@ -19,6 +20,9 @@ export type AcpPermissionRequest = {
   // Main-process provenance for application-owned approvals. Provider payloads are rebuilt by the
   // permission broker and cannot set this projection. It is transient and never persisted.
   appOwned?: true
+  // The renderer projection retains the review kind even when its evidence cannot be shown.
+  notebookCodeReview?: true
+  notebookRuntimeReview?: true
   // Renderer lifecycle hint only. Main sets this after the request authority reaches Session
   // storage; restored authority is still reloaded and validated independently before use.
   durable?: true
@@ -46,6 +50,69 @@ export type AcpPermissionRequest = {
     riskScope: string
   }>
 }
+
+type NotebookReviewTarget = {
+  language?: unknown
+  projectId?: unknown
+  promptMessageId?: unknown
+  messageBranchId?: unknown
+  runtimeId?: unknown
+}
+
+export function isAppOwnedNotebookCodeReview(value: unknown): value is {
+  appOwned: true
+  rawInput: {
+    code?: unknown
+    notebookCodeRisk: NotebookReviewTarget & {
+      runId?: unknown
+      environment?: unknown
+      risks?: unknown
+    }
+  }
+} {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    !('appOwned' in value) ||
+    value.appOwned !== true
+  )
+    return false
+  const rawInput = 'rawInput' in value ? value.rawInput : undefined
+  if (rawInput === null || typeof rawInput !== 'object' || !('notebookCodeRisk' in rawInput))
+    return false
+  return rawInput.notebookCodeRisk !== null && typeof rawInput.notebookCodeRisk === 'object'
+}
+
+export function isAppOwnedNotebookRuntimeReview(value: unknown): value is {
+  appOwned: true
+  rawInput: {
+    notebookRuntimeSelection: NotebookReviewTarget & {
+      label?: unknown
+      interpreterPath?: unknown
+      previousRuntimeId?: unknown
+      previousLabel?: unknown
+    }
+  }
+} {
+  if (!value || typeof value !== 'object' || !('appOwned' in value) || value.appOwned !== true)
+    return false
+  const rawInput = 'rawInput' in value ? value.rawInput : undefined
+  if (!rawInput || typeof rawInput !== 'object' || !('notebookRuntimeSelection' in rawInput))
+    return false
+  return Boolean(
+    rawInput.notebookRuntimeSelection && typeof rawInput.notebookRuntimeSelection === 'object'
+  )
+}
+
+export type PendingNotebookReview =
+  | { kind: 'code'; runId: string }
+  | {
+      kind: 'runtime'
+      projectId: string
+      promptMessageId: string
+      messageBranchId: string
+      language?: NotebookLanguage
+    }
 
 // An Open-Science-owned tool grant. `categoryKey` is the broker's opaque matcher key;
 // `label`/`kind` are the display projection and `scope` reserves future project/global ownership.

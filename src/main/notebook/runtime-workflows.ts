@@ -1,4 +1,6 @@
 import { createLogger, startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import { stat } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 import type { MicromambaRunner } from '@aipoch/environment'
 import {
   defaultDiscoveryDeps,
@@ -63,6 +65,11 @@ type RuntimeWorkflowDeps = {
 
 type RuntimeWorkflows = {
   listPythonEnvironments(): Promise<DiscoveredInterpreter[]>
+  listLanguageEnvironments(language: NotebookLanguage): Promise<DiscoveredInterpreter[]>
+  registerCheckedInterpreter(request: {
+    language: NotebookLanguage
+    path: string
+  }): Promise<DiscoveredInterpreter | undefined>
   listEnvironments(): Promise<{
     python: DiscoveredInterpreter[]
     r: DiscoveredInterpreter[]
@@ -155,6 +162,18 @@ const createRuntimeWorkflows = (deps: RuntimeWorkflowDeps): RuntimeWorkflows => 
 
   return {
     listPythonEnvironments: () => discoverLanguageEnvs('python'),
+    listLanguageEnvironments: discoverLanguageEnvs,
+    registerCheckedInterpreter: async ({ language, path }) => {
+      if (!isAbsolute(path) || !(await stat(path).catch(() => undefined))?.isFile()) return
+      const [detected] = await discoverInterpreters(language, {
+        ...defaultDiscoveryDeps(deps.runtimeRoot()),
+        candidatePaths: async () => [path]
+      })
+      if (!detected?.version) return
+      await deps.settingsService.addManualInterpreter(language, path)
+      invalidateDiscovery()
+      return detected
+    },
     setSandboxAccess: async (request) => {
       const diagnostic = startDiagnosticOperation(createLogger('notebook:runtime'), {
         operation: 'r-sandbox-access-request',

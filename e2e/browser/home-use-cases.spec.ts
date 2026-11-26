@@ -3,7 +3,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 async function openUseCases(page: Page, surface: 'panel' | 'full'): Promise<void> {
   await page.getByRole('button', { name: 'Resource center', exact: true }).click()
   if (surface === 'panel') {
-    await page.getByRole('combobox', { name: 'Resource type' }).click()
+    await page.getByRole('combobox', { name: 'Resource type' }).press('ArrowDown')
     await page.getByRole('option', { name: 'Use Cases', exact: true }).click()
   } else {
     await page

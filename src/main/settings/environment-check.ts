@@ -45,7 +45,11 @@ const REGISTRY_PROBE_PATHS: Partial<Record<AgentFrameworkId, string>> = {
 }
 const REGISTRY_PROBE_TIMEOUT_MS = 5_000
 
-type RegistryProbe = (registry: ManagedClaudeRegistry, packagePath?: string) => Promise<number>
+export type RegistryProbe = (
+  registry: ManagedClaudeRegistry,
+  packagePath?: string,
+  signal?: AbortSignal
+) => Promise<number>
 
 export type EnvironmentCheckDeps = {
   platform?: NodeJS.Platform
@@ -140,21 +144,26 @@ const registryFailureReason = (error: unknown): RegistryProbeFailureReason | und
 
 // Use the active host transport, also used by managed installs. Node owns its proxy environment;
 // Electron hosts use Chromium. A HEAD request keeps the required source check lightweight.
-const probeRegistryReachability: RegistryProbe = async (registry, packagePath = '') => {
+const probeRegistryReachability: RegistryProbe = async (registry, packagePath = '', signal) => {
+  signal?.throwIfAborted()
   const startedAt = Date.now()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REGISTRY_PROBE_TIMEOUT_MS)
+  timer.unref?.()
+  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal
 
   try {
     const response = await netFetchStandard(`${REGISTRY_URLS[registry]}${packagePath}`, {
       method: 'HEAD',
       redirect: 'follow',
-      signal: controller.signal
+      signal: requestSignal
     })
+    signal?.throwIfAborted()
     if (!response.ok)
       throw new RegistryProbeFailure('http', `HTTP ${response.status} while checking ${registry}`)
     return Date.now() - startedAt
   } catch (error) {
+    signal?.throwIfAborted()
     if (error instanceof RegistryProbeFailure) throw error
     const reason = controller.signal.aborted ? 'timeout' : registryFailureReason(error)
     if (reason) throw new RegistryProbeFailure(reason, `Could not reach ${registry} (${reason}).`)
@@ -164,14 +173,64 @@ const probeRegistryReachability: RegistryProbe = async (registry, packagePath = 
   }
 }
 
+/**
+ * Resolves ordered trusted npm registries for a managed runtime install.
+ *
+ * When a valid `preferredRegistry` is supplied it is placed first with the remaining source as
+ * fallback. Otherwise all trusted registries are probed concurrently for the framework's package
+ * path, returning the first reachable registry first and keeping the other as automatic fallback.
+ */
+const resolveInstallRegistries = async ({
+  agentFrameworkId,
+  preferredRegistry,
+  probeRegistry = probeRegistryReachability,
+  signal
+}: {
+  agentFrameworkId: AgentFrameworkId
+  preferredRegistry?: ManagedClaudeRegistry
+  probeRegistry?: RegistryProbe
+  signal?: AbortSignal
+}): Promise<string[]> => {
+  signal?.throwIfAborted()
+  const allRegistries = Object.keys(REGISTRY_URLS) as ManagedClaudeRegistry[]
+  if (preferredRegistry && Object.hasOwn(REGISTRY_URLS, preferredRegistry)) {
+    const rest = allRegistries.filter((registry) => registry !== preferredRegistry)
+    return [preferredRegistry, ...rest].map((registry) => REGISTRY_URLS[registry])
+  }
+
+  const packagePath = REGISTRY_PROBE_PATHS[agentFrameworkId] ?? ''
+  const probeController = new AbortController()
+  const probeSignal = signal
+    ? AbortSignal.any([probeController.signal, signal])
+    : probeController.signal
+
+  try {
+    const winner = await Promise.any(
+      allRegistries.map((registry) =>
+        probeRegistry(registry, packagePath, probeSignal).then(() => registry)
+      )
+    )
+    signal?.throwIfAborted()
+    const ordered = [winner, ...allRegistries.filter((registry) => registry !== winner)]
+    return ordered.map((registry) => REGISTRY_URLS[registry])
+  } catch {
+    signal?.throwIfAborted()
+    return allRegistries.map((registry) => REGISTRY_URLS[registry])
+  } finally {
+    probeController.abort()
+  }
+}
+
 const inspectRegistry = async (
   registry: ManagedClaudeRegistry,
   probe: RegistryProbe,
-  packagePath: string
+  packagePath: string,
+  signal?: AbortSignal
 ): Promise<{ registry: ManagedClaudeRegistry; latencyMs?: number }> => {
   try {
-    return { registry, latencyMs: await probe(registry, packagePath) }
+    return { registry, latencyMs: await probe(registry, packagePath, signal) }
   } catch {
+    signal?.throwIfAborted()
     return { registry }
   }
 }
@@ -182,7 +241,8 @@ const runEnvironmentCheck = async ({
   frameworks,
   encryptionAvailable,
   credentialStore = 'os',
-  deps = {}
+  deps = {},
+  signal
 }: {
   storageRoot: string
   // The framework the user selected; only its runtime gates readiness/auto-install.
@@ -193,6 +253,7 @@ const runEnvironmentCheck = async ({
   encryptionAvailable: boolean
   credentialStore?: 'os' | 'file'
   deps?: EnvironmentCheckDeps
+  signal?: AbortSignal
 }): Promise<EnvironmentCheckResult> => {
   // The selected framework's runtime drives the required gate; the others are shown for context only.
   const selected = frameworks.find((framework) => framework.id === agentFrameworkId)
@@ -305,8 +366,13 @@ const runEnvironmentCheck = async ({
     }
   } else {
     const registryResults = await Promise.all([
-      inspectRegistry('npmjs', probeRegistry, REGISTRY_PROBE_PATHS[agentFrameworkId] ?? ''),
-      inspectRegistry('npmmirror', probeRegistry, REGISTRY_PROBE_PATHS[agentFrameworkId] ?? '')
+      inspectRegistry('npmjs', probeRegistry, REGISTRY_PROBE_PATHS[agentFrameworkId] ?? '', signal),
+      inspectRegistry(
+        'npmmirror',
+        probeRegistry,
+        REGISTRY_PROBE_PATHS[agentFrameworkId] ?? '',
+        signal
+      )
     ])
     const reachable = registryResults
       .filter(
@@ -522,4 +588,10 @@ const runEnvironmentCheck = async ({
   }
 }
 
-export { REGISTRY_URLS, probeRegistryReachability, runEnvironmentCheck, verifyStorageAccess }
+export {
+  REGISTRY_URLS,
+  probeRegistryReachability,
+  resolveInstallRegistries,
+  runEnvironmentCheck,
+  verifyStorageAccess
+}

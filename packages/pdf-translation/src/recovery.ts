@@ -383,6 +383,9 @@ export function pdfTranslationMissingCitationIdentities(
 }
 
 function ordinaryAcademicHeading(source: string): string | undefined {
+  // PDF letter spacing can split this heading into runs such as RE FER EN CES.
+  // Fold whitespace only for the complete known heading, not arbitrary names.
+  if (source.replace(/\s+/gu, '').toLowerCase() === 'references') return 'References'
   const heading = source
     .trim()
     .replace(/\s+/gu, ' ')
@@ -578,6 +581,14 @@ export function pdfTranslationDropsStandaloneProperName(
   const recordLabel = /^([A-Z]{2,8}) (?:[Dd]omain|[Ii]nformation [Rr]ecords?)$/u.exec(value)
   if (recordLabel)
     return !new RegExp(`(?<![A-Za-z0-9_])${recordLabel[1]}(?![A-Za-z0-9_])`, 'u').test(translation)
+  // Match complete rubric criteria so a longer organization or method name
+  // cannot borrow the exemption from a descriptive phrase.
+  if (
+    /^(?:(?:useful|relevant) descriptions?|(?:physics|conceptual) approach|(?:specific|practical) application|(?:math|algebraic) procedures?|logical progression)$/iu.test(
+      value.replace(/\s+/gu, ' ')
+    )
+  )
+    return false
   // Small-caps PDF fonts can extract ordinary publication labels as mixed case.
   // A closed lowercase vocabulary proves they are prose before CamelCase is
   // interpreted as a model identifier; unknown names still fail that lookup.

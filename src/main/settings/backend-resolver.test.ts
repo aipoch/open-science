@@ -1,5 +1,6 @@
 import { codeBuddyAccounts } from '../../shared/codebuddy-subscription'
 import { ProviderRuntimeProjectionOwner } from './provider-runtime-projection'
+import { CODEX_BRIDGE_MODEL } from '../agent-framework/codex'
 import { releaseResolvedAgentBackendLeases } from '../agent-framework'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1260,7 +1261,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       backendId: 'codex:provider-a',
       route: 'codex-bridge',
       model: 'model-a',
-      sessionModel: 'gpt-5.4',
+      sessionModel: CODEX_BRIDGE_MODEL,
       sessionModelRequired: false,
       supportsImageInput: true,
       reasoningEffort: 'max',

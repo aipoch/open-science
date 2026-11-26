@@ -3705,36 +3705,69 @@ it.each([
   await waitFor(() => expect(hook.result.current.state.status).toBe(change ? 'error' : 'ready'))
 })
 
-describe.each(['˜', 'ˆ'])('native leading accent %s', (accent) => {
-  it.each(['leading', 'shifted-mark', 'reversed-native-order', 'duplicate-base'])(
-    'keeps an exact leading spacing accent only for adjacent unchanged owned pairs: %s',
+describe.each([
+  { accent: '˜', base: 'q' },
+  { accent: 'ˆ', base: 'q' },
+  { accent: '˜', base: 'Γ =' }
+])('native $accent accent over $base', ({ accent, base }) => {
+  const fused = base.endsWith('='),
+    label = fused ? base + accent : accent + base
+  it.each([
+    'intact',
+    'shifted-mark',
+    'reversed-native-order',
+    'duplicate-base',
+    ...(fused ? ['changed-font'] : ['repeated-intact', 'repeated-shifted'])
+  ])(
+    'keeps an exact spacing accent only for adjacent unchanged owned pairs: %s',
     async (variant) => {
-      const f = fixture(),
-        glyph = (str: string, x: number, y: number, width: number): typeof f.item => ({
+      const repeated = variant.startsWith('repeated-'),
+        expression = repeated ? label + ' + ' + label : label,
+        f = fixture(),
+        glyph = (
+          str: string,
+          x: number,
+          y: number,
+          width: number
+        ): typeof f.item & { fontName: string } => ({
           str,
           width,
+          fontName: 'native',
           transform: [10, 0, 0, 10, x, y]
         }),
         original = [
           glyph('Value ', 60, 700, 30),
           glyph(accent, 100, 701.6, 5),
-          glyph('q', 100.2, 700, 4.7)
+          glyph(base, 100.2, 700, fused ? 17 : 4.7),
+          ...(repeated
+            ? [glyph('+', 116, 700, 5), glyph(accent, 130, 701.6, 5), glyph(base, 130.2, 700, 4.7)]
+            : [])
         ],
         movedMark = glyph(accent, variant === 'shifted-mark' ? 141 : 140, 701.6, 5),
-        movedBase = glyph('q', 140.2, 700, 4.7),
+        movedBase = {
+          ...glyph(base, 140.2, 700, fused ? 17 : 4.7),
+          fontName: variant === 'changed-font' ? 'different' : 'native'
+        },
         target = [
           glyph('数值 ', 60, 700, 25),
           ...(variant === 'reversed-native-order'
             ? [movedBase, movedMark]
             : [movedMark, movedBase]),
-          ...(variant === 'duplicate-base' ? [movedBase] : [])
+          ...(variant === 'duplicate-base' ? [movedBase] : []),
+          ...(repeated
+            ? [
+                glyph('+', 156, 700, 5),
+                glyph(accent, variant === 'repeated-shifted' ? 174 : 170, 701.6, 5),
+                glyph(base, 170.2, 700, 4.7)
+              ]
+            : [])
         ],
         source = createPdfTranslationSource({
           ...f.results.source,
           units: [
             {
               ...f.results.source.units[0],
-              source: `Value ${accent}q`,
+              source: `Value ${expression}`,
               fragments: [
                 {
                   ...f.results.source.units[0].fragments[0],
@@ -3747,17 +3780,24 @@ describe.each(['˜', 'ˆ'])('native leading accent %s', (accent) => {
         results = {
           source,
           units: [
-            { id: 'one', translationSource: `Value ${accent}q`, translation: `数值 ${accent}q` }
+            {
+              id: 'one',
+              translationSource: `Value ${expression}`,
+              translation: `数值 ${expression}`
+            }
           ]
         },
         artifact = { results, data: new Uint8Array([4, 5]) }
-      f.originalPage.getTextContent.mockResolvedValue({ items: original })
-      f.targetPage.getTextContent.mockResolvedValue({ items: target })
+      const styles = { native: { ascent: 0.85 }, different: { ascent: 0.8 } }
+      f.originalPage.getTextContent.mockImplementation(async () => ({ items: original, styles }))
+      f.targetPage.getTextContent.mockImplementation(async () => ({ items: target, styles }))
       const hook = renderHook(() =>
         usePdfTranslationDocument(f.original, results, artifact, 'reader:0')
       )
       await waitFor(() =>
-        expect(hook.result.current.state.status).toBe(variant === 'leading' ? 'ready' : 'error')
+        expect(hook.result.current.state.status).toBe(
+          variant.endsWith('intact') ? 'ready' : 'error'
+        )
       )
     }
   )
@@ -4516,6 +4556,82 @@ it.each(
   await waitFor(() => expect(hook.result.current.state.status).toBe(accepted ? 'ready' : 'error'))
 })
 
+it.each(['same-face', 'ordinary-face', 'changed-font-program'])(
+  'requires the retained blackboard font for a natural-number power: %s',
+  async (variant) => {
+    const f = fixture(),
+      item = (
+        str: string,
+        x: number,
+        y: number,
+        size: number,
+        width: number,
+        fontName: string
+      ): typeof f.item & { fontName: string; height: number } => ({
+        ...f.item,
+        str,
+        width,
+        fontName,
+        height: size,
+        transform: [size, 0, 0, size, x, y]
+      }),
+      original = [
+        item('Value ', 60, 700, 10, 28, 'body'),
+        item('N', 90, 700, 10, 8, 'native'),
+        item('3', 98, 704, 7, 4, 'body')
+      ],
+      translated = [
+        item('数值', 60, 700, 10, 20, 'body'),
+        item('N', 82, 700, 10, 8, 'native'),
+        item('3', 90, 704, 7, 4, 'body')
+      ],
+      sourceText = 'Value N3',
+      source = createPdfTranslationSource({
+        ...f.results.source,
+        units: [
+          {
+            id: 'one',
+            source: sourceText,
+            fragments: [
+              {
+                ...f.results.source.units[0].fragments[0],
+                items: original.map(({ str }, index) => ({ index, text: str }))
+              }
+            ]
+          }
+        ]
+      }),
+      results = {
+        source,
+        units: [{ id: 'one', translationSource: sourceText, translation: '数值 ℕ³' }]
+      }
+    const setFonts = (page: object, name: string, byte: number): void => {
+      Object.assign(page, {
+        commonObjs: {
+          has: (key: string) => key === 'native',
+          get: () => ({ name, data: new Uint8Array([1, byte, 3]) })
+        },
+        getOperatorList: vi.fn(async () => ({ fnArray: [], argsArray: [] }))
+      })
+    }
+    setFonts(f.originalPage, 'MSBM10', 2)
+    setFonts(
+      f.targetPage,
+      variant === 'ordinary-face' ? 'Times-Roman' : 'MSBM10',
+      variant === 'changed-font-program' ? 8 : 2
+    )
+    f.originalPage.getTextContent.mockResolvedValue({ items: original })
+    f.targetPage.getTextContent.mockResolvedValue({ items: translated })
+    const artifact = { results, data: new Uint8Array([4, 5]) }
+    const hook = renderHook(() =>
+      usePdfTranslationDocument(f.original, results, artifact, 'reader:0')
+    )
+    await waitFor(() =>
+      expect(hook.result.current.state.status).toBe(variant === 'same-face' ? 'ready' : 'error')
+    )
+  }
+)
+
 it.each(
   readPdfTranslationCases<{ name: string; change: string; accepted: boolean }>(
     'same-paragraph-fragment-read-padding.jsonl'
@@ -5203,6 +5319,7 @@ it('keeps transient generation failures retryable', async () => {
 
 it.each([
   'owned',
+  'structured writer result',
   'stale claim',
   'geometry-owned',
   'geometry-stale claim',
@@ -5212,10 +5329,12 @@ it.each([
   'changed action after retry'
 ] as const)('retains a rejected link only with one exact native owner: %s', async (kind) => {
   const f = fixture()
+  const structuredResult = kind === 'structured writer result'
   const geometry = kind.startsWith('geometry-')
   const prime = kind.startsWith('prime-')
   const staleClaim = kind.endsWith('stale claim')
-  const ownsLink = kind === 'owned' || kind === 'geometry-owned' || kind === 'prime-below'
+  const ownsLink =
+    structuredResult || kind === 'owned' || kind === 'geometry-owned' || kind === 'prime-below'
   const source = [
     geometry ? 'Compare the results from 2010.' : 'Compare Eq. (4) after 4 independent trials.',
     'An independent paragraph.'
@@ -5286,12 +5405,22 @@ it.each([
     geometry
       ? Array.from({ length: 9 }, (_, index) => ({ ...value, url: `${value.url}/${index}` }))
       : [value]
-  f.originalPage.getAnnotations.mockResolvedValue(withDistinctActions(annotation))
+  const unrelatedLink = {
+    ...annotation,
+    rect: [420, 648, 480, 659],
+    url: 'https://example.invalid/unrelated'
+  }
+  f.originalPage.getAnnotations.mockResolvedValue(
+    structuredResult ? [annotation, unrelatedLink] : withDistinctActions(annotation)
+  )
   let attempt = 0
   let opens = 0
-  const generatePdf = vi.fn<(input: PdfTranslationPdfRequest) => Promise<Uint8Array>>(
-    async () => new Uint8Array([++attempt])
-  )
+  const generatePdf = vi.fn(async (input: PdfTranslationPdfRequest) => {
+    expect(input.allowLinkOmission).toBe(false)
+    expect(input.dropLinks).toBeUndefined()
+    const data = new Uint8Array([++attempt])
+    return structuredResult ? { data, layoutFailures: [] } : data
+  })
   const releaseRebuild = Promise.withResolvers<typeof f.target>()
   const rejectedOwner = staleClaim || kind === 'prime-inside'
   const repaired =
@@ -5329,14 +5458,19 @@ it.each([
                   ? withPrime([before[0], glyph(target[1], 60, 655, 200)])
                   : before
         }),
-        getAnnotations: async (): Promise<Record<string, unknown>[]> =>
-          withDistinctActions(
+        getAnnotations: async (): Promise<Record<string, unknown>[]> => [
+          ...withDistinctActions(
             generation === 1
-              ? { ...annotation, rect: geometry ? [555, 698, 563, 710] : [129, 698, 137, 710] }
+              ? {
+                  ...annotation,
+                  rect: geometry ? [555, 698, 563, 710] : [129, 698, 137, 710]
+                }
               : generation === 2 && !rejectedOwner
                 ? repaired
                 : annotation
-          )
+          ),
+          ...(structuredResult ? [unrelatedLink] : [])
+        ]
       }))
     }
     if (generation === 2 && ownsLink) {
@@ -6831,6 +6965,10 @@ it.each(['valid', 'changed-action', 'changed-vector'] as const)(
 
 it.each([
   'same-ink',
+  'batch-same',
+  'batch-second-changed',
+  'batch-second-blank',
+  'batch-distant',
   'split-final-space',
   'final-space-wrong-font',
   'final-space-changed-ink',
@@ -6852,6 +6990,7 @@ it.each([
   'verifies a split untouched neighboring run with complete geometry and rendered ink: %s',
   async (kind) => {
     const { createCanvas } = await import('@napi-rs/canvas')
+    const batched = kind.startsWith('batch-')
     const staggered = kind.startsWith('staggered-'),
       splitSpace = kind === 'split-final-space' || kind.startsWith('final-space-'),
       moved = kind === 'moved-piece' || kind === 'staggered-moved'
@@ -6912,17 +7051,26 @@ it.each([
                 rect: {
                   x: 100 / 600,
                   y: 90 / 800,
-                  width: before.width / 600,
-                  height: (staggered ? 14 : 10) / 800
+                  width: (before.width + (batched ? 45 : 0)) / 600,
+                  height: (kind === 'batch-distant' ? 310 : staggered ? 14 : 10) / 800
                 },
-                items: [{ index: 1, text: before.str }]
+                items: batched
+                  ? [
+                      { index: 1, text: before.str },
+                      { index: 2, text: before.str }
+                    ]
+                  : [{ index: 1, text: before.str }]
               }
             ]
           }
         ]
       })
+    const beside = (item: typeof before): typeof before => ({
+      ...item,
+      transform: [10, 0, 0, 10, item.transform[4] + 45, kind === 'batch-distant' ? 400 : 700]
+    })
     const originalText = {
-      items: [{ ...f.item, str: 'cell' }, before],
+      items: [{ ...f.item, str: 'cell' }, before, ...(batched ? [beside(before)] : [])],
       styles:
         staggered || kind === 'neighbor-ink' || kind === 'invalid-font-metrics'
           ? {
@@ -6940,6 +7088,7 @@ it.each([
         f.item,
         first,
         ...(splitSpace ? [space] : kind === 'staggered-missing' ? [] : [last]),
+        ...(batched ? [beside(first), beside(last)] : []),
         ...(['duplicate-piece', 'staggered-duplicate'].includes(kind) ? [last] : [])
       ],
       styles: staggered ? originalText.styles : {}
@@ -6978,6 +7127,10 @@ it.each([
                   3,
                   3
                 )
+              if (batched && kind !== 'batch-second-blank') {
+                const x = 145 * 4 + 4 + transform[4]
+                context.fillRect(x + (changed ? 1 : 0), 4, 3, 3)
+              }
               if (changed && ['neighbor-ink', 'invalid-font-metrics'].includes(kind))
                 context.fillRect(4, 440 + transform[5], 3, 3)
             }
@@ -6987,6 +7140,7 @@ it.each([
       originalRender = render(false),
       targetRender = render(
         [
+          'batch-second-changed',
           'changed-ink',
           'staggered-changed-ink',
           'neighbor-ink',
@@ -7013,12 +7167,20 @@ it.each([
       )
       await waitFor(() =>
         expect(hook.result.current.state.status).toBe(
-          ['same-ink', 'neighbor-ink', 'staggered-same-ink', 'split-final-space'].includes(kind)
+          [
+            'same-ink',
+            'batch-same',
+            'batch-distant',
+            'neighbor-ink',
+            'staggered-same-ink',
+            'split-final-space'
+          ].includes(kind)
             ? 'ready'
             : 'error'
         )
       )
       if (
+        batched ||
         [
           'staggered-same-ink',
           'staggered-changed-ink',
@@ -7032,8 +7194,9 @@ it.each([
           'transparent-ink'
         ].includes(kind)
       ) {
-        expect(originalRender).toHaveBeenCalledOnce()
-        expect(targetRender).toHaveBeenCalledOnce()
+        const expectedRenders = kind === 'batch-distant' ? 2 : 1
+        expect(originalRender).toHaveBeenCalledTimes(expectedRenders)
+        expect(targetRender).toHaveBeenCalledTimes(expectedRenders)
       } else {
         expect(originalRender).not.toHaveBeenCalled()
         expect(targetRender).not.toHaveBeenCalled()
@@ -8950,5 +9113,81 @@ it.each([0.07, 0.3])(
     await waitFor(() =>
       expect(hook.result.current.state.status).toBe(shift < 0.1 ? 'ready' : 'error')
     )
+  }
+)
+
+it.each(['same', 'edge', 'moved', 'changed', 'blank'] as const)(
+  'verifies a retained legacy relation by its original ink (%s)',
+  async (ink) => {
+    const f = fixture()
+    const sourceText = 'The result is valid when x 6= 0.'
+    const resultText = '当 x 不等于 0 时，结果有效。'
+    const source = createPdfTranslationSource({
+      ...f.results.source,
+      units: [
+        {
+          ...f.results.source.units[0],
+          source: sourceText,
+          fragments: [
+            {
+              ...f.results.source.units[0].fragments[0],
+              items: [{ index: 0, text: sourceText }]
+            }
+          ]
+        }
+      ]
+    })
+    const results = {
+      source,
+      units: [{ id: 'one', translationSource: sourceText, translation: resultText }]
+    }
+    f.originalPage.getTextContent.mockResolvedValue({ items: [{ ...f.item, str: sourceText }] })
+    f.targetPage.getTextContent.mockResolvedValue({
+      items: [{ ...f.item, str: 'The result is valid when x \u0338= 0.' }]
+    })
+    const row = (dark: number[]): Uint8ClampedArray =>
+      new Uint8ClampedArray(
+        [0, 1, 2, 3].flatMap((index) =>
+          dark.includes(index) ? [0, 0, 0, 255] : [255, 255, 255, 255]
+        )
+      )
+    const originalInk = row(ink === 'blank' ? [] : [1])
+    const targetInk = row(
+      ink === 'changed' || ink === 'blank'
+        ? []
+        : ink === 'edge'
+          ? [1, 2]
+          : ink === 'moved'
+            ? [1, 3]
+            : [1]
+    )
+    const sourceRender = vi.fn(() => ({ promise: Promise.resolve() }))
+    const targetRender = vi.fn(() => ({ promise: Promise.resolve() }))
+    Object.assign(f.originalPage, { render: sourceRender })
+    Object.assign(f.targetPage, { render: targetRender })
+    const context = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementationOnce(
+        () =>
+          ({ getImageData: () => ({ data: originalInk }) }) as unknown as CanvasRenderingContext2D
+      )
+      .mockImplementationOnce(
+        () => ({ getImageData: () => ({ data: targetInk }) }) as unknown as CanvasRenderingContext2D
+      )
+    try {
+      const artifact = { results, data: new Uint8Array([4, 5]) }
+      const hook = renderHook(() =>
+        usePdfTranslationDocument(f.original, results, artifact, 'reader:0')
+      )
+      const accepted = ink === 'same' || ink === 'edge'
+      await waitFor(() =>
+        expect(hook.result.current.state.status).toBe(accepted ? 'ready' : 'error')
+      )
+      expect(sourceRender).toHaveBeenCalledOnce()
+      expect(targetRender).toHaveBeenCalledOnce()
+      if (accepted) expect(hook.result.current.ready?.retainedUnitIds).toEqual(['one'])
+    } finally {
+      context.mockRestore()
+    }
   }
 )
