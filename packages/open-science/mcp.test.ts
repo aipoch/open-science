@@ -9,6 +9,29 @@ import { createResearchMcpServer } from './mcp.mjs'
 import { OpenScienceApiError, OpenScienceClient } from './index.mjs'
 
 const cleanup: Array<() => Promise<void>> = []
+
+it.each(['list_artifacts', 'download_artifact'])(
+  '%s rejects timeout values beyond the Node timer limit',
+  async (name) => {
+    const connect = vi.fn()
+    const { client } = await harness(connect)
+    const { tools } = await client.listTools()
+    const timeoutSchema = tools.find((tool) => tool.name === name)?.inputSchema.properties
+      ?.timeoutMs as { maximum?: number }
+    expect(timeoutSchema.maximum).toBe(2_147_483_647)
+    const input =
+      name === 'list_artifacts'
+        ? { sessionId: 'session-1' }
+        : { sessionId: 'session-1', downloadId: 'artifact-1' }
+    const result = await client.callTool({
+      name,
+      arguments: { ...input, timeoutMs: 2_147_483_648 }
+    })
+    expect(result.isError).toBe(true)
+    expect(connect).not.toHaveBeenCalled()
+  }
+)
+
 afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((close) => close()))
 })

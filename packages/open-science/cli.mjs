@@ -46,6 +46,7 @@ const START_TIMEOUT_MS = 120_000
 // Cover the service's 40s authentication-aware stop budget plus exit-record observation.
 const STOP_TIMEOUT_MS = 42_000
 const ARTIFACT_REQUEST_TIMEOUT_MS = 5 * 60 * 1_000
+const MAX_TIMER_DELAY_MS = 2_147_483_647
 const usage = `Usage: open-science <command> [options]
 
 Commands:
@@ -520,7 +521,7 @@ export const parseCliArgs = (argv) => {
   }
   if (options.timeoutMs !== undefined) {
     const timeoutMs = Number(options.timeoutMs)
-    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMER_DELAY_MS) {
       throw new CliUsageError(`Invalid timeout: ${options.timeoutMs}`)
     }
     options.timeoutMs = timeoutMs

@@ -572,6 +572,15 @@ describe('task CLI', () => {
     expect(() => parseCliArgs(['artifacts', 'list', 'session-1', '--timeout-ms', '0'])).toThrow(
       'Invalid timeout: 0'
     )
+    for (const subcommand of ['list', 'download']) {
+      expect(
+        parseCliArgs(['artifacts', subcommand, 'artifact-1', '--timeout-ms', '2147483647']).options
+          .timeoutMs
+      ).toBe(2_147_483_647)
+      expect(() =>
+        parseCliArgs(['artifacts', subcommand, 'artifact-1', '--timeout-ms', '2147483648'])
+      ).toThrow('Invalid timeout: 2147483648')
+    }
     expect(() => parseCliArgs(['run', '--cancel-on-timeout', '--wait'])).toThrow(
       '--cancel-on-timeout requires --timeout-ms.'
     )

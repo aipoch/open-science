@@ -22,6 +22,7 @@ const outputName = z
   .max(255)
   .describe('Exact Artifact name requested for this Run.')
 const transferBudget = 300_000
+const MAX_TIMER_DELAY_MS = 2_147_483_647
 const readOnly = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -191,7 +192,7 @@ export const artifactCapabilities = [
     inputSchema: z.strictObject({
       sessionId,
       runId: runId.optional(),
-      timeoutMs: z.number().int().positive().optional()
+      timeoutMs: z.number().int().positive().max(MAX_TIMER_DELAY_MS).optional()
     }),
     annotations: readOnly,
     async handler({ sessionId, runId, timeoutMs }, { getClient, signal }) {
@@ -212,7 +213,7 @@ export const artifactCapabilities = [
         .describe(
           'Absolute path in an existing directory. Default: <profile>/agent-delivery/<downloadId>/<Artifact name>.'
         ),
-      timeoutMs: z.number().int().positive().default(transferBudget)
+      timeoutMs: z.number().int().positive().max(MAX_TIMER_DELAY_MS).default(transferBudget)
     }),
     annotations: { ...readOnly, readOnlyHint: false, idempotentHint: false },
     handler: download
