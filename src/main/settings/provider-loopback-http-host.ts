@@ -1,6 +1,8 @@
-import { ApplicationCommandError } from '../../shared/application-command-contract'
-import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../../shared/application-command-contract'
-import { recordModelHttpDenial } from './provider-http-access'
+import {
+  ApplicationCommandError,
+  MODEL_HTTP_DESTINATION_NOT_ALLOWED
+} from '../../shared/application-command-contract'
+import { recordModelHttpDenial } from './provider-failure-observation'
 import { randomBytes, randomUUID } from 'node:crypto'
 import {
   createServer,
@@ -234,7 +236,8 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
             error instanceof ApplicationCommandError &&
             error.code === MODEL_HTTP_DESTINATION_NOT_ALLOWED
           ) {
-            const requestId = recordModelHttpDenial()
+            const requestId = randomUUID()
+            recordModelHttpDenial(requestId)
             response.setHeader('x-request-id', requestId)
             writeProviderLoopbackJson(response, 403, {
               error: {

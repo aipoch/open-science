@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import {
   ApplicationCommandError,
   MODEL_HTTP_DESTINATION_NOT_ALLOWED
@@ -30,16 +29,3 @@ export async function resolveProviderHttpAccess(
     throw modelHttpDestinationDenied()
   return allowed
 }
-
-// SDKs can replace error codes with generic HTTP categories. Correlate their returned request ID
-// with the local bridge response before attributing a forbidden response to the allowlist.
-const recentDenials = new Set<string>()
-export function recordModelHttpDenial(): string {
-  const requestId = randomUUID()
-  recentDenials.add(requestId)
-  if (recentDenials.size > 256) recentDenials.delete(recentDenials.values().next().value!)
-  return requestId
-}
-
-export const isLocalModelHttpDenial = (requestId: unknown): requestId is string =>
-  typeof requestId === 'string' && recentDenials.has(requestId)

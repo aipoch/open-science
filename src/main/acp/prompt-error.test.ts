@@ -1,4 +1,4 @@
-import { recordModelHttpDenial } from '../settings/provider-http-access'
+import { recordModelHttpDenial } from '../settings/provider-failure-observation'
 import { classifyFailure } from '../../shared/failure/classify'
 import { describe, expect, it } from 'vitest'
 import { RequestError } from '@agentclientprotocol/sdk'
@@ -688,7 +688,8 @@ describe('compatibility bridge upstream status preservation', () => {
 })
 
 it('identifies a bridge denial across structured and wrapped SDK errors', () => {
-  const requestId = recordModelHttpDenial()
+  const requestId = 'local-bridge-denial'
+  recordModelHttpDenial(requestId)
   const code = 'MODEL_HTTP_DESTINATION_NOT_ALLOWED'
   const wrapped = (id: string): Error =>
     agentError(

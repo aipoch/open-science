@@ -2,7 +2,7 @@ import {
   ApplicationCommandError,
   MODEL_HTTP_DESTINATION_NOT_ALLOWED
 } from '../../shared/application-command-contract'
-import { isLocalModelHttpDenial } from '../settings/provider-http-access'
+import { isLocalModelHttpDenial } from '../settings/provider-failure-observation'
 import { type FailureFacts, readHarnessErrorDiagnostics } from '../../shared/failure/contract'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { redactSensitiveText } from '@aipoch/diagnostics'
