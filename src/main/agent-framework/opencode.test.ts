@@ -3,7 +3,12 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { buildOpencodeConfig, createOpencodeFramework, opencodeFramework } from './opencode'
+import {
+  OPENCODE_NOTEBOOK_CHECK_COMMAND,
+  buildOpencodeConfig,
+  createOpencodeFramework,
+  opencodeFramework
+} from './opencode'
 
 const fakeChild = {} as ChildProcessWithoutNullStreams
 
@@ -30,6 +35,7 @@ it('generates a 2.x plugin that exposes app MCP identities without changing fore
     ['foreign', { codemode: true }]
   ])
   const hooks = new Map<string, () => Promise<void>>()
+  const addCommand = vi.fn()
   const list = vi
     .fn()
     .mockResolvedValueOnce([])
@@ -39,11 +45,15 @@ it('generates a 2.x plugin that exposes app MCP identities without changing fore
       transform: async (apply: (editor: unknown) => void) => apply({ list: () => servers }),
       list: async () => ({ data: [{ name: 'open_science_notebook' }, { name: 'foreign' }] })
     },
+    command: { transform: async (apply: (editor: unknown) => void) => apply({ add: addCommand }) },
     tool: { list },
     session: {
       hook: async (name: string, callback: () => Promise<void>) => hooks.set(name, callback)
     }
   })
+  expect(addCommand).toHaveBeenCalledWith(
+    expect.objectContaining({ name: OPENCODE_NOTEBOOK_CHECK_COMMAND })
+  )
   expect([...servers.values()].map((server) => server.codemode)).toEqual([false, false, true])
   await hooks.get('prompt')!()
   expect(list).toHaveBeenCalledTimes(2)

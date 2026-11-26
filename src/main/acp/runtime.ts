@@ -1523,6 +1523,14 @@ class AcpRuntime {
           : undefined
       },
       observeSessionUpdate: (notification) => {
+        const connection = this.connection
+        if (
+          notification.update.sessionUpdate === 'available_commands_update' &&
+          connection &&
+          identity.epoch === this.connectionResources.epoch &&
+          this.backendGeneration.openCodeUsageApi()?.version === 2
+        )
+          this.openCodeNotebook.observeCommands(connection, notification)
         this.providerSessionResumer.observeProgress(notification.sessionId)
         this.permissionContext.observeProviderUpdate(notification)
       },
@@ -2374,7 +2382,8 @@ class AcpRuntime {
 
   private openCodeNotebookScope(providerSessionId: string): OpenCodeNotebookScope | undefined {
     const api = this.backendGeneration.openCodeUsageApi()
-    if (!api || api.version === 2 || this.sessionEnvironment.role() !== 'primary') return
+    const connection = this.connection
+    if (!api || !connection || this.sessionEnvironment.role() !== 'primary') return
     const id = this.sessionRegistry.resolveAppSessionId(providerSessionId)
     const entry = this.sessionRegistry.lookup(id)
     const snapshot = entry?.aggregate.snapshot()
@@ -2387,6 +2396,7 @@ class AcpRuntime {
       return
     return {
       api,
+      connection,
       session: entry.attachment.session,
       revision: entry.aggregate.specialistBindingRevision(),
       servers: this.sessionCapabilities.mcpServersFor(id),

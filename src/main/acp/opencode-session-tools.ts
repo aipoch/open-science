@@ -1,10 +1,17 @@
-import type { ActiveSession, McpServer } from '@agentclientprotocol/sdk'
+import {
+  methods,
+  type ActiveSession,
+  type ClientConnection,
+  type McpServer,
+  type SessionNotification
+} from '@agentclientprotocol/sdk'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   NOTEBOOK_TOOLS_UNAVAILABLE_CODE,
   NOTEBOOK_TOOLS_UNAVAILABLE_MESSAGE
 } from '../../shared/failure/messages'
 import { canonicalAppMcpServerName } from '../agent-framework/app-mcp-names'
+import { OPENCODE_NOTEBOOK_CHECK_COMMAND } from '../agent-framework/opencode'
 import { NOTEBOOK_MCP_SERVER_NAME } from '../notebook/mcp-server'
 import { isRecord } from '../value-guards'
 import type { AcpOpenCodeUsageApi } from './backend-generation-owner'
@@ -91,6 +98,7 @@ const prepareOpenCodeSessionTools = async (input: SessionToolsInput): Promise<vo
 
 export type OpenCodeNotebookScope = {
   api: AcpOpenCodeUsageApi
+  connection: ClientConnection
   session: ActiveSession
   revision: number
   servers: readonly McpServer[]
@@ -101,10 +109,20 @@ type ReadinessCheck = { revision: number; ready: boolean }
 
 export class AcpOpenCodeNotebook {
   private readonly checks = new WeakMap<ActiveSession, ReadinessCheck>()
+  private readonly checkCommands = new WeakMap<ClientConnection, Set<string>>()
 
   constructor(
     private readonly resolveScope: (providerSessionId: string) => OpenCodeNotebookScope | undefined
   ) {}
+
+  observeCommands(connection: ClientConnection, { sessionId, update }: SessionNotification): void {
+    if (update.sessionUpdate !== 'available_commands_update') return
+    const sessions = this.checkCommands.get(connection) ?? new Set<string>()
+    if (update.availableCommands.some(({ name }) => name === OPENCODE_NOTEBOOK_CHECK_COMMAND))
+      sessions.add(sessionId)
+    else sessions.delete(sessionId)
+    this.checkCommands.set(connection, sessions)
+  }
 
   invalidate(session: ActiveSession): void {
     this.checks.delete(session)
@@ -123,14 +141,32 @@ export class AcpOpenCodeNotebook {
     const signal = input.signal ?? scope.interaction?.signal
     try {
       if (!notebook) throw new Error('The OpenCode session configuration omits Notebook.')
-      await prepareOpenCodeSessionTools({
-        api: scope.api,
-        cwd: input.cwd,
-        providerSessionId: input.providerSessionId,
-        notebook,
-        providerRefreshed: input.providerRefreshed,
-        signal
-      })
+      if (scope.api.version === 2) {
+        // The usage API belongs to a separate server. Check the private ACP tool catalog
+        // through its advertised plugin command, which never submits a model prompt.
+        if (!this.checkCommands.get(scope.connection)?.has(input.providerSessionId))
+          throw new Error('OpenCode did not advertise the Notebook check command.')
+        const timeout = AbortSignal.timeout(NOTEBOOK_PREPARATION_TIMEOUT_MS)
+        const response = await scope.connection.agent.request(
+          methods.agent.session.prompt,
+          {
+            sessionId: input.providerSessionId,
+            prompt: [{ type: 'text', text: '/' + OPENCODE_NOTEBOOK_CHECK_COMMAND }]
+          },
+          { cancellationSignal: signal ? AbortSignal.any([signal, timeout]) : timeout }
+        )
+        if (response.stopReason !== 'end_turn')
+          throw new Error('OpenCode did not complete the Notebook check command.')
+      } else {
+        await prepareOpenCodeSessionTools({
+          api: scope.api,
+          cwd: input.cwd,
+          providerSessionId: input.providerSessionId,
+          notebook,
+          providerRefreshed: input.providerRefreshed,
+          signal
+        })
+      }
     } catch (error) {
       signal?.throwIfAborted()
       log.warn('OpenCode Notebook MCP preparation failed', {
@@ -152,6 +188,7 @@ export class AcpOpenCodeNotebook {
     return (
       current?.session === scope.session &&
       current.api === scope.api &&
+      current.connection === scope.connection &&
       current.revision === scope.revision &&
       current.interaction === scope.interaction &&
       !scope.interaction?.signal.aborted
