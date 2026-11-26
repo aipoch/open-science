@@ -125,13 +125,15 @@ import {
 } from './provider-validation-state'
 import type { SettingsRepository } from './repository'
 import type { SystemProxyEnvironment } from './system-proxy'
-import type { StoredProvider, StoredSettings } from './types'
+import type { ApplySharedDestination, StoredProvider, StoredSettings } from './types'
 import { buildValidationRequest, validateProvider as validateProviderTarget } from './validate'
 import type { XaiOAuthControllerPort } from './xai-oauth'
 import { XaiProviderAccountOwner } from './xai-provider-account-owner'
 type ProviderAccountsModuleOptions = {
   repository: SettingsRepository
-  commitSharedDestination?: (write: () => Promise<void>) => Promise<void>
+  commitSharedDestination?: (
+    write: (apply: ApplySharedDestination) => Promise<void>
+  ) => Promise<void>
   storageRoot: string
   userClaudeDir: string
   userCodexDir: string
@@ -1018,7 +1020,7 @@ class ProviderAccountsModule {
       assertProviderCapacity(current.providers.length, exists)
       const networkDestination =
         provider.type === 'custom' ? providerNetworkDestination(provider.baseUrl ?? '') : undefined
-      const persist = async (): Promise<void> => {
+      const persist = async (applySharedDestination?: ApplySharedDestination): Promise<void> => {
         await this.repository.upsertProvider(
           provider,
           prepared.requireExisting ? provider.id : undefined,
@@ -1029,6 +1031,7 @@ class ProviderAccountsModule {
             expectedConfigRevision: prepared.expectedConfigRevision,
             expectedValidationState,
             networkDestination,
+            applySharedDestination,
             previouslyShared: providerNetworkDestinationIsTrusted(
               provider.baseUrl ?? '',
               prepared.settings.notebookNetwork?.trustedPrivateDestinations ?? []

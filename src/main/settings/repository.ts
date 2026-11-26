@@ -31,6 +31,7 @@ import {
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
 import {
+  trustedDestinationId,
   type NotebookNetworkSettings,
   type TrustedPrivateDestination
 } from '../../shared/notebook-network-settings'
@@ -84,6 +85,7 @@ import {
 } from './subagent-model-settings'
 import type { StoredClassificationSettings } from './types'
 import {
+  type ApplySharedDestination,
   type StoredCodexInfo,
   type StoredComputeGrant,
   type StoredConnectors,
@@ -104,6 +106,93 @@ type LocalShellRuntimeWrite = Readonly<{
   settings: StoredSettings
   mutation: LocalShellRuntimeMutation
 }>
+
+const validationState = (
+  provider?: StoredProvider
+): Pick<StoredProvider, 'lastValidatedAt' | 'lastValidatedTarget' | 'lastValidationFailure'> => ({
+  lastValidatedAt: provider?.lastValidatedAt,
+  lastValidatedTarget: provider?.lastValidatedTarget,
+  lastValidationFailure: provider?.lastValidationFailure
+})
+
+// Only undo values that still belong to this save. Other settings can change while the
+// live policy is being applied, including independent provider and destination edits.
+const undoSharedProviderSave = (
+  current: StoredSettings,
+  before: StoredSettings,
+  saved: StoredSettings,
+  providerId: string,
+  destination: TrustedPrivateDestination
+): StoredSettings => {
+  const next = { ...current }
+  const savedProvider = saved.providers.find((row) => row.id === providerId)
+  const live = current.providers.find((row) => row.id === providerId)
+  const catalog = providerCatalogState(live)
+  const health = validationState(live)
+  // A refresh or health observation is independent of a configuration edit. Preserve a
+  // later configuration, and carry newer observations only onto a compatible restored target.
+  if (
+    savedProvider &&
+    live &&
+    isDeepStrictEqual(
+      { ...live, ...catalog, ...health },
+      { ...savedProvider, ...catalog, ...health }
+    )
+  ) {
+    const original = before.providers.find((row) => row.id === providerId)
+    if (original) {
+      const sameConnection =
+        original.baseUrl === savedProvider.baseUrl &&
+        sameCatalogTarget(original, savedProvider) &&
+        isDeepStrictEqual(original.apiEndpoints, savedProvider.apiEndpoints)
+      const restored = { ...original }
+      if (sameConnection && !isDeepStrictEqual(catalog, providerCatalogState(savedProvider)))
+        Object.assign(restored, catalog)
+      if (
+        sameConnection &&
+        original.model === savedProvider.model &&
+        isDeepStrictEqual(original.localModels, savedProvider.localModels) &&
+        !isDeepStrictEqual(health, validationState(savedProvider))
+      )
+        Object.assign(restored, health)
+      next.providers = current.providers.map((row) => (row === live ? restored : row))
+    } else {
+      next.providers = current.providers.filter((row) => row !== live)
+    }
+    if (
+      before.activeModel !== saved.activeModel &&
+      current.activeProviderId === providerId &&
+      current.activeModel === saved.activeModel
+    )
+      next.activeModel = before.activeModel
+  }
+  const matches = (row: TrustedPrivateDestination): boolean =>
+    !row.managedGrantId &&
+    row.hostname === destination.hostname &&
+    row.port === destination.port &&
+    row.protocol === destination.protocol
+  const original = before.notebookNetwork?.trustedPrivateDestinations?.find(matches)
+  const savedRule = saved.notebookNetwork?.trustedPrivateDestinations?.find(matches)
+  const rules = current.notebookNetwork?.trustedPrivateDestinations ?? []
+  const liveRule = rules.find(matches)
+  if (
+    savedRule &&
+    liveRule &&
+    !isDeepStrictEqual(original, savedRule) &&
+    isDeepStrictEqual(
+      { ...liveRule, id: trustedDestinationId(liveRule) },
+      { ...savedRule, id: trustedDestinationId(savedRule) }
+    )
+  ) {
+    next.notebookNetwork = normalizeNotebookNetworkSettings({
+      ...current.notebookNetwork,
+      trustedPrivateDestinations: original
+        ? rules.map((row) => (matches(row) ? original : row))
+        : rules.filter((row) => !matches(row))
+    })
+  }
+  return next
+}
 
 type ProviderValidationHistory = {
   firstCompatibleRevision: number
@@ -352,6 +441,7 @@ class SettingsRepository {
       expectedFramework?: AgentFrameworkId
       createOnly?: boolean
       expectedConfigRevision?: number
+      applySharedDestination?: ApplySharedDestination
       networkDestination?: TrustedPrivateDestination
       previouslyShared?: boolean
       catalogBaseline?: ProviderCatalogState
@@ -363,7 +453,9 @@ class SettingsRepository {
     },
     guard?: { expectedLabCatalogToken?: string; isCurrent?: () => boolean }
   ): Promise<StoredSettings> {
-    return this.mutate((settings) => {
+    let previous!: StoredSettings
+    const saved = await this.mutate((settings) => {
+      previous = settings
       if (
         configEdit?.expectedFramework !== undefined &&
         settings.agentFrameworkId !== configEdit.expectedFramework
@@ -391,14 +483,7 @@ class SettingsRepository {
         throw new Error('Provider configuration changed. Your draft has not been saved.')
       if (
         configEdit?.expectedValidationState &&
-        !isDeepStrictEqual(
-          {
-            lastValidatedAt: source?.lastValidatedAt,
-            lastValidatedTarget: source?.lastValidatedTarget,
-            lastValidationFailure: source?.lastValidationFailure
-          },
-          configEdit.expectedValidationState
-        )
+        !isDeepStrictEqual(validationState(source), configEdit.expectedValidationState)
       ) {
         throw new Error(
           'Provider connection status changed. Your changes have not been saved. Test the connection again.'
@@ -500,6 +585,16 @@ class SettingsRepository {
           : {})
       }
     })
+    const destination = configEdit?.networkDestination
+    if (destination && configEdit.applySharedDestination) {
+      await configEdit.applySharedDestination(async () => {
+        const persisted = sanitizeSettings(saved)
+        await this.mutate((current) =>
+          undoSharedProviderSave(current, previous, persisted, provider.id, destination)
+        )
+      })
+    }
+    return saved
   }
 
   // Records a fetched catalog only while the provider still points at the target that produced it.
@@ -975,11 +1070,6 @@ class SettingsRepository {
   async setNotebookNetwork(value: NotebookNetworkSettings): Promise<StoredSettings> {
     const notebookNetwork = normalizeNotebookNetworkSettings(value)
     return this.mutate((settings) => ({ ...settings, notebookNetwork }))
-  }
-
-  // Restores a complete snapshot for a failed cross-owner settings transaction.
-  async restoreSettings(snapshot: StoredSettings): Promise<StoredSettings> {
-    return this.mutate(() => snapshot)
   }
 
   async setWslSelection(selection: WslSelection): Promise<StoredSettings> {

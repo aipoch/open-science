@@ -18,6 +18,7 @@ import {
 } from '../../shared/notebook-network'
 import type { SetNotebookNetworkRequest } from '../../shared/settings'
 import type { SettingsRepository } from './repository'
+import type { ApplySharedDestination } from './types'
 
 const mergeById = <T extends { id: string }>(
   current: readonly T[],
@@ -82,8 +83,7 @@ const syncManagedDestinationRules = (
 }
 
 type NotebookNetworkSettingsOwnerOptions = Readonly<{
-  repository: Pick<SettingsRepository, 'getSettings' | 'setNotebookNetwork'> &
-    Partial<Pick<SettingsRepository, 'restoreSettings'>>
+  repository: Pick<SettingsRepository, 'getSettings' | 'setNotebookNetwork'>
   apply: (settings: NotebookNetworkSettings) => Promise<void>
 }>
 
@@ -102,36 +102,27 @@ class NotebookNetworkSettingsOwner {
   }
 
   // Provider and rule commit together in the repository, ordered with edits and gateway refreshes.
-  commitSharedDestination(write: () => Promise<void>): Promise<void> {
-    const operation = this.writeTail.then(async () => {
-      const previous = await this.options.repository.getSettings()
-      const previousNetwork = normalizeNotebookNetworkSettings(previous.notebookNetwork)
-      try {
-        await write()
-        await this.options.apply(await this.readAndReconcile())
-      } catch (error) {
-        const rollbackErrors: unknown[] = []
+  commitSharedDestination(write: (apply: ApplySharedDestination) => Promise<void>): Promise<void> {
+    const refresh = async (): Promise<void> => this.options.apply(await this.readAndReconcile())
+    const operation = this.writeTail.then(() =>
+      write(async (undoWrite) => {
         try {
-          if (this.options.repository.restoreSettings)
-            await this.options.repository.restoreSettings(previous)
-          else await this.options.repository.setNotebookNetwork(previousNetwork)
-        } catch (rollbackError) {
-          rollbackErrors.push(rollbackError)
+          await refresh()
+        } catch (error) {
+          const errors = [error]
+          for (const recover of [undoWrite, refresh]) {
+            try {
+              await recover()
+            } catch (rollbackError) {
+              errors.push(rollbackError)
+            }
+          }
+          if (errors.length > 1)
+            throw new AggregateError(errors, 'Could not apply or restore Notebook network access.')
+          throw error
         }
-        try {
-          await this.options.apply(previousNetwork)
-        } catch (rollbackError) {
-          rollbackErrors.push(rollbackError)
-        }
-        if (rollbackErrors.length > 0) {
-          throw new AggregateError(
-            [error, ...rollbackErrors],
-            'Could not apply or restore Notebook network access.'
-          )
-        }
-        throw error
-      }
-    })
+      })
+    )
     this.writeTail = operation.catch(() => {})
     return operation
   }
