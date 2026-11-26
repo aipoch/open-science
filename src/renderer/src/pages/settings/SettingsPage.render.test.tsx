@@ -1724,6 +1724,13 @@ describe('SettingsPage layout', () => {
     expect(cancelButton?.dataset.size).toBe('default')
     expect(repairButton?.dataset.size).toBe(cancelButton?.dataset.size)
 
+    const idle = await window.api.acp.getState()
+    const notify = vi.mocked(window.api.acp.onState).mock.calls.at(-1)?.[0]
+    await act(async () =>
+      notify?.({ ...idle, promptInFlight: true, promptInFlightSessionIds: ['active'] })
+    )
+    expect(repairButton?.disabled).toBe(true)
+    await act(async () => notify?.(idle))
     openRadixMenu(repairButton)
     const managed = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
@@ -4541,13 +4548,13 @@ describe('SettingsPage Codex framework', () => {
   })
 
   it.each([
-    [true, '0.144.6', true],
+    [true, '0.157.1', true],
     [false, '0.144.6', true],
-    [true, '0.157.1', false],
-    [true, '0.158.0', false],
+    [true, '0.166.0', false],
+    [true, '0.167.0', false],
     [true, undefined, true]
   ])(
-    'requires a native update for unsupported managed or external CLIs (%s, %s)',
+    'requires repair for unsupported managed or external CLIs (%s, %s)',
     async (nativeManaged, nativeVersion, expected) => {
       const api = window.api.settings
       const snapshot = {
@@ -4556,7 +4563,7 @@ describe('SettingsPage Codex framework', () => {
         codebuddy: {},
         codex: {
           resolvedPath: '/data/codex-managed/adapter/dist/index.js',
-          version: '1.6.2',
+          version: '2.6.0',
           nativeVersion,
           nativeManaged
         },
@@ -4576,8 +4583,8 @@ describe('SettingsPage Codex framework', () => {
       })
       await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
       await openAgentPanel()
-      const update = document.body.querySelector<HTMLButtonElement>('[aria-label="Update Codex"]')
-      expect(Boolean(update)).toBe(expected)
+      const repair = document.body.querySelector<HTMLButtonElement>('[aria-label="Repair Codex"]')
+      expect(Boolean(repair)).toBe(expected)
       if (!nativeManaged)
         expect(document.body.textContent).toContain('without changing your external installation')
       if (expected) {
@@ -4586,7 +4593,11 @@ describe('SettingsPage Codex framework', () => {
           .mockResolvedValue({ installId: 'upgrade', ok: false, error: 'Codex is in use' })
         api.installCodex = installCodex
         api.onInstallLog = vi.fn().mockReturnValue(() => undefined)
-        await act(async () => update?.click())
+        openRadixMenu(repair)
+        const sources = document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+        expect(sources).toHaveLength(1)
+        expect(sources[0].textContent).toContain('App-managed download')
+        await act(async () => clickRadixMenuItem(sources[0]))
         expect(installCodex).toHaveBeenCalledWith({ source: 'managed' })
       }
     }
@@ -4599,8 +4610,8 @@ describe('SettingsPage Codex framework', () => {
       opencode: {},
       codex: {
         resolvedPath: '/data/codex-managed/adapter/dist/index.js',
-        version: '1.6.2',
-        nativeVersion: '0.157.1'
+        version: '2.6.0',
+        nativeVersion: '0.166.0'
       },
       providers: [],
       agentFrameworkId: 'claude-code',
@@ -4634,7 +4645,7 @@ describe('SettingsPage Codex framework', () => {
     const codexRadio = document.body.querySelector<HTMLButtonElement>('[aria-label="Use Codex"]')
     expect(codexRadio).not.toBeNull()
     // The native and adapter versions are displayed separately; the repo link points at the ACP adapter.
-    expect(document.body.textContent).toContain('Codex CLI 0.157.1, ACP 1.6.2')
+    expect(document.body.textContent).toContain('Codex CLI 0.166.0, ACP 2.6.0')
     expect(document.body.textContent).toContain('agentclientprotocol/codex-acp')
 
     await act(async () => codexRadio?.click())
@@ -4654,7 +4665,7 @@ describe('SettingsPage Codex framework', () => {
     const snapshot = {
       claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/data/codex-acp', version: '2.6.0' },
       codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' },
       providers: [],
       agentFrameworkId: 'codex',
@@ -4709,7 +4720,7 @@ describe('SettingsPage Codex framework', () => {
     const snapshot = {
       claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/data/codex-acp', version: '2.6.0' },
       codebuddy: { resolvedPath: '/opt/homebrew/bin/codebuddy', version: '2.138.0' },
       providers: [],
       agentFrameworkId: 'codebuddy',
@@ -4904,7 +4915,7 @@ describe('SettingsPage Codex framework', () => {
     const initialSnapshot = {
       claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/data/codex-acp', version: '2.6.0' },
       codebuddy: {},
       providers: [],
       agentFrameworkId: 'codex',
@@ -4952,7 +4963,7 @@ describe('SettingsPage Codex framework', () => {
       revision: 1,
       claude: { resolvedPath: '/data/claude', version: MINIMUM_CLAUDE_CLI_VERSION },
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/data/codex-acp', version: '2.6.0' },
       codebuddy: {},
       providers: [],
       agentFrameworkId: 'codex',
@@ -5037,8 +5048,8 @@ describe('SettingsPage Codex framework', () => {
 
     expect(document.body.textContent).toContain('Installed / 2')
     expect(document.body.textContent).toContain('Available / 2')
-    expect(document.body.textContent).toContain('Update required')
-    expect(document.body.querySelector('[aria-label="Update Codex"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Needs repair')
+    expect(document.body.querySelector('[aria-label="Repair Codex"]')).not.toBeNull()
     const frameworkRadios = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="radio"][aria-label^="Use "]')
     )
@@ -5065,7 +5076,7 @@ describe('SettingsPage Codex framework', () => {
       const snapshot = {
         claude: {},
         opencode: {},
-        codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+        codex: { resolvedPath: '/data/codex-acp', version: '2.6.0' },
         providers: [provider],
         activeProviderId: provider.id,
         activeModel: 'gpt-5.6-sol',
@@ -5115,7 +5126,7 @@ describe('SettingsPage Codex framework', () => {
     const snapshot = {
       claude: {},
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/data/codex-acp', version: '2.6.0' },
       providers: [provider],
       activeProviderId: provider.id,
       activeModel: 'gpt-5.6-sol',
@@ -5166,7 +5177,7 @@ describe('SettingsPage Codex framework', () => {
       api.settings.getSettings = vi.fn().mockResolvedValue({
         claude: {},
         opencode: {},
-        codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+        codex: { resolvedPath: '/data/codex-acp', version: '2.6.0' },
         providers: [provider],
         activeProviderId: provider.id,
         agentFrameworkId,
@@ -5220,7 +5231,7 @@ describe('SettingsPage Codex framework', () => {
     api.settings.getSettings = vi.fn().mockResolvedValue({
       claude: {},
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/data/codex-acp', version: '2.6.0' },
       providers: [provider],
       agentFrameworkId: 'codex',
       agentFrameworks: frameworks,
@@ -5262,7 +5273,7 @@ describe('SettingsPage Codex framework', () => {
     api.settings.getSettings = vi.fn().mockResolvedValue({
       claude: {},
       opencode: {},
-      codex: { resolvedPath: '/data/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/data/codex-acp', version: '2.6.0' },
       providers: [provider],
       agentFrameworkId: 'codex',
       agentFrameworks: frameworks,

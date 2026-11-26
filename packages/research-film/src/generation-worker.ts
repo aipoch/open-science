@@ -8,6 +8,7 @@ import {
   type ResearchVideoWorkerMessage
 } from './generation.js'
 import { createKokoroNarrator } from './kokoro.js'
+import { remoteSpeechIdentity } from './remote-speech.js'
 import type { SpeechSynthesizer } from './narration.js'
 const send = (message: ResearchVideoWorkerMessage): void => {
   if (message.kind === 'speech-result')
@@ -85,7 +86,10 @@ if ('kind' in input && input.kind === 'speech') {
   const synthesizers: SpeechSynthesizer[] = Array.from(
     { length: generation.speechConcurrency ?? 1 },
     (_, lane) => ({
-      identity: 'kokoro-js-1.2.1/af_heart/q8/speed-1',
+      proportionalTiming: Boolean(generation.speech),
+      identity: generation.speech
+        ? remoteSpeechIdentity(generation.speech)
+        : 'kokoro-js-1.2.1/af_heart/q8/speed-1',
       measureDuration(text) {
         return new Promise((resolve) => {
           pendingDurations.set(lane, resolve)

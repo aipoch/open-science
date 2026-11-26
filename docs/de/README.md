@@ -53,17 +53,17 @@
 
 > Dieses Dokument ist eine Übersetzung der englischen `README.md`. Bei Abweichungen ist die [englische Version](../../README.md) maßgeblich.
 
-### 💡 AIPOCH Open-Science v1.3.4 — Neuerungen
+### 💡 AIPOCH Open-Science v1.3.5 — Neuerungen
 
-_22. November 2026_
+_24. November 2026_
 
-- **Blick in den integrierten Agenten**: Projekte können die Agenten-Ablaufverfolgung aktivieren und korrelierte Bereiche für Turns, Modellanfragen und Werkzeugausführungen an einen selbst gehosteten OTLP/HTTP-Empfänger exportieren — die erfasste Detailtiefe liegt dabei in Ihrer Hand.
-- **Windows-Updates ohne Hürden**: Ein In-App-Update bleibt nicht mehr stehen, solange der integrierte Agent läuft, und stabile Windows-Updates werden wieder als kompakte Installer-Deltas angewendet.
-- **Lange Notebook-Verläufe bleiben flott**: Beim Starten und Abschließen von Läufen, beim Auswählen von Ergebnissen und beim Öffnen von Vorschauen wird der gesamte Verlauf nicht mehr erneut gelesen.
-- **Speicheranzeigen, denen Sie vertrauen können**: Die Compute-Zusammenfassung stimmt unter macOS nun mit der Aktivitätsanzeige überein und zeigt unter Windows den zugesicherten Speicher im Verhältnis zu seinem Limit.
-- **CodeBuddy-Reasoning-Aufwände**: Die Auswahl bietet nur noch die Stufen an, die das gewählte CodeBuddy-Modell tatsächlich unterstützt.
+- **Kleinere macOS-Updates**: In-App-Updates laden jetzt signierte Deltas statt vollständiger Installer herunter, sodass die meisten Updates nur noch einen Bruchteil der Datenmenge übertragen.
+- **Literatur lesen, ohne den Faden zu verlieren**: Abbildungen und Tabellen lassen sich aus Verweisen im Text heraus in der Vorschau anzeigen, und markierte Passagen werden im PDF-Reader direkt vor Ort übersetzt.
+- **Mehr Möglichkeiten, Modelle anzubinden**: Cloud-Gateways (Cloudflare AI Gateway, AWS Bedrock Runtime, Microsoft Foundry, Vectrust) und lokale Presets (Ollama, LM Studio, llama.cpp, vLLM) ergänzen den Provider-Katalog.
+- **Eine leichtere, stabilere App**: Verlaufsprotokolle und Notebook-Abbildungen werden bei Bedarf geladen, und die Notebook-Speicherfreigabe wird vor dem Fortsetzen der Arbeit erneut geprüft.
+- **Bessere Wiederherstellung**: Das Fortsetzen von Sitzungen übersteht nicht verfügbare Provider, und die PDF-Übersetzung bewahrt das native Layout noch getreuer.
 
-[Vollständige Versionshinweise v1.3.4](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
+[Vollständige Versionshinweise v1.3.5](https://github.com/aipoch/open-science/releases/tag/v1.3.5)
 
 <a id="share-your-research"></a>
 

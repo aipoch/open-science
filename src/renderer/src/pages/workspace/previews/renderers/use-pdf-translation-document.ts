@@ -28,8 +28,7 @@ export type { PdfTranslationDocumentState } from './pdf-translation-document-sta
 
 import {
   pdfGenerationFailure,
-  type PdfTranslationLayoutFailure,
-  type PdfTranslationLinkLocation
+  type PdfTranslationLayoutFailure
 } from '@aipoch/pdf-translation/contracts'
 import { type PdfTranslationRecordLayoutRequest } from '../../../../../../shared/pdf-translation'
 
@@ -126,11 +125,6 @@ export function usePdfTranslationDocument(
       original: PDFDocumentProxy
       results: PdfTranslationResults
       ids: ReadonlySet<string>
-    }
-    rejectedLinks?: {
-      original: PDFDocumentProxy
-      results: PdfTranslationResults
-      links: readonly PdfTranslationLinkLocation[]
     }
     originalLinkOwners?: {
       original: PDFDocumentProxy
@@ -253,10 +247,6 @@ export function usePdfTranslationDocument(
         ? request.originalPages.reasons
         : []
     )
-    const rejectedLinks =
-      request.rejectedLinks?.original === original && request.rejectedLinks.results === runResults
-        ? request.rejectedLinks.links
-        : []
     const originalLinkOwners = new Map(
       request.originalLinkOwners?.original === original &&
         request.originalLinkOwners.results === runResults
@@ -327,7 +317,6 @@ export function usePdfTranslationDocument(
     const baseline = request.baseline
     const reusable =
       !useArtifact &&
-      !rejectedLinks.length &&
       !originalPages.size &&
       !preservedIds.size &&
       baseline?.original === original &&
@@ -372,15 +361,12 @@ export function usePdfTranslationDocument(
     let nativeFailures: Record<string, PdfTranslationLayoutFailure> = {}
     let cacheToken: string | undefined
     let cacheHit = false
-    let canOmitLinks = false
-    let omittedLinks: readonly PdfTranslationLinkLocation[] = []
     const bypassCache =
       request.bypassCache?.original === original && request.bypassCache.results === runResults
     let cache =
       complete &&
       !originalPages.size &&
       !preservedIds.size &&
-      !rejectedLinks.length &&
       !(incremental && reusable?.validation?.hasLinkOmissions) &&
       runResults.checkpoint
         ? {
@@ -517,8 +503,6 @@ export function usePdfTranslationDocument(
         const generate = async (): Promise<Uint8Array | undefined> => {
           cacheToken = undefined
           cacheHit = false
-          canOmitLinks = false
-          omittedLinks = []
           nativeFailures = {}
           for (const { unit } of generatedUnits)
             if (preservedIds.has(unit.id))
@@ -537,8 +521,7 @@ export function usePdfTranslationDocument(
             id,
             preserveUnsupported: true,
             preserveUnmatched: true,
-            allowLinkOmission: true,
-            ...(rejectedLinks.length ? { dropLinks: rejectedLinks } : {}),
+            allowLinkOmission: false,
             data: source,
             ...(incremental ? { incremental } : {}),
             ...(cache ? { cache } : {}),
@@ -564,9 +547,7 @@ export function usePdfTranslationDocument(
             })
           })
           if (!output || output instanceof Uint8Array) return output ?? undefined
-          canOmitLinks = true
-          omittedLinks = output.omittedLinks ?? []
-          cacheToken = cache && !omittedLinks.length ? output.cacheToken : undefined
+          cacheToken = cache ? output.cacheToken : undefined
           cacheHit = Boolean(cache && output.cacheHit)
           // A persisted PDF has not been validated in this reader; check every page.
           if (cacheHit) incremental = undefined
@@ -621,7 +602,7 @@ export function usePdfTranslationDocument(
         dirtyPages,
         originalPages,
         originalLinkOwners,
-        omittedLinks,
+        omittedLinks: [],
         preservedIds,
         acceptedById,
         useArtifact
@@ -768,21 +749,6 @@ export function usePdfTranslationDocument(
           })
         const recoveryRequest = { ...request, bypassCache: { original, results: runResults } }
         if (recovery.action === 'keep-links') {
-          if (
-            canOmitLinks &&
-            location.failedLinkLocations?.length &&
-            !rejectedLinks.some((link) => link.pageNumber === recovery.pageNumber)
-          ) {
-            setRequest({
-              ...recoveryRequest,
-              rejectedLinks: {
-                original,
-                results: runResults,
-                links: [...rejectedLinks, ...location.failedLinkLocations]
-              }
-            })
-            return
-          }
           setRequest({
             ...recoveryRequest,
             originalLinkOwners: {

@@ -1,3 +1,5 @@
+import { pdfjsLib } from '../pdfjs'
+import { provesIsolatedLink, readIsolatedLinkLabels } from './pdf-isolated-link-label'
 import {
   verifiedPdfLatinAccentText,
   pdfLinkLabelKey,
@@ -379,6 +381,7 @@ export async function verifyPdfTranslationLinks({
   // Identify a fresh recovery attempt for this page. Any unproved link
   // failure still takes the ordinary original-page fallback.
   const pendingRetentions = new Map<number, string>()
+  let isolatedDraws: Awaited<ReturnType<typeof readIsolatedLinkLabels>> | undefined
   const pendingOwners = new Set<string>()
   for (const [index, annotation] of sourceAnnotations.entries()) {
     const moved = targetAnnotations[index]
@@ -405,6 +408,87 @@ export async function verifyPdfTranslationLinks({
       Math.abs(annotation.rect[3] - annotation.rect[1] - moved.rect[3] + moved.rect[1]) > 0.001
     )
       throw validationError('PDF link geometry changed')
+    const provenIsolated = async (): Promise<boolean> => {
+      if (
+        source.rotation !== 0 ||
+        target.rotation !== 0 ||
+        annotation.uri ||
+        !annotation.destinationCoordinates.length ||
+        typeof sourcePage.getOperatorList !== 'function'
+      )
+        return false
+      const before = linkedItems(originalText, annotation.rect, true),
+        after = linkedItems(text, moved.rect)
+      if (before.length !== 1 || after.length !== 1 || !/^S?\d{1,4}[A-Za-z]?$/.test(after[0].str))
+        return false
+      const sourceItem = before[0],
+        glyph = after[0],
+        within = (
+          x: number,
+          y: number,
+          r: (typeof units)[number]['fragments'][number]['rect']
+        ): boolean =>
+          x >= r.x * source.width - 0.001 &&
+          x <= (r.x + r.width) * source.width + 0.001 &&
+          y >= r.y * source.height - 0.001 &&
+          y <= (r.y + r.height) * source.height + 0.001
+      const owners = units.flatMap((unit, i) =>
+        unit.fragments
+          .filter(
+            (f) =>
+              f.pageNumber === number &&
+              f.items.some(
+                (claim) =>
+                  originalText.items[claim.index] === sourceItem && claim.text === sourceItem.str
+              )
+          )
+          .map((f) => ({ i, f }))
+      )
+      if (owners.length !== 1 || unchanged(owners[0].i)) return false
+      const { i, f } = owners[0]
+      if (
+        ![annotation.rect, moved.rect].every((box) =>
+          [
+            [box[0], box[1]],
+            [box[2], box[3]]
+          ].every(([px, py]) => {
+            const [x, y] = source.convertToViewportPoint(px, py)
+            return within(x, y, f.rect)
+          })
+        )
+      )
+        return false
+      const row = visibleTargetItems
+        .flatMap((t) => {
+          if (
+            !('str' in t) ||
+            !t.str.trim() ||
+            t.transform[1] !== 0 ||
+            t.transform[2] !== 0 ||
+            t.transform[0] <= 0 ||
+            Math.abs(t.transform[5] - glyph.transform[5]) >
+              Math.min(t.transform[0], glyph.transform[0]) * 0.3
+          )
+            return []
+          return [t.transform[4], t.transform[4] + t.width].every((px) => {
+            const [x, y] = target.convertToViewportPoint(px, t.transform[5])
+            return within(x, y, f.rect)
+          })
+            ? [t]
+            : []
+        })
+        .sort((a, b) => a.transform[4] - b.transform[4])
+      isolatedDraws ??= await readIsolatedLinkLabels(sourcePage, pdfjsLib.OPS).catch(() => [])
+      return provesIsolatedLink({
+        draws: isolatedDraws,
+        rect: annotation.rect,
+        sourceLine: sourceItem,
+        targetGlyph: glyph,
+        targetRow: row,
+        source: units[i].source,
+        translation: renderUnits[i].translation
+      })
+    }
     const retainLink = (): boolean => {
       if (!canRetainLinks) return false
       // A lowered prime from the next line can fall inside the label read
@@ -1298,7 +1382,7 @@ export async function verifyPdfTranslationLinks({
       return false
     })
     if ((mergedDelimiter || nativeBracketedSources.length) && bracketedOwners.length !== 1) {
-      if (retainLink()) continue
+      if ((!mergedDelimiter && (await provenIsolated())) || retainLink()) continue
       throw validationError('PDF link left its closed numeric citation')
     }
     const verifiedClosedSuffix =
@@ -2543,7 +2627,7 @@ export async function verifyPdfTranslationLinks({
         !fragmentLabels.includes(sourceLabel) &&
         (!key || pdfLinkLabelKey(sourceLabel) !== key))
     ) {
-      if (retainLink()) continue
+      if ((await provenIsolated()) || retainLink()) continue
       throw validationError('PDF link label changed')
     }
     const owners = units.filter(
@@ -2772,7 +2856,7 @@ export async function verifyPdfTranslationLinks({
         })
     )
     if (owners.length !== 1) {
-      if (retainLink()) continue
+      if ((await provenIsolated()) || retainLink()) continue
       throw validationError('PDF link left its source paragraph')
     }
   }

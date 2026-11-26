@@ -304,7 +304,7 @@ const createService = (
       getAdapterVersion: (path) =>
         Promise.resolve(
           path === options.codexDetected?.path || path === options.managedCodexAdapterPath
-            ? (options.codexDetected?.version ?? 'codex-acp 1.6.2')
+            ? (options.codexDetected?.version ?? 'codex-acp 2.6.0')
             : undefined
         ),
       getCodexVersion: (path) =>
@@ -312,7 +312,7 @@ const createService = (
           path === options.codexDetected?.nativePath
             ? options.codexDetected.nativeVersion
             : path === options.managedCodexNativePath
-              ? 'codex-cli 0.157.1'
+              ? 'codex-cli 0.166.0'
               : path === options.codexExternalNative?.path
                 ? options.codexExternalNative.version
                 : undefined
@@ -1302,6 +1302,7 @@ describe('SettingsService: providers', () => {
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       [
         'cli_auth_credentials_store = "file"',
+        'thread_unload_delay_secs = 0',
         '# Open-Science: begin imported Codex route selection',
         'model_provider = "subscription-route"',
         '# Open-Science: end imported Codex route selection',
@@ -2033,7 +2034,7 @@ describe('SettingsService: providers', () => {
     expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
     expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
     await expect(readFile(appConfigPath, 'utf8')).resolves.toBe(
-      'cli_auth_credentials_store = "file"\n'
+      'cli_auth_credentials_store = "file"\nthread_unload_delay_secs = 0\n'
     )
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeUndefined()
@@ -3092,9 +3093,9 @@ describe('SettingsService: preflight & spawn config', () => {
     ] as const) {
       await repository.setCodexInfo({
         resolvedPath: adapter,
-        version: '1.6.2',
+        version: '2.6.0',
         nativePath,
-        nativeVersion: '0.157.1'
+        nativeVersion: '0.166.0'
       })
       const snapshot = await service.getSettingsView()
       expect(snapshot.codexManaged).toBe(true)
@@ -3123,11 +3124,11 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(authPath, authContent)
     await writeFile(configPath, 'model = "account-default"\n')
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex',
       managedCodexAdapterPath: adapterPath
     })
-    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '2.6.0' })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
       id: CODEX_ISOLATED_PROVIDER_ID,
@@ -3162,9 +3163,9 @@ describe('SettingsService: preflight & spawn config', () => {
     const service = createService(undefined, {
       codexDetected: {
         path: adapterPath,
-        version: 'codex-acp 1.6.2',
+        version: 'codex-acp 2.6.0',
         nativePath,
-        nativeVersion: 'codex-cli 0.157.1'
+        nativeVersion: 'codex-cli 0.166.0'
       }
     })
 
@@ -3173,9 +3174,9 @@ describe('SettingsService: preflight & spawn config', () => {
 
     expect(snapshot.codex).toEqual({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativeManaged: false,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     expect(await service.getPreflight()).toMatchObject({ codexReady: true, agentReady: true })
   })
@@ -3186,8 +3187,8 @@ describe('SettingsService: preflight & spawn config', () => {
     // the smoke test. Otherwise native CLI would show missing and block Continue.
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
-      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: '/usr/local/bin/codex', version: 'codex-cli 0.157.1' }
+      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 2.6.0' },
+      codexExternalNative: { path: '/usr/local/bin/codex', version: 'codex-cli 0.166.0' }
     })
 
     const result = await service.checkEnvironment()
@@ -3209,16 +3210,16 @@ describe('SettingsService: preflight & spawn config', () => {
     const globalAdapterPath = '/opt/tools/codex-acp'
     const globalNativePath = '/usr/local/bin/codex'
     const service = createService(undefined, {
-      codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.157.1' },
+      codexDetected: { path: globalAdapterPath, version: 'codex-acp 2.6.0' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.166.0' },
       managedCodexAdapterPath: managedAdapterPath
     })
     await repository.setAgentFramework('codex')
     await repository.setCodexInfo({
       resolvedPath: globalAdapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: globalNativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
 
     const result = await service.checkEnvironment()
@@ -3226,9 +3227,9 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(result.ready).toBe(true)
     expect((await repository.getSettings()).codex).toEqual({
       resolvedPath: managedAdapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: globalNativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
   })
 
@@ -3237,7 +3238,7 @@ describe('SettingsService: preflight & spawn config', () => {
     // executable is not sufficient because runtime must not fall back to ambient profile discovery.
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
-      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.6.2' }
+      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 2.6.0' }
       // No codexExternalNative: probe finds nothing, but smoke test passed.
     })
 
@@ -3259,7 +3260,7 @@ describe('SettingsService: preflight & spawn config', () => {
     // records adapterFound=true with a smoke-test-failed reason that the UI must honor.
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
-      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.6.2' },
+      codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 2.6.0' },
       codexSmokeOk: false
     })
 
@@ -3278,7 +3279,7 @@ describe('SettingsService: preflight & spawn config', () => {
     const service = createService(undefined, {
       codexDetected: {
         path: managedCodexAdapterEntry(storageRoot),
-        version: 'codex-acp 1.6.2',
+        version: 'codex-acp 2.6.0',
         nativePath: managedCodexBinary(storageRoot)
       }
     })
@@ -3294,15 +3295,15 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await service.detectCodex()
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     const provider = (
       await service.upsertProvider({
@@ -3376,14 +3377,14 @@ describe('SettingsService: preflight & spawn config', () => {
     const service = createService(undefined, {
       codexDetected: {
         path: adapterPath,
-        version: 'codex-acp 1.6.2',
+        version: 'codex-acp 2.6.0',
         nativePath,
-        nativeVersion: 'codex-cli 0.157.1'
+        nativeVersion: 'codex-cli 0.166.0'
       }
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath
     })
     const provider = (
@@ -3394,7 +3395,7 @@ describe('SettingsService: preflight & spawn config', () => {
         key: 'test-key'
       })
     ).providers[0]
-    await service.setActiveProvider(provider.id, 'gpt-5.4')
+    await service.setActiveProvider(provider.id, 'gpt-5.5')
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     const backend = await resolveActiveBackend(service)
@@ -3413,16 +3414,16 @@ describe('SettingsService: preflight & spawn config', () => {
     const service = createService(undefined, {
       codexDetected: {
         path: adapterPath,
-        version: 'codex-acp 1.6.2',
+        version: 'codex-acp 2.6.0',
         nativePath,
-        nativeVersion: 'codex-cli 0.158.0'
+        nativeVersion: 'codex-cli 0.167.0'
       }
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     const provider = (
       await service.upsertProvider({
@@ -3432,7 +3433,7 @@ describe('SettingsService: preflight & spawn config', () => {
         key: 'test-key'
       })
     ).providers[0]
-    await service.setActiveProvider(provider.id, 'gpt-5.4')
+    await service.setActiveProvider(provider.id, 'gpt-5.5')
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'codex')
 
     const backend = await resolveActiveBackend(service)
@@ -3456,9 +3457,9 @@ describe('SettingsService: preflight & spawn config', () => {
     await chmod(adapterPath, 0o755)
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
@@ -3499,15 +3500,15 @@ describe('SettingsService: preflight & spawn config', () => {
     await chmod(globalAdapterPath, 0o755)
     await chmod(globalNativePath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.157.1' },
+      codexDetected: { path: globalAdapterPath, version: 'codex-acp 2.6.0' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.166.0' },
       managedCodexAdapterPath: managedAdapterPath
     })
     await repository.setCodexInfo({
       resolvedPath: globalAdapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: globalNativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -3538,15 +3539,15 @@ describe('SettingsService: preflight & spawn config', () => {
     await chmod(globalAdapterPath, 0o755)
     await chmod(globalNativePath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.157.1' },
+      codexDetected: { path: globalAdapterPath, version: 'codex-acp 2.6.0' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.166.0' },
       managedCodexAdapterPath: join(storageRoot, 'missing-managed-adapter', 'index.js')
     })
     await repository.setCodexInfo({
       resolvedPath: globalAdapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: globalNativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -3573,10 +3574,10 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(managedAdapterPath, '#!/usr/bin/env node\n')
     await chmod(managedAdapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: managedAdapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: managedAdapterPath, version: 'codex-acp 2.6.0' },
       managedCodexAdapterPath: managedAdapterPath
     })
-    await repository.setCodexInfo({ resolvedPath: managedAdapterPath, version: '1.6.2' })
+    await repository.setCodexInfo({ resolvedPath: managedAdapterPath, version: '2.6.0' })
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
@@ -3611,15 +3612,15 @@ describe('SettingsService: preflight & spawn config', () => {
       logoutIsolated: vi.fn()
     }
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex',
       codexAuth
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
@@ -3665,7 +3666,7 @@ describe('SettingsService: preflight & spawn config', () => {
       logoutIsolated: vi.fn()
     }
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex',
       codexAuth,
       resolveCodexProxyEnvironment: () =>
@@ -3680,9 +3681,9 @@ describe('SettingsService: preflight & spawn config', () => {
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
@@ -3742,7 +3743,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.NO_PROXY).toContain('127.0.0.1')
     expect(backend.proxyEnvironmentMode).toBe('replace')
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
-      'cli_auth_credentials_store = "file"\n'
+      'cli_auth_credentials_store = "file"\nthread_unload_delay_secs = 0\n'
     )
     expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
@@ -3763,7 +3764,7 @@ describe('SettingsService: preflight & spawn config', () => {
     })
 
     const fallbackService = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex',
       resolveCodexProxyEnvironment: () => Promise.resolve(undefined)
     })
@@ -3780,14 +3781,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
@@ -3894,14 +3895,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -3930,7 +3931,7 @@ describe('SettingsService: preflight & spawn config', () => {
 
     // Chat Completions provider ⇒ bridge ⇒ Codex runs the classic-tool-mode catalog model so it
     // advertises the shell_command function tool the bridge can forward (CODEX_BRIDGE_MODEL).
-    expect(backend.sessionModel).toBe('gpt-5.4')
+    expect(backend.sessionModel).toBe('gpt-5.5')
     expect(backend.sessionEffort).toBe('none')
     expect(backend.contextWindow).toBe(1_000_000)
     expect(backend.providerConfiguration).toEqual({
@@ -4074,14 +4075,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const first = (
@@ -4175,14 +4176,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -4217,14 +4218,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -5451,8 +5452,8 @@ describe('SettingsService: skills', () => {
         // like C:\… when splitting PATH on ':' , so detection would never match the file it created).
         platform: process.platform,
         isRunnable: (path) => Promise.resolve(path === adapterPath),
-        getAdapterVersion: () => Promise.resolve('codex-acp 1.6.2'),
-        getCodexVersion: () => Promise.resolve('codex-cli 0.157.1'),
+        getAdapterVersion: () => Promise.resolve('codex-acp 2.6.0'),
+        getCodexVersion: () => Promise.resolve('codex-cli 0.166.0'),
         smokeInitialize: () => Promise.resolve(true),
         resolveNpmBinDirs: () => Promise.resolve([]),
         managedAdapterPath: adapterPath
@@ -5460,9 +5461,9 @@ describe('SettingsService: skills', () => {
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -5589,8 +5590,8 @@ describe('SettingsService: skills', () => {
         homePath: '/home',
         platform: 'linux',
         isRunnable: (path) => Promise.resolve(path === adapterPath),
-        getAdapterVersion: () => Promise.resolve('codex-acp 1.6.2'),
-        getCodexVersion: () => Promise.resolve('codex-cli 0.157.1'),
+        getAdapterVersion: () => Promise.resolve('codex-acp 2.6.0'),
+        getCodexVersion: () => Promise.resolve('codex-cli 0.166.0'),
         smokeInitialize: () => Promise.resolve(true),
         resolveNpmBinDirs: () => Promise.resolve([]),
         managedAdapterPath: adapterPath
@@ -5598,9 +5599,9 @@ describe('SettingsService: skills', () => {
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const customSkillName = 'mcp-xt'
@@ -6046,9 +6047,9 @@ describe('installCodex', () => {
       installManagedCodexImpl: async ({ installId }) => ({
         result: { installId, ok: true },
         adapterPath: '/data/codex-managed/adapter/dist/index.js',
-        adapterVersion: '1.6.2',
+        adapterVersion: '2.6.0',
         codexPath: '/data/codex-managed/codex/vendor/target/bin/codex',
-        codexVersion: '0.157.1'
+        codexVersion: '0.166.0'
       })
     })
 
@@ -6057,9 +6058,9 @@ describe('installCodex', () => {
     expect(result.ok).toBe(true)
     expect((await repository.getSettings()).codex).toEqual({
       resolvedPath: '/data/codex-managed/adapter/dist/index.js',
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/codex/vendor/target/bin/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
   })
 })
@@ -6328,7 +6329,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
-    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
+    await repository.setCodexInfo({ resolvedPath: adapterPath, version: '2.6.0' })
     await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.setAgentFramework('codex')
     const service = createService()
@@ -6427,9 +6428,9 @@ describe('SettingsService: uninstall managed runtime', () => {
     await repository.setOpencodeInfo(opencodeBin, '1.18.3')
     await repository.setCodexInfo({
       resolvedPath: codexAdapter,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('opencode')
     const service = createService(
@@ -6437,9 +6438,9 @@ describe('SettingsService: uninstall managed runtime', () => {
       {
         codexDetected: {
           path: codexAdapter,
-          version: 'codex-acp 1.6.2',
+          version: 'codex-acp 2.6.0',
           nativePath,
-          nativeVersion: 'codex-cli 0.157.1'
+          nativeVersion: 'codex-cli 0.166.0'
         }
       }
     )
@@ -6571,9 +6572,9 @@ describe('SettingsService: reasoning effort', () => {
     await repository.setAgentFramework('codex')
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: execPath,
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     const codex = (await service.upsertProvider({ type: 'codex-isolated' })).providers[0]
     await service.setActiveProvider(codex.id)
@@ -6738,14 +6739,14 @@ describe('SettingsService: reasoning effort', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      codexDetected: { path: adapterPath, version: 'codex-acp 2.6.0' },
       managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
-      version: '1.6.2',
+      version: '2.6.0',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.157.1'
+      nativeVersion: '0.166.0'
     })
     await repository.setAgentFramework('codex')
     const provider = (

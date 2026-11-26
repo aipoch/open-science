@@ -103,11 +103,15 @@ describe('matchesProviderPickerQuery', () => {
 })
 
 describe('providerKindPatch for local presets', () => {
-  it('seeds a custom chat-completions provider pointed at the local server', () => {
-    expect(providerKindPatch('local:vllm', 'messages')).toMatchObject({
+  it.each([
+    ['vllm', 'vLLM', 'http://localhost:8000'],
+    ['magpie', 'Magpie', 'http://127.0.0.1:3425/v1']
+  ])('seeds the %s connection with its local endpoint', (id, name, baseUrl) => {
+    expect(providerKindPatch(`local:${id}`, 'messages')).toMatchObject({
       type: 'custom',
-      name: 'vLLM',
-      baseUrl: 'http://localhost:8000',
+      localPresetId: id,
+      name,
+      baseUrl,
       apiEndpoint: 'chat-completions'
     })
   })

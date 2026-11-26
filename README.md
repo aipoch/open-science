@@ -51,17 +51,17 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-### 💡 AIPOCH Open-Science v1.3.4 updates
+### 💡 AIPOCH Open-Science v1.3.5 updates
 
-_November 22, 2026_
+_November 24, 2026_
 
-- **See inside the built-in Agent**: Projects can opt in to Agent tracing, exporting correlated spans for turns, model requests, and tool executions to an OTLP/HTTP receiver you host, with capture detail you control.
-- **Windows updates, unblocked**: An in-app update no longer stalls when the built-in Agent is running, and stable Windows updates apply as compact installer deltas again.
-- **Long Notebook histories stay fast**: Starting and finishing Runs, selecting results, and opening previews no longer re-read the whole history.
-- **Memory readings you can trust**: The Compute summary now matches Activity Monitor on macOS and shows committed memory against its limit on Windows.
-- **CodeBuddy reasoning efforts**: The effort picker now offers only the levels the selected CodeBuddy model actually supports.
+- **Smaller macOS updates**: In-app updates now download signed deltas instead of full installers, so most updates transfer a fraction of the bytes.
+- **Read literature without losing your place**: Figures and tables preview from in-text references, and selected passages translate in place in the PDF reader.
+- **More ways to connect models**: Cloud gateways (Cloudflare AI Gateway, AWS Bedrock Runtime, Microsoft Foundry, Vectrust) and local presets (Ollama, LM Studio, llama.cpp, vLLM) join the provider catalog.
+- **A lighter, steadier app**: Transcript history and Notebook figures load on demand, and Notebook memory admission rechecks before continuing work.
+- **Better recovery**: Session resume survives unavailable providers, and PDF translation preserves native layout more faithfully.
 
-[View the full v1.3.4 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
+[View the full v1.3.5 release notes](https://github.com/aipoch/open-science/releases/tag/v1.3.5)
 
 <a id="share-your-research"></a>
 

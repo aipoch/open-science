@@ -3564,7 +3564,9 @@ describe('PdfPreviewContent', () => {
     expect(textLayer?.classList.contains('pdf-text-layer')).toBe(true)
     expect(container.querySelector('[data-pdf-text-layer] .endOfContent')).not.toBeNull()
 
+    cancelTextLayer.mockClear()
     await act(async () => root.unmount())
+    expect(cancelTextLayer).toHaveBeenCalled()
     expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
     expect(destroyDocument).toHaveBeenCalled()
     expect(destroyDocument.mock.invocationCallOrder[0]).toBeLessThan(
@@ -5696,6 +5698,21 @@ describe('PdfPreviewContent', () => {
       expect(screen.getByRole('button', { name: 'Previous match' }).hasAttribute('disabled')).toBe(
         true
       )
+    })
+
+    it('coalesces rapid warm queries without waiting for the cold extraction debounce', async () => {
+      const getPage = vi.fn(async () => textPage('first last last'))
+      await renderSearchDocument(getPage)
+      const input = await openSearch('first')
+      expect(input.parentElement?.textContent).toContain('1/3')
+      await changeQuery(input, 'absent')
+      await act(async () => vi.advanceTimersByTimeAsync(20))
+      await changeQuery(input, 'last')
+      await act(async () => vi.advanceTimersByTimeAsync(39))
+      expect(input.parentElement?.textContent).toContain('0/0')
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(input.parentElement?.textContent).toContain('1/6')
+      expect(getPage).toHaveBeenCalledTimes(3)
     })
 
     it('announces a failed page while preserving matches before the remaining scan finishes', async () => {

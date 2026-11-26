@@ -89,6 +89,51 @@ function* citationMatches(text) {
     matcher.lastIndex = match.index + 1
   }
 }
+const bracketedReferenceGroup = /\[\s*(\d{1,4}(?:\s*[,，;]\s*\d{1,4}|\s*[–—-]\s*\d{1,4})+)\s*\]/gu
+const referenceGroupKey = (value) =>
+  value.replace(/\s/gu, '').replaceAll('—', '–').replaceAll('，', ',')
+function translatedPdfBracketedReferenceGroup(source, translation, label, offset) {
+  const wrapped = /^\[.*\]$/u.test(label),
+    inner = wrapped ? label.slice(1, -1) : label
+  if (
+    source.slice(offset, offset + label.length) !== label ||
+    !/^\d{1,4}(?:\s*[,，;]\s*\d{1,4}|\s*[–—-]\s*\d{1,4})+$/u.test(inner)
+  )
+    return undefined
+  const from = [...source.matchAll(bracketedReferenceGroup)],
+    to = [...translation.matchAll(bracketedReferenceGroup)],
+    sourceGroup = from.find((match) => {
+      const start = match.index + match[0].indexOf(match[1]),
+        lower = wrapped ? match.index : start,
+        upper = wrapped ? match.index + match[0].length : start + match[1].length
+      return (
+        offset >= lower &&
+        offset + label.length <= upper &&
+        referenceGroupKey(match[1]).includes(referenceGroupKey(inner))
+      )
+    })
+  if (!sourceGroup) return undefined
+  const key = referenceGroupKey(sourceGroup[1]),
+    sourceMatches = from.filter((match) => referenceGroupKey(match[1]) === key),
+    targetMatches = to.filter((match) => referenceGroupKey(match[1]) === key)
+  if (sourceMatches.length !== targetMatches.length) return null
+  const occurrence = sourceMatches.indexOf(sourceGroup),
+    target = targetMatches[occurrence]
+  if (!target) return null
+  if (wrapped) return { start: target.index, text: target[0] }
+  const sourceStart = sourceGroup.index + sourceGroup[0].indexOf(sourceGroup[1]),
+    targetStart = target.index + target[0].indexOf(target[1]),
+    prefix = sourceGroup[1].slice(0, offset - sourceStart).replace(/\s/gu, '').length,
+    compactLabel = referenceGroupKey(inner),
+    positions = [...target[1].matchAll(/\S/gu)].map((match) => match.index),
+    start = positions[prefix],
+    end = positions[prefix + compactLabel.length - 1]
+  return start === undefined ||
+    end === undefined ||
+    referenceGroupKey(target[1]).slice(prefix, prefix + compactLabel.length) !== compactLabel
+    ? null
+    : { start: targetStart + start, text: target[1].slice(start, end + 1) }
+}
 const compoundAuthor = `${author}\\s+${author}(?:\\s+${author}){0,2}`
 const compoundCitation = new RegExp(
   `(?<=[(（]\\s*)(?:${compoundAuthor}\\s*(?:&|and\\s+|[和与與])\\s*${authorName}|${author}\\s*(?:&|and\\s+|[和与與])\\s*${compoundAuthor})(?![A-Za-zÀ-ÖØ-öø-ÿ])`,
@@ -911,6 +956,8 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
   if (commaDated !== undefined) return commaDated
   const supporting = supportingInformationFragment(source, translation, label, offset)
   if (supporting !== undefined) return supporting
+  const groupedReference = translatedPdfBracketedReferenceGroup(source, translation, label, offset)
+  if (groupedReference !== undefined) return groupedReference
   const bracketed = translatedPdfBracketedReference(source, translation, label, offset)
   if (bracketed !== undefined)
     return bracketed ? { start: bracketed.start, text: bracketed.text } : null
@@ -922,6 +969,19 @@ export function translatedPdfLinkFragment(source, translation, label, offset) {
   if (compound !== undefined) return compound
   if (!label || /[\p{C}]/u.test(label) || source.slice(offset, offset + label.length) !== label)
     return null
+  if (/^S\d+[A-Za-z]?$/u.test(label)) {
+    // S1 and S1A may occur in the same paragraph. Bind the complete ordered
+    // figure references, never a bare occurrence inside another identifier.
+    const panels = (text) => [
+      ...text.matchAll(/(?:\b(?:Figure|Fig\.?)\s*|[图圖]\s*)(S\d+[A-Za-z]?)(?![\w.–-][\w]|[\w])/gu)
+    ]
+    const from = panels(source),
+      to = panels(translation)
+    const start = (match) => match.index + match[0].length - match[1].length
+    const i = from.findIndex((match) => start(match) === offset && match[1] === label)
+    if (i >= 0 && from.length === to.length && from.every((m, j) => m[1] === to[j][1]))
+      return { start: start(to[i]), text: label }
+  }
   // The opening bracket can share its native link with a collective author.
   // Keep it only with the complete closed author/year identity and occurrence.
   if (/^[[［(（]/u.test(label)) {

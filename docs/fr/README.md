@@ -53,17 +53,17 @@
 
 > Ce document est une traduction de `README.md` en anglais. En cas de divergence, la [version anglaise](../../README.md) fait foi.
 
-### 💡 AIPOCH Open-Science v1.3.4 — Nouveautés
+### 💡 AIPOCH Open-Science v1.3.5 — Nouveautés
 
-_22 novembre 2026_
+_24 novembre 2026_
 
-- **Regardez l’Agent intégré à l’œuvre**: Les projets peuvent activer le traçage de l’Agent, qui exporte des spans corrélées pour les tours, les requêtes de modèle et les exécutions d’outils vers un récepteur OTLP/HTTP que vous hébergez, avec un niveau de détail de capture que vous contrôlez.
-- **Mises à jour Windows débloquées**: Une mise à jour dans l’application ne reste plus bloquée pendant que l’Agent intégré tourne, et les mises à jour stables sous Windows s’appliquent à nouveau sous forme de deltas d’installation compacts.
-- **Les longs historiques Notebook restent rapides**: Démarrer et terminer des exécutions, sélectionner des résultats et ouvrir des aperçus ne relisent plus l’historique en entier.
-- **Des relevés mémoire fiables**: Le résumé de l’appareil de calcul correspond désormais à Activity Monitor sous macOS et affiche sous Windows la mémoire validée par rapport à sa limite.
-- **Niveaux de raisonnement CodeBuddy**: Le sélecteur d’effort ne propose désormais que les niveaux réellement pris en charge par le modèle CodeBuddy sélectionné.
+- **Des mises à jour macOS plus légères**: Les mises à jour dans l’application téléchargent désormais des deltas signés au lieu d’installateurs complets, si bien que la plupart des mises à jour ne transfèrent qu’une fraction des données.
+- **Lisez la littérature sans perdre le fil**: Les figures et tableaux s’affichent en aperçu depuis les références du texte, et les passages sélectionnés se traduisent sur place dans le lecteur PDF.
+- **Plus de façons de connecter des modèles**: Des passerelles cloud (Cloudflare AI Gateway, AWS Bedrock Runtime, Microsoft Foundry, Vectrust) et des préréglages locaux (Ollama, LM Studio, llama.cpp, vLLM) rejoignent le catalogue de fournisseurs.
+- **Une application plus légère et plus stable**: L’historique des transcriptions et les figures du Notebook se chargent à la demande, et l’admission mémoire du Notebook est revérifiée avant de poursuivre le travail.
+- **Une meilleure reprise**: La reprise de session survit aux fournisseurs indisponibles, et la traduction PDF préserve plus fidèlement la mise en page native.
 
-[Notes complètes v1.3.4](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
+[Notes complètes v1.3.5](https://github.com/aipoch/open-science/releases/tag/v1.3.5)
 
 <a id="share-your-research"></a>
 

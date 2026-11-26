@@ -55,6 +55,7 @@ import {
   pdfFigureSchema,
   PDF_FIGURE_LIMITS,
   type ListPdfFiguresRequest,
+  comparePdfAnnotationReadingPosition,
   pdfAnnotationSchema,
   type CreatePdfAnnotationRequest,
   type DeletePdfAnnotationRequest,
@@ -85,6 +86,7 @@ type Client = Pick<
 >
 type Transaction = Pick<
   Prisma.TransactionClient,
+  | '$queryRaw'
   | 'pdfDocument'
   | 'contentBlob'
   | 'uploadVersion'
@@ -356,6 +358,8 @@ const requireDocumentOwner = async (
   if (row.sourceKind !== 'literature-attachment-version' || !version)
     throw new Error('PDF annotation source is not available.')
 }
+
+const MAX_READING_ORDER_PREVIEW_ROWS = 20_000
 
 class PdfAnnotationRepository {
   constructor(
@@ -650,11 +654,6 @@ class PdfAnnotationRepository {
         scope.id = id
       }
       if (request.projectId) await requireProject(transaction, request.projectId)
-      const rows = await transaction.pdfAnnotation.findMany({
-        where: { ...scope, ...after },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        take: limit + 1
-      })
       const total = await transaction.pdfAnnotation.count({ where: scope })
       const documents = await transaction.pdfAnnotationDocument.findMany({
         where: { sources: { some: bindingWhere(request) } },
@@ -682,6 +681,61 @@ class PdfAnnotationRepository {
             )
         )
         .flatMap((document) => document.sources.map(bindingSource))
+      let rows: PdfAnnotationRow[]
+      if (request.readingOrderPreview) {
+        // This is a display-only prefix of one verified notebook, not a chronological cursor.
+        if (
+          !request.literatureVersionId ||
+          documents.length !== 1 ||
+          reconciliationSources.length ||
+          total > MAX_READING_ORDER_PREVIEW_ROWS
+        )
+          return { items: [], total }
+        const documentId = documents[0].id
+        const positions = await transaction.$queryRaw<
+          {
+            id: string
+            createdAt: Date
+            page: number | null
+            top: number | null
+          }[]
+        >`SELECT id, createdAt,
+          CAST(CASE json_extract(selectorJson, '$.selector.kind')
+            WHEN 'document-note' THEN 0
+            ELSE json_extract(selectorJson, '$.selector.pageNumber') END AS REAL) AS page,
+          CAST(CASE json_extract(selectorJson, '$.selector.kind')
+            WHEN 'text' THEN COALESCE(json_extract(selectorJson, '$.selector.quads[0].y'), 0)
+            WHEN 'region' THEN json_extract(selectorJson, '$.selector.rect.y')
+            WHEN 'document-note' THEN 0
+            WHEN 'page-note' THEN 0 END AS REAL) AS top
+          FROM PdfAnnotation WHERE documentId = ${documentId}`
+        const ordered = []
+        for (const { id, createdAt, page, top } of positions) {
+          if (page === null || top === null || !(createdAt instanceof Date))
+            return { items: [], total }
+          ordered.push({
+            id,
+            createdAt: createdAt.toISOString(),
+            page,
+            top
+          })
+        }
+        const ids = ordered
+          .sort(comparePdfAnnotationReadingPosition)
+          .slice(0, limit)
+          .map(({ id }) => id)
+        const selected = await transaction.pdfAnnotation.findMany({
+          where: { ...scope, id: { in: ids } }
+        })
+        const byId = new Map(selected.map((row) => [row.id, row]))
+        rows = ids.flatMap((id) => byId.get(id) ?? [])
+      } else {
+        rows = await transaction.pdfAnnotation.findMany({
+          where: { ...scope, ...after },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          take: limit + 1
+        })
+      }
       const pageRows = rows.slice(0, limit)
       const documentIds = new Set(pageRows.map((row) => row.documentId))
       const scopedSources = new Map(

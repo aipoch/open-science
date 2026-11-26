@@ -239,10 +239,22 @@ export const listPdfAnnotationsRequestSchema = scopeSchema
     sourceFileId: identity.optional(),
     versionId: identity.optional(),
     cursor: cursorSchema.optional(),
+    readingOrderPreview: z.literal(true).optional(),
     limit: z.number().int().min(1).max(PDF_ANNOTATION_LIMITS.pageSize).optional()
   })
   .strict()
   .refine(hasValidScope)
+  .refine(
+    (request) =>
+      !request.readingOrderPreview ||
+      Boolean(
+        request.literatureVersionId &&
+        !request.cursor &&
+        !request.id &&
+        !request.sourceFileId &&
+        !request.versionId
+      )
+  )
 export const updatePdfAnnotationRequestSchema = scopeSchema
   .extend({
     id: identity.max(TAG_RESOURCE_ID_MAX_LENGTH),
@@ -334,6 +346,37 @@ export const pdfAnnotationListResultSchema = z
 export const deletePdfAnnotationResultSchema = z.object({ deleted: z.boolean() }).strict()
 
 export type PdfAnnotation = z.infer<typeof pdfAnnotationSchema>
+
+type PdfAnnotationReadingPosition = Readonly<{
+  page: number
+  top: number
+  createdAt: string
+  id: string
+}>
+export const comparePdfAnnotationReadingPosition = (
+  left: PdfAnnotationReadingPosition,
+  right: PdfAnnotationReadingPosition
+): number =>
+  left.page - right.page ||
+  left.top - right.top ||
+  left.createdAt.localeCompare(right.createdAt) ||
+  left.id.localeCompare(right.id)
+
+export const pdfAnnotationReadingPosition = ({
+  id,
+  createdAt,
+  target: { selector }
+}: PdfAnnotation): PdfAnnotationReadingPosition => ({
+  id,
+  createdAt,
+  page: selector.kind === 'document-note' ? 0 : selector.pageNumber,
+  top:
+    selector.kind === 'text'
+      ? (selector.quads[0]?.y ?? 0)
+      : selector.kind === 'region'
+        ? selector.rect.y
+        : 0
+})
 export type CreatePdfAnnotationRequest = z.infer<typeof createPdfAnnotationRequestSchema>
 export type ListPdfAnnotationsRequest = z.infer<typeof listPdfAnnotationsRequestSchema>
 export type PdfAnnotationListResult = z.infer<typeof pdfAnnotationListResultSchema>

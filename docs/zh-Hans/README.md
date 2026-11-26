@@ -53,17 +53,17 @@
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-### 💡 AIPOCH Open-Science v1.3.4 更新
+### 💡 AIPOCH Open-Science v1.3.5 更新
 
-_2026 年 11 月 22 日_
+_2026 年 11 月 24 日_
 
-- **看清内置 Agent 的内部**：项目可选择开启 Agent 追踪，将回合、模型请求与工具执行彼此关联的 span 导出到你自行托管的 OTLP/HTTP 接收端，捕获细节由你掌控。
-- **Windows 更新不再受阻**：内置 Agent 运行时，应用内更新不再停滞；Windows 稳定版更新重新以紧凑的安装器增量包形式应用。
-- **长 Notebook 历史保持快速**：启动与结束 Run、选择结果、打开预览都不再重新读取整个历史。
-- **值得信赖的内存读数**：Compute 摘要现在在 macOS 上与活动监视器一致，在 Windows 上显示已提交内存相对其上限。
-- **CodeBuddy 推理档位**：档位选择器现在只提供所选 CodeBuddy 模型实际支持的级别。
+- **macOS 更新更小**：应用内更新现在下载签名增量包，而非完整安装器，大多数更新只需传输一小部分数据。
+- **阅读文献不再打断思路**：图表可从正文引用处直接预览，选中的段落在 PDF 阅读器中原位翻译。
+- **更多模型连接方式**：云网关（Cloudflare AI Gateway、AWS Bedrock Runtime、Microsoft Foundry、Vectrust）与本地预设（Ollama、LM Studio、llama.cpp、vLLM）加入提供商目录。
+- **更轻、更稳的应用**：对话记录历史与 Notebook 图表按需加载，Notebook 在继续工作前会重新检查内存准入。
+- **更可靠的恢复**：会话恢复在提供商不可用时仍可继续，PDF 翻译更忠实地保留原始版式。
 
-[查看 v1.3.4 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.4)
+[查看 v1.3.5 完整版本说明](https://github.com/aipoch/open-science/releases/tag/v1.3.5)
 
 <a id="share-your-research"></a>
 

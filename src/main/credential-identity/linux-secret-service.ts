@@ -1,5 +1,11 @@
-import { callLinuxCredentialMetadata } from './linux-dbus'
+import { createLogger } from '@aipoch/diagnostics/node'
+import { callLinuxCredentialMetadata, LinuxMetadataCallError } from './linux-dbus'
 import type { IdentityProbeResult } from './probe-contract'
+
+const log = createLogger('credential-identity')
+const reportFailure = (method: string, category: string, exitCode?: number): void => {
+  log.warn('Secret Service metadata probe failed', { method, category, exitCode })
+}
 
 const service = 'org.freedesktop.secrets'
 const servicePath = '/org/freedesktop/secrets'
@@ -38,24 +44,45 @@ export const probeLinuxCredentialIdentity = (appName: string): IdentityProbeResu
     if (
       result.length !== 2 ||
       !result.every((list) => Array.isArray(list) && list.every(objectPath))
-    )
+    ) {
+      reportFailure('SearchItems', 'invalid-response')
       return { status: 'error' }
+    }
     const [unlocked, locked] = result as string[][]
-    if (locked.length) return { status: 'access-blocked' }
-    if (unlocked.length > 1) return { status: 'error' }
+    if (locked.length) {
+      reportFailure('SearchItems', 'locked-items')
+      return { status: 'access-blocked' }
+    }
+    if (unlocked.length > 1) {
+      reportFailure('SearchItems', 'multiple-unlocked-items')
+      return { status: 'error' }
+    }
     const alias = call(servicePath, serviceInterface, 'ReadAlias', 's', ['default'])
-    if (alias.length !== 1 || !objectPath(alias[0])) return { status: 'access-blocked' }
+    if (alias.length !== 1 || !objectPath(alias[0])) {
+      reportFailure('ReadAlias', 'default-collection-unavailable')
+      return { status: 'access-blocked' }
+    }
     const property = call(alias[0], 'org.freedesktop.DBus.Properties', 'Get', 'ss', [
       'org.freedesktop.Secret.Collection',
       'Locked'
     ])
     const lockedValue = property[0] as { type?: unknown; data?: unknown } | undefined
-    if (property.length !== 1 || lockedValue?.type !== 'b' || typeof lockedValue.data !== 'boolean')
+    if (
+      property.length !== 1 ||
+      lockedValue?.type !== 'b' ||
+      typeof lockedValue.data !== 'boolean'
+    ) {
+      reportFailure('Get', 'invalid-response')
       return { status: 'error' }
-    return {
-      status: lockedValue.data ? 'access-blocked' : unlocked.length ? 'exists' : 'not-found'
     }
-  } catch {
+    if (lockedValue.data) {
+      reportFailure('Get', 'collection-locked')
+      return { status: 'access-blocked' }
+    }
+    return { status: unlocked.length ? 'exists' : 'not-found' }
+  } catch (error) {
+    if (error instanceof LinuxMetadataCallError)
+      reportFailure(error.method, error.message, error.exitCode)
     return { status: 'error', reason: 'linux-secret-service-metadata-unavailable' }
   }
 }

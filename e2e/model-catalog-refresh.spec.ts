@@ -13,6 +13,7 @@ test('limits image catalog refresh to official providers and saves custom model 
   await settings.locator('[data-scenario-model="image-generation"]').click()
   await settings.getByRole('button', { name: 'Image services', exact: true }).click()
   await settings.getByRole('button', { name: 'Add image service', exact: true }).click()
+  await settings.locator('[data-provider-kind="custom"]').click()
 
   const refresh = settings.getByRole('button', { name: 'Refresh model list', exact: true })
   const providerType = settings.getByRole('combobox', { name: 'Provider type', exact: true })

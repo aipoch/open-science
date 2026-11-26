@@ -83,6 +83,27 @@ export function pdfTranslationLayoutFragments(
       Math.abs(a.y - b.y) * page.height <= 0.1 &&
       Math.abs(a.height - b.height) * page.height <= 0.1 &&
       Math.abs(b.x - a.x - a.width) * page.width <= 0.25
+    // A short last line ending in a citation is not a narrower column. Only
+    // borrow its empty right margin under a multi-line, flush-left prose run.
+    const citationTail =
+      !unit.sourceOnly &&
+      !unit.figure &&
+      !unit.preserve &&
+      !unit.referenceBoundary &&
+      fragment === unit.fragments.at(-1) &&
+      unit.fragments.length >= 3 &&
+      /\[\d{1,4}(?:,\s*\d{1,4})+\]\.$/u.test(unit.source) &&
+      previous.items.length >= 2 &&
+      fragment.items.length === 1 &&
+      unit.source.endsWith(fragment.items[0].text.trim()) &&
+      a.height >= b.height * 1.8 &&
+      b.width < a.width &&
+      Math.abs(a.x - b.x) * page.width <= 0.5 &&
+      gap >= 0 &&
+      gap <= 2 &&
+      !source.originalRegions?.some(
+        (region) => region.pageNumber === fragment.pageNumber && intersects(rect, region.rect)
+      )
     if (
       (splitCaptionPanelRow ||
         (b.y > a.y &&
@@ -92,7 +113,8 @@ export function pdfTranslationLayoutFragments(
           gap <= 2 &&
           // A paragraph can narrow beside a figure. Keep that change in footprint
           // instead of filling its bounding rectangle across the neighboring graphic.
-          (overlap >= Math.max(a.width, b.width) * 0.8 ||
+          (citationTail ||
+            overlap >= Math.max(a.width, b.width) * 0.8 ||
             (isPdfTranslationCaption(unit.source) &&
               fragment === unit.fragments.at(-1) &&
               Math.abs(a.x - b.x) * page.width <= 1 &&

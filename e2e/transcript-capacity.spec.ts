@@ -167,10 +167,8 @@ test('does not force unannotated transcript geometry during native layout change
   await expect(
     page.getByRole('button', { name: 'Load full conversation', exact: true })
   ).toHaveCount(0)
-  // Completion and history-loading rows have their own scroll anchors. Count the fixture messages.
-  await expect(page.locator('[data-message-id^="layout-"]')).toHaveCount(80, {
-    timeout: 60_000
-  })
+  // The window includes completion rows. Wait for the offscreen fixture message used below.
+  await expect(page.locator('[data-message-id="layout-380"]')).toBeAttached()
   await expect(page.locator('[data-annotation-surface]').first()).toBeAttached()
 
   // Count the synchronous geometry reads identified by the issue's CPU reproduction.

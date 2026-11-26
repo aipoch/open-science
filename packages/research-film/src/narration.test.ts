@@ -38,6 +38,42 @@ describe('research video narration', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+  it.each([1, 8])(
+    'aligns proportional captions to %i seconds of audio without probes',
+    async (duration) => {
+      const root = await mkdtemp(join(tmpdir(), 'research-video-proportional-'))
+      const caption =
+        'We compare the average temperature across three independent experiments today.'
+      const synthesize = vi.fn(async () => ({
+        samples: new Float32Array(duration * 8000),
+        sampleRate: 8000
+      }))
+      const measureDuration = vi.fn()
+      try {
+        const result = await prepareVideoNarration({
+          spec: { scenes: [{ id: 's', msg: 0, lines: [{ caption }], panels: [] }] },
+          synthesizer: {
+            identity: 'fixture',
+            proportionalTiming: true,
+            synthesize,
+            measureDuration
+          },
+          outputDirectory: join(root, 'voice'),
+          signal: new AbortController().signal
+        })
+        const { words } = result.voices.s_0
+        expect(words).toHaveLength(10)
+        expect(words[0][0]).toBe(0)
+        expect(words.at(-1)?.[1]).toBe(duration)
+        expect(words.every(([a, b], i) => b > a && (!i || a === words[i - 1][1]))).toBe(true)
+        expect(synthesize).toHaveBeenCalledExactlyOnceWith(caption)
+        expect(measureDuration).not.toHaveBeenCalled()
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('rejects an oversized stereo mix before opening line recordings', async () => {
     const voice = { duration: 275, words: [[0, 275] as [number, number]] }
     await expect(

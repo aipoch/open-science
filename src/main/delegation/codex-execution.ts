@@ -57,14 +57,14 @@ type CodexDelegateExecution = Readonly<{
 
 /**
  * Pin reviewed identities independently of the download target: an upgrade must not implicitly
- * certify its tool inventory. 0.157.1 was audited with ACP 1.6.2 and agents.enabled=false;
+ * certify its tool inventory. 0.166.0 was audited with ACP 2.6.0 and agents.enabled=false;
  * features.multi_agent{,_v2}=false alone does not override the new models' native delegation.
- * Upstream: rust-v0.157.1 codex-rs/core/src/config/mod.rs::multi_agent_version_override.
+ * Upstream: rust-v0.166.0 codex-rs/core/src/config/mod.rs::multi_agent_version_override.
  */
 const getCodexNativeDelegationAudit = (
   identity: CodexRuntimeIdentity
 ): readonly NativeDelegationAudit[] => {
-  const reviewed = identity.nativeVersion === '0.157.1' && identity.adapterVersion === '1.6.2'
+  const reviewed = identity.nativeVersion === '0.166.0' && identity.adapterVersion === '2.6.0'
   if (!reviewed) {
     return Object.freeze(
       (['task', 'agent', 'multi-agent'] as const).map((entryPoint) =>
