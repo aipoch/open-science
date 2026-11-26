@@ -1,3 +1,4 @@
+import { currentSendAttempt, writeSendAttempt } from '../send-attempt-diagnostics'
 import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import { taskPromptOwnerOf } from '../../shared/task-continuation'
@@ -616,7 +617,10 @@ class AcpPromptTurnWorkflow {
         this.options.onPromptStarted(request.sessionId, interaction.turnToken, mode.promptAttemptId)
       )
       this.options.emitState()
+      writeSendAttempt({ phase: 'prompt-admission', result: 'completed' })
       log.info('prompt start', {
+        ...currentSendAttempt(),
+        ...(mode.promptAttemptId ? { promptAttemptId: mode.promptAttemptId } : {}),
         sessionId: request.sessionId,
         textLength: request.text?.length ?? 0
       })

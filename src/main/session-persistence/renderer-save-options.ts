@@ -3,6 +3,7 @@ import type {
   SaveSessionOptions,
   SessionConflictRebaseField
 } from '../../shared/session-persistence'
+import { readSendAttemptIdentity } from '../../shared/send-attempt-diagnostics'
 import { sanitizeSessionConversationCommands } from '../../shared/session-conversation-command'
 
 const RENDERER_SESSION_CONFLICT_REBASE_FIELDS = new Set<SessionConflictRebaseField>([
@@ -23,6 +24,7 @@ export const sanitizeRendererSaveSessionOptions = (
 ): SaveSessionOptions | undefined => {
   if (typeof options !== 'object' || options === null) return undefined
   const fields = Reflect.get(options, 'conflictRebaseFields')
+  const sendAttempt = readSendAttemptIdentity(Reflect.get(options, 'sendAttempt'))
   const expectedRevision = Reflect.get(options, 'expectedRevision')
   if (
     expectedRevision !== undefined &&
@@ -50,8 +52,10 @@ export const sanitizeRendererSaveSessionOptions = (
   ]
   return expectedRevision !== undefined ||
     conflictRebaseFields.length > 0 ||
-    conversationCommands.length > 0
+    conversationCommands.length > 0 ||
+    sendAttempt !== undefined
     ? {
+        ...(sendAttempt ? { sendAttempt } : {}),
         ...(expectedRevision !== undefined ? { expectedRevision } : {}),
         ...(conflictRebaseFields.length ? { conflictRebaseFields } : {}),
         ...(conversationCommands.length ? { conversationCommands } : {})

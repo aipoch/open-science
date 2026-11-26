@@ -184,7 +184,10 @@ const options = (
       }
     },
     runtime: {
-      sendMessage: vi.fn(() => Promise.resolve({ sessionId: 'session-a', messageId: 'message-a' })),
+      sendMessage: vi.fn(async (request) => {
+        request.onPreparationStarted?.()
+        return { sessionId: 'session-a', messageId: 'message-a' }
+      }),
       resendEditedMessage: vi.fn(() => Promise.resolve(true)),
       cancelRun: vi.fn(() => Promise.resolve()),
       resumeInterruptedSession: vi.fn(() => Promise.resolve()),
@@ -393,6 +396,7 @@ describe('workspace conversation controller', () => {
       const input = options({ activeSession, getSession: () => activeSession })
       let rejected: (() => void) | undefined
       input.runtime.sendMessage = vi.fn(async (request) => {
+        request.onPreparationStarted?.()
         request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-a' })
         rejected = () => request.onPreparationRejected?.('Preparation failed', 'session-a')
         if (timing === 'before-result') rejected()
@@ -455,7 +459,8 @@ describe('workspace conversation controller', () => {
     mounted.push(hook)
     await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
     expect(input.composer.lifecycle.consumePdfProseReading).not.toHaveBeenCalled()
-    expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledOnce()
+    expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
   })
 
   it('keeps the captured policy when the queue rejects a missing branch identity', () => {
@@ -555,10 +560,10 @@ describe('workspace conversation controller', () => {
         pdfReadingPositionSource: { sourceKind: 'artifact-version', sourceVersionId: 'version-1' }
       })
     )
-    expect(hook.result.current.optimisticMessage).toMatchObject({
-      content: '',
-      annotations: [annotation]
-    })
+    const sent = vi.mocked(input.runtime.sendMessage).mock.calls[0][0]
+    expect(sent.composerSnapshot).toBe(
+      vi.mocked(input.composer.lifecycle.captureSend).mock.results[0].value
+    )
     expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
 
     await act(async () =>
@@ -708,6 +713,7 @@ describe('workspace conversation controller', () => {
       | NonNullable<Parameters<typeof input.runtime.sendMessage>[0]['onPreparationRejected']>
       | undefined
     input.runtime.sendMessage = vi.fn(async (request) => {
+      request.onPreparationStarted?.()
       rejected = request.onPreparationRejected
       return { sessionId: 'session-a', messageId: 'prompt-a' }
     })
@@ -892,6 +898,7 @@ describe('workspace conversation controller', () => {
   it('keeps the original operation error after receipt rejection restores the real composer', async () => {
     const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
     input.runtime.sendMessage = vi.fn(async (request) => {
+      request.onPreparationStarted?.()
       request.onPreparationRejected?.('Synthetic submission write failure')
       return undefined
     })
@@ -951,7 +958,10 @@ describe('workspace conversation controller', () => {
     const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
     input.runtime.sendMessage = vi.fn<
       WorkspaceConversationControllerOptions['runtime']['sendMessage']
-    >(() => new Promise(() => undefined))
+    >((request) => {
+      request.onPreparationStarted?.()
+      return new Promise(() => undefined)
+    })
     let composer!: ReturnType<typeof useWorkspaceComposerController>
     let controller!: WorkspaceConversationController
     const root = createRoot(document.createElement('div'))
@@ -1011,65 +1021,12 @@ describe('workspace conversation controller', () => {
     }
   })
 
-  it('exposes the submitted draft immediately while runtime admission is pending', async () => {
-    let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
-    const admission = new Promise<{ sessionId: string; messageId: string }>((resolve) => {
-      resolveAdmission = resolve
-    })
-    const input = options()
-    input.runtime.sendMessage = vi.fn(() => admission)
-    const hook = renderController(input)
-    mounted.push(hook)
-
-    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
-
-    expect(hook.result.current.optimisticMessage).toMatchObject({
-      role: 'user',
-      content: 'hello',
-      parts: textDoc('hello').nodes,
-      uploads: []
-    })
-
-    await act(async () => resolveAdmission({ sessionId: 'session-a', messageId: 'message-a' }))
-    expect(hook.result.current.optimisticMessage).toBeUndefined()
-  })
-
-  it('removes only this send preview when its real message appears before admission settles', async () => {
-    let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
-    let onMessageAppended: ((message: { sessionId: string; messageId: string }) => void) | undefined
-    const input = options()
-    input.runtime.sendMessage = vi.fn((request) => {
-      onMessageAppended = request.onMessageAppended
-      return new Promise<{ sessionId: string; messageId: string }>((resolve) => {
-        resolveAdmission = resolve
-      })
-    })
-    const hook = renderController(input)
-    mounted.push(hook)
-    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
-    expect(hook.result.current.optimisticMessage?.content).toBe('hello')
-
-    act(() => onMessageAppended?.({ sessionId: 'session-a', messageId: 'real-message-1' }))
-    expect(hook.result.current.optimisticMessage).toBeUndefined()
-    // Clearing the preview must not unlock a send that is still in flight.
-    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
-    expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
-    await act(async () => resolveAdmission({ sessionId: 'session-a', messageId: 'real-message-1' }))
-
-    const previousNotification = onMessageAppended
-    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
-    expect(hook.result.current.optimisticMessage?.content).toBe('hello')
-    // Identical text (even a reused draft version) is a different submission.
-    act(() => previousNotification?.({ sessionId: 'session-a', messageId: 'real-message-1' }))
-    expect(hook.result.current.optimisticMessage?.content).toBe('hello')
-    await act(async () => resolveAdmission({ sessionId: 'session-a', messageId: 'real-message-2' }))
-  })
-
   it('restores a failed draft even after its preview handed off to the real message', async () => {
     let rejectAdmission!: (error: Error) => void
     let onMessageAppended: (() => void) | undefined
     const input = options()
     input.runtime.sendMessage = vi.fn((request) => {
+      request.onPreparationStarted?.()
       onMessageAppended = () =>
         request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'real-message' })
       return new Promise<{ sessionId: string; messageId: string }>((_resolve, reject) => {
@@ -1113,6 +1070,7 @@ describe('workspace conversation controller', () => {
     vi.mocked(input.composer.lifecycle.captureSend).mockReturnValue(snapshot)
     let rejected: ((message: string) => void) | undefined
     input.runtime.sendMessage = vi.fn(async (request) => {
+      request.onPreparationStarted?.()
       rejected = request.onPreparationRejected
       request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'optimistic-prompt' })
       return { sessionId: 'session-a', messageId: 'optimistic-prompt' }
@@ -1143,6 +1101,7 @@ describe('workspace conversation controller', () => {
     const input = options()
     let rejected: ((message: string) => void) | undefined
     input.runtime.sendMessage = vi.fn(async (request) => {
+      request.onPreparationStarted?.()
       rejected = request.onPreparationRejected
       return { sessionId: 'session-a', messageId: 'optimistic-prompt' }
     })
@@ -2010,8 +1969,9 @@ describe('workspace conversation controller', () => {
       order.push('clear')
       return true
     })
-    input.runtime.sendMessage = vi.fn(async () => {
+    input.runtime.sendMessage = vi.fn(async (request) => {
       order.push('send')
+      request.onPreparationStarted?.()
       return { sessionId: 'session-a', messageId: 'message-a' }
     })
     const hook = renderController(input)
@@ -2020,7 +1980,7 @@ describe('workspace conversation controller', () => {
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
 
-    expect(order).toEqual(['barrier', 'clear', 'send'])
+    expect(order).toEqual(['barrier', 'send', 'clear'])
     expect(input.session.lifecycle.prepareSpecialistSend).toHaveBeenCalledWith(
       'session-a',
       'specialist-b'
@@ -2048,14 +2008,17 @@ describe('workspace conversation controller', () => {
 
   it('restores the captured draft when runtime submit has no result', async () => {
     const input = options()
-    input.runtime.sendMessage = vi.fn(() => Promise.resolve(undefined))
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      request.onPreparationStarted?.()
+      return undefined
+    })
     const hook = renderController(input)
     mounted.push(hook)
 
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: ['skill-a'] }))
     await vi.waitFor(() => expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalled())
 
-    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a')
+    expect(input.composer.lifecycle.clearDraft).toHaveBeenCalledWith('session-a', 1)
     expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledWith(
       expect.objectContaining({ draftKey: 'session-a', version: 1 })
     )
@@ -2101,9 +2064,8 @@ describe('workspace conversation controller', () => {
     mounted.push(hook)
 
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
-    await vi.waitFor(() =>
-      expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledWith(snapshot)
-    )
+    await vi.waitFor(() => expect(input.composer.actions.setError).toHaveBeenCalled())
+    expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
 
     expect(input.composer.actions.setError).toHaveBeenCalledWith(
       expect.stringContaining('fixed version')
@@ -2624,6 +2586,7 @@ describe('draft acceptance notifications', () => {
       if (phase === 'validation') input.agentConfigurationReady = false
       else
         input.runtime.sendMessage = vi.fn(async (request) => {
+          request.onPreparationStarted?.()
           request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-a' })
           request.onPreparationRejected?.('Preparation failed', 'session-a')
           return undefined

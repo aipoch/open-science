@@ -6467,6 +6467,8 @@
     "Fork cancelled": "Bifurcación cancelada",
     "Open forked Session": "Abrir sesión bifurcada",
     "Temporarily read-only during fork": "Solo lectura temporal durante la bifurcación",
+    "Waiting for earlier conversation changes timed out. Try sending again.": "Se agotó el tiempo de espera para guardar los cambios anteriores de la conversación. Vuelva a intentar el envío.",
+    "Saving the message before sending timed out. Try sending again.": "Se agotó el tiempo para guardar el mensaje antes de enviarlo. Vuelva a intentar el envío.",
     "Session storage is not ready.": "El almacenamiento de sesiones no está listo.",
     "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "Las habilidades propias se incluyen de forma predeterminada. Las habilidades destacadas se referencian por nombre. Seleccione otras habilidades para incluir sus archivos.",
     "Unbundled Skills remain referenced": "Las habilidades no incluidas conservan sus referencias",

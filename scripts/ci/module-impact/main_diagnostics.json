@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/main/send-attempt-diagnostics.ts",
     "src/main/resource-diagnostics/activity.ts",
     "src/main/resource-diagnostics/activity.test.ts",
     "src/main/resource-diagnostics/recorder.ts",
@@ -19,6 +20,7 @@
     "src/shared/resource-recording.ts"
   ],
   "interfacePaths": [
+    "src/main/send-attempt-diagnostics.ts",
     "src/main/resource-diagnostics/activity.ts",
     "src/main/resource-diagnostics/recorder.ts",
     "src/main/resource-diagnostics/facts.ts",

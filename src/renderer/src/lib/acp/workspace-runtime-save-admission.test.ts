@@ -21,7 +21,7 @@ import {
   flushSessionPersistence,
   saveSessionInOrder
 } from '../session-persistence/session-persistence'
-import { sendWorkspaceMessage } from './workspace-runtime-command-owner'
+import { readWorkspaceSendPreview, sendWorkspaceMessage } from './workspace-runtime-command-owner'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
 
 // Join the public renderer send/intent boundary to Main's actual save and runtime writers.
@@ -173,6 +173,89 @@ describe('workspace send while the previous Main terminal projection is queued',
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+  })
+
+  it('exposes the original composer snapshot until the append write is acknowledged', async () => {
+    const h = await harness()
+    await h.terminal('stop')
+    await h.commitTerminal()
+    const snapshot = {
+      draftKey: 'session-1',
+      version: 1,
+      doc: { nodes: [{ type: 'text' as const, text: 'Next question' }] },
+      annotations: [],
+      attachments: []
+    }
+    const acknowledged = Promise.withResolvers<void>()
+    const stored = Promise.withResolvers<void>()
+    const onPersisted = vi.fn()
+    let flushCount = 0
+    const send = sendWorkspaceMessage(
+      h.runtime as never,
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        text: 'Next question',
+        composerSnapshot: snapshot,
+        onMessagePersisted: onPersisted
+      },
+      {
+        flushPersistence: async (target) => {
+          await h.flush(target)
+          if (++flushCount === 2) {
+            stored.resolve()
+            await acknowledged.promise
+          }
+        }
+      }
+    )
+    try {
+      await stored.promise
+      const preview = readWorkspaceSendPreview('project-1', 'session-1')
+      expect(preview?.snapshot).toBe(snapshot)
+      expect(preview?.messageId).toBe(h.durable().messages.at(-1)?.id)
+      expect(readWorkspaceSendPreview('project-2', 'session-1')).toBeUndefined()
+      expect(onPersisted).not.toHaveBeenCalled()
+      expect(h.runtime.sendPrompt).not.toHaveBeenCalled()
+    } finally {
+      acknowledged.resolve()
+      await send
+    }
+    expect(readWorkspaceSendPreview('project-1', 'session-1')).toBeUndefined()
+    expect(onPersisted).toHaveBeenCalledOnce()
+    expect(h.runtime.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the persisted history when admission rejects after the snapshot is released', async () => {
+    const h = await harness()
+    await h.terminal('stop')
+    await h.commitTerminal()
+    h.runtime.sendPrompt.mockRejectedValueOnce(new Error('Fixture admission rejection'))
+    const onPersisted = vi.fn()
+    const result = await sendWorkspaceMessage(
+      h.runtime as never,
+      {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        text: 'Next question',
+        composerSnapshot: {
+          draftKey: 'session-1',
+          version: 1,
+          doc: { nodes: [{ type: 'text', text: 'Next question' }] },
+          annotations: [],
+          attachments: []
+        },
+        onMessagePersisted: onPersisted
+      },
+      { flushPersistence: h.flush, awaitPromptAdmission: true }
+    )
+    expect(result).toBeUndefined()
+    expect(onPersisted).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(h.durable().promptPreparation).toBeUndefined())
+    expect(h.durable().messages.filter(({ content }) => content === 'Next question')).toHaveLength(
+      1
+    )
+    expect(readWorkspaceSendPreview('project-1', 'session-1')).toBeUndefined()
   })
 
   it('keeps a pending user intent retryable when it meets Main activeRun', async () => {

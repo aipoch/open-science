@@ -6467,6 +6467,8 @@
     "Fork cancelled": "Duplication annulée",
     "Open forked Session": "Ouvrir la session dupliquée",
     "Temporarily read-only during fork": "Lecture seule temporaire pendant la duplication",
+    "Waiting for earlier conversation changes timed out. Try sending again.": "Le délai d’attente de l’enregistrement des modifications précédentes de la conversation est dépassé. Réessayez d’envoyer le message.",
+    "Saving the message before sending timed out. Try sending again.": "Le délai d’enregistrement du message avant l’envoi est dépassé. Réessayez de l’envoyer.",
     "Session storage is not ready.": "Le stockage des sessions n’est pas prêt.",
     "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "Les compétences détenues sont incluses par défaut. Les compétences mises en avant sont référencées par leur nom. Cochez les autres compétences pour inclure leurs fichiers.",
     "Unbundled Skills remain referenced": "Les compétences non incluses restent référencées",

@@ -1,3 +1,4 @@
+import { traceMainSendWait } from '../send-attempt-diagnostics'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
 import {
   loadSessionHistoryPageRequestSchema,
@@ -2553,15 +2554,19 @@ class SessionRepository {
       if ((await this.inspectFileBoundary(sessionJournalPath(filePath))) !== 'missing')
         throw new SessionJournalCorruptionError('Session format changed before JSON replacement.')
       this.journal.invalidate(filePath)
-      await this.atomicWriteContents(filePath, preparedWrite.contents)
+      await traceMainSendWait('commit-session', () =>
+        this.atomicWriteContents(filePath, preparedWrite.contents!)
+      )
       return
     }
     try {
       const identity = { expectedRevision: sessionRevision(session) - 1 }
       await this.mutateCatalog(async () => {
-        if (preparedWrite.journalWrite)
-          await this.journal.writePrepared(filePath, preparedWrite.journalWrite, identity)
-        else await this.journal.write(filePath, { document, ...identity })
+        await traceMainSendWait('commit-session', () =>
+          preparedWrite.journalWrite
+            ? this.journal.writePrepared(filePath, preparedWrite.journalWrite, identity)
+            : this.journal.write(filePath, { document, ...identity })
+        )
       })
     } catch (error) {
       if (error instanceof SessionJournalSizeError)

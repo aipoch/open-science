@@ -48,7 +48,12 @@ export type ComposerPdfProseReadingRestore = {
 
 export type ComposerDraft = {
   // Process-local retry owner for this restored snapshot; never a Main Session field.
-  retrySessionOwner?: { sessionId: string; projectId: string }
+  retrySessionOwner?: {
+    sessionId: string
+    projectId: string
+    messageId?: string
+    draftVersion?: number
+  }
   setupSessionToken?: string
   queuedEdit?: MessageQueueEditIntent
   restoredPdfProseReading?: ComposerPdfProseReadingRestore

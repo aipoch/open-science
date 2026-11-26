@@ -54,19 +54,30 @@ const useWorkspaceOperationErrors = create<{
   providerValidations: Record<string, ProviderValidationSnapshot>
   providerTargets: Record<string, ProviderTarget | undefined>
   diagnostics: Record<string, OperationDiagnostic>
+  unconfirmedSendStorage: Record<string, true>
 }>(() => ({
   contextResets: {},
   errors: {},
   failures: {},
   providerValidations: {},
   providerTargets: {},
-  diagnostics: {}
+  diagnostics: {},
+  unconfirmedSendStorage: {}
 }))
+
+const setUnconfirmedWorkspaceSendStorage = (sessionId: string, unconfirmed: boolean): void => {
+  useWorkspaceOperationErrors.setState(({ unconfirmedSendStorage }) => {
+    const next = { ...unconfirmedSendStorage }
+    if (unconfirmed) next[sessionId] = true
+    else delete next[sessionId]
+    return { unconfirmedSendStorage: next }
+  })
+}
 
 const reportWorkspaceOperationError = (
   sessionId: string,
   error: string,
-  context?: { providerTarget?: ProviderTarget } & (
+  context?: { providerTarget?: ProviderTarget; sendStorageTimeout?: boolean } & (
     { operation: 'resume'; rawError: unknown } | { operation?: undefined }
   )
 ): void => {
@@ -86,13 +97,17 @@ const reportWorkspaceOperationError = (
         errors: { ...errors, [sessionId]: error },
         failures: {
           ...failures,
-          [sessionId]: classifyFailure({
-            origin: 'operation',
-            code: context?.operation === 'resume' ? 'resume-operation' : undefined,
-            text:
-              context?.operation === 'resume' ? (errorDetail(context.rawError) ?? error) : error,
-            model: context?.providerTarget?.model
-          })
+          [sessionId]: context?.sendStorageTimeout
+            ? { category: 'session', reason: 'session/send-storage-timeout', diagnostics: {} }
+            : classifyFailure({
+                origin: 'operation',
+                code: context?.operation === 'resume' ? 'resume-operation' : undefined,
+                text:
+                  context?.operation === 'resume'
+                    ? (errorDetail(context.rawError) ?? error)
+                    : error,
+                model: context?.providerTarget?.model
+              })
         },
         providerValidations: {
           ...providerValidations,
@@ -138,6 +153,7 @@ const clearWorkspaceOperationError = (sessionId: string): void => {
 export {
   useWorkspaceOperationErrors,
   reportWorkspaceOperationError,
+  setUnconfirmedWorkspaceSendStorage,
   clearWorkspaceOperationError,
   useWorkspaceElicitationFailures,
   reportWorkspaceElicitationFailure

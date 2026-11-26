@@ -335,6 +335,7 @@ export type SessionConflictRebaseField =
   | 'pinned'
 
 export type SaveSessionOptions = {
+  sendAttempt?: import('../send-attempt-diagnostics').SendAttemptIdentity
   // Recovery retries must not overwrite an authority that changed after the user's review.
   expectedRevision?: number
   runtimeWriterToken?: string

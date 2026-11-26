@@ -1,3 +1,4 @@
+import { isSendDiagnosticId, readSendAttemptEvent } from '../../shared/send-attempt-diagnostics'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { readHarnessErrorDiagnostics } from '../../shared/failure/contract'
 import { diagnosticText, projectDiagnosticError, type DiagnosticTextOptions } from './detail'
@@ -404,7 +405,19 @@ export function projectDiagnosticLog(
     if (identifier(source[key])) result[key] = diagnosticText(source[key], options, 200)
   if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
+  if (
+    source.msg === 'conversation send phase' &&
+    (source.scope === 'renderer' || source.scope === 'send-attempt')
+  ) {
+    const event = readSendAttemptEvent(data)
+    if (event) result.diagnostics = event
+    return result
+  }
   const diagnostic = fields(data, options)
+  if (source.msg === 'prompt start' || String(source.msg).startsWith('acp:resume-session ')) {
+    for (const key of ['sendAttemptId', 'promptMessageId', 'promptAttemptId'])
+      if (isSendDiagnosticId(data[key])) diagnostic[key] = data[key]
+  }
   if (
     source.scope === 'acp-bridge' &&
     source.msg === 'bridge upstream error' &&

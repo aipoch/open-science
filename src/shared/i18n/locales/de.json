@@ -6302,6 +6302,8 @@
     "Fork cancelled": "Abzweigung abgebrochen",
     "Open forked Session": "Abgezweigte Session öffnen",
     "Temporarily read-only during fork": "Während der Abzweigung vorübergehend schreibgeschützt",
+    "Waiting for earlier conversation changes timed out. Try sending again.": "Zeitüberschreitung beim Speichern früherer Änderungen an der Konversation. Versuchen Sie erneut, die Nachricht zu senden.",
+    "Saving the message before sending timed out. Try sending again.": "Zeitüberschreitung beim Speichern der Nachricht vor dem Senden. Versuchen Sie es erneut.",
     "Session storage is not ready.": "Der Sitzungsspeicher ist nicht bereit.",
     "Owned Skills are bundled by default. Featured Skills are referenced by name. Check other Skills to include their files.": "Eigene Fähigkeiten werden standardmäßig mitgeliefert. Empfohlene Fähigkeiten werden über ihren Namen referenziert. Wählen Sie weitere Fähigkeiten aus, um deren Dateien einzuschließen.",
     "Unbundled Skills remain referenced": "Nicht mitgelieferte Fähigkeiten bleiben referenziert",

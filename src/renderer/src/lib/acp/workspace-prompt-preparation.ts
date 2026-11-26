@@ -2,7 +2,10 @@ import { i18next } from '../../i18n'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
 import { discardPreparedSessionConversationIntents } from '../../stores/session-conversation-intents'
 import { toPersistedSession, useSessionStore } from '../../stores/session-store'
-import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import {
+  loadPersistedSession,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
 
 export type WorkspacePromptPreparation = {
   id: string
@@ -11,6 +14,13 @@ export type WorkspacePromptPreparation = {
   authority: PersistedChatSession
   previousAdmissionIds: ReadonlySet<string>
 }
+
+type WorkspacePromptReceipt = Pick<
+  WorkspacePromptPreparation,
+  'id' | 'sessionId' | 'promptMessageId' | 'authority'
+>
+
+const expiredPromptReceipts = new Map<string, WorkspacePromptReceipt>()
 
 export const ownsWorkspacePromptPreparation = (
   preparation: WorkspacePromptPreparation
@@ -32,7 +42,8 @@ export const ownsWorkspacePromptPreparation = (
 export const prepareWorkspacePrompt = async (
   session: PersistedChatSession,
   promptMessageId: string,
-  mode: 'new' | 'resume' | 'rearm'
+  mode: 'new' | 'resume' | 'rearm',
+  options?: { id: string; signal: AbortSignal }
 ): Promise<WorkspacePromptPreparation> => {
   // Main holds one witness per Session. A new preparation built over a retained one could never
   // release it, so its exact rollback is replayed first and the fresh live snapshot is used.
@@ -42,7 +53,8 @@ export const prepareWorkspacePrompt = async (
     ? useSessionStore.getState().sessions.find(({ id }) => id === session.id)
     : undefined
   if (liveSource) session = toPersistedSession(liveSource)
-  const id = `prompt-preparation-${crypto.randomUUID()}`
+  options?.signal.throwIfAborted()
+  const id = options?.id ?? `prompt-preparation-${crypto.randomUUID()}`
   const authority = await saveSessionInOrder(session, undefined, undefined, {
     conversationCommands: [
       { kind: 'prepare-prompt', id, timestamp: Date.now(), promptMessageId, mode }
@@ -51,7 +63,7 @@ export const prepareWorkspacePrompt = async (
   const source = useSessionStore
     .getState()
     .sessions.find((candidate) => candidate.id === session.id)
-  if (source)
+  if (source && !options?.signal.aborted)
     useSessionStore.getState().applyDurableSessionProjection({
       source,
       session: authority,
@@ -66,6 +78,47 @@ export const prepareWorkspacePrompt = async (
       authority.runtimeSessionAdmissions?.map(({ executionId }) => executionId)
     )
   }
+}
+
+// Check the exact write receipt before releasing the preparation. Keep saved messages for retries with the same ID.
+export const reconcileExpiredWorkspacePrompt = async (
+  preparation: WorkspacePromptReceipt
+): Promise<{ rolledBack: boolean; failure?: string }> => {
+  const { sessionId } = preparation
+  expiredPromptReceipts.set(sessionId, preparation)
+  let authority: PersistedChatSession | undefined
+  try {
+    authority = await loadPersistedSession(
+      { projectId: preparation.authority.projectId, sessionId },
+      undefined,
+      { bypassCache: true }
+    )
+  } catch (error) {
+    // Recheck before the next send so a failed read does not treat a saved message as missing.
+    return {
+      rolledBack: false,
+      failure: describeWorkspacePromptRollbackFailure(undefined, errorText(error))
+    }
+  }
+  if (expiredPromptReceipts.get(sessionId) === preparation) expiredPromptReceipts.delete(sessionId)
+  if (
+    !authority ||
+    authority.promptPreparation?.id !== preparation.id ||
+    authority.promptPreparation.promptMessageId !== preparation.promptMessageId
+  )
+    return { rolledBack: false }
+  const saved = (authority.conversationGraph?.messages ?? authority.messages).some(
+    ({ id, role }) => id === preparation.promptMessageId && role === 'user'
+  )
+  return attemptWorkspacePromptRollback(
+    {
+      ...preparation,
+      previousAdmissionIds: new Set(
+        preparation.authority.runtimeSessionAdmissions?.map(({ executionId }) => executionId)
+      )
+    },
+    saved
+  )
 }
 
 export const rollbackWorkspacePrompt = async (
@@ -179,12 +232,15 @@ const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
 export const resetWorkspacePromptRollbacksForTests = (): void => {
+  expiredPromptReceipts.clear()
   failedPromptRollbacks.clear()
   pendingPromptRollbacks.clear()
 }
 
 export const hasPendingWorkspacePromptRollback = (sessionId: string): boolean =>
-  failedPromptRollbacks.has(sessionId) || pendingPromptRollbacks.has(sessionId)
+  expiredPromptReceipts.has(sessionId) ||
+  failedPromptRollbacks.has(sessionId) ||
+  pendingPromptRollbacks.has(sessionId)
 
 export const describeWorkspacePromptRollbackFailure = (
   original: string | undefined,
@@ -247,6 +303,8 @@ export const retryPendingWorkspacePromptRollback = async (
           failure: describeWorkspacePromptRollbackFailure(undefined, result.failure)
         }
   }
+  const expired = expiredPromptReceipts.get(sessionId)
+  if (expired) return reconcileExpiredWorkspacePrompt(expired)
   const failed = failedPromptRollbacks.get(sessionId)
   if (!failed) return { rolledBack: false }
   if (!useSessionStore.getState().sessions.some(({ id }) => id === sessionId)) {

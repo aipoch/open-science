@@ -58,7 +58,9 @@ import {
   resendEditedWorkspaceMessage,
   deleteWorkspaceSession,
   NotebookContinuationBranchError,
+  readWorkspaceSendPreview,
   sendWorkspaceMessage,
+  subscribeWorkspaceSendPreview,
   type ResendEditedMessageInput,
   type SendWorkspaceMessageIntent,
   type SendWorkspaceMessageResult
@@ -148,7 +150,13 @@ const setWorkspacePermissionProfile = async (
   return true
 }
 
+const workspaceSendPreview = {
+  read: readWorkspaceSendPreview,
+  subscribe: subscribeWorkspaceSendPreview
+}
+
 type WorkspaceAgentRuntime = {
+  sendPreview?: typeof workspaceSendPreview
   actionError: string | null
   isConnecting: boolean
   pendingPermissions: AcpPermissionRequest[]
@@ -349,8 +357,9 @@ const useOwnedWorkspaceAgentRuntime = (
         })
       }
       rememberAdmittedTarget(resolvedInput.sessionId)
-      const pendingPdfContextSelection = resolvedInput.projectId
-        ? usePreviewWorkbenchStore.getState().pendingPdfContextByProject[resolvedInput.projectId]
+      const projectId = resolvedInput.projectId
+      const pendingPdfContextSelection = projectId
+        ? usePreviewWorkbenchStore.getState().pendingPdfContextByProject[projectId]
         : undefined
       return sendWorkspaceMessage(
         runtime,
@@ -371,13 +380,9 @@ const useOwnedWorkspaceAgentRuntime = (
             rememberAdmittedTarget(sessionId)
           },
           onPdfContextLinked: (_sessionId, pdfContext) => {
-            if (!resolvedInput.projectId) return
-            revealLinkedPdfContext(resolvedInput.projectId, pdfContext)
-            clearLinkedPendingPdfContext(
-              resolvedInput.projectId,
-              pendingPdfContextSelection,
-              pdfContext
-            )
+            if (!projectId) return
+            revealLinkedPdfContext(projectId, pdfContext)
+            clearLinkedPendingPdfContext(projectId, pendingPdfContextSelection, pdfContext)
           },
           onSessionSizeLimit
         }
@@ -632,6 +637,7 @@ const useOwnedWorkspaceAgentRuntime = (
 
   return {
     actionError: runtime.actionError,
+    sendPreview: workspaceSendPreview,
     isConnecting: runtime.isConnecting,
     pendingPermissions: visiblePendingPermissions,
     permissionProfiles: runtime.state.permissionProfiles,

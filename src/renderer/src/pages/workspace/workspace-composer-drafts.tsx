@@ -1,17 +1,28 @@
 import { createContext, useContext, useState, type ReactElement, type ReactNode } from 'react'
 
-import type { ComposerDraft } from './composer-contract'
+import type { ComposerDraft, ComposerSendSnapshot } from './composer-contract'
+
+type RestoreFailedSend = (
+  snapshot: ComposerSendSnapshot,
+  preserveOnConflict?: boolean,
+  boundDraftKey?: string,
+  reportConflict?: boolean
+) => boolean
 
 type ComposerDraftOwner = {
   draftsRef: { current: Record<string, ComposerDraft> }
   versionsRef: { current: Record<string, number> }
   deletedDraftKeysRef: { current: Set<string> }
+  clearDraftRef: { current?: (draftKey: string, expectedVersion?: number) => boolean }
+  restoreFailedSendRef: { current?: RestoreFailedSend }
 }
 
 const createDraftOwner = (): ComposerDraftOwner => ({
   draftsRef: { current: {} as Record<string, ComposerDraft> },
   versionsRef: { current: {} as Record<string, number> },
-  deletedDraftKeysRef: { current: new Set<string>() }
+  deletedDraftKeysRef: { current: new Set<string>() },
+  clearDraftRef: {},
+  restoreFailedSendRef: {}
 })
 
 const ComposerDraftsContext = createContext<ComposerDraftOwner | null>(null)

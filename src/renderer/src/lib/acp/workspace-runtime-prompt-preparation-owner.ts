@@ -47,7 +47,10 @@ type HistoryReplayContext = {
   historyImages?: AcpMessageImage[]
 }
 
+import type { WorkspaceSendAttemptTrace } from './workspace-send-attempt'
+
 type PrepareExistingWorkspacePromptRequest = {
+  trace?: WorkspaceSendAttemptTrace
   isCurrent?: () => boolean
   sessionId: string
   requireExistingSession?: boolean
@@ -357,6 +360,11 @@ const prepareExistingWorkspacePrompt = async (
     }
 
     shouldResumeSession = !agentContextResetPerformed && runtimeMustAdoptSession
+    request.trace?.record({
+      phase: 'bind-session',
+      result: 'completed',
+      detail: shouldResumeSession ? 'resume-required' : 'reuse-live'
+    })
     if (shouldResumeSession) {
       const resumeCwd = request.cwd || runtime.state.cwd
       if (!resumeCwd) {
@@ -383,11 +391,13 @@ const prepareExistingWorkspacePrompt = async (
               ...request.selectedRuntime.agentConfiguration
             }
           : undefined
-      const resumeResult = await runtime.resumeSession(
-        ...resumeArguments,
-        target,
-        currentSession?.memoryEnabled !== false
-      )
+      const identity = request.trace?.identity
+      const memoryEnabled = currentSession?.memoryEnabled !== false
+      const resume = (): ReturnType<typeof runtime.resumeSession> =>
+        identity
+          ? runtime.resumeSession(...resumeArguments, target, memoryEnabled, identity)
+          : runtime.resumeSession(...resumeArguments, target, memoryEnabled)
+      const resumeResult = await (request.trace?.wait('resume-session', resume) ?? resume())
       if (request.isCurrent?.() === false) return undefined
       contextResetFromResume = Boolean(resumeResult?.contextReset)
       useSessionStore.getState().markResumed(
@@ -455,6 +465,11 @@ const prepareExistingWorkspacePrompt = async (
     reportWorkspaceOperationError(sessionId, getResumeFailureMessage(error), {
       providerTarget:
         request.selectedRuntime.agentConfiguration ?? currentSession?.agentConfiguration
+    })
+    request.trace?.record({
+      phase: 'composer-feedback',
+      result: 'completed',
+      detail: 'error-reported'
     })
     return undefined
   } finally {

@@ -126,6 +126,7 @@ const dispatchQueuedSession = (
           })
         : await current.runtime.sendMessage({
             sessionId,
+            ...(item.snapshot ? { composerSnapshot: item.snapshot } : {}),
             onMessageAppended: () => {
               if (owner.dispatches.get(sessionId) !== activeDispatch) return
               owner.replaceItem(sessionId, item.id, { messageAppended: true })

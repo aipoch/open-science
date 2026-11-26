@@ -1,4 +1,5 @@
 import type { Logger } from '@aipoch/diagnostics/node'
+import { readSendAttemptEvent } from '../shared/send-attempt-diagnostics'
 import {
   RENDERER_FAILURE_CHANNEL,
   isRendererFailureReport,
@@ -32,7 +33,8 @@ const projectRendererFailureReport = (value: unknown): RendererFailureReport | u
             'errorCategory',
             'context',
             'fingerprint',
-            'sessionWrite'
+            'sessionWrite',
+            'sendAttempt'
           ].includes(key)
       )
     ) {
@@ -54,7 +56,13 @@ const projectRendererFailureReport = (value: unknown): RendererFailureReport | u
       if (recovery && typeof recovery === 'object' && !Array.isArray(recovery))
         sessionWrite.recovery = { ...recovery }
     }
+    const sendAttempt = keys.includes('sendAttempt')
+      ? readSendAttemptEvent(record.sendAttempt)
+      : undefined
+    if (keys.includes('sendAttempt') && (!sendAttempt || keys.includes('sessionWrite')))
+      return undefined
     const candidate = {
+      ...(sendAttempt ? { sendAttempt } : {}),
       source: record.source,
       surface: record.surface,
       errorCategory: record.errorCategory,
@@ -92,6 +100,7 @@ export const createRendererFailureReporter = (
   const windowMs = options.windowMs ?? 60_000
   const maxReportsPerWindow = options.maxReportsPerWindow ?? 10
   const maxRecoveryReportsPerWindow = options.maxRecoveryReportsPerWindow ?? 120
+  const maxSendReportsPerWindow = 240
   const readNow = (): number => {
     try {
       const timestamp = now()
@@ -137,22 +146,30 @@ export const createRendererFailureReporter = (
       // Select a separate bounded budget without evaluating renderer-controlled getters. Recovery
       // milestones must not consume the error budget or lose repeated flashes to fingerprint dedup.
       let recoveryPayload = false
+      let sendPayload = false
       try {
+        sendPayload = Object.getOwnPropertyDescriptor(value, 'sendAttempt')?.value !== undefined
         const write = Object.getOwnPropertyDescriptor(value, 'sessionWrite')?.value
         recoveryPayload = Object.getOwnPropertyDescriptor(write, 'recovery')?.value !== undefined
       } catch {
         // Invalid envelopes use the ordinary bounded validation path below.
       }
-      const windowKey = `${recoveryPayload ? 'recovery' : 'failure'}:${senderKey}`
-      const limit = recoveryPayload ? maxRecoveryReportsPerWindow : maxReportsPerWindow
+      const windowKey = `${sendPayload ? 'send' : recoveryPayload ? 'recovery' : 'failure'}:${senderKey}`
+      const limit = sendPayload
+        ? maxSendReportsPerWindow
+        : recoveryPayload
+          ? maxRecoveryReportsPerWindow
+          : maxReportsPerWindow
       const timestamp = readNow()
       let window = windows.get(windowKey)
       if (!window || timestamp - window.startedAt >= windowMs) {
         if (window?.suppressedCount) {
           warn(
-            recoveryPayload
-              ? 'session storage recovery reports suppressed'
-              : 'renderer failure reports suppressed',
+            sendPayload
+              ? 'conversation send reports suppressed'
+              : recoveryPayload
+                ? 'session storage recovery reports suppressed'
+                : 'renderer failure reports suppressed',
             {
               suppressedCount: window.suppressedCount,
               windowMs
@@ -170,11 +187,16 @@ export const createRendererFailureReporter = (
 
       if (window.reportCount >= limit) {
         window.suppressedCount += 1
-        if (recoveryPayload && window.suppressedCount === 1)
-          warn('session storage recovery rate limit reached', {
-            windowMs,
-            maxReportsPerWindow: limit
-          })
+        if ((sendPayload || recoveryPayload) && window.suppressedCount === 1)
+          warn(
+            sendPayload
+              ? 'conversation send rate limit reached'
+              : 'session storage recovery rate limit reached',
+            {
+              windowMs,
+              maxReportsPerWindow: limit
+            }
+          )
         return 'suppressed'
       }
       window.reportCount += 1
@@ -185,6 +207,13 @@ export const createRendererFailureReporter = (
           errorCategory: 'invalid-payload'
         })
         return 'rejected'
+      }
+
+      if (report.sendAttempt) {
+        const event = report.sendAttempt
+        const write = event.result === 'failed' || event.result === 'timed-out' ? warn : info
+        write('conversation send phase', event)
+        return 'recorded'
       }
 
       const fingerprint = [
@@ -208,9 +237,13 @@ export const createRendererFailureReporter = (
       const recovery = report.sessionWrite?.recovery
       if (recovery) {
         if (
-          ['retained', 'reconcile-unconfirmed', 'retry-failed', 'discard-failed'].includes(
-            recovery.event
-          )
+          [
+            'send-timeout',
+            'retained',
+            'reconcile-unconfirmed',
+            'retry-failed',
+            'discard-failed'
+          ].includes(recovery.event)
         )
           warn('session storage recovery', report)
         else info('session storage recovery', report)

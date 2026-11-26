@@ -1,3 +1,4 @@
+import { currentSendAttempt, traceMainSendWait, withSendAttempt } from '../send-attempt-diagnostics'
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
@@ -286,7 +287,9 @@ const createAcpHandlerWorkflows = (
 ): AcpHandlerWorkflows => ({
   async createSession(request): Promise<AcpCreateSessionResponse> {
     try {
-      return await createSessionWorkflow.create(request)
+      return await withSendAttempt(request.sendAttempt, { projectId: request.projectId }, () =>
+        traceMainSendWait('create-session', () => createSessionWorkflow.create(request))
+      )
     } catch (error) {
       // Persist create failures without letting a broken diagnostic sink mask the authoritative error.
       try {
@@ -299,55 +302,62 @@ const createAcpHandlerWorkflows = (
   },
 
   async resumeSession(request): Promise<AcpCreateSessionResponse> {
-    const startedAt = Date.now()
-    const context = {
-      operationId: randomUUID(),
-      sessionHash: resumeSessionHash(request.sessionId),
-      sessionId: request.sessionId,
-      projectId: request.projectId,
-      frameworkId: request.agentTarget?.frameworkId,
-      previousFrameworkId: request.previousFrameworkId
-    }
-    logResumeDiagnostic('info', 'acp:resume-session started', context)
-
-    try {
-      const resume = async (projectId: string): Promise<AcpCreateSessionResponse> => {
-        const bound = bindResumeRequestToProject(request, projectId)
-        if (
-          interruptedTurnSessions?.prepareRuntimeResume &&
-          !runtime.hasLiveSession(projectId, request.sessionId)
-        ) {
-          await interruptedTurnSessions.prepareRuntimeResume(projectId, request.sessionId)
-        }
-        const attached = await runtime.resumeSession(bound)
-        await interruptedTurnSessions?.completeRuntimeAttachment?.(
-          projectId,
-          request.sessionId,
-          attached
-        )
-        return attached
+    return withSendAttempt(request.sendAttempt, request, async () => {
+      const startedAt = Date.now()
+      const context = {
+        ...currentSendAttempt(),
+        operationId: randomUUID(),
+        sessionHash: resumeSessionHash(request.sessionId),
+        sessionId: request.sessionId,
+        projectId: request.projectId,
+        frameworkId: request.agentTarget?.frameworkId,
+        previousFrameworkId: request.previousFrameworkId
       }
-      const result = archiveAvailability
-        ? await archiveAvailability.withSessionAvailableById(request.sessionId, resume)
-        : request.projectId
-          ? await resume(request.projectId)
-          : await runtime.resumeSession(request)
-      logResumeDiagnostic('info', 'acp:resume-session completed', {
-        ...context,
-        durationMs: Math.max(0, Date.now() - startedAt),
-        frameworkId: result.frameworkId,
-        contextReset: result.contextReset === true
-      })
-      return result
-    } catch (error) {
-      logResumeDiagnostic('error', 'acp:resume-session failed', {
-        ...context,
-        durationMs: Math.max(0, Date.now() - startedAt),
-        ...resumeErrorDiagnosticFields(error),
-        ...errorLogFields(error)
-      })
-      throw error
-    }
+      logResumeDiagnostic('info', 'acp:resume-session started', context)
+
+      try {
+        const resume = async (projectId: string): Promise<AcpCreateSessionResponse> => {
+          const bound = bindResumeRequestToProject(request, projectId)
+          if (
+            interruptedTurnSessions?.prepareRuntimeResume &&
+            !runtime.hasLiveSession(projectId, request.sessionId)
+          ) {
+            await traceMainSendWait('resume-cleanup', () =>
+              interruptedTurnSessions.prepareRuntimeResume!(projectId, request.sessionId)
+            )
+          }
+          const attached = await runtime.resumeSession(bound)
+          await interruptedTurnSessions?.completeRuntimeAttachment?.(
+            projectId,
+            request.sessionId,
+            attached
+          )
+          return attached
+        }
+        const result = archiveAvailability
+          ? await traceMainSendWait('archive-availability', () =>
+              archiveAvailability.withSessionAvailableById(request.sessionId, resume)
+            )
+          : request.projectId
+            ? await resume(request.projectId)
+            : await runtime.resumeSession(request)
+        logResumeDiagnostic('info', 'acp:resume-session completed', {
+          ...context,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          frameworkId: result.frameworkId,
+          contextReset: result.contextReset === true
+        })
+        return result
+      } catch (error) {
+        logResumeDiagnostic('error', 'acp:resume-session failed', {
+          ...context,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          ...resumeErrorDiagnosticFields(error),
+          ...errorLogFields(error)
+        })
+        throw error
+      }
+    })
   },
 
   async continueInterruptedTurn(request): Promise<AcpRuntimeState> {
@@ -461,7 +471,14 @@ const createAcpHandlerWorkflows = (
     // back only its own token, preserving any older in-flight prompt tracked for the same Session.
     const tracked = taskNotifications?.trackPrompt(request)
     try {
-      await runtime.startPrompt(request)
+      await withSendAttempt(
+        request.sendAttempt,
+        {
+          sessionId: request.sessionId,
+          promptMessageId: request.provenanceContext?.promptMessageId
+        },
+        () => traceMainSendWait('dispatch-prompt', () => runtime.startPrompt(request))
+      )
     } catch (error) {
       if (tracked) taskNotifications?.untrackPrompt(request.sessionId, tracked)
       throw error

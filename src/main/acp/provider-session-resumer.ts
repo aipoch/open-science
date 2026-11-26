@@ -1,6 +1,17 @@
+import {
+  startMainSendPhase,
+  traceMainSendWait,
+  writeSendAttempt
+} from '../send-attempt-diagnostics'
+import {
+  classifySendAttemptError,
+  type SendAttemptDetail
+} from '../../shared/send-attempt-diagnostics'
 import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { freshSessionAttachment } from './session-agent-target'
-import { HARNESS_OWNER } from '../harness-acp/config'
+import { HARNESS_CHECKPOINT_LOCK_META, HARNESS_OWNER } from '../harness-acp/config'
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../shared/agent-framework-id'
+import { traceCheckpointLock } from './checkpoint-lock-diagnostics'
 import type { AcpSpecialistResolutionContext } from './runtime-contract'
 import {
   recordMainAgentContext,
@@ -296,6 +307,7 @@ export class AcpProviderSessionResumer {
     }
     const attached = this.deps.registry.lookup(request.sessionId)?.attachment
     if (attached) {
+      writeSendAttempt({ phase: 'bind-session', result: 'completed', detail: 'reuse-live' })
       this.pendingResumeTransfers.delete(request.sessionId)
       const response = await this.resumeAttached(request, attached, isPermissionCurrent)
       onSessionReady?.()
@@ -455,7 +467,9 @@ export class AcpProviderSessionResumer {
     const identity = reserved.reservation
 
     try {
-      const connection = await this.withTimeout(() => this.deps.ensureConnected(cwd))
+      const connection = await this.withTimeout(() => this.deps.ensureConnected(cwd), [], {
+        connection: true
+      })
       this.deps.assertCurrentConnection(connection)
       identity.renew()
       const response = await this.withTimeout(
@@ -619,8 +633,15 @@ export class AcpProviderSessionResumer {
   private async withTimeout<Result>(
     operation: (cancellationSignal: AbortSignal) => Promise<Result>,
     progressSessionIds: readonly string[] = [],
-    options: { preserveConnection?: boolean; timeoutMessage?: () => string } = {}
+    options: {
+      connection?: boolean
+      preserveConnection?: boolean
+      timeoutMessage?: () => string
+    } = {}
   ): Promise<Result> {
+    const finish = startMainSendPhase(options.connection ? 'acp-connect' : 'resume-deadline', {
+      timeoutMs: this.deps.resumeTimeoutMs
+    })
     const cancellation = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
@@ -634,6 +655,7 @@ export class AcpProviderSessionResumer {
       if (timer !== undefined) this.deps.clearTimer(timer)
       timer = this.deps.setTimer(() => {
         timedOut = true
+        finish('timed-out')
         const error = new Error(options.timeoutMessage?.() ?? 'ACP session resume timed out.')
         cancellation.abort(error)
         rejectTimeout(error)
@@ -643,9 +665,24 @@ export class AcpProviderSessionResumer {
     renewTimeout()
 
     try {
-      return await Promise.race([operation(cancellation.signal), timeout])
+      const work = operation(cancellation.signal)
+      void work.then(
+        () => {
+          if (timedOut) finish('late-result', 'acknowledged')
+        },
+        () => {
+          if (timedOut) finish('late-result', 'unconfirmed')
+        }
+      )
+      const result = await Promise.race([work, timeout])
+      finish('completed')
+      return result
     } catch (error) {
-      if (timedOut && !options.preserveConnection) await this.deps.disconnectTimedOutConnection()
+      if (!timedOut) finish(classifySendAttemptError(error))
+      if (timedOut && !options.preserveConnection)
+        await traceMainSendWait('acp-timeout-cleanup', () =>
+          this.deps.disconnectTimedOutConnection()
+        )
       throw error
     } finally {
       settled = true
@@ -708,7 +745,7 @@ export class AcpProviderSessionResumer {
         sessionId: request.sessionId,
         ...this.deps.diagnosticContext()
       })
-      return this.adopt(request, connection, cwd, projectId, identity)
+      return this.adopt(request, connection, cwd, projectId, identity, 'requested-fresh')
     }
     if (compatibleOnly && persistedProviderSessionId) {
       return this.resumeCompatible(
@@ -749,7 +786,7 @@ export class AcpProviderSessionResumer {
         reason: decision.reason,
         ...this.deps.diagnosticContext()
       })
-      return this.adopt(request, connection, cwd, projectId, identity)
+      return this.adopt(request, connection, cwd, projectId, identity, 'incompatible-runtime')
     }
     return this.resumeCompatible(
       request,
@@ -796,7 +833,7 @@ export class AcpProviderSessionResumer {
           cancellationSignal.throwIfAborted()
           this.deps.assertCurrentConnection(connection)
           identity.assertCurrent()
-          return this.adopt(request, connection, cwd, projectId, identity)
+          return this.adopt(request, connection, cwd, projectId, identity, 'resume-rejected')
         }
       }
       recordMainAgentContext(connection, providerSessionId)
@@ -899,23 +936,31 @@ export class AcpProviderSessionResumer {
 
       let resumeResponse: unknown
       try {
-        resumeResponse = await connection.agent.request(
-          acp.methods.agent.session.resume,
-          {
-            sessionId: providerSessionId,
-            cwd,
-            mcpServers: sessionCapabilities.mcpServers,
-            ...specialistProjection.setup.metaArg,
-            ...(backend.framework.id === 'open-science-agent'
-              ? {
-                  _meta: {
-                    ...specialistProjection.setup.metaArg._meta,
-                    [HARNESS_OWNER]: { projectId, sessionId: request.sessionId }
+        const builtIn = backend.framework.id === DEFAULT_AGENT_FRAMEWORK_ID
+        const resume = (operationId?: string): Promise<unknown> =>
+          connection.agent.request(
+            acp.methods.agent.session.resume,
+            {
+              sessionId: providerSessionId,
+              cwd,
+              mcpServers: sessionCapabilities.mcpServers,
+              ...specialistProjection.setup.metaArg,
+              ...(builtIn
+                ? {
+                    _meta: {
+                      ...specialistProjection.setup.metaArg._meta,
+                      [HARNESS_OWNER]: { projectId, sessionId: request.sessionId },
+                      ...(operationId ? { [HARNESS_CHECKPOINT_LOCK_META]: operationId } : {})
+                    }
                   }
-                }
-              : {})
-          },
-          { cancellationSignal }
+                : {})
+            },
+            { cancellationSignal }
+          )
+        resumeResponse = await traceMainSendWait(
+          'acp-resume',
+          () => (builtIn ? traceCheckpointLock(connection, resume) : resume()),
+          { detail: 'session/resume' }
         )
       } catch (error) {
         const failure = this.policy.classifyFailure(error, {
@@ -952,7 +997,7 @@ export class AcpProviderSessionResumer {
         // Adoption now owns cleanup and releases identity even on failure. Do not catch its
         // rejection below: checking that released reservation would mask the provider error as
         // a superseded startup. resumeDetached still awaits this promise before final release.
-        return this.adopt(request, connection, cwd, projectId, identity)
+        return this.adopt(request, connection, cwd, projectId, identity, 'resume-rejected')
       }
 
       // A successful resume has reacquired the writer even if local configuration fails below.
@@ -1090,18 +1135,24 @@ export class AcpProviderSessionResumer {
     connection: ClientConnection,
     cwd: string,
     projectId: string,
-    identity: AcpPrimarySessionIdentityReservation
+    identity: AcpPrimarySessionIdentityReservation,
+    reason: SendAttemptDetail
   ): Promise<AcpCreateSessionResponse> {
-    return this.deps.adopter.adopt(request.sessionId, {
-      connection,
-      cwd,
-      projectId,
-      identity,
-      permissionProfile: request.permissionProfile,
-      specialistId: request.specialistId,
-      specialistBindingPending: request.specialistBindingPending,
-      memoryEnabled: request.memoryEnabled
-    })
+    return traceMainSendWait(
+      'adopt-replacement',
+      () =>
+        this.deps.adopter.adopt(request.sessionId, {
+          connection,
+          cwd,
+          projectId,
+          identity,
+          permissionProfile: request.permissionProfile,
+          specialistId: request.specialistId,
+          specialistBindingPending: request.specialistBindingPending,
+          memoryEnabled: request.memoryEnabled
+        }),
+      { detail: reason }
+    )
   }
 
   private assertNoPendingWriterRelease(sessionId: string): void {

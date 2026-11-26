@@ -1,3 +1,5 @@
+import { startMainSendPhase } from '../send-attempt-diagnostics'
+import { classifySendAttemptError } from '../../shared/send-attempt-diagnostics'
 import { harnessTurnAdapter } from './harness-turn-adapter'
 import type {
   ActiveSession,
@@ -277,6 +279,8 @@ class AcpProviderPromptExecutor {
       probe,
       report: input.reportBestEffortFailure
     })
+    let finishOutput: ReturnType<typeof startMainSendPhase> | undefined
+    let finishTurn: ReturnType<typeof startMainSendPhase> | undefined
     let probeState: 'open' | 'cancelled' | 'finalized' = 'open'
     const releaseObservation = (): void => {
       if (this.observations.get(providerSessionId)?.token === token) {
@@ -315,11 +319,16 @@ class AcpProviderPromptExecutor {
       }
 
       let promptRequest: Promise<unknown>
+      const finishSubmit = startMainSendPhase('acp-session-prompt')
       try {
         input.onDispatchAttempt?.()
         promptRequest = input.session.prompt(content)
+        finishSubmit('completed')
+        finishOutput = startMainSendPhase('first-output')
+        finishTurn = startMainSendPhase('turn-terminal')
         input.onDispatched?.()
       } catch (error) {
+        finishSubmit(classifySendAttemptError(error))
         await cancelProbe()
         throw error
       }
@@ -360,6 +369,14 @@ class AcpProviderPromptExecutor {
             input.isUserStopped?.()
           )
             continue
+          const notification = message.notification.update
+          const visibleMessage =
+            notification.sessionUpdate === 'agent_message_chunk' &&
+            (notification.content.type !== 'text' || notification.content.text.trim().length > 0)
+          if (visibleMessage || update === 'tool_call' || update === 'plan') {
+            finishOutput?.('completed')
+            finishOutput = undefined
+          }
           input.routeNotification(message.notification)
           continue
         }
@@ -391,6 +408,11 @@ class AcpProviderPromptExecutor {
           facts.outputTruncated
             ? { ...message.response, stopReason: 'max_tokens' }
             : terminal
+        const completion = response.stopReason === 'cancelled' ? 'cancelled' : 'completed'
+        finishOutput?.(completion, 'no-output')
+        finishOutput = undefined
+        finishTurn?.(completion)
+        finishTurn = undefined
         return Object.freeze({
           kind: 'stopped',
           response,
@@ -400,7 +422,15 @@ class AcpProviderPromptExecutor {
           )
         })
       }
+    } catch (error) {
+      finishOutput?.(classifySendAttemptError(error))
+      finishOutput = undefined
+      finishTurn?.(classifySendAttemptError(error))
+      finishTurn = undefined
+      throw error
     } finally {
+      finishOutput?.('cancelled')
+      finishTurn?.('cancelled')
       await cancelProbe()
       releaseObservation()
     }
