@@ -101,7 +101,13 @@ describe('ProviderKindPicker', () => {
     expect(chip('Local').getAttribute('aria-pressed')).toBe('true')
     expect(chip('All').getAttribute('aria-pressed')).toBe('false')
     expect(sectionHeadings()).toEqual(['Local'])
-    expect(cardKeys()).toEqual(['local:ollama', 'local:lmstudio', 'local:llamacpp', 'local:vllm'])
+    expect(cardKeys()).toEqual([
+      'local:ollama',
+      'local:lmstudio',
+      'local:llamacpp',
+      'local:vllm',
+      'local:magpie'
+    ])
   })
 
   it('picks the first enabled match on Enter', () => {

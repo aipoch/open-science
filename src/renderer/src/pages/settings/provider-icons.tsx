@@ -20,6 +20,7 @@ import azureLogo from '@/assets/provider-icons/azure.svg'
 import cloudflareLogo from '@/assets/provider-icons/cloudflare.svg'
 import llamaCppLogo from '@/assets/provider-icons/llamacpp.svg'
 import lmStudioLogo from '@/assets/provider-icons/lmstudio.svg'
+import magpieLogo from '@/assets/provider-icons/magpie.png'
 import ollamaLogo from '@/assets/provider-icons/ollama.svg'
 import vectrustLogo from '@/assets/provider-icons/vectrust.png'
 import vllmLogo from '@/assets/provider-icons/vllm.svg'
@@ -116,6 +117,7 @@ const VENDOR_LOGO: Partial<Record<OfficialVendorId, string>> = {
 const LOCAL_LOGO: Record<LocalProviderPresetId, string> = {
   llamacpp: llamaCppLogo,
   lmstudio: lmStudioLogo,
+  magpie: magpieLogo,
   ollama: ollamaLogo,
   vllm: vllmLogo
 }
