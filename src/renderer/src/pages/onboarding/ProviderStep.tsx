@@ -1186,11 +1186,8 @@ const ProviderStep = ({
                       ) : (
                         <ProviderKindIcon
                           kindKey={card.kindKey}
-                          className={clsx(
-                            'size-9',
-                            ['openai', 'anthropic', 'xai'].includes(card.id) &&
-                              'brightness-0 invert-92'
-                          )}
+                          monochromeOnDark={['openai', 'anthropic', 'xai'].includes(card.id)}
+                          className="size-9"
                         />
                       )}
                       <h2 className="mt-[1.1rem] font-onboarding-serif text-[1.65rem] font-normal tracking-[-0.035em] text-text-000">

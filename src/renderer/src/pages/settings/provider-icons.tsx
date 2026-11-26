@@ -123,12 +123,18 @@ const LOCAL_LOGO: Record<LocalProviderPresetId, string> = {
 
 export const ProviderKindIcon = ({
   kindKey,
+  monochromeOnDark = false,
   className
 }: {
   kindKey: string
+  monochromeOnDark?: boolean
   className?: string
 }): React.JSX.Element => {
-  const iconClass = cn('size-5 shrink-0', darkLogoBacking, className)
+  const iconClass = cn(
+    'size-5 shrink-0',
+    monochromeOnDark ? 'brightness-0 invert-92' : darkLogoBacking,
+    className
+  )
 
   if (kindKey === 'custom') {
     return <CirclePlus className={cn('text-muted-foreground', iconClass)} aria-hidden="true" />

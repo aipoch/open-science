@@ -367,6 +367,27 @@ test('leaves space between a visible horizontal scrollbar and the quick-connect 
   await skip.click({ trial: true })
 })
 
+test('shows the monochrome brand silhouettes in both card themes', async ({ app }, info) => {
+  const { page } = app
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme })
+    await expect
+      .poll(() => page.locator('html').evaluate((el) => el.classList.contains('dark')))
+      .toBe(theme === 'dark')
+    for (const id of ['openai', 'anthropic', 'xai']) {
+      const card = page.locator(`.onboarding-provider-card-${id}`)
+      const mark = card.locator('h2').locator('xpath=preceding-sibling::*[1]')
+      const png = await mark.screenshot({ path: info.outputPath(`${theme}-${id}.png`) })
+      const pixels = await sharp(png).removeAlpha().greyscale().raw().toBuffer()
+      const ink = pixels.filter((value) => value > 211).length / pixels.length
+      expect(ink, `${theme} ${id} visible strokes`).toBeGreaterThan(0.05)
+      expect(ink, `${theme} ${id} visible negative space`).toBeLessThan(0.85)
+    }
+  }
+})
+
 test('exposes quick-connect actions on the first tap on touch-only devices', async ({ app }) => {
   const { page } = app
   const cdp = await page.context().newCDPSession(page)
