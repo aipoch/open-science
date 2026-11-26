@@ -53,11 +53,24 @@ useArchiveUndoStore.setState({
   ]
 })
 
-export function Fixture(): React.JSX.Element {
+export function Fixture(): React.JSX.Element | null {
   const { t } = useTranslation()
   const [modal, setModal] = useState('')
   const [actions, setActions] = useState(0)
   const [notice, setNotice] = useState(true)
+  if (query.has('toastPosition')) {
+    const toast = notice ? (
+      <ActionToast
+        level="success"
+        title={t('Update')}
+        detail={t('Update cancelled. The service is still running and the download is kept.')}
+        dismissLabel={t('Dismiss')}
+        onDismiss={() => setNotice(false)}
+        testId="update-outcome-toast"
+      />
+    ) : null
+    return query.has('stacked') ? <ActionToastStack>{toast}</ActionToastStack> : toast
+  }
   if (query.has('about')) {
     return (
       <main className="mx-auto max-w-5xl space-y-6 p-6 text-foreground" data-testid="about-preview">
