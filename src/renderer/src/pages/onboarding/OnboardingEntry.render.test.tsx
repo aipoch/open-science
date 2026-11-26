@@ -146,10 +146,10 @@ describe('Onboarding entry flow', () => {
     await finishWelcomeAnimation()
     await clickButton(/^Next$/)
     await clickButton(/^Advanced mode$/)
-    expect(findButton(/^Skip$/)?.disabled).toBe(false)
+    expect(findButton(/^Continue with free Kilo Gateway$/)?.disabled).toBe(false)
     await act(async () => useSettingsStore.setState({ environmentCheckError: 'Check failed.' }))
-    expect(findButton(/^Skip$/)?.disabled).toBe(true)
-    await clickButton(/^Skip$/)
+    expect(findButton(/^Continue with free Kilo Gateway$/)?.disabled).toBe(true)
+    await clickButton(/^Continue with free Kilo Gateway$/)
     expect(useSettingsStore.getState().addOnboardingKiloProvider).not.toHaveBeenCalled()
   })
 
@@ -327,6 +327,7 @@ describe('Onboarding entry flow', () => {
 
   it.each([
     ['new free Kilo', 'official', 'kilo', 'kilo-auto/free', false, 'Using free Kilo models'],
+    ['active free Kilo', 'official', 'kilo', 'kilo-auto/free', false, 'Using free Kilo models'],
     ['saved Codex', 'codex-shared', undefined, 'gpt-5', false, 'Connected with your account'],
     ['saved Kilo with key', 'official', 'kilo', 'paid-model', true, 'Connected with API key'],
     ['local gateway', 'custom', undefined, 'local-model', false, 'Connected']
@@ -356,7 +357,14 @@ describe('Onboarding entry flow', () => {
       await clickButton(/Advanced options/)
       await clickButton(/^Continue$/)
       await clickButton(/^Continue$/)
-      await clickButton(provisionFree ? /^Skip$/ : /^Use configured provider$/)
+      expect(findButton(/^Skip$/)).toBeNull()
+      const free = summary === 'Using free Kilo models'
+      const buttonLabel = free ? /^Continue with free Kilo Gateway$/ : /^Continue$/
+      expect(findButton(buttonLabel)?.dataset.variant).toBe('default')
+      expect(container.textContent).toContain(
+        free ? 'without an API key' : `Already configured: ${name} (${model})`
+      )
+      await clickButton(buttonLabel)
       await clickButton(/^Finish$/)
       const badge = container.querySelector('.onboarding-connection-summary')
       expect(badge?.textContent).toContain(name)

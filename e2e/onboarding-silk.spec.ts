@@ -151,7 +151,7 @@ test('keeps the provider tray translucent in both themes and sizes each step to 
   await expect(page.locator('#provider-base-url')).toBeVisible()
   await page.getByRole('button', { name: 'Change provider', exact: true }).click()
   await expect(page.getByRole('searchbox', { name: 'Search providers' })).toBeVisible()
-  await page.getByRole('button', { name: /^(Skip|Use configured provider)$/ }).click()
+  await page.getByRole('button', { name: 'Continue with free Kilo Gateway', exact: true }).click()
   await page.getByRole('button', { name: 'Finish', exact: true }).click()
   const readyActions = page.locator('[data-onboarding-entry="ready"] .onboarding-ready-actions')
   await expect(readyActions).toBeVisible()
@@ -210,7 +210,12 @@ test('opens the full provider picker with the defaults and completes onboarding'
   await dialog.locator('[data-provider-kind="official:cloudflare-ai-gateway"]').click()
   await expect(dialog.locator('#provider-cloudflare-mode')).toBeVisible()
   await dialog.getByRole('button', { name: 'Change provider' }).click()
-  await dialog.getByRole('button', { name: 'Skip', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Continue with free Kilo Gateway', exact: true }).click()
+  const settings = await page.evaluate(() => window.api.settings.getSettings())
+  expect(settings.providers.find(({ id }) => id === settings.activeProviderId)?.vendorId).toBe(
+    'kilo'
+  )
+  expect(settings.activeModel).toBe('kilo-auto/free')
   await expect(dialog.locator('[aria-current="step"]')).toHaveText('4Notebook runtime')
   await dialog.getByRole('button', { name: 'Finish', exact: true }).click()
   await dialog.getByRole('button', { name: 'Start exploring', exact: true }).click()

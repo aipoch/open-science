@@ -13,10 +13,12 @@ import { CardContent, CardDescription, CardFooter, CardHeader } from '@/componen
 import { Separator } from '@/components/ui/separator'
 import type {
   ClaudeInstallResult,
+  ProviderView,
   UpsertProviderRequest,
   ValidateProviderResult,
   XaiOAuthDeviceAuthorization
 } from '../../../../shared/settings'
+import { KILO_FREE_MODEL_ID } from '../../../../shared/provider-model-catalog'
 import { CODEX_IMPORT_FILE_MISSING_MESSAGE } from '../../../../shared/codex-runtime'
 import { unwrapIpcErrorDetail } from '../../../../shared/failure/messages'
 import {
@@ -71,6 +73,11 @@ import {
 import { mergeLocalModels } from '../settings/provider-model-form'
 import { modelCatalogErrorMessage } from '../settings/model-catalog-feedback'
 import type { ProviderStepOperation } from './use-provider-step-operation'
+
+const isFreeKiloModel = (provider: ProviderView | undefined, model?: string): boolean =>
+  provider?.type === 'official' &&
+  provider.vendorId === 'kilo' &&
+  (model ?? provider.model) === KILO_FREE_MODEL_ID
 
 const isBrowserSignInProvider = (type: ProviderFormValue['type']): boolean =>
   type === 'codex-isolated' ||
@@ -311,7 +318,7 @@ const ProviderStep = ({
     { id: string; cancel: (id: string) => Promise<void>; settled: Promise<unknown> } | undefined
   >(undefined)
   const [isSaving, setIsSaving] = useState(false)
-  const [isSkipping, setIsSkipping] = useState(false)
+  const [isContinuing, setIsContinuing] = useState(false)
   const [isRefreshingModels, setIsRefreshingModels] = useState(false)
   const [catalogError, setCatalogError] = useState<string>()
   const busy = operation.pending
@@ -374,8 +381,9 @@ const ProviderStep = ({
   )
   const customApiEndpoint = defaultCustomApiEndpoint(frameworkEndpoints)
   const activeFramework = useSettingsStore(selectActiveAgentFramework)
-  const canReuseExistingProvider =
-    !formValue.providerFormTouched &&
+  const freeKiloActive = isFreeKiloModel(existingProvider, activeModel)
+  const keepConfiguredProvider =
+    !freeKiloActive &&
     existingProvider !== undefined &&
     existingProvider.lastValidatedAt !== undefined &&
     existingProvider.lastValidationFailure === undefined &&
@@ -510,16 +518,21 @@ const ProviderStep = ({
     }
   }
 
-  const handleSkip = async (): Promise<void> => {
+  const handleContinueWithModel = async (): Promise<void> => {
     if (!canContinue || !operation.begin()) return
-    setIsSkipping(true)
+    setIsContinuing(true)
     setValidationMessage(undefined)
     try {
-      if (canReuseExistingProvider) {
-        advanceIfMounted()
-        return
+      if (!keepConfiguredProvider && !freeKiloActive) {
+        await addOnboardingKiloProvider()
+        const settings = useSettingsStore.getState()
+        const selected = settings.providers.find(({ id }) => id === settings.activeProviderId)
+        if (!isFreeKiloModel(selected, settings.activeModel)) {
+          setValidationOk(false)
+          setValidationMessage(t('Could not save provider.'))
+          return
+        }
       }
-      await addOnboardingKiloProvider()
       advanceIfMounted()
     } catch (error) {
       if (!mounted.current) return
@@ -531,7 +544,7 @@ const ProviderStep = ({
       )
     } finally {
       operation.finish()
-      setIsSkipping(false)
+      setIsContinuing(false)
     }
   }
 
@@ -1504,12 +1517,12 @@ const ProviderStep = ({
           )}
         </CardDescription>
         <p className="text-xs leading-5 text-muted-foreground">
-          {canReuseExistingProvider && existingProvider
+          {keepConfiguredProvider && existingProvider
             ? t('Already configured: {{name}} ({{model}}). You can continue with this provider.', {
                 name: existingProvider.name,
-                model: existingProvider.model ?? activeModel ?? t('default model')
+                model: activeModel ?? existingProvider.model ?? t('default model')
               })
-            : t('Skip to access free Kilo models.')}
+            : t('You can use the free Kilo Gateway model without an API key.')}
         </p>
       </CardHeader>
       <Separator className="bg-border-200" />
@@ -1549,7 +1562,7 @@ const ProviderStep = ({
                   setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
                 }}
                 errors={showProviderErrors ? formErrors : undefined}
-                disabled={isSaving || isSkipping || isRefreshingModels}
+                disabled={isSaving || isContinuing || isRefreshingModels}
                 onRefreshModels={formValue.localPresetId ? handleRefreshModels : undefined}
                 isRefreshingModels={isRefreshingModels}
                 catalogError={catalogError}
@@ -1623,7 +1636,7 @@ const ProviderStep = ({
           <Button
             type="button"
             variant="outline"
-            disabled={isSkipping || (!!picker && busy)}
+            disabled={isContinuing || (!!picker && busy)}
             onClick={() => {
               if (picker && !showPicker) {
                 picker.select()
@@ -1637,18 +1650,10 @@ const ProviderStep = ({
             {t('Back', { context: 'step' })}
           </Button>
         )}
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void handleSkip()}
-          disabled={busy || !canContinue}
-          aria-busy={isSkipping}
-        >
-          {canReuseExistingProvider ? t('Use configured provider') : t('Skip')}
-        </Button>
         {!showPicker && (
           <Button
             type="button"
+            variant="outline"
             onClick={() => void handleSaveProvider()}
             disabled={busy || !canContinue}
             className="px-4"
@@ -1665,6 +1670,14 @@ const ProviderStep = ({
             </span>
           </Button>
         )}
+        <Button
+          type="button"
+          onClick={() => void handleContinueWithModel()}
+          disabled={busy || !canContinue}
+          aria-busy={isContinuing}
+        >
+          {keepConfiguredProvider ? t('Continue') : t('Continue with free Kilo Gateway')}
+        </Button>
       </CardFooter>
       <ClaudeIsolatedSignInModal
         open={isClaudeSignInOpen}

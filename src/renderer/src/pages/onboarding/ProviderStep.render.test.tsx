@@ -729,13 +729,25 @@ describe('ProviderStep', () => {
       addOnboardingKiloProvider
     })
 
-    await renderStep({ onAdvance })
+    await renderStep({
+      onAdvance,
+      initialValue: { ...createEmptyProviderFormValue(), providerFormTouched: true }
+    })
 
     expect(container.textContent).toContain('Already configured: DeepSeek (deepseek-v4-pro)')
-    await clickButton(/use configured provider/i)
+    await clickButton(/^Continue$/)
 
     expect(onAdvance).toHaveBeenCalledOnce()
     expect(addOnboardingKiloProvider).not.toHaveBeenCalled()
+  })
+
+  it('stays on the provider step when free Kilo could not be activated', async () => {
+    const onAdvance = vi.fn()
+    await renderStep({ onAdvance })
+    await clickButton(/^Continue with free Kilo Gateway$/)
+    expect(useSettingsStore.getState().addOnboardingKiloProvider).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Could not save provider.')
+    expect(onAdvance).not.toHaveBeenCalled()
   })
 
   it('preserves a manually chosen API format when revisiting an otherwise blank draft', async () => {
