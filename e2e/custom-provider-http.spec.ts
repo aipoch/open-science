@@ -7,11 +7,8 @@ import { createProject, openProjectSession } from './certification/helpers'
 import { submitPromptViaUi } from './fixtures/conversation'
 import { test } from './fixtures/electron-app'
 
-test('enforces a saved HTTP model grant and explains revocation across restart', async ({
-  app
-}) => {
-  test.setTimeout(180_000)
-  const host = Object.values(networkInterfaces())
+const privateHost = () =>
+  Object.values(networkInterfaces())
     .flat()
     .find(
       (address) =>
@@ -19,13 +16,14 @@ test('enforces a saved HTTP model grant and explains revocation across restart',
         !address.internal &&
         /^(192\.168\.|10\.)/.test(address.address)
     )?.address
-  test.skip(!host, 'A private non-loopback interface is required for the remote HTTP policy.')
+
+const startModelServer = async (host: string) => {
   let probes = 0
   const server = createServer(async (req, res) => {
+    probes++
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(Buffer.from(chunk))
     const body = JSON.parse(Buffer.concat(chunks).toString() || '{}')
-    probes++
     if (body.stream) {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       const events = [
@@ -53,12 +51,30 @@ test('enforces a saved HTTP model grant and explains revocation across restart',
     server.once('error', reject)
     server.listen(0, host, resolve)
   })
+  const { port } = server.address() as AddressInfo
+  return {
+    baseUrl: `http://${host}:${port}`,
+    port,
+    get requests() {
+      return probes
+    },
+    close: () => new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+}
+
+test('enforces a saved HTTP model grant and explains revocation across restart', async ({
+  app
+}) => {
+  test.setTimeout(180_000)
+  const host = privateHost()
+  test.skip(!host, 'A private non-loopback interface is required for the remote HTTP policy.')
+  const server = await startModelServer(host!)
   try {
-    const port = (server.address() as AddressInfo).port
+    const { port } = server
     const edit = {
       type: 'custom' as const,
       name: 'HTTP fixture',
-      baseUrl: `http://${host}:${port}`,
+      baseUrl: server.baseUrl,
       model: 'mock-model',
       key: 'synthetic-test-only',
       apiEndpoints: ['messages' as const]
@@ -77,7 +93,7 @@ test('enforces a saved HTTP model grant and explains revocation across restart',
       edit
     )
     expect(saved.validation.ok, JSON.stringify(saved.validation)).toBe(true)
-    expect(probes).toBeGreaterThanOrEqual(2)
+    expect(server.requests).toBeGreaterThanOrEqual(2)
     const granted = (await inspect()).notebookNetwork?.trustedPrivateDestinations
     expect(granted).toEqual([expect.objectContaining({ hostname: host, port, protocol: 'http' })])
     await page.evaluate(
@@ -106,7 +122,7 @@ test('enforces a saved HTTP model grant and explains revocation across restart',
         trustedPrivateDestinations: []
       })
     })
-    const beforeDenial = probes
+    const beforeDenial = server.requests
     const assertNotice = async (): Promise<void> => {
       const notice = page
         .getByTestId('conversation-composer-dock')
@@ -143,7 +159,7 @@ test('enforces a saved HTTP model grant and explains revocation across restart',
       .filter({ hasText: blockedPrompt.slice(0, 36) })
       .click()
     await assertNotice()
-    expect(probes).toBe(beforeDenial)
+    expect(server.requests).toBe(beforeDenial)
     const restored = await page.evaluate(
       (edit) => window.api.settings.saveValidatedProvider(edit),
       { ...edit, id: saved.providerId! }
@@ -156,6 +172,99 @@ test('enforces a saved HTTP model grant and explains revocation across restart',
     await page.evaluate((id) => window.api.settings.deleteProvider({ id }), saved.providerId!)
     expect((await inspect()).notebookNetwork?.trustedPrivateDestinations).toEqual(granted)
   } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await server.close()
+  }
+})
+
+test('shows the local denial when an existing conversation switches to an untrusted HTTP provider', async ({
+  app
+}) => {
+  const host = privateHost()
+  test.skip(!host, 'A private non-loopback interface is required for the remote HTTP policy.')
+  const local = await startModelServer('127.0.0.1')
+  try {
+    const remote = await startModelServer(host!)
+    try {
+      const page = await app.completeOnboarding()
+      const remoteModel = 'remote-switch-model'
+      const remoteProviderId = await page.evaluate(
+        async ({ localUrl, remoteUrl, remoteModel }) => {
+          const settings = window.api.settings
+          const common = {
+            type: 'custom' as const,
+            key: 'synthetic-test-only',
+            apiEndpoints: ['messages' as const]
+          }
+          const local = await settings.saveValidatedProvider({
+            ...common,
+            name: 'Loopback fixture',
+            baseUrl: localUrl,
+            model: 'local-switch-model'
+          })
+          const remote = await settings.saveValidatedProvider({
+            ...common,
+            name: 'Remote fixture',
+            baseUrl: remoteUrl,
+            model: remoteModel
+          })
+          if (!local.providerId || !remote.providerId)
+            throw new Error('Model fixtures failed validation')
+          await settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
+          await settings.setActiveProvider({ id: local.providerId, model: 'local-switch-model' })
+          await settings.setAgentFramework({ id: 'open-science-agent' })
+          const policy = (await settings.getSettings()).notebookNetwork!
+          await settings.setNotebookNetwork({
+            allowedDomains: policy.allowedDomains,
+            disabledOpenScienceDomains: policy.disabledOpenScienceDomains,
+            disabledOpenScienceDomainGroups: policy.disabledOpenScienceDomainGroups,
+            baseTrustedPrivateDestinations: policy.trustedPrivateDestinations,
+            trustedPrivateDestinations: []
+          })
+          return remote.providerId
+        },
+        { localUrl: local.baseUrl, remoteUrl: remote.baseUrl, remoteModel }
+      )
+
+      const projectId = await createProject(page, 'HTTP provider switch')
+      await submitPromptViaUi(page, 'Reply before switching models.')
+      await expect(page.getByText('ALLOWLIST_FIXTURE_OK', { exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toBeHidden()
+      const sessionId = await page.evaluate(
+        async (id) =>
+          (await window.api.sessions.loadAll()).sessions.find(
+            (session) => session.projectId === id
+          )!.id,
+        projectId
+      )
+      const requestsBeforeSwitch = remote.requests
+      await page.getByRole('button', { name: 'Select model', exact: true }).click()
+      await page.getByTestId('model-row').hover()
+      await page.getByRole('menuitemradio', { name: remoteModel, exact: true }).focus()
+      await page.keyboard.press('Enter')
+      await expect
+        .poll(() =>
+          page.evaluate(
+            async (id) =>
+              (await window.api.sessions.loadAll()).sessions.find((session) => session.id === id)
+                ?.agentConfiguration,
+            sessionId
+          )
+        )
+        .toMatchObject({ providerId: remoteProviderId, model: remoteModel })
+      await submitPromptViaUi(page, 'Continue after switching models.')
+      const notice = page
+        .getByTestId('conversation-composer-dock')
+        .getByTestId('composer-notice-slot')
+      await expect(
+        notice.getByRole('heading', { name: 'Model request blocked', exact: true })
+      ).toBeVisible()
+      await notice.locator('summary').click()
+      await expect(notice.locator('pre')).toContainText('MODEL_HTTP_DESTINATION_NOT_ALLOWED')
+      expect(remote.requests).toBe(requestsBeforeSwitch)
+    } finally {
+      await remote.close()
+    }
+  } finally {
+    await local.close()
   }
 })
