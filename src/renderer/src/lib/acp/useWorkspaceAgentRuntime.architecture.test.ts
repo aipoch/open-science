@@ -484,6 +484,8 @@ const directReturnObject = (arrow: ReturnType<typeof variableArrow>): Node => {
 }
 const hookKeys = [
   'actionError',
+  'actionErrorCode',
+  'clearActionError',
   'isConnecting',
   'pendingPermissions',
   'permissionProfiles',

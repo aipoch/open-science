@@ -1,4 +1,7 @@
-import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  ApplicationCommandError,
+  MODEL_HTTP_DESTINATION_NOT_ALLOWED
+} from '../../shared/application-command-contract'
 import { isLocalModelHttpDenial } from '../settings/provider-http-access'
 import { type FailureFacts, readHarnessErrorDiagnostics } from '../../shared/failure/contract'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
@@ -6,7 +9,6 @@ import { redactSensitiveText } from '@aipoch/diagnostics'
 
 import { classifyFailure } from '../../shared/failure/classify'
 import {
-  MODEL_HTTP_DESTINATION_NOT_ALLOWED,
   CALL_STACK_LIMIT_MESSAGE,
   PROVIDER_CONNECTION_FAILED_PREFIX,
   PROVIDER_RESOURCE_NOT_FOUND_PREFIX,

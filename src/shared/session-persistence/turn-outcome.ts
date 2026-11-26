@@ -1,4 +1,4 @@
-import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../failure/messages'
+import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../application-command-contract'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { readHarnessErrorDiagnostics } from '../failure/contract'
 import type {

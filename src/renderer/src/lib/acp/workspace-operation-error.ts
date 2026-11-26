@@ -1,5 +1,5 @@
 import { parseApplicationCommandError } from '../../../../shared/application-command-contract'
-import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../../../../shared/failure/messages'
+import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../../../../shared/application-command-contract'
 import { classifyFailure } from '../../../../shared/failure/classify'
 import type { ClassifiedFailure } from '../../../../shared/failure/contract'
 import { create } from 'zustand'

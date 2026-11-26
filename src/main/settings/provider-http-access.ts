@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { ApplicationCommandError } from '../../shared/application-command-contract'
-import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../../shared/failure/messages'
+import {
+  ApplicationCommandError,
+  MODEL_HTTP_DESTINATION_NOT_ALLOWED
+} from '../../shared/application-command-contract'
 import { providerNetworkDestination } from '../../shared/provider-network-authorization'
 
 export const modelHttpDestinationDenied = (): ApplicationCommandError =>

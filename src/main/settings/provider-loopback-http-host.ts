@@ -1,5 +1,5 @@
 import { ApplicationCommandError } from '../../shared/application-command-contract'
-import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../../shared/failure/messages'
+import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../../shared/application-command-contract'
 import { recordModelHttpDenial } from './provider-http-access'
 import { randomBytes, randomUUID } from 'node:crypto'
 import {

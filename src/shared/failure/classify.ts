@@ -1,4 +1,4 @@
-import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from './messages'
+import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../application-command-contract'
 import { readProviderErrorCode } from './contract'
 import type { ClassifiedFailure, FailureFacts } from './contract'
 import { recognizeProvider } from './recognizers/provider'
