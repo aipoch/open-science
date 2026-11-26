@@ -123,6 +123,7 @@ it('filters injected diagnostics and thrown errors in the final selection log', 
 })
 
 it.each([
+  [{ error: { code: 'ETIMEDOUT', message: 'PRIVATE-ERROR' } }, 'timeout', undefined],
   [{ status: 7, stdout: 'PRIVATE-REPLY' }, 'unsuccessful-exit', 7],
   [{ status: 0, stdout: 'PRIVATE-REPLY' }, 'invalid-json', undefined],
   [
