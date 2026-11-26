@@ -121,3 +121,30 @@ it('filters injected diagnostics and thrown errors in the final selection log', 
   ])
   expect(lines.join('\n')).not.toMatch(/RAW-/)
 })
+
+it.each([
+  [{ status: 7, stdout: 'PRIVATE-REPLY' }, 'unsuccessful-exit', 7],
+  [{ status: 0, stdout: 'PRIVATE-REPLY' }, 'invalid-json', undefined],
+  [
+    { status: 0, stdout: JSON.stringify({ type: 'aoao', data: [['/PRIVATE', '/OTHER'], []] }) },
+    'multiple-unlocked-items',
+    undefined
+  ]
+] as const)(
+  'diagnoses a failed Secret Service search without logging its payload (%s)',
+  async (reply, category, exitCode) => {
+    fixture.spawn.mockReturnValue(reply)
+    const { probeLinuxCredentialIdentity } = await import('./linux-secret-service')
+    const lines = await captureDiagnosticLogs(() => {
+      expect(probeLinuxCredentialIdentity('PRIVATE-APP').status).toBe('error')
+    })
+    expect(fixture.spawn).toHaveBeenCalledTimes(1)
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({
+        msg: 'Secret Service metadata probe failed',
+        data: { method: 'SearchItems', category, ...(exitCode === undefined ? {} : { exitCode }) }
+      })
+    ])
+    expect(lines.join('')).not.toContain('PRIVATE')
+  }
+)

@@ -665,6 +665,8 @@ it('mirrors a fatal service report and keeps recoverable background errors in th
   const send = await startHealthyRuntime()
   await waitForReady(send)
   const mirror = f.initLogs.mock.lastCall![0].mirrorToConsole
+  expect(mirror('credential-identity', 'Secret Service metadata probe failed')).toBe(true)
+  expect(mirror('credential-identity', 'identity probe completed')).toBe(false)
   const error = new Error('diagnostic fixture')
   f.createLifetime.mock.lastCall![0].report(error)
   expect(mirror('node-runtime', f.log.error.mock.lastCall![0])).toBe(false)
