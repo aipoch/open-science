@@ -567,12 +567,24 @@ const composeAcpRuntimePromptOwners = (
               current.hasClaimedContinuation)
           )
             throw new Error('The Notebook refusal changed. Refresh it before continuing execution.')
-          if (
+          const priorBranch = current?.scope.messageBranchId
+          const retry =
             humanTurn &&
-            operation.desktopContinuation &&
-            operation.refusalId &&
-            current?.recheckMemory
-          ) {
+            operation.retryDesktopContinuationOf &&
+            operation.retryDesktopContinuationOf === current?.scope.promptMessageId &&
+            !current.hasClaimedContinuation &&
+            (priorBranch === scope.messageBranchId ||
+              (priorBranch &&
+                request.provenanceContext?.messageBranchAncestry?.includes(priorBranch)))
+              ? current.retryableDesktopContinuation
+              : undefined
+          const continuedFromRefusalId = operation.refusalId ?? retry?.refusalId
+          const desktopContinuation =
+            humanTurn && operation.desktopContinuation && operation.refusalId
+              ? { recheckMemory: current?.recheckMemory }
+              : retry
+          const recheckMemory = desktopContinuation?.recheckMemory
+          if (current && continuedFromRefusalId && recheckMemory) {
             const createIntent = notebook.createExecutionIntent
             const admissionSignal = operation.admissionSignal
               ? AbortSignal.any([signal, operation.admissionSignal])
@@ -585,7 +597,7 @@ const composeAcpRuntimePromptOwners = (
                   'The Notebook refusal changed. Refresh it before continuing execution.'
                 )
             }
-            return current.recheckMemory(admissionSignal).then(() => {
+            return recheckMemory(admissionSignal).then(() => {
               assertCurrent()
               return {
                 signal: admissionSignal,
@@ -594,9 +606,9 @@ const composeAcpRuntimePromptOwners = (
                   assertCurrent()
                   const continuation = createIntent({
                     ...scope,
-                    continuedFromRefusalId: operation.refusalId
+                    continuedFromRefusalId
                   })
-                  continuation.prepareUserExecution(operation.assertCurrent)
+                  continuation.prepareUserExecution(operation.assertCurrent, desktopContinuation)
                   current.claimContinuation()
                   remember(continuation)
                 }
@@ -617,13 +629,16 @@ const composeAcpRuntimePromptOwners = (
           }
           // A failed discovery leaves the old intent blocked. A fresh user turn can try again.
           const freshRetry = humanTurn && current?.canRetryAbandonedPreparation
-          if (current?.refusalId && !operation.refusalId && !freshRetry) intent = current
+          if (current?.refusalId && !continuedFromRefusalId && !freshRetry) intent = current
           else {
             intent = notebook.createExecutionIntent({
               ...scope,
-              ...(operation.refusalId ? { continuedFromRefusalId: operation.refusalId } : {})
+              ...(continuedFromRefusalId ? { continuedFromRefusalId } : {})
             })
-            intent.prepareUserExecution(operation.refusalId ? operation.assertCurrent : undefined)
+            intent.prepareUserExecution(
+              continuedFromRefusalId ? operation.assertCurrent : undefined,
+              desktopContinuation
+            )
           }
         } else if (!intent) {
           const origin =

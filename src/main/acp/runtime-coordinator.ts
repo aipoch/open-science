@@ -1882,9 +1882,10 @@ class AcpRuntimeCoordinator {
     const runtime = this.claimRuntimeAdmission(owner ?? this.getActiveRuntime())
     const admission = this.runtimeAdmissions.get(runtime)
     const notebookOperation = notebookUserOperation(request)
-    const notebookAdmission = notebookOperation?.desktopContinuation
-      ? new AbortController()
-      : undefined
+    const notebookAdmission =
+      notebookOperation?.desktopContinuation || notebookOperation?.retryDesktopContinuationOf
+        ? new AbortController()
+        : undefined
     const attempt: PendingPromptStart = {
       id: `prompt-attempt-${++this.promptAttemptSequence}`,
       runtime,

@@ -30,6 +30,7 @@ export class NotebookExecutionIntent {
   private continuationClaimed = false
   private userPreparationPending = false
   private freshUserRetryAllowed = false
+  private desktopContinuation?: { recheckMemory?: NotebookMemoryRecheck }
   private userMemoryRecheck?: () => void
   private readonly branches = new Map<
     string,
@@ -51,7 +52,24 @@ export class NotebookExecutionIntent {
   }
 
   get canRetryAbandonedPreparation(): boolean {
-    return this.freshUserRetryAllowed && this.refusalReason === ABANDONED_NOTEBOOK_PREPARATION
+    return (
+      this.freshUserRetryAllowed &&
+      !this.scope.continuedFromRefusalId &&
+      this.refusalReason === ABANDONED_NOTEBOOK_PREPARATION
+    )
+  }
+
+  get retryableDesktopContinuation():
+    { refusalId: string; recheckMemory?: NotebookMemoryRecheck } | undefined {
+    const refusalId = this.scope.continuedFromRefusalId
+    if (
+      !refusalId ||
+      !this.desktopContinuation ||
+      !this.freshUserRetryAllowed ||
+      this.refusalReason !== ABANDONED_NOTEBOOK_PREPARATION
+    )
+      return
+    return { refusalId, recheckMemory: this.desktopContinuation.recheckMemory }
   }
 
   get recheckMemory(): NotebookMemoryRecheck | undefined {
@@ -93,9 +111,13 @@ export class NotebookExecutionIntent {
     return this.refusal.id
   }
 
-  prepareUserExecution(assertUserCurrent?: () => void): void {
+  prepareUserExecution(
+    assertUserCurrent?: () => void,
+    desktopContinuation?: { recheckMemory?: NotebookMemoryRecheck }
+  ): void {
     this.userPreparationPending = true
     this.userMemoryRecheck = assertUserCurrent
+    this.desktopContinuation = desktopContinuation
   }
 
   // Provider dispatch commits preparation before tools run. Keep the one-shot human recheck
@@ -108,14 +130,15 @@ export class NotebookExecutionIntent {
 
   commitUserExecution(): void {
     this.userPreparationPending = false
+    this.desktopContinuation = undefined
   }
 
   abandonUserExecution(options?: { allowFreshUserRetry?: boolean }): void {
     this.userMemoryRecheck = undefined
     if (!this.userPreparationPending) return
     this.userPreparationPending = false
-    this.freshUserRetryAllowed =
-      options?.allowFreshUserRetry === true && !this.refusal && !this.scope.continuedFromRefusalId
+    this.freshUserRetryAllowed = options?.allowFreshUserRetry === true && !this.refusal
+    if (!this.freshUserRetryAllowed) this.desktopContinuation = undefined
     this.block(ABANDONED_NOTEBOOK_PREPARATION)
   }
 
@@ -209,6 +232,7 @@ type NotebookUserOperation = Readonly<{
   refusalId?: string
   projectId?: string
   desktopContinuation?: true
+  retryDesktopContinuationOf?: string
   admissionSignal?: AbortSignal
   task?: NotebookTaskContinuationOperation['task']
   assertCurrent(): void

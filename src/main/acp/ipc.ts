@@ -132,6 +132,9 @@ const registerAcpIpcHandlerSet = (
     return stateCommand(
       workflows.sendPrompt(
         withNotebookUserOperation(rendererRequest, {
+          ...(typeof request.provenanceContext?.retryNotebookPromptId === 'string'
+            ? { retryDesktopContinuationOf: request.provenanceContext.retryNotebookPromptId }
+            : {}),
           assertCurrent: () => {
             if (lease.signal.aborted || !lease.isCurrent() || _event.sender?.isDestroyed())
               throw new Error('Notebook user operation expired.')

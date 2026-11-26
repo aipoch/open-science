@@ -1545,7 +1545,10 @@ const ConversationPanel = ({
           const result = await conversation.actions.revise(
             prompt.id,
             prompt.parts?.length ? docFromMessageParts(prompt.parts) : docFromText(prompt.content),
-            prompt.annotations ?? []
+            prompt.annotations ?? [],
+            ...(notice.failure.reason === 'environment/notebook-tools-unavailable'
+              ? ([true] as const)
+              : [])
           )
           if (!result.ok)
             throw new Error(
