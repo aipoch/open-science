@@ -913,7 +913,7 @@ export class AcpProviderSessionResumer {
 
       let resumeResponse: unknown
       try {
-        const resumeThread = () =>
+        const resumeThread = (): Promise<unknown> =>
           connection.agent.request(
             acp.methods.agent.session.resume,
             {
