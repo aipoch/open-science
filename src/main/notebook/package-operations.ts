@@ -58,6 +58,7 @@ type NotebookPackageOperationsOptions = {
   mirrorProbe?: ProbeDeps
   resolvePackageMirror?: () => PackageMirror | undefined | Promise<PackageMirror | undefined>
   ensureRecovered: (laneKey?: string) => Promise<void>
+  hasUnsettledKernelCleanup: (environment: string) => boolean
   loadSession: (request: NotebookSessionRequest) => Promise<PackageSession>
   findSession: (sessionId: string) => PackageSession | undefined
   sessions: () => Iterable<PackageSession>
@@ -158,6 +159,13 @@ class NotebookPackageOperations {
           target.environmentName,
           target.binding
         ).required,
+      recheckProcessOwnership: (target) =>
+        options.hasUnsettledKernelCleanup(target.environmentName)
+          ? packageOperationFailure(
+              new Error('Notebook processes using this environment could not be stopped.'),
+              target.receipt
+            )
+          : undefined,
       runtimeRepair: options.runtimeRepair,
       blockUnconfirmedChild: ({ repairRuntimeId, journalTarget }) => {
         options.recovery.markRuntimeLiveUnconfirmed(repairRuntimeId)

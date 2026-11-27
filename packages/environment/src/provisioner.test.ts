@@ -112,6 +112,67 @@ const makeDeps = (root: string, overrides: Partial<ProvisionerDeps> = {}): Provi
   }
 }
 
+describe('destructive prefix operations with pending Notebook cleanup', () => {
+  it.each(['repair', 'provision', 'upgrade'] as const)(
+    'prevents %s from modifying an existing Python prefix while kernel cleanup is pending',
+    async (action) => {
+      const root = makeRoot()
+      const prefix = envPrefix(root, DEFAULT_PY_ENV, process.platform)
+      const bin = pythonBin(prefix, process.platform)
+      mkdirSync(dirname(bin), { recursive: true })
+      writeFileSync(bin, 'existing interpreter')
+      if (action === 'upgrade') writeReadyMarker(root, DEFAULT_ENV_VERSION - 1, 't')
+      const runArgv = vi.fn()
+      const verify = vi.fn().mockRejectedValue(new Error('invalid interpreter'))
+      const provisioner = new DefaultRuntimeProvisioner(
+        makeDeps(root, {
+          hasUnreapedKernelProcesses: (name) => name === DEFAULT_PY_ENV,
+          runArgv,
+          verify
+        })
+      )
+
+      const operation =
+        action === 'repair'
+          ? provisioner.repair('python', vi.fn(), { force: true })
+          : action === 'provision'
+            ? provisioner.provisionPython(vi.fn())
+            : provisioner.upgradeIfNeeded(vi.fn())
+      await expect(operation).rejects.toThrow(
+        'Notebook processes using this environment could not be stopped.'
+      )
+      expect(readFileSync(bin, 'utf8')).toBe('existing interpreter')
+      expect(runArgv).not.toHaveBeenCalled()
+    }
+  )
+
+  it('allows verifying an existing prefix or creating a missing prefix', async () => {
+    const existingRoot = makeRoot()
+    const bin = pythonBin(
+      envPrefix(existingRoot, DEFAULT_PY_ENV, process.platform),
+      process.platform
+    )
+    mkdirSync(dirname(bin), { recursive: true })
+    writeFileSync(bin, 'working interpreter')
+    const existing = new DefaultRuntimeProvisioner(
+      makeDeps(existingRoot, { hasUnreapedKernelProcesses: () => true })
+    )
+    await expect(existing.provisionPython(vi.fn())).resolves.toBeUndefined()
+    expect(readFileSync(bin, 'utf8')).toBe('working interpreter')
+
+    const freshRoot = makeRoot()
+    const fresh = new DefaultRuntimeProvisioner(
+      makeDeps(freshRoot, { hasUnreapedKernelProcesses: () => true })
+    )
+    await expect(fresh.provisionPython(vi.fn())).resolves.toBeUndefined()
+    expect(
+      existsSync(
+        pythonBin(envPrefix(freshRoot, DEFAULT_PY_ENV, process.platform), process.platform)
+      )
+    ).toBe(true)
+  })
+})
+
 describe('historical R prefixes containing spaces', () => {
   it.each(['darwin', 'linux'] as const)(
     'rejects R provisioning before fetching packages on %s',

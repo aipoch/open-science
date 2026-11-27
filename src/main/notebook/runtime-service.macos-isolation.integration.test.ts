@@ -292,13 +292,12 @@ it
       expect(failedRun.status).not.toBe('completed')
       expect(failedRun.recovery).toMatchObject({
         execution: 'may-have-run',
-        retryAfter: unknownProof ? 'cleanup-verified' : 'runtime-ready',
+        retryAfter: 'runtime-ready',
         kernel: {
           kind: 'python',
           environment: 'default-python',
           signal: 'SIGKILL',
-          cause: 'unknown',
-          cleanup: unknownProof ? 'unverified' : 'verified'
+          cause: 'unknown'
         }
       })
       const crashContext = JSON.parse(
@@ -309,45 +308,35 @@ it
       // Verify the actual agent-facing payload, not only a signal substring or service-side state.
       expect(crashContext.recovery).toMatchObject(failedRun.recovery!)
       expect(crashContext.recovery.guidance).toContain('Exit cause: unknown.')
-      if (unknownProof) {
-        expect(crashContext.recovery.guidance).toContain('notebook_restart')
-        expect(crashContext.recovery.guidance).toContain('default-python')
-      } else {
-        expect(crashContext.recovery.guidance).not.toContain('notebook_restart')
-        // Exercise the advertised path through MCP: verified cleanup needs no explicit restart.
-        const next = await client.callTool({
-          name: 'notebook_execute',
-          arguments: { code: 'assert "sentinel" not in globals(); print("fresh-after-exit")' }
-        })
-        expect(next.isError).not.toBe(true)
-        expect((await service.state(scope('crashed-A'))).runs.at(-1)).toMatchObject({
-          status: 'completed',
-          text: { stdout: 'fresh-after-exit\n' }
-        })
-      }
-      if (escapedPid) {
-        await vi.waitFor(() => expect(() => process.kill(escapedPid!, 0)).toThrow())
-        escapedPid = undefined
-      }
+      expect(crashContext.recovery.guidance).not.toMatch(/cleanup|notebook_restart/u)
+      expect(crashContext.recovery.kernel).not.toHaveProperty('cleanup')
       if (unknownProof) {
         expect(existsSync(retiredRoot)).toBe(true)
         expect(existsSync(`${retiredRoot}.receipt`)).toBe(true)
-        const rejected = await client.callTool({
-          name: 'notebook_execute',
-          arguments: { code: 'print(99)' }
+      }
+      if (scenario === 'unknown-proof-restart') {
+        const restarted = await client.callTool({
+          name: 'notebook_restart',
+          arguments: { language: 'python', environment: ' python ' }
         })
-        expect(rejected).toMatchObject({ isError: true })
-        const rejectedContext = JSON.parse(
-          (rejected.content as Array<{ type: string; text?: string }>).find(
-            (item) => item.type === 'text'
-          )!.text!
-        )
-        expect(rejectedContext.recovery).toMatchObject({
-          execution: 'not-started',
-          retryAfter: 'cleanup-verified',
-          kernel: failedRun.recovery!.kernel
+        expect(restarted.isError).not.toBe(true)
+      }
+      const next = await client.callTool({
+        name: 'notebook_execute',
+        arguments: { code: 'assert "sentinel" not in globals(); print("fresh-after-exit")' }
+      })
+      expect(next.isError, JSON.stringify(next)).not.toBe(true)
+      const freshRun = (await service.state(scope('crashed-A'))).runs.at(-1)!
+      expect(freshRun).toMatchObject({
+        status: 'completed',
+        text: { stdout: 'fresh-after-exit\n' }
+      })
+      expect(freshRun.kernelEpochId).not.toBe(failedRun.kernelEpochId)
+      if (escapedPid) {
+        await vi.waitFor(() => expect(() => process.kill(escapedPid!, 0)).toThrow(), {
+          timeout: 10_000
         })
-        expect(rejectedContext.recovery.guidance).toContain('This command was not started.')
+        escapedPid = undefined
       }
 
       for (const sessionId of ['warm-B', 'new-C']) {
@@ -379,9 +368,6 @@ it
         expect(completed.every((run) => run.status === 'completed')).toBe(true)
       }
       if (unknownProof) {
-        await expect(service.execute({ ...scope('crashed-A'), code: 'print(99)' })).rejects.toThrow(
-          'process tree could not be stopped'
-        )
         // The failed interpreter must not block healthy kernels in its own Session, even
         // through the agent's existing Turn and while cleanup proof is still withheld.
         const healthyRepl = await client.callTool({
@@ -404,23 +390,16 @@ it
         expect(existsSync(retiredRoot)).toBe(true)
         expect(existsSync(`${retiredRoot}.receipt`)).toBe(true)
       }
-      retainProof = false
-      if (scenario === 'unknown-proof-restart') {
-        const restarted = await client.callTool({
-          name: 'notebook_restart',
-          arguments: { language: 'python', environment: ' python ' }
-        })
-        expect(restarted.isError).not.toBe(true)
-      }
       const recovered = await client.callTool({
         name: 'notebook_execute',
         arguments: { language: 'python', environment: 'python', code: 'after_recovery = 123' }
       })
       expect(recovered.isError).not.toBe(true)
-      // A verified recovery must discharge this turn's prior stop failure, without ending the task.
+      // The Agent Turn can finish while the old process still lacks cleanup proof.
       await expect(
         rpc.clearArtifactTurnBinding('crashed-A', 'recovery-turn')
       ).resolves.toBeUndefined()
+      retainProof = false
       expect(
         await service.executeControl({
           ...scope('crashed-A'),
@@ -444,7 +423,6 @@ it
       expect(
         await service.execute({ ...scope('crashed-A'), code: 'assert after_recovery == 123' })
       ).toMatchObject({ status: 'completed' })
-      expect(existsSync(retiredRoot)).toBe(false)
       expect(
         await service.execute({ ...scope('warm-B'), code: 'assert sentinel == 42' })
       ).toMatchObject({ status: 'completed' })
@@ -453,6 +431,8 @@ it
         expect(await readFile(join(root, 'sentinel'), 'utf8')).toBe('historical workload')
         expect(existsSync(`${root}.receipt`)).toBe(true)
       }
+      await expect(service.shutdownAll()).resolves.toMatchObject({ reaped: true })
+      expect(existsSync(retiredRoot)).toBe(false)
     } finally {
       retainProof = false
       await client.close()
@@ -725,11 +705,10 @@ it
           kind: 'repl',
           signal: code.includes('kill') ? 'SIGKILL' : null,
           exitCode: code.includes('kill') ? null : 17,
-          cause: 'unknown',
-          cleanup: 'verified'
+          cause: 'unknown'
         }
       })
-      expect(context.recovery.guidance).toContain('no extra restart')
+      expect(context.recovery.guidance).not.toMatch(/cleanup|notebook_restart/u)
       expect(
         (
           await client.callTool({

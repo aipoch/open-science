@@ -756,11 +756,9 @@ class NotebookExecutionOwner {
     )
     const { environment, processKey } = admission.route
     const { binding, resolvedInterpreter } = admission
-    const kernelWasTerminatedAtAdmission =
-      session.isKernelTerminated(processKey) || session.kernelStatus(processKey) === 'terminated'
     const kernelEpoch = session.kernelEpoch(
       processKey,
-      kernelWasTerminatedAtAdmission,
+      false,
       notebookInterpreterIdentity(resolvedInterpreter)
     )
     const kernelEpochId = kernelEpoch.id
@@ -846,7 +844,8 @@ class NotebookExecutionOwner {
         processKey,
         async () => {
           // Admission freezes the target and inputs, not the process or directory that survives
-          // preceding executions. Resolve those facts again on this process's serialized turn.
+          // preceding executions. A termination may have arrived after this entry joined the FIFO.
+          await session.drainExecutorLifecycle()
           const cwdBefore = session.cwd
           const kernelStatusBefore = session.kernelStatus(processKey)
           const kernelWasTerminated =
@@ -1392,13 +1391,14 @@ class NotebookExecutionOwner {
     const runId = queuedRun.runId
     const kernelEpochId = epoch.id
     const replEpochId = blockedMutation ? undefined : kernelEpochId
+    const assertCurrentEpoch = (): void => {
+      if (session.currentKernelEpochId('repl') !== kernelEpochId)
+        throw new Error('Notebook interpreter was stopped before execution. Run the code again.')
+    }
     const executionAdmission = guardNotebookExecutionAdmission(
       notebookExecutionAdmission(request),
       signal,
-      () => {
-        if (session.currentKernelEpochId('repl') !== kernelEpochId)
-          throw new Error('Notebook REPL epoch retired before dispatch.')
-      }
+      assertCurrentEpoch
     )
     let executedOnLiveKernel = !blockedMutation
     let reachedExecutor = false
@@ -1437,9 +1437,7 @@ class NotebookExecutionOwner {
               )
               await prepareNotebookExecution(request, 'dispatch')
               signal?.throwIfAborted()
-              if (session.currentKernelEpochId('repl') !== epoch.id) {
-                throw new Error('Notebook REPL epoch retired before dispatch.')
-              }
+              assertCurrentEpoch()
               if (mcpRpc) session.retainControlInvocationConnection(runId, mcpRpc)
               const releaseControlInvocation = mcpRpc?.beginControlInvocation?.(
                 {

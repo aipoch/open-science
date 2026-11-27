@@ -84,6 +84,60 @@ describe('NotebookNetworkSandbox', () => {
     }
   })
 
+  it('admits a new command while a launched kernel still owns pending cleanup', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    await sandbox.initialize()
+    const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+    const first = await sandbox.wrap({ ...command, kernelEpochId: 'old-kernel' })
+    const entered = Promise.withResolvers<void>()
+    const cleanup = Promise.withResolvers<void>()
+    const debt = {
+      processesTerminated: false,
+      networkClosed: false,
+      temporaryResourcesRemoved: false
+    }
+    const complete = {
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }
+    const confirmTermination = vi.fn(async () => false)
+    backend.cleanupAfterCommand.mockImplementationOnce(async () => {
+      entered.resolve()
+      await cleanup.promise
+      return debt
+    })
+    const pending = first.cleanup('exit', { processesTerminated: false, confirmTermination })
+    try {
+      await entered.promise
+      const successor = await sandbox.wrap({ ...command, kernelEpochId: 'new-kernel' })
+      const shell = await sandbox.wrap(command)
+      expect(backend.cleanupAfterCommand).toHaveBeenCalledOnce()
+      expect(confirmTermination).not.toHaveBeenCalled()
+      cleanup.resolve()
+      await expect(pending).resolves.toEqual(debt)
+      await expect(successor.cleanup('exit', { processesTerminated: true })).resolves.toEqual(
+        complete
+      )
+      await shell.cleanup('exit', { processesTerminated: true })
+      await expect(sandbox.dispose()).rejects.toThrow('cleanup was incomplete')
+      expect(backend.reset).not.toHaveBeenCalled()
+      await expect(
+        first.cleanup('exit', { processesTerminated: true, processState: 'started-and-reaped' })
+      ).resolves.toEqual(complete)
+      await sandbox.dispose()
+      expect(confirmTermination).toHaveBeenCalledOnce()
+      expect(backend.reset).toHaveBeenCalledOnce()
+    } finally {
+      cleanup.resolve()
+      await pending
+      backend.cleanupAfterCommand.mockResolvedValue(complete)
+      await sandbox.dispose()
+    }
+  })
+
   it('shares one termination verification across concurrent admissions', async () => {
     const sandbox = new NotebookNetworkSandbox(options())
     vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })

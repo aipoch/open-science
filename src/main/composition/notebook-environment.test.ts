@@ -32,7 +32,7 @@ vi.mock('../notebook/env-ipc', () => ({
   broadcastNotebookEnvProgress: mocks.progress
 }))
 
-import type { RuntimeProvisioner } from '@aipoch/environment'
+import { addRepairRequired, type RuntimeProvisioner } from '@aipoch/environment'
 import { initializeDataRootWriteAvailability } from '../storage/migration-state'
 import { KernelProcessLifecycleOwner } from '../notebook/kernel-process-lifecycle.windows-posix'
 import { NotebookRunRepository } from '../notebook/repository'
@@ -63,6 +63,7 @@ const fixture = (): Dependencies => ({
     prepareRuntimeRepair: vi.fn(),
     completeRuntimeRepair: vi.fn(),
     setEnvironmentStartupBarrier: vi.fn(),
+    hasUnreapedKernelProcesses: vi.fn(() => false),
     setEnvironmentManager: vi.fn(),
     setDefaultEnvProvisioner: vi.fn()
   },
@@ -94,15 +95,23 @@ beforeEach(() => {
 })
 
 describe('Notebook environment composition', () => {
-  it('reports runtime status while an old Windows kernel receipt still fences environment writes', async () => {
+  it('admits status and provision while rejecting a same-environment Reset with unconfirmed cleanup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'notebook-runtime-status-'))
     const previous = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
     const intent = previous.beginSpawn({
       laneKey: 'old-session',
-      processKey: 'python:default-python',
+      processKey: 'r:default-r',
       kernelEpochId: 'old-epoch'
     })
     previous.recordSpawned(intent, { pid: 4242 })
+    const provisioningRoot = join(root, 'runtime')
+    addRepairRequired(provisioningRoot, 'default-r', 'protected-identity-change')
+    const raw = provisioner()
+    vi.mocked(raw.repair).mockImplementation(async (_language, _report, options) => {
+      await options?.onStarting?.()
+    })
+    mocks.createProvisioner.mockReturnValue(raw)
+    const dependencies = fixture()
     const service = new NotebookRuntimeService({
       platform: 'win32',
       dataRoot: root,
@@ -112,15 +121,16 @@ describe('Notebook environment composition', () => {
     })
     try {
       const lifecycle = await registerNotebookEnvironmentComposition({
-        ...fixture(),
-        provisioningRoot: join(root, 'runtime'),
+        ...dependencies,
+        provisioningRoot,
         notebookService: service
       })
       await expect(lifecycle.status()).resolves.toMatchObject({ pythonReady: true, rReady: true })
-      await expect(lifecycle.provision('python')).rejects.toThrow('KERNEL_STARTUP_FENCE')
-      await expect(lifecycle.repair('python', 'default-python')).rejects.toThrow(
-        'KERNEL_STARTUP_FENCE'
+      await expect(lifecycle.provision('r')).resolves.toBeUndefined()
+      await expect(lifecycle.repair('r', 'default-r')).rejects.toThrow(
+        'Notebook processes using this environment could not be stopped.'
       )
+      expect(dependencies.notebookNetworkSandbox.revokeManagedRAccess).not.toHaveBeenCalled()
     } finally {
       await service.dispose()
       await rm(root, { recursive: true, force: true })

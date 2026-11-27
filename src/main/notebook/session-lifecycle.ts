@@ -248,6 +248,16 @@ class NotebookSessionLifecycleOwner {
                       return false
                     if (!stillIdle() || this.hasPendingWork(session.sessionId)) return false
                     if (this.options.sessions.get(session.lane) !== session) return false
+                    if (process.retire) {
+                      if (!process.retire()) return false
+                      const instance = kernelInstanceForProcessKey(process.processKey)
+                      await this.projectKernelIdleShutdown(
+                        session.lane,
+                        instance.kind,
+                        'environment' in instance ? instance.environment : undefined
+                      )
+                      return true
+                    }
                     const owned = this.resources({
                       projectId: session.projectId,
                       sessionId: session.sessionId
@@ -361,8 +371,7 @@ class NotebookSessionLifecycleOwner {
       if (controller.signal.aborted)
         throw new Error('Notebook session initialization was cancelled.')
     }
-    const ensuring = this.options.sessions.getOrCreate(lane, async () => {
-      await this.options.ensureProcessRecovery(notebookLaneKey(lane))
+    const sessionReady = this.options.sessions.getOrCreate(lane, async () => {
       assertCreationAvailable()
       await assertResearchSessionWritable(this.options.storageRoot, projectId, request.sessionId)
       let document = await this.options.repository.loadSessionInitialization({
@@ -443,6 +452,11 @@ class NotebookSessionLifecycleOwner {
         }
         throw error
       }
+    })
+    const ensuring = sessionReady.then(async (session) => {
+      await this.options.ensureProcessRecovery(notebookLaneKey(lane))
+      await session.resumeExecutor(() => this.createExecutor(lane))
+      return session
     }) as PendingOperation<RuntimeSession>
     ensuring.resource ??= {
       identity: ensuring,
