@@ -425,6 +425,33 @@ describe('HomePage package export progress', () => {
 })
 
 describe('HomePage environment repair notice', () => {
+  it('defers pending project creation until the onboarding backdrop becomes active', async () => {
+    useNavigationStore.setState({ pendingProjectCreation: true })
+
+    await act(async () =>
+      root.render(
+        <HomePage
+          isActive={false}
+          canDeleteProjects={false}
+          hasCompleteSessionCatalog
+          onOpenGlobalSearch={vi.fn()}
+        />
+      )
+    )
+
+    expect(document.body.textContent).not.toContain('Group related sessions under a project.')
+    expect(useNavigationStore.getState().pendingProjectCreation).toBe(true)
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(document.body.textContent).toContain('Group related sessions under a project.')
+    expect(useNavigationStore.getState().pendingProjectCreation).toBe(false)
+  })
+
   it('consumes a global-search request and opens the New Project dialog', async () => {
     useNavigationStore.setState({ pendingProjectCreation: true })
 

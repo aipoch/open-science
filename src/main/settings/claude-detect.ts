@@ -1,3 +1,4 @@
+import { isSupportedClaudeCliVersion } from '../../shared/claude-runtime'
 import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
@@ -99,10 +100,12 @@ const detectClaude = async (
   const binaryNames = claudeBinaryNames(deps.platform)
   const resolveSpawnTarget = deps.resolveSpawnTarget ?? ((candidate: string) => candidate)
 
+  let incompatible: ClaudeDetectResult | undefined
   for await (const dir of candidateDirs(deps, signal)) {
     for (const name of binaryNames) {
       const candidate = p.join(dir, name)
 
+      if (!p.isAbsolute(candidate)) continue
       const executable = await deps.isExecutable(candidate)
       signal?.throwIfAborted()
       if (!executable) continue
@@ -118,11 +121,13 @@ const detectClaude = async (
       // its shell-run `--version` just succeeded, so reject it and keep probing for a spawnable target.
       if (isUnspawnableShim(resolveSpawnTarget(candidate), deps.platform)) continue
 
-      return { found: true, path: candidate, version }
+      const result = { found: true, path: candidate, version }
+      if (isSupportedClaudeCliVersion(version)) return result
+      incompatible ??= result
     }
   }
 
-  return { found: false }
+  return incompatible ?? { found: false }
 }
 
 // Real filesystem executable check. On Windows the POSIX execute bit is meaningless — access(X_OK)

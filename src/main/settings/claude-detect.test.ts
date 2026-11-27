@@ -99,11 +99,21 @@ describe('claude-detect', () => {
   it('finds claude on PATH and records its absolute path and version', async () => {
     const resolveNpmBinDirs = vi.fn(async () => [])
     const result = await detectClaude(
-      createDeps({ '/usr/local/bin/claude': '2.1.0' }, { resolveNpmBinDirs })
+      createDeps({ '/usr/local/bin/claude': '2.2.0' }, { resolveNpmBinDirs })
     )
     expect(resolveNpmBinDirs).not.toHaveBeenCalled()
 
-    expect(result).toEqual({ found: true, path: '/usr/local/bin/claude', version: '2.1.0' })
+    expect(result).toEqual({ found: true, path: '/usr/local/bin/claude', version: '2.2.0' })
+  })
+
+  it('prefers a compatible managed CLI over an outdated PATH candidate', async () => {
+    const result = await detectClaude(
+      createDeps(
+        { '/usr/local/bin/claude': '2.1.0', '/managed/bin/claude': '2.2.0' },
+        { extraDirs: ['/managed/bin'] }
+      )
+    )
+    expect(result.path).toBe('/managed/bin/claude')
   })
 
   it('passes cancellation through npm discovery and version probing', async () => {

@@ -26,9 +26,9 @@ type CompleteResult = {
 const completeResult = (status: 'passed' | 'advisory'): CompleteResult => ({
   schemaVersion: 1,
   status,
-  plannedTests: 11,
-  completedTests: 11,
-  readyTests: 11,
+  plannedTests: 12,
+  completedTests: 12,
+  readyTests: 12,
   axeRunCount: EXPECTED_ACCESSIBILITY_SURFACES.length,
   scans: EXPECTED_ACCESSIBILITY_SURFACES.map((surface) => ({ surface }))
 })
@@ -152,16 +152,16 @@ it('accepts complete evidence from the expanded responsive and contrast matrix',
       path,
       JSON.stringify({
         ...completeResult('passed'),
-        plannedTests: 11,
-        completedTests: 11,
-        readyTests: 11,
+        plannedTests: 12,
+        completedTests: 12,
+        readyTests: 12,
         axeRunCount: surfaces.length,
         scans: surfaces.map((surface) => ({ surface }))
       })
     )
     expect(readAccessibilityResult(path)).toMatchObject({
       status: 'passed',
-      plannedTests: 11,
+      plannedTests: 12,
       axeRunCount: 21
     })
   } finally {

@@ -5,6 +5,7 @@ import { RefreshCw, TriangleAlert } from 'lucide-react'
 import { Trans, useTranslation } from 'react-i18next'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { selectAnyInstalling, useSettingsStore } from '@/stores/settings-store'
 import type {
   AgentFrameworkId,
@@ -735,13 +736,20 @@ const AgentPanel = ({
   )
 
   return (
-    <div className="space-y-5 p-5">
+    <div className={cn('space-y-5', isOnboarding ? 'onboarding-agent-panel' : 'p-5')}>
       {/* The runtime cards double as the framework selector: pick a card to make it the active
           backend (confirmed, since it starts a fresh session). Cards are grouped by install state
           so management (Installed) and acquisition (Available) don't compete for attention — but
           the active runtime can't be uninstalled (switch to the other one first). */}
       <SettingsSection
         data-settings-anchor="agent.framework"
+        className={
+          isOnboarding
+            ? 'p-0 [&_:where(h2)]:text-[0.9375rem] [&_:where(h2)]:leading-[1.4]'
+            : undefined
+        }
+        headerClassName={isOnboarding ? 'sm:gap-3' : undefined}
+        contentClassName={isOnboarding ? 'mt-4' : undefined}
         title={title}
         headingAs={isOnboarding ? 'h2' : 'h3'}
         aria-label={title}

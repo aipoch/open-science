@@ -345,6 +345,51 @@ describe('SettingsService provider facade', () => {
     }
   })
 
+  it('retains a working default after a rejected onboarding key and completing setup', async () => {
+    await repository.setAgentFramework('opencode')
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+        )
+    )
+    vi.stubGlobal('fetch', fetch)
+    try {
+      const { initDataRoot } = await import('../storage-root')
+      initDataRoot(join(dir, 'Open-Science'))
+      const original = await service.saveValidatedProvider({
+        type: 'custom',
+        name: 'Working',
+        baseUrl: 'https://working.example/v1',
+        model: 'working-model',
+        key: 'test-working',
+        apiEndpoints: ['chat-completions']
+      })
+      expect(original.validation.ok).toBe(true)
+      await repository.setActiveProvider(original.providerId!, 'working-model')
+      const before = await repository.getSettings()
+      fetch.mockImplementation(async () => new Response('Unauthorized', { status: 401 }))
+      const rejected = await service.saveValidatedProvider({
+        type: 'official',
+        vendorId: 'deepseek',
+        model: 'deepseek-chat',
+        key: 'test-rejected'
+      })
+      expect(rejected.validation).toMatchObject({ ok: false })
+      expect(rejected.providerId).toBeUndefined()
+      await service.markOnboardingComplete()
+      const after = await repository.getSettings()
+      expect(after.providers).toEqual(before.providers)
+      expect(after.activeProviderId).toBe(original.providerId)
+      expect(await service.resolveActiveModelChangeTarget()).toMatchObject({
+        providerId: original.providerId,
+        model: 'working-model'
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('returns the committed provider identity when snapshot refresh fails', async () => {
     await repository.setAgentFramework('opencode')
     vi.stubGlobal(

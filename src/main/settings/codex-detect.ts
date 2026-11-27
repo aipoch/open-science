@@ -539,8 +539,10 @@ const createDefaultDetectDeps = (): CodexDetectDeps => {
 
 async function* nativeCandidates(
   deps: CodexSearchDirs,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  preferredPaths: readonly (string | undefined)[] = []
 ): AsyncGenerator<string> {
+  for (const candidate of preferredPaths) if (candidate) yield candidate
   const p = pathFor(deps.platform)
   let bundledPath: string | undefined
   if (deps.platform === 'darwin') {
@@ -559,15 +561,19 @@ async function* nativeCandidates(
 // Detect the native CLI independently so Settings can distinguish it from a missing adapter.
 const detectNativeCodex = async (
   deps: CodexSearchDirs & Pick<CodexDetectDeps, 'getCodexVersion'> = createDefaultDetectDeps(),
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options: { supportedOnly?: boolean; preferredPaths?: readonly (string | undefined)[] } = {}
 ): Promise<{ path: string; version: string } | undefined> => {
   signal?.throwIfAborted()
-  for await (const codexPath of nativeCandidates(deps, signal)) {
+  const seen = new Set<string>()
+  for await (const codexPath of nativeCandidates(deps, signal, options.preferredPaths)) {
+    if (seen.has(codexPath)) continue
+    seen.add(codexPath)
     signal?.throwIfAborted()
     const versionOutput = await deps.getCodexVersion(codexPath, signal)
     signal?.throwIfAborted()
     const version = versionOutput ? parseVersion(versionOutput) : undefined
-    if (version) {
+    if (version && (!options.supportedOnly || isSupportedCodexCliVersion(version))) {
       return { path: codexPath, version }
     }
   }

@@ -44,11 +44,11 @@ export const settingsBeginXaiOAuthLoginContracts = {
     'settings',
     ['settings:begin-xai-oauth-login', LOCAL]
   ),
-  'settings.cancelClaudeLogin': callable<() => Promise<void>>()('settings', [
-    'settings:cancel-claude-login',
-    LOCAL
-  ]),
-  'settings.cancelCodexLogin': callable<() => Promise<void>>()('settings', [
+  'settings.cancelClaudeLogin': callable<(signInInstallId?: string) => Promise<void>>()(
+    'settings',
+    ['settings:cancel-claude-login', LOCAL]
+  ),
+  'settings.cancelCodexLogin': callable<(signInInstallId?: string) => Promise<void>>()('settings', [
     'settings:cancel-codex-login',
     LOCAL
   ])
