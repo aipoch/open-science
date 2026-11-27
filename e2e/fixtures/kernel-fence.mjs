@@ -3,8 +3,11 @@
 export const kernelRecoveryRequest = 'WINDOWS_KERNEL_RECOVERY_REQUEST:'
 
 export async function exerciseKernelRecovery(client, prompt, toolResult) {
+  // The fixture request occupies one line. The agent can append context to the prompt.
   const input = JSON.parse(
-    prompt.slice(prompt.lastIndexOf(kernelRecoveryRequest) + kernelRecoveryRequest.length)
+    prompt
+      .slice(prompt.lastIndexOf(kernelRecoveryRequest) + kernelRecoveryRequest.length)
+      .split(/\r?\n/u, 1)[0]
   )
   const call = async (name, args) =>
     toolResult(

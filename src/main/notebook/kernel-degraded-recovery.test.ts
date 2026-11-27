@@ -1,4 +1,3 @@
-import type { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, rename, rm } from 'node:fs/promises'
@@ -8,6 +7,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { terminateProcessTree } from '../process-tree'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import {
+  controlKernelTreeReaping,
+  type KernelTreeReap
+} from './fixtures/controlled-kernel-tree-reaping'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
@@ -504,19 +507,19 @@ describe('kernel degraded recovery', () => {
     const oldCleanup = Promise.withResolvers<void>()
     const oldPids = new Set<number>()
     let retryAllowed = false
-    const terminateTree = vi.fn(async (child: ChildProcess) => {
+    const reapTree = vi.fn<KernelTreeReap>(async (child, reap) => {
       if (child.pid !== undefined && oldPids.has(child.pid)) {
         await oldCleanup.promise
-        const result = await terminateProcessTree(child)
+        const result = await reap()
         return retryAllowed ? result : { reaped: false }
       }
-      return terminateProcessTree(child)
+      return reap()
     })
     const executor = new NotebookKernelExecutor({
       replLoopPath: REPL_LOOP,
       processLifecycle: lifecycle,
       laneKey: '["project-1","session-1","root",null,null]',
-      terminateTree
+      terminateTree: controlKernelTreeReaping(reapTree)
     })
     const request = {
       cwd: root,
@@ -551,7 +554,7 @@ describe('kernel degraded recovery', () => {
       const stopping = executor.terminate('repl', '').catch((error: unknown) => error)
       void stopping.then(() => (settled = true))
       await vi.waitFor(() =>
-        expect(terminateTree.mock.calls.map(([child]) => child.pid)).toContain(newPid)
+        expect(reapTree.mock.calls.map(([child]) => child.pid)).toContain(newPid)
       )
       expect(settled).toBe(false)
       oldCleanup.resolve()
@@ -577,18 +580,18 @@ describe('kernel degraded recovery', () => {
     await lifecycle.ensureReady()
     const degradedPids = new Set<number>()
     const terminationAttempts = new Map<number, number>()
-    const terminateTree = vi.fn(async (child: ChildProcess) => {
+    const reapTree: KernelTreeReap = async (child, reap) => {
       if (child.pid !== undefined) {
         terminationAttempts.set(child.pid, (terminationAttempts.get(child.pid) ?? 0) + 1)
       }
-      const result = await terminateProcessTree(child)
+      const result = await reap()
       return child.pid !== undefined && degradedPids.has(child.pid) ? { reaped: false } : result
-    })
+    }
     const executor = new NotebookKernelExecutor({
       replLoopPath: REPL_LOOP,
       processLifecycle: lifecycle,
       laneKey: '["project-1","session-1","root",null,null]',
-      terminateTree
+      terminateTree: controlKernelTreeReaping(reapTree)
     })
     const request = {
       cwd: root,
@@ -669,6 +672,7 @@ describe('kernel degraded recovery', () => {
         )
       }
     } finally {
+      degradedPids.clear()
       await executor.shutdown()
     }
   }, 20_000)

@@ -6,8 +6,12 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchLocalRpc } from '../local-rpc-transport'
-import { terminateProcessTree } from '../process-tree'
+import {
+  controlKernelTreeReaping,
+  type KernelTreeReap
+} from './fixtures/controlled-kernel-tree-reaping'
 import { NotebookKernelExecutor } from './kernel-executor'
+import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookRunRepository } from './repository'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
@@ -20,7 +24,11 @@ import {
 
 const cleanups: (() => Promise<unknown>)[] = []
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+  try {
+    for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+  } finally {
+    vi.restoreAllMocks()
+  }
 })
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -36,9 +44,7 @@ async function harness(
     onExecute?: (request: NotebookExecutionRequest) => Promise<void>
     realExecutor?: boolean
     onSpawn?: () => Promise<void>
-    terminateTree?: NonNullable<
-      ConstructorParameters<typeof NotebookKernelExecutor>[0]
-    >['terminateTree']
+    reapTree?: KernelTreeReap
     serverOptions?: ConstructorParameters<typeof NotebookLocalRpcServer>[1]
   } = {}
 ): Promise<{
@@ -60,18 +66,25 @@ async function harness(
   const requests: NotebookExecutionRequest[] = []
   const lifecycles: NotebookExecutorLifecycleCallbacks[] = []
   const repository = new NotebookRunRepository(root)
+  const terminateTree = options.reapTree && controlKernelTreeReaping(options.reapTree)
+  const processLifecycle =
+    terminateTree && process.platform === 'win32'
+      ? new KernelProcessLifecycleOwner({ storageRoot: join(root, 'controlled-kernel-ownership') })
+      : undefined
   const service = new NotebookRuntimeService({
     memoryPolicy: healthyNotebookMemoryPolicy(),
     configRoot: root,
     dataRoot: root,
     projectId: 'default-project',
     repository,
-    executorFactory: (_sessionId, lifecycle) => {
+    executorFactory: (sessionId, lifecycle) => {
       lifecycles.push(lifecycle)
       if (options.realExecutor) {
         const executor = new NotebookKernelExecutor({
           ...lifecycle,
-          terminateTree: options.terminateTree
+          terminateTree,
+          processLifecycle,
+          laneKey: sessionId
         })
         const execute = executor.execute.bind(executor)
         vi.spyOn(executor, 'execute').mockImplementation(async (request) => {
@@ -156,11 +169,11 @@ describe('REPL process RPC ownership', () => {
     let attempts = 0
     const { authorityStatus, execute, requests, root, service } = await harness({
       realExecutor: true,
-      terminateTree: async (child) => {
+      reapTree: async (child, reap) => {
         oldPid ??= child.pid
-        if (child.pid !== oldPid) return terminateProcessTree(child)
+        if (child.pid !== oldPid) return reap()
         if (++attempts === 1) {
-          await terminateProcessTree(child)
+          await reap()
           return { reaped: false }
         }
         retryEntered.resolve()
@@ -191,7 +204,10 @@ describe('REPL process RPC ownership', () => {
       const stop = service.terminateMonitoredProcess({ ...scope, id: oldId! })
       // Always release the monitor's cleanup if an execution assertion fails.
       try {
-        await retryEntered.promise
+        await Promise.race([
+          retryEntered.promise,
+          stop.then(() => expect.fail('Cleanup finished before retrying the retained owner.'))
+        ])
         let status: NotebookControlResult['status'] | undefined
         const execution = execute().then((result) => (status = result.status))
         try {
@@ -220,9 +236,9 @@ describe('REPL process RPC ownership', () => {
       let reapingConfirmed = false
       const { authorityStatus, execute, lifecycles, requests, root, service } = await harness({
         realExecutor: true,
-        terminateTree: async (child) => {
+        reapTree: async (child, reap) => {
           oldPid ??= child.pid
-          const result = await terminateProcessTree(child)
+          const result = await reap()
           return child.pid === oldPid && !reapingConfirmed ? { reaped: false } : result
         }
       })
