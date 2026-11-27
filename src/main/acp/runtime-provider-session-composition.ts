@@ -5,7 +5,10 @@ import type { AgentFramework } from '../agent-framework/types'
 import { assertMainAgentSessionResumeAllowed } from './main-agent-process-ownership'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import { AcpProviderSessionCreator } from './provider-session-creator'
-import { AcpProviderSessionResumer } from './provider-session-resumer'
+import {
+  AcpProviderSessionResumer,
+  type AcpNotebookConnectionVerifier
+} from './provider-session-resumer'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
@@ -25,6 +28,7 @@ const composeAcpRuntimeProviderSessionOwners = (
   session: AcpRuntimeSessionOwners,
   lifecycle: AcpRuntimeLifecycleOwners,
   runtime: Readonly<{
+    verifyNotebookConnection?: AcpNotebookConnectionVerifier
     clearUserChoiceProvenanceForSession: (sessionId: string) => void
     releasePromptResourcesForSession: (sessionId: string) => void
   }>
@@ -154,6 +158,7 @@ const composeAcpRuntimeProviderSessionOwners = (
     getSnapshot: () => session.publication.getSnapshot()
   })
   const providerSessionResumer = new AcpProviderSessionResumer({
+    verifyNotebookConnection: runtime.verifyNotebookConnection,
     defaultCwd: options.defaultCwd,
     defaultProjectId,
     currentCwd: () => base.snapshotOwner.cwd,

@@ -65,6 +65,7 @@ import type {
 } from '../agent-framework/types'
 import type { ApprovedSwitchReadBack, ClaudeCodeReplayInput } from '../agents/claude-code-handoff'
 import { LITERATURE_MCP_SERVER_NAME } from '../literature/mcp-contract'
+import { NOTEBOOK_MCP_SERVER_NAME } from '../notebook/mcp-server'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { withDataRootWrite } from '../storage/migration-state'
@@ -81,6 +82,7 @@ import type {
   AcpBackendGenerationView
 } from './backend-generation-owner'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
+import { AcpOpenCodeNotebook, type OpenCodeNotebookScope } from './opencode-session-tools'
 import type { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import type {
   AcpConnectionResourceAttempt,
@@ -285,6 +287,9 @@ class AcpRuntime {
   private readonly spawnAgent: (() => ChildProcessWithoutNullStreams) | undefined
   private readonly backendGeneration: AcpBackendGenerationOwner
   private readonly sessionConfigurator: AcpSessionConfigurator
+  private readonly openCodeNotebook = new AcpOpenCodeNotebook((id) =>
+    this.openCodeNotebookScope(id)
+  )
   private readonly sessionCapabilities: AcpSessionCapabilityOwner
   private readonly sessionUpdateProjector: AcpSessionUpdateProjector
   private readonly providerPromptExecutor: AcpProviderPromptExecutor
@@ -455,6 +460,7 @@ class AcpRuntime {
       }
     })
     const prompt = composeAcpRuntimePromptOwners(options, base, session, {
+      verifyNotebookConnection: this.openCodeNotebook.verify,
       refreshNotebookConnection: (input) =>
         this.providerSessionResumer.refreshNotebookConnection(input),
       onProviderPromptAccepted: (sessionId) => {
@@ -583,6 +589,7 @@ class AcpRuntime {
       session,
       lifecycle,
       {
+        verifyNotebookConnection: this.openCodeNotebook.verify,
         clearUserChoiceProvenanceForSession: (sessionId) =>
           this.questionContinuations.clearSession(sessionId),
         releasePromptResourcesForSession: (sessionId) =>
@@ -1059,7 +1066,10 @@ class AcpRuntime {
         onSessionReady
       )
       const session = this.activeSessionFor(request.sessionId)
-      if (session) await this.options.authorizedDirectories?.initialize(session)
+      if (session) {
+        this.openCodeNotebook.invalidate(session)
+        await this.options.authorizedDirectories?.initialize(session)
+      }
       if (resumed.contextReset) {
         this.durableContinuationContext.markContextReset(request.sessionId)
       }
@@ -1513,6 +1523,14 @@ class AcpRuntime {
           : undefined
       },
       observeSessionUpdate: (notification) => {
+        const connection = this.connection
+        if (
+          notification.update.sessionUpdate === 'available_commands_update' &&
+          connection &&
+          identity.epoch === this.connectionResources.epoch &&
+          this.backendGeneration.openCodeUsageApi()?.version === 2
+        )
+          this.openCodeNotebook.observeCommands(connection, notification)
         this.providerSessionResumer.observeProgress(notification.sessionId)
         this.permissionContext.observeProviderUpdate(notification)
       },
@@ -2360,6 +2378,30 @@ class AcpRuntime {
       this.providerSessionResumer.observeProgress(params.sessionId)
     }
     this.providerPromptExecutor.observeProviderMessage(params)
+  }
+
+  private openCodeNotebookScope(providerSessionId: string): OpenCodeNotebookScope | undefined {
+    const api = this.backendGeneration.openCodeUsageApi()
+    const connection = this.connection
+    if (!api || !connection || this.sessionEnvironment.role() !== 'primary') return
+    const id = this.sessionRegistry.resolveAppSessionId(providerSessionId)
+    const entry = this.sessionRegistry.lookup(id)
+    const snapshot = entry?.aggregate.snapshot()
+    if (
+      !entry?.attachment ||
+      entry.attachment.providerSessionId !== providerSessionId ||
+      snapshot?.frameworkId !== 'opencode' ||
+      !this.sessionCapabilities.mcpServerNamesFor(id).includes(NOTEBOOK_MCP_SERVER_NAME)
+    )
+      return
+    return {
+      api,
+      connection,
+      session: entry.attachment.session,
+      revision: entry.aggregate.specialistBindingRevision(),
+      servers: this.sessionCapabilities.mcpServersFor(id),
+      interaction: this.sessionInteractions.current(id)
+    }
   }
 
   // Looks up the workspace root bound to a session for filesystem operations.

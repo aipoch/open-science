@@ -54,6 +54,8 @@ export type AgentTurnProvenanceContext = {
   // A suppressed application continuation may use a synthetic prompt identity while retaining a
   // durable conversation message as the authorization origin for control-plane calls.
   originMessageId?: string
+  // A desktop Retry action targets the failed Notebook discovery attempt on the prior revision.
+  retryNotebookPromptId?: string
   rootFrameId?: string
   agentFrameId?: string
   messageBranchId?: string

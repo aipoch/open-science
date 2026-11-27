@@ -7995,6 +7995,8 @@
     "The input is too long": "Die Eingabe ist zu lang",
     "Shorten the conversation or remove some attachments, then retry.": "Kürzen Sie die Konversation oder entfernen Sie einige Anhänge und versuchen Sie es erneut.",
     "Check your credentials, model and account settings, then retry.": "Prüfen Sie Ihre Zugangsdaten sowie die Modell- und Kontoeinstellungen und versuchen Sie es erneut.",
+    "Notebook tools are temporarily unavailable": "Notebook-Tools sind vorübergehend nicht verfügbar",
+    "Retry to send this request with Notebook.": "Versuchen Sie erneut, diese Anfrage mit Notebook zu senden.",
     "The model service is temporarily unavailable": "Der Modelldienst ist vorübergehend nicht verfügbar",
     "The request could not finish. Wait a moment, then retry.": "Die Anfrage konnte nicht abgeschlossen werden. Warten Sie kurz und versuchen Sie es erneut.",
     "The local environment needs attention": "Die lokale Umgebung muss überprüft werden",

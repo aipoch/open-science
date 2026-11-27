@@ -100,6 +100,14 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     secondaryActions: ['retry'],
     feedback: 'link'
   },
+  'environment/notebook-tools-unavailable': {
+    level: 'warning',
+    titleKey: 'Notebook tools are temporarily unavailable',
+    descriptionKey: 'Retry to send this request with Notebook.',
+    primaryAction: 'retry',
+    secondaryActions: [],
+    feedback: 'none'
+  },
   'service/unavailable': noticeCatalog.service,
   'configuration/endpoint-invalid': {
     ...noticeCatalog.configuration,

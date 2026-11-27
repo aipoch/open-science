@@ -213,8 +213,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Directory discovery publishes its existing result fields using the MCP default dialect.
         // Output paging reads one persisted Run through the existing session-scoped state route.
         // Paging and handoff extraction project results only; no Auto operation branch changed.
+        // Discovery checks the advertised tool list against registered names and draft guidance
+        // points to the existing notebook_execute RPC.
         'notebook/mcp-server.ts':
-          '246821c41c360ed03b33b39d42dd5600d2339edc245814f1acb4949b052b187e',
+          '8119ff8f7829818b2fa7c87d1e3c1430e0aaa2acc2f50ed972d405fa9ff0dc4d',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.

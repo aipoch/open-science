@@ -32,7 +32,11 @@ import type {
   SessionSetupContext
 } from './types'
 import { isProductionDelegatedWorkFramework } from '../delegation/production-readiness'
-import { appMcpServerNames, renderAppMcpToolReferences } from './app-mcp-names'
+import {
+  appMcpServerNames,
+  modelFacingAppMcpServerName,
+  renderAppMcpToolReferences
+} from './app-mcp-names'
 
 type SpawnProcess = (
   command: string,
@@ -304,6 +308,8 @@ const buildOpencodeGoSessionPlugin = (
   ].join('\n')
 }
 
+export const OPENCODE_NOTEBOOK_CHECK_COMMAND = 'open-science-notebook-check'
+
 const buildOpencodeV2Plugin = (provider: ResolvedProvider, ctx: ModelConfigContext): string => {
   const providerIds = opencodeModelCatalog(provider, ctx.reasoningEffort, ctx.providerModelCatalog)
     .filter((entry) => entry.provider.vendorId === 'opencode-go')
@@ -315,10 +321,34 @@ const buildOpencodeV2Plugin = (provider: ResolvedProvider, ctx: ModelConfigConte
     'export default Plugin.define({',
     '  id: "open-science-compatibility",',
     '  async setup(ctx) {',
+    `    const notebook = ${JSON.stringify(modelFacingAppMcpServerName('opencode', 'open-science-notebook'))}`,
+    '    let notebookDiscoveryRevision = 0',
     '    await ctx.mcp.transform(editor => {',
     '      for (const [name, server] of editor.list()) {',
     '        if (servers.has(name)) server.codemode = false',
+    '        if (name !== notebook || !notebookDiscoveryRevision) continue',
+    // Changing only Notebook's configuration makes reload reconnect the failed client.
+    '        const revision = String(notebookDiscoveryRevision)',
+    '        if (server.type === "local") server.environment = { ...server.environment, OPEN_SCIENCE_NOTEBOOK_DISCOVERY_REVISION: revision }',
+    '        else server.headers = { ...server.headers, "x-open-science-notebook-discovery-revision": revision }',
     '      }',
+    '    })',
+    '    await ctx.command.transform(editor => {',
+    `      editor.add({ name: ${JSON.stringify(OPENCODE_NOTEBOOK_CHECK_COMMAND)}, description: "Check Notebook tools", async execute() {`,
+    '        const deadline = Date.now() + 4000',
+    '        let reloaded = false',
+    '        do {',
+    '          const status = (await ctx.mcp.list()).data.find(server => server.name === notebook)?.status?.status',
+    '          if (status === "connected" && (await ctx.tool.list()).some(tool => tool.options?.namespace === notebook && tool.options?.codemode === false)) return',
+    '          if (status === "failed" && !reloaded) {',
+    '            reloaded = true',
+    '            notebookDiscoveryRevision++',
+    '            await ctx.mcp.reload()',
+    '          }',
+    '          await new Promise(resolve => setTimeout(resolve, 50))',
+    '        } while (Date.now() < deadline)',
+    '        throw new Error("Notebook discovery failed")',
+    '      }})',
     '    })',
     // 2.x returns session/new before async MCP discovery and its tool catalog debounce settle.
     '    await ctx.session.hook("prompt", async () => {',

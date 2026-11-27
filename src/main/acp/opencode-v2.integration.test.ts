@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { opencodeFramework } from '../agent-framework'
+import { OPENCODE_NOTEBOOK_CHECK_COMMAND } from '../agent-framework/opencode'
 import { AcpAgentConnectionAdapter, type AcpAgentConnectionHooks } from './agent-connection-adapter'
 import { AcpBackendGenerationOwner } from './backend-generation-owner'
 import { AcpConnectionResourceOwner } from './connection-resource-owner'
@@ -29,6 +30,7 @@ it.runIf(executablePath)(
     const permissions: acp.RequestPermissionRequest[] = []
     const notifications: acp.SessionNotification[] = []
     let allow = true
+    let discoveryUnavailable = false
     let releaseModel: (() => void) | undefined
     let modelBlocked: (() => void) | undefined
     let probe: Awaited<ReturnType<AcpOpenCodeTurnAdapter['begin']>> | undefined
@@ -36,7 +38,7 @@ it.runIf(executablePath)(
       const chunks: Buffer[] = []
       for await (const chunk of request) chunks.push(Buffer.from(chunk))
       const body = JSON.parse(Buffer.concat(chunks).toString() || '{}')
-      if (request.url === '/mcp') {
+      if (request.url?.startsWith('/mcp')) {
         mcpRequests.push({ method: request.method, body })
         if (request.method !== 'POST') {
           response.writeHead(405).end()
@@ -53,6 +55,16 @@ it.runIf(executablePath)(
             capabilities: { tools: {} },
             serverInfo: { name: 'test', version: '1' }
           }
+        if (body.method === 'tools/list' && discoveryUnavailable) {
+          response.writeHead(200, { 'content-type': 'application/json' }).end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              error: { code: -32603, message: 'Notebook discovery fixture unavailable' }
+            })
+          )
+          return
+        }
         if (body.method === 'tools/list')
           result = {
             tools: [
@@ -309,6 +321,27 @@ it.runIf(executablePath)(
       expect(steeredRequests).toHaveLength(2)
       expect(JSON.stringify(steeredRequests[1].messages).match(/STEER_ONCE/g)).toHaveLength(1)
       expect(notifications.length).toBeGreaterThan(0)
+
+      discoveryUnavailable = true
+      await ready.connection.agent.request(acp.methods.agent.session.resume, {
+        sessionId: session.sessionId,
+        cwd: workspace,
+        mcpServers: [
+          {
+            name: 'open_science_notebook',
+            type: 'http',
+            url: `${baseUrl}/mcp-resume`,
+            headers: []
+          }
+        ]
+      })
+      const modelRequestsBeforeCheck = modelRequests.length
+      const check = (): Promise<acp.PromptResponse> =>
+        prompt(session.sessionId, '/' + OPENCODE_NOTEBOOK_CHECK_COMMAND)
+      await expect(check()).rejects.toThrow()
+      discoveryUnavailable = false
+      await expect(check()).resolves.toMatchObject({ stopReason: 'end_turn' })
+      expect(modelRequests).toHaveLength(modelRequestsBeforeCheck)
     } catch (error) {
       throw new Error(
         `${String(error)}\n${stderr.join('').slice(-4000)}\n${JSON.stringify({ mcpRequests, modelRequests: modelRequests.map((request) => ({ model: request.model, tools: (request.tools as Array<{ function: { name: string } }>)?.map((tool) => tool.function.name) })), notifications, permissions })}`,

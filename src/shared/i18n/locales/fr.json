@@ -8167,6 +8167,8 @@
     "The input is too long": "Le contenu saisi est trop long",
     "Shorten the conversation or remove some attachments, then retry.": "Raccourcissez la conversation ou retirez certaines pièces jointes, puis réessayez.",
     "Check your credentials, model and account settings, then retry.": "Vérifiez vos identifiants et les paramètres du modèle et du compte, puis réessayez.",
+    "Notebook tools are temporarily unavailable": "Les outils de Notebook sont temporairement indisponibles",
+    "Retry to send this request with Notebook.": "Réessayez d’envoyer cette demande avec Notebook.",
     "The model service is temporarily unavailable": "Le service du modèle est temporairement indisponible",
     "The request could not finish. Wait a moment, then retry.": "La requête n’a pas pu aboutir. Patientez un instant, puis réessayez.",
     "The local environment needs attention": "L’environnement local nécessite votre attention",

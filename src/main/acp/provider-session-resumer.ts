@@ -81,7 +81,16 @@ const isCodexWriterConflict = (error: unknown, threadId: string): boolean => {
 
 type ResumeEvent = AcpRuntimeEventInput
 
+export type AcpNotebookConnectionVerifier = (input: {
+  providerSessionId: string
+  cwd: string
+  mcpServers?: readonly McpServer[]
+  providerRefreshed: boolean
+  signal?: AbortSignal
+}) => Promise<void>
+
 type AcpProviderSessionResumerDependencies = Readonly<{
+  verifyNotebookConnection?: AcpNotebookConnectionVerifier
   defaultCwd: string
   defaultProjectId: string
   currentCwd: () => string | undefined
@@ -282,6 +291,14 @@ export class AcpProviderSessionResumer {
           permissionProfile:
             snapshot.permissionProfile?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
           cancellationSignal: signal
+        })
+        checkpoint()
+        await this.deps.verifyNotebookConnection?.({
+          providerSessionId: attachment.providerSessionId,
+          cwd: input.cwd,
+          mcpServers: input.mcpServers,
+          providerRefreshed: true,
+          signal
         })
         checkpoint()
       },

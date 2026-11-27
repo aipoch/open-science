@@ -146,6 +146,7 @@ type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
   supportsImageInput?: boolean
   supportsImageRelay?: boolean
   truncateFromMessageId?: string
+  retryNotebookPromptId?: string
   allowCompactionRecovery?: boolean
 }
 type SendWorkspaceMessageResult = { sessionId: string; messageId: string }
@@ -162,6 +163,7 @@ type WorkspaceCommandLifecycle = {
   onSessionSizeLimit?: (sessionId: string) => void
 }
 type ResendEditedMessageInput = {
+  retryNotebookPreparation?: boolean
   expectedFrameworkId?: AgentFrameworkId
   agentConfiguration?: SessionAgentConfiguration
   onMessageAppended?: (message: SendWorkspaceMessageResult) => void
@@ -345,6 +347,7 @@ type PromptDispatch = {
   }
   turnIntent?: SendWorkspaceMessageIntent['turnIntent']
   notebookContinuation?: { refusalId: string; projectId: string; kind?: 'memory' }
+  retryNotebookPromptId?: string
   accepted?: () => void
   onPromptAccepted?: SendWorkspaceMessageIntent['onPromptAccepted']
   preparation?: WorkspacePromptPreparation
@@ -402,6 +405,7 @@ const dispatchPrompt = (
     request.annotations ?? [],
     request.referencedArtifacts
   )
+  const provenance = promptContext(request.sessionId, request.messageId)
   const args = [
     request.sessionId,
     preparedAnnotations.promptText,
@@ -412,7 +416,9 @@ const dispatchPrompt = (
     request.replay?.historyAttachments,
     request.replay?.historyImages,
     request.replay?.resumeFallback,
-    promptContext(request.sessionId, request.messageId),
+    provenance && request.retryNotebookPromptId
+      ? { ...provenance, retryNotebookPromptId: request.retryNotebookPromptId }
+      : provenance,
     request.replay?.contextReset,
     request.turnIntent,
     useSessionStore.getState().sessions.find((session) => session.id === request.sessionId)
@@ -1765,6 +1771,7 @@ const performSendWorkspaceMessage = async (
           ? { ...replay, historyAttachments: promptMedia.historyAttachments }
           : replay,
         turnIntent: input.turnIntent,
+        retryNotebookPromptId: input.retryNotebookPromptId,
         notebookContinuation:
           input.notebookContinuation && projectId
             ? {
@@ -2147,6 +2154,7 @@ const resendEditedWorkspaceMessage = async (
         onMessageAppended: input.onMessageAppended,
         historyReplayDescriptor: options.historyReplayDescriptor,
         truncateFromMessageId: input.messageId,
+        retryNotebookPromptId: input.retryNotebookPreparation ? input.messageId : undefined,
         supportsImageInput: options.supportsImageInput,
         supportsImageRelay: options.supportsImageRelay
       },

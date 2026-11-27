@@ -4,6 +4,7 @@ import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/tool-error-recovery'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { executionRecoveryContext } from './execution-recovery'
 import { notebookDiagnosticPreview } from './content-limits'
@@ -60,7 +61,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'One `notebook_execute` per Python/R cell; reuse `cellId`. Idle/capacity reclamation loses variables; persist reusable data. Skills: repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
   'Use call forms in `repl_execute`; batch safe independent operations.',
   'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
-  'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
+  'Edit drafts via `notebook_execute` using plain relative paths in the writable session workspace. Handoff uses `OPEN_SCIENCE_HANDOFF_DIR`. Preserve originals and paths.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
   'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. executionStarted reports whether user code began, when known. After kernel failure/timeout, check possible side effects before retrying.',
@@ -2081,11 +2082,29 @@ const notebookRpcToolsForEnvironment = (
 const createNotebookMcpServer = (
   environment: NotebookMcpEnvironment
 ): ModelContextProtocolServer => {
+  const tools = notebookRpcToolsForEnvironment(environment)
   const server = installToolErrorRecovery(
     new ModelContextProtocolServer({ name: NOTEBOOK_MCP_SERVER_NAME, version: '1.0.0' })
   )
+  const protocol = server.server
+  const setHandler = protocol.setRequestHandler.bind(protocol)
+  protocol.setRequestHandler = (schema, handler) => {
+    if (!Object.is(schema, ListToolsRequestSchema)) return setHandler(schema, handler)
+    setHandler(schema, async (request, extra) => {
+      const result = await handler(request, extra)
+      const listed = 'tools' in result && Array.isArray(result.tools) ? result.tools : []
+      const names = new Set(listed.map((tool) => tool.name))
+      if (
+        listed.length !== tools.length ||
+        names.size !== tools.length ||
+        tools.some(({ name }) => !names.has(name))
+      )
+        throw new Error('The Notebook MCP tool list does not match the active configuration.')
+      return result
+    })
+  }
 
-  for (const tool of notebookRpcToolsForEnvironment(environment)) {
+  for (const tool of tools) {
     registerNotebookRpcTool(server, environment, tool)
   }
 

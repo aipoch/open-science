@@ -232,6 +232,45 @@ describe('diagnostic log projection', () => {
   it('does not emit arbitrary data from a record without diagnostic fields', () => {
     expect(projectDiagnosticLog({ data: { payload: 'secret', rawOutput: 'secret' } })).toEqual({})
   })
+
+  it('retains failed tool identity without exporting tool payloads', () => {
+    const projected = projectDiagnosticLog({
+      msg: 'tool call failed',
+      data: {
+        tool: 'open-science-notebook/notebook_execute',
+        toolCallId: 'tool-call-1',
+        sessionId: 'session-1',
+        reason: 'connector call rejected: connector_unavailable',
+        rawInput: { code: 'PRIVATE_NOTEBOOK_CODE' },
+        rawOutput: { content: 'PRIVATE_CONNECTOR_RESPONSE' }
+      }
+    })
+
+    expect(projected).toMatchObject({
+      event: 'tool call failed',
+      diagnostics: {
+        toolCallObserved: true,
+        tool: 'open-science-notebook/notebook_execute',
+        toolCallId: 'tool-call-1',
+        hasReportedToolName: true,
+        reason: 'connector call rejected: connector_unavailable'
+      }
+    })
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE_NOTEBOOK_CODE')
+    expect(JSON.stringify(projected)).not.toContain('PRIVATE_CONNECTOR_RESPONSE')
+  })
+
+  it('marks an unsafe reported tool name without exporting it', () => {
+    const projected = projectDiagnosticLog({
+      msg: 'tool call failed',
+      data: { tool: '/Users/alice/private-tool', toolCallId: 'tool-call-2' }
+    })
+
+    expect(projected).toMatchObject({
+      diagnostics: { toolCallObserved: true, hasReportedToolName: true, toolCallId: 'tool-call-2' }
+    })
+    expect(JSON.stringify(projected)).not.toContain('/Users/alice/private-tool')
+  })
 })
 
 describe('diagnostic session projection', () => {

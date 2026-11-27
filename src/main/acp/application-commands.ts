@@ -418,6 +418,12 @@ const registerAcpCommands = (
           dependencies.workflows.sendPrompt(
             canSatisfyHumanApproval(invocation.callerContext)
               ? withNotebookUserOperation(request, {
+                  ...(invocation.callerContext.surface === 'electron' &&
+                  typeof request.provenanceContext?.retryNotebookPromptId === 'string'
+                    ? {
+                        retryDesktopContinuationOf: request.provenanceContext.retryNotebookPromptId
+                      }
+                    : {}),
                   assertCurrent: () => {
                     if (
                       !canSatisfyHumanApproval(invocation.callerContext) ||

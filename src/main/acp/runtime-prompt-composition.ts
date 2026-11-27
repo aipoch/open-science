@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
+import { NOTEBOOK_TOOLS_UNAVAILABLE_CODE } from '../../shared/failure/messages'
 import { isDelegationSettlementPrompt } from '../../shared/task-continuation'
 import {
   markTrustedNotebookBindingPermissionPrompts,
@@ -28,7 +29,10 @@ import {
   notebookExecutionIntent,
   notebookUserOperation
 } from '../notebook/execution-intent'
-import type { AcpProviderSessionResumer } from './provider-session-resumer'
+import type {
+  AcpNotebookConnectionVerifier,
+  AcpProviderSessionResumer
+} from './provider-session-resumer'
 import { shellRuntimeAgentContract } from '../notebook/shell-runtime'
 import { requestPlanReviewProviderStop } from './plan-review-provider-stop'
 
@@ -39,6 +43,7 @@ type AcpRuntimePromptReloadHost = Readonly<{
 }>
 
 type AcpRuntimePromptHost = Readonly<{
+  verifyNotebookConnection?: AcpNotebookConnectionVerifier
   refreshNotebookConnection?: AcpProviderSessionResumer['refreshNotebookConnection']
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
@@ -262,6 +267,16 @@ const composeAcpRuntimePromptOwners = (
           : {})
       })
     }
+    const verifyAttachedNotebookConnection = (
+      mcpServers?: readonly acp.McpServer[]
+    ): Promise<void> | undefined =>
+      host.verifyNotebookConnection?.({
+        providerSessionId: input.providerSessionId,
+        cwd: input.cwd,
+        mcpServers,
+        providerRefreshed: false,
+        signal: input.signal
+      })
     const intent = input.request && notebookExecutionIntent(input.request)
     // A distinct Provider dispatch has its own credential even when it inherits the same stopped
     // intent. A late callback from its predecessor must never stop a newer explanatory branch.
@@ -301,19 +316,26 @@ const composeAcpRuntimePromptOwners = (
           // CodeBuddy selects its process-global native Session and validates its shared login.
           // Keep the framework hook; only the generic Notebook-driven resume is unnecessary.
           await prepareFramework()
+          assertCurrent()
+          await verifyAttachedNotebookConnection(refresh.mcpServers)
         }
         assertCurrent()
         refresh.commit()
       } catch (error) {
         // A cancelled/failed preparation must not leave an executable current intent for a
         // later generic reconnect. Retired credentials are never restored.
-        intent.abandonUserExecution()
+        const discoveryFailed =
+          error instanceof Error &&
+          'code' in error &&
+          error.code === NOTEBOOK_TOOLS_UNAVAILABLE_CODE
+        intent.abandonUserExecution({ allowFreshUserRetry: discoveryFailed })
         refresh?.release()
         throw error
       }
       return
     }
     await prepareFramework()
+    await verifyAttachedNotebookConnection()
   }
   const contextCompactionWorkflow = new AcpContextCompactionWorkflow({
     sessions: { activeSession, currentFramework },
@@ -545,12 +567,24 @@ const composeAcpRuntimePromptOwners = (
               current.hasClaimedContinuation)
           )
             throw new Error('The Notebook refusal changed. Refresh it before continuing execution.')
-          if (
+          const priorBranch = current?.scope.messageBranchId
+          const retry =
             humanTurn &&
-            operation.desktopContinuation &&
-            operation.refusalId &&
-            current?.recheckMemory
-          ) {
+            operation.retryDesktopContinuationOf &&
+            operation.retryDesktopContinuationOf === current?.scope.promptMessageId &&
+            !current.hasClaimedContinuation &&
+            (priorBranch === scope.messageBranchId ||
+              (priorBranch &&
+                request.provenanceContext?.messageBranchAncestry?.includes(priorBranch)))
+              ? current.retryableDesktopContinuation
+              : undefined
+          const continuedFromRefusalId = operation.refusalId ?? retry?.refusalId
+          const desktopContinuation =
+            humanTurn && operation.desktopContinuation && operation.refusalId
+              ? { recheckMemory: current?.recheckMemory }
+              : retry
+          const recheckMemory = desktopContinuation?.recheckMemory
+          if (current && continuedFromRefusalId && recheckMemory) {
             const createIntent = notebook.createExecutionIntent
             const admissionSignal = operation.admissionSignal
               ? AbortSignal.any([signal, operation.admissionSignal])
@@ -563,7 +597,7 @@ const composeAcpRuntimePromptOwners = (
                   'The Notebook refusal changed. Refresh it before continuing execution.'
                 )
             }
-            return current.recheckMemory(admissionSignal).then(() => {
+            return recheckMemory(admissionSignal).then(() => {
               assertCurrent()
               return {
                 signal: admissionSignal,
@@ -572,9 +606,9 @@ const composeAcpRuntimePromptOwners = (
                   assertCurrent()
                   const continuation = createIntent({
                     ...scope,
-                    continuedFromRefusalId: operation.refusalId
+                    continuedFromRefusalId
                   })
-                  continuation.prepareUserExecution(operation.assertCurrent)
+                  continuation.prepareUserExecution(operation.assertCurrent, desktopContinuation)
                   current.claimContinuation()
                   remember(continuation)
                 }
@@ -593,14 +627,18 @@ const composeAcpRuntimePromptOwners = (
             // A late turn can rebind the old intent, but the decision cannot grant execution twice.
             current?.claimContinuation()
           }
-          // Ordinary chat may explain the refusal. An explicit continuation creates a new intent.
-          if (current?.refusalId && !operation.refusalId) intent = current
+          // A failed discovery leaves the old intent blocked. A fresh user turn can try again.
+          const freshRetry = humanTurn && current?.canRetryAbandonedPreparation
+          if (current?.refusalId && !continuedFromRefusalId && !freshRetry) intent = current
           else {
             intent = notebook.createExecutionIntent({
               ...scope,
-              ...(operation.refusalId ? { continuedFromRefusalId: operation.refusalId } : {})
+              ...(continuedFromRefusalId ? { continuedFromRefusalId } : {})
             })
-            intent.prepareUserExecution(operation.refusalId ? operation.assertCurrent : undefined)
+            intent.prepareUserExecution(
+              continuedFromRefusalId ? operation.assertCurrent : undefined,
+              desktopContinuation
+            )
           }
         } else if (!intent) {
           const origin =

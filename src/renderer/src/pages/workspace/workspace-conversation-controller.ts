@@ -161,7 +161,8 @@ type WorkspaceConversationController = {
     revise: (
       messageId: string,
       doc: ComposerDoc,
-      annotations: Annotation[]
+      annotations: Annotation[],
+      retryNotebookPreparation?: boolean
     ) => Promise<EditedMessageSendResult>
     branch: (messageId: string) => void
     sideChat: { start: (onAccepted?: () => void) => void }
@@ -772,7 +773,12 @@ const useWorkspaceConversationController = (
         draft: submitDraft,
         restoredPlan: submitRestoredPlan
       },
-      revise: async (messageId, doc, annotations = []): Promise<EditedMessageSendResult> => {
+      revise: async (
+        messageId,
+        doc,
+        annotations = [],
+        retryNotebookPreparation
+      ): Promise<EditedMessageSendResult> => {
         const current = optionsRef.current
         const sessionId = current.activeSession?.id
         if (
@@ -789,6 +795,7 @@ const useWorkspaceConversationController = (
         const queueRevision =
           messageQueue.lifecycle.blocksImmediateSend(sessionId) || canQueueRevision(current)
         if (queueRevision) {
+          if (retryNotebookPreparation) return { ok: false }
           if (!current.agentConfiguration || (!canRevise(current) && !canQueueRevision(current)))
             return { ok: false }
           const snapshot = current.composer.lifecycle.captureRevision(doc, annotations)
@@ -807,6 +814,7 @@ const useWorkspaceConversationController = (
         if (!canRevise(current)) return { ok: false }
         try {
           const sent = await current.runtime.resendEditedMessage(sessionId, messageId, {
+            ...(retryNotebookPreparation ? { retryNotebookPreparation } : {}),
             text: docToText(doc),
             annotations,
             parts: docToMessageParts(doc),
