@@ -91,7 +91,7 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
   {
     id: 'network.domains',
     panel: 'network',
-    labelKey: 'Notebook network access',
+    labelKey: 'Agent & Notebook network',
     keywords: 'trusted unsafe networks http https ip ipv4 ipv6 localhost hostname port intranet'
   },
   {

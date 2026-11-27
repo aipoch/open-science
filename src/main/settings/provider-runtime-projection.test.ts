@@ -1267,8 +1267,42 @@ it('rejects a persisted remote HTTP provider before projecting credentials into 
     model: 'model',
     keyRef: encryptKey('PRIVACY_CANARY')
   }
-  expect(() => owner.resolveProvider(provider)).toThrow(/HTTPS/)
+  expect(() => owner.resolveProvider(provider)).toThrow(
+    expect.objectContaining({ code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' })
+  )
+  for (const baseUrl of [
+    'http://user:pass@gateway.example',
+    'http://gateway.example?token=x',
+    'invalid'
+  ]) {
+    expect(() => owner.resolveProvider({ ...provider, baseUrl })).toThrow()
+    expect(() => owner.resolveProvider({ ...provider, baseUrl })).not.toThrow(
+      expect.objectContaining({ code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' })
+    )
+  }
   expect(owner.toProviderView(provider).baseUrl).toBe(provider.baseUrl)
 })
 
 await configureTestElectronHost(await import('electron'))
+
+it('projects the shared HTTP grant only when the backend supplies it', () => {
+  const owner = new ProviderRuntimeProjectionOwner()
+  const provider: StoredProvider = {
+    id: 'http-gateway',
+    type: 'custom',
+    name: 'HTTP gateway',
+    baseUrl: 'http://gateway.example:8080/v1',
+    model: 'model',
+    keyRef: 'enc:key',
+    apiEndpoints: ['messages']
+  }
+  const framework = getAgentFramework('claude-code')
+  expect(() => owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework)).toThrow(
+    expect.objectContaining({ code: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED' })
+  )
+  expect(
+    owner.resolveRuntimeTarget(provider, { kind: 'configured' }, framework, {
+      allowInsecureHttp: true
+    }).provider.allowInsecureHttp
+  ).toBe(true)
+})

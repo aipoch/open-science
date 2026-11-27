@@ -1,3 +1,8 @@
+import {
+  ApplicationCommandError,
+  MODEL_HTTP_DESTINATION_NOT_ALLOWED
+} from '../../shared/application-command-contract'
+import { isLocalModelHttpDenial } from '../settings/provider-failure-observation'
 import { type FailureFacts, readHarnessErrorDiagnostics } from '../../shared/failure/contract'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { redactSensitiveText } from '@aipoch/diagnostics'
@@ -26,7 +31,7 @@ export type PromptErrorContext = {
 }
 
 // The innermost provider detail pulled from a wrapped error message.
-type UpstreamDetail = { text: string; type?: string; status?: number }
+type UpstreamDetail = { text: string; type?: string; status?: number; localDenialId?: string }
 
 const MAX_PROVIDER_ERROR_DETAIL_LENGTH = 300
 
@@ -136,7 +141,13 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
 
   try {
     const parsed = JSON.parse(jsonText) as {
-      error?: { message?: unknown; type?: unknown; status?: unknown }
+      error?: {
+        message?: unknown
+        type?: unknown
+        status?: unknown
+        code?: unknown
+        request_id?: unknown
+      }
       message?: unknown
     }
     const err = parsed.error
@@ -159,6 +170,9 @@ const extractUpstreamDetail = (message: string): UpstreamDetail | undefined => {
 
     return {
       text,
+      ...(err?.code === MODEL_HTTP_DESTINATION_NOT_ALLOWED && isLocalModelHttpDenial(err.request_id)
+        ? { localDenialId: err.request_id }
+        : {}),
       type: typeof err?.type === 'string' ? err.type : undefined,
       status: nestedStatus ?? (wrappedStatus ? Number(wrappedStatus) : undefined)
     }
@@ -373,6 +387,13 @@ export const collectPromptFailureFacts = (
   const codex = record(data.codexErrorInfo)
   const detail = record(Object.values(codex)[0])
   const protocol = data.protocol
+  if (error instanceof ApplicationCommandError && error.code === MODEL_HTTP_DESTINATION_NOT_ALLOWED)
+    return {
+      origin: 'operation',
+      code: error.code,
+      model: context.model,
+      provider: context.providerName
+    }
   if (
     isProviderErrorKind(error) &&
     (protocol === 'chat-completions' || protocol === 'responses' || protocol === 'messages')
@@ -391,6 +412,16 @@ export const collectPromptFailureFacts = (
       data.status <= 599
         ? data.status
         : undefined
+    if (status === 403 && isLocalModelHttpDenial(data.requestId))
+      return {
+        origin: 'operation',
+        code: MODEL_HTTP_DESTINATION_NOT_ALLOWED,
+        model,
+        provider,
+        status,
+        protocol,
+        requestId: data.requestId
+      }
     return {
       origin: 'provider',
       protocol,
@@ -404,6 +435,15 @@ export const collectPromptFailureFacts = (
   if (codexFailure) return codexFailure
   const text = rawErrorMessage(error)
   const upstream = extractUpstreamDetail(text)
+  if (upstream?.localDenialId)
+    return {
+      origin: 'operation',
+      code: MODEL_HTTP_DESTINATION_NOT_ALLOWED,
+      model: context.model,
+      provider: context.providerName,
+      status: 403,
+      requestId: upstream.localDenialId
+    }
   const explicitStatus = [
     data.statusCode,
     data.status,

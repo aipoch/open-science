@@ -974,7 +974,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           networkView.kind === 'proxy'
             ? t('Proxy')
             : networkView.kind === 'domains'
-              ? t('Notebook network access')
+              ? t('Agent & Notebook network')
               : t('Package mirror')
       }
     }

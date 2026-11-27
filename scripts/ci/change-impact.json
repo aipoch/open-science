@@ -563,6 +563,7 @@
         "e2e/session-plan-recovery.spec.ts",
         "e2e/auto-review-stop-resume.spec.ts",
         "e2e/provider-connection-validation.spec.ts",
+        "e2e/custom-provider-http.spec.ts",
         "e2e/model-catalog-refresh.spec.ts",
         "e2e/global-search.spec.ts",
         "e2e/search-file-navigation.spec.ts",
@@ -758,6 +759,7 @@
       "role": "overlay",
       "paths": [
         "e2e/workspace-conversation.spec.ts",
+        "e2e/custom-provider-http.spec.ts",
         "e2e/workspace-files.spec.ts",
         "e2e/markdown-publication-policy.spec.ts",
         "e2e/fixtures/pptx.ts"

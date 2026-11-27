@@ -1,3 +1,4 @@
+import { providerNetworkDestination } from './provider-network-authorization'
 import {
   getOfficialVendor,
   type CatalogModel,
@@ -61,7 +62,8 @@ export type CustomProviderBaseUrlError =
   | 'Remove credentials from the Base URL and use the API key field.'
 
 export const getCustomProviderBaseUrlError = (
-  value: string
+  value: string,
+  options: Readonly<{ allowInsecureHttp?: boolean }> = {}
 ): CustomProviderBaseUrlError | undefined => {
   let url: URL
   try {
@@ -73,12 +75,15 @@ export const getCustomProviderBaseUrlError = (
   if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname) {
     return 'Base URL must be a valid HTTP or HTTPS URL.'
   }
-  if (!isSecureProviderUrl(url)) return PROVIDER_TRANSPORT_ERROR
+  if (!isSecureProviderUrl(url) && !(options.allowInsecureHttp && url.protocol === 'http:'))
+    return PROVIDER_TRANSPORT_ERROR
   if (url.username || url.password || [...url.searchParams.keys()].some(isSensitiveUrlQueryKey)) {
     return 'Remove credentials from the Base URL and use the API key field.'
   }
   if (url.search || url.hash) return 'Base URL must not include query parameters or fragments.'
 
+  if (!isSecureProviderUrl(url) && !providerNetworkDestination(value))
+    return 'Base URL must be a valid HTTP or HTTPS URL.'
   return undefined
 }
 

@@ -420,7 +420,9 @@ export const getProviderFormErrors = (
   if (value.type === 'custom') {
     if (!value.baseUrl.trim()) errors.baseUrl = 'Base URL is required.'
     else {
-      const baseUrlError = getCustomProviderBaseUrlError(value.baseUrl.trim())
+      const baseUrlError = getCustomProviderBaseUrlError(value.baseUrl.trim(), {
+        allowInsecureHttp: true
+      })
       if (baseUrlError) errors.baseUrl = baseUrlError
     }
     if (!rows && !value.model.trim()) errors.model = 'Model is required.'

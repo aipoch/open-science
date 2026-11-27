@@ -8,7 +8,10 @@ import type {
   NotebookStrictWhitelistEntry,
   TrustedPrivateDestination
 } from '../../../../shared/notebook-network-settings'
-import { normalizeTrustedPrivateDestinations } from '../../../../shared/notebook-network'
+import {
+  effectiveNotebookStrictWhitelist,
+  normalizeTrustedPrivateDestinations
+} from '../../../../shared/notebook-network'
 import {
   trustedDestinationId,
   requiresNetworkException,
@@ -27,6 +30,10 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { ErrorNotice } from '@/components/error-notice'
+import {
+  removeNotebookNetworkRule,
+  updateNotebookNetworkRule
+} from './notebook-network-rule-operations'
 
 export type NetworkEditorLeaveState = Readonly<{
   dirty: boolean
@@ -125,9 +132,9 @@ export function NotebookNetworkAccessEditor({
   const strict = currentMode === 'strict'
   const editingExisting = Boolean(editor?.id || editor?.original)
   const editorOpen = Boolean(editor)
-  const rules = settings.strictWhitelist ?? []
-  const groups = settings.strictWhitelistGroups ?? []
   const manual = (settings.trustedPrivateDestinations ?? []).filter((rule) => !rule.managedGrantId)
+  const rules = effectiveNotebookStrictWhitelist(settings)
+  const groups = settings.strictWhitelistGroups ?? []
   const grants = (settings.destinationGrants ?? []).filter((grant) => grant.revokedAt === undefined)
   const showSearch = strict || manual.length + grants.length > 10
   // Rule edits retain their baseline. A different effective mode invalidates all local intent.
@@ -250,10 +257,7 @@ export function NotebookNetworkAccessEditor({
     void commit({ ...base, mode: pendingMode }, base, undefined, true)
   }
   const removeStrictRule = (ruleId: string): void => {
-    void commit(
-      { ...settings, strictWhitelist: rules.filter((item) => item.id !== ruleId) },
-      settings
-    )
+    void commit(removeNotebookNetworkRule(settings, ruleId), settings)
   }
   const open = (
     rule?: NotebookStrictWhitelistEntry,
@@ -291,7 +295,7 @@ export function NotebookNetworkAccessEditor({
       }
       void commit(next, base)
     }
-    if (strict) {
+    if (strict && !editor.original) {
       let groupId = group
       let groups = [...(base.strictWhitelistGroups ?? [])]
       if (group === '__new__') {
@@ -329,6 +333,12 @@ export function NotebookNetworkAccessEditor({
           : [...remaining, rule],
         strictWhitelistGroups: groups
       })
+    } else if (editor.original?.sharedWithAgent) {
+      const next = updateNotebookNetworkRule(base, trustedDestinationId(editor.original), target)
+      if (next === 'duplicate') setError(t('This address is already in the list.'))
+      else if (next === 'invalid-address')
+        setError(t('Enter a valid hostname or IP and a port from 1 to 65535.'))
+      else persist(next)
     } else {
       const remaining = (base.trustedPrivateDestinations ?? []).filter(
         (rule) => rule !== editor.original
@@ -448,7 +458,7 @@ export function NotebookNetworkAccessEditor({
             onChange={(event) => setPort(event.target.value)}
           />
         </label>
-        {strict ? (
+        {strict && !editor.original ? (
           <label className="col-span-full space-y-1 text-xs">
             {t('Group')}
             <Select
@@ -471,7 +481,7 @@ export function NotebookNetworkAccessEditor({
             </Select>
           </label>
         ) : null}
-        {strict && group === '__new__' ? (
+        {strict && !editor.original && group === '__new__' ? (
           <label className="col-span-full space-y-1 text-xs">
             {t('Group name')}
             <Input value={newGroup} onChange={(event) => setNewGroup(event.target.value)} />
@@ -753,7 +763,8 @@ export function NotebookNetworkAccessEditor({
               </summary>
               {rows.map((rule) => (
                 <div key={rule.id}>
-                  {editor?.id === rule.id ? (
+                  {editor?.id === rule.id ||
+                  (editor?.original && trustedDestinationId(editor.original) === rule.id) ? (
                     editorForm
                   ) : (
                     <div className={rowClass}>
@@ -769,7 +780,12 @@ export function NotebookNetworkAccessEditor({
                       <Button
                         variant="ghost"
                         disabled={busy || !!editor}
-                        onClick={() => open(rule)}
+                        onClick={() => {
+                          const shared = manual.find(
+                            (item) => item.sharedWithAgent && trustedDestinationId(item) === rule.id
+                          )
+                          open(shared ? undefined : rule, shared)
+                        }}
                       >
                         {t('Edit')}
                       </Button>

@@ -1,3 +1,4 @@
+import { providerNetworkDestinationIsTrusted } from '../../shared/provider-network-authorization'
 import { harnessFramework } from '../agent-framework/harness'
 import { createAgentRunner, type AgentStep, type TurnOutcome } from '@aipoch/agent-harness'
 import { isDeepStrictEqual } from 'node:util'
@@ -139,7 +140,8 @@ export class HarnessSessionOwner {
     this.entries.add(entry)
     lifetime.addEventListener('abort', onAbort, { once: true })
     try {
-      baseline = (await this.repository.getSettings()).providers.find(({ id }) => id === providerId)
+      const settings = await this.repository.getSettings()
+      baseline = settings.providers.find(({ id }) => id === providerId)
       controller.signal.throwIfAborted()
       if (
         !baseline ||
@@ -150,7 +152,13 @@ export class HarnessSessionOwner {
       const target = this.projection.resolveRuntimeTarget(
         baseline,
         { kind: 'required', model },
-        harnessFramework
+        harnessFramework,
+        {
+          allowInsecureHttp: providerNetworkDestinationIsTrusted(
+            baseline.baseUrl ?? '',
+            settings.notebookNetwork?.trustedPrivateDestinations ?? []
+          )
+        }
       )
       // Pin the protocol at admission; later discovery only governs new sessions.
       endpoint = preferredEndpoint(target.apiEndpoints, harnessFramework.supportedApiTypes)

@@ -958,7 +958,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 ### Settings
 
-- **Network / Notebook network access** retains shared Settings history and breadcrumbs. Explain
+- **Network / Agent & Notebook network** retains shared Settings history and breadcrumbs. Explain
   restricted public HTTPS reads and broad domain grants before the custom-public-domain editor.
   Built-in services use collapsed groups with explicit expand affordances; switches mean automatic
   access, while disabled groups require approval and required package services remain locked.

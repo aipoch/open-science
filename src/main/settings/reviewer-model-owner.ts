@@ -6,6 +6,7 @@ import type { ProviderAccountsModule } from './provider-accounts'
 import { providerRuntimeValidationTarget } from './provider-validation-state'
 import type { SettingsRepository } from './repository'
 import type { StoredSettings } from './types'
+import { providerNetworkDestinationIsTrusted } from '../../shared/provider-network-authorization'
 
 type ReviewerModelOwnerOptions = {
   repository: SettingsRepository
@@ -48,7 +49,13 @@ class ReviewerModelOwner {
     const target = this.options.providers.resolveRuntimeTarget(
       provider,
       { kind: 'required', model: candidate.model },
-      framework
+      framework,
+      {
+        allowInsecureHttp: providerNetworkDestinationIsTrusted(
+          provider.baseUrl ?? '',
+          settings.notebookNetwork?.trustedPrivateDestinations ?? []
+        )
+      }
     )
     if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
       throw new Error(
@@ -86,7 +93,13 @@ class ReviewerModelOwner {
       const target = this.options.providers.resolveRuntimeTarget(
         provider,
         { kind: 'required', model: configuration.model },
-        framework
+        framework,
+        {
+          allowInsecureHttp: providerNetworkDestinationIsTrusted(
+            provider.baseUrl ?? '',
+            settings.notebookNetwork?.trustedPrivateDestinations ?? []
+          )
+        }
       )
       if (providerValidationFailed(provider, providerRuntimeValidationTarget(target, framework))) {
         throw new Error('The configured Reviewer model provider validation failed.')

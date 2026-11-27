@@ -56,6 +56,11 @@ import {
   type ProviderTransportOwnerOptions
 } from './provider-transport-owner'
 import type { StoredSettings } from './types'
+import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import {
+  providerNetworkDestination,
+  providerNetworkDestinationIsTrusted
+} from '../../shared/provider-network-authorization'
 
 export type { AgentBackendSelection, ExplicitAgentBackendTarget } from './backend-selection-owner'
 
@@ -131,6 +136,31 @@ export type AgentBackendResolverOptions = ProviderTransportOwnerOptions & {
 
 // Coordinates stable backend decisions while ProviderTransportOwner owns every live generation.
 // The constructor is intentionally side-effect free; runtime resources start only inside resolve calls.
+const providerHttpIsTrusted = (settings: StoredSettings, baseUrl?: string): boolean =>
+  providerNetworkDestinationIsTrusted(
+    baseUrl ?? '',
+    settings.notebookNetwork?.trustedPrivateDestinations ?? []
+  )
+
+const runtimeTargetOptions = (
+  settings: StoredSettings,
+  provider: StoredProvider
+): Readonly<{ allowInsecureHttp: true }> | undefined =>
+  providerHttpIsTrusted(settings, provider.baseUrl) ? { allowInsecureHttp: true } : undefined
+
+const resolveRuntimeTargetForSettings = (
+  providers: AgentBackendProviderPort,
+  settings: StoredSettings,
+  provider: StoredProvider,
+  selection: RuntimeProviderModelSelection,
+  framework: ReturnType<typeof getAgentFramework>
+): ProviderRuntimeTarget => {
+  const options = runtimeTargetOptions(settings, provider)
+  return options
+    ? providers.resolveRuntimeTarget(provider, selection, framework, options)
+    : providers.resolveRuntimeTarget(provider, selection, framework)
+}
+
 export class AgentBackendResolver {
   private readonly readSettings: () => Promise<StoredSettings>
   private readonly providers: AgentBackendProviderPort
@@ -162,7 +192,16 @@ export class AgentBackendResolver {
         this.providers.resolveRuntimeReasoningEffortProfile(provider, model)
     })
     this.planner = new BackendRoutePlanner({ providers: this.providers })
-    this.transports = new ProviderTransportOwner(options)
+    this.transports = new ProviderTransportOwner({
+      ...options,
+      isProviderHttpAllowed: async (url) => {
+        const settings = await this.readSettings()
+        return providerNetworkDestinationIsTrusted(
+          url,
+          settings.notebookNetwork?.trustedPrivateDestinations ?? []
+        )
+      }
+    })
     this.ensureCodexSubscriptionHome =
       options.ensureCodexSubscriptionHome ??
       ((transport) => ensureCodexAuthHome('isolated', this.storageRoot, transport))
@@ -210,7 +249,13 @@ export class AgentBackendResolver {
     const storedProvider = settings.providers.find((provider) => provider.id === providerId)
     if (!storedProvider) return undefined
 
-    const target = this.providers.resolveRuntimeTarget(storedProvider, modelSelection, framework)
+    const target = resolveRuntimeTargetForSettings(
+      this.providers,
+      settings,
+      storedProvider,
+      modelSelection,
+      framework
+    )
     if (!target.frameworkCompatible || (frameworkId === 'codex' && !target.modelBridgeSupported)) {
       return undefined
     }
@@ -263,17 +308,32 @@ export class AgentBackendResolver {
     const projection = new ProviderRuntimeProjectionOwner()
     const providers: AgentBackendProviderPort = {
       resolveRuntimeTarget: (stored, selection, framework) => {
-        const target = projection.resolveRuntimeTarget(stored, selection, framework)
+        const target = projection.resolveRuntimeTarget(stored, selection, framework, {
+          allowInsecureHttp: provider.allowInsecureHttp
+        })
         return { ...target, provider: { ...target.provider, ...provider } }
       },
       resolveRuntimeModelCatalog: (stored, framework) => [
-        providers.resolveRuntimeTarget(stored, { kind: 'provider-default' }, framework)
+        providers.resolveRuntimeTarget(stored, { kind: 'provider-default' }, framework, {
+          allowInsecureHttp: provider.allowInsecureHttp
+        })
       ],
       resolveRuntimeReasoningEffortProfile: (stored, model) =>
         projection.resolveRuntimeReasoningEffortProfile(stored, model)
     }
+    const candidateGrant = provider.allowInsecureHttp
+      ? providerNetworkDestination(provider.baseUrl ?? '')
+      : undefined
     const snapshot: StoredSettings = {
       ...settings,
+      ...(candidateGrant
+        ? {
+            notebookNetwork: {
+              ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+              trustedPrivateDestinations: [candidateGrant]
+            }
+          }
+        : {}),
       providers: [candidate],
       activeProviderId: candidate.id,
       activeModel: provider.model
@@ -315,7 +375,9 @@ export class AgentBackendResolver {
     const selection = await this.selection.resolveExplicitTarget(target)
     const stored = selection.settings.providers.find(({ id }) => id === selection.providerId)
     if (!stored) throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
-    const runtime = this.providers.resolveRuntimeTarget(
+    const runtime = resolveRuntimeTargetForSettings(
+      this.providers,
+      selection.settings,
       stored,
       selection.modelSelection,
       getAgentFramework('opencode')
@@ -374,7 +436,9 @@ export class AgentBackendResolver {
       ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
       : undefined
     if (!activeProvider) throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
-    return this.providers.resolveRuntimeTarget(
+    return resolveRuntimeTargetForSettings(
+      this.providers,
+      settings,
       activeProvider,
       { kind: 'configured', requestedModel: settings.activeModel },
       framework
@@ -396,7 +460,13 @@ export class AgentBackendResolver {
       : undefined
     if (!storedProvider) throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
 
-    const target = this.providers.resolveRuntimeTarget(storedProvider, modelSelection, framework)
+    const target = resolveRuntimeTargetForSettings(
+      this.providers,
+      settings,
+      storedProvider,
+      modelSelection,
+      framework
+    )
     if (!target.frameworkCompatible) {
       throw new Error(buildActiveModelIncompatibleMessage(framework.displayName))
     }

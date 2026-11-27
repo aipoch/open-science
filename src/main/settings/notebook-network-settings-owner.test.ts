@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { SettingsRepository } from './repository'
 import { migrateNotebookNetworkSettings } from '../../shared/notebook-network-strict'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -116,6 +120,159 @@ describe('NotebookNetworkSettingsOwner', () => {
       expect.objectContaining(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
     )
   })
+
+  it.each(['write', 'apply'])(
+    'preserves concurrent settings after a shared provider %s failure',
+    async (phase) => {
+      const directory = await mkdtemp(join(tmpdir(), 'shared-provider-'))
+      try {
+        const repository = new SettingsRepository(directory)
+        await repository.setLocalePreference('en')
+        const rule = {
+          hostname: 'gateway.example',
+          port: 8080,
+          protocol: 'http' as const,
+          approvedAddresses: [],
+          sharedWithAgent: true as const
+        }
+        const provider = {
+          id: 'provider',
+          type: 'custom' as const,
+          name: 'Gateway',
+          model: 'mock',
+          baseUrl: 'http://gateway.example:8080'
+        }
+        let release!: () => void
+        const gate = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        let entered!: () => void
+        const started = new Promise<void>((resolve) => {
+          entered = resolve
+        })
+        const fail = async (): Promise<never> => {
+          entered()
+          await gate
+          throw new Error('controlled failure')
+        }
+        const apply = vi.fn().mockResolvedValue(undefined)
+        if (phase === 'apply') apply.mockImplementationOnce(fail)
+        const owner = new NotebookNetworkSettingsOwner({ repository, apply })
+        const operation = owner.commitSharedDestination(async (applySharedDestination) => {
+          if (phase === 'write') await fail()
+          await repository.upsertProvider(provider, undefined, {
+            networkDestination: rule,
+            applySharedDestination
+          })
+        })
+        await started
+        if (phase === 'apply') {
+          const written = await repository.getSettings()
+          expect(written.providers.map(({ id }) => id)).toContain(provider.id)
+          expect(
+            await repository.updateProviderModelCatalogIfTargetMatches(written.providers[0], [
+              'observed'
+            ])
+          ).toBe(true)
+          expect(written.notebookNetwork?.trustedPrivateDestinations).toContainEqual(
+            expect.objectContaining(rule)
+          )
+        }
+        await repository.setLocalePreference('fr')
+        release()
+        await expect(operation).rejects.toThrow('controlled failure')
+        const final = await repository.getSettings()
+        expect(final.localePreference).toBe('fr')
+        expect(final.providers).toEqual([])
+        expect(final.notebookNetwork?.trustedPrivateDestinations ?? []).toEqual([])
+        if (phase === 'apply') expect(apply).toHaveBeenLastCalledWith(final.notebookNetwork)
+        else expect(apply).not.toHaveBeenCalled()
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['catalog refresh', 'configuration edit'])(
+    'undoes only the failed save after a later %s',
+    async (concurrentWrite) => {
+      const directory = await mkdtemp(join(tmpdir(), 'shared-provider-edit-'))
+      try {
+        const repository = new SettingsRepository(directory)
+        const rule = {
+          id: 'manual',
+          hostname: 'gateway.example',
+          port: 8080,
+          protocol: 'http' as const,
+          approvedAddresses: []
+        }
+        const provider = {
+          id: 'edited',
+          type: 'custom' as const,
+          name: 'Gateway',
+          model: 'original',
+          apiEndpoints: ['messages' as const],
+          baseUrl: 'http://gateway.example:8080'
+        }
+        await repository.upsertProvider(provider)
+        await repository.setActiveProvider(provider.id, provider.model)
+        await repository.setNotebookNetwork({
+          ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+          trustedPrivateDestinations: [rule]
+        })
+        const before = await repository.getSettings()
+        const owner = new NotebookNetworkSettingsOwner({
+          repository,
+          apply: vi
+            .fn()
+            .mockImplementationOnce(async () => {
+              const saved = await repository.getSettings()
+              expect(saved.activeModel).toBe('replacement')
+              expect(saved.notebookNetwork?.trustedPrivateDestinations?.[0].sharedWithAgent).toBe(
+                true
+              )
+              if (concurrentWrite === 'catalog refresh') {
+                expect(
+                  await repository.updateProviderModelCatalogIfTargetMatches(saved.providers[0], [
+                    'observed'
+                  ])
+                ).toBe(true)
+              } else {
+                await repository.upsertProvider(
+                  { ...saved.providers[0], name: 'New name', model: 'later' },
+                  provider.id,
+                  { expectedConfigRevision: saved.providers[0].configRevision }
+                )
+              }
+              await repository.upsertProvider({ ...provider, id: 'independent' })
+              throw new Error('apply failed')
+            })
+            .mockResolvedValue(undefined)
+        })
+        await expect(
+          owner.commitSharedDestination(async (applySharedDestination) => {
+            await repository.upsertProvider({ ...provider, model: 'replacement' }, provider.id, {
+              networkDestination: { ...rule, sharedWithAgent: true },
+              applySharedDestination
+            })
+          })
+        ).rejects.toThrow('apply failed')
+        const final = await repository.getSettings()
+        const result = final.providers.find(({ id }) => id === provider.id)
+        if (concurrentWrite === 'catalog refresh') {
+          expect(final.activeModel).toBe(before.activeModel)
+          expect(result).toEqual({ ...before.providers[0], fetchedModels: ['observed'] })
+        } else {
+          expect(final.activeModel).toBe('later')
+          expect(result).toMatchObject({ name: 'New name', model: 'later' })
+        }
+        expect(final.providers.some(({ id }) => id === 'independent')).toBe(true)
+        expect(final.notebookNetwork?.trustedPrivateDestinations).toEqual([rule])
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 
   it.each(['persist', 'apply'])('rolls back a cancelled approval during %s', async (phase) => {
     const state = harness()
