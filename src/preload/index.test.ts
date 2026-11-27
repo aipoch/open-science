@@ -502,6 +502,7 @@ describe('preload bridge — public surface inventory', () => {
       'notebook.inspectNamespace',
       'notebook.onAvailable',
       'notebook.onChanged',
+      'notebook.onExecutionRefused',
       'notebook.onMemoryPolicyChanged',
       'notebook.onMemoryRejected',
       'notebook.readInputPreview',

@@ -2,6 +2,10 @@
 // Owners may compose further trusted checks (intent, lifecycle, cancellation) at these boundaries.
 import type { MemoryPolicyObservation, MemoryPolicyService } from './memory-policy'
 import { createLogger } from '@aipoch/diagnostics/node'
+import {
+  isNotebookMemoryRejectionCode,
+  type NotebookExecutionRecovery
+} from '../../shared/execution-recovery'
 import { loadNotebookMemoryPolicyConfig } from './memory-policy-config'
 
 export type NotebookMemoryPolicyPort = Pick<MemoryPolicyService, 'getState' | 'currentState'> &
@@ -98,7 +102,7 @@ export const guardNotebookExecutionAdmission = (
   }
 
 export class NotebookExecutionAdmissionError extends Error {
-  readonly recovery = { execution: 'not-started' as const, retryAfter: 'runtime-ready' as const }
+  readonly recovery: NotebookExecutionRecovery
   constructor(
     readonly code: string,
     message: string,
@@ -106,6 +110,11 @@ export class NotebookExecutionAdmissionError extends Error {
   ) {
     super(`${code}: ${message}`)
     this.name = 'NotebookExecutionAdmissionError'
+    this.recovery = {
+      execution: 'not-started',
+      retryAfter: 'runtime-ready',
+      ...(isNotebookMemoryRejectionCode(code) ? { memoryRejectionCode: code } : {})
+    }
   }
 }
 
@@ -159,8 +168,8 @@ export const createNotebookExecutionAdmission = (options: {
     throw new NotebookExecutionAdmissionError(
       state.status === 'pressured' ? 'NOTEBOOK_MEMORY_PRESSURE' : 'NOTEBOOK_MEMORY_UNAVAILABLE',
       state.status === 'pressured'
-        ? 'Memory is under pressure. Execution was not started. Stop a Notebook session in Compute or free memory, then choose to retry.'
-        : 'Notebook memory checking is unavailable. Execution was not started. Check or repair the runtime, then choose to retry.' +
+        ? 'Memory is under pressure. Execution was not started.'
+        : 'Notebook memory checking is unavailable. Execution was not started.' +
             (state.reason.detail ? ` ${state.reason.detail}` : ''),
       state
     )

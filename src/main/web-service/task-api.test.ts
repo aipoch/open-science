@@ -1268,7 +1268,10 @@ describe('HeadlessTaskApi adapter', () => {
         status: 'waiting_for_user',
         requiresUser: true,
         refusalId,
-        next: { action: 'continue_notebook_in_app' }
+        next: {
+          action: 'continue_notebook_in_app',
+          message: expect.stringContaining('send a new message in the original Session and branch')
+        }
       }
       await expect(inspect()).resolves.toMatchObject({ ...waiting, promptMessageId: 'follow-up' })
       session = materializeSessionConversationGraph({
@@ -1286,11 +1289,13 @@ describe('HeadlessTaskApi adapter', () => {
         execution: { status: 'unconfirmed', sessionId: imported.id }
       })
 
-      notebook.createExecutionIntent({
+      const continued = notebook.createExecutionIntent({
         ...scope,
         promptMessageId: 'continued',
         continuedFromRefusalId: refusalId
       })
+      continued.prepareUserExecution(undefined, original)
+      continued.commitUserExecution()
       session = materializeSessionConversationGraph({
         ...session,
         messages: [...session.messages, prompt('continued')]
@@ -1307,6 +1312,36 @@ describe('HeadlessTaskApi adapter', () => {
         status: 'completed',
         notebookRunId: 'notebook-continued',
         kernelDispatched: true
+      })
+
+      // A late Task can rebind the original intent while a later user turn still owns resources.
+      notebook.bindExecutionIntent(scope, original)
+      notebook.blockExecutionIntents(scope)
+      const manualRefusalId = continued.refusalId
+      expect(manualRefusalId).toBeDefined()
+      await expect(inspect()).resolves.toMatchObject({
+        ...waiting,
+        promptMessageId: 'continued',
+        refusalId: manualRefusalId
+      })
+      await expect(
+        notebook.inspectTaskExecution({ ...scope, includeSessionRefusal: 'current' })
+      ).resolves.toMatchObject({ ...waiting, promptMessageId: 'original' })
+
+      const recovered = notebook.createExecutionIntent({
+        ...scope,
+        promptMessageId: 'after-manual-stop',
+        continuedFromRefusalId: manualRefusalId
+      })
+      recovered.prepareUserExecution(undefined, continued)
+      recovered.commitUserExecution()
+      session = materializeSessionConversationGraph({
+        ...session,
+        messages: [...session.messages, prompt('after-manual-stop')]
+      })
+      await expect(inspect()).resolves.toMatchObject({
+        promptMessageId: 'after-manual-stop',
+        continuedFromRefusalId: manualRefusalId
       })
     } finally {
       await api.dispose()

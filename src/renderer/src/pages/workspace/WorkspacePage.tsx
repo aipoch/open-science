@@ -1658,12 +1658,7 @@ const WorkspacePage = ({
         <NotebookMemoryNoticeBridge
           projectId={activeProjectId}
           canManage={isSessionPersistenceReady && canOpenProjectCompute}
-          sendMessage={
-            typeof window.api.acp?.continueNotebookExecution === 'function'
-              ? runtime.sendMessage
-              : undefined
-          }
-          onContinue={(event) => {
+          onContinue={async (event) => {
             const session = useSessionStore
               .getState()
               .sessions.find(

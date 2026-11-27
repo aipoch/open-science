@@ -1,4 +1,3 @@
-import { isDesktopRenderer } from '@/lib/interface-scale'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -13,7 +12,6 @@ import {
 
 import type {
   NotebookProjectResources,
-  NotebookPendingDecision,
   NotebookResource,
   NotebookResourceRelease,
   NotebookSessionResources
@@ -34,121 +32,15 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useSessionStore } from '@/stores/session-store'
-import { useProjectStore } from '@/stores/project-store'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { ComputePanel } from './ComputePanel'
-import { formatComputeUptime } from './compute-monitor-presentation'
+import { ComputeOpenSessionButton } from './ComputeResourceActions'
+import {
+  formatComputeUptime,
+  releaseBlockedLabel,
+  resourceReleaseStatus
+} from './compute-monitor-presentation'
 import { formatByteSize } from '@/lib/utils'
-import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
-import { useNotebookMemoryContinuation } from './useNotebookMemoryContinuation'
-
-const NotebookContinuation = ({
-  decision,
-  refresh,
-  onError
-}: {
-  decision: NotebookPendingDecision
-  refresh: () => void
-  onError: (message: string | undefined) => void
-}): React.JSX.Element => {
-  const { t } = useTranslation()
-  const runtime = useWorkspaceAgentRuntime()
-  const session = useSessionStore((state) =>
-    state.sessions.find(
-      (session) => session.id === decision.sessionId && session.projectId === decision.projectId
-    )
-  )
-  const projectName = useProjectStore(
-    (state) => state.projects.find((project) => project.id === decision.projectId)?.name
-  )
-  const [sending, setSending] = useState(false)
-  const canContinue = isDesktopRenderer()
-  const memoryDecision = canContinue && decision.kind === 'memory'
-  const recheck = useNotebookMemoryContinuation(
-    memoryDecision ? decision : undefined,
-    'compute',
-    runtime.sendMessage
-  )
-  const continueWork = async (): Promise<void> => {
-    if (!session || sending) return
-    setSending(true)
-    onError(undefined)
-    try {
-      const result = await runtime.sendMessage({
-        projectId: decision.projectId,
-        sessionId: decision.sessionId,
-        cwd: session.cwd,
-        requireExistingSession: true,
-        preserveSelection: true,
-        notebookContinuation: {
-          refusalId: decision.refusalId,
-          messageBranchId: decision.messageBranchId
-        },
-        text: t(
-          'Recheck memory and reconsider the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
-        )
-      })
-      if (!result) {
-        throw new Error(
-          t('Notebook continuation could not be started. The previous request remains stopped.')
-        )
-      }
-    } catch (error) {
-      onError(error instanceof Error ? error.message : String(error))
-    } finally {
-      refresh()
-      setSending(false)
-    }
-  }
-  if (!session || recheck.handedOff) return <></>
-  return (
-    <div className="space-y-2 rounded-lg border border-border-200 bg-bg-000 p-3 text-xs">
-      <p className="font-medium">{session.title}</p>
-      <p className="text-text-100">
-        {t('Project: {{name}}', { name: projectName ?? decision.projectId })}
-      </p>
-      <p className="text-text-100">
-        {memoryDecision
-          ? t('Notebook execution needs your decision.')
-          : canContinue
-            ? t(
-                'Notebook work remains stopped until you explicitly continue. This sends a new guidance message and checks memory again.'
-              )
-            : t(
-                'Open the same Session and branch in the Open-Science desktop app, then choose Continue Notebook work in Compute.'
-              )}
-      </p>
-      {recheck.error && <ErrorNotice inline role="alert" description={recheck.error} />}
-      {memoryDecision ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={recheck.busy}
-          aria-busy={recheck.busy || undefined}
-          onClick={() => void recheck.checkAndContinue().then(refresh)}
-        >
-          <span key={String(recheck.busy)} className="button-feedback">
-            {recheck.busy ? t('Checking…') : t('Check and continue')}
-          </span>
-        </Button>
-      ) : canContinue ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={sending}
-          aria-busy={sending}
-          onClick={() => void continueWork()}
-        >
-          <span key={String(sending)} className="button-feedback">
-            {t('Continue Notebook work')}
-          </span>
-        </Button>
-      ) : null}
-    </div>
-  )
-}
 
 const resourceLabel = (
   resource: Pick<NotebookResource, 'group' | 'kind'>,
@@ -164,24 +56,29 @@ const resourceLabel = (
   return resource.kind === 'python' ? 'Python' : t('Notebook kernel')
 }
 
-const releaseBlockedLabel = (reason: string, t: ReturnType<typeof useTranslation>['t']): string => {
-  if (reason === 'release-in-progress' || reason === 'cleanup-in-progress')
-    return t('Notebook cleanup is already in progress.')
-  if (reason === 'session-exporting')
-    return t('This Session is being exported. Wait, then review the resources again.')
-  if (reason === 'runtime-binding-changing')
-    return t('The Notebook environment is changing. Wait, then review the resources again.')
-  if (reason === 'application-stopping') return t('Open-Science is shutting down.')
-  if (reason === 'application-updating')
-    return t('An update is in progress. Wait, then review the resources again.')
-  if (reason === 'package-handoff')
-    return t('Session files are being transferred. Wait, then review the resources again.')
-  if (reason === 'data-migration')
-    return t('Data is being moved. Wait, then review the resources again.')
-  if (reason === 'session-unavailable')
-    return t('This Session is unavailable or you do not have permission to manage it.')
-  return t('Notebook release is currently unavailable. Refresh and review the resources again.')
-}
+const releaseFailureDetails = (
+  release: NotebookResourceRelease,
+  t: ReturnType<typeof useTranslation>['t']
+): string =>
+  release.resources
+    .filter((resource) => resource.status === 'incomplete')
+    .map((resource) =>
+      [
+        resourceLabel(resource, t),
+        resource.environment,
+        resource.laneKey && t('Lane: {{lane}}', { lane: resource.laneKey }),
+        resource.processesTerminated === false &&
+          t('Processes terminated: {{result}}', { result: t('No') }),
+        resource.networkClosed === false && t('Network closed: {{result}}', { result: t('No') }),
+        resource.temporaryResourcesRemoved === false &&
+          t('Temporary resources removed: {{result}}', { result: t('No') }),
+        resource.projection === 'failed' && t('Saved Notebook state could not be updated.'),
+        resource.error
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    )
+    .join('\n')
 
 const ResourceDetails = ({
   resource,
@@ -299,7 +196,14 @@ type NotebookResourcePanelProps = {
   readError?: string
   backgroundRuns: readonly NotebookProjectBackgroundRunActivity[]
   refresh: () => void
-  goToSession: (sessionId: string) => void
+  goToSession?: (sessionId: string) => void
+  desktop?: {
+    hidden: boolean
+    confirmation?: NotebookSessionResources
+    closeConfirmation: () => void
+    sessionTitles: ReadonlyMap<string, string>
+    restoreConfirmationFocus: (event: Event) => void
+  }
 }
 
 const NotebookResourcePanel = ({
@@ -310,88 +214,150 @@ const NotebookResourcePanel = ({
   readError,
   backgroundRuns,
   refresh,
-  goToSession
+  goToSession,
+  desktop
 }: NotebookResourcePanelProps): React.JSX.Element => {
   const { t } = useTranslation()
   const sessions = useSessionStore((state) => state.sessions)
-  const [confirmation, setConfirmation] = useState<NotebookSessionResources>()
-  const [submitting, setSubmitting] = useState(false)
+  const [localConfirmation, setConfirmation] = useState<NotebookSessionResources>()
+  const [comment, setComment] = useState('')
+  const confirmation = desktop ? desktop.confirmation : localConfirmation
+  const closeConfirmation = (): void => {
+    setComment('')
+    if (desktop) desktop.closeConfirmation()
+    else setConfirmation(undefined)
+  }
+  const [submission, setSubmission] = useState<{ retryOperationId?: string }>()
+  const submitting = submission !== undefined
   const [operationResult, setOperationResult] = useState<{
     snapshot: NotebookProjectResources
     release: NotebookResourceRelease
   }>()
   const [progressId, setProgressId] = useState<string>()
-  const [error, setError] = useState<{ kind: 'release' | 'continuation'; message: string }>()
-  const releases = new Map(snapshot.releases.map((release) => [release.operationId, release]))
+  const [error, setError] = useState<{ kind: 'release'; message: string }>()
+  const [desktopReleaseState, setDesktopReleaseState] = useState<{
+    observed?: NotebookProjectResources['releases']
+    visible: ReadonlyMap<string, NotebookResourceRelease>
+  }>(() => ({ visible: new Map() }))
+  const desktopReleases = desktopReleaseState.visible
+  const [dismissedReleases, setDismissedReleases] = useState<ReadonlySet<string>>(() => new Set())
+
+  // The release outlives the resource rows. Keep visible operations mounted for live announcements,
+  // and skip completed history that this panel did not observe.
+  if (desktop && desktopReleaseState.observed !== snapshot.releases) {
+    let next: Map<string, NotebookResourceRelease> | undefined
+    for (const release of snapshot.releases) {
+      const { operationId, phase, status } = release
+      const current = desktopReleases.get(operationId)
+      if (
+        !phase ||
+        dismissedReleases.has(operationId) ||
+        current === release ||
+        current?.status === 'released' ||
+        (!current && status === 'released')
+      )
+        continue
+      next ??= new Map(desktopReleases)
+      next.set(operationId, release)
+    }
+    setDesktopReleaseState({ observed: snapshot.releases, visible: next ?? desktopReleases })
+  }
+  const dismissRelease = (operationId: string): void => {
+    setDismissedReleases((previous) => new Set(previous).add(operationId))
+    setDesktopReleaseState((previous) => {
+      const visible = new Map(previous.visible)
+      visible.delete(operationId)
+      return { ...previous, visible }
+    })
+  }
+  const releases = new Map(
+    desktop ? [] : snapshot.releases.map((release) => [release.operationId, release])
+  )
   // A command response fills the gap until the next authoritative owner snapshot arrives.
-  if (operationResult?.snapshot === snapshot) {
+  if (
+    operationResult &&
+    (operationResult.snapshot === snapshot || !releases.has(operationResult.release.operationId))
+  ) {
     releases.set(operationResult.release.operationId, operationResult.release)
   }
-  const decisions = new Map(
-    [
-      ...[...releases.values()].flatMap((release) => release.continuations),
-      ...snapshot.pendingDecisions
-    ].map((decision) => [
-      `${decision.projectId}:${decision.sessionId}:${decision.refusalId}`,
-      decision
-    ])
-  )
   const progress = progressId ? releases.get(progressId) : undefined
   const progressBlockedReason = snapshot.groups.find(
     (group) => group.sessionId === progress?.sessionId
   )?.releaseBlockedReason
+  const environmentRecoveryWarning = t(
+    'The installer stopped. Recover the affected environment before using it again.'
+  )
   const sessionTitle = (sessionId: string): string =>
+    desktop?.sessionTitles.get(sessionId) ??
     sessions.find((session) => session.id === sessionId && session.projectId === projectId)
-      ?.title ?? t('Deleted Session')
+      ?.title ??
+    t('Deleted Session')
   const confirm = async (): Promise<void> => {
     if (!confirmation || submitting) return
-    setSubmitting(true)
+    setSubmission({})
     setError(undefined)
     try {
       const result = await window.api.notebook.releaseSessionResources({
         projectId,
         sessionId: confirmation.sessionId,
-        revision: confirmation.revision
+        revision: confirmation.revision,
+        ...(desktop ? { stopAll: { comment: comment.trim() } } : {})
       })
-      setOperationResult({ snapshot, release: result })
-      setProgressId(result.operationId)
+      if (desktop) {
+        setDesktopReleaseState((previous) => {
+          if (previous.visible.has(result.operationId)) return previous
+          // A fast release may have finished in the poll before its command receipt arrived.
+          const completed = previous.observed?.find(
+            (release) => release.operationId === result.operationId && release.status === 'released'
+          )
+          return {
+            ...previous,
+            visible: new Map(previous.visible).set(result.operationId, completed ?? result)
+          }
+        })
+      } else {
+        setOperationResult({ snapshot, release: result })
+        setProgressId(result.operationId)
+      }
     } catch (error) {
       setError({ kind: 'release', message: error instanceof Error ? error.message : String(error) })
     } finally {
-      setConfirmation(undefined)
+      closeConfirmation()
       refresh()
-      setSubmitting(false)
+      setSubmission(undefined)
     }
   }
   const retry = async (release: NotebookResourceRelease): Promise<void> => {
     if (submitting) return
-    setSubmitting(true)
+    setSubmission({ retryOperationId: release.operationId })
     setError(undefined)
     try {
-      setOperationResult({
-        snapshot,
-        release: await window.api.notebook.retryResourceRelease({
-          projectId,
-          sessionId: release.sessionId,
-          operationId: release.operationId
-        })
+      const result = await window.api.notebook.retryResourceRelease({
+        projectId,
+        sessionId: release.sessionId,
+        operationId: release.operationId
       })
+      if (desktop) {
+        setDesktopReleaseState((previous) => {
+          const current = previous.visible.get(release.operationId)
+          // A newer poll may have already observed the retry's progress or final outcome.
+          if (current?.status !== 'partial' || current.finishedAt !== release.finishedAt)
+            return previous
+          return { ...previous, visible: new Map(previous.visible).set(result.operationId, result) }
+        })
+      } else {
+        setOperationResult({ snapshot, release: result })
+      }
     } catch (error) {
       setError({ kind: 'release', message: error instanceof Error ? error.message : String(error) })
     } finally {
       refresh()
-      setSubmitting(false)
+      setSubmission(undefined)
     }
   }
-  const releaseStatus = (release: NotebookResourceRelease): string =>
-    release.status === 'releasing'
-      ? t('Releasing Notebook resources')
-      : release.status === 'partial'
-        ? t('Cleanup incomplete')
-        : t('Notebook resources released')
 
   return (
-    <div className="space-y-3">
+    <div hidden={desktop?.hidden} className={desktop ? 'space-y-1' : 'space-y-3'}>
       {readError !== undefined && (
         <ErrorNotice
           inline
@@ -409,145 +375,188 @@ const NotebookResourcePanel = ({
       {error !== undefined ? (
         <ErrorNotice
           role="alert"
-          title={
-            error.kind === 'continuation'
-              ? t(
-                  'Notebook continuation could not be started. The previous request remains stopped.'
-                )
-              : t(
-                  'Notebook release could not be confirmed. Review the refreshed resources before trying again.'
-                )
-          }
+          title={t(
+            'Notebook release could not be confirmed. Review the refreshed resources before trying again.'
+          )}
           errorCode={error.message}
           diagnosticsLabel={t('Details')}
           dismissButton={{ label: t('Dismiss'), onClick: () => setError(undefined) }}
         />
       ) : null}
-      <ComputePanel
-        title={t('Notebook resources')}
-        icon={BookOpen}
-        description={
-          <>
-            {t('Current project')}
-            {observedAt !== undefined && (
-              <> · {t('Sessions: {{sessions}}', { sessions: snapshot.groups.length })}</>
-            )}
-          </>
-        }
-        action={
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            className="text-muted-foreground"
-            aria-label={t('Refresh Notebook resources')}
-            title={t('Refresh Notebook resources')}
-            onClick={refresh}
-          >
-            <RefreshCw aria-hidden="true" />
-          </Button>
-        }
-      >
-        {snapshot.groups.length === 0 && readError === undefined && (
-          <p role="status" className="px-3 py-6 text-center text-xs text-text-100">
-            {observedAt === undefined ? t('Loading…') : t('No running Notebooks')}
-          </p>
-        )}
-        {snapshot.groups.map((group) => (
-          <section
-            key={group.sessionId}
-            aria-label={sessionTitle(group.sessionId)}
-            className="space-y-2 border-b border-border px-4 py-3 text-xs last:border-b-0"
-          >
-            <div className="flex items-center gap-1">
-              <h3
-                className="min-w-0 truncate text-sm font-medium"
-                title={sessionTitle(group.sessionId)}
-              >
-                {sessionTitle(group.sessionId)}
-              </h3>
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                disabled={
-                  !sessions.some(
-                    (session) => session.id === group.sessionId && session.projectId === projectId
-                  )
-                }
-                aria-label={t('Go to Session')}
-                title={t('Go to Session')}
-                onClick={() => goToSession(group.sessionId)}
-              >
-                <ArrowUpRight aria-hidden="true" />
-              </Button>
-              <Button
-                type="button"
-                size="xs"
-                variant="outline"
-                className="ml-auto"
-                title={t('Stop and release Notebook')}
-                aria-label={t('Stop and release Notebook')}
-                disabled={Boolean(group.releaseBlockedReason)}
-                aria-describedby={
-                  group.releaseBlockedReason ? `release-blocked-${group.sessionId}` : undefined
-                }
-                onClick={() => setConfirmation(group)}
-              >
-                <Square aria-hidden="true" />
-                {t('Stop')}
-              </Button>
-            </div>
-            <ul className="divide-y divide-border/60 rounded-md bg-muted/40">
-              {group.resources.map((resource) => (
-                <ResourceDetails
-                  key={resource.id}
-                  resource={resource}
-                  observedAt={observedAt ?? 0}
-                />
-              ))}
-            </ul>
-            {backgroundRuns
-              .filter((run) => run.sessionId === group.sessionId)
-              .map((run) => (
-                <p key={run.runId} className="text-text-100">
-                  {t('Background')} · {run.title}
+      {!desktop && (
+        <ComputePanel
+          title={t('Notebook resources')}
+          icon={BookOpen}
+          description={
+            <>
+              {t('Current project')}
+              {observedAt !== undefined && (
+                <> · {t('Sessions: {{sessions}}', { sessions: snapshot.groups.length })}</>
+              )}
+            </>
+          }
+          action={
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              className="text-muted-foreground"
+              aria-label={t('Refresh Notebook resources')}
+              title={t('Refresh Notebook resources')}
+              onClick={refresh}
+            >
+              <RefreshCw aria-hidden="true" />
+            </Button>
+          }
+        >
+          {snapshot.groups.length === 0 && readError === undefined && (
+            <p role="status" className="px-3 py-6 text-center text-xs text-text-100">
+              {observedAt === undefined ? t('Loading…') : t('No running Notebooks')}
+            </p>
+          )}
+          {snapshot.groups.map((group) => (
+            <section
+              key={group.sessionId}
+              aria-label={sessionTitle(group.sessionId)}
+              className="space-y-2 border-b border-border px-4 py-3 text-xs last:border-b-0"
+            >
+              <div className="flex items-center gap-1">
+                <h3
+                  className="min-w-0 truncate text-sm font-medium"
+                  title={sessionTitle(group.sessionId)}
+                >
+                  {sessionTitle(group.sessionId)}
+                </h3>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  disabled={
+                    !sessions.some(
+                      (session) => session.id === group.sessionId && session.projectId === projectId
+                    )
+                  }
+                  aria-label={t('Go to Session')}
+                  title={t('Go to Session')}
+                  onClick={() => goToSession?.(group.sessionId)}
+                >
+                  <ArrowUpRight aria-hidden="true" />
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  className="ml-auto"
+                  title={t('Stop and release Notebook')}
+                  aria-label={t('Stop and release Notebook')}
+                  disabled={Boolean(group.releaseBlockedReason)}
+                  aria-describedby={
+                    group.releaseBlockedReason ? `release-blocked-${group.sessionId}` : undefined
+                  }
+                  onClick={() => setConfirmation(group)}
+                >
+                  <Square aria-hidden="true" />
+                  {t('Stop')}
+                </Button>
+              </div>
+              <ul className="divide-y divide-border/60 rounded-md bg-muted/40">
+                {group.resources.map((resource) => (
+                  <ResourceDetails
+                    key={resource.id}
+                    resource={resource}
+                    observedAt={observedAt ?? 0}
+                  />
+                ))}
+              </ul>
+              {backgroundRuns
+                .filter((run) => run.sessionId === group.sessionId)
+                .map((run) => (
+                  <p key={run.runId} className="text-text-100">
+                    {t('Background')} · {run.title}
+                  </p>
+                ))}
+              {group.releaseBlockedReason ? (
+                <p id={`release-blocked-${group.sessionId}`} className="text-text-100">
+                  {releaseBlockedLabel(group.releaseBlockedReason, t)}
                 </p>
-              ))}
-            {group.releaseBlockedReason ? (
-              <p id={`release-blocked-${group.sessionId}`} className="text-text-100">
-                {releaseBlockedLabel(group.releaseBlockedReason, t)}
-              </p>
-            ) : null}
-          </section>
-        ))}
-      </ComputePanel>
+              ) : null}
+            </section>
+          ))}
+        </ComputePanel>
+      )}
 
-      {decisions.size > 0 ? (
-        <section aria-labelledby="notebook-decisions-title" className="space-y-2">
-          <h2 id="notebook-decisions-title" className="text-sm font-semibold">
-            {t('Waiting for your decision')}
-          </h2>
-          {[...decisions].map(([key, decision]) => (
-            <NotebookContinuation
-              key={key}
-              decision={decision}
-              refresh={refresh}
-              onError={(message) =>
-                setError(message === undefined ? undefined : { kind: 'continuation', message })
+      {desktop &&
+        [...desktopReleases.values()].map((release) => {
+          const failed = release.status === 'partial'
+          const running = release.status === 'releasing'
+          const needsEnvironmentRecovery = release.resources.some(
+            ({ environmentRecoveryRequired }) => environmentRecoveryRequired
+          )
+          const openReleasedSession = release.status === 'released' && goToSession
+          const name = sessionTitle(release.sessionId)
+          const blockedReason = snapshot.groups.find(
+            (group) => group.sessionId === release.sessionId
+          )?.releaseBlockedReason
+          const retrying = submission?.retryOperationId === release.operationId
+          return (
+            <ErrorNotice
+              key={release.operationId}
+              inline
+              className={openReleasedSession ? 'px-2 py-2' : 'py-2 ps-1 pe-2'}
+              role={failed ? 'alert' : 'status'}
+              level={failed || needsEnvironmentRecovery ? 'warning' : running ? 'info' : 'success'}
+              content={
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-0.5">
+                    <p
+                      className="min-w-0 truncate text-sm leading-5 font-semibold text-foreground"
+                      title={name}
+                    >
+                      {name}
+                    </p>
+                    {openReleasedSession && (
+                      <ComputeOpenSessionButton
+                        className="-my-0.5 shrink-0"
+                        onClick={() => openReleasedSession(release.sessionId)}
+                      />
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs leading-4">{resourceReleaseStatus(release, t)}</p>
+                  {needsEnvironmentRecovery && (
+                    <p className="mt-0.5 text-xs leading-4">{environmentRecoveryWarning}</p>
+                  )}
+                </div>
+              }
+              errorCode={failed ? releaseFailureDetails(release, t) : undefined}
+              diagnosticsLabel={failed ? t('Details') : undefined}
+              primaryButton={
+                failed
+                  ? {
+                      label: t('Retry cleanup'),
+                      disabled: submitting || Boolean(blockedReason),
+                      loading: retrying,
+                      description: blockedReason
+                        ? releaseBlockedLabel(blockedReason, t)
+                        : undefined,
+                      onClick: () => void retry(release)
+                    }
+                  : undefined
+              }
+              dismissButton={
+                running || retrying
+                  ? undefined
+                  : { label: t('Dismiss'), onClick: () => dismissRelease(release.operationId) }
               }
             />
-          ))}
-        </section>
-      ) : null}
-
+          )
+        })}
       {[...releases.values()].map((release) => (
         <div
           key={release.operationId}
           className="rounded-lg border border-border-200 bg-bg-000 p-3 text-xs"
         >
-          <p className="font-medium">
-            {sessionTitle(release.sessionId)} · {releaseStatus(release)}
+          <p className="font-medium" role="status">
+            {sessionTitle(release.sessionId)} · {resourceReleaseStatus(release, t)}
           </p>
           <Button
             type="button"
@@ -561,31 +570,49 @@ const NotebookResourcePanel = ({
       ))}
 
       <AlertDialog.Root
-        open={isActive && Boolean(confirmation)}
+        open={isActive && !desktop?.hidden && Boolean(confirmation)}
         onOpenChange={(open) => {
-          if (!open && !submitting) setConfirmation(undefined)
+          if (!open && !submitting) closeConfirmation()
         }}
       >
         <AlertDialog.Portal>
           <AlertDialog.Overlay className={dialogOverlayClassName} />
           <AlertDialog.Content
+            onCloseAutoFocus={desktop?.restoreConfirmationFocus}
             className={dialogPanelClassName('w-[min(512px,calc(100vw-2rem))] p-0')}
           >
             <div className={dialogHeaderClassName}>
               <AlertDialog.Title className={dialogTitleClassName}>
-                {t('Stop and release Notebook for "{{title}}"?', {
-                  title: confirmation ? sessionTitle(confirmation.sessionId) : ''
-                })}
+                {desktop
+                  ? t('Stop all Notebook resources?')
+                  : t('Stop and release Notebook for "{{title}}"?', {
+                      title: confirmation ? sessionTitle(confirmation.sessionId) : ''
+                    })}
               </AlertDialog.Title>
             </div>
             <div className={dialogBodyClassName}>
               <AlertDialog.Description asChild>
                 <div className={`${dialogDescriptionClassName} space-y-2`}>
-                  <p>{t('This stops the listed local Notebook tasks and resources.')}</p>
-                  <p>{t('Variables and connections will be lost.')}</p>
-                  <p>{t('History, saved outputs, files, and installed environments are kept.')}</p>
-                  <p>{t('Earlier file writes are not undone.')}</p>
-                  <p>{t('Independent remote Compute Jobs are not stopped.')}</p>
+                  {desktop ? (
+                    <>
+                      <p>
+                        {t(
+                          'Stopping clears Notebook variables, closes open connections, and may discard unsaved work.'
+                        )}
+                      </p>
+                      <p>{t('Tasks that keep running may be forced to stop.')}</p>
+                    </>
+                  ) : (
+                    <>
+                      <p>{t('This stops the listed local Notebook tasks and resources.')}</p>
+                      <p>{t('Variables and connections will be lost.')}</p>
+                      <p>
+                        {t('History, saved outputs, files, and installed environments are kept.')}
+                      </p>
+                      <p>{t('Earlier file writes are not undone.')}</p>
+                      <p>{t('Independent remote Compute Jobs are not stopped.')}</p>
+                    </>
+                  )}
                 </div>
               </AlertDialog.Description>
               <ul className="mt-3 space-y-2 text-xs">
@@ -597,6 +624,23 @@ const NotebookResourcePanel = ({
                   />
                 ))}
               </ul>
+              {desktop && (
+                <label className="mt-3 block text-xs">
+                  {t('Reason for stopping (optional)')}
+                  <textarea
+                    className="mt-1 min-h-20 w-full rounded-md border border-border bg-card p-3 text-sm"
+                    value={comment}
+                    maxLength={2000}
+                    disabled={submitting}
+                    onChange={(event) => setComment(event.target.value)}
+                  />
+                  <span className="text-muted-foreground">
+                    {t(
+                      'A short note helps the agent understand why you stopped and decide what to try next.'
+                    )}
+                  </span>
+                </label>
+              )}
             </div>
             <div className={dialogFooterClassName}>
               <AlertDialog.Cancel asChild>
@@ -617,7 +661,7 @@ const NotebookResourcePanel = ({
                 onClick={() => void confirm()}
               >
                 <span key={String(submitting)} className="button-feedback">
-                  {t('Stop and release')}
+                  {desktop ? t('Stop') : t('Stop and release')}
                 </span>
               </Button>
             </div>
@@ -625,104 +669,111 @@ const NotebookResourcePanel = ({
         </AlertDialog.Portal>
       </AlertDialog.Root>
 
-      <Dialog.Root
-        open={isActive && Boolean(progress)}
-        onOpenChange={(open) => {
-          if (!open) setProgressId(undefined)
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className={dialogOverlayClassName} />
-          <Dialog.Content className={dialogPanelClassName('w-[min(512px,calc(100vw-2rem))] p-0')}>
-            <div className={dialogHeaderClassName}>
-              <Dialog.Title className={dialogTitleClassName}>
-                {progress ? releaseStatus(progress) : t('Notebook cleanup')}
-              </Dialog.Title>
-            </div>
-            <div className={`${dialogBodyClassName} space-y-3`}>
-              <Dialog.Description className={dialogDescriptionClassName}>
-                {t(
-                  'Closing this progress view does not cancel cleanup. No Notebook execution starts automatically.'
-                )}
-              </Dialog.Description>
-              <ul className="space-y-2 text-xs" aria-live="polite">
-                {progress?.resources.map((resource) => (
-                  <li key={resource.id} className="space-y-1 rounded-md bg-bg-10 p-3">
-                    <p className="font-medium">
-                      {resourceLabel(resource, t)}
-                      {resource.environment ? ` · ${resource.environment}` : ''} ·{' '}
-                      {resource.status === 'released'
-                        ? t('Released')
-                        : resource.status === 'pending'
-                          ? t('Releasing')
-                          : t('Cleanup incomplete')}
-                    </p>
-                    {resource.laneKey ? (
-                      <p>{t('Lane: {{lane}}', { lane: resource.laneKey })}</p>
-                    ) : null}
-                    {resource.processesTerminated !== undefined ? (
-                      <p>
-                        {t('Processes terminated: {{result}}', {
-                          result: resource.processesTerminated ? t('Yes') : t('No')
-                        })}
+      {!desktop && (
+        <Dialog.Root
+          open={isActive && Boolean(progress)}
+          onOpenChange={(open) => {
+            if (!open) setProgressId(undefined)
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className={dialogOverlayClassName} />
+            <Dialog.Content className={dialogPanelClassName('w-[min(512px,calc(100vw-2rem))] p-0')}>
+              <div className={dialogHeaderClassName}>
+                <Dialog.Title className={dialogTitleClassName}>
+                  {progress ? resourceReleaseStatus(progress, t) : t('Notebook cleanup')}
+                </Dialog.Title>
+              </div>
+              <div className={`${dialogBodyClassName} space-y-3`}>
+                <Dialog.Description className={dialogDescriptionClassName}>
+                  {t(
+                    'Closing this progress view does not cancel cleanup. No Notebook execution starts automatically.'
+                  )}
+                </Dialog.Description>
+                <ul className="space-y-2 text-xs" aria-live="polite">
+                  {progress?.resources.map((resource) => (
+                    <li key={resource.id} className="space-y-1 rounded-md bg-bg-10 p-3">
+                      <p className="font-medium">
+                        {resourceLabel(resource, t)}
+                        {resource.environment ? ` · ${resource.environment}` : ''} ·{' '}
+                        {resource.status === 'released'
+                          ? t('Released')
+                          : resource.status === 'pending'
+                            ? t('Releasing')
+                            : t('Cleanup incomplete')}
                       </p>
-                    ) : null}
-                    {resource.networkClosed !== undefined ? (
-                      <p>
-                        {t('Network closed: {{result}}', {
-                          result: resource.networkClosed ? t('Yes') : t('No')
-                        })}
-                      </p>
-                    ) : null}
-                    {resource.temporaryResourcesRemoved !== undefined ? (
-                      <p>
-                        {t('Temporary resources removed: {{result}}', {
-                          result: resource.temporaryResourcesRemoved ? t('Yes') : t('No')
-                        })}
-                      </p>
-                    ) : null}
-                    {resource.projection === 'failed' ? (
-                      <p className="text-status-failure-foreground dark:text-status-failure-dark-foreground">
-                        {t('Saved Notebook state could not be updated.')}
-                      </p>
-                    ) : null}
-                    {resource.error ? (
-                      <pre className="whitespace-pre-wrap break-words text-text-100">
-                        {resource.error}
-                      </pre>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-              {progressBlockedReason ? (
-                <p id="notebook-retry-blocked" className="text-xs text-text-100">
-                  {releaseBlockedLabel(progressBlockedReason, t)}
-                </p>
-              ) : null}
-            </div>
-            <div className={dialogFooterClassName}>
-              <Button type="button" variant="ghost" onClick={() => setProgressId(undefined)}>
-                {t('Close progress')}
-              </Button>
-              {progress?.status === 'partial' ? (
-                <Button
-                  type="button"
-                  disabled={submitting || Boolean(progressBlockedReason)}
-                  aria-busy={submitting}
-                  aria-describedby={progressBlockedReason ? 'notebook-retry-blocked' : undefined}
-                  onClick={() => void retry(progress)}
-                >
-                  <span key={String(submitting)} className="button-feedback">
-                    {t('Retry cleanup')}
-                  </span>
+                      {resource.laneKey ? (
+                        <p>{t('Lane: {{lane}}', { lane: resource.laneKey })}</p>
+                      ) : null}
+                      {resource.processesTerminated !== undefined ? (
+                        <p>
+                          {t('Processes terminated: {{result}}', {
+                            result: resource.processesTerminated ? t('Yes') : t('No')
+                          })}
+                        </p>
+                      ) : null}
+                      {resource.networkClosed !== undefined ? (
+                        <p>
+                          {t('Network closed: {{result}}', {
+                            result: resource.networkClosed ? t('Yes') : t('No')
+                          })}
+                        </p>
+                      ) : null}
+                      {resource.temporaryResourcesRemoved !== undefined ? (
+                        <p>
+                          {t('Temporary resources removed: {{result}}', {
+                            result: resource.temporaryResourcesRemoved ? t('Yes') : t('No')
+                          })}
+                        </p>
+                      ) : null}
+                      {resource.projection === 'failed' ? (
+                        <p className="text-status-failure-foreground dark:text-status-failure-dark-foreground">
+                          {t('Saved Notebook state could not be updated.')}
+                        </p>
+                      ) : null}
+                      {resource.environmentRecoveryRequired ? (
+                        <p className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                          {environmentRecoveryWarning}
+                        </p>
+                      ) : null}
+                      {resource.error ? (
+                        <pre className="whitespace-pre-wrap break-words text-text-100">
+                          {resource.error}
+                        </pre>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                {progressBlockedReason ? (
+                  <p id="notebook-retry-blocked" className="text-xs text-text-100">
+                    {releaseBlockedLabel(progressBlockedReason, t)}
+                  </p>
+                ) : null}
+              </div>
+              <div className={dialogFooterClassName}>
+                <Button type="button" variant="ghost" onClick={() => setProgressId(undefined)}>
+                  {t('Close progress')}
                 </Button>
-              ) : null}
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+                {progress?.status === 'partial' ? (
+                  <Button
+                    type="button"
+                    disabled={submitting || Boolean(progressBlockedReason)}
+                    aria-busy={submitting}
+                    aria-describedby={progressBlockedReason ? 'notebook-retry-blocked' : undefined}
+                    onClick={() => void retry(progress)}
+                  >
+                    <span key={String(submitting)} className="button-feedback">
+                      {t('Retry cleanup')}
+                    </span>
+                  </Button>
+                ) : null}
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      )}
     </div>
   )
 }
 
-export { NotebookResourcePanel }
+export { NotebookResourcePanel, ResourceDetails }

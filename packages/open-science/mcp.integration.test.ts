@@ -1258,7 +1258,10 @@ it('returns the stopped Notebook and user action without waiting for the outer R
       messageBranchId: 'branch-1',
       requiresUser: true,
       retryable: false,
-      next: { action: 'continue_notebook_in_app', message: 'Choose Continue Notebook work.' }
+      next: {
+        action: 'continue_notebook_in_app',
+        message: 'Send a new message in the original Session and branch.'
+      }
     }
   }
   const agent = await resourceAgents((request, response) => {
@@ -1272,6 +1275,12 @@ it('returns the stopped Notebook and user action without waiting for the outer R
   expect(result.isError).not.toBe(true)
   expect(result.structuredContent).toEqual(expected)
   expect(await agent.cli('wait_run', args)).toEqual(expected)
+  const guide = await agent.mcp('get_agent_guide')
+  expect(guide.isError).not.toBe(true)
+  expect(guide.structuredContent?.result).toContain(
+    'send a new message in the original Session and branch'
+  )
+  expect(await agent.cli('get_agent_guide')).toEqual(guide.structuredContent)
   const listed = (await agent.mcp('list_capabilities', { group: 'research' }))
     .structuredContent as {
     result: { groups: { research: { name: string }[] } }

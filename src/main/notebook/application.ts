@@ -70,6 +70,7 @@ const createNotebookApplication = (deps: NotebookApplicationDeps): NotebookAppli
     callbacks: {
       onNotebookAvailable: (event) => events.publish('notebook:available', event),
       onNotebookChanged: (event) => events.publish('notebook:changed', event),
+      onExecutionRefused: (event) => events.publish('notebook:execution-refused', event),
       onMemoryPolicyRejected: (context, state) =>
         events.publish('notebook:memory-rejected', {
           ...context,

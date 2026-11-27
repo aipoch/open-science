@@ -124,6 +124,38 @@ describe('session termination feedback', () => {
     expect(monitor.manualTerminations('p2', 's1')).toEqual([])
   })
 
+  it('offers Force close only for the still-live original process and settles the same stop record', async () => {
+    const terminate = vi
+      .fn<(force?: boolean) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('Stop timed out'))
+      .mockResolvedValue(undefined)
+    let live = true
+    const original = resource({ pid: 43210, terminate, hasLiveProcess: () => live })
+    let item = original
+    const monitor = new NotebookProcessMonitor(() => [item])
+    const [first] = (await monitor.snapshot()).instances
+    const request = { id: first.id, sessionId: first.sessionId, projectId: first.projectId }
+    expect(first.canForceClose).toBeUndefined()
+    await expect(monitor.terminateRequest({ ...request, force: true })).rejects.toThrow()
+    expect(terminate).not.toHaveBeenCalled()
+    await expect(monitor.terminateRequest({ ...request, comment: 'Use chunks' })).rejects.toThrow()
+    expect((await monitor.snapshot()).instances[0].canForceClose).toBe(true)
+    const [record] = monitor.manualTerminations(first.projectId, first.sessionId)
+    expect(record).toMatchObject({ status: 'cleanup-failed', comment: 'Use chunks' })
+    live = false
+    await expect(monitor.terminateRequest({ ...request, force: true })).rejects.toThrow()
+    item = resource({ pid: original.pid })
+    await expect(monitor.terminateRequest({ ...request, force: true })).rejects.toThrow()
+    expect(terminate).toHaveBeenCalledOnce()
+    expect(item.terminate).not.toHaveBeenCalled()
+    item = original
+    live = true
+    await monitor.terminateRequest({ ...request, force: true })
+    expect(terminate).toHaveBeenLastCalledWith(true)
+    expect(monitor.manualTerminations(first.projectId, first.sessionId)).toEqual([
+      { ...record, status: 'stopped' }
+    ])
+  })
   it('validates the complete group before stopping anything and rejects oversized comments', async () => {
     const first = resource()
     const other = resource({ sessionId: 's2' })

@@ -47,8 +47,8 @@ const HOST_SDK_DISCOVERY_GUIDANCE =
 const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
   'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
 const NOTEBOOK_REJECTION_GUIDANCE =
-  'Memory/intent refusal: not started; explain and await explicit user Retry/Continue. Never auto-retry, queue/replay, poll memory or bypass via tools/languages/environments/Sessions/Subagents. Chat/approval/auto-continuation cannot unlock; released variables may vanish.'
-const NOTEBOOK_TOOL_REJECTION_GUIDANCE = 'Refusal requires explicit user Retry/Continue.'
+  'On a memory/intent refusal, explain the outcome and await a new user message in the same conversation. Never auto-retry, queue/replay, poll memory or bypass via tools/languages/environments/Sessions/Subagents. Released variables may vanish.'
+const NOTEBOOK_TOOL_REJECTION_GUIDANCE = 'After refusal, wait for a new user message.'
 
 // Scoped prompt addendum that only applies when the agent is given notebook tools. Keep equivalent
 // guidance concise; the prompt and complete MCP schema share the tested static context budget.
@@ -565,7 +565,8 @@ const notebookRpcErrorGuidance = (status: number, error: unknown): string | unde
     code === 'NOTEBOOK_MEMORY_PRESSURE' ||
     code === 'NOTEBOOK_MEMORY_UNAVAILABLE'
   ) {
-    return 'Notebook work is stopped. Do not retry, change tools, language, environment or Session, or delegate it. After resolving the cause, ask the user to choose Continue Notebook work in Compute in the Open-Science desktop app.'
+    if (detail?.recovery) return undefined
+    return 'Notebook work is stopped. Do not retry, change tools, language, environment or Session, or delegate it. After resolving the cause, ask the user to send a new message in the original conversation.'
   }
   if (detail && ['recovery', 'retryable', 'hint', 'guidance'].some((key) => key in detail))
     return undefined
@@ -1007,6 +1008,9 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
       'runtimeStatus',
       'errorCode'
     ]),
+    ...(recovery?.memoryRejectionCode && !record.errorCode && !record.shellErrorCode
+      ? { errorCode: recovery.memoryRejectionCode }
+      : {}),
     ...(record.shellErrorCode ? { errorCode: record.shellErrorCode } : {}),
     ...(record.shellRuntimeStatus ? { runtimeStatus: record.shellRuntimeStatus } : {}),
     ...(recovery ? { recovery } : {}),
@@ -1016,7 +1020,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     ...(stdout.text ? { stdout: stdout.text } : {}),
     ...(stderr ? { stderr } : {}),
     ...(traceback ? { traceback } : {}),
-    ...(hint ? { hint } : {}),
+    ...(hint && !recovery?.memoryRejectionCode ? { hint } : {}),
     ...(compactOutputs.outputs.length ? { outputs: compactOutputs.outputs } : {}),
     ...(compactOutputs.omitted > 0 ? { omittedOutputCount: compactOutputs.omitted } : {}),
     ...(workingFiles.length ? { workingFiles } : {}),

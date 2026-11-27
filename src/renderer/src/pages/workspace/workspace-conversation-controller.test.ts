@@ -9,6 +9,8 @@ import {
   useSessionStore
 } from '@/stores/session-store'
 import type { TextAnnotation } from '../../../../shared/annotations'
+import type { NotebookExecutionRefusal } from '../../../../shared/execution-recovery'
+import type { NotebookProjectActivity } from '../../../../shared/notebook'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
@@ -26,6 +28,14 @@ import {
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const textDoc = (text: string): ComposerDoc => ({ nodes: [{ type: 'text', text }] })
+
+const refusalAtOrder = (order: number): NotebookExecutionRefusal => ({
+  projectId: 'project-a',
+  sessionId: 'session-a',
+  generation: 'backend-a',
+  refusalId: `refusal-${order}`,
+  order
+})
 
 const quotedAnnotation = (): TextAnnotation => ({
   id: 'annotation-side-chat',
@@ -293,6 +303,7 @@ afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   sessionStorage.clear()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -1162,6 +1173,72 @@ describe('workspace conversation controller', () => {
     expect(latestComposer.actions.setError).toHaveBeenCalledWith('Provider admission failed')
   })
 
+  it('uses the latest backend refusal when a new draft is submitted after renderer reload', async () => {
+    const activeSession = { ...runningSession(), status: 'idle' as const }
+    const input = options({ activeSession })
+    const activity = Promise.withResolvers<NotebookProjectActivity>()
+    let publish!: (refusal: NotebookExecutionRefusal) => void
+    vi.stubGlobal('api', {
+      notebook: {
+        getProjectActivity: vi.fn(() => activity.promise),
+        onExecutionRefused: (listener: typeof publish) => {
+          publish = listener
+          return vi.fn()
+        }
+      }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    publish(refusalAtOrder(2))
+    publish(refusalAtOrder(1))
+    activity.resolve({ kernels: [], backgroundRuns: [], executionRefusals: [refusalAtOrder(1)] })
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notebookSubmission: {
+          refusalId: 'refusal-2',
+          sessionId: 'session-a',
+          messageBranchId: 'branch-a'
+        }
+      })
+    )
+  })
+
+  it('retries refusal hydration after a transient failure without waiting for a new event', async () => {
+    const input = options()
+    const getProjectActivity = vi
+      .fn<() => Promise<NotebookProjectActivity>>()
+      .mockRejectedValueOnce(new Error('Transport reconnecting'))
+      .mockResolvedValue({
+        kernels: [],
+        backgroundRuns: [],
+        executionRefusals: [refusalAtOrder(1)]
+      })
+    vi.stubGlobal('api', {
+      notebook: { getProjectActivity }
+    })
+    vi.useFakeTimers()
+    try {
+      const hook = renderController(input)
+      mounted.push(hook)
+      await act(async () => undefined)
+      expect(getProjectActivity).toHaveBeenCalledOnce()
+      await act(async () => vi.advanceTimersByTimeAsync(1_000))
+      expect(getProjectActivity).toHaveBeenCalledTimes(2)
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          notebookSubmission: expect.objectContaining({
+            refusalId: 'refusal-1',
+            sessionId: 'session-a'
+          })
+        })
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('branches from a completed Agent Message without consuming the composer draft', async () => {
     const input = options()
     const hook = renderController(input)
@@ -1705,19 +1782,43 @@ describe('workspace conversation controller', () => {
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
-  it('captures the active Session Specialist when queueing', async () => {
+  it('freezes the active Session Specialist and refusal at the queue submit gesture', async () => {
     let currentSession = { ...runningSession(), specialistId: 'specialist-a' }
     const input = options({ activeSession: currentSession, getSession: () => currentSession })
+    let publish!: (refusal: NotebookExecutionRefusal) => void
+    vi.stubGlobal('api', {
+      notebook: {
+        onExecutionRefused: (listener: typeof publish) => {
+          publish = listener
+          return vi.fn()
+        }
+      }
+    })
     const hook = renderController(input)
     mounted.push(hook)
 
+    publish(refusalAtOrder(1))
+    const captureSend = vi.mocked(input.composer.lifecycle.captureSend)
+    const captureSnapshot = captureSend.getMockImplementation()!
+    captureSend.mockImplementationOnce(() => {
+      publish(refusalAtOrder(2))
+      return captureSnapshot()
+    })
     act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    publish(refusalAtOrder(3))
     currentSession = { ...currentSession, status: 'idle' }
     hook.rerender({ ...input, activeSession: currentSession, getSession: () => currentSession })
 
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ specialistId: 'specialist-a' })
+      expect.objectContaining({
+        specialistId: 'specialist-a',
+        notebookSubmission: {
+          refusalId: 'refusal-1',
+          sessionId: currentSession.id,
+          messageBranchId: 'branch-a'
+        }
+      })
     )
   })
 

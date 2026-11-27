@@ -5,9 +5,11 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { NotebookRuntimeService } from './runtime-service'
 import type { MemoryPolicyObservation } from './memory-policy'
 import type { NotebookExecutionRequest } from './execution-contract'
+import { compactNotebookExecutionResult } from './mcp-server'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
 import {
   NotebookExecutionIntent,
+  NotebookExecutionIntentOwner,
   withNotebookExecutionIntent,
   withNotebookUserOperation
 } from './execution-intent'
@@ -30,6 +32,56 @@ it('requires the current grant in the same branch ancestry before inheriting a m
     expect(intent.forDescendant(context).refusalId).toBeDefined()
   }
   expect(intent.refusalId).toBeUndefined()
+})
+
+it('retains the ordering marker after an explicit branchless reproduction recovery', () => {
+  const onRefused = vi.fn()
+  const owner = new NotebookExecutionIntentOwner(onRefused)
+  const scope = { projectId: 'p', sessionId: 's', source: 'reproduction' as const }
+  const original = owner.create(scope)
+  const refusalId = original.block('pressured')
+  const marker = expect.objectContaining({ projectId: 'p', sessionId: 's', refusalId })
+  expect(onRefused).toHaveBeenLastCalledWith(marker)
+  expect(owner.submissionRefusals('p')).toEqual([marker])
+  expect(owner.submissionRefusals('other-project')).toEqual([])
+
+  const retried = owner.create(scope)
+  expect(retried.latestRefusal).toBe(original)
+  expect(original.refusalWasContinued).toBe(false)
+  retried.commitUserExecution()
+  expect(original.refusalWasContinued).toBe(true)
+  expect(() => original.assertExecutable()).toThrow('Execution was not started')
+  expect(owner.submissionRefusals('p')).toEqual([marker])
+
+  const chat = owner.create({ ...scope, source: undefined, messageBranchId: 'branch' })
+  const laterRefusal = chat.block('manual-release')
+  expect(onRefused).toHaveBeenLastCalledWith(expect.objectContaining({ refusalId: laterRefusal }))
+  expect(owner.submissionRefusals('p')).toEqual([
+    expect.objectContaining({ refusalId: laterRefusal })
+  ])
+  owner.create(scope).commitUserExecution()
+  expect(chat.refusalWasContinued).toBe(false)
+})
+
+it('retains the conversation branch when a late binding overlaps a manual release', () => {
+  const owner = new NotebookExecutionIntentOwner()
+  const session = { projectId: 'p', sessionId: 's' }
+  const branch = { ...session, messageBranchId: 'branch-a' }
+  const stopped = owner.create(branch)
+  const originalRefusalId = stopped.block('pressured')
+  const fresh = owner.create(branch)
+  const reproduction = owner.create({ ...session, source: 'reproduction' })
+  owner.bind(branch, stopped)
+
+  owner.block(session, 'manual-release')
+  expect(reproduction.refusalId).toEqual(expect.any(String))
+  expect(stopped.refusalId).toBe(originalRefusalId)
+  expect(stopped.latestRefusal).toBe(fresh)
+  expect(owner.submissionRefusals('p')).toEqual([
+    expect.objectContaining({ refusalId: fresh.refusalId })
+  ])
+  owner.block(session, 'manual-release')
+  expect(stopped.latestRefusal).toBe(fresh)
 })
 
 let root: string | undefined
@@ -331,7 +383,7 @@ it('rejects pressure before accepting a REPL execution while history remains rea
 })
 
 it.each(['repl', 'python', 'r', 'shell'] as const)(
-  'records a compatible not-started failure after submission for %s',
+  'retains the Run and exports its memory refusal when %s is rejected before dispatch',
   async (surface) => {
     root = await mkdtemp(join(tmpdir(), 'runtime-admission-'))
     const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
@@ -375,17 +427,22 @@ it.each(['repl', 'python', 'r', 'shell'] as const)(
         : surface === 'shell'
           ? await runtime.executeShell({ ...request, command: 'saved=1' })
           : await runtime.execute({ ...request, language: surface, source: 'user', code: '1' })
-    expect(result).toMatchObject({
-      recovery: { execution: 'not-started' },
+    expect(compactNotebookExecutionResult(result)).toMatchObject({
+      runId: expect.any(String),
+      errorCode: 'NOTEBOOK_MEMORY_PRESSURE',
+      kernelDispatched: false,
+      executionStarted: false,
+      recovery: { execution: 'not-started', retryAfter: 'runtime-ready' },
       ...(surface === 'shell' ? { exitCode: 1 } : { status: 'failed' })
     })
     expect(execute).not.toHaveBeenCalled()
     const state = await runtime.state(request)
     expect(state.runs[0]).toMatchObject({
+      runId: result.runId,
       status: 'failed',
       kernelDispatched: false,
       executionStarted: false,
-      recovery: { execution: 'not-started' }
+      recovery: { execution: 'not-started', memoryRejectionCode: 'NOTEBOOK_MEMORY_PRESSURE' }
     })
     expect(state.environments.some((environment) => environment.status === 'running')).toBe(false)
   }

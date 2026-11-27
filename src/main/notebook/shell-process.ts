@@ -1287,25 +1287,36 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
     return undefined
   }
   resources(): NotebookOwnedResource[] {
-    return Array.from(this.sessions, ([key, session]) => ({
-      identity: session,
-      group: 'shell',
-      kind: session.identity.runtimeBinding?.kind,
-      phase: session.resourcePhase,
-      startedAt: session.startedAt,
-      projectId: session.identity.projectId,
-      sessionId: session.identity.sessionId,
-      laneKey: session.identity.laneKey,
-      sampleMemory: session.sampleMemory,
-      ...(session.identity.runtimeBinding?.kind === 'wsl2-bash'
-        ? {}
-        : { executionDomain: 'host' as const }),
-      release: async () => {
-        const result = await session.shutdown()
-        if (result.reaped && this.sessions.get(key) === session) this.sessions.delete(key)
-        return result
+    return Array.from(this.sessions, ([key, session]) => {
+      const processIdentity = session.monitoredProcess?.identity
+      return {
+        identity: session,
+        processIdentity,
+        hasLiveProcess: () => session.hasLiveProcess(processIdentity),
+        group: 'shell',
+        kind: session.identity.runtimeBinding?.kind,
+        phase: session.resourcePhase,
+        startedAt: session.startedAt,
+        projectId: session.identity.projectId,
+        sessionId: session.identity.sessionId,
+        laneKey: session.identity.laneKey,
+        sampleMemory: session.sampleMemory,
+        ...(session.identity.runtimeBinding?.kind === 'wsl2-bash'
+          ? {}
+          : { executionDomain: 'host' as const }),
+        release: async (force) => {
+          if (
+            processIdentity &&
+            session.monitoredProcess &&
+            session.monitoredProcess.identity !== processIdentity
+          )
+            return { reaped: false, error: new Error(SHELL_CLEANUP_INCOMPLETE_MESSAGE) }
+          const result = await session.shutdown(force ? processIdentity : undefined)
+          if (result.reaped && this.sessions.get(key) === session) this.sessions.delete(key)
+          return result
+        }
       }
-    }))
+    })
   }
 
   monitoredProcesses(): import('./process-monitor').MonitoredInterpreter[] {
@@ -1322,13 +1333,14 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
           environment: session.identity.runtimeBinding?.kind,
           startedAt: session.startedAt,
           ...observed,
-          terminate: async () => {
+          hasLiveProcess: () => session.hasLiveProcess(observed.identity),
+          terminate: async (force) => {
             if (
               this.sessions.get(key) !== session ||
               session.monitoredProcess?.identity !== observed.identity
             )
               throw new Error('Shell process changed. Refresh the list.')
-            const result = await session.shutdown()
+            const result = await session.shutdown(force ? observed.identity : undefined)
             if (!result.reaped) throw new Error(SHELL_CLEANUP_INCOMPLETE_MESSAGE)
             if (this.sessions.get(key) === session) this.sessions.delete(key)
           }

@@ -177,7 +177,7 @@ const enqueueQueuedMessage = (
   setComposerError: (error: string | null) => void,
   admission: MessageQueueAdmission
 ): boolean => {
-  const { session, snapshot, ...intent } = admission
+  const { session, snapshot, notebookSubmission, ...intent } = admission
   const identity = activeBranchIdentity(session)
   if (!identity) {
     setComposerError('Wait for the active message branch to finish loading, then try again.')
@@ -194,6 +194,7 @@ const enqueueQueuedMessage = (
   }
   const item: MessageQueueItem = {
     kind: 'user',
+    notebookSubmission: restored ? undefined : notebookSubmission,
     agentFrameworkId: session.agentFrameworkId,
     id: owner.createQueueItemId(),
     sessionId: session.id,

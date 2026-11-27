@@ -34,8 +34,7 @@ import {
 import {
   canAccessSessionPlan,
   canRelayTaskInteraction,
-  canSatisfyHumanApproval,
-  requireDesktopCaller
+  canSatisfyHumanApproval
 } from '../caller-context'
 import { withNotebookUserOperation } from '../notebook/execution-intent'
 import { z } from 'zod'
@@ -431,33 +430,9 @@ const registerAcpCommands = (
           )
         )
       },
-      'acp:continue-notebook-execution': (invocation) => {
-        const assertCurrent = (): void => {
-          if (
-            !canSatisfyHumanApproval(invocation.callerContext) ||
-            invocation.callerLease.signal.aborted ||
-            !invocation.callerLease.isCurrent()
-          )
-            throw new Error('Only a current human caller can continue Notebook execution.')
-          requireDesktopCaller(invocation.callerContext)
-        }
-        assertCurrent()
-        const { projectId, refusalId, ...request } = invocation.args[0]
-        if (!projectId?.trim() || !refusalId?.trim() || !request.text?.trim())
-          throw new Error('Notebook continuation requires a current refusal and a new user prompt.')
-        return stateCommand(
-          dependencies.workflows.sendPrompt(
-            withNotebookUserOperation(
-              {
-                ...request,
-                turnIntent: undefined,
-                permissionPrompts: undefined,
-                continuation: undefined,
-                suppressUserMessage: undefined
-              },
-              { projectId, refusalId, desktopContinuation: true, assertCurrent }
-            )
-          )
+      'acp:continue-notebook-execution': () => {
+        throw new Error(
+          'Submit a new message in the affected conversation to retry Notebook execution.'
         )
       },
       'acp:steer-follow-up': (invocation) =>

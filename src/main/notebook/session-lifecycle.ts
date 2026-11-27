@@ -39,7 +39,7 @@ import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.win
 import type { NotebookExecutionOwner } from './execution-owner'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 import type { IdleInterpreter } from './idle-reclamation'
-import type { NotebookOwnedResource } from './owned-resources'
+import type { NotebookOwnedResource, NotebookResourceCleanupResult } from './owned-resources'
 
 type RuntimeSession = NotebookSessionAggregate
 type PendingOperation<Result> = Promise<Result> & { resource: NotebookOwnedResource }
@@ -124,7 +124,7 @@ const kernelInstanceForProcessKey = (processKey: string): NotebookKernelInstance
 // Orchestrates one Registry generation without duplicating Registry or Aggregate state.
 class NotebookSessionLifecycleOwner {
   private readonly idleTeardowns = new Map<string, Promise<boolean>>()
-  private readonly retainedReleaseHolds = new Set<string>()
+  private readonly retainedReleaseHolds = new Map<string, 'release' | 'stop-process'>()
   private readonly retainedReleases = new Map<
     string,
     { projectId: string; sessionId: string; operation: Promise<void> }
@@ -145,14 +145,21 @@ class NotebookSessionLifecycleOwner {
     return this.idleTeardowns.has(scope.sessionId) ? 'cleanup-in-progress' : undefined
   }
 
-  holdSessionResources(scope: { projectId: string; sessionId: string }): () => void {
+  holdSessionResources(
+    scope: { projectId: string; sessionId: string },
+    kind: 'release' | 'stop-process' = 'release'
+  ): () => void {
     const key = JSON.stringify([scope.projectId, scope.sessionId])
     this.assertScopeAvailable(scope.projectId, scope.sessionId)
-    if (this.shutdownAllPromise || this.idleTeardowns.has(scope.sessionId))
+    if (
+      this.shutdownAllPromise ||
+      this.idleTeardowns.has(scope.sessionId) ||
+      this.retainedReleaseHolds.has(key)
+    )
       throw new Error(
         'Notebook teardown is already in progress. Refresh before releasing resources.'
       )
-    this.retainedReleaseHolds.add(key)
+    this.retainedReleaseHolds.set(key, kind)
     return () => this.retainedReleaseHolds.delete(key)
   }
 
@@ -504,12 +511,17 @@ class NotebookSessionLifecycleOwner {
   runProjectOperation<Result>(
     request: NotebookSessionRequest,
     operation: (deletionSignal: AbortSignal) => Promise<Result>,
-    trackActivity = true
+    trackActivity = true,
+    resource?: Pick<NotebookOwnedResource, 'group' | 'kind' | 'hasLiveProcess'> & {
+      cleanup: (force?: boolean) => Promise<NotebookResourceCleanupResult>
+    }
   ): Promise<Result> {
     if (trackActivity) this.options.onActivityChanged?.(request.sessionId)
     const idleTeardown = this.idleTeardowns.get(request.sessionId)
     if (idleTeardown)
-      return idleTeardown.then(() => this.runProjectOperation(request, operation, trackActivity))
+      return idleTeardown.then(() =>
+        this.runProjectOperation(request, operation, trackActivity, resource)
+      )
     const projectId = resolveProjectId(request, this.options.defaultProjectId)
     let releaseAdmission: (() => void) | undefined
     try {
@@ -542,17 +554,18 @@ class NotebookSessionLifecycleOwner {
     }) as PendingOperation<Result>
     running.resource = {
       identity: running,
-      group: 'operation',
-      kind: 'session-work',
+      group: resource?.group ?? 'operation',
+      kind: resource?.kind ?? 'session-work',
+      hasLiveProcess: resource?.hasLiveProcess,
       phase: 'running',
       startedAt: Date.now(),
       projectId,
       sessionId: request.sessionId,
       laneKey: notebookLaneKey(this.laneForRequest(request)),
-      release: async () => {
+      release: async (force) => {
         controller.abort(new Error('Notebook operation was released.'))
         await running.catch(() => undefined)
-        return { reaped: true }
+        return resource ? resource.cleanup(force) : { reaped: true }
       }
     }
     const pending =
@@ -824,7 +837,7 @@ class NotebookSessionLifecycleOwner {
   private assertScopeAvailable(projectId: string, sessionId: string): void {
     if (this.terminal) throw new Error('Notebook runtime is disposed.')
     this.assertDeletionAvailable(projectId, sessionId)
-    if (this.retainedReleaseHolds.has(JSON.stringify([projectId, sessionId])))
+    if (this.retainedReleaseHolds.get(JSON.stringify([projectId, sessionId])) === 'release')
       throw new Error('Notebook resources are being released. Start a new execution after cleanup.')
   }
 

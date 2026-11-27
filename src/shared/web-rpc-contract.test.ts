@@ -219,6 +219,7 @@ describe('Web RPC contract', () => {
     expect(eventPaths.filter((path) => path.startsWith('notebook.'))).toEqual([
       'notebook.onAvailable',
       'notebook.onChanged',
+      'notebook.onExecutionRefused',
       'notebook.onMemoryPolicyChanged',
       'notebook.onMemoryRejected'
     ])

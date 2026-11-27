@@ -536,71 +536,90 @@ const composeAcpRuntimePromptOwners = (
         }
         if ((humanTurn || taskContinuation) && operation && notebook.createExecutionIntent) {
           operation.assertCurrent()
-          if (operation.projectId && operation.projectId !== scope.projectId)
-            throw new Error('Notebook continuation does not belong to this Project.')
-          if (
-            operation.refusalId &&
-            (current?.refusalId !== operation.refusalId ||
+          if (taskContinuation && operation.task) {
+            const { branchId, promptMessageId } = operation.task
+            if (operation.projectId !== scope.projectId)
+              throw new Error('Notebook continuation does not belong to this Project.')
+            if (
+              current?.refusalId !== operation.refusalId ||
               current.scope.messageBranchId !== scope.messageBranchId ||
-              current.hasClaimedContinuation)
-          )
-            throw new Error('The Notebook refusal changed. Refresh it before continuing execution.')
-          if (
-            humanTurn &&
-            operation.desktopContinuation &&
-            operation.refusalId &&
-            current?.recheckMemory
-          ) {
+              current.hasClaimedContinuation
+            )
+              throw new Error(
+                'The Notebook refusal changed. Refresh it before continuing execution.'
+              )
+            if (
+              branchId !== scope.messageBranchId ||
+              !request.provenanceContext?.messageAncestry?.includes(promptMessageId) ||
+              (current.scope.promptMessageId !== promptMessageId &&
+                notebook.resolveExecutionIntent?.(scope, promptMessageId) !== current)
+            )
+              throw new Error('The original Notebook stop is no longer in this Task branch.')
+            current.claimContinuation()
+            intent = notebook.createExecutionIntent({
+              ...scope,
+              continuedFromRefusalId: operation.refusalId
+            })
+            intent.prepareUserExecution(operation.assertCurrent, current)
+            remember(intent)
+            return
+          }
+          const promptId = scope.promptMessageId
+          const existing = promptId ? notebook.resolveExecutionIntent?.(scope, promptId) : undefined
+          const refusal = current?.latestRefusal
+          const submission = request.notebookSubmission
+          const followsRefusal =
+            Boolean(refusal?.refusalId) &&
+            submission?.sessionId === scope.sessionId &&
+            submission.messageBranchId === scope.messageBranchId &&
+            submission.refusalId === refusal?.refusalId
+          const matchingRefusal =
+            followsRefusal && scope.messageBranchId === refusal?.scope.messageBranchId
+              ? refusal
+              : undefined
+          if (refusal && (!followsRefusal || (!matchingRefusal && !refusal.refusalWasContinued)))
+            intent = refusal
+          else if (existing) intent = existing
+          else {
+            const recheckMemory =
+              matchingRefusal &&
+              (!matchingRefusal.refusalWasContinued ||
+                current?.refusalId ||
+                current?.hasPendingUserMemoryRecheck)
             const createIntent = notebook.createExecutionIntent
-            const admissionSignal = operation.admissionSignal
-              ? AbortSignal.any([signal, operation.admissionSignal])
-              : signal
-            const assertCurrent = (): void => {
-              admissionSignal.throwIfAborted()
-              operation.assertCurrent()
-              if (lookupCurrent() !== current || current.hasClaimedContinuation)
-                throw new Error(
-                  'The Notebook refusal changed. Refresh it before continuing execution.'
-                )
+            const prepare = (): NotebookExecutionIntent => {
+              const next = createIntent({
+                ...scope,
+                ...(matchingRefusal ? { continuedFromRefusalId: matchingRefusal.refusalId } : {})
+              })
+              next.inheritRefusalHistory(current)
+              next.prepareUserExecution(
+                recheckMemory ? operation.assertCurrent : undefined,
+                matchingRefusal
+              )
+              return next
             }
-            return current.recheckMemory(admissionSignal).then(() => {
-              assertCurrent()
-              return {
+            if (recheckMemory) {
+              const admissionSignal = operation.admissionSignal
+                ? AbortSignal.any([signal, operation.admissionSignal])
+                : signal
+              const assertCurrent = (): void => {
+                admissionSignal.throwIfAborted()
+                operation.assertCurrent()
+                const latest = lookupCurrent()
+                if (latest !== current || latest?.latestRefusal !== refusal)
+                  throw new Error('The Notebook refusal changed. Submit a new message to continue.')
+              }
+              return Promise.resolve({
                 signal: admissionSignal,
                 assertCurrent,
                 commit: () => {
                   assertCurrent()
-                  const continuation = createIntent({
-                    ...scope,
-                    continuedFromRefusalId: operation.refusalId
-                  })
-                  continuation.prepareUserExecution(operation.assertCurrent)
-                  current.claimContinuation()
-                  remember(continuation)
+                  remember(prepare())
                 }
-              }
-            })
-          }
-          if (taskContinuation && operation.task) {
-            const { branchId, promptMessageId } = operation.task
-            if (
-              branchId !== scope.messageBranchId ||
-              !request.provenanceContext?.messageAncestry?.includes(promptMessageId) ||
-              (current?.scope.promptMessageId !== promptMessageId &&
-                notebook.resolveExecutionIntent?.(scope, promptMessageId) !== current)
-            )
-              throw new Error('The original Notebook stop is no longer in this Task branch.')
-            // A late turn can rebind the old intent, but the decision cannot grant execution twice.
-            current?.claimContinuation()
-          }
-          // Ordinary chat may explain the refusal. An explicit continuation creates a new intent.
-          if (current?.refusalId && !operation.refusalId) intent = current
-          else {
-            intent = notebook.createExecutionIntent({
-              ...scope,
-              ...(operation.refusalId ? { continuedFromRefusalId: operation.refusalId } : {})
-            })
-            intent.prepareUserExecution(operation.refusalId ? operation.assertCurrent : undefined)
+              })
+            }
+            intent = prepare()
           }
         } else if (!intent) {
           const origin =

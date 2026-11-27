@@ -34387,53 +34387,63 @@ it.each([
           expect(execute).toHaveBeenCalledTimes(2)
           return
         }
-        await expect(
+        const sendMessage = (
+          promptMessageId: string,
+          messageBranchId: string,
+          refusalId = stopped.refusalId!
+        ): Promise<PromptResponse> =>
           runtime.sendPrompt(
             withNotebookUserOperation(
               {
                 sessionId: scope.sessionId,
-                text: 'Continue on a different branch.',
-                provenanceContext: { promptMessageId: 'wrong-branch', messageBranchId: 'other' }
+                text: 'Try the analysis with a smaller dataset.',
+                notebookSubmission: { refusalId, sessionId: scope.sessionId, messageBranchId },
+                provenanceContext: { promptMessageId, messageBranchId }
               },
-              {
-                projectId: scope.projectId,
-                refusalId: stopped.refusalId,
-                assertCurrent: () => undefined
-              }
+              { assertCurrent: () => undefined }
             )
           )
-        ).rejects.toThrow('Notebook refusal changed')
+        await sendMessage('wrong-branch', 'other')
+        expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
         expect(service.currentExecutionIntent(scope)).toBe(stopped)
-        await runtime.sendPrompt(
-          withNotebookUserOperation(
-            {
-              sessionId: scope.sessionId,
-              text: 'Explicitly continue a new Notebook execution.',
-              provenanceContext: {
-                promptMessageId: 'continue-task',
-                messageBranchId: 'task-branch'
-              }
-            },
-            {
-              projectId: scope.projectId,
-              refusalId: stopped.refusalId,
-              assertCurrent: () => undefined
-            }
-          )
-        )
+        await sendMessage('new-user-message', 'task-branch')
         expect(promptResult).toContain('"status":"completed"')
         expect(execute).toHaveBeenCalledTimes(2)
-        await expect(
-          service.inspectTaskExecution({ ...scope, promptMessageId: 'continue-task' })
-        ).resolves.toMatchObject({
-          continuedFromRefusalId: stopped.refusalId,
-          promptMessageId: 'continue-task',
-          messageBranchId: 'task-branch'
-        })
+        await sendMessage('queued-on-other-branch', 'other', 'older-observed-refusal')
+        expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
+        await sendMessage('fresh-on-other-branch', 'other')
+        expect(promptResult).toContain('"status":"completed"')
+        expect(execute).toHaveBeenCalledTimes(3)
+        await sendMessage('back-on-task-branch', 'task-branch')
+        expect(promptResult).toContain('"status":"completed"')
+        expect(execute).toHaveBeenCalledTimes(4)
+        const resumed = service.currentExecutionIntent(scope)!
         await task.prompt(acceptedTask)
         expect(service.currentExecutionIntent(scope)).toBe(stopped)
         expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
-        expect(execute).toHaveBeenCalledTimes(2)
+        expect(execute).toHaveBeenCalledTimes(4)
+        const oldRefusalId = stopped.refusalId
+        service.blockExecutionIntents(scope)
+        expect(stopped.refusalId).toBe(oldRefusalId)
+        expect(stopped.latestRefusal).toBe(resumed)
+        expect(service.getProjectActivity(scope).executionRefusals).toEqual([
+          expect.objectContaining({ refusalId: resumed.refusalId })
+        ])
+        await sendMessage('queued-before-manual-stop', 'task-branch', oldRefusalId)
+        expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
+        await sendMessage('after-manual-stop', 'task-branch', resumed.refusalId)
+        expect(promptResult).toContain('"status":"completed"')
+        expect(execute).toHaveBeenCalledTimes(5)
+        const reproduction = service.createExecutionIntent({ ...scope, source: 'reproduction' })
+        const reproductionRefusalId = reproduction.block('pressured')
+        await sendMessage('before-reproduction-retry', 'task-branch', reproductionRefusalId)
+        expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
+        service.createExecutionIntent({ ...scope, source: 'reproduction' }).commitUserExecution()
+        await sendMessage('queued-before-reproduction-refusal', 'task-branch', stopped.refusalId)
+        expect(promptResult).toContain('NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION')
+        await sendMessage('after-reproduction-retry', 'task-branch', reproductionRefusalId)
+        expect(promptResult).toContain('"status":"completed"')
+        expect(execute).toHaveBeenCalledTimes(6)
         return
       } else
         await runtime.sendPrompt(
@@ -34458,7 +34468,7 @@ it.each([
   }
 )
 
-it.each(['Stop', 'caller revocation', 'refusal replacement'] as const)(
+it.each(['Stop', 'caller revocation', 'refusal replacement', 'a newer refusal'] as const)(
   'does not consume a Notebook memory refusal when %s wins during the durable write',
   async (change) => {
     const child = new FakeAgentProcess()
@@ -34521,15 +34531,23 @@ it.each(['Stop', 'caller revocation', 'refusal replacement'] as const)(
         messageBranchId: provenanceContext.messageBranchId
       }
       const refused = intents.create(scope)
-      const refusalId = refused.block('memory', { recheckMemory: async () => undefined })
+      refused.block('memory')
+      const current = change === 'a newer refusal' ? intents.create(scope) : refused
       let callerCurrent = true
       const starting = runtime.startPrompt(
         withNotebookUserOperation(
-          { sessionId, text: 'Continue the blocked Notebook work.', provenanceContext },
+          {
+            sessionId,
+            text: 'Continue the blocked Notebook work.',
+            provenanceContext,
+            notebookSubmission: {
+              refusalId: refused.refusalId!,
+              sessionId,
+              messageBranchId: scope.messageBranchId
+            }
+          },
           {
             projectId: scope.projectId,
-            refusalId,
-            desktopContinuation: true,
             assertCurrent: () => {
               if (!callerCurrent) throw new Error('Notebook caller is no longer current')
             }
@@ -34541,9 +34559,10 @@ it.each(['Stop', 'caller revocation', 'refusal replacement'] as const)(
         (error: Error) => error.message
       )
       await Promise.race([writeStarted.promise, starting])
-      let expected = refused
+      let expected = current
       if (change === 'Stop') await runtime.cancelPrompt({ sessionId, userInitiated: true })
       else if (change === 'caller revocation') callerCurrent = false
+      else if (change === 'a newer refusal') current.block('memory')
       else expected = intents.create(scope)
       finishWrite.resolve()
       expect(await admission).not.toBe('accepted')
@@ -34553,7 +34572,7 @@ it.each(['Stop', 'caller revocation', 'refusal replacement'] as const)(
       )
       expect(onPromptStarted).not.toHaveBeenCalled()
       expect(provider.prompts).toEqual([])
-      expect(refused.hasClaimedContinuation).toBe(false)
+      expect(refused.refusalWasContinued).toBe(false)
       expect(intents.current(scope)).toBe(expected)
     } finally {
       finishWrite.resolve()
@@ -34583,7 +34602,6 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
   })
   let pressured = false
   const forcedSamples: boolean[] = []
-  let refusalId: string | undefined
   const healthy = healthyNotebookMemoryPolicy()
   const service = new NotebookRuntimeService({
     configRoot: root,
@@ -34610,11 +34628,6 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
               reason: { code: 'low-memory' }
             }
           : healthy.currentState()
-    },
-    callbacks: {
-      onMemoryPolicyRejected: (context) => {
-        refusalId = context.refusalId
-      }
     }
   })
   const rpc = new NotebookLocalRpcServer(service, { transport: 'tcp' })
@@ -34689,38 +34702,22 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
       )
       return response.text()
     }
+    const observedSubmission = (): NonNullable<AcpPromptRequest['notebookSubmission']> => ({
+      refusalId: service.currentExecutionIntent({
+        projectId: 'project',
+        sessionId: session.sessionId
+      })!.latestRefusal!.refusalId!,
+      sessionId: session.sessionId
+    })
     pressured = true
     expect(await run(old)).toContain('NOTEBOOK_MEMORY_PRESSURE')
     expect(forcedSamples).not.toContain(true)
-    const continuedScope = { projectId: 'project', sessionId: session.sessionId }
-    const stopped = service.currentExecutionIntent(continuedScope)!
-    const continueFromDesktop = (): ReturnType<typeof runtime.sendPrompt> =>
-      runtime.sendPrompt(
-        withNotebookUserOperation(
-          {
-            sessionId: session.sessionId,
-            text: 'Continue the blocked Notebook work.',
-            provenanceContext: { promptMessageId: 'desktop-notebook-continuation' }
-          },
-          {
-            projectId: 'project',
-            refusalId: stopped.refusalId,
-            desktopContinuation: true,
-            assertCurrent
-          }
-        )
-      )
-    await expect(continueFromDesktop()).rejects.toThrow('NOTEBOOK_MEMORY_PRESSURE')
-    expect(forcedSamples.at(-1)).toBe(true)
-    expect(agent.prompts).toHaveLength(1)
-    expect(service.currentExecutionIntent(continuedScope)).toBe(stopped)
-    expect(stopped.hasClaimedContinuation).toBe(false)
     pressured = false
     await runtime.sendPrompt(
       withNotebookUserOperation(
         {
           sessionId: session.sessionId,
-          text: 'Explain the refusal.',
+          text: 'Queued before the refusal.',
           provenanceContext: { promptMessageId: 'user-chat' }
         },
         { assertCurrent }
@@ -34763,9 +34760,10 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
         {
           sessionId: session.sessionId,
           text: 'Continue execution after checking memory.',
+          notebookSubmission: observedSubmission(),
           provenanceContext: { promptMessageId: 'user-two' }
         },
-        { projectId: 'project', refusalId, assertCurrent }
+        { assertCurrent }
       )
     )
     expect(agent.resumedSessions).toHaveLength(3)
@@ -34804,9 +34802,10 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
           {
             sessionId: session.sessionId,
             text: 'Start a new execution context.',
+            notebookSubmission: observedSubmission(),
             provenanceContext: { promptMessageId: 'failed-user-three' }
           },
-          { projectId: 'project', refusalId: oldIntent.refusalId, assertCurrent }
+          { assertCurrent }
         )
       )
     ).rejects.toThrow('Internal error')
@@ -34822,9 +34821,10 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
         {
           sessionId: session.sessionId,
           text: 'Continue with a new execution after the failed preparation.',
+          notebookSubmission: observedSubmission(),
           provenanceContext: { promptMessageId: 'retry-failed-user-three' }
         },
-        { projectId: 'project', refusalId: failedIntent.refusalId, assertCurrent }
+        { assertCurrent }
       )
     )
     // Recovery is immediately usable; neither a reconnect nor the previous credential is needed.
@@ -34849,14 +34849,10 @@ it('pins each trusted Notebook user intent before provider dispatch and keeps re
           {
             sessionId: session.sessionId,
             text: 'Continue with a current human lease.',
+            notebookSubmission: observedSubmission(),
             provenanceContext: { promptMessageId: 'expired-user-four' }
           },
           {
-            projectId: 'project',
-            refusalId: service.currentExecutionIntent({
-              projectId: 'project',
-              sessionId: session.sessionId
-            })!.refusalId,
             assertCurrent: () => {
               if (!leaseCurrent) throw new Error('Human execution lease expired')
             }

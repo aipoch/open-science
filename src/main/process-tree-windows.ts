@@ -28,6 +28,14 @@ export const inspectWindowsChildJobProcessIds = (child: ChildProcess): number[] 
   return pids
 }
 
+export const hasVerifiedWindowsProcessTreeMember = (child: ChildProcess): boolean => {
+  try {
+    return Boolean(inspectWindowsChildJobProcessIds(child)?.length)
+  } catch {
+    return false
+  }
+}
+
 const normalizeWindowsSpawnError = (error: unknown): unknown => {
   if (!(error instanceof Error)) return error
   const match = /^Create owned process failed \((\d+)\)$/.exec(error.message)

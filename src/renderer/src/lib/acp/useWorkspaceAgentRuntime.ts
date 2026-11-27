@@ -57,7 +57,6 @@ import {
 import {
   resendEditedWorkspaceMessage,
   deleteWorkspaceSession,
-  NotebookContinuationBranchError,
   sendWorkspaceMessage,
   type ResendEditedMessageInput,
   type SendWorkspaceMessageIntent,
@@ -694,7 +693,6 @@ export {
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   getResumeFailureMessage,
-  NotebookContinuationBranchError,
   pendingWorkspacePermissions,
   processVisibleWorkspaceRuntimeEvents,
   setWorkspacePermissionProfile,

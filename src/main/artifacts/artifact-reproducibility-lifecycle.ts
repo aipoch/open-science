@@ -8,6 +8,10 @@ import { SessionReproducibilityStore } from './session-reproducibility-store'
 import { validateReproductionContext, validateReproductionDiskSpace } from '@aipoch/reproducibility'
 import { reproductionRecipes, reproductionEvidence } from './reproducibility-host'
 
+import {
+  forceCloseRetainedInstaller,
+  hasVerifiedRetainedInstaller
+} from '../notebook/owned-resources'
 import type {
   SessionReproducibilityCommand,
   SessionReproducibilityBatch
@@ -468,29 +472,39 @@ class ArtifactReproducibilityAttemptOwner {
             startedAt: Date.parse(attempt.startedAt),
             projectId,
             sessionId,
-            release: () => this.releaseAttempt(attempt)
+            // An installer already in this snapshot is closed through its own resource. A handle
+            // retained while this attempt drains still belongs to the confirmed attempt.
+            hasLiveProcess: () =>
+              !installer && hasVerifiedRetainedInstaller(attempt.installer?.identity),
+            release: (force) => this.releaseAttempt(attempt, force && !installer)
           },
           ...(installer
             ? [
                 {
                   identity: installer.identity,
+                  parentIdentity: attempt,
                   group: 'installer' as const,
                   kind: 'environment-restore',
                   phase: 'cleanup-pending' as const,
                   startedAt: installer.startedAt,
                   projectId,
                   sessionId,
-                  release: () => installer.release()
+                  hasLiveProcess: () => hasVerifiedRetainedInstaller(installer.identity),
+                  release: async (force?: boolean) => {
+                    if (force) await forceCloseRetainedInstaller(installer.identity)
+                    return installer.release()
+                  }
                 }
               ]
             : []),
           ...(attempt.runtime?.resources?.() ?? []).map((resource) => ({
             ...resource,
+            parentIdentity: attempt,
             projectId,
             sessionId,
-            release: () => {
+            release: (force?: boolean) => {
               if (!attempt.recording) attempt.controller.abort(new Error('Reproduction cancelled.'))
-              return resource.release()
+              return resource.release(force)
             }
           }))
         ]
@@ -508,12 +522,17 @@ class ArtifactReproducibilityAttemptOwner {
     this.dependencies.onResourcesChanged?.()
   }
 
-  private releaseAttempt(attempt: Attempt): Promise<NotebookResourceCleanupResult> {
+  private releaseAttempt(
+    attempt: Attempt,
+    force?: boolean
+  ): Promise<NotebookResourceCleanupResult> {
     if (attempt.releasing) return attempt.releasing
     const release = (async (): Promise<NotebookResourceCleanupResult> => {
       if (!attempt.recording) attempt.controller.abort(new Error('Reproduction cancelled.'))
       await attempt.settled
       if (attempt.cleanupError) {
+        if (force && attempt.installer)
+          await forceCloseRetainedInstaller(attempt.installer.identity)
         const result = await attempt.retainedCleanup?.()
         if (!result?.reaped) return { reaped: false, error: attempt.cleanupError }
         attempt.cleanupError = undefined

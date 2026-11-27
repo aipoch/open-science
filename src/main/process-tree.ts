@@ -1296,6 +1296,10 @@ export const isRecordedPosixLeaderCurrent = (leader: {
   leader.birthToken !== undefined &&
   currentRecordedPosixIdentity(leader.pid)?.birthToken === leader.birthToken
 
+export const hasVerifiedPosixProcessTreeMember = (child: ChildProcess): boolean =>
+  process.platform !== 'win32' &&
+  ownedPosixProcessIdentities(child).identities.some(isRecordedPosixLeaderCurrent)
+
 const signalRecordedPosixGroup = (
   leader: PosixProcessIdentity,
   signal: NodeJS.Signals

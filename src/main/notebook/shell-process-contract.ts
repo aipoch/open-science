@@ -3,6 +3,7 @@ import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type { NotebookRunStatus, ShellRuntimeBinding } from '../../shared/notebook'
 
 export type NotebookShellResult = {
+  runId?: string
   kernelDispatched?: boolean
   executionStarted?: boolean
   stdout: string

@@ -54,6 +54,13 @@ test('monitors real owned kernels through Compute and delivers stop feedback to 
   await expect(monitor.locator('pre')).toHaveCount(0)
   await expect(monitor.locator('details[data-kernel-details]')).toHaveCount(0)
   await monitor.locator('button[aria-controls]').first().click()
+  const sessionHeader = monitor
+    .locator('header')
+    .filter({ has: page.locator('button[aria-controls]') })
+  await expect(sessionHeader.getByTitle('Process memory', { exact: true })).toBeVisible()
+  await expect(sessionHeader.getByTitle('CPU cores', { exact: true })).toBeVisible()
+  await sessionHeader.getByRole('button', { name: 'Open session', exact: true }).hover()
+  await expect(page.getByRole('tooltip', { name: 'Open session', exact: true })).toBeVisible()
   const row = monitor.locator('details').filter({
     has: page.getByRole('img', {
       name: process.env.OPEN_SCIENCE_TEST_R ? 'R' : 'JavaScript REPL',
@@ -107,19 +114,25 @@ test('monitors real owned kernels through Compute and delivers stop feedback to 
   await app.setMainWindowSize(650, 820)
   await page.screenshot({ path: testInfo.outputPath('compute-narrow.png') })
   await app.setMainWindowSize(1200, 900)
-  await monitor.getByRole('button', { name: 'Session actions' }).click()
-  await page.getByRole('menuitem', { name: 'Stop all', exact: true }).click()
-  const form = monitor.getByRole('form', { name: 'Stop all session kernels', exact: true })
+  const stopSession = monitor.getByRole('button', { name: 'Stop all', exact: true })
+  await stopSession.hover()
+  await expect(page.getByRole('tooltip', { name: 'Stop all', exact: true })).toBeVisible()
+  await stopSession.click()
+  const form = page.getByRole('alertdialog', { name: 'Stop all Notebook resources?', exact: true })
   await form.getByRole('textbox').fill('Use smaller batches')
   await form.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(stopSession).toBeFocused()
   expect(
     (await page.evaluate(() => window.api.notebook.getProcessMonitor())).instances
   ).toHaveLength(expectedKinds.length)
-  await monitor.getByRole('button', { name: 'Session actions' }).click()
-  await page.getByRole('menuitem', { name: 'Stop all', exact: true }).click()
+  await stopSession.click()
   await form.getByRole('textbox').fill('Use smaller batches')
-  await form.getByRole('button', { name: 'Terminate', exact: true }).click()
-  await expect(monitor.getByText('No tracked Notebook processes', { exact: true })).toBeVisible()
+  await form.getByRole('button', { name: 'Stop', exact: true }).click()
+  await expect(form).toBeHidden()
+  await expect(monitor.getByText('0 processes', { exact: true })).toBeVisible()
+  await expect(
+    monitor.getByRole('status').filter({ hasText: 'Notebook resources released' })
+  ).toBeVisible()
   await page.getByRole('button', { name: 'Compute', exact: true }).click()
   await submitPromptViaUi(page, 'Read Compute stop feedback.')
   await expect(
@@ -138,11 +151,16 @@ test('delivers the reason in the interrupted running kernel tool response', asyn
   await monitor.locator('button[aria-controls]').first().click()
   await expect(monitor.getByRole('img', { name: 'Shell', exact: true })).toBeVisible()
   await expect(monitor.locator('[data-kernel-details] summary')).toContainText('Running')
-  await monitor.getByRole('button', { name: 'Terminate', exact: true }).click()
+  const stopProcess = monitor
+    .locator('[data-kernel-details]')
+    .getByRole('button', { name: 'Stop', exact: true })
+  await stopProcess.hover()
+  await expect(page.getByRole('tooltip', { name: 'Stop', exact: true })).toBeVisible()
+  await stopProcess.click()
   const form = monitor.getByRole('form', { name: 'Stop this kernel?', exact: true })
   await form.getByRole('textbox').fill('Use smaller batches')
   await form.getByRole('button', { name: 'Terminate', exact: true }).click()
-  await expect(monitor.getByText('No tracked Notebook processes', { exact: true })).toBeVisible()
+  await expect(monitor.getByText('0 processes', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Compute', exact: true }).click()
   await expect(
     page.getByText('Compute running stop feedback received.', { exact: true })

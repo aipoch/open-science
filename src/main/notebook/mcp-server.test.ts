@@ -1117,7 +1117,7 @@ describe('notebook_execute tool', () => {
   })
 
   it.each([
-    ['NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION: Execution was stopped.', 'Continue Notebook work'],
+    ['NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION: Execution was stopped.', 'send a new message'],
     [
       'Notebook execution declined: this code requires one-time approval.',
       'Wait for the user to authorize a different action.'
@@ -1156,6 +1156,49 @@ describe('notebook_execute tool', () => {
       }
     }
   )
+
+  it('returns memory refusals as errors from the originating MCP tools', async () => {
+    const environment = {
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    }
+    const server = createNotebookMcpServer(environment)
+    const client = new ModelContextProtocolClient({ name: 'memory-refusal', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const fetchRpc = vi.spyOn(globalThis, 'fetch')
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      for (const [name, args, code] of [
+        ['notebook_execute', { code: '1' }, 'NOTEBOOK_MEMORY_PRESSURE'],
+        ['notebook_execute', { language: 'r', code: '1' }, 'NOTEBOOK_MEMORY_UNAVAILABLE'],
+        ['repl_execute', { code: '1' }, 'NOTEBOOK_MEMORY_PRESSURE'],
+        ['bash_execute', { command: 'pwd' }, 'NOTEBOOK_MEMORY_UNAVAILABLE']
+      ] as const) {
+        const error = {
+          code,
+          message: 'Execution was not started.',
+          recovery: {
+            execution: 'not-started',
+            retryAfter: 'runtime-ready',
+            guidance:
+              'Report the failure and wait for a new user request before retrying Notebook execution.'
+          }
+        }
+        fetchRpc.mockResolvedValueOnce(new Response(JSON.stringify({ error }), { status: 409 }))
+        const result = await client.callTool({ name, arguments: args })
+        expect(result.isError).toBe(true)
+        expect(JSON.parse((result.content as { text: string }[])[0].text)).toEqual(error)
+      }
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
 
   it('reports failed foreground cells and failed background Runs as tool errors', async () => {
     const server = createNotebookMcpServer({
@@ -3211,6 +3254,25 @@ describe('manage_environments tool', () => {
 })
 
 describe('compactNotebookExecutionResult', () => {
+  it('asks for a new user request without adding the generic Bash retry hint after memory refusal', () => {
+    const result = compactNotebookExecutionResult({
+      runId: 'refused-bash',
+      kernelKind: 'bash',
+      status: 'failed',
+      recovery: {
+        execution: 'not-started',
+        retryAfter: 'runtime-ready',
+        memoryRejectionCode: 'NOTEBOOK_MEMORY_PRESSURE'
+      }
+    })
+    expect(result).toMatchObject({
+      runId: 'refused-bash',
+      errorCode: 'NOTEBOOK_MEMORY_PRESSURE',
+      recovery: { guidance: expect.stringContaining('wait for a new user request') }
+    })
+    expect(result).not.toHaveProperty('hint')
+  })
+
   it.each([
     [false, false],
     [true, false],

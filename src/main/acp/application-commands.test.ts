@@ -308,80 +308,71 @@ describe('ACP application commands', () => {
     expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledTimes(1)
   })
 
-  it('accepts a new Notebook execution prompt only from a current Desktop human caller', async () => {
+  it('grants Notebook submission authority only to ordinary prompts from a human caller', async () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
     const request = {
-      projectId: 'project-1',
       sessionId: 'session-1',
-      refusalId: 'refusal',
-      text: 'Continue execution after checking memory.'
+      text: 'Try the analysis on a smaller dataset.',
+      notebookSubmission: { refusalId: 'refusal', sessionId: 'session-1' }
     }
     await expect(
       router.dispatcher.invoke(
         acpCommands.continueNotebookExecution,
-        invocation([request], createTaskCallerContext())
+        invocation([{ ...request, projectId: 'project-1', refusalId: 'refusal' }])
       )
-    ).rejects.toThrow('Only a current human caller')
-    for (const web of [
-      createWebCallerContext('local-web'),
-      createWebCallerContext('remote-web', { location: 'remote' })
-    ]) {
-      await expect(
-        router.dispatcher.invoke(acpCommands.continueNotebookExecution, invocation([request], web))
-      ).rejects.toThrow('Open-Science desktop app')
-    }
+    ).rejects.toThrow('Submit a new message')
     expect(dependencies.workflows.sendPrompt).not.toHaveBeenCalled()
-    await expect(
-      router.dispatcher.invoke(
-        acpCommands.continueNotebookExecution,
-        invocation([request], createElectronCallerContext(7))
-      )
-    ).resolves.toEqual(commandResponse)
-    expect(dependencies.workflows.sendPrompt).toHaveBeenCalledOnce()
+
+    await router.dispatcher.invoke(
+      acpCommands.sendPrompt,
+      invocation([request], createTaskCallerContext())
+    )
+    expect(
+      notebookUserOperation(vi.mocked(dependencies.workflows.sendPrompt).mock.calls[0][0])
+    ).toBeUndefined()
+    await router.dispatcher.invoke(
+      acpCommands.sendPrompt,
+      invocation([request], createWebCallerContext('local-web'))
+    )
+    expect(
+      notebookUserOperation(vi.mocked(dependencies.workflows.sendPrompt).mock.calls[1][0])
+    ).toEqual({ assertCurrent: expect.any(Function) })
   })
 
-  it.each(['sendPrompt', 'continueNotebookExecution'] as const)(
-    'expires %s execution authority when its document lease ends during prompt preparation',
-    async (command) => {
-      const dependencies = createDependencies()
-      let prepare!: () => void
-      const prepared = new Promise<void>((resolve) => (prepare = resolve))
-      vi.mocked(dependencies.workflows.sendPrompt).mockImplementation(async (request) => {
-        await prepared
-        notebookUserOperation(request)!.assertCurrent()
-        return snapshot
-      })
-      const router = createApplicationCommandRouter()
-      registerAcpCommands(router.registrar, dependencies)
-      const context =
-        command === 'continueNotebookExecution'
-          ? createElectronCallerContext(7)
-          : createWebCallerContext('notebook-human')
-      const leases = new ApplicationCallerLeaseRegistry()
-      const caller = leases.acquire(context)
-      const pending = router.dispatcher.invoke(acpCommands[command], {
-        callerContext: context,
-        callerLease: caller.lease,
-        args: [
-          {
-            projectId: 'project-1',
-            sessionId: 'session-1',
-            refusalId: 'refusal',
-            text: 'Continue execution after checking memory.'
-          }
-        ]
-      })
-      await vi.waitFor(() => expect(dependencies.workflows.sendPrompt).toHaveBeenCalledOnce())
-      const rejected = expect(pending).rejects.toThrow(/expired|current human caller/)
-      caller.release()
-      prepare()
-      await rejected
-      router.dispose()
-      leases.dispose()
-    }
-  )
+  it('expires Notebook submission authority when the document lease ends during prompt preparation', async () => {
+    const dependencies = createDependencies()
+    const prepared = Promise.withResolvers<void>()
+    vi.mocked(dependencies.workflows.sendPrompt).mockImplementation(async (request) => {
+      await prepared.promise
+      notebookUserOperation(request)!.assertCurrent()
+      return snapshot
+    })
+    const router = createApplicationCommandRouter()
+    registerAcpCommands(router.registrar, dependencies)
+    const context = createWebCallerContext('notebook-human')
+    const leases = new ApplicationCallerLeaseRegistry()
+    const caller = leases.acquire(context)
+    const pending = router.dispatcher.invoke(acpCommands.sendPrompt, {
+      callerContext: context,
+      callerLease: caller.lease,
+      args: [
+        {
+          sessionId: 'session-1',
+          text: 'Continue execution after checking memory.',
+          notebookSubmission: { refusalId: 'refusal', sessionId: 'session-1' }
+        }
+      ]
+    })
+    await vi.waitFor(() => expect(dependencies.workflows.sendPrompt).toHaveBeenCalledOnce())
+    const rejected = expect(pending).rejects.toThrow('Notebook user operation expired.')
+    caller.release()
+    prepared.resolve()
+    await rejected
+    router.dispose()
+    leases.dispose()
+  })
 
   it.each([
     createElectronCallerContext(7),

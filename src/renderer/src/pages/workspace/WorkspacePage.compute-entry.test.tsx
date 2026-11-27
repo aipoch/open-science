@@ -203,29 +203,17 @@ describe('WorkspacePage Compute entry with Web capabilities', () => {
       )
       expect(screen.getByRole('dialog', { name: 'System memory is under pressure' })).toBeTruthy()
       expect(memoryRuntime.sendMessage).not.toHaveBeenCalled()
-      await act(async () =>
-        fireEvent.click(
-          screen.getByRole('button', {
-            name: source === 'reproduction' ? 'Open reproducibility checks' : 'Check and continue'
-          })
-        )
-      )
       if (source === 'reproduction') {
+        await act(async () =>
+          fireEvent.click(screen.getByRole('button', { name: 'Open reproducibility checks' }))
+        )
         expect(screen.getByRole('region', { name: 'Reproducibility checks' }).textContent).toBe(
           'sess-1'
         )
-        expect(memoryRuntime.sendMessage).not.toHaveBeenCalled()
       } else {
-        expect(memoryRuntime.sendMessage).toHaveBeenCalledWith(
-          expect.objectContaining({
-            projectId: 'proj-1',
-            sessionId: 'sess-1',
-            requireExistingSession: true,
-            notebookContinuation: { refusalId: 'live-refusal', kind: 'memory' },
-            text: 'Continue the blocked Notebook work. Keep completed results and ask before repeating completed steps.'
-          })
-        )
+        expect(screen.queryByRole('button', { name: 'Check and continue' })).toBeNull()
       }
+      expect(memoryRuntime.sendMessage).not.toHaveBeenCalled()
     }
   )
 

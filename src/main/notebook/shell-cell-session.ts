@@ -3,6 +3,7 @@ import {
   type NotebookCellPreview
 } from '../../shared/notebook-process-monitor'
 import { compilePowerShellCommand } from './powershell-native-capture'
+import { hasVerifiedPosixProcessTreeMember, terminateProcessTree } from '../process-tree'
 import { createNotebookMemorySampler, type NotebookOwnedMemorySample } from './resource-memory'
 import {
   NotebookExecutionAdmissionError,
@@ -73,7 +74,7 @@ export class ShellCellSession {
   startedAt = Date.now()
   private lastCell?: NotebookCellPreview
   private lastPid?: number
-  private lastProcessIdentity?: object
+  private lastProcessIdentity?: ChildProcessWithoutNullStreams
   private cleanupInProgress = false
   private cleanupAttemptFailed = false
 
@@ -177,7 +178,16 @@ export class ShellCellSession {
     })
   }
 
-  async shutdown(): Promise<{ reaped: boolean }> {
+  hasLiveProcess(identity: object | undefined): boolean {
+    return (
+      this.identity.runtimeBinding?.kind !== 'wsl2-bash' &&
+      this.lastProcessIdentity !== undefined &&
+      this.lastProcessIdentity === identity &&
+      hasVerifiedPosixProcessTreeMember(this.lastProcessIdentity)
+    )
+  }
+
+  async shutdown(forceIdentity?: object): Promise<{ reaped: boolean }> {
     this.closed = true
     this.lifetime.abort()
     this.executionPolicy?.policy.dispose?.()
@@ -186,6 +196,8 @@ export class ShellCellSession {
     try {
       await this.tail
       await this.completion
+      if (forceIdentity && this.hasLiveProcess(forceIdentity) && this.lastProcessIdentity)
+        await terminateProcessTree(this.lastProcessIdentity, 'SIGKILL')
       const reaped = await this.verifyCleanup()
       this.cleanupAttemptFailed = !reaped
       return { reaped }

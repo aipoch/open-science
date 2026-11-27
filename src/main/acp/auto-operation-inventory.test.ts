@@ -214,8 +214,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Output paging reads one persisted Run through the existing session-scoped state route.
         // Paging and handoff extraction project results only; no Auto operation branch changed.
         // notebook_restart describes starting fresh on the next execution. Its schema and dispatch are unchanged.
+        // Reviewed: memory refusals carry a code and ask for a new message through the existing
+        // tool schemas, RPC dispatch and authorization paths.
         'notebook/mcp-server.ts':
-          'dca31c945c607cf7e0f4910f7cc17ee55dfaabdb5e4d3fb865b0f41f1c00a7a9',
+          'f37d0dd8b0811b653b95c6a8742c0b75a61ef086da629564a112734252515086',
 
         // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
         // Plan operation dispositions are unchanged.

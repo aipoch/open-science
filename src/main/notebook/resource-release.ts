@@ -27,6 +27,7 @@ type Release = {
   view: NotebookResourceRelease
   resources: NotebookOwnedResource[]
   results: Map<object, NotebookResourceCleanupResult>
+  feedback?: (view: NotebookResourceRelease) => void
 }
 type Dependencies = {
   resources: (scope: { projectId?: string; sessionId?: string }) => NotebookOwnedResource[]
@@ -35,6 +36,11 @@ type Dependencies = {
   block: (scope: Scope) => readonly NotebookExecutionContinuation[]
   decisions: (projectId: string) => readonly NotebookExecutionContinuation[]
   changed: () => void
+  recordStop?: (
+    request: ReleaseNotebookSessionResourcesRequest,
+    resources: readonly NotebookOwnedResource[],
+    view: NotebookResourceRelease
+  ) => (view: NotebookResourceRelease) => void
   blockedReason: (scope: Scope, scopeHeld?: boolean) => string | undefined
   logger: Pick<RuntimeDiagnosticLogger, 'info' | 'error'>
 }
@@ -44,6 +50,8 @@ const sampleIntervalMs = 5_000
 const keyFor = (scope: Scope): string => JSON.stringify([scope.projectId, scope.sessionId])
 const sameResource = (left: NotebookOwnedResource, right: NotebookOwnedResource): boolean =>
   left.identity === right.identity &&
+  left.parentIdentity === right.parentIdentity &&
+  left.processIdentity === right.processIdentity &&
   left.group === right.group &&
   left.projectId === right.projectId &&
   left.sessionId === right.sessionId &&
@@ -258,6 +266,14 @@ export class NotebookResourceReleaseOwner {
     assertCurrent: () => void
   ): NotebookResourceRelease {
     assertCurrent()
+    if (
+      request.stopAll !== undefined &&
+      (!request.stopAll ||
+        typeof request.stopAll !== 'object' ||
+        (request.stopAll.comment !== undefined &&
+          (typeof request.stopAll.comment !== 'string' || request.stopAll.comment.length > 2000)))
+    )
+      throw new Error('Invalid Notebook stop reason.')
     const existing = [...this.releases.values()].find(
       ({ view }) => keyFor(view) === keyFor(request) && view.revision === request.revision
     )
@@ -280,11 +296,14 @@ export class NotebookResourceReleaseOwner {
     assertCurrent()
     const release = this.find(request)
     if (release.view.status !== 'partial') return this.view(release)
-    const resources = release.resources.filter((resource) => {
+    return this.commit(release.view, this.retryResources(release), assertCurrent, release).view
+  }
+
+  private retryResources(release: Release): NotebookOwnedResource[] {
+    return release.resources.filter((resource) => {
       const result = release.results.get(resource.identity)
       return !result?.reaped || result.projection === 'failed'
     })
-    return this.commit(release.view, resources, assertCurrent, release).view
   }
 
   private find(request: NotebookResourceReleaseRequest): Release {
@@ -301,6 +320,12 @@ export class NotebookResourceReleaseOwner {
     retry?: Release
   ): { view: NotebookResourceRelease } {
     const scope = { projectId: request.projectId, sessionId: request.sessionId }
+    if (
+      [...this.releases.values()].some(
+        ({ view }) => keyFor(view) === keyFor(scope) && view.status === 'releasing'
+      )
+    )
+      throw new Error('Notebook resource release is already in progress.')
     const releaseHold = this.dependencies.hold(scope, resources)
     let releaseWriter: (() => void) | undefined
     try {
@@ -333,6 +358,10 @@ export class NotebookResourceReleaseOwner {
         results: new Map()
       }
       release.view.status = 'releasing'
+      if (request.stopAll) {
+        release.view.phase = 'release'
+        release.feedback = this.dependencies.recordStop?.(request, resources, release.view)
+      } else if (retry && release.view.phase) release.view.phase = 'retry'
       delete release.view.finishedAt
       release.view.continuations = continuations
       for (const resource of resources) {
@@ -348,13 +377,6 @@ export class NotebookResourceReleaseOwner {
       })
       const writer = releaseWriter
       const operation = withDataRootWrite(async () => {
-        const drain = resources.filter(
-          (resource) =>
-            resource.group === 'operation' ||
-            resource.group === 'reproduction' ||
-            resource.group === 'batch'
-        )
-        const trees = resources.filter((resource) => !drain.includes(resource))
         const record = (outcomes: Awaited<ReturnType<typeof releaseNotebookResources>>): void => {
           for (const { resource, result } of outcomes) {
             release.results.set(resource.identity, result)
@@ -365,6 +387,7 @@ export class NotebookResourceReleaseOwner {
               networkClosed: result.networkClosed,
               temporaryResourcesRemoved: result.temporaryResourcesRemoved,
               projection: result.projection,
+              environmentRecoveryRequired: result.environmentRecoveryRequired,
               error:
                 result.error instanceof Error
                   ? result.error.message
@@ -375,12 +398,64 @@ export class NotebookResourceReleaseOwner {
           }
           this.dependencies.changed()
         }
-        record(await releaseNotebookResources(drain))
-        record(await releaseNotebookResources(trees))
-        release.view.status = release.view.resources.every(({ status }) => status === 'released')
-          ? 'released'
-          : 'partial'
-        release.view.finishedAt = Date.now()
+        const attempt = async (selected: NotebookOwnedResource[]): Promise<void> => {
+          const drain = selected.filter(
+            ({ group, kind }) =>
+              group === 'operation' ||
+              group === 'reproduction' ||
+              group === 'batch' ||
+              (group === 'installer' && kind === 'environment-install')
+          )
+          record(await releaseNotebookResources(drain))
+          record(
+            await releaseNotebookResources(selected.filter((resource) => !drain.includes(resource)))
+          )
+        }
+        await attempt(resources)
+        if (retry || !request.stopAll) return
+        const retryable = this.retryResources(release)
+        if (!retryable.length) return
+        release.view.phase = 'retry'
+        this.dependencies.changed()
+        await attempt(retryable)
+
+        const live = retryable.filter((resource) => {
+          const result = release.results.get(resource.identity)
+          return (
+            !result?.reaped && result?.processesTerminated !== true && resource.hasLiveProcess?.()
+          )
+        })
+        if (!live.length) return
+        release.view.phase = 'force-close'
+        this.dependencies.changed()
+        const processes = live.filter(({ group }) => group !== 'reproduction')
+        const outcomes = await releaseNotebookResources(processes, true)
+        record(outcomes)
+
+        // An attempt can only remove its temporary directory after its original processes
+        // have exited. Revisit its cleanup within this operation's existing scope hold.
+        const parents = new Set<object>()
+        for (const { resource, result } of outcomes)
+          if (resource.parentIdentity && (result.reaped || result.processesTerminated))
+            parents.add(resource.parentIdentity)
+        const forcedAttempts = live.filter(({ group }) => group === 'reproduction')
+        if (forcedAttempts.length) record(await releaseNotebookResources(forcedAttempts, true))
+        const pendingParents = this.retryResources(release).filter(
+          (resource) => parents.has(resource.identity) && !forcedAttempts.includes(resource)
+        )
+        if (pendingParents.length) record(await releaseNotebookResources(pendingParents))
+
+        // A parent's retained cleanup can also finish a child's sandbox teardown. Refresh
+        // any outdated child result through its original handle without another force close.
+        const cleanedParents = new Set(
+          [...forcedAttempts, ...pendingParents]
+            .filter(({ identity }) => release.results.get(identity)?.reaped)
+            .map(({ identity }) => identity)
+        )
+        const pendingChildren = this.retryResources(release).filter(
+          ({ parentIdentity }) => parentIdentity && cleanedParents.has(parentIdentity)
+        )
+        if (pendingChildren.length) record(await releaseNotebookResources(pendingChildren))
       })
         .catch((error: unknown) => {
           this.dependencies.logger.error('Notebook resource release could not finish', {
@@ -388,8 +463,6 @@ export class NotebookResourceReleaseOwner {
             operationId: release.view.operationId,
             error: error instanceof Error ? error.message : String(error)
           })
-          release.view.status = 'partial'
-          release.view.finishedAt = Date.now()
           for (const item of release.view.resources)
             if (item.status === 'pending') {
               item.status = 'incomplete'
@@ -397,8 +470,13 @@ export class NotebookResourceReleaseOwner {
             }
         })
         .finally(() => {
+          release.view.status = release.view.resources.every(({ status }) => status === 'released')
+            ? 'released'
+            : 'partial'
+          release.view.finishedAt = Date.now()
           writer()
           releaseHold()
+          release.feedback?.(release.view)
           this.complete(release)
           if (release.view.status === 'released') {
             release.resources = []

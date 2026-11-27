@@ -1559,7 +1559,20 @@ describe('installAcpIpcHandlers — create-session failure logging', () => {
 // gap that let a connector-sessionId regression slip through green.
 describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () => {
   const callerEvent = { sender: { id: 7, isDestroyed: () => false } }
-  it.each(['acp:send-prompt', 'acp:continue-notebook-execution'])(
+  it('rejects the retired synthetic Notebook continuation command without sending a prompt', async () => {
+    registerWithFakes()
+    expect(() =>
+      handlers.get('acp:continue-notebook-execution')!(callerEvent, {
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        refusalId: 'refusal',
+        text: 'Continue'
+      })
+    ).toThrow('Submit a new message')
+    expect(sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it.each(['acp:send-prompt'])(
     'expires prepared Notebook authority from %s when the native document navigates',
     async (channel) => {
       registerWithFakes()

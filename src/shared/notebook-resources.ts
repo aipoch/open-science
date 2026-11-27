@@ -42,6 +42,7 @@ export type NotebookResourceRelease = {
   sessionId: string
   revision: string
   status: 'releasing' | 'released' | 'partial'
+  phase?: 'release' | 'retry' | 'force-close'
   startedAt: number
   finishedAt?: number
   resources: Array<{
@@ -55,6 +56,7 @@ export type NotebookResourceRelease = {
     networkClosed?: boolean
     temporaryResourcesRemoved?: boolean
     projection?: 'complete' | 'failed'
+    environmentRecoveryRequired?: true
     error?: string
   }>
   continuations: NotebookPendingDecision[]
@@ -71,6 +73,7 @@ export type ReleaseNotebookSessionResourcesRequest = {
   projectId: string
   sessionId: string
   revision: string
+  stopAll?: { comment?: string }
 }
 export type NotebookResourceReleaseRequest = {
   projectId: string
