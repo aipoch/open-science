@@ -3539,6 +3539,7 @@ class NotebookRuntimeService {
         group: 'installer',
         kind: 'environment-install',
         hasLiveProcess: () => hasVerifiedRetainedInstaller(unconfirmed?.cleanup),
+        hasPendingCleanup: () => unconfirmed?.cleanup !== undefined,
         cleanup: async (force) => {
           if (!unconfirmed) return { reaped: true }
           const cleanup = unconfirmed.cleanup

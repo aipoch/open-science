@@ -40,7 +40,7 @@ import {
   EnvironmentManifestPublicationError,
   type EnvironmentStateTracker
 } from '@aipoch/environment'
-import { CHILD_UNCONFIRMED } from '@aipoch/environment'
+import { CHILD_UNCONFIRMED, retainEnvironmentChildCleanup } from '@aipoch/environment'
 import type {
   InstallDeps as InstallDepsForTest,
   InstallResult as InstallResultForTest
@@ -16520,6 +16520,65 @@ describe('v4 runtime bindings & agent tools', () => {
       target: failure.target
     })
     expect(installAttempts).toBe(1)
+  })
+
+  it('keeps an unconfirmed installer available to Stop all after managePackages returns', async () => {
+    const root = await createStorageRoot()
+    const scope = { projectId: 'default-project', sessionId: 'installer' }
+    let live = true
+    const forceClose = vi.fn(async () => {
+      live = false
+    })
+    const cleanup = vi.fn(async () => ({ reaped: !live, processesTerminated: !live }))
+    const service = bindingService(root, {
+      installPackagesImpl: async () => {
+        throw retainEnvironmentChildCleanup(new Error(CHILD_UNCONFIRMED), {
+          identity: {},
+          startedAt: Date.now(),
+          processControl: { hasLiveProcess: () => live, forceClose },
+          release: cleanup
+        })
+      }
+    })
+    try {
+      await expect(
+        service.managePackages({
+          ...scope,
+          workspaceCwd: root,
+          language: 'python',
+          packages: ['numpy']
+        })
+      ).resolves.toMatchObject({ ok: false, error: expect.stringContaining(CHILD_UNCONFIRMED) })
+      const [group] = (await service.getProjectResources(scope)).groups
+      expect(group?.resources).toEqual([
+        expect.objectContaining({ group: 'installer', phase: 'cleanup-pending' })
+      ])
+      expect(service.ownedResources({ ...scope, sessionId: 'another' })).toEqual([])
+      await expect(service.shutdownAll()).resolves.toMatchObject({ reaped: false })
+      expect((await service.getProjectResources(scope)).groups).toContainEqual(group)
+      const { operationId } = await service.releaseSessionResources(
+        { ...scope, revision: group.revision, stopAll: {} },
+        () => undefined
+      )
+      await service.waitForSessionTeardown(scope)
+
+      expect(forceClose).toHaveBeenCalledOnce()
+      expect(cleanup).toHaveBeenCalledTimes(4)
+      expect(service.getResourceRelease({ ...scope, operationId })).toMatchObject({
+        status: 'released',
+        phase: 'force-close',
+        resources: [
+          { status: 'released', processesTerminated: true, environmentRecoveryRequired: true }
+        ]
+      })
+      expect(service.ownedResources(scope)).toEqual([])
+      expect(service.isPrefixRecoveryBlocked(envPrefix(getRuntimeRoot(root), DEFAULT_PY_ENV))).toBe(
+        true
+      )
+    } finally {
+      live = false
+      await service.dispose()
+    }
   })
 
   it('uses one repair key for bound and unbound sessions sharing a managed R prefix', async () => {
