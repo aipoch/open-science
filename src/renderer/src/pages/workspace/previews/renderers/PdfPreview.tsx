@@ -22,7 +22,7 @@ import {
   type FigureLinkAnchor,
   type PdfLinkDestination
 } from './pdf-native-links'
-import { PdfSearchTextCache } from './pdf-search-text-cache'
+import { PdfSearchTextCache, type PdfSearchText } from './pdf-search-text-cache'
 import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
 import {
   usePdfTranslationDocument,
@@ -103,7 +103,7 @@ import {
   sanitizePdfDocumentSource,
   type PdfDocumentSource
 } from '../../../../../../shared/pdf-document-source'
-import { joinPdfTextItems } from '../../../../../../shared/pdf-text'
+import { joinPdfTextItems, type PdfTextItem } from '../../../../../../shared/pdf-text'
 import { TagSelection } from '../../../settings/ResourceTagControls'
 import { createPreviewFileItemForManagedVersion } from '../../preview-file-item'
 
@@ -331,39 +331,65 @@ const isEditableTarget = (target: EventTarget | null): boolean =>
   target instanceof HTMLTextAreaElement ||
   (target instanceof HTMLElement && target.isContentEditable)
 
-type PdfFindTerm = { text: string; scope: 'original' | 'translated-pdf' | 'translated-paragraph' }
+type PdfFindSelection = { layer: HTMLElement; page: number; start: number; end: number }
+type PdfFindTerm = {
+  text?: string
+  selection?: PdfFindSelection
+  scope: 'original' | 'translated-pdf' | 'translated-paragraph'
+}
 
-const pdfLayerText = (
-  root: Element,
-  range?: Range
-): { text: string; nodes: Text[]; starts: number[] } => {
-  const spans = Array.from(root.querySelectorAll('span')).filter(
-    (span): span is HTMLSpanElement =>
-      span.firstChild instanceof Text &&
-      Boolean(span.textContent) &&
-      (!range || range.intersectsNode(span.firstChild))
-  )
-  const nodes = spans.map((span) => span.firstChild as Text)
-  const starts: number[] = []
-  let text = ''
-  for (const [index, node] of nodes.entries()) {
-    const previousSpan = spans[index - 1]
-    const currentSpan = spans[index]
-    if (previousSpan && currentSpan && !/\s$/u.test(text) && !/^\s/u.test(node.data)) {
-      const previousBounds = previousSpan.getBoundingClientRect()
-      const currentBounds = currentSpan.getBoundingClientRect()
-      const height = Math.max(previousBounds.height, currentBounds.height)
-      if (height > 0) {
-        if (Math.abs(previousBounds.top - currentBounds.top) > height / 2) text += '\n'
-        else if (currentBounds.left - previousBounds.right > height * 0.15) text += ' '
-      }
+type SearchRunBox = Pick<DOMRect, 'left' | 'top' | 'height'>
+
+// Accept ordinary downward line advances returning to the same column margin.
+// Larger vertical gaps and a jump to another column remain search boundaries.
+const lineSeparator = (lineLeft: number, previous: SearchRunBox, next: SearchRunBox): string => {
+  const height = Math.min(previous.height, next.height)
+  const advance = next.top - previous.top
+  return height > 0 &&
+    advance > height * 0.5 &&
+    advance <= height * 1.65 &&
+    Math.abs(next.left - lineLeft) <= height * 0.5
+    ? ' '
+    : '\n'
+}
+
+const pdfSearchText = (items: PdfTextItem[]): string => {
+  const chunks: string[] = []
+  let start = 0
+  let previous: SearchRunBox | undefined
+  let lineLeft = 0
+  let endings = 0
+  for (const [index, item] of items.entries()) {
+    if (item.str?.trim()) {
+      const t = item.transform
+      const box =
+        t &&
+        t[0] > 0 &&
+        t[3] > 0 &&
+        !t[1] &&
+        !t[2] &&
+        (item.dir === undefined || item.dir === 'ltr')
+          ? { left: t[4], top: -t[5], height: item.height || t[3] }
+          : undefined
+      if (
+        previous &&
+        box &&
+        (endings || Math.abs(box.top - previous.top) > Math.max(previous.height, box.height) / 2)
+      ) {
+        chunks.push(
+          joinPdfTextItems(items.slice(start, index)),
+          endings > 1 ? '\n' : lineSeparator(lineLeft, previous, box)
+        )
+        start = index
+        lineLeft = box.left
+      } else if (!previous && box) lineLeft = box.left
+      previous = box
+      endings = 0
     }
-    starts.push(text.length)
-    const start = range?.startContainer === node ? range.startOffset : 0
-    const end = range?.endContainer === node ? range.endOffset : node.length
-    text += node.data.slice(start, end)
+    if (item.hasEOL) endings++
   }
-  return { text, nodes, starts }
+  chunks.push(joinPdfTextItems(start ? items.slice(start) : items))
+  return chunks.join('')
 }
 
 const selectedFindTerm = (reader: HTMLElement): PdfFindTerm | undefined => {
@@ -372,21 +398,70 @@ const selectedFindTerm = (reader: HTMLElement): PdfFindTerm | undefined => {
   const range = selection.getRangeAt(0)
   const ancestor = range.commonAncestorContainer
   const element = ancestor instanceof Element ? ancestor : ancestor.parentElement
-  const body = element?.closest('[data-pdf-text-layer], [data-translation-text]')
+  const body = element?.closest<HTMLElement>('[data-pdf-text-layer], [data-translation-text]')
   if (!body || !reader.contains(body) || body.closest('[inert]')) return
-  const text = (
-    body.matches('[data-pdf-text-layer]') && !element?.closest('span')
-      ? pdfLayerText(body, range).text
-      : selection.toString()
-  ).trim()
+  const scope = body.closest('[data-pdf-translated-page]') ? 'translated-pdf' : 'original'
+  if (
+    body.matches('[data-pdf-text-layer]') &&
+    !(element?.matches('span') && !element.childElementCount)
+  ) {
+    const page = Number(body.closest<HTMLElement>('[data-pdf-page-number]')?.dataset.pdfPageNumber)
+    if (!page) return
+    // Snapshot offsets before focusing the find bar changes the browser selection.
+    const prefix = range.cloneRange()
+    prefix.selectNodeContents(body)
+    prefix.setEnd(range.startContainer, range.startOffset)
+    const start = prefix.toString().length
+    return { scope, selection: { layer: body, page, start, end: start + range.toString().length } }
+  }
+  const text = selection.toString().trim()
   if (!text || /[\r\n]/u.test(text)) return
   if (body.matches('[data-translation-text]')) return { text, scope: 'translated-paragraph' }
-  return { text, scope: body.closest('[data-pdf-translated-page]') ? 'translated-pdf' : 'original' }
+  return { text, scope }
 }
 
-const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
-  const { text, nodes, starts } = pdfLayerText(root)
-  const normalizedText = text.toLocaleLowerCase()
+const projectPdfText = (
+  root: HTMLElement,
+  text: string
+):
+  | {
+      nodes: Text[]
+      starts: number[]
+      domOffsets: number[]
+      cursor: number
+    }
+  | undefined => {
+  // Project source characters onto the mounted layer. PDF.js omits empty runs,
+  // and the index can insert or trim whitespace at either end of a DOM span.
+  const nodes: Text[] = []
+  const starts: number[] = []
+  const domOffsets: number[] = []
+  let domLength = 0
+  let cursor = 0
+  for (const span of root.querySelectorAll('span')) {
+    const node = span.firstChild
+    if (!(node instanceof Text)) continue
+    nodes.push(node)
+    starts.push(domLength)
+    for (let i = 0; i < node.length; i++) {
+      if (/\s/u.test(node.data[i])) {
+        if (node.data[i] === text[cursor]) domOffsets[cursor++] = domLength + i
+        continue
+      }
+      while (cursor < text.length && /\s/u.test(text[cursor])) cursor++
+      if (text[cursor] !== node.data[i]) return
+      domOffsets[cursor++] = domLength + i
+    }
+    domLength += node.length
+  }
+  return { nodes, starts, domOffsets, cursor }
+}
+
+const textRangesForQuery = (root: HTMLElement, query: string, source: PdfSearchText): Range[] => {
+  const { text, normalized: normalizedText } = source
+  const projection = projectPdfText(root, text)
+  if (!projection) return []
+  const { nodes, starts, domOffsets, cursor } = projection
   const normalizedQuery = query.toLocaleLowerCase()
   if (!normalizedQuery) return []
   // Keep whole-string casing (for example, Greek final sigma). Length-changing lowercase
@@ -406,8 +481,15 @@ const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
   let index = 0
   while ((index = normalizedText.indexOf(normalizedQuery, index)) >= 0) {
     const end = index + normalizedQuery.length
-    const originalStart = originalStarts[index]
-    const originalEnd = originalEnds[end - 1]
+    // PDF.js can cap the text layer before the page ends. Later occurrences
+    // still count, but only complete matches in the rendered prefix have ranges.
+    if (originalEnds[end - 1] > cursor) break
+    let startChar = originalStarts[index]
+    let endChar = originalEnds[end - 1] - 1
+    while (startChar <= endChar && domOffsets[startChar] === undefined) startChar++
+    while (endChar >= startChar && domOffsets[endChar] === undefined) endChar--
+    const originalStart = domOffsets[startChar]
+    const originalEnd = domOffsets[endChar] + 1
     // Inserted word/line gaps have no DOM node: anchor their endpoints to adjacent text.
     const startNodeIndex = starts.findIndex((start, i) => start + nodes[i].length > originalStart)
     const endNodeIndex = starts.findLastIndex((start) => start < originalEnd)
@@ -428,7 +510,8 @@ const updatePdfSearchHighlights = (
   scroll: HTMLElement | null,
   query: string,
   selected?: PdfSearchMatch,
-  translated = false
+  translated = false,
+  sources?: WeakMap<HTMLElement, PdfSearchText>
 ): Range | undefined => {
   const registry = (globalThis as unknown as { CSS?: { highlights?: HighlightRegistry } }).CSS
     ?.highlights
@@ -441,7 +524,9 @@ const updatePdfSearchHighlights = (
   for (const layer of scroll.querySelectorAll<HTMLElement>('[data-pdf-text-layer]')) {
     if (Boolean(layer.closest('[data-pdf-translated-page]')) !== translated) continue
     const page = layer.closest<HTMLElement>('[data-pdf-page-number]')
-    const pageRanges = textRangesForQuery(layer, query)
+    const source = sources?.get(layer)
+    if (!source) continue
+    const pageRanges = textRangesForQuery(layer, query, source)
     allRanges.push(...pageRanges)
     if (Number(page?.dataset.pdfPageNumber) === selected?.pageNumber) {
       selectedRange = pageRanges[selected.occurrence]
@@ -2252,7 +2337,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
         }
       })
       textLayerRef.current = textLayer
-      await textLayer.render({ viewport })
+      await textLayer.render({ viewport, textContentParams: { includeMarkedContent: true } })
       // PDF.js registers even completed layers for global selection. Keep the
       // builder until disposal; a superseded late render must unregister itself.
       if (canceled || pageRef.current !== page || textLayerRef.current !== textLayer) {
@@ -3319,6 +3404,21 @@ const PdfReaderContent = ({
     [currentTranslation, translationSource]
   )
   const searchDocument = searchTranslated && pairedDocument ? pairedDocument.document : document
+  const [findSelection, setFindSelection] = useState<PdfFindSelection>()
+  const layerSearchTexts = useRef(new WeakMap<HTMLElement, PdfSearchText>())
+  const readSearchPage = useCallback(
+    (pageNumber: number) =>
+      searchTextCacheRef.current.get(pageNumber, async () => {
+        const page = await searchDocument!.getPage(pageNumber)
+        try {
+          const content = await page.getTextContent()
+          return pdfSearchText(content.items.map((item) => ('str' in item ? item : {})))
+        } finally {
+          page.cleanup()
+        }
+      }),
+    [searchDocument]
+  )
   const [searchedDocument, setSearchedDocument] = useState(searchDocument)
   if (searchedDocument !== searchDocument) {
     setSearchedDocument(searchDocument)
@@ -3329,6 +3429,7 @@ const PdfReaderContent = ({
   }
   useEffect(() => {
     searchTextCacheRef.current.clear()
+    layerSearchTexts.current = new WeakMap()
     pendingSearchRevealRef.current = undefined
   }, [searchDocument])
   const canRetryPdfGeneration =
@@ -3491,7 +3592,13 @@ const PdfReaderContent = ({
     (match: PdfSearchMatch): void => {
       const scroll = scrollRef.current
       if (!scroll || !searchDocument) return
-      const range = updatePdfSearchHighlights(scroll, searchQuery, match, searchTranslated)
+      const range = updatePdfSearchHighlights(
+        scroll,
+        searchQuery,
+        match,
+        searchTranslated,
+        layerSearchTexts.current
+      )
       pendingSearchRevealRef.current = undefined
       if (revealPdfSearchRange(scroll, range)) return
       pendingSearchRevealRef.current = {
@@ -3729,25 +3836,25 @@ const PdfReaderContent = ({
         let revealedFirstMatch = false
         for (let pageNumber = 1; pageNumber <= searchDocument.numPages; pageNumber += 1) {
           if (canceled) return
-          let text: string
+          let source: PdfSearchText
           try {
-            text = await searchTextCacheRef.current.get(pageNumber, async () => {
-              const page = await searchDocument.getPage(pageNumber)
-              try {
-                const content = await page.getTextContent()
-                return joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {})))
-              } finally {
-                page.cleanup()
-              }
-            })
+            source = await readSearchPage(pageNumber)
           } catch {
             if (canceled) return
             setSearchIncomplete(true)
             continue
           }
           if (canceled) return
-          const pageMatchCount = countPdfSearchOccurrences(text, normalizedQuery)
+          const pageMatchCount = countPdfSearchOccurrences(source.normalized, normalizedQuery)
           if (pageMatchCount > 0) {
+            if (!revealedFirstMatch) {
+              for (const layer of scrollRef.current?.querySelectorAll<HTMLElement>(
+                `[data-pdf-page-number="${pageNumber}"] [data-pdf-text-layer]`
+              ) ?? []) {
+                if (Boolean(layer.closest('[data-pdf-translated-page]')) === searchTranslated)
+                  layerSearchTexts.current.set(layer, source)
+              }
+            }
             matches.push({ pageNumber, count: pageMatchCount })
             matchCount += pageMatchCount
           }
@@ -3776,25 +3883,67 @@ const PdfReaderContent = ({
       clearTimeout(timer)
       pendingSearchRevealRef.current = undefined
     }
-  }, [searchDocument, searchQuery, revealSearchMatch])
+  }, [searchDocument, searchQuery, revealSearchMatch, readSearchPage, searchTranslated])
 
   useEffect(() => {
     const scroll = scrollRef.current
-    const selected = resolvePdfSearchMatch(searchResults, selectedSearchIndex)
-    const range = updatePdfSearchHighlights(scroll, searchQuery, selected, searchTranslated)
-    const pending = pendingSearchRevealRef.current
-    if (!pending) return
-    if (
-      pending.document !== searchDocument ||
-      pending.requestKey !== resourceRequestKey ||
-      pending.query !== searchQuery ||
-      pending.match.pageNumber !== selected?.pageNumber ||
-      pending.match.occurrence !== selected.occurrence
-    ) {
-      pendingSearchRevealRef.current = undefined
-      return
+    // Virtualized pages may mount after their index was scanned.
+    let canceled = false
+    const pages = new Set(searchResults.map((result) => result.pageNumber))
+    const missing = [
+      ...(scroll?.querySelectorAll<HTMLElement>('[data-pdf-text-layer]') ?? [])
+    ].filter(
+      (layer) =>
+        !layerSearchTexts.current.has(layer) &&
+        Boolean(layer.closest('[data-pdf-translated-page]')) === searchTranslated &&
+        pages.has(
+          Number(layer.closest<HTMLElement>('[data-pdf-page-number]')?.dataset.pdfPageNumber)
+        )
+    )
+    if (missing.length) {
+      void Promise.all(
+        missing.map(async (layer) => {
+          const pageNumber = Number(
+            layer.closest<HTMLElement>('[data-pdf-page-number]')!.dataset.pdfPageNumber
+          )
+          try {
+            const source = await readSearchPage(pageNumber)
+            if (!canceled) layerSearchTexts.current.set(layer, source)
+          } catch {
+            if (!canceled) setSearchIncomplete(true)
+          }
+        })
+      ).then(() => {
+        if (!canceled) paint()
+      })
     }
-    if (scroll && revealPdfSearchRange(scroll, range)) pendingSearchRevealRef.current = undefined
+    function paint(): void {
+      const selected = resolvePdfSearchMatch(searchResults, selectedSearchIndex)
+      const range = updatePdfSearchHighlights(
+        scroll,
+        searchQuery,
+        selected,
+        searchTranslated,
+        layerSearchTexts.current
+      )
+      const pending = pendingSearchRevealRef.current
+      if (!pending) return
+      if (
+        pending.document !== searchDocument ||
+        pending.requestKey !== resourceRequestKey ||
+        pending.query !== searchQuery ||
+        pending.match.pageNumber !== selected?.pageNumber ||
+        pending.match.occurrence !== selected.occurrence
+      ) {
+        pendingSearchRevealRef.current = undefined
+        return
+      }
+      if (scroll && revealPdfSearchRange(scroll, range)) pendingSearchRevealRef.current = undefined
+    }
+    if (!missing.length) paint()
+    return () => {
+      canceled = true
+    }
   }, [
     searchDocument,
     searchTranslated,
@@ -3802,7 +3951,8 @@ const PdfReaderContent = ({
     searchQuery,
     searchResults,
     selectedSearchIndex,
-    textLayerEpoch
+    textLayerEpoch,
+    readSearchPage
   ])
 
   useLayoutEffect(() => {
@@ -4011,13 +4161,39 @@ const PdfReaderContent = ({
     setSelectedSearchIndex(nextIndex)
     revealSearchMatch(nextMatch)
   }
-  const changeSearchQuery = (query: string): void => {
+  const changeSearchQuery = useCallback((query: string): void => {
+    setFindSelection(undefined)
     setSearchQuery(query)
     setSearchResults([])
     setSearchResultCount(0)
     setSearchIncomplete(false)
     setSelectedSearchIndex(0)
-  }
+  }, [])
+  useEffect(() => {
+    if (!findSelection || !searchOpen || !searchDocument) return
+    const { layer, page, start, end } = findSelection
+    let canceled = false
+    void readSearchPage(page).then(
+      ({ text }) => {
+        if (canceled) return
+        setFindSelection(undefined)
+        if (!readerRef.current?.contains(layer)) return
+        const projection = projectPdfText(layer, text)
+        if (!projection) return
+        const first = projection.domOffsets.findIndex((offset) => offset >= start)
+        const last = projection.domOffsets.findLastIndex((offset) => offset < end)
+        if (first < 0 || last < first) return
+        const term = text.slice(first, last + 1).trim()
+        if (term && !/[\r\n]/u.test(term) && term !== searchQuery) changeSearchQuery(term)
+      },
+      () => {
+        if (!canceled) setFindSelection(undefined)
+      }
+    )
+    return () => {
+      canceled = true
+    }
+  }, [findSelection, searchOpen, searchDocument, readSearchPage, searchQuery, changeSearchQuery])
   const closeSearch = (): void => {
     setSearchOpen(false)
     changeSearchQuery('')
@@ -4112,11 +4288,12 @@ const PdfReaderContent = ({
       translated &&
       (!pairedDocument || term?.scope === 'translated-paragraph')
     ) {
-      if (term) setTranslationQuery(term.text)
+      if (term?.text) setTranslationQuery(term.text)
       openTranslationSearch()
       return
     }
-    if (term && term.text !== searchQuery) changeSearchQuery(term.text)
+    if (term?.text && term.text !== searchQuery) changeSearchQuery(term.text)
+    setFindSelection(term?.selection)
     setSearchTranslated(Boolean(pairedDocument && translated))
     setSearchOpen(true)
     if (searchOpen) {
@@ -5339,7 +5516,7 @@ const PdfReaderContent = ({
                         onScopeChange={
                           pairedDocument
                             ? (translated) => {
-                                setSearchQuery('')
+                                changeSearchQuery('')
                                 setSearchIncomplete(false)
                                 setSearchTranslated(translated)
                                 if (effectiveRendition !== 'compare')

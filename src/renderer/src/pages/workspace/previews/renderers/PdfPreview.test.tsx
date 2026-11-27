@@ -89,7 +89,8 @@ vi.mock('pdfjs-dist/web/pdf_viewer.mjs', () => ({
         const span = document.createElement('span')
         span.textContent = item.str ?? ''
         const left = item.transform?.[4] ?? 0
-        const top = item.transform?.[5] ?? 0
+        // PDF baselines increase upward, while DOM coordinates increase downward.
+        const top = -(item.transform?.[5] ?? 0)
         const width = item.width ?? 0
         const height = item.height ?? 0
         span.getBoundingClientRect = () =>
@@ -5417,6 +5418,189 @@ describe('PdfPreviewContent', () => {
     await vi.waitFor(() => expect(highlights.set).toHaveBeenCalledWith('pdf-search-results', {}))
     expect(constructedHighlights.some((ranges) => ranges.length > 0)).toBe(true)
   })
+
+  it('preserves user input while a selected PDF phrase is being indexed', async () => {
+    const content = { items: [{ str: 'first ' }, { str: 'second' }], styles: {} }
+    const read = vi.fn(async () => content)
+    getPage.mockResolvedValue({
+      getViewport: () => ({ width: 600, height: 800 }),
+      getTextContent: read,
+      render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+      cleanup: vi.fn()
+    })
+    await act(async () =>
+      root.render(<PdfPreviewContent path="/workspace/pending.pdf" name="pending.pdf" />)
+    )
+    const layer = await waitFor(() => {
+      const layer = container.querySelector('[data-pdf-text-layer]')!
+      expect(layer?.querySelectorAll('span')).toHaveLength(2)
+      return layer
+    })
+    const pending = Promise.withResolvers<typeof content>()
+    read.mockClear().mockReturnValueOnce(pending.promise)
+    window.getSelection()!.selectAllChildren(layer)
+    await act(async () => fireEvent.keyDown(layer, { key: 'f', metaKey: true }))
+    expect(read).toHaveBeenCalledOnce()
+    const input = screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search document' })
+    await act(async () => fireEvent.change(input, { target: { value: 'my query' } }))
+    await act(async () => pending.resolve(content))
+    expect(input.value).toBe('my query')
+  })
+
+  it('counts and highlights wrapped phrases only within the same column', async () => {
+    vi.useFakeTimers()
+    const highlights = new Map<string, Set<Range>>()
+    vi.stubGlobal('CSS', { highlights })
+    vi.stubGlobal(
+      'Highlight',
+      class extends Set<Range> {
+        constructor(...ranges: Range[]) {
+          super(ranges)
+        }
+      }
+    )
+    const run = (
+      str: string,
+      x: number,
+      y: number,
+      hasEOL = false
+    ): { str: string; transform: number[]; width: number; height: number; hasEOL: boolean } => ({
+      str,
+      transform: [10, 0, 0, 10, x, y],
+      width: 40,
+      height: 10,
+      hasEOL
+    })
+    const items = [
+      run('study', 10, 90),
+      run('protein', 55, 90, true),
+      run('expression', 10, 78, true),
+      run('protein', 10, 50, true),
+      run('expression', 260, 38, true),
+      run('protein', 260, 26, true),
+      run('expression', 260, 4, true),
+      run('protein', 260, -8, true),
+      { str: '', hasEOL: true },
+      run('expression', 260, -20, true),
+      run('protein ', 260, -32, true),
+      run(' expression!', 260, -44),
+      { ...run('protein', 260, -80, true), dir: 'ttb' },
+      { ...run('expression', 260, -92), dir: 'ttb' }
+    ]
+    getPage.mockResolvedValue({
+      getViewport: () => ({ width: 600, height: 800 }),
+      getTextContent: async () => ({ items, styles: {} }),
+      render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+      cleanup: vi.fn()
+    })
+    await act(async () =>
+      root.render(<PdfPreviewContent path="/workspace/wrapped.pdf" name="wrapped.pdf" />)
+    )
+    const spans = [...container.querySelectorAll('[data-pdf-text-layer] span')].filter(
+      (span) => span.textContent
+    )
+    const selectAndFind = async (first: number, last: number, endOffset: number): Promise<void> => {
+      window
+        .getSelection()!
+        .setBaseAndExtent(spans[last].firstChild!, endOffset, spans[first].firstChild!, 0)
+      await act(async () => fireEvent.keyDown(spans[first], { key: 'f', ctrlKey: true }))
+    }
+    await selectAndFind(1, 2, 10)
+    const input = screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search document' })
+    expect(input.value).toBe('protein expression')
+    await act(async () => vi.advanceTimersByTimeAsync(180))
+    expect(input.parentElement?.textContent).toContain('1/2')
+    await act(async () => fireEvent.change(input, { target: { value: 'previous' } }))
+    await selectAndFind(3, 4, 10)
+    expect(input.value).toBe('previous')
+    await selectAndFind(7, 8, 10)
+    expect(input.value).toBe('previous')
+    await selectAndFind(9, 10, 11)
+    expect(input.value).toBe('protein expression')
+    await act(async () => vi.advanceTimersByTimeAsync(180))
+    const ranges = [...(highlights.get('pdf-search-results') ?? [])]
+    expect(ranges).toHaveLength(2)
+    expect(ranges[0].startContainer).toBe(spans[1].firstChild)
+    expect(ranges[0].endContainer).toBe(spans[2].firstChild)
+    await act(async () => screen.getByRole('button', { name: 'Next match' }).click())
+    expect(input.parentElement?.textContent).toContain('2/2')
+    const [current] = highlights.get('pdf-search-current')!
+    expect(current.startContainer).toBe(spans[9].firstChild)
+    expect(current.endContainer).toBe(spans[10].firstChild)
+    expect(current.startOffset).toBe(0)
+    expect(current.endOffset).toBe(11)
+    expect(current.toString()).toBe('protein  expression')
+  })
+
+  it('finds a formula across an inline subscript baseline shift', async () => {
+    vi.useFakeTimers()
+    // PDF.js text runs from H₂O with a 7-point subscript in 12-point body text.
+    const items = [
+      { str: 'H', transform: [12, 0, 0, 12, 20, 100], height: 12, width: 8.66 },
+      { str: '2', transform: [7, 0, 0, 7, 28.66, 96], height: 7, width: 3.89 },
+      { str: 'O', transform: [12, 0, 0, 12, 32.55, 100], height: 12, width: 9 }
+    ]
+    getPage.mockResolvedValue({
+      getViewport: () => ({ width: 600, height: 800 }),
+      getTextContent: async () => ({ items, styles: {} }),
+      render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+      cleanup: vi.fn()
+    })
+    await act(async () =>
+      root.render(<PdfPreviewContent path="/workspace/formula.pdf" name="formula.pdf" />)
+    )
+    const input = await openSearch('H2O')
+    expect(input.parentElement?.textContent).toContain('1/1')
+  })
+
+  it.each([
+    { rendered: 'needle nee', tail: 'dle needle', query: 'needle', total: 3 },
+    { rendered: 'needle ', tail: 'next needle word', query: 'needle ', total: 2 }
+  ])(
+    'keeps complete hits for "$query" in a truncated text layer',
+    async ({ rendered, tail, query, total }) => {
+      vi.useFakeTimers()
+      const highlights = new Map<string, Set<Range>>()
+      vi.stubGlobal('CSS', { highlights })
+      vi.stubGlobal(
+        'Highlight',
+        class extends Set<Range> {
+          constructor(...ranges: Range[]) {
+            super(ranges)
+          }
+        }
+      )
+      getPage.mockResolvedValue({
+        getViewport: () => ({ width: 600, height: 800 }),
+        getTextContent: async () => ({
+          items: [{ str: rendered }, { str: tail }],
+          styles: {}
+        }),
+        render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+        cleanup: vi.fn()
+      })
+      await act(async () =>
+        root.render(<PdfPreviewContent path="/workspace/truncated.pdf" name="truncated.pdf" />)
+      )
+      // PDF.js may stop appending spans while getTextContent still indexes the full page.
+      const spans = container.querySelectorAll('[data-pdf-text-layer] span')
+      expect(spans).toHaveLength(2)
+      spans[1].remove()
+      const input = await openSearch(query)
+      expect(input.parentElement?.textContent).toContain(`1/${total}`)
+      expect(Array.from(highlights.get('pdf-search-results') ?? [], (r) => r.toString())).toEqual([
+        query
+      ])
+      expect(Array.from(highlights.get('pdf-search-current') ?? [], (r) => r.startOffset)).toEqual([
+        0
+      ])
+      for (let occurrence = 2; occurrence <= total; occurrence++) {
+        await act(async () => screen.getByRole('button', { name: 'Next match' }).click())
+        expect(input.parentElement?.textContent).toContain(`${occurrence}/${total}`)
+        expect(highlights.has('pdf-search-current')).toBe(false)
+      }
+    }
+  )
 
   const openSearch = async (query: string): Promise<HTMLInputElement> => {
     const scroll = container.querySelector<HTMLElement>('[role="region"]')!

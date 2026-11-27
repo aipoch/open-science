@@ -1,6 +1,8 @@
+export type PdfSearchText = Readonly<{ text: string; normalized: string }>
+
 /** Retain a document's text within a byte budget; don't cyclically evict pages during full scans. */
 export class PdfSearchTextCache {
-  private readonly entries = new Map<number, Promise<string>>()
+  private readonly entries = new Map<number, Promise<PdfSearchText>>()
   private bytes = 0
   private retainedPages = 0
   private generation = 0
@@ -24,7 +26,7 @@ export class PdfSearchTextCache {
     )
   }
 
-  get(page: number, load: () => Promise<string>): Promise<string> {
+  get(page: number, load: () => Promise<string>): Promise<PdfSearchText> {
     const cached = this.entries.get(page)
     if (cached) return cached
     const generation = this.generation
@@ -32,13 +34,13 @@ export class PdfSearchTextCache {
       (text) => {
         const normalized = text.toLocaleLowerCase()
         if (generation === this.generation && this.entries.get(page) === pending) {
-          const size = normalized.length * 2
+          const size = (normalized.length + (normalized === text ? 0 : text.length)) * 2
           if (this.bytes + size <= this.maxBytes) {
             this.bytes += size
             this.retainedPages++
           } else this.entries.delete(page)
         }
-        return normalized
+        return { text: normalized === text ? normalized : text, normalized }
       },
       (error) => {
         if (this.entries.get(page) === pending) this.entries.delete(page)
