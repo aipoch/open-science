@@ -420,9 +420,12 @@ it('finishes installer cleanup after verified exit and keeps the environment rec
       () => undefined
     )
     const request = { ...scope, operationId: release.operationId }
-    await service.waitForSessionTeardown(scope)
+    await expect(service.waitForSessionTeardown(scope)).rejects.toThrow(/cleanup is incomplete/i)
     await expect(install).resolves.toMatchObject({ ok: false })
     expect(cleanup).toHaveBeenCalledTimes(2)
+    expect(service.ownedResources(scope)).toEqual([
+      expect.objectContaining({ group: 'installer', phase: 'cleanup-pending' })
+    ])
     expect(service.getResourceRelease(request)).toMatchObject({
       status: 'partial',
       resources: [{ status: 'incomplete', error: CHILD_UNCONFIRMED }]
@@ -440,11 +443,13 @@ it('finishes installer cleanup after verified exit and keeps the environment rec
     expect(service.getResourceRelease(request).resources[0].error).toBeUndefined()
     expect((await service.retryResourceRelease(request, () => undefined)).status).toBe('released')
     expect(cleanup).toHaveBeenCalledTimes(3)
+    expect(service.ownedResources(scope)).toEqual([])
     expect(service.isPrefixLiveUnconfirmed(envPrefix(runtimeRoot, DEFAULT_PY_ENV))).toBe(true)
     expect(
       await RuntimeOperationJournal.forPath(operationJournalPath(runtimeRoot)).pending()
     ).toEqual([expect.objectContaining({ kind: 'install', repairReason: 'interrupted-install' })])
   } finally {
+    reaped = true
     await service.dispose()
     await install
     await rm(root, { recursive: true, force: true })
