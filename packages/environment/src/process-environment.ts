@@ -2,7 +2,7 @@ import { statSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
 
 import type { NotebookLanguage } from './contracts'
-import { rLibraryDir } from './runtime-paths'
+import { condaActivatedPath, rLibraryDir } from './runtime-paths'
 
 const COMMON_ENV_ALLOWLIST = ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ'] as const
 
@@ -18,6 +18,24 @@ export const normalizeRProcessLocale = (
       if (/^(LANG|LC_.*)$/i.test(key) && /^C\.UTF-?8$/i.test(value ?? '')) delete env[key]
     }
   }
+  return env
+}
+
+/** R must see a supported locale and, for conda, its own native libraries before it starts. */
+export const rProcessEnvironment = (
+  sourceEnv: NodeJS.ProcessEnv,
+  prefix?: string,
+  platform: NodeJS.Platform = process.platform
+): NodeJS.ProcessEnv => {
+  const env = normalizeRProcessLocale(sourceEnv, platform)
+  if (!prefix) return env
+  const paths: string[] = []
+  for (const [key, value] of Object.entries(env)) {
+    if ((platform === 'win32' ? key.toUpperCase() : key) !== 'PATH') continue
+    if (value) paths.push(value)
+    delete env[key]
+  }
+  env.PATH = condaActivatedPath(prefix, paths.join(platform === 'win32' ? ';' : ':'), platform)
   return env
 }
 

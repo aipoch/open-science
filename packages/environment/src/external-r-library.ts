@@ -4,16 +4,24 @@ import { isAbsolute } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { rscriptFor, windowsCondaPrefixForR } from './environment-discovery'
-import { condaActivatedPath } from './runtime-paths'
+import { rProcessEnvironment } from './process-environment'
 
-export const externalRLibraryProbeScript = `local({
-  normalize <- function(paths) normalizePath(paths, winslash="/", mustWork=FALSE)
-  same <- function(paths) if (.Platform$OS.type == "windows") tolower(paths) else paths
-  libraries <- unique(normalize(.libPaths()))
-  system <- same(normalize(c(.Library, .Library.site)))
-  libraries <- libraries[!(same(libraries) %in% system) & dir.exists(libraries) & file.access(libraries, 2) == 0]
-  cat("OPEN_SCIENCE_R_LIBRARIES=", jsonlite::toJSON(unname(libraries)), "\\n", sep="")
-})`
+// Windows Rscript reads only the first line of an -e argument.
+const localRExpression = (statements: string[]): string => `local({ ${statements.join('; ')} })`
+
+const normalizePaths =
+  'normalize <- function(paths) normalizePath(paths, winslash="/", mustWork=FALSE)'
+const samePaths =
+  'same <- function(paths) if (.Platform$OS.type == "windows") tolower(paths) else paths'
+
+export const externalRLibraryProbeScript = localRExpression([
+  normalizePaths,
+  samePaths,
+  'libraries <- unique(normalize(.libPaths()))',
+  'system <- same(normalize(c(.Library, .Library.site)))',
+  'libraries <- libraries[!(same(libraries) %in% system) & dir.exists(libraries) & file.access(libraries, 2) == 0]',
+  'cat("OPEN_SCIENCE_R_LIBRARIES=", jsonlite::toJSON(unname(libraries)), "\\n", sep="")'
+])
 
 /** Read the selected runtime's profile-visible libraries without creating or authorizing any. */
 export const discoverExternalRLibraries = async (
@@ -25,9 +33,7 @@ export const discoverExternalRLibraries = async (
   const { stdout } = await execute(command, ['--slave', '-e', externalRLibraryProbeScript], {
     timeout: 15_000,
     windowsHide: true,
-    ...(prefix
-      ? { env: { ...process.env, PATH: condaActivatedPath(prefix, process.env.PATH) } }
-      : {})
+    env: rProcessEnvironment(process.env, prefix)
   })
   const line = String(stdout)
     .split(/\r?\n/)
@@ -60,17 +66,18 @@ export const externalRInstallScript = (
   library: string,
   packages: readonly string[],
   repository: string
-): string => `local({
-  destination <- normalizePath(${JSON.stringify(library)}, winslash="/", mustWork=TRUE)
-  normalize <- function(paths) normalizePath(paths, winslash="/", mustWork=FALSE)
-  same <- function(paths) if (.Platform$OS.type == "windows") tolower(paths) else paths
-  if (!(same(destination) %in% same(normalize(.libPaths()))) ||
-      same(destination) %in% same(normalize(c(.Library, .Library.site))))
-    stop("The authorized library must be a personal library visible to this R runtime.")
-  if (file.access(destination, 2) != 0) stop("The authorized R library is not writable.")
-  packages <- c(${packages.map((name) => JSON.stringify(name)).join(',')})
-  options(warn=2)
-  utils::install.packages(packages, lib=destination, repos=${JSON.stringify(repository)})
-  installed <- utils::installed.packages(lib.loc=destination)
-  if (!all(packages %in% installed[, "Package"])) stop("R package installation is incomplete.")
-})`
+): string =>
+  localRExpression([
+    `destination <- normalizePath(${JSON.stringify(library)}, winslash="/", mustWork=TRUE)`,
+    normalizePaths,
+    samePaths,
+    'if (!(same(destination) %in% same(normalize(.libPaths()))) || ' +
+      'same(destination) %in% same(normalize(c(.Library, .Library.site)))) ' +
+      'stop("The authorized library must be a personal library visible to this R runtime.")',
+    'if (file.access(destination, 2) != 0) stop("The authorized R library is not writable.")',
+    `packages <- c(${packages.map((name) => JSON.stringify(name)).join(',')})`,
+    'options(warn=2)',
+    `utils::install.packages(packages, lib=destination, repos=${JSON.stringify(repository)})`,
+    'installed <- utils::installed.packages(lib.loc=destination)',
+    'if (!all(packages %in% installed[, "Package"])) stop("R package installation is incomplete.")'
+  ])

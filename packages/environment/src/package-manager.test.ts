@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, win32 } from 'node:path'
 import { promisify } from 'node:util'
@@ -1198,9 +1198,16 @@ describe('installPackages', () => {
             storageRoot: root,
             cranMirror: mirror,
             spawn: async (_command, args) => {
+              const setupPath = join(root, 'biocmanager-fixture.R')
+              writeFileSync(setupPath, setup)
               const { stdout, stderr } = await promisify(execFile)(
                 rScriptBin(process.env.OPEN_SCIENCE_TEST_R_ENV!),
-                ['--vanilla', '--slave', '-e', `${setup}\n${args.at(-1)}`],
+                [
+                  '--vanilla',
+                  '--slave',
+                  '-e',
+                  `source(${JSON.stringify(setupPath)}); ${args.at(-1)}`
+                ],
                 { env: { ...process.env, LC_ALL: 'en_US.UTF-8' }, timeout: 15_000 }
               )
               return { code: 0, stdout, stderr }

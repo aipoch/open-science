@@ -348,7 +348,7 @@ const requiresNotebookNetworkRecovery = (run: NotebookRunRecord): boolean => {
     )
   ].join('\n')
 
-  return /(?:enable protected mode before (?:authorizing|verifying) r access\.|windows protected mode is not ready for r:|windows protection ownership is inconsistent\.|notebook appcontainer (?:profile|loopback|resources|gateway)|windows sandbox gateway port)/iu.test(
+  return /(?:enable protected mode before (?:authorizing|verifying) r access\.|windows protected mode is not ready(?: for r)?:|windows protection ownership is inconsistent\.|notebook appcontainer (?:profile|loopback|resources|gateway)|windows sandbox gateway port)/iu.test(
     diagnostics
   )
 }
@@ -365,7 +365,7 @@ const NotebookNetworkRecoveryNotice = (): React.JSX.Element => {
       className="mt-3 border-status-warning-foreground/30 bg-status-warning-surface/20 dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface/20"
       title={t('Notebook execution was blocked')}
       description={t(
-        'This R cell was not run because Notebook network protection is not ready. Open Network settings to finish setup, then run the cell again.'
+        'In Network settings, choose standard mode or repair protection, then run this R cell again.'
       )}
       primaryButton={{
         label: t('Network settings'),

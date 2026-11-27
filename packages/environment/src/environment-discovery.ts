@@ -16,6 +16,7 @@ import { createLogger } from '@aipoch/diagnostics/node'
 import { isMacOSDeveloperToolsPythonStub } from './python-command'
 import { probeInterpreterVersion } from './python-command'
 import { parseRVersion, rHasJsonlite } from './r-command'
+import { rProcessEnvironment } from './process-environment'
 import {
   condaActivatedPath,
   DEFAULT_PY_ENV,
@@ -564,10 +565,14 @@ export const defaultDiscoveryDeps = (
     language: NotebookLanguage,
     timeout = PROBE_TIMEOUT_MS
   ): { timeout: number; windowsHide: boolean; env?: NodeJS.ProcessEnv } => {
-    const prefix =
-      language === 'python'
-        ? windowsCondaPrefixForPython(interpreterPath, runtimeRoot, platform)
-        : windowsCondaPrefixForR(interpreterPath, platform)
+    if (language === 'r') {
+      return {
+        timeout,
+        windowsHide: true,
+        env: rProcessEnvironment(env, windowsCondaPrefixForR(interpreterPath, platform), platform)
+      }
+    }
+    const prefix = windowsCondaPrefixForPython(interpreterPath, runtimeRoot, platform)
     return prefix
       ? {
           timeout,

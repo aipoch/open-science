@@ -384,7 +384,10 @@ export type ProjectFilesFilterPreference = {
 // Request to set (or clear, via omitted fields) the package-mirror configuration.
 export type SetNetworkProxyRequest = NetworkProxySettings
 
-export type SetNotebookNetworkRequest = NotebookNetworkSettings & {
+export type SetNotebookNetworkRequest =
+  { selectWindowsProtection: boolean } | NotebookNetworkRulesRequest
+
+export type NotebookNetworkRulesRequest = NotebookNetworkSettings & {
   baseMode?: NotebookNetworkSettings['mode']
   baseStrictWhitelist?: NotebookNetworkSettings['strictWhitelist']
   baseStrictWhitelistGroups?: NotebookNetworkSettings['strictWhitelistGroups']

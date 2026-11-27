@@ -150,6 +150,8 @@ export type PrivateDestinationReview =
   | Readonly<{ ok: false; reason: 'invalid' | 'ineligible' | 'dns' }>
 
 export type NotebookNetworkSettings = Readonly<{
+  /** Unset installations select execution from the existing Windows setup receipt. */
+  windowsProtectionEnabled?: boolean
   mode?: NotebookNetworkMode
   strictWhitelistVersion?: 1
   strictWhitelist?: readonly NotebookStrictWhitelistEntry[]

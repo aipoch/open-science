@@ -8,7 +8,7 @@ import { packageToolFor } from './contracts'
 import { rscriptFor, windowsCondaPrefixForR } from './environment-discovery'
 import { listArgv, micromambaSpawnEnv, resolveMicromamba } from './micromamba'
 import type { MicromambaRunner } from './windows-micromamba-runner'
-import { condaActivatedPath } from './runtime-paths'
+import { rProcessEnvironment } from './process-environment'
 
 // Read-only package inventory for one DISCOVERED environment (Settings → Runtimes "Packages"
 // dialog). Dispatch reuses the package-operation writer mapping (packageToolFor): app-owned conda
@@ -147,18 +147,6 @@ const defaultExec: ListPackagesExec = async (file, args, options) => {
   return { stdout: String(stdout), stderr: String(stderr) }
 }
 
-// A Windows conda R needs its env's Library\bin DLLs on PATH to start (see environment-discovery's
-// probeOptions); POSIX needs nothing extra.
-const condaRSpawnEnv = (
-  interpreterPath: string,
-  platform: NodeJS.Platform
-): NodeJS.ProcessEnv | undefined => {
-  const prefix = windowsCondaPrefixForR(interpreterPath, platform)
-  return prefix
-    ? { ...process.env, PATH: condaActivatedPath(prefix, process.env.PATH, platform) }
-    : undefined
-}
-
 const failureMessage = (tool: string, env: DiscoveredInterpreter, error: unknown): Error => {
   const detail = error instanceof Error ? error.message : String(error)
   return new Error(`Could not list packages in ${env.label} (${tool} failed: ${detail})`)
@@ -222,7 +210,7 @@ export const listEnvPackages = async (
   try {
     ;({ stdout } = await exec(rscript, rListPackagesArgs(), {
       ...options,
-      env: condaRSpawnEnv(rscript, platform)
+      env: rProcessEnvironment(process.env, windowsCondaPrefixForR(rscript, platform), platform)
     }))
   } catch (error) {
     throw failureMessage('Rscript', env, error)

@@ -9417,12 +9417,38 @@ describe('SettingsService: claude-shared login orchestration', () => {
 })
 
 describe('Notebook protection Shell capability switch', () => {
+  it.runIf(process.platform === 'win32')(
+    'persists a mode switch after stopping notebooks and refreshes Shell without setup',
+    async () => {
+      const calls: string[] = []
+      const service = new SettingsService({
+        configRoot: storageRoot,
+        repository,
+        withNotebookFolderPolicyChange: async (commit) => {
+          calls.push('stop')
+          await commit()
+        },
+        refreshNotebookShellCapabilities: async () => {
+          calls.push('refresh')
+        }
+      })
+      await service.setNotebookNetwork({ selectWindowsProtection: false })
+      expect(calls).toEqual(['stop', 'refresh'])
+      expect(
+        await new SettingsService({ configRoot: storageRoot, repository }).getNotebookNetwork()
+      ).toMatchObject({ windowsProtectionEnabled: false })
+    }
+  )
   it('refreshes existing conversations after setup and removal before returning status', async () => {
     const calls: string[] = []
     let protectedMode = false
     const service = new SettingsService({
       configRoot: storageRoot,
       repository,
+      withNotebookFolderPolicyChange: async (commit) => {
+        calls.push('stop')
+        await commit()
+      },
       installNotebookNetwork: async () => {
         protectedMode = true
         calls.push('install')
@@ -9445,7 +9471,61 @@ describe('Notebook protection Shell capability switch', () => {
     })
     await service.installNotebookNetwork()
     await service.removeNotebookNetwork()
-    expect(calls).toEqual(['install', 'refresh-7.6', 'status', 'remove', 'refresh-5.1', 'status'])
+    expect(calls).toEqual([
+      'stop',
+      'install',
+      'refresh-7.6',
+      'status',
+      'stop',
+      'remove',
+      'refresh-5.1',
+      'status'
+    ])
+    expect((await service.getNotebookNetwork()).windowsProtectionEnabled).toBeUndefined()
+  })
+
+  it('retains standard execution after removal even if Shell refresh fails', async () => {
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      withNotebookFolderPolicyChange: (commit) => commit(),
+      removeNotebookNetwork: async () => ({ cancelled: false }),
+      refreshNotebookShellCapabilities: async () => {
+        throw new Error('refresh failed')
+      }
+    })
+    await repository.setNotebookNetwork({
+      ...(await service.getNotebookNetwork()),
+      windowsProtectionEnabled: true
+    })
+    await expect(service.removeNotebookNetwork()).rejects.toThrow('refresh failed')
+    const restarted = new SettingsService({ configRoot: storageRoot, repository })
+    expect(await restarted.getNotebookNetwork()).toMatchObject({ windowsProtectionEnabled: false })
+  })
+
+  it('restores standard on cancelled setup before releasing the Notebook execution fence', async () => {
+    const shutdown = vi.fn(async (commit: () => Promise<void>) => {
+      await commit()
+      expect((await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled).toBe(false)
+    })
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      withNotebookFolderPolicyChange: shutdown,
+      installNotebookNetwork: async () => {
+        expect((await repository.getSettings()).notebookNetwork?.windowsProtectionEnabled).toBe(
+          true
+        )
+        return { cancelled: true }
+      },
+      getNotebookNetworkStatus: async () => ({ kind: 'standard' })
+    })
+    await repository.setNotebookNetwork({
+      ...(await service.getNotebookNetwork()),
+      windowsProtectionEnabled: false
+    })
+    expect(await service.installNotebookNetwork()).toMatchObject({ kind: 'standard' })
+    expect(shutdown).toHaveBeenCalledOnce()
   })
 
   it.each(['installNotebookNetwork', 'removeNotebookNetwork'] as const)(
@@ -9460,6 +9540,7 @@ describe('Notebook protection Shell capability switch', () => {
         configRoot: storageRoot,
         repository,
         [method]: operation,
+        withNotebookFolderPolicyChange: (commit) => commit(),
         refreshNotebookShellCapabilities: refresh,
         getNotebookNetworkStatus: async () => ({
           kind: 'setupRequired',
@@ -9481,6 +9562,7 @@ describe('Notebook protection Shell capability switch', () => {
         configRoot: storageRoot,
         repository,
         [method]: async () => ({ cancelled: false }),
+        withNotebookFolderPolicyChange: (commit) => commit(),
         refreshNotebookShellCapabilities: async () => {
           throw new Error('refresh failed')
         },

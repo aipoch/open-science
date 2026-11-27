@@ -82,7 +82,6 @@ export const NotebookNetworkAccessSummary = ({
         </span>
       }
       aria-label={t('Notebook network access')}
-      data-settings-anchor="network.domains"
       data-testid={testId}
     >
       <ul className="divide-y divide-border rounded-xl border border-border px-3">

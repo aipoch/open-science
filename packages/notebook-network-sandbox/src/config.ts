@@ -110,14 +110,21 @@ const containsOwnershipState = (root: string): boolean => {
   }
 }
 
-const resolveWindowsOwnershipRoot = (environment: NodeJS.ProcessEnv, packaged: boolean): string => {
+const resolveWindowsOwnershipRoot = (
+  environment: NodeJS.ProcessEnv,
+  packaged: boolean,
+  inspectOwnership = true
+): string => {
   const home = environment.USERPROFILE ?? environment.HOME ?? homedir()
   const isolatedRoot =
     resolveConfigRootOverride(packaged, environment) ??
     (!packaged ? resolveBootstrapConfigRoot(home, false, environment) : undefined)
-  if (isolatedRoot) return join(isolatedRoot, 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
   const base = environment.LOCALAPPDATA ?? join(home, 'AppData', 'Local')
-  const current = join(base, 'Aipoch', 'Open-Science', 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
+  const applicationRoot = isolatedRoot ?? join(base, 'Aipoch', 'Open-Science')
+  // A damaged protection tree must not block ordinary Job Object supervision.
+  if (!inspectOwnership) return join(applicationRoot, 'notebook-supervision')
+  const current = join(applicationRoot, 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
+  if (isolatedRoot) return current
   const legacy = join(base, 'Aipoch', 'OpenScience', 'notebook-sandbox', WINDOWS_INSTALLATION_ID)
   const hasLegacy = containsOwnershipState(legacy)
   if (hasLegacy && containsOwnershipState(current)) {
@@ -140,8 +147,13 @@ const createRuntimeConfig = (
   for (const domain of policy.deniedDomains) validateDomainPattern(domain, true)
   const resourceRoot = options.resources.root
   const installationId = WINDOWS_INSTALLATION_ID
-  const windowsOwnershipRoot = resolveWindowsOwnershipRoot(environment, options.packaged ?? true)
+  const windowsOwnershipRoot = resolveWindowsOwnershipRoot(
+    environment,
+    options.packaged ?? true,
+    options.windowsProtectionEnabled !== false
+  )
   return {
+    windowsProtectionEnabled: options.windowsProtectionEnabled,
     mode: policy.mode,
     strictWhitelist: policy.strictWhitelist,
     trustedPrivateDestinations: policy.trustedPrivateDestinations,

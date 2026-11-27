@@ -280,6 +280,7 @@ describe('RuntimesPanel', () => {
   )
 
   it.each<NotebookNetworkStatus>([
+    { kind: 'standard' },
     { kind: 'setupRequired', platform: 'win32', reasons: ['windowsProfileMissing'] },
     { kind: 'checking' },
     { kind: 'error', reason: 'runtimeFailure' },
@@ -308,6 +309,18 @@ describe('RuntimesPanel', () => {
     await click(button ?? null)
     expect(container.textContent).not.toContain('Enable protected mode before verifying R access.')
     expect(authorize).not.toHaveBeenCalled()
+    if (status.kind === 'standard' || status.kind === 'setupRequired') {
+      expect(button).toBeUndefined()
+      expect(
+        Array.from(container.querySelectorAll('details button')).some(
+          (button) => button.textContent === 'Remove R access'
+        )
+      ).toBe(true)
+      expect(container.textContent).not.toContain(
+        'R access verification requires network protection'
+      )
+      return
+    }
     expect(button?.disabled).toBe(true)
     expect(container.textContent).toContain(
       'R access verification requires network protection to be ready.'
@@ -348,7 +361,7 @@ describe('RuntimesPanel', () => {
       Array.from(container.querySelectorAll('button')).find(
         (element) => element.textContent === name
       )!
-    expect(findButton('Authorize and verify').disabled).toBe(true)
+    expect(findButton('Authorize and verify')).toBeUndefined()
     getStatus.mockResolvedValue({ kind: 'ready', warnings: [] })
     await click(findButton('Recheck'))
     expect(findButton('Authorize and verify').disabled).toBe(false)

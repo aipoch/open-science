@@ -651,6 +651,10 @@ const RuntimesPanel = ({
                 'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
               )
             : undefined)
+    const showRevocationOnly =
+      networkStatus.kind === 'standard' ||
+      (networkStatus.kind === 'setupRequired' && networkStatus.platform === 'win32')
+    const AccessSection = showRevocationOnly ? 'details' : 'div'
 
     return (
       <div
@@ -778,24 +782,32 @@ const RuntimesPanel = ({
         ) : null}
 
         {(external || defaultManaged) && language === 'r' && window.api.platform === 'win32' ? (
-          <div className="mt-3 border-t border-border pt-3">
-            <p className="text-xs text-muted-foreground">
-              {t(
-                "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required."
-              )}
-            </p>
+          <AccessSection className="mt-3 border-t border-border pt-3">
+            {showRevocationOnly ? (
+              <summary className="cursor-pointer text-xs text-muted-foreground">
+                {t('Notebook network protection')}
+              </summary>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "Allow the sandbox to list names in this R installation's parent folders. Other file contents remain protected. Administrator approval may be required."
+                )}
+              </p>
+            )}
             <div className="mt-2 flex flex-wrap gap-2">
-              <RuntimeDisabledHint reason={verifyHint} label={t('Authorize and verify')}>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={Boolean(verifyHint)}
-                  onClick={() => void setSandboxAccess(env, true)}
-                >
-                  {t('Authorize and verify')}
-                </Button>
-              </RuntimeDisabledHint>
+              {!showRevocationOnly ? (
+                <RuntimeDisabledHint reason={verifyHint} label={t('Authorize and verify')}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={Boolean(verifyHint)}
+                    onClick={() => void setSandboxAccess(env, true)}
+                  >
+                    {t('Authorize and verify')}
+                  </Button>
+                </RuntimeDisabledHint>
+              ) : null}
               <RuntimeDisabledHint reason={busyHint} label={t('Remove R access')}>
                 <Button
                   type="button"
@@ -808,7 +820,7 @@ const RuntimesPanel = ({
                 </Button>
               </RuntimeDisabledHint>
             </div>
-            {networkStatus.kind !== 'ready' ? (
+            {!showRevocationOnly && networkStatus.kind !== 'ready' ? (
               <p className="mt-2 text-xs text-muted-foreground">
                 {t(
                   'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
@@ -820,7 +832,7 @@ const RuntimesPanel = ({
                 {runtimeAccessMessage[env.envId]}
               </p>
             ) : null}
-          </div>
+          </AccessSection>
         ) : null}
 
         {external && enabled ? (
