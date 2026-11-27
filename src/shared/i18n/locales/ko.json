@@ -7826,6 +7826,8 @@
     "Request failed": "요청 실패",
     "Model request failed": "모델 요청에 실패했습니다",
     "The model provider could not complete the request. Retry or check the model provider settings.": "모델 제공업체가 요청을 완료하지 못했습니다. 다시 시도하거나 모델 제공업체 설정을 확인하세요.",
+    "Image resolution is too high": "이미지 해상도가 너무 높습니다",
+    "Resize the image to 64 megapixels or less and send it again.": "이미지를 6,400만 화소 이하로 줄인 후 다시 보내세요.",
     "The input is too long": "입력 내용이 너무 깁니다",
     "Shorten the conversation or remove some attachments, then retry.": "대화 내용을 줄이거나 일부 첨부 파일을 제거한 후 다시 시도하세요.",
     "Check your credentials, model and account settings, then retry.": "자격 증명, 모델 및 계정 설정을 확인한 후 다시 시도하세요.",

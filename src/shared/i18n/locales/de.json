@@ -7992,6 +7992,8 @@
     "Request failed": "Anfrage fehlgeschlagen",
     "Model request failed": "Modellanfrage fehlgeschlagen",
     "The model provider could not complete the request. Retry or check the model provider settings.": "Der Modellanbieter konnte die Anfrage nicht abschließen. Versuchen Sie es erneut oder prüfen Sie die Anbietereinstellungen.",
+    "Image resolution is too high": "Die Bildauflösung ist zu hoch",
+    "Resize the image to 64 megapixels or less and send it again.": "Verkleinern Sie das Bild auf höchstens 64 Megapixel und senden Sie es erneut.",
     "The input is too long": "Die Eingabe ist zu lang",
     "Shorten the conversation or remove some attachments, then retry.": "Kürzen Sie die Konversation oder entfernen Sie einige Anhänge und versuchen Sie es erneut.",
     "Check your credentials, model and account settings, then retry.": "Prüfen Sie Ihre Zugangsdaten sowie die Modell- und Kontoeinstellungen und versuchen Sie es erneut.",

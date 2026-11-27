@@ -4,6 +4,8 @@ const overflow =
   /media[_\s-]?unstrippable|request[_\s-]?(?:entity[_\s-]?)?too[_\s-]?large|maximum context length|context[_\s-]?(?:length|window)[_\s-]?exceeded|prompt is too long/i
 
 export const recognizeInput: Recognizer = ({ status, code, responseMessage, text = '' }) => {
+  if (code === 'IMAGE_PIXEL_LIMIT_EXCEEDED')
+    return { category: 'input', reason: 'input/image-pixel-limit', diagnostics: {} }
   if (
     status === 413 ||
     code === 'ContextOverflowError' ||

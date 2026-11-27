@@ -7828,6 +7828,8 @@
     "Request failed": "リクエストに失敗しました",
     "Model request failed": "モデルへのリクエストに失敗しました",
     "The model provider could not complete the request. Retry or check the model provider settings.": "モデルプロバイダーがリクエストを完了できませんでした。再試行するか、モデルプロバイダーの設定を確認してください。",
+    "Image resolution is too high": "画像の解像度が高すぎます",
+    "Resize the image to 64 megapixels or less and send it again.": "画像を6400万画素以下に縮小して、もう一度送信してください。",
     "The input is too long": "入力内容が長すぎます",
     "Shorten the conversation or remove some attachments, then retry.": "会話を短くするか、一部の添付ファイルを削除してから、再試行してください。",
     "Check your credentials, model and account settings, then retry.": "認証情報、モデル、アカウントの設定を確認してから再試行してください。",

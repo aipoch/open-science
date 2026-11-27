@@ -8309,6 +8309,8 @@
     "Request failed": "Не удалось выполнить запрос",
     "Model request failed": "Запрос к модели не выполнен",
     "The model provider could not complete the request. Retry or check the model provider settings.": "Поставщик модели не смог завершить запрос. Повторите попытку или проверьте настройки поставщика модели.",
+    "Image resolution is too high": "Слишком высокое разрешение изображения",
+    "Resize the image to 64 megapixels or less and send it again.": "Уменьшите изображение до 64 мегапикселей или меньше и отправьте его ещё раз.",
     "The input is too long": "Введённые данные слишком длинные",
     "Shorten the conversation or remove some attachments, then retry.": "Сократите диалог или удалите часть вложений, затем повторите попытку.",
     "Check your credentials, model and account settings, then retry.": "Проверьте учётные данные, настройки модели и аккаунта, затем повторите попытку.",
