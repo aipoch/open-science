@@ -1,5 +1,6 @@
 export {
   resolveMessagesBaseUrl,
+  resolveMessagesUrl,
   normalizeMessagesRootUrl,
   appendChatCompletionsPath,
   resolveChatCompletionsBaseUrl,

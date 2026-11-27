@@ -102,10 +102,7 @@ class ProviderRuntimeProjectionOwner {
     if (isXaiSubscriptionProvider(provider.type))
       return ['messages', 'chat-completions', 'responses']
     if (isLabProvider(provider.type)) {
-      return providerEndpoints(
-        provider,
-        activeModel ?? provider.model ?? provider.fetchedModels?.[0]
-      )
+      return providerEndpoints(provider, activeModel ?? this.resolveActiveModel(provider))
     }
     if (provider.type === 'official' && provider.vendorId) {
       const catalog = resolveOfficialModelCatalog(provider)
@@ -191,12 +188,29 @@ class ProviderRuntimeProjectionOwner {
     selection: RuntimeProviderModelSelection,
     framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget {
+    const implicitModel =
+      selection.kind !== 'required' &&
+      (selection.kind !== 'configured' || !selection.requestedModel)
+    if (isLabProvider(storedProvider.type) && implicitModel && !storedProvider.model) {
+      const model = this.availableModels(storedProvider).find(
+        (candidate) =>
+          isModelStreamingCompatible(framework.id, storedProvider.modelStreaming?.[candidate]) &&
+          isProviderUsableByFramework(
+            { type: 'lab', apiEndpoints: providerEndpoints(storedProvider, candidate) },
+            framework
+          )
+      )
+      if (model)
+        return this.withFramework(
+          this.resolveProviderTarget(storedProvider, { kind: 'required', model }),
+          framework
+        )
+    }
     // Native Codex owns an omitted default; the built-in Agent must pin its model before launch.
     const modelSelection =
       framework.id === 'open-science-agent' &&
       isCodexSubscriptionProvider(storedProvider.type) &&
-      selection.kind !== 'required' &&
-      (selection.kind !== 'configured' || !selection.requestedModel)
+      implicitModel
         ? {
             kind: 'configured' as const,
             requestedModel: storedProvider.model ?? defaultVendorModel('openai')
@@ -402,7 +416,7 @@ class ProviderRuntimeProjectionOwner {
       }
     }
     if (isLabProvider(provider.type)) {
-      const model = modelOverride ?? provider.model ?? provider.fetchedModels?.[0]
+      const model = modelOverride ?? this.resolveActiveModel(provider)
       if (!provider.baseUrl) throw new Error('The Lab provider has no server address.')
       const capabilities = readLabModelCapabilities(provider.modelCapabilities?.[model ?? ''])
       return {

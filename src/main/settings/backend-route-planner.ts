@@ -41,6 +41,7 @@ import {
   normalizeMessagesRootUrl,
   resolveChatCompletionsUrl,
   resolveChatCompletionsBaseUrl,
+  resolveMessagesUrl,
   type ResponsesNamespacedTool
 } from '@aipoch/providers/protocol'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
@@ -136,12 +137,19 @@ const piWireFor = (
     return { wire: 'chat-completions', oauth: 'xai' }
   }
   if (isLabProvider(target.provider.type)) {
-    const wire = preferredEndpoint(target.apiEndpoints, ['responses', 'chat-completions'])
+    const wire = preferredEndpoint(target.apiEndpoints, [
+      'responses',
+      'chat-completions',
+      'messages'
+    ])
     const base = target.provider.baseUrl?.replace(/\/+$/u, '')
     if (!wire || !base) return undefined
     return {
       wire,
-      endpoint: `${base}/${wire === 'responses' ? 'responses' : 'chat/completions'}`,
+      endpoint:
+        wire === 'messages'
+          ? resolveMessagesUrl(base)
+          : `${base}/${wire === 'responses' ? 'responses' : 'chat/completions'}`,
       oauth: 'lab'
     }
   }

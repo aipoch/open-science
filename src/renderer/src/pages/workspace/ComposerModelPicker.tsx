@@ -15,11 +15,13 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { formatLabModelMultiplier } from '@/lib/lab-model-pricing'
 import { cn } from '@/lib/utils'
 import { ProviderKindIcon } from '../settings/provider-icons'
 import { providerKindKey } from '../settings/provider-form-value'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
+import { LAB_PROVIDER_ID } from '../../../../shared/lab'
 import {
   buildConfiguredModelCatalog,
   type ConfiguredModelCatalogEntry
@@ -40,6 +42,8 @@ const triggerClassName =
 
 // Label for an option: the model name, or the provider name when the option carries no concrete model.
 const optionLabel = (option: Pick<ConfiguredModelCatalogEntry, 'label'>): string => option.label
+
+const menuHintClassName = 'shrink-0 text-[11px] tabular-nums text-text-300'
 
 // One radio row shape shared by both submenus: menuitemradio semantics, bold + trailing Check when
 // picked, optional leading icon and trailing hint. The three call sites (default effort, effort
@@ -65,7 +69,7 @@ const MenuRadioItem = ({
   >
     {leading}
     <span className="min-w-0 flex-1 truncate">{children}</span>
-    {hint ? <span className="text-[11px] text-text-300">{hint}</span> : null}
+    {hint ? <span className={menuHintClassName}>{hint}</span> : null}
     {checked ? (
       <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
     ) : null}
@@ -92,6 +96,7 @@ const ComposerModelPicker = ({
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
+  const labModels = useSettingsStore((state) => state.lab?.models)
   const activeProviderId = useSettingsStore((state) => state.activeProviderId)
   const claudeSubscriptionProviderId = useSettingsStore(
     (state) => state.claudeSubscriptionProviderId
@@ -186,6 +191,8 @@ const ComposerModelPicker = ({
           label: selectedProvider.name
         }
       : undefined)
+
+  const labPricingByModel = new Map(labModels?.map((model) => [model.id, model.pricing]))
 
   // Group options by provider so official vendors show their catalog under one heading.
   const groups = providers
@@ -383,11 +390,20 @@ const ComposerModelPicker = ({
               return (
                 <DropdownMenuGroup key={group.provider.id}>
                   <DropdownMenuLabel>{group.provider.name}</DropdownMenuLabel>
-                  {compatible ? (
+                  {compatible || group.provider.id === LAB_PROVIDER_ID ? (
                     group.options.map((option) => {
                       const isActive =
                         option.providerId === selectedProviderId && option.model === activeKeyModel
                       const optionCompatible = option.selectable
+                      const pricing =
+                        option.providerId === LAB_PROVIDER_ID
+                          ? labPricingByModel.get(option.model)
+                          : undefined
+                      const pricingHint = pricing
+                        ? pricing.free
+                          ? t('Free')
+                          : formatLabModelMultiplier(pricing.multiplier)
+                        : undefined
 
                       if (!optionCompatible) {
                         const optionReason = modelUnavailableReason(
@@ -414,6 +430,9 @@ const ComposerModelPicker = ({
                                   <span className="min-w-0 flex-1 truncate">
                                     {optionLabel(option)}
                                   </span>
+                                  {pricingHint ? (
+                                    <span className={menuHintClassName}>{pricingHint}</span>
+                                  ) : null}
                                   <span className="text-xs">{t('unsupported')}</span>
                                 </DropdownMenuItem>
                               </TooltipTrigger>
@@ -429,6 +448,7 @@ const ComposerModelPicker = ({
                         <MenuRadioItem
                           key={`${option.providerId}:${option.model}`}
                           checked={isActive}
+                          hint={pricingHint}
                           onSelect={() =>
                             onChange({
                               providerId: option.providerId,

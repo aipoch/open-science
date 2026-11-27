@@ -31,9 +31,11 @@ export const buildLabProviderRecord = (
     .slice(0, LAB_RESOURCE_LIMITS.maxModels)
     .map((model) => ({ ...model, id: labModelIdFromBootstrap(model.id) }))
   const fetchedModels = models.map(({ id }) => id)
-  const defaultModel = bootstrap.default_model_id
-    ? labModelIdFromBootstrap(bootstrap.default_model_id)
-    : undefined
+  const defaultModel = models.find(
+    (model) =>
+      model.id === labModelIdFromBootstrap(bootstrap.default_model_id ?? '') &&
+      model.endpoints.length > 0
+  )?.id
   const modelProtocols = Object.fromEntries(models.map(({ id, endpoints }) => [id, endpoints]))
   const modelCapabilities: Record<string, LabModelCapabilities> = Object.fromEntries(
     models.flatMap((model) => (model.capabilities ? [[model.id, model.capabilities] as const] : []))
@@ -51,7 +53,7 @@ export const buildLabProviderRecord = (
     labCatalogToken: randomUUID(),
     apiEndpoints: [...new Set(models.flatMap(({ endpoints }) => endpoints))],
     fetchedModels,
-    ...(defaultModel && fetchedModels.includes(defaultModel) ? { model: defaultModel } : {}),
+    ...(defaultModel ? { model: defaultModel } : {}),
     ...(Object.keys(modelProtocols).length > 0 ? { modelProtocols } : {}),
     ...(Object.keys(modelCapabilities).length > 0 ? { modelCapabilities } : {}),
     ...(Object.keys(modelStreaming).length > 0 ? { modelStreaming } : {})

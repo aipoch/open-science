@@ -59,11 +59,17 @@ export class LabApiError extends Error {
   }
 }
 
+type LabModelPricing = Readonly<{
+  multiplier: number
+  free: boolean
+}>
+
 export type LabModelSummary = Readonly<{
   id: string
   name: string
-  protocols: readonly ModelProtocol[]
+  protocols: readonly string[]
   streaming: boolean
+  pricing?: LabModelPricing
 }>
 
 export type LabView = Readonly<{
@@ -76,57 +82,16 @@ export type LabView = Readonly<{
   deviceId?: string
   modelCount?: number
   models?: readonly LabModelSummary[]
-  usage?: LabUsage
+  usage?: LabUsage | null
   error?: Readonly<{ code: LabErrorCode; message?: string }>
   sessionExpiresAt?: number
 }>
 
-export type LabUsageQuota = Readonly<{
-  limit: number
-  used: number
-  remaining: number
-  unlimited: boolean
-}>
-
-export type LabUsageAmount = Readonly<{
-  limit: number
-  used: number
-  remaining: number
-}>
-
-export type LabUsageToken = Readonly<{
-  available: boolean
-  reason?: string
-  name?: string
-  status?: string
-  expiresAt?: string | null
-  quota?: LabUsageQuota
-}>
-
-export type LabUsageOrg = Readonly<{
-  available: boolean
-  reason?: string
-  unlimited: boolean
-  quota?: LabUsageQuota
-  stale: boolean
-  syncedAt?: string | null
-}>
-
+// All amounts are in points. A null member allowance means the member has no individual cap.
 export type LabUsage = Readonly<{
-  available: boolean
-  reason?: string
-  token: LabUsageToken
-  org: LabUsageOrg
-  effective?: Readonly<{ remaining: number; limitedBy: string }>
-  display?: Readonly<{
-    perUnit: number
-    exchangeRate: number
-    currency: string
-    cny: Readonly<{ token?: LabUsageAmount; org?: LabUsageAmount }>
-    usd: Readonly<{ token?: LabUsageAmount; org?: LabUsageAmount }>
-  }>
-  fetchedAt?: string | null
-  stale: boolean
+  organizationBalance: number
+  memberAllowance: Readonly<{ limit: number; remaining: number }> | null
+  availablePoints: number
 }>
 
 export type SetLabServerRequest = Readonly<{ serverUrl: string }>
@@ -172,8 +137,7 @@ const positiveInteger = (value: unknown): number | undefined => {
   return Math.floor(value)
 }
 
-// A bootstrap model entry as returned by GET /api/me/bootstrap. Only the fields this client uses
-// are typed; unknown fields are ignored.
+// A model entry parsed from GET /api/me/bootstrap. Only the fields this client uses are kept.
 export type LabBootstrapModel = Readonly<{
   id: string
   name?: string
@@ -183,6 +147,7 @@ export type LabBootstrapModel = Readonly<{
   enabled?: boolean
   available?: boolean
   capabilities?: LabModelCapabilities
+  pricing?: LabModelPricing
 }>
 
 export type LabBootstrap = Readonly<{
@@ -227,18 +192,27 @@ export const labModelWireId = (modelId: string): string =>
 
 export const labModelLabel = (modelId: string): string => labModelWireId(modelId)
 
-// Legacy bootstrap catalogs may omit protocol metadata. An explicit declaration must match a
-// route the gateway can serve.
+// A missing declaration from a legacy server defaults to Chat Completions.
+const labDeclaredProtocols = (model: LabBootstrapModel): string[] =>
+  model.protocol === undefined && model.protocols === undefined
+    ? ['chat-completions']
+    : [
+        ...new Set(
+          [...(model.protocols ?? []), model.protocol ?? '']
+            .map((protocol) => protocol.trim().toLowerCase())
+            .filter(Boolean)
+        )
+      ]
+
 export const labProtocolsToEndpoints = (model: LabBootstrapModel): ModelProtocol[] => {
-  if (model.protocol === undefined && model.protocols === undefined) return ['chat-completions']
-  const declared = [...(model.protocols ?? []), ...(model.protocol ? [model.protocol] : [])]
   const endpoints: ModelProtocol[] = []
-  for (const protocol of declared) {
-    const normalized = protocol.toLowerCase()
+  for (const normalized of labDeclaredProtocols(model)) {
     if (normalized === 'openai' || normalized === 'chat-completions') {
       if (!endpoints.includes('chat-completions')) endpoints.push('chat-completions')
     } else if (normalized === 'openai-response' || normalized === 'responses') {
       if (!endpoints.includes('responses')) endpoints.push('responses')
+    } else if (normalized === 'anthropic' || normalized === 'messages') {
+      if (!endpoints.includes('messages')) endpoints.push('messages')
     }
   }
   return endpoints
@@ -247,11 +221,9 @@ export const labProtocolsToEndpoints = (model: LabBootstrapModel): ModelProtocol
 export const labAvailableModels = (
   models: readonly LabBootstrapModel[]
 ): Array<LabBootstrapModel & { endpoints: ModelProtocol[] }> =>
-  models.flatMap((model) => {
-    if (model.enabled === false || model.available === false) return []
-    const endpoints = labProtocolsToEndpoints(model)
-    return endpoints.length > 0 ? [{ ...model, endpoints }] : []
-  })
+  models
+    .filter((model) => model.enabled !== false && model.available !== false)
+    .map((model) => ({ ...model, endpoints: labProtocolsToEndpoints(model) }))
 
 export const isLabDeploymentUrl = (serverUrl: string, candidate: string): boolean => {
   try {
@@ -285,94 +257,46 @@ export const joinLabBaseUrl = (serverUrl: string, modelBaseUrl: string | undefin
   return resolved.toString().replace(/\/+$/u, '')
 }
 
-const finiteNumber = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isFinite(value) ? value : undefined
+const isSafeInteger = (value: unknown): value is number => Number.isSafeInteger(value)
 
-const readUsageQuota = (raw: unknown): LabUsageQuota | undefined => {
-  if (!isRecord(raw)) return undefined
-  const limit = finiteNumber(raw.limit)
-  const used = finiteNumber(raw.used)
-  const remaining = finiteNumber(raw.remaining)
-  if (limit === undefined || used === undefined || remaining === undefined) return undefined
-  return { limit, used, remaining, unlimited: raw.unlimited === true }
-}
-
-const readUsageAmount = (raw: unknown): LabUsageAmount | undefined => {
-  if (!isRecord(raw)) return undefined
-  const limit = finiteNumber(raw.limit)
-  const used = finiteNumber(raw.used)
-  const remaining = finiteNumber(raw.remaining)
-  if (limit === undefined || used === undefined || remaining === undefined) return undefined
-  return { limit, used, remaining }
-}
-
-const readUsageAmounts = (
-  raw: unknown
-): Readonly<{ token?: LabUsageAmount; org?: LabUsageAmount }> => {
-  if (!isRecord(raw)) return {}
-  const token = readUsageAmount(raw.token)
-  const org = readUsageAmount(raw.org)
-  return { ...(token ? { token } : {}), ...(org ? { org } : {}) }
-}
-
-// Keeps the optional usage payload render-safe: malformed nested values are omitted rather than
-// making the whole Lab connection fail. The server's `available:false` state is preserved.
 export const readLabUsage = (raw: unknown): LabUsage | undefined => {
-  if (!isRecord(raw)) return undefined
-  const tokenRecord = isRecord(raw.token) ? raw.token : {}
-  const orgRecord = isRecord(raw.org) ? raw.org : {}
-  const tokenQuota = readUsageQuota(tokenRecord.quota)
-  const orgQuota = readUsageQuota(orgRecord.quota)
-  const token = {
-    available: tokenRecord.available === true,
-    ...(typeof tokenRecord.reason === 'string' ? { reason: tokenRecord.reason } : {}),
-    ...(typeof tokenRecord.name === 'string' ? { name: tokenRecord.name } : {}),
-    ...(typeof tokenRecord.status === 'string' ? { status: tokenRecord.status } : {}),
-    ...(tokenRecord.expires_at === null || typeof tokenRecord.expires_at === 'string'
-      ? { expiresAt: tokenRecord.expires_at }
-      : {}),
-    ...(tokenQuota ? { quota: tokenQuota } : {})
+  if (
+    !isRecord(raw) ||
+    !isRecord(raw.org_wallet) ||
+    !isRecord(raw.member_allowance) ||
+    !isRecord(raw.effective)
+  ) {
+    return undefined
   }
-  const org = {
-    available: orgRecord.available === true,
-    ...(typeof orgRecord.reason === 'string' ? { reason: orgRecord.reason } : {}),
-    unlimited: orgRecord.unlimited === true,
-    ...(orgQuota ? { quota: orgQuota } : {}),
-    stale: orgRecord.stale === true,
-    ...(orgRecord.synced_at === null || typeof orgRecord.synced_at === 'string'
-      ? { syncedAt: orgRecord.synced_at }
-      : {})
+  const { scale } = raw
+  const { balance_mp: balance } = raw.org_wallet
+  const { remaining_mp: available } = raw.effective
+  const { unlimited, limit_mp: limit, remaining_mp: remaining } = raw.member_allowance
+
+  if (
+    !isSafeInteger(scale) ||
+    scale <= 0 ||
+    !isSafeInteger(balance) ||
+    !isSafeInteger(available) ||
+    available < 0
+  ) {
+    return undefined
   }
-  const effectiveRaw = isRecord(raw.effective) ? raw.effective : undefined
-  const effectiveRemaining = finiteNumber(effectiveRaw?.remaining)
-  const displayRaw = isRecord(raw.display) ? raw.display : undefined
-  const display =
-    displayRaw &&
-    finiteNumber(displayRaw.per_unit) !== undefined &&
-    finiteNumber(displayRaw.exchange_rate) !== undefined &&
-    typeof displayRaw.currency === 'string'
-      ? {
-          perUnit: finiteNumber(displayRaw.per_unit)!,
-          exchangeRate: finiteNumber(displayRaw.exchange_rate)!,
-          currency: displayRaw.currency,
-          cny: readUsageAmounts(displayRaw.cny),
-          usd: readUsageAmounts(displayRaw.usd)
-        }
-      : undefined
-  return {
-    available: raw.available === true,
-    ...(typeof raw.reason === 'string' ? { reason: raw.reason } : {}),
-    token,
-    org,
-    ...(effectiveRemaining !== undefined && typeof effectiveRaw?.limited_by === 'string'
-      ? { effective: { remaining: effectiveRemaining, limitedBy: effectiveRaw.limited_by } }
-      : {}),
-    ...(display ? { display } : {}),
-    ...(raw.fetched_at === null || typeof raw.fetched_at === 'string'
-      ? { fetchedAt: raw.fetched_at }
-      : {}),
-    stale: raw.stale === true
+
+  const usage = { organizationBalance: balance / scale, availablePoints: available / scale }
+  if (unlimited === true && limit === null && remaining === null) {
+    return { ...usage, memberAllowance: null }
   }
+  if (
+    unlimited !== false ||
+    !isSafeInteger(limit) ||
+    limit < 0 ||
+    !isSafeInteger(remaining) ||
+    remaining < 0
+  ) {
+    return undefined
+  }
+  return { ...usage, memberAllowance: { limit: limit / scale, remaining: remaining / scale } }
 }
 
 // Narrows a Lab capability document to the values this client actually consumes. Unknown fields
@@ -423,8 +347,9 @@ export const labModelSummaries = (
       Object.freeze({
         id: labModelIdFromBootstrap(model.id),
         name: model.name?.trim() || model.id,
-        protocols: Object.freeze(model.endpoints),
-        streaming: model.streaming !== false
+        protocols: Object.freeze(labDeclaredProtocols(model)),
+        streaming: model.streaming !== false,
+        ...(model.pricing ? { pricing: model.pricing } : {})
       })
     )
   )
@@ -471,6 +396,12 @@ export const mapLabGatewayError = (
         message:
           'The model has no available upstream channel right now (it may not be published or its channel may be disabled).'
       }
+    case 'INSUFFICIENT_POINTS':
+      return { code, message: 'Your organization has insufficient Lab points.' }
+    case 'MEMBER_LIMIT_REACHED':
+      return { code, message: 'You have reached your Lab points allowance for this period.' }
+    case 'MODEL_NOT_PRICED':
+      return { code, message: 'This Lab model does not have pricing configured.' }
     case 'insufficient_quota':
       return { code, message: 'The upstream subscription or quota is exhausted.' }
     case 'context_length_exceeded':

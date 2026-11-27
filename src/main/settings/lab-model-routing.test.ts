@@ -108,6 +108,29 @@ describe('Lab provider model routing', () => {
     ])
   })
 
+  it('chooses an implicit Lab model compatible with the Agent', () => {
+    const stored = buildLabProviderRecord('https://lab.example.com', {
+      user: { id: 'usr_1' },
+      device: { id: 'dev_1' },
+      models: [
+        { id: 'gemini', protocol: 'gemini' },
+        { id: 'haiku', protocol: 'anthropic' },
+        { id: 'responses', protocol: 'openai-response' }
+      ]
+    })
+    const projection = new ProviderRuntimeProjectionOwner()
+    const framework = { id: 'codex', supportedApiTypes: ['responses'] } as const
+    expect(
+      projection.resolveRuntimeTarget(stored, { kind: 'configured' }, framework)
+    ).toMatchObject({
+      effectiveModel: 'lab:responses',
+      frameworkCompatible: true
+    })
+    expect(
+      projection.resolveRuntimeTarget(stored, { kind: 'required', model: 'lab:haiku' }, framework)
+    ).toMatchObject({ effectiveModel: 'lab:haiku', frameworkCompatible: false })
+  })
+
   it('rejects a model gateway outside the configured deployment', () => {
     expect(() =>
       buildLabProviderRecord('https://lab.example.com', {

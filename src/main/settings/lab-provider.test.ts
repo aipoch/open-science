@@ -19,7 +19,8 @@ const BOOTSTRAP: LabBootstrap = {
     },
     { id: 'plain-chat' },
     { id: 'lab:research-default', protocol: 'openai-response', streaming: false },
-    { id: 'unsupported-model', protocols: ['anthropic'] },
+    { id: 'haiku', protocols: ['anthropic'] },
+    { id: 'unsupported-model', protocols: ['gemini'] },
     { id: 'disabled-model', protocol: 'openai', enabled: false },
     { id: 'unavailable-model', protocol: 'openai', available: false }
   ],
@@ -39,14 +40,18 @@ describe('buildLabProviderRecord', () => {
     expect(record.fetchedModels).toEqual([
       'lab:research-default',
       'lab:plain-chat',
-      'lab:lab:research-default'
+      'lab:lab:research-default',
+      'lab:haiku',
+      'lab:unsupported-model'
     ])
     expect(record.modelProtocols).toMatchObject({
       'lab:research-default': ['chat-completions'],
       'lab:plain-chat': ['chat-completions'],
-      'lab:lab:research-default': ['responses']
+      'lab:lab:research-default': ['responses'],
+      'lab:haiku': ['messages'],
+      'lab:unsupported-model': []
     })
-    expect(record.apiEndpoints).toEqual(['chat-completions', 'responses'])
+    expect(record.apiEndpoints).toEqual(['chat-completions', 'responses', 'messages'])
     expect(record.modelStreaming).toEqual({ 'lab:lab:research-default': false })
   })
 
@@ -64,13 +69,27 @@ describe('buildLabProviderRecord', () => {
     }
   )
 
-  it('publishes an empty catalog when no model has a supported protocol', () => {
+  it('retains models without a desktop-compatible protocol', () => {
     const record = buildLabProviderRecord('https://lab.example.com', {
       ...BOOTSTRAP,
-      models: [{ id: 'unsupported', protocol: 'anthropic' }]
+      models: [{ id: 'unsupported', protocol: 'gemini' }]
     })
-    expect(record.fetchedModels).toEqual([])
+    expect(record.fetchedModels).toEqual(['lab:unsupported'])
+    expect(record.modelProtocols).toEqual({ 'lab:unsupported': [] })
     expect(record.apiEndpoints).toEqual([])
+  })
+
+  it('skips an unsupported model when choosing an implicit default', () => {
+    const record = buildLabProviderRecord('https://lab.example.com', {
+      ...BOOTSTRAP,
+      models: [
+        { id: 'gemini', protocol: 'gemini' },
+        { id: 'haiku', protocol: 'anthropic' }
+      ]
+    })
+    expect(
+      resolveProviderEffectiveModel({ ...record, models: record.fetchedModels }, undefined)
+    ).toBe('lab:haiku')
   })
 
   it('omits the map when no model advertises capabilities', () => {

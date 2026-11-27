@@ -7,7 +7,11 @@ import {
   type ReasoningEffortPresetSetting,
   type ReasoningEffortProfile
 } from './reasoning-effort'
-import { type ModelReasoningEffort, type OfficialVendorId } from '@aipoch/providers'
+import {
+  type ModelProtocol,
+  type ModelReasoningEffort,
+  type OfficialVendorId
+} from '@aipoch/providers'
 
 import {
   isClaudeSubscriptionProvider,
@@ -28,6 +32,7 @@ export type ProviderReasoningEffortSource = {
   reasoningEffortPreset?: ReasoningEffortPresetSetting
   localModels?: readonly LocalProviderModel[]
   manualModels?: readonly ProviderModel[]
+  modelProtocols?: Readonly<Record<string, readonly ModelProtocol[]>>
   modelCapabilities?: Readonly<Record<string, LabModelCapabilities>>
   modelReasoningEfforts?: Readonly<Record<string, readonly ModelReasoningEffort[]>>
 }
@@ -62,6 +67,8 @@ export const resolveProviderEffectiveModel = (
     return provider.model
   }
   if (isClaudeSubscriptionProvider(provider.type)) return undefined
+  if (provider.type === 'lab')
+    return availableModels.find((model) => provider.modelProtocols?.[model]?.length !== 0)
 
   return availableModels[0] ?? provider.model
 }
