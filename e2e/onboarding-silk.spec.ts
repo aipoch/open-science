@@ -71,6 +71,8 @@ test('animates only the hovered Silk card and keeps keyboard focus visually stab
   const canvas = card.locator('canvas')
   const otherCanvas = control.locator('canvas')
   const tray = card.locator('.onboarding-provider-card-actions')
+  // The dialog widens on entry. Resizing a paused canvas repaints its bitmap.
+  await waitForCardTransitions(page.getByRole('dialog'))
   const idle = await pixels(canvas)
   const otherIdle = await pixels(otherCanvas)
   await expectStableCard(card, idle)

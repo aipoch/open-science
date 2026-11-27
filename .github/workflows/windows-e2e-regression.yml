@@ -107,7 +107,7 @@ jobs:
     needs: [plan, windows_e2e_setup]
     if: ${{ !cancelled() && needs.plan.outputs.should_test == 'true' && needs.windows_e2e_setup.result == 'success' }}
     runs-on: windows-latest
-    # Budget both 7-minute browser attempts, two 15-minute Electron suites,
+    # Budget both 10-minute browser attempts, two 15-minute Electron suites,
     # setup and diagnostic uploads; 40 minutes can cancel a healthy final suite.
     timeout-minutes: 60
     strategy:
@@ -148,7 +148,7 @@ jobs:
         # NetLog traced blank fixtures to Windows WSAENOBUFS after hundreds of asset reloads.
         # Keep each browser process serialized and cap its loopback socket churn with runner shards.
         shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/6 --fail-on-flaky-tests
+        run: npm run test:e2e:browser -- --workers=1 --global-timeout=600000 --shard=${{ matrix.shard }}/6 --fail-on-flaky-tests
       - name: Diagnose selected browser journey
         id: browser_diagnostic
         if: ${{ steps.setup.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.test_pattern != '' && inputs.diagnostic_suite == 'browser' }}

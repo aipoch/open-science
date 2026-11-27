@@ -1141,19 +1141,25 @@ for (const variant of [
       await expect(warningTip).toContainText(
         'This passage is translated, but its original layout was retained in the PDF.'
       )
-      await expect(warningTip).toContainText(
-        'These source pages were kept in their original form because their links could not be remapped safely.'
-      )
+      await expect(
+        panel
+          .locator('[data-layout-failure]')
+          .getByText(
+            'These source pages were kept in their original form because their links could not be remapped safely.',
+            { exact: true }
+          )
+      ).toBeVisible()
       await page.screenshot({ path: testInfo.outputPath('retained-paragraph-tip.png') })
       await marker.focus()
       await expect(
         panel.getByRole('button', { name: 'Retranslate this paragraph', exact: true })
       ).toBeVisible()
       const calls = directRequests.length
-      await panel.getByRole('button', { name: 'Retry PDF layout', exact: true }).click()
-      await expect(
-        panel.getByRole('button', { name: 'Layout unchanged', exact: true })
-      ).toBeDisabled({ timeout: 60000 })
+      const retryLayout = panel.getByRole('button', { name: 'Retry PDF layout', exact: true })
+      await retryLayout.click()
+      await retryLayout.hover()
+      await expect(page.getByRole('tooltip')).toContainText('Layout unchanged', { timeout: 60000 })
+      await expect(retryLayout).toBeEnabled()
       expect(directRequests).toHaveLength(calls)
       await expect(first.locator('[data-pdf-translated-page] [data-pdf-text-layer]')).toContainText(
         'Cell growth'

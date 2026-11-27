@@ -412,6 +412,25 @@ const capturedBirths = [[12346, '135411000000000000']] as const
 const launcherBirth = '135411000000000001'
 const capturedTree = new Map([[12345, launcherBirth], ...capturedBirths])
 
+it('confirms Windows teardown from the captured identities when taskkill cannot confirm exit', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  vi.useFakeTimers()
+  close.mockReturnValue(new Promise(() => {}))
+  boundary.processTable.mockReturnValue([])
+  const operation = boundary.fixture(
+    { windowMode: 'hidden' },
+    async () => {
+      boundary.mainEvaluate.mockResolvedValueOnce(capturedBirths)
+    },
+    { status: 'passed', expectedStatus: 'passed', attach }
+  )
+  await vi.waitFor(() => expect(close).toHaveBeenCalled(), { timeout: 10_000 })
+  await vi.advanceTimersByTimeAsync(30_000)
+  await operation
+  expect(boundary.terminateByIdentity).toHaveBeenCalledWith(capturedTree, expect.any(Number))
+  expect(existsSync(root)).toBe(false)
+})
+
 it.each(
   [
     { name: 'all observed processes exited', complete: true, survivors: [], succeeds: true },
