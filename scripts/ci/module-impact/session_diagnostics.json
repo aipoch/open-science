@@ -22,7 +22,8 @@
     "src/main/session-diagnostics/projection.ts",
     "src/main/session-diagnostics/worker-entry.ts",
     "src/main/session-diagnostics/resources.ts",
-    "src/main/session-diagnostics/resources.test.ts"
+    "src/main/session-diagnostics/resources.test.ts",
+    "src/main/session-diagnostics/network.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/session-diagnostics.ts",

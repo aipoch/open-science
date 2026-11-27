@@ -258,6 +258,19 @@ const NotebookRunCell = ({
         <div className="flex min-w-0 items-center gap-2">
           <span className="font-mono text-text-300">[{index}]</span>
           <span className="rounded bg-bg-300 px-1.5 py-0.5 text-text-200">{kind}</span>
+          {run.networkMode ? (
+            <span
+              className={cn(
+                'rounded border px-1.5 py-0.5 text-[11px] font-medium',
+                run.networkMode === 'strict'
+                  ? 'notebook-network-strict'
+                  : 'notebook-network-relaxed'
+              )}
+              data-testid="notebook-run-network-mode"
+            >
+              {run.networkMode === 'strict' ? t('Strict mode') : t('Relaxed mode')}
+            </span>
+          ) : null}
           {run.source === 'user' ? (
             <span className="rounded bg-blue-500/10 px-1.5 py-0.5 font-medium text-blue-700 dark:text-blue-300">
               {t('you')}
@@ -630,6 +643,7 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
   const retryProvision = useNotebookEnvStore((s) => s.retry)
   const provision = useNotebookEnvStore((s) => s.provision)
   const openSettingsToPanel = useSettingsStore((s) => s.openSettingsToPanel)
+  const notebookNetworkMode = useSettingsStore((s) => s.notebookNetwork.mode ?? 'relaxed')
   const isPreparingR =
     provisionUi.kind === 'preparing' &&
     provisionUi.scope === 'r' &&
@@ -1848,6 +1862,19 @@ const NotebookPreview = ({ item, isActive = true }: NotebookPreviewProps): React
               )
             )}
           </div>
+          <span
+            className={cn(
+              'ml-2 inline-flex shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium',
+              notebookNetworkMode === 'strict'
+                ? 'notebook-network-strict'
+                : 'notebook-network-relaxed'
+            )}
+            role="status"
+            aria-label={notebookNetworkMode === 'strict' ? t('Strict mode') : t('Relaxed mode')}
+            data-testid="notebook-network-mode"
+          >
+            {notebookNetworkMode === 'strict' ? t('Strict mode') : t('Relaxed mode')}
+          </span>
           {activeDataLanguage ? (
             <>
               <Tooltip>

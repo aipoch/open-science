@@ -579,6 +579,40 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
   }
 
+  it('shows the current Notebook network mode in the pane header', async () => {
+    await mountWithRuns([makeRun({ runId: 'network-mode', kernelKind: 'python' })])
+
+    expect(screen.getByTestId('notebook-network-mode').textContent).toBe('Relaxed mode')
+    expect(screen.getByRole('status', { name: 'Relaxed mode' })).toBe(
+      screen.getByTestId('notebook-network-mode')
+    )
+
+    act(() => {
+      useSettingsStore.setState({
+        notebookNetwork: {
+          ...useSettingsStore.getState().notebookNetwork,
+          mode: 'strict'
+        }
+      })
+    })
+
+    expect(screen.getByTestId('notebook-network-mode').textContent).toBe('Strict mode')
+    expect(screen.getByRole('status', { name: 'Strict mode' })).toBe(
+      screen.getByTestId('notebook-network-mode')
+    )
+  })
+
+  it('shows the network mode captured by each execution record', async () => {
+    await mountWithRuns([
+      makeRun({ runId: 'relaxed-run', networkMode: 'relaxed' }),
+      makeRun({ runId: 'strict-run', networkMode: 'strict' })
+    ])
+
+    expect(
+      screen.getAllByTestId('notebook-run-network-mode').map((node) => node.textContent)
+    ).toEqual(['Relaxed mode', 'Strict mode'])
+  })
+
   it.each([
     { rootFrameId: 'root-frame-session-1' },
     { rootFrameId: 'root-frame-pending-session-1' },

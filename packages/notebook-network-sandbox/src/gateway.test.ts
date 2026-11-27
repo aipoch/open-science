@@ -1080,3 +1080,81 @@ describe('HTTP forwarding integrity', () => {
     expect(connections).toBe(2)
   })
 })
+
+describe('network audit observations', () => {
+  it('records one decision and a distinct HTTP result without recording the URL or headers', async () => {
+    const origin = createHttpServer((_request, response) => {
+      response.writeHead(201)
+      response.end('private body')
+    })
+    origin.listen(0, '127.0.0.1')
+    await once(origin, 'listening')
+    closeTasks.push(() => new Promise((resolve) => origin.close(() => resolve())))
+    const port = (origin.address() as { port: number }).port
+    const observations: unknown[] = []
+    const gateway = await CommandGateway.open({
+      credentials,
+      decide: async () => ({ allowed: true, address: '127.0.0.1' }),
+      startAudit: (target) => {
+        observations.push(target)
+        return (event) => observations.push(event)
+      }
+    })
+    closeTasks.push(() => gateway.close())
+    await new Promise<void>((resolve, reject) => {
+      const req = request(
+        {
+          host: '127.0.0.1',
+          port: gateway.port,
+          path: `http://example.org:${port}/private?token=secret`,
+          headers: { 'proxy-authorization': authorization }
+        },
+        (res) => {
+          res.resume()
+          res.once('end', resolve)
+        }
+      )
+      req.once('error', reject)
+      req.end()
+    })
+    expect(observations).toEqual([
+      { host: 'example.org', port, protocol: 'http' },
+      expect.objectContaining({ decision: 'allowed', address: '127.0.0.1' }),
+      expect.objectContaining({
+        outcome: 'completed',
+        statusCode: 201,
+        decision: 'allowed',
+        address: '127.0.0.1'
+      })
+    ])
+    expect(JSON.stringify(observations)).not.toMatch(/secret|private/)
+  })
+  it('records blocked access and never reports success for a gateway rejection', async () => {
+    const observations: unknown[] = []
+    const gateway = await CommandGateway.open({
+      credentials,
+      decide: async () => ({ allowed: false, message: 'policy denied' }),
+      startAudit: () => (event) => observations.push(event)
+    })
+    closeTasks.push(() => gateway.close())
+    await new Promise<void>((resolve, reject) => {
+      const req = request(
+        {
+          host: '127.0.0.1',
+          port: gateway.port,
+          path: 'http://example.org/',
+          headers: { 'proxy-authorization': authorization }
+        },
+        (res) => {
+          res.resume()
+          res.once('end', resolve)
+        }
+      )
+      req.once('error', reject)
+      req.end()
+    })
+    expect(observations).toEqual([
+      expect.objectContaining({ decision: 'blocked', reason: 'policy denied' })
+    ])
+  })
+})

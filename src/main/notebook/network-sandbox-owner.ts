@@ -1,3 +1,4 @@
+import type { NotebookNetworkAudit } from './network-audit'
 import { strictNetworkRuleMatches } from '@aipoch/notebook-network-sandbox/network-address'
 import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
@@ -38,6 +39,7 @@ import type { ShellRuntimeBinding } from '../../shared/notebook'
 import {
   formatNetworkHostname,
   requiresNetworkException,
+  type NotebookNetworkMode,
   type NotebookNetworkSettings
 } from '../../shared/notebook-network-settings'
 import {
@@ -256,6 +258,7 @@ const blockedDestinationKey = (
 ): string => `${sessionId}\0${protocol}://${formatNetworkHostname(hostname)}:${port}`
 
 type NotebookNetworkSandboxOwnerOptions = Readonly<{
+  audit?: Pick<NotebookNetworkAudit, 'record' | 'flush'>
   configRoot?: string
   windowsRuntimeRoot?: string
   packaged?: boolean
@@ -331,7 +334,13 @@ const protectedWriteRoots = (readWriteRoots: readonly string[]): string[] =>
 // Application authority that must never be writable from a broad or nested grant. Grant-time and
 // execution-time planning must keep these write boundaries consistent.
 const authorityWriteDenyRoots = (configRoot: string | undefined): string[] =>
-  configRoot ? [join(configRoot, 'settings.json'), join(configRoot, 'sessions')] : []
+  configRoot
+    ? [
+        join(configRoot, 'settings.json'),
+        join(configRoot, 'sessions'),
+        join(configRoot, 'logs', 'network')
+      ]
+    : []
 
 const dependencyReason = (message: string): NotebookNetworkStatusReason => {
   if (message.includes('bubblewrap')) return 'linuxBubblewrapMissing'
@@ -433,6 +442,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       )
       this.releaseWindowsRuntime = configureWindowsNotebookRuntime(() => this.windowsRuntime!.get())
     }
+  }
+
+  async getNetworkMode(): Promise<NotebookNetworkMode> {
+    await this.initialize()
+    return this.settings?.mode ?? 'relaxed'
   }
 
   async windowsProtectionConfigured(): Promise<boolean> {
@@ -698,6 +712,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     let unsubscribeFullAccess: (() => void) | undefined
     let executionActive = false
     let activeCommandText = invocation.commandText
+    let activeNotebookRunId = invocation.notebookRunId
     let activeExecutionId = invocation.executionReference
     let activeSignal = invocation.signal
     let executionGeneration = 0
@@ -804,6 +819,20 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           ]
         },
         ...(invocation.signal ? { signal: invocation.signal } : {}),
+        startAudit: (target) => {
+          // Capture before DNS/approval awaits; a persistent kernel may begin another Run meanwhile.
+          const context = {
+            requestId: randomUUID(),
+            mode: this.settings?.mode ?? 'relaxed',
+            projectId: invocation.projectId,
+            sessionId: invocation.sessionId,
+            notebookRunId: executionActive ? activeNotebookRunId : undefined,
+            executionId: executionActive ? activeExecutionId : undefined,
+            runtime: invocation.runtime,
+            ...target
+          }
+          return (event) => this.options.audit?.record({ ...context, ...event })
+        },
         onNetworkAccessRequest: async (request) => {
           if (activeSignal?.aborted) return false
           const policySignal = this.policyAbort.signal
@@ -1294,6 +1323,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         )
         executionActive = true
         activeCommandText = request?.commandText ?? invocation.commandText
+        activeNotebookRunId = request?.notebookRunId ?? invocation.notebookRunId
         activeExecutionId = request?.executionReference ?? invocation.executionReference
         activeSignal = request?.signal ?? invocation.signal
         executionWaitListener = request?.onNetworkWaitChange
@@ -2063,6 +2093,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       this.log.error('sandbox disposal failed', diagnosticErrorFields(error))
       throw error
     }
+    await this.options.audit?.flush()
     this.log.info('sandbox disposed')
     this.initialized = false
     this.releaseWindowsRuntime?.()

@@ -35,6 +35,8 @@ describe('network IPC handler', () => {
     handlers.clear()
     const info = { connectionType: 'wifi', ipAddress: '192.168.1.42' } as const
     const owner: NetworkCommandOwner = {
+      queryNotebookLogs: vi.fn(),
+      setNotebookLogRetention: vi.fn(),
       getInfo: vi.fn().mockResolvedValue(info),
       checkConnectivity: vi.fn().mockResolvedValue(false)
     }
@@ -47,6 +49,8 @@ describe('network IPC handler', () => {
   it('records connectivity probe start, outcome, and duration', async () => {
     handlers.clear()
     const owner: NetworkCommandOwner = {
+      queryNotebookLogs: vi.fn(),
+      setNotebookLogRetention: vi.fn(),
       getInfo: vi.fn(),
       checkConnectivity: vi.fn().mockResolvedValue(true)
     }
@@ -78,6 +82,8 @@ describe('network IPC handler', () => {
     handlers.clear()
     const failure = new Error('private network details')
     const owner: NetworkCommandOwner = {
+      queryNotebookLogs: vi.fn(),
+      setNotebookLogRetention: vi.fn(),
       getInfo: vi.fn(),
       checkConnectivity: vi.fn().mockRejectedValue(failure)
     }

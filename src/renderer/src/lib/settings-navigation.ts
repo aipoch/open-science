@@ -149,7 +149,7 @@ export type SettingsPanelId =
   | 'lab'
   | 'remote-control'
 
-export type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }
+export type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' | 'logs' }
 
 // A Settings history entry contains only the active panel's state. This sum type prevents unrelated
 // panel views from forming impossible combinations or leaking into every navigation transition.

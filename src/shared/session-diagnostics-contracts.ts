@@ -29,6 +29,7 @@ const inspection = z
             'invalid-session',
             'log',
             'resource-log',
+            'network-log',
             'database',
             'notebook',
             'environment',

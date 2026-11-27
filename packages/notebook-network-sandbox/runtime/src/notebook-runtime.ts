@@ -1,3 +1,4 @@
+import type { GatewayAuditStart } from './gateway/command-gateway.js'
 import { NETWORK_APPROVAL_REQUIRED, NETWORK_POLICY_BLOCKED } from './gateway/recovery-context.js'
 import { constants } from 'node:fs'
 import { access, mkdir } from 'node:fs/promises'
@@ -109,6 +110,7 @@ const cleanupComplete = (result: SandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
 
 type NetworkWrapRequest = Readonly<{
+  startAudit?: GatewayAuditStart
   target?: NotebookSandboxTarget
   command: string
   executable?: string
@@ -215,7 +217,7 @@ const decide = async (
   const verdict = await policy.inspect(host, port, protocol)
   if (!current()) return expired
   if (verdict.kind === 'allow' && !verdict.addresses)
-    return { allowed: true, address: verdict.address }
+    return { allowed: true, address: verdict.address, reason: 'policy' }
   if (verdict.kind === 'deny') {
     violations.record(commandId, `deny network-outbound ${host}:${port} (${verdict.reason})`)
     return {
@@ -245,7 +247,7 @@ const decide = async (
     allowed = false
   }
   if (!current()) return expired
-  if (allowed) return { allowed: true, address: verdict.address }
+  if (allowed) return { allowed: true, address: verdict.address, reason: 'authorization' }
   if (purpose === 'probe')
     return {
       allowed: false,
@@ -328,6 +330,7 @@ const wrap = async (
       throw new Error('Notebook WSL2 sandbox target requires a Windows host.')
     }
     const gateway = await CommandGateway.open({
+      startAudit: request.startAudit,
       decide: (host, port, purpose, canResume, protocol) =>
         decide(request.commandId, host, port, purpose, canResume, protocol),
       credentials,
@@ -477,6 +480,7 @@ const wrap = async (
       }
     }
     gateway = await CommandGateway.open({
+      startAudit: request.startAudit,
       decide: (host, port, purpose, canResume, protocol) =>
         decide(request.commandId, host, port, purpose, canResume, protocol),
       ...(certificateAuthority

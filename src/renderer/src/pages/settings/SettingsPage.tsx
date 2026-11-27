@@ -812,7 +812,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     !document.documentElement.hasAttribute('data-open-science-notebook-network-unavailable')
   const networkView: NetworkView =
     currentRoute.panel === 'network' &&
-    (currentRoute.view.kind !== 'domains' || notebookNetworkAvailable)
+    (currentRoute.view.kind !== 'domains' || notebookNetworkAvailable) &&
+    (currentRoute.view.kind !== 'logs' ||
+      (notebookNetworkAvailable && typeof window.api?.network?.queryNotebookLogs === 'function'))
       ? currentRoute.view
       : { kind: 'list' }
   const computeView: ComputeView =
@@ -975,7 +977,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             ? t('Proxy')
             : networkView.kind === 'domains'
               ? t('Notebook network access')
-              : t('Package mirror')
+              : networkView.kind === 'logs'
+                ? t('Notebook network logs')
+                : t('Package mirror')
       }
     }
     if (activePanel === 'compute' && computeView.kind !== 'list') {
@@ -1857,6 +1861,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         modelView.kind === 'classification-edit' ||
                         modelView.kind === 'image-service-create' ||
                         modelView.kind === 'image-service-edit')) ||
+                      (activePanel === 'network' && networkView.kind === 'logs') ||
                       activePanel === 'memory' ||
                       activePanel === 'tags'
                       ? 'h-full'

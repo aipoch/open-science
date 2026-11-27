@@ -94,6 +94,7 @@ export type NotebookNetworkSandboxStatus =
   | Readonly<{ kind: 'error'; message: string }>
 
 export type NotebookSandboxCommand = Readonly<{
+  startAudit?: import('../runtime/src/gateway/command-gateway.js').GatewayAuditStart
   target?: NotebookSandboxTarget
   /** Launched persistent kernels are reaped by their epoch owner and drained on disposal. */
   kernelEpochId?: string

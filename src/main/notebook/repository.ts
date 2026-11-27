@@ -599,7 +599,10 @@ const notebookRunCandidate = (value: unknown): boolean => {
       value.kernelKind !== 'python' &&
       value.kernelKind !== 'r' &&
       value.kernelKind !== 'repl' &&
-      value.kernelKind !== 'bash')
+      value.kernelKind !== 'bash') ||
+    (value.networkMode !== undefined &&
+      value.networkMode !== 'relaxed' &&
+      value.networkMode !== 'strict')
   ) {
     return false
   }

@@ -168,7 +168,9 @@
     "src/main/notebook/owned-resources.ts",
     "src/main/notebook/resource-memory.ts",
     "src/main/notebook/process-monitor.ts",
-    "src/main/notebook/process-monitor.test.ts"
+    "src/main/notebook/process-monitor.test.ts",
+    "src/main/notebook/network-audit.ts",
+    "src/main/notebook/network-audit.test.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/environment-application-commands.ts",
@@ -337,7 +339,8 @@
       "src/main/notebook/memory-policy.native.integration.test.ts",
       "src/main/notebook/memory-policy.test.ts",
       "src/main/notebook/owned-resources.integration.test.ts",
-      "src/main/notebook/process-monitor.test.ts"
+      "src/main/notebook/process-monitor.test.ts",
+      "src/main/notebook/network-audit.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

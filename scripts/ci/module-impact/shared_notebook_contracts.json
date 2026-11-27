@@ -4,11 +4,13 @@
     "src/shared/notebook-network-strict.ts",
     "src/shared/notebook-network-strict.test.ts",
     "src/shared/network-destination-grants.ts",
-    "src/shared/network-destination-grants.test.ts"
+    "src/shared/network-destination-grants.test.ts",
+    "src/shared/notebook-network-audit.ts"
   ],
   "interfacePaths": [
     "src/shared/notebook-network-settings.ts",
-    "src/shared/network-destination-grants.ts"
+    "src/shared/network-destination-grants.ts",
+    "src/shared/notebook-network-audit.ts"
   ],
   "consumerModules": [],
   "testFiles": {

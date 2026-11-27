@@ -58,6 +58,7 @@ const validateAgainstNbformatSchema = async (notebook: unknown): Promise<void> =
 describe('runDocumentToIpynb', () => {
   it('projects source, provenance, execution count, and every structured output kind', () => {
     const run = makeRun({
+      networkMode: 'strict',
       outputs: [
         { type: 'stream', name: 'stdout', text: 'hello\nworld' },
         { type: 'stream', name: 'stderr', text: 'warning' },
@@ -97,7 +98,8 @@ describe('runDocumentToIpynb', () => {
           endedAt: 200,
           status: 'completed',
           kernel: 'python',
-          environment: 'default-python'
+          environment: 'default-python',
+          networkMode: 'strict'
         }
       }
     })
