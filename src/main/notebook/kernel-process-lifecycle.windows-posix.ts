@@ -10,6 +10,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
@@ -19,7 +20,7 @@ import {
   terminateOwnedPosixProcessGroupById,
   type ProcessTreeKillResult
 } from '../process-tree'
-import { windowsProcessCommandLine, windowsProcessIsAlive } from '../windows-process-query'
+import { windowsProcessCommandLine, windowsProcessStartTicks } from '../windows-process-query'
 import {
   hasSystemRestarted,
   isStableBootIdentity,
@@ -80,9 +81,30 @@ type KernelProcessSpawnIntent = Readonly<{
 type KernelProcessReceipt = Readonly<{
   path: string
   receiptId: string
+  laneKey: string
 }>
 
 type KernelProcessProbe = 'dead' | 'owned' | 'reused' | 'unknown'
+
+const SCOPED_RECOVERY_CACHE_MAX = 256
+
+type ScopedRecoveryResult = Readonly<{
+  directoryMtimeMs: number | undefined
+}>
+
+type DeferredRecovery =
+  | { reason: 'invalid-receipt' | 'receipt-changed' | 'cleanup-failed' }
+  | { reason: 'unverified-process'; probe: 'unknown' | 'reused' }
+  | { reason: 'termination-unconfirmed'; probe: 'owned'; reaped: false }
+
+type RecoveryDiagnostic = Readonly<
+  DeferredRecovery & {
+    lane?: string
+    processKey?: string
+    kernelEpochId?: string
+    receiptId?: string
+  }
+>
 
 type KernelProcessRecoveryController = Readonly<{
   probe(
@@ -96,10 +118,12 @@ type KernelProcessRecoveryController = Readonly<{
 }>
 
 type KernelProcessRecoveryOptions = Readonly<{
-  // A valid receipt identifies its exact lane/process. When this is enabled, an unverified receipt
-  // remains an exact process fence but does not stop unrelated kernel admission. Invalid receipts
-  // are still global failures because their owner cannot be determined safely.
+  // A valid receipt identifies its exact lane/process/epoch. When this is enabled, an unverified
+  // receipt fences only that same epoch. Background scans keep and report unresolved receipts.
   allowUnverifiedReceipts?: boolean
+  // Scoped recovery only needs to verify receipts that could fence this lane. Omit this for the
+  // strict global recovery used before environment mutation.
+  targetLaneKey?: string
 }>
 
 type KernelProcessLifecycleOwnerOptions = Readonly<{
@@ -109,6 +133,7 @@ type KernelProcessLifecycleOwnerOptions = Readonly<{
   controller?: KernelProcessRecoveryController
   readBootToken?: () => string | undefined
   readWindowsBootObservation?: typeof readWindowsBootObservation
+  onRecoveryDeferred?: (diagnostic: RecoveryDiagnostic) => void
 }>
 
 const isPositivePid = (value: unknown): value is number =>
@@ -139,8 +164,18 @@ const isWindowsProcessTreeProof = (value: unknown): value is WindowsProcessTreeP
   )
 }
 
-const recordFilePrefix = (scope: KernelProcessSpawnScope): string =>
+const legacyRecordFilePrefix = (scope: KernelProcessSpawnScope): string =>
   createHash('sha256').update(`${scope.laneKey}\0${scope.processKey}`).digest('hex')
+
+const recordFilePrefix = (scope: KernelProcessSpawnScope): string =>
+  `${legacyRecordFilePrefix(scope)}.${createHash('sha256').update(scope.kernelEpochId).digest('hex')}`
+
+const hasReceiptFilePrefix = (name: string, prefix: string): boolean =>
+  name.startsWith(`${prefix}.pending.`) || name.startsWith(`${prefix}.active.`)
+
+const recordMatchesFileName = (name: string, record: KernelProcessRecord): boolean =>
+  hasReceiptFilePrefix(name, recordFilePrefix(record)) ||
+  hasReceiptFilePrefix(name, legacyRecordFilePrefix(record))
 
 const writeRecordSync = (path: string, record: KernelProcessRecord): void => {
   const directory = dirname(path)
@@ -252,16 +287,16 @@ const processEvidence = async (
       return undefined
     }
   }
-  if (platform === 'win32') {
-    try {
-      return windowsProcessCommandLine(record.pid)
-    } catch {
-      // Unreadable evidence keeps the startup fence closed; see the caller.
-      return undefined
-    }
-  }
   return capture('ps', ['eww', '-p', String(record.pid), '-o', 'command='])
 }
+
+const matchesProcessEvidence = (
+  record: Readonly<KernelProcessRecord>,
+  evidence: string | undefined
+): boolean =>
+  evidence !== undefined &&
+  (evidence.includes(`${OWNER_TOKEN_ENV}=${record.ownerToken}`) ||
+    (!!record.commandIdentityMarker && evidence.includes(record.commandIdentityMarker)))
 
 const proofFileConfirmsWindowsProcessTreeReaped = (proof: WindowsProcessTreeProof): boolean => {
   try {
@@ -292,105 +327,113 @@ const requestWindowsProcessTreeReap = async (proof: WindowsProcessTreeProof): Pr
   return false
 }
 
-const terminateWindowsPid = async (
-  pid: number,
-  proof: WindowsProcessTreeProof
-): Promise<ProcessTreeKillResult> => {
-  if (await requestWindowsProcessTreeReap(proof)) return { reaped: true }
-  await capture('taskkill.exe', ['/pid', String(pid), '/T', '/F'])
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (!pidIsAlive(pid)) {
-      // A proof-backed receipt remains unresolved until the supervisor publishes terminal
-      // evidence. The taskkill fallback only proves that the recorded host exited, not that
-      // descendants were reaped.
-      return { reaped: proofFileConfirmsWindowsProcessTreeReaped(proof) }
+const createWindowsKernelRecovery = (): KernelProcessRecoveryController => {
+  // Carry the verified identity from probe to terminate for this recovery attempt.
+  const verifiedHostStartTicks = new WeakMap<Readonly<KernelProcessRecord>, string>()
+  return {
+    probe: async (record) => {
+      if (record.platform !== 'win32') return 'dead'
+      // New hosts are atomically created inside this exact Job before they can activate a receipt.
+      // Its identity survives the proof publisher; a missing Job proves there are no members left.
+      if (record.windowsJobName) {
+        return (await reapWindowsOwnedJob(record.windowsJobName).catch(() => false))
+          ? 'dead'
+          : 'unknown'
+      }
+      const { pid, windowsProcessTreeProof: proof } = record
+      if (!pid || !proof) return 'unknown'
+      verifiedHostStartTicks.delete(record)
+      try {
+        const startTicks = windowsProcessStartTicks(pid)
+        // Exited intermediate parents disappear from snapshots even if their children survive.
+        if (startTicks === undefined) {
+          return (await requestWindowsProcessTreeReap(proof)) ? 'dead' : 'unknown'
+        }
+        // Legacy receipts lack a recorded creation time. Read it around the ownership check so a
+        // PID recycled during that check cannot supply the verified host's identity.
+        if (
+          !matchesProcessEvidence(record, windowsProcessCommandLine(pid)) ||
+          windowsProcessStartTicks(pid) !== startTicks
+        ) {
+          return 'unknown'
+        }
+        verifiedHostStartTicks.set(record, startTicks)
+        return 'owned'
+      } catch {
+        return 'unknown'
+      }
+    },
+    terminate: async (record) => {
+      const { pid, windowsProcessTreeProof: proof } = record
+      const startTicks = verifiedHostStartTicks.get(record)
+      verifiedHostStartTicks.delete(record)
+      if (
+        !pid ||
+        !proof ||
+        startTicks === undefined ||
+        !(await requestWindowsProcessTreeReap(proof))
+      ) {
+        return { reaped: false }
+      }
+      try {
+        // A missing process or a different creation time proves that the verified host exited.
+        return { reaped: windowsProcessStartTicks(pid) !== startTicks }
+      } catch {
+        return { reaped: false }
+      }
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
   }
-  return { reaped: false }
 }
 
 const defaultController = (
   platform: NodeJS.Platform,
   currentBootToken: () => string | undefined = readBootToken
-): KernelProcessRecoveryController => ({
-  probe: async (record, checkpoint) => {
-    if (record.platform !== platform) return 'dead'
-    // New hosts are atomically created inside this exact Job before they can activate a receipt.
-    // Its identity survives the proof publisher; a missing Job proves there are no members left.
-    if (record.windowsJobName) {
-      return (await reapWindowsOwnedJob(record.windowsJobName).catch(() => false))
-        ? 'dead'
-        : 'unknown'
-    }
-    if (!record.pid) return 'unknown'
-
-    if (platform !== 'win32') {
-      const bootToken = currentBootToken()
-      if (bootTokenProvesReboot(record.bootToken, bootToken)) return 'dead'
-    }
-    if (platform === 'darwin') {
-      return createDarwinKernelRecovery().probe({ ...record, pid: record.pid }, checkpoint)
-    }
-    let alive: boolean
-    if (platform === 'win32') {
-      // Exited intermediate parents disappear from snapshots even if their children survive.
-      const proof = record.windowsProcessTreeProof
-      if (!proof) return 'unknown'
-      try {
-        alive = windowsProcessIsAlive(record.pid) && pidIsAlive(record.pid)
-      } catch {
-        alive = pidIsAlive(record.pid)
+): KernelProcessRecoveryController => {
+  if (platform === 'win32') return createWindowsKernelRecovery()
+  return {
+    probe: async (record, checkpoint) => {
+      if (record.platform !== platform) return 'dead'
+      if (!record.pid) return 'unknown'
+      if (bootTokenProvesReboot(record.bootToken, currentBootToken())) return 'dead'
+      if (platform === 'darwin') {
+        return createDarwinKernelRecovery().probe({ ...record, pid: record.pid }, checkpoint)
       }
-      if (!alive) return (await requestWindowsProcessTreeReap(proof)) ? 'dead' : 'unknown'
-    } else {
-      alive = pidIsAlive(record.pid)
-    }
-    if (platform !== 'win32') {
-      const groupAlive = isOwnedPosixProcessGroupAlive(record.pid)
-      if (!groupAlive) return 'dead'
+      const alive = pidIsAlive(record.pid)
+      if (!isOwnedPosixProcessGroupAlive(record.pid)) return 'dead'
       // Once the leader exits, its numeric group id is no longer tied to the persisted process
       // identity. A later group can reuse it during the same boot, so retain the fence rather than
       // authorizing a group signal from the number alone.
       if (!alive) return 'unknown'
-    }
 
-    if (record.processStartToken !== undefined) {
-      const current = readProcessStartToken(record.pid)
-      if (current !== undefined && current !== record.processStartToken) return 'reused'
+      if (record.processStartToken !== undefined) {
+        const current = readProcessStartToken(record.pid)
+        if (current !== undefined && current !== record.processStartToken) return 'reused'
+      }
+      return matchesProcessEvidence(record, await processEvidence(record, platform))
+        ? 'owned'
+        : 'unknown'
+    },
+    terminate: (record, checkpoint) => {
+      const pid = record.pid
+      if (!pid) return Promise.resolve({ reaped: false })
+      if (platform === 'darwin') {
+        return checkpoint
+          ? createDarwinKernelRecovery().terminate({ ...record, pid }, checkpoint)
+          : Promise.resolve({ reaped: false })
+      }
+      return terminateOwnedPosixProcessGroupById(
+        pid,
+        undefined,
+        undefined,
+        record.posixBirthToken,
+        {
+          name: OWNER_TOKEN_ENV,
+          value: record.ownerToken
+        }
+      )
     }
-    const evidence = await processEvidence(record, platform)
-    if (evidence?.includes(`${OWNER_TOKEN_ENV}=${record.ownerToken}`)) return 'owned'
-    if (record.commandIdentityMarker && evidence?.includes(record.commandIdentityMarker)) {
-      return 'owned'
-    }
-    // Missing identity evidence is not proof that the PID was reused: ps/CIM output can be
-    // truncated or unavailable under tighter host permissions. Only a start-token mismatch above
-    // proves reuse. Keep the startup fence closed rather than risk clearing or killing an unrelated
-    // process from ambiguous evidence.
-    return 'unknown'
-  },
-  terminate: (record, checkpoint) => {
-    if (!record.pid) return Promise.resolve({ reaped: false })
-    if (platform === 'darwin') {
-      return checkpoint
-        ? createDarwinKernelRecovery().terminate({ ...record, pid: record.pid }, checkpoint)
-        : Promise.resolve({ reaped: false })
-    }
-    if (platform === 'win32') {
-      return record.windowsProcessTreeProof
-        ? terminateWindowsPid(record.pid, record.windowsProcessTreeProof)
-        : Promise.resolve({ reaped: false })
-    }
-    return terminateOwnedPosixProcessGroupById(
-      record.pid,
-      undefined,
-      undefined,
-      record.posixBirthToken,
-      { name: OWNER_TOKEN_ENV, value: record.ownerToken }
-    )
   }
-})
+}
 
 class KernelProcessLifecycleOwner {
   readonly ownerInstanceId: string
@@ -399,10 +442,14 @@ class KernelProcessLifecycleOwner {
   private readonly controller: KernelProcessRecoveryController
   private readonly readBootToken: () => string | undefined
   private readonly readWindowsBootObservation: typeof readWindowsBootObservation
+  private readonly onRecoveryDeferred: KernelProcessLifecycleOwnerOptions['onRecoveryDeferred']
+  private readonly reportedDeferredRecoveries = new Map<string, DeferredRecovery['reason']>()
   private readonly pendingReceiptIds = new Set<string>()
   private recovery: Promise<void> | undefined
   private scopedRecoveryTail: Promise<void> = Promise.resolve()
   private readonly scopedRecoveries = new Map<string, Promise<void>>()
+  private readonly scopedRecoveryResults = new Map<string, ScopedRecoveryResult>()
+  private readonly invalidatedScopedRecoveries = new Set<string>()
 
   constructor(options: KernelProcessLifecycleOwnerOptions) {
     this.ownerInstanceId = options.ownerInstanceId ?? randomUUID()
@@ -412,11 +459,58 @@ class KernelProcessLifecycleOwner {
     this.readWindowsBootObservation =
       options.readWindowsBootObservation ?? readWindowsBootObservation
     this.controller = options.controller ?? defaultController(this.platform, this.readBootToken)
+    this.onRecoveryDeferred = options.onRecoveryDeferred
+  }
+
+  hasReceipts(): boolean {
+    try {
+      return readdirSync(this.directory).some((name) => name.endsWith('.json'))
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== 'ENOENT'
+    }
+  }
+
+  hasReceiptsForEnvironment(
+    environment: string,
+    {
+      previousOwnerOnly = false,
+      activeEpochIds
+    }: { previousOwnerOnly?: boolean; activeEpochIds?: ReadonlySet<string> } = {}
+  ): boolean {
+    const normalizeEnvironment = (name: string): string => {
+      if (this.platform === 'win32') return name.toLowerCase().replace(/\.+$/u, '')
+      if (this.platform === 'darwin') return name.toLowerCase()
+      return name
+    }
+    const target = normalizeEnvironment(environment)
+    try {
+      for (const name of readdirSync(this.directory)) {
+        if (!name.endsWith('.json')) continue
+        const record = decodeRecord(readFileSync(join(this.directory, name), 'utf8'))
+        // An unreadable or mismatched receipt cannot rule out ownership of this prefix.
+        if (!record || !recordMatchesFileName(name, record)) return true
+        if (
+          record.ownerInstanceId === this.ownerInstanceId &&
+          (previousOwnerOnly || activeEpochIds?.has(record.kernelEpochId))
+        ) {
+          continue
+        }
+        if (record.processKey === 'repl') continue
+        const [kind, nameInReceipt] = record.processKey.split(':', 2)
+        if ((kind !== 'python' && kind !== 'r') || !nameInReceipt) return true
+        if (normalizeEnvironment(nameInReceipt) === target) return true
+      }
+      return false
+    } catch (error) {
+      // An intent can become active while reading the ledger. Only absence of the directory itself
+      // establishes that no receipt can remain.
+      return (error as NodeJS.ErrnoException).code !== 'ENOENT' || existsSync(this.directory)
+    }
   }
 
   ensureReady(): Promise<void> {
     if (this.recovery) return this.recovery
-    const recovery = this.recoverRecords()
+    const recovery = this.recoverRecords().then(() => undefined)
     this.recovery = recovery
     void recovery.catch(() => {
       if (this.recovery === recovery) this.recovery = undefined
@@ -425,27 +519,47 @@ class KernelProcessLifecycleOwner {
   }
 
   ensureReadyForLane(laneKey: string): Promise<void> {
+    const cached = this.scopedRecoveryResults.get(laneKey)
+    if (cached && cached.directoryMtimeMs === this.receiptDirectoryMtimeMs()) {
+      this.scopedRecoveryResults.delete(laneKey)
+      this.scopedRecoveryResults.set(laneKey, cached)
+      return Promise.resolve()
+    }
+    this.scopedRecoveryResults.delete(laneKey)
     const existing = this.scopedRecoveries.get(laneKey)
     if (existing) return existing
     // Session admission may happen concurrently for several lanes. Serialize the filesystem scan,
     // while sharing duplicate callers for the same lane.
-    const queued = this.scopedRecoveryTail.then(() =>
-      this.recoverRecords({ allowUnverifiedReceipts: true })
-    )
+    const queued = this.scopedRecoveryTail.then(async () => {
+      const directoryMtimeBefore = this.receiptDirectoryMtimeMs()
+      const settled = await this.recoverRecords({
+        allowUnverifiedReceipts: true,
+        targetLaneKey: laneKey
+      })
+      const directoryMtimeAfter = this.receiptDirectoryMtimeMs()
+      if (
+        settled &&
+        directoryMtimeBefore === directoryMtimeAfter &&
+        !this.invalidatedScopedRecoveries.delete(laneKey)
+      ) {
+        this.rememberScopedRecovery(laneKey, directoryMtimeAfter)
+      }
+    })
     this.scopedRecoveryTail = queued.catch(() => undefined)
     this.scopedRecoveries.set(laneKey, queued)
     void queued
       .finally(() => {
         if (this.scopedRecoveries.get(laneKey) === queued) this.scopedRecoveries.delete(laneKey)
+        if (!this.scopedRecoveries.has(laneKey)) this.invalidatedScopedRecoveries.delete(laneKey)
       })
       .catch(() => undefined)
     return queued
   }
 
   async recover(options: KernelProcessRecoveryOptions = {}): Promise<void> {
-    const recovery = this.recoverRecords(options)
+    const recovery = this.recoverRecords(options).then(() => undefined)
     // Tolerant startup recovery must not satisfy a later strict ensureReady() call used by
-    // environment mutation. Exact process admission remains fenced by beginSpawn().
+    // environment mutation. Same-epoch admission remains fenced by beginSpawn().
     if (!options.allowUnverifiedReceipts) this.recovery = recovery
     try {
       await recovery
@@ -465,14 +579,28 @@ class KernelProcessLifecycleOwner {
     windowsProcessTreeProof?: WindowsProcessTreeProof,
     ownWindowsJob = false
   ): KernelProcessSpawnIntent {
+    this.invalidateLaneRecovery(scope.laneKey)
     const prefix = recordFilePrefix(scope)
+    const legacyPrefix = legacyRecordFilePrefix(scope)
     mkdirSync(this.directory, { recursive: true })
     // Unpublished .tmp writes cannot authorize a host; recovery only reads published JSON receipts.
-    if (
-      readdirSync(this.directory).some(
-        (name) => name.startsWith(`${prefix}.`) && name.endsWith('.json')
-      )
-    ) {
+    const fenced = readdirSync(this.directory).some((name) => {
+      if (!name.endsWith('.json')) return false
+      if (name.startsWith(`${prefix}.`)) return true
+      if (!hasReceiptFilePrefix(name, legacyPrefix)) return false
+      try {
+        const record = decodeRecord(readFileSync(join(this.directory, name), 'utf8'))
+        return (
+          record?.laneKey === scope.laneKey &&
+          record.processKey === scope.processKey &&
+          record.kernelEpochId === scope.kernelEpochId
+        )
+      } catch {
+        // An unreadable legacy receipt has no verified epoch. Leave it to background recovery.
+        return false
+      }
+    })
+    if (fenced) {
       throw new Error(
         `KERNEL_STARTUP_FENCE: ${scope.processKey} still has durable process ownership.`
       )
@@ -512,6 +640,7 @@ class KernelProcessLifecycleOwner {
       commandIdentityMarker?: string
     }>
   ): KernelProcessReceipt {
+    this.invalidateLaneRecovery(intent.record.laneKey)
     if (!isPositivePid(child.pid)) throw new Error('Kernel process did not expose a valid pid.')
     const activePath = intent.activePath(child.pid)
     try {
@@ -541,16 +670,18 @@ class KernelProcessLifecycleOwner {
     }
     writeRecordSync(activePath, record)
     this.pendingReceiptIds.delete(record.receiptId)
-    return { path: activePath, receiptId: record.receiptId }
+    return { path: activePath, receiptId: record.receiptId, laneKey: record.laneKey }
   }
 
   abandonSpawn(intent: KernelProcessSpawnIntent): void {
+    this.invalidateLaneRecovery(intent.record.laneKey)
     this.pendingReceiptIds.delete(intent.record.receiptId)
     this.removeIfOwned(intent.path, intent.record.receiptId)
   }
 
   complete(receipt: KernelProcessReceipt, reaped: boolean): void {
     if (!reaped) return
+    this.invalidateLaneRecovery(receipt.laneKey)
     let proof: WindowsProcessTreeProof | undefined
     try {
       const record = decodeRecord(readFileSync(receipt.path, 'utf8'))
@@ -567,17 +698,47 @@ class KernelProcessLifecycleOwner {
     return { [OWNER_TOKEN_ENV]: ownerToken }
   }
 
-  private async recoverRecords(options: KernelProcessRecoveryOptions = {}): Promise<void> {
+  private invalidateLaneRecovery(laneKey: string): void {
+    this.scopedRecoveryResults.delete(laneKey)
+    if (this.scopedRecoveries.has(laneKey)) this.invalidatedScopedRecoveries.add(laneKey)
+  }
+
+  private rememberScopedRecovery(laneKey: string, directoryMtimeMs: number | undefined): void {
+    this.scopedRecoveryResults.delete(laneKey)
+    this.scopedRecoveryResults.set(laneKey, { directoryMtimeMs })
+    while (this.scopedRecoveryResults.size > SCOPED_RECOVERY_CACHE_MAX) {
+      const oldest = this.scopedRecoveryResults.keys().next().value
+      if (oldest === undefined) return
+      this.scopedRecoveryResults.delete(oldest)
+    }
+  }
+
+  private receiptDirectoryMtimeMs(): number | undefined {
+    try {
+      return statSync(this.directory).mtimeMs
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+      throw error
+    }
+  }
+
+  private async recoverRecords(options: KernelProcessRecoveryOptions = {}): Promise<boolean> {
     let names: string[]
     try {
       names = readdirSync(this.directory)
         .filter((name) => name.endsWith('.json'))
         .sort()
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
       throw error
     }
     const blocked: string[] = []
+    let settled = true
+    const defer = (name: string, reason: DeferredRecovery, record?: KernelProcessRecord): void => {
+      settled = false
+      if (options.allowUnverifiedReceipts) this.reportDeferredRecovery(name, reason, record)
+      else blocked.push(record ? `${record.laneKey}:${record.processKey}` : name)
+    }
     let bootObservation: ReturnType<typeof readWindowsBootObservation> | undefined
     const currentWindowsBoot = (): ReturnType<typeof readWindowsBootObservation> =>
       (bootObservation ??= this.readWindowsBootObservation())
@@ -589,20 +750,22 @@ class KernelProcessLifecycleOwner {
           pendingRecord = decodeRecord(readFileSync(path, 'utf8'))
         } catch (error) {
           // The host may have atomically promoted this intent after the directory snapshot.
-          // Its active receipt still fences exact process admission in beginSpawn().
+          // Its active receipt still fences same-epoch admission in beginSpawn().
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
           pendingRecord = undefined
         }
-        const pendingRecordMatchesName =
-          pendingRecord !== undefined && name.startsWith(`${recordFilePrefix(pendingRecord)}.`)
-        if (options.allowUnverifiedReceipts) {
-          if (!pendingRecord || !name.startsWith(`${recordFilePrefix(pendingRecord)}.`)) {
-            blocked.push(name)
+        const ownedIntent =
+          pendingRecord && recordMatchesFileName(name, pendingRecord) ? pendingRecord : undefined
+        if (ownedIntent && options.allowUnverifiedReceipts) {
+          if (
+            options.targetLaneKey !== undefined &&
+            ownedIntent.laneKey !== options.targetLaneKey
+          ) {
             continue
           }
           if (
-            pendingRecord.ownerInstanceId === this.ownerInstanceId &&
-            this.pendingReceiptIds.has(pendingRecord.receiptId)
+            ownedIntent.ownerInstanceId === this.ownerInstanceId &&
+            this.pendingReceiptIds.has(ownedIntent.receiptId)
           ) {
             // Tolerant lane recovery can run while this owner is between beginSpawn() and the
             // atomic pending-to-active promotion. Leave this live intent for the host to publish.
@@ -615,9 +778,12 @@ class KernelProcessLifecycleOwner {
         const cancelledPath = `${path}.cancelled-${this.ownerInstanceId}`
         try {
           renameSync(path, cancelledPath)
-          rmSync(cancelledPath, { force: true })
-          if (pendingRecordMatchesName) {
-            removeWindowsProcessTreeProof(pendingRecord?.windowsProcessTreeProof)
+          if (ownedIntent) {
+            rmSync(cancelledPath, { force: true })
+            removeWindowsProcessTreeProof(ownedIntent.windowsProcessTreeProof)
+          } else {
+            // Preserve the malformed intent for diagnosis outside the active JSON ledger.
+            this.reportDeferredRecovery(name, { reason: 'invalid-receipt' })
           }
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -630,80 +796,119 @@ class KernelProcessLifecycleOwner {
       } catch {
         record = undefined
       }
-      if (!record) {
-        blocked.push(name)
-        continue
-      }
-      if (!name.startsWith(`${recordFilePrefix(record)}.`)) {
-        // A valid payload under the wrong filename cannot be matched by beginSpawn(), so retain the
-        // global fail-closed behavior instead of treating its scope as trustworthy.
-        blocked.push(name)
+      if (!record || !recordMatchesFileName(name, record)) {
+        defer(name, { reason: 'invalid-receipt' })
         continue
       }
       if (record.ownerInstanceId === this.ownerInstanceId) continue
-      const legacyWindows =
-        this.platform === 'win32' && record.platform === 'win32' && !record.windowsJobName
-      if (legacyWindows && record.windowsBootObservation) {
-        const current = await currentWindowsBoot()
-        if (
-          current?.hostHash === record.windowsBootObservation.hostHash &&
-          hasSystemRestarted(record.windowsBootObservation.bootIdentity, current.bootIdentity)
-        ) {
-          if (this.removeIfOwned(path, record.receiptId))
-            removeWindowsProcessTreeProof(record.windowsProcessTreeProof)
-          continue
-        }
-      }
-      if (!record.pid) {
-        const encodedPid = name.match(/\.active\.(\d+)\./)?.[1]
-        if (encodedPid && isPositivePid(Number(encodedPid))) record.pid = Number(encodedPid)
-      }
-      const recoveryRecord = record
-      const checkpoint = (identities: DarwinRecoveryIdentity[]): void => {
-        // Remember uncertain associated members even if ownership cannot yet authorize a signal.
-        if (decodeRecord(readFileSync(path, 'utf8'))?.receiptId !== recoveryRecord.receiptId) {
-          throw new Error('Kernel recovery receipt changed before checkpoint.')
-        }
-        recoveryRecord.darwinRecoveryProcesses = identities
-        writeRecordSync(path, recoveryRecord)
-      }
-      const probe = await (this.platform === 'darwin'
-        ? this.controller.probe(record, checkpoint)
-        : this.controller.probe(record))
       if (
-        probe === 'dead' ||
-        (probe === 'reused' &&
-          (record.platform !== 'win32' ||
-            !record.windowsProcessTreeProof ||
-            (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))))
+        options.allowUnverifiedReceipts &&
+        options.targetLaneKey !== undefined &&
+        record.laneKey !== options.targetLaneKey
       ) {
-        if (this.removeIfOwned(path, record.receiptId)) {
-          removeWindowsProcessTreeProof(record.windowsProcessTreeProof)
-        }
         continue
       }
-      if (probe === 'owned') {
-        const result = await (this.platform === 'darwin'
-          ? this.controller.terminate(record, checkpoint)
-          : this.controller.terminate(record))
-        if (result.reaped) {
-          if (this.removeIfOwned(path, record.receiptId)) {
-            removeWindowsProcessTreeProof(record.windowsProcessTreeProof)
-          }
-          continue
-        }
+
+      try {
+        const outcome = await this.recoverActiveReceipt(name, path, record, currentWindowsBoot)
+        if (outcome) defer(name, outcome, record)
+        else this.reportedDeferredRecoveries.delete(name)
+      } catch (error) {
+        if (!options.allowUnverifiedReceipts) throw error
+        defer(name, { reason: 'cleanup-failed' }, record)
       }
-      if (legacyWindows && !record.windowsBootObservation) {
-        const current = await currentWindowsBoot()
-        if (current) this.checkpointWindowsBoot(path, record, current)
-      }
-      if (!options.allowUnverifiedReceipts) blocked.push(`${record.laneKey}:${record.processKey}`)
     }
     if (blocked.length > 0) {
       throw new Error(
         `KERNEL_STARTUP_FENCE: could not prove old persistent process ownership was cleared (${blocked.join(', ')}).`
       )
     }
+    return settled
+  }
+
+  private reportDeferredRecovery(
+    name: string,
+    outcome: DeferredRecovery,
+    record?: KernelProcessRecord
+  ): void {
+    if (!this.onRecoveryDeferred || this.reportedDeferredRecoveries.get(name) === outcome.reason)
+      return
+    this.reportedDeferredRecoveries.delete(name)
+    this.reportedDeferredRecoveries.set(name, outcome.reason)
+    if (this.reportedDeferredRecoveries.size > SCOPED_RECOVERY_CACHE_MAX) {
+      const oldest = this.reportedDeferredRecoveries.keys().next().value
+      if (oldest !== undefined) this.reportedDeferredRecoveries.delete(oldest)
+    }
+    this.onRecoveryDeferred({
+      ...outcome,
+      ...(record && {
+        lane: record.laneKey,
+        processKey: record.processKey,
+        kernelEpochId: record.kernelEpochId,
+        receiptId: record.receiptId
+      })
+    })
+  }
+
+  private async recoverActiveReceipt(
+    name: string,
+    path: string,
+    record: KernelProcessRecord,
+    currentWindowsBoot: typeof readWindowsBootObservation
+  ): Promise<DeferredRecovery | undefined> {
+    const settle = (): DeferredRecovery | undefined => {
+      if (!this.removeIfOwned(path, record.receiptId)) return { reason: 'receipt-changed' }
+      removeWindowsProcessTreeProof(record.windowsProcessTreeProof)
+      return undefined
+    }
+    const legacyWindows =
+      this.platform === 'win32' && record.platform === 'win32' && !record.windowsJobName
+    if (legacyWindows && record.windowsBootObservation) {
+      const current = await currentWindowsBoot()
+      if (
+        current?.hostHash === record.windowsBootObservation.hostHash &&
+        hasSystemRestarted(record.windowsBootObservation.bootIdentity, current.bootIdentity)
+      ) {
+        return settle()
+      }
+    }
+    if (!record.pid) {
+      const encodedPid = name.match(/\.active\.(\d+)\./)?.[1]
+      if (encodedPid && isPositivePid(Number(encodedPid))) record.pid = Number(encodedPid)
+    }
+    const checkpoint = (identities: DarwinRecoveryIdentity[]): void => {
+      // Remember uncertain associated members even if ownership cannot yet authorize a signal.
+      if (decodeRecord(readFileSync(path, 'utf8'))?.receiptId !== record.receiptId) {
+        throw new Error('Kernel recovery receipt changed before checkpoint.')
+      }
+      record.darwinRecoveryProcesses = identities
+      writeRecordSync(path, record)
+    }
+    const probe = await (this.platform === 'darwin'
+      ? this.controller.probe(record, checkpoint)
+      : this.controller.probe(record))
+    if (
+      probe === 'dead' ||
+      (probe === 'reused' &&
+        (record.platform !== 'win32' ||
+          !record.windowsProcessTreeProof ||
+          (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))))
+    ) {
+      return settle()
+    }
+    if (probe === 'owned') {
+      const result = await (this.platform === 'darwin'
+        ? this.controller.terminate(record, checkpoint)
+        : this.controller.terminate(record))
+      if (result.reaped) return settle()
+    }
+    if (legacyWindows && !record.windowsBootObservation) {
+      const current = await currentWindowsBoot()
+      if (current) this.checkpointWindowsBoot(path, record, current)
+    }
+    return probe === 'owned'
+      ? { reason: 'termination-unconfirmed', probe, reaped: false }
+      : { reason: 'unverified-process', probe }
   }
 
   private checkpointWindowsBoot(

@@ -60,7 +60,7 @@ const headerSchema = z
 type Header = z.infer<typeof headerSchema>
 type Render = Pick<
   PdfTranslationPdfRequest,
-  'pages' | 'units' | 'preserveUnsupported' | 'preserveUnmatched'
+  'pages' | 'units' | 'preserveUnsupported' | 'preserveUnmatched' | 'allowLinkOmission'
 >
 type Identity = {
   source: PdfTranslationCheckpointRequest
@@ -191,7 +191,7 @@ export class PdfTranslationPdfCache {
     let cacheKey: string | null = null
     try {
       const parsed = descriptor.safeParse(input.cache)
-      if (parsed.success) {
+      if (parsed.success && !input.dropLinks?.length) {
         try {
           identity = {
             source: structuredClone(parsed.data.source),
@@ -202,7 +202,8 @@ export class PdfTranslationPdfCache {
               pages: input.pages,
               units: input.units,
               preserveUnsupported: input.preserveUnsupported,
-              preserveUnmatched: input.preserveUnmatched
+              preserveUnmatched: input.preserveUnmatched,
+              allowLinkOmission: input.allowLinkOmission
             })
           }
           const checkpoint = await this.options.owner.readCheckpoint(
@@ -253,7 +254,13 @@ export class PdfTranslationPdfCache {
       if (operation.cancelled || caller.signal.aborted || !caller.isCurrent()) return null
       const result = await this.options.writer.generateDetailed(input, caller)
       if (!result || operation.cancelled || !this.current(root, caller)) return result
-      if (!cacheKey || !identity || !this.safeResult(result, input.units.length)) return result
+      if (
+        !cacheKey ||
+        !identity ||
+        result.omittedLinks?.length ||
+        !this.safeResult(result, input.units.length)
+      )
+        return result
       const token = randomUUID()
       const bytes =
         result.data.byteLength +

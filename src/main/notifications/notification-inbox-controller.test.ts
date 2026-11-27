@@ -23,6 +23,11 @@ const repository = (
     markRead: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 1 })),
     markAllRead: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 1 })),
     markSessionsRead: vi.fn(async () => ({ changed: true, unreadCount: 0, latestSequence: 1 })),
+    markVisibleSessionsRead: vi.fn(async () => ({
+      changed: true,
+      unreadCount: 0,
+      latestSequence: 1
+    })),
     markSessionTaskOutcomesRead: vi.fn(async () => ({
       changed: true,
       unreadCount: 0,
@@ -292,15 +297,15 @@ describe('createNotificationInboxController', () => {
     inbox.handleWindowCreated()
     resolveFocus(true)
     await oldView
-    expect(db.markSessionsRead).not.toHaveBeenCalled()
+    expect(db.markVisibleSessionsRead).not.toHaveBeenCalled()
     const detachedView = inbox.syncViewState({ visibleSessionId: 'old-session' })
     inbox.configureDesktop()
     resolveFocus(true)
     await detachedView
-    expect(db.markSessionsRead).not.toHaveBeenCalled()
+    expect(db.markVisibleSessionsRead).not.toHaveBeenCalled()
   })
 
-  it('auto-acknowledges all session notifications when a conversation becomes visible', async () => {
+  it('auto-acknowledges visible conversation notifications', async () => {
     const db = repository()
     const inbox = createNotificationInboxController({
       repository: db,
@@ -311,7 +316,7 @@ describe('createNotificationInboxController', () => {
 
     await inbox.syncViewState({ visibleSessionId: 'session-1' })
 
-    expect(db.markSessionsRead).toHaveBeenCalledWith(['session-1'], 5000)
+    expect(db.markVisibleSessionsRead).toHaveBeenCalledWith(['session-1'], 5000)
     expect(db.markSessionTaskOutcomesRead).not.toHaveBeenCalled()
   })
 })

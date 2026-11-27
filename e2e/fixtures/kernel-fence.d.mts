@@ -1,7 +1,10 @@
-export interface KernelFenceMcpClient {
+export interface KernelRecoveryMcpClient {
   callTool(request: unknown, options?: unknown, config?: unknown): Promise<unknown>
 }
 
-export const fencePrompt: string
-export const retryFencePrompt: string
-export function exerciseKernelFence(client: KernelFenceMcpClient, retry?: boolean): Promise<string>
+export const kernelRecoveryRequest: string
+export function exerciseKernelRecovery(
+  client: KernelRecoveryMcpClient,
+  prompt: string,
+  toolResult: (name: string, result: unknown) => unknown
+): Promise<string>

@@ -45,6 +45,8 @@ const invocation = <Args extends readonly unknown[]>(
 const createWorkflows = (): RuntimeWorkflows => ({
   setSandboxAccess: vi.fn(async () => ({ cancelled: false })),
   listPythonEnvironments: vi.fn().mockResolvedValue([]),
+  listLanguageEnvironments: vi.fn().mockResolvedValue([]),
+  registerCheckedInterpreter: vi.fn().mockResolvedValue(undefined),
   listEnvironments: vi.fn(async () => ({ python: [], r: [] })),
   listPackages: vi.fn(async () => [{ name: 'numpy', version: '2.1.3' }]),
   listPackageCounts: vi.fn(async () => ({ managed: 1 })),

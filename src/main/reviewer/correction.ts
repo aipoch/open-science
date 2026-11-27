@@ -107,6 +107,7 @@ export class ReviewerCorrectionOwner {
               {
                 onPromptAdmitted: async () => ({
                   ...(await input.onPromptAdmitted!()),
+                  originMessageId: provenanceContext.originMessageId,
                   promptMessageId
                 })
               }

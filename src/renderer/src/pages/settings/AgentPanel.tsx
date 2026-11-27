@@ -5,6 +5,7 @@ import { RefreshCw, TriangleAlert } from 'lucide-react'
 import { Trans, useTranslation } from 'react-i18next'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { selectAnyInstalling, useSettingsStore } from '@/stores/settings-store'
 import type {
   AgentFrameworkId,
@@ -396,15 +397,6 @@ const AgentPanel = ({
       description: t("OpenAI's coding agent, connected through the Codex ACP adapter."),
       ready: codexReady,
       installed: Boolean(codex.resolvedPath),
-      updateRequired: Boolean(
-        codex.resolvedPath &&
-        ((codex.version && !isSupportedCodexAcpVersion(codex.version)) ||
-          !isSupportedCodexCliVersion(codex.nativeVersion))
-      ),
-      minimumVersion:
-        codex.version && !isSupportedCodexAcpVersion(codex.version)
-          ? MINIMUM_CODEX_ACP_VERSION
-          : undefined,
       versionDetail:
         codex.resolvedPath || codex.version || codex.nativeVersion
           ? t('Codex CLI {{nativeVersion}}, ACP {{adapterVersion}}', {
@@ -413,7 +405,10 @@ const AgentPanel = ({
             })
           : undefined,
       updateAvailable: Boolean(
-        codexManaged && codex.nativeManaged && hasCodexNativeUpdate(codex.nativeVersion)
+        codexReady &&
+        codexManaged &&
+        codex.nativeManaged &&
+        hasCodexNativeUpdate(codex.nativeVersion)
       ),
       updateHint:
         codex.resolvedPath &&
@@ -422,7 +417,7 @@ const AgentPanel = ({
           ? t(
               'Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.'
             )
-          : hasCodexNativeUpdate(codex.nativeVersion)
+          : codexReady && hasCodexNativeUpdate(codex.nativeVersion)
             ? codexManaged && codex.nativeManaged
               ? t(
                   'Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.',
@@ -460,7 +455,9 @@ const AgentPanel = ({
       uninstallCommand: 'npm uninstall -g @agentclientprotocol/codex-acp',
       managed: codexManaged,
       installSources:
-        codex.resolvedPath && !isSupportedCodexCliVersion(codex.nativeVersion)
+        codex.resolvedPath &&
+        (!isSupportedCodexCliVersion(codex.nativeVersion) ||
+          (codex.version && !isSupportedCodexAcpVersion(codex.version)))
           ? getCodexInstallSources().filter((source) => source.id === 'managed')
           : getCodexInstallSources(),
       install: codexInstall,
@@ -639,6 +636,12 @@ const AgentPanel = ({
         (check) => check.id === 'agent' && check.status === 'failed'
       ))
 
+  const repairDisabled =
+    anyInstalling ||
+    isUninstalling ||
+    isDetectingAnyFramework ||
+    promptInFlight ||
+    (!isOnboarding && isSwitching)
   const pendingRepairCard = frameworkCards.find((card) => card.key === pendingRepair)
   const installedRadioId =
     installedFrameworks.find((card) => card.ready && card.frameworkId === agentFrameworkId)
@@ -733,13 +736,20 @@ const AgentPanel = ({
   )
 
   return (
-    <div className="space-y-5 p-5">
+    <div className={cn('space-y-5', isOnboarding ? 'onboarding-agent-panel' : 'p-5')}>
       {/* The runtime cards double as the framework selector: pick a card to make it the active
           backend (confirmed, since it starts a fresh session). Cards are grouped by install state
           so management (Installed) and acquisition (Available) don't compete for attention — but
           the active runtime can't be uninstalled (switch to the other one first). */}
       <SettingsSection
         data-settings-anchor="agent.framework"
+        className={
+          isOnboarding
+            ? 'p-0 [&_:where(h2)]:text-[0.9375rem] [&_:where(h2)]:leading-[1.4]'
+            : undefined
+        }
+        headerClassName={isOnboarding ? 'sm:gap-3' : undefined}
+        contentClassName={isOnboarding ? 'mt-4' : undefined}
         title={title}
         headingAs={isOnboarding ? 'h2' : 'h3'}
         aria-label={title}
@@ -878,14 +888,14 @@ const AgentPanel = ({
         name={pendingRepairCard?.name ?? null}
         sources={pendingRepairCard?.installSources ?? []}
         installing={pendingRepairCard?.install.isInstalling ?? false}
-        disabled={anyInstalling || isUninstalling || (!isOnboarding && isSwitching)}
+        disabled={repairDisabled}
         npmAvailable={npmAvailable}
         blockedInstallSources={
           pendingRepairCard?.frameworkId === agentFrameworkId ? blockedInstallSources : {}
         }
         onCancel={() => setPendingRepair(null)}
         onRepair={(source) => {
-          if (!pendingRepairCard) return
+          if (!pendingRepairCard || repairDisabled) return
           setPendingRepair(null)
           void installFramework(pendingRepairCard, source)
         }}

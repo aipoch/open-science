@@ -98,6 +98,51 @@ describe('PdfThumbnail', () => {
     vi.unstubAllGlobals()
   })
 
+  it('uses owner-provided visibility without creating an inner observer', async () => {
+    const observe = vi.fn()
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe
+        constructor() {
+          this.observe = observe
+        }
+        unobserve = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+
+    await act(async () => {
+      root.render(
+        <PdfThumbnail
+          path="/workspace/owner-visible.pdf"
+          name="owner-visible.pdf"
+          source="local"
+          isVisible={false}
+        />
+      )
+      await flushMicrotasks()
+    })
+
+    expect(observe).not.toHaveBeenCalled()
+    expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
+
+    await act(async () => {
+      root.render(
+        <PdfThumbnail
+          path="/workspace/owner-visible.pdf"
+          name="owner-visible.pdf"
+          source="local"
+          isVisible
+        />
+      )
+      await flushMicrotasks()
+    })
+
+    expect(observe).not.toHaveBeenCalled()
+    expect(window.api.previewResources.acquire).toHaveBeenCalledOnce()
+  })
+
   it.each([false, true])(
     'does not reacquire while Desktop is recovering (closing=%s)',
     async (closing) => {
@@ -624,6 +669,78 @@ describe('PdfThumbnail', () => {
     })
 
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+  })
+
+  it('starts an owner-visible queued thumbnail before a prefetch thumbnail', async () => {
+    const renderResolvers: Array<() => void> = []
+    const started: string[] = []
+    vi.mocked(createManagedPdfLoadingTask).mockImplementation((resource) => {
+      started.push(resource.id)
+      let resolveRender!: () => void
+      const renderPromise = new Promise<void>((resolve) => {
+        resolveRender = resolve
+      })
+      renderResolvers.push(resolveRender)
+      return {
+        promise: Promise.resolve({
+          getPage: vi.fn().mockResolvedValue({
+            getViewport: vi.fn(() => ({ width: 100, height: 140 })),
+            render: vi.fn(() => ({
+              promise: renderPromise,
+              cancel: vi.fn(() => resolveRender())
+            })),
+            cleanup: vi.fn()
+          }),
+          destroy: vi.fn().mockResolvedValue(undefined)
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never
+    })
+
+    const thumbnail = (path: string, isVisible?: boolean): React.JSX.Element => (
+      <PdfThumbnail
+        key={path}
+        path={path}
+        name={path.split('/').at(-1) ?? path}
+        source="local"
+        isVisible={isVisible}
+      />
+    )
+
+    await act(async () => {
+      root.render(
+        <>
+          {thumbnail('/workspace/prefetch-1.pdf')}
+          {thumbnail('/workspace/prefetch-2.pdf')}
+          {thumbnail('/workspace/prefetch-3.pdf')}
+        </>
+      )
+      await flushMicrotasks()
+    })
+    expect(started).toHaveLength(2)
+
+    await act(async () => {
+      root.render(
+        <>
+          {thumbnail('/workspace/prefetch-1.pdf')}
+          {thumbnail('/workspace/prefetch-2.pdf')}
+          {thumbnail('/workspace/prefetch-3.pdf')}
+          {thumbnail('/workspace/visible.pdf', true)}
+        </>
+      )
+      await flushMicrotasks()
+    })
+
+    renderResolvers[0]()
+    await act(async () => {
+      await flushMicrotasks()
+    })
+
+    expect(started.at(-1)).toBe('resource:/workspace/visible.pdf')
+    renderResolvers.forEach((resolve) => resolve())
+    await act(async () => {
+      await flushMicrotasks()
+    })
   })
 
   it('starts a fresh job when a same-key subscriber replaces an aborted job', async () => {

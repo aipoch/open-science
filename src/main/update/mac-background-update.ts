@@ -5,6 +5,7 @@ import { access, realpath, statfs } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { AutoUpdater } from 'electron'
+import type { MacSparkleUpdate } from './mac-sparkle'
 import { verifyArtifactChecksum } from './installation-artifact'
 import type { UpdateStrategy } from './strategy'
 
@@ -52,17 +53,43 @@ export async function planMacUpdateOnQuit(
   native: AutoUpdater,
   bundle: string,
   cache: string,
-  checkOccupancy: () => Promise<void>
+  checkOccupancy: () => Promise<void>,
+  sparkle?: Pick<MacSparkleUpdate, 'artifact' | 'isReady' | 'install'>
 ): Promise<false | (() => Promise<void>)> {
   const ready = strategy.getStatus()
   if (
     !ready.automaticDownloads ||
     ready.state !== 'ready' ||
     ready.recovery ||
-    !ready.artifactSha512 ||
-    !ready.localPath
+    !ready.artifactSha512
   )
     return false
+  if (!ready.localPath) {
+    const version = ready.latest
+    const artifact = sparkle?.artifact
+    if (
+      !version ||
+      !artifact ||
+      !sparkle?.isReady(version) ||
+      artifact.zipSha512 !== ready.artifactSha512
+    )
+      return false
+    const space = BigInt(artifact.zipSize) * 4n
+    if (
+      !(await writableInstallation(bundle)) ||
+      (await availableBytes(cache)) < space ||
+      (await availableBytes(bundle)) < space
+    )
+      return false
+    await checkOccupancy()
+    if (
+      strategy.getStatus() !== ready ||
+      !sparkle.isReady(version) ||
+      !(await writableInstallation(bundle))
+    )
+      return false
+    return () => sparkle.install(version, false)
+  }
   if ((await strategy.getInstaller())?.format !== 'zip' || !(await writableInstallation(bundle)))
     return false
   // MacUpdater 6.8.9 has already opened an authenticated loopback feed over this exact ZIP.

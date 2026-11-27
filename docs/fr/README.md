@@ -53,18 +53,17 @@
 
 > Ce document est une traduction de `README.md` en anglais. En cas de divergence, la [version anglaise](../../README.md) fait foi.
 
-### 💡 AIPOCH Open-Science v1.3.3 — Nouveautés
+### 💡 AIPOCH Open-Science v1.3.5 — Nouveautés
 
-_21 novembre 2026_
+_24 novembre 2026_
 
-- **Mises à jour automatiques**: Sur macOS, une mise à jour éligible peut s’installer quand vous quittez l’application ; sur Windows et Linux, une mise à jour peut être préparée pour le prochain lancement pendant que vous travaillez — les téléchargements en arrière-plan exigent un réseau sans restriction et de l’espace de stockage, et le chemin manuel reste disponible.
-- **Agent intégré par défaut**: Les nouveaux projets et les nouvelles sessions démarrent partout avec l’Agent Open-Science intégré, y compris sur des installations propres de la CLI et du SDK ; les environnements d’exécution d’agent externes ne s’installent à la demande que lorsque vous les choisissez.
-- **Une application plus légère**: L’application installée est plus légère sur macOS et Windows, et l’environnement npm hors ligne fourni est compilé pour Node 22 au lieu d’embarquer plus d’un millier de fichiers de paquets individuels.
-- **Édition d’image unifiée**: Les instructions d’édition se trouvent dans le compositeur de conversation, et les actions au survol ou au clavier lancent l’édition depuis n’importe quelle prévisualisation, avec navigation entre les versions à tout moment.
-- **Des échecs qui s’expliquent**: Les échecs de requête, de chargement, d’importation et de notebook indiquent désormais ce qui s’est réellement passé, et les exécutions interrompues sont distinguées des travaux qui n’ont jamais répondu.
-- **Raccourcis des paramètres restaurés**: Skills, Specialists et Connectors sont de retour dans les paramètres, chacun ouvrant sa catégorie et vous ramenant à l’endroit où vous étiez.
+- **Des mises à jour macOS plus légères**: Les mises à jour dans l’application téléchargent désormais des deltas signés au lieu d’installateurs complets, si bien que la plupart des mises à jour ne transfèrent qu’une fraction des données.
+- **Lisez la littérature sans perdre le fil**: Les figures et tableaux s’affichent en aperçu depuis les références du texte, et les passages sélectionnés se traduisent sur place dans le lecteur PDF.
+- **Plus de façons de connecter des modèles**: Des passerelles cloud (Cloudflare AI Gateway, AWS Bedrock Runtime, Microsoft Foundry, Vectrust) et des préréglages locaux (Ollama, LM Studio, llama.cpp, vLLM) rejoignent le catalogue de fournisseurs.
+- **Une application plus légère et plus stable**: L’historique des transcriptions et les figures du Notebook se chargent à la demande, et l’admission mémoire du Notebook est revérifiée avant de poursuivre le travail.
+- **Une meilleure reprise**: La reprise de session survit aux fournisseurs indisponibles, et la traduction PDF préserve plus fidèlement la mise en page native.
 
-[Notes complètes v1.3.3](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
+[Notes complètes v1.3.5](https://github.com/aipoch/open-science/releases/tag/v1.3.5)
 
 <a id="share-your-research"></a>
 

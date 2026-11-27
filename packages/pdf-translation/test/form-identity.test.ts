@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- infer synthetic native proof fixtures */
 import { expect, it, vi } from 'vitest'
+import { createCanvas } from '@napi-rs/canvas'
 import { PDFDocument, PDFName, StandardFonts, rgb } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 // @ts-expect-error Worker-private JavaScript is exercised through its native runtime.
@@ -143,6 +144,50 @@ it.each([
   if (kind === 'negative-scale') image.identity.matrix[0] = other.identity.matrix[0] = -50
   Object.assign(value, { before: [...value.before, image], after: [...value.after, other] })
   expect(matches(value)).toBe(false)
+})
+
+it('skips bitmap rendering for a graphic-only Form on a translated page', async () => {
+  const graphic = await PDFDocument.create(),
+    panel = graphic.addPage([80, 80]),
+    canvas = createCanvas(80, 80)
+  canvas.getContext('2d').fillRect(0, 0, 80, 80)
+  const image = await graphic.embedPng(canvas.toBuffer('image/png'))
+  panel.drawImage(image, { x: 0, y: 0, width: 80, height: 80 })
+  await graphic.flush()
+  const document = await PDFDocument.create(),
+    page = document.addPage([600, 800]),
+    embedded = await document.embedPage(panel)
+  page.drawPage(embedded, { x: 100, y: 400 })
+  page.drawText('Review results', { x: 100, y: 300 })
+  const data = await document.save(),
+    task = getDocument({ data: data.slice(), useSystemFonts: true }),
+    e = await engine(),
+    renderImage = vi.spyOn(e.p, 'FPDFImageObj_GetRenderedBitmap'),
+    engineSpy = vi.spyOn(pdfium, 'engine').mockResolvedValueOnce(e)
+  try {
+    const { source } = await extractPdfTranslationSource({
+      document: await task.promise,
+      resourceRequestKey: 'graphic-only-form',
+      signal: new AbortController().signal
+    })
+    const unit = source.units.find(({ source }) => source === 'Review results')!
+    expect(unit).toBeDefined()
+    const generate = vi.fn()
+    expect(
+      await translateFormLabels(
+        data,
+        [{ ...unit, translation: '审查结果' }],
+        source.pages,
+        generate
+      )
+    ).toBe(data)
+    expect(generate).not.toHaveBeenCalled()
+    expect(renderImage).not.toHaveBeenCalled()
+  } finally {
+    engineSpy.mockRestore()
+    renderImage.mockRestore()
+    await task.destroy()
+  }
 })
 
 it('retains a complete single native diagram tag instead of an expanded model label', async () => {

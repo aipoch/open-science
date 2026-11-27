@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 
 import type {
   PersistedChatMessage,
+  PersistedChatSession,
   SessionPlanDelivery,
   SessionPlanRuntimeContext,
   SessionPlanStepStatus,
@@ -17,10 +18,12 @@ import {
   projectPlanStepStates,
   planStepTitles,
   type ActivePlanProjection,
+  type ExternalPlanResponse,
   type GeneratePlanContent,
   type PlanDocumentV1,
   type PlanResponseCommand
 } from '../../shared/session-plan/contract'
+import type { TaskInteractionDecisionSource } from '../../shared/task-interaction'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 import { matchPlanDelivery } from './plan-delivery'
 
@@ -56,7 +59,7 @@ type PlanServiceDependencies = Readonly<{
     plan: SessionPlanRuntimeContext | undefined
     archivePlanProjection?: ActivePlanProjection
     sessionStatus: 'waiting-plan-approval' | 'running' | 'idle'
-    beforePersist?: () => void
+    beforePersist?: (session?: PersistedChatSession) => void
   }) => Promise<SessionRuntimeContext>
   isRevisionConflict: (error: unknown) => boolean
   persistUserMessage: (input: {
@@ -64,12 +67,13 @@ type PlanServiceDependencies = Readonly<{
     sessionId: string
     content: string
     interactionId: string
-    beforePersist?: () => void
+    beforePersist?: (session?: PersistedChatSession) => void
     markPlanReview?: Readonly<{
       expectedRevision: number
       plan: SessionPlanRuntimeContext
       commandId: string
       createdAt: number
+      externalResponse?: Omit<ExternalPlanResponse, 'promptMessageId'>
     }>
   }) => Promise<PersistedChatMessage>
   now?: () => number
@@ -111,10 +115,14 @@ type ActivePlanStepStatusCommand = Readonly<{
 
 type PlanDecisionCommitPrecondition = Readonly<{
   beforeDecisionCommit?: () => boolean
+  decisionSource?: TaskInteractionDecisionSource
+  beforeExternalCommit?: (session?: PersistedChatSession) => void
 }>
 
 type PlanFeedbackCommitPrecondition = Readonly<{
   beforeFeedbackPersist?: () => void
+  decisionSource?: TaskInteractionDecisionSource
+  beforeExternalCommit?: (session?: PersistedChatSession) => void
 }>
 
 type PlanDecisionResult = {
@@ -181,6 +189,7 @@ class PlanService {
     sessionId: string
     executionId: string
     interactionId: string
+    taskRunId?: string
     content: GeneratePlanContent
   }): Promise<{ projection: ActivePlanProjection; pauseInteraction: true }> {
     const document = createPlanDocumentV1(input.content)
@@ -251,6 +260,7 @@ class PlanService {
       artifactChecksum: artifact.checksum,
       document,
       originatingPromptMessageId: input.interactionId,
+      ...(input.taskRunId ? { originatingTaskRunId: input.taskRunId } : {}),
       materializedAt: this.now(),
       approval: 'pending',
       stepStatuses: {}
@@ -324,6 +334,15 @@ class PlanService {
       if (plan.approval !== 'pending') {
         throw new PlanCommandError('approval-already-decided', 'Plan approval is irreversible.')
       }
+      if (
+        input.artifactVersionId !== undefined &&
+        plan.artifactVersionId !== input.artifactVersionId
+      ) {
+        throw new PlanCommandError('stale-plan', 'A newer Plan is active.')
+      }
+      if (input.expectedRevision !== undefined && context.revision !== input.expectedRevision) {
+        throw new PlanCommandError('revision-conflict', 'The Plan revision is stale.')
+      }
       const text = input.feedback.trim()
       if (!text) throw new PlanCommandError('invalid-plan', 'Plan feedback must be non-empty.')
       const interactionId = this.dependencies.interactions.interactionIdFor(
@@ -344,12 +363,30 @@ class PlanService {
         sessionId: input.sessionId,
         content: text,
         interactionId,
-        ...(input.beforeFeedbackPersist ? { beforePersist: input.beforeFeedbackPersist } : {}),
+        ...(input.beforeFeedbackPersist || input.beforeExternalCommit
+          ? {
+              beforePersist: (session?: PersistedChatSession) => {
+                input.beforeExternalCommit?.(session)
+                input.beforeFeedbackPersist?.()
+              }
+            }
+          : {}),
         markPlanReview: {
           expectedRevision: context.revision,
           plan,
           commandId: deliveryCommandId,
-          createdAt: deliveryCreatedAt
+          createdAt: deliveryCreatedAt,
+          ...(input.decisionSource !== undefined && input.expectedRevision !== undefined
+            ? {
+                externalResponse: {
+                  source: input.decisionSource,
+                  reviewedRevision: input.expectedRevision,
+                  action: 'revise',
+                  feedbackChecksum: sha256(text),
+                  commandId: deliveryCommandId
+                }
+              }
+            : {})
         }
       })
       this.dependencies.interactions.release(input.sessionId, plan.artifactVersionId)
@@ -400,30 +437,44 @@ class PlanService {
     if (existingDelivery?.kind === 'review-feedback') {
       Reflect.deleteProperty(settledPlan, 'delivery')
     }
+    const deliveryCommandId = this.createCommandId()
     const updated: SessionPlanRuntimeContext = {
       ...settledPlan,
       ...(existingDelivery && existingDelivery.kind !== 'review-feedback'
         ? { delivery: existingDelivery }
         : {}),
       approval: input.decision,
+      ...(input.decisionSource === undefined
+        ? {}
+        : {
+            externalResponse: {
+              source: input.decisionSource,
+              reviewedRevision: input.expectedRevision,
+              action: input.decision,
+              commandId: deliveryCommandId,
+              promptMessageId: plan.originatingPromptMessageId
+            }
+          }),
       delivery: {
-        commandId: this.createCommandId(),
+        commandId: deliveryCommandId,
         kind: input.decision === 'approved' ? 'approved-plan' : 'rejected-plan',
         state: 'queued',
         originatingPromptMessageId: plan.originatingPromptMessageId,
         createdAt: this.now()
       }
     }
-    const beforePersist = input.beforeDecisionCommit
-      ? (): void => {
-          if (!input.beforeDecisionCommit?.()) {
-            throw new PlanCommandError(
-              'interaction-mismatch',
-              'The Session Plan decision authorization was revoked before commit.'
-            )
+    const beforePersist =
+      input.beforeDecisionCommit || input.beforeExternalCommit
+        ? (session?: PersistedChatSession): void => {
+            input.beforeExternalCommit?.(session)
+            if (input.beforeDecisionCommit && !input.beforeDecisionCommit()) {
+              throw new PlanCommandError(
+                'interaction-mismatch',
+                'The Session Plan decision authorization was revoked before commit.'
+              )
+            }
           }
-        }
-      : undefined
+        : undefined
     const next = await this.patch(
       input,
       updated,
@@ -816,7 +867,7 @@ class PlanService {
     input: PlanIdentityCommand,
     plan: SessionPlanRuntimeContext | undefined,
     sessionStatus: 'waiting-plan-approval' | 'running' | 'idle',
-    beforePersist?: () => void
+    beforePersist?: (session?: PersistedChatSession) => void
   ): Promise<SessionRuntimeContext> {
     try {
       return await this.dependencies.patchRuntimeContext({
@@ -923,6 +974,8 @@ class PlanService {
         ? { originatingPromptMessageId: plan.originatingPromptMessageId }
         : {}),
       ...(plan.materializedAt !== undefined ? { materializedAt: plan.materializedAt } : {}),
+      ...(plan.originatingTaskRunId ? { originatingTaskRunId: plan.originatingTaskRunId } : {}),
+      ...(plan.externalResponse ? { externalResponse: plan.externalResponse } : {}),
       revision,
       approval: plan.approval,
       lifecycle,

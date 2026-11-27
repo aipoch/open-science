@@ -7,8 +7,16 @@ on:
     - cron: '17 15 * * *' # UTC; 23:17 Asia/Singapore
   workflow_dispatch:
     inputs:
-      workspace_test_pattern:
-        description: 'Optional workspace test regex for a single-runner diagnostic (10 repetitions)'
+      diagnostic_suite:
+        description: 'Suite for a focused Windows diagnostic'
+        type: choice
+        options:
+          - browser
+          - functional
+          - workspace
+        default: browser
+      test_pattern:
+        description: 'Optional Playwright title regex for the selected diagnostic suite (10 repetitions)'
         type: string
         default: ''
 
@@ -99,13 +107,13 @@ jobs:
     needs: [plan, windows_e2e_setup]
     if: ${{ !cancelled() && needs.plan.outputs.should_test == 'true' && needs.windows_e2e_setup.result == 'success' }}
     runs-on: windows-latest
-    # Budget both 7-minute browser attempts, two 15-minute Electron suites,
+    # Budget both 10-minute browser attempts, two 15-minute Electron suites,
     # setup and diagnostic uploads; 40 minutes can cancel a healthy final suite.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' && '[1]' || '[1,2,3,4,5,6]') }}
+        shard: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.test_pattern != '' && '[1]' || '[1,2,3,4,5,6]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -127,12 +135,12 @@ jobs:
         shell: bash
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Install headless Chromium
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.workspace_test_pattern == '' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.test_pattern == '' || inputs.diagnostic_suite == 'browser' }}
         run: npx playwright install chromium --only-shell
       # Scheduled coverage reports retry-passed flakes as failures, like Mac Source Regression.
       - name: Run renderer layout pilot
         id: renderer_layout
-        if: ${{ steps.setup.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.workspace_test_pattern == '') }}
+        if: ${{ steps.setup.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.test_pattern == '') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
@@ -140,10 +148,20 @@ jobs:
         # NetLog traced blank fixtures to Windows WSAENOBUFS after hundreds of asset reloads.
         # Keep each browser process serialized and cap its loopback socket churn with runner shards.
         shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/6 --fail-on-flaky-tests
+        run: npm run test:e2e:browser -- --workers=1 --global-timeout=600000 --shard=${{ matrix.shard }}/6 --fail-on-flaky-tests
+      - name: Diagnose selected browser journey
+        id: browser_diagnostic
+        if: ${{ steps.setup.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.test_pattern != '' && inputs.diagnostic_suite == 'browser' }}
+        continue-on-error: true
+        shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
+        env:
+          TEST_PATTERN: ${{ inputs.test_pattern }}
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
+        run: npm run test:e2e:browser -- --workers=1 --grep "$env:TEST_PATTERN" --repeat-each=10 --retries=0 --global-timeout=900000 --fail-on-flaky-tests
       - name: Run functional journeys
         id: e2e_functional_windows
-        if: ${{ steps.setup.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.workspace_test_pattern == '') }}
+        if: ${{ steps.setup.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.test_pattern == '') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
@@ -152,6 +170,16 @@ jobs:
         # Three serial shards left journeys unrun at the 15-minute cap. Six shards preserve
         # the complete test set and existing per-test/global deadlines.
         run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/6 --global-timeout=900000 --fail-on-flaky-tests
+      - name: Diagnose selected functional journey
+        id: functional_diagnostic
+        if: ${{ steps.setup.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.test_pattern != '' && inputs.diagnostic_suite == 'functional' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          TEST_PATTERN: ${{ inputs.test_pattern }}
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
+        run: npm run test:e2e:journey -- --workers=1 --grep "$TEST_PATTERN" --repeat-each=10 --retries=0 --global-timeout=900000 --fail-on-flaky-tests
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -165,7 +193,7 @@ jobs:
           if-no-files-found: warn
       - name: Run workspace journeys
         id: e2e_workspace_windows
-        if: ${{ steps.setup.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.workspace_test_pattern == '') }}
+        if: ${{ steps.setup.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.test_pattern == '') }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_windows
@@ -173,11 +201,11 @@ jobs:
         run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/6 --global-timeout=900000 --fail-on-flaky-tests
       - name: Diagnose selected workspace journey
         id: workspace_diagnostic
-        if: ${{ steps.setup.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' }}
+        if: ${{ steps.setup.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.test_pattern != '' && inputs.diagnostic_suite == 'workspace' }}
         continue-on-error: true
         shell: bash
         env:
-          TEST_PATTERN: ${{ inputs.workspace_test_pattern }}
+          TEST_PATTERN: ${{ inputs.test_pattern }}
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace_windows.json
         run: npm run test:e2e:workspace -- --workers=1 --grep "$TEST_PATTERN" --repeat-each=10 --retries=0 --global-timeout=900000 --fail-on-flaky-tests
@@ -204,15 +232,25 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
-      - name: Enforce workspace diagnostic
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' }}
+      - name: Enforce selected diagnostic
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.test_pattern != '' }}
         shell: bash
         env:
           SETUP: ${{ steps.setup.outcome }}
+          SUITE: ${{ inputs.diagnostic_suite }}
+          BROWSER: ${{ steps.browser_diagnostic.outcome }}
+          FUNCTIONAL: ${{ steps.functional_diagnostic.outcome }}
           DIAGNOSTIC: ${{ steps.workspace_diagnostic.outcome }}
-        run: '[[ "$SETUP" == "success" && "$DIAGNOSTIC" == "success" ]]'
+        run: |
+          [[ "$SETUP" == "success" ]]
+          case "$SUITE" in
+            browser) [[ "$BROWSER" == "success" ]] ;;
+            functional) [[ "$FUNCTIONAL" == "success" ]] ;;
+            workspace) [[ "$DIAGNOSTIC" == "success" ]] ;;
+            *) exit 1 ;;
+          esac
       - name: Enforce complete Windows E2E suites
-        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.workspace_test_pattern == '') }}
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.test_pattern == '') }}
         shell: bash
         env:
           SETUP: ${{ steps.setup.outcome }}

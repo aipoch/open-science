@@ -229,3 +229,54 @@ it.each(['aligned', 'shifted', 'body style'])(
     expect(units.flatMap((unit) => unit.items).sort()).toEqual(items.map((_, i) => `1:${i}`))
   }
 )
+
+it.each(['aligned', 'shifted', 'mixed faces'])(
+  'joins a hanging decimal heading above a separately indented paragraph (%s)',
+  (shape) => {
+    const title = '2.4. Calibrating the panel for',
+      suffix = 'LED response measurements',
+      items = [
+        item(
+          'A reference grid is captured before updating the independent channels.',
+          40,
+          515,
+          250,
+          'Body',
+          true
+        ),
+        item('The process restarts after the evaluation completes.', 40, 502, 218, 'Body', true),
+        item('', 40, 470, 0, 'Title', true),
+        item(title, 40, 470, 250, 'Title', true),
+        item(
+          suffix,
+          shape === 'shifted' ? 68 : 62,
+          456.8,
+          106,
+          shape === 'mixed faces' ? 'Other' : 'Title'
+        ),
+        item('', 51, 433, 0, 'Body', true),
+        item(
+          'A separate panel returns the final calibration for each channel.',
+          51,
+          433,
+          239,
+          'Body',
+          true
+        ),
+        item(
+          'Measurements continue at the edge of the same body column.',
+          40,
+          419.8,
+          250,
+          'Body',
+          true
+        )
+      ]
+    const { units } = read({ page: 1, width: 600, height: 800, rotation: 0, items })
+    const heading = units.find((unit) => unit.items.includes('1:3'))
+    expect(heading?.source).toBe(shape === 'aligned' ? `${title} ${suffix}` : title)
+    expect(heading?.items).toEqual(shape === 'aligned' ? ['1:3', '1:4'] : ['1:3'])
+    const claims = units.flatMap((unit) => unit.items).sort()
+    expect(claims).toEqual(['1:0', '1:1', '1:3', '1:4', '1:6', '1:7'])
+  }
+)

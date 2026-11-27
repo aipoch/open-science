@@ -1762,7 +1762,8 @@ export function ImageEditorBoundary({
   const inDialog = presentation === 'dialog'
   const editing = inDialog ? requestedEditKey === key : draft?.panelOpen
   useLayoutEffect(() => {
-    if (draft && !editing) onVersionChange?.(previewItem)
+    if (!draft) onVersionChange?.(undefined)
+    else if (!editing) onVersionChange?.(previewItem)
   }, [draft, editing, previewItem, onVersionChange])
   useLayoutEffect(() => () => onVersionChange?.(undefined), [onVersionChange])
   const editDisabledReason = entryLoading

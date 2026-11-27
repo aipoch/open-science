@@ -2,10 +2,16 @@ import type { ResearchVideoStep } from './progress.js'
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from './source.js'
-import { buildVideoTimeline, type VideoSpec, type VoiceTiming } from './timeline.js'
+import {
+  buildVideoTimeline,
+  estimateWordTimings,
+  type VideoSpec,
+  type VoiceTiming
+} from './timeline.js'
 
 export type SpeechSynthesizer = {
   identity: string
+  proportionalTiming?: boolean
   measureDuration?(text: string): Promise<number>
   synthesize(text: string): Promise<{ samples: Float32Array; sampleRate: number }>
 }
@@ -216,16 +222,13 @@ export async function prepareVideoNarration(options: {
       report()
       return duration
     }
-    for (let task = queue[next++]; task && !failure; task = queue[next++]) {
-      options.signal.throwIfAborted()
-      const { text, lineIndex, chunkIndex } = task
-      const audio = await synthesize(text)
-      const duration = durationOf(audio)
-      if (!Number.isFinite(duration) || duration > 300)
-        throw new Error('Narration exceeds five minutes per line')
+    const probeWordTimings = async (
+      text: string,
+      words: string[],
+      duration: number
+    ): Promise<VoiceTiming['words']> => {
       const durationKey = JSON.stringify([synthesizer.identity, text])
       if (!durations.has(durationKey)) remember(durationKey, Promise.resolve(duration))
-      const words = text.split(' ')
       const boundaries: number[] = [0]
       for (let i = 1; i < words.length; i++) {
         const prefix = await measure(words.slice(0, i).join(' '))
@@ -235,10 +238,21 @@ export async function prepareVideoNarration(options: {
         boundaries.push(Math.min(duration, Math.max(boundaries.at(-1)!, estimate)))
       }
       boundaries.push(duration)
-      chunksByLine[lineIndex][chunkIndex] = {
-        ...audio,
-        words: words.map((_, i): [number, number] => [boundaries[i], boundaries[i + 1]])
-      }
+      return words.map((_, i) => [boundaries[i], boundaries[i + 1]])
+    }
+    for (let task = queue[next++]; task && !failure; task = queue[next++]) {
+      options.signal.throwIfAborted()
+      const { text, lineIndex, chunkIndex } = task
+      const audio = await synthesize(text)
+      const duration = durationOf(audio)
+      if (!Number.isFinite(duration) || duration > 300)
+        throw new Error('Narration exceeds five minutes per line')
+      const words = text.split(' ')
+      const timings = synthesizer.proportionalTiming
+        ? estimateWordTimings(words, duration)
+        : await probeWordTimings(text, words, duration)
+      if (synthesizer.proportionalTiming) completed += 2 * (words.length - 1)
+      chunksByLine[lineIndex][chunkIndex] = { ...audio, words: timings }
       if (--remaining[lineIndex] === 0) completedLines++
       report()
     }

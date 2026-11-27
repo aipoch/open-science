@@ -299,9 +299,13 @@ if (new URLSearchParams(location.search).has('evidence')) {
   const current = usePackageOperationStore.getState().operation!
   usePackageOperationStore.getState().receive({
     ...current,
-    state: 'failed',
-    error:
-      'Sensitive content detected at session.json @37746. Check: Credential-like assignment. Review it before exporting the Session package.',
+    state: 'awaiting-selection',
+    progress: { phase: 'confirming' },
+    sensitiveExportReview: {
+      expiresAt: 2_000_000_000_000,
+      destination: '/Users/researcher/Documents/research.science',
+      fileDigest: { sizeBytes: 7, checksum: 'c'.repeat(64) }
+    },
     sensitiveContent: Array.from({ length: 20 }, (_, index) => ({
       location: `research-file-${index}.txt`,
       offset: 0,

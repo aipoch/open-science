@@ -37,6 +37,272 @@ const { SettingsService } = await import('./service')
 const { SettingsRepository } = await import('./repository')
 
 describe('SettingsService provider facade', () => {
+  it('keeps API provider discovery read-only and separates a verified save from activation', async () => {
+    const key = 'synthetic-task-provider-key'
+    const framework = 'opencode'
+    const model = 'test-model'
+    const setup = (request: unknown): ReturnType<typeof service.bootstrap> =>
+      service.bootstrap(request, () => undefined)
+    const options = { action: 'provider-options', framework }
+    const draft = {
+      action: 'provider-save',
+      providerType: 'custom',
+      framework,
+      model,
+      baseUrl: 'https://gateway.example/v1',
+      protocol: 'chat-completions'
+    }
+    const response = (body: unknown, status = 200): Response => Response.json(body, { status })
+    const probe = vi.fn(async (url: string, init?: RequestInit) => {
+      const configuredKey = new Headers(init?.headers).get('authorization')
+      return url === 'https://gateway.example/v1/chat/completions' &&
+        configuredKey === `Bearer ${key}`
+        ? response({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+        : response({ error: { message: `Rejected ${configuredKey}` } }, 401)
+    })
+    vi.stubGlobal('fetch', probe)
+    try {
+      expect(await setup(options)).toMatchObject({
+        ok: true,
+        providerOptions: {
+          framework,
+          selectedFramework: null,
+          active: { providerId: null, model: null },
+          providers: [],
+          official: expect.arrayContaining([
+            expect.objectContaining({
+              vendorId: 'openai',
+              models: expect.arrayContaining([
+                expect.objectContaining({
+                  id: 'gpt-5.4',
+                  compatible: false,
+                  credentialRequired: true
+                })
+              ])
+            }),
+            expect.objectContaining({
+              vendorId: 'anthropic',
+              models: expect.arrayContaining([
+                expect.objectContaining({
+                  id: 'claude-haiku-4-5-20251001',
+                  compatible: true,
+                  credentialRequired: true
+                })
+              ])
+            })
+          ])
+        }
+      })
+      expect(probe).not.toHaveBeenCalled()
+      expect(await setup({ ...draft, key })).toEqual({ ok: false, code: 'configuration_conflict' })
+      await repository.setAgentFramework(framework)
+      expect(await setup(draft)).toEqual({ ok: false, code: 'provider_credential_missing' })
+      expect(await setup({ ...draft, credentialRef: 'missing-ref' })).toEqual({
+        ok: false,
+        code: 'credential_invalid'
+      })
+      const failed = await setup({ ...draft, key: 'rejected-key' })
+      expect(failed).toEqual({ ok: false, code: 'provider_validation_failed', category: 'auth' })
+      expect(JSON.stringify(failed)).not.toContain('rejected-key')
+      expect(await setup(options)).toMatchObject({ ok: true, providerOptions: { providers: [] } })
+
+      const { createdCredential } = await service.createDeviceCredential({
+        displayName: 'Synthetic gateway key',
+        kind: 'api_key',
+        secret: key
+      })
+      const saved = await setup({ ...draft, credentialRef: createdCredential.id })
+      expect(saved).toMatchObject({
+        ok: true,
+        providerSetup: { model, framework, saved: true, active: false, validation: 'passed' }
+      })
+      if (!saved.ok || !saved.providerSetup) throw new Error('Missing saved provider identity')
+      const { providerId } = saved.providerSetup
+      const selection = {
+        action: 'provider-activate',
+        framework,
+        providerId,
+        model,
+        expectedActiveProviderId: null,
+        expectedActiveModel: null
+      }
+      const before = await setup(options)
+      expect(before).toMatchObject({
+        ok: true,
+        providerOptions: {
+          active: { providerId: null, model: null },
+          providers: [
+            { id: providerId, models: [expect.objectContaining({ id: model, compatible: true })] }
+          ]
+        }
+      })
+      expect(JSON.stringify(before)).not.toContain(key)
+      expect(await setup({ ...selection, model: 'other-model' })).toEqual({
+        ok: false,
+        code: 'provider_validation_failed',
+        category: 'model-not-found'
+      })
+      expect(await setup(selection)).toMatchObject({
+        ok: true,
+        providerSetup: {
+          providerId,
+          model,
+          framework,
+          saved: true,
+          active: true,
+          validation: 'passed'
+        }
+      })
+      expect(await setup(selection)).toEqual({ ok: false, code: 'configuration_conflict' })
+      expect(await setup(options)).toMatchObject({
+        ok: true,
+        providerOptions: { active: { providerId, model } }
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('resolves official wire protocols and saves only to the original terminal target', async () => {
+    const key = 'synthetic-terminal-key'
+    const framework = 'open-science-agent'
+    const providerId = '53a8ae2b-957e-452d-b127-2e0b867e5314'
+    const setup = (request: unknown): ReturnType<typeof service.bootstrap> =>
+      service.bootstrap(request, () => undefined)
+    const terminal = { action: 'provider-credential-target', framework, providerId }
+    await repository.setAgentFramework(framework)
+    for (const { vendorId, model, protocol } of [
+      { vendorId: 'anthropic', model: 'claude-haiku-4-5-20251001', protocol: 'messages' },
+      { vendorId: 'openai', model: 'gpt-5.4', protocol: 'responses' }
+    ]) {
+      expect(await setup({ ...terminal, providerType: 'official', vendorId, model })).toMatchObject(
+        {
+          ok: true,
+          providerCredentialTarget: {
+            protocol,
+            endpoint: expect.stringMatching(new RegExp(`/${protocol}$`))
+          }
+        }
+      )
+    }
+
+    const draft = {
+      ...terminal,
+      providerType: 'custom',
+      model: 'local-test-model',
+      baseUrl: 'http://127.0.0.1:43210',
+      protocol: 'chat-completions'
+    }
+    const probe = vi.fn(async (_url: string, init?: RequestInit) =>
+      new Headers(init?.headers).get('authorization') === `Bearer ${key}`
+        ? Response.json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+        : Response.json({ error: { message: 'Rejected key' } }, { status: 401 })
+    )
+    vi.stubGlobal('fetch', probe)
+    try {
+      expect(await setup(draft)).toEqual({
+        ok: true,
+        providerCredentialTarget: {
+          protocol: 'chat-completions',
+          endpoint: 'http://127.0.0.1:43210/v1/chat/completions'
+        }
+      })
+      const save = {
+        ...draft,
+        action: 'provider-save',
+        key,
+        expectedProtocol: 'chat-completions',
+        expectedEndpoint: 'http://127.0.0.1:43210/v1/chat/completions'
+      }
+      expect(await setup({ ...save, expectedProtocol: 'responses' })).toEqual({
+        ok: false,
+        code: 'configuration_conflict'
+      })
+      expect(
+        await setup({ ...save, expectedEndpoint: 'http://127.0.0.1:9999/v1/chat/completions' })
+      ).toEqual({
+        ok: false,
+        code: 'configuration_conflict'
+      })
+      expect(probe).not.toHaveBeenCalled()
+      expect(await setup({ ...save, key: 'wrong-key' })).toMatchObject({
+        ok: false,
+        category: 'auth'
+      })
+      expect(await setup({ action: 'provider-options' })).toMatchObject({
+        providerOptions: { providers: [] }
+      })
+      expect(await setup(save)).toMatchObject({
+        ok: true,
+        providerSetup: {
+          providerId,
+          model: draft.model,
+          saved: true,
+          validation: 'passed',
+          active: false
+        }
+      })
+      expect(await setup(draft)).toEqual({ ok: false, code: 'configuration_conflict' })
+      expect(await setup({ ...save, key: 'another-key' })).toEqual({
+        ok: false,
+        code: 'configuration_conflict'
+      })
+      const options = await setup({ action: 'provider-options' })
+      expect(options).toMatchObject({
+        providerOptions: {
+          active: { providerId: null, model: null },
+          providers: [
+            { id: providerId, lastValidated: { model: draft.model, protocol: draft.protocol } }
+          ]
+        }
+      })
+      expect(JSON.stringify(options)).not.toContain(key)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps the newer active provider when an activation probe overlaps another selection', async () => {
+    const framework = 'opencode'
+    const model = 'gateway-model'
+    await repository.setAgentFramework(framework)
+    for (const id of ['requested', 'selected-later']) {
+      await service.upsertProvider({
+        id,
+        type: 'custom',
+        model,
+        baseUrl: 'http://127.0.0.1:43110/v1',
+        apiEndpoints: ['chat-completions']
+      })
+    }
+    const waiting = Promise.withResolvers<Response>()
+    const probe = vi.fn(() => waiting.promise)
+    vi.stubGlobal('fetch', probe)
+    try {
+      const activation = service.bootstrap(
+        {
+          action: 'provider-activate',
+          framework,
+          model,
+          providerId: 'requested',
+          expectedActiveProviderId: null,
+          expectedActiveModel: null
+        },
+        () => undefined
+      )
+      await expect.poll(() => probe.mock.calls.length).toBe(1)
+      await service.setActiveProvider('selected-later', model)
+      waiting.resolve(
+        Response.json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+      )
+      expect(await activation).toEqual({ ok: false, code: 'configuration_conflict' })
+      expect((await service.getSettingsView()).activeProviderId).toBe('selected-later')
+    } finally {
+      waiting.resolve(new Response(null, { status: 502 }))
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('returns updated health without claiming a configuration commit when unchanged saved credentials fail', async () => {
     await repository.setAgentFramework('opencode')
     await service.upsertProvider({
@@ -74,6 +340,51 @@ describe('SettingsService provider facade', () => {
         lastValidationFailure: { category: 'auth', status: 403 }
       })
       expect(JSON.stringify(result)).not.toContain('existing-secret')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('retains a working default after a rejected onboarding key and completing setup', async () => {
+    await repository.setAgentFramework('opencode')
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] })
+        )
+    )
+    vi.stubGlobal('fetch', fetch)
+    try {
+      const { initDataRoot } = await import('../storage-root')
+      initDataRoot(join(dir, 'Open-Science'))
+      const original = await service.saveValidatedProvider({
+        type: 'custom',
+        name: 'Working',
+        baseUrl: 'https://working.example/v1',
+        model: 'working-model',
+        key: 'test-working',
+        apiEndpoints: ['chat-completions']
+      })
+      expect(original.validation.ok).toBe(true)
+      await repository.setActiveProvider(original.providerId!, 'working-model')
+      const before = await repository.getSettings()
+      fetch.mockImplementation(async () => new Response('Unauthorized', { status: 401 }))
+      const rejected = await service.saveValidatedProvider({
+        type: 'official',
+        vendorId: 'deepseek',
+        model: 'deepseek-chat',
+        key: 'test-rejected'
+      })
+      expect(rejected.validation).toMatchObject({ ok: false })
+      expect(rejected.providerId).toBeUndefined()
+      await service.markOnboardingComplete()
+      const after = await repository.getSettings()
+      expect(after.providers).toEqual(before.providers)
+      expect(after.activeProviderId).toBe(original.providerId)
+      expect(await service.resolveActiveModelChangeTarget()).toMatchObject({
+        providerId: original.providerId,
+        model: 'working-model'
+      })
     } finally {
       vi.unstubAllGlobals()
     }
@@ -174,6 +485,8 @@ describe('SettingsService provider facade', () => {
     const before = await repository.getSettings()
     expect(await service.bootstrap({ action: 'status' }, () => {})).toEqual({
       ok: true,
+      selectedFramework: null,
+      keylessKiloAvailable: true,
       next: {}
     })
     expect(await repository.getSettings()).toEqual(before)
@@ -266,7 +579,8 @@ describe('SettingsService provider facade', () => {
       configRoot: dir,
       installManagedClaudeImpl: async ({ installId }) => ({
         result: { installId, ok: false, error: 'expected test failure' }
-      })
+      }),
+      probeRegistry: async () => 10
     })
 
     try {

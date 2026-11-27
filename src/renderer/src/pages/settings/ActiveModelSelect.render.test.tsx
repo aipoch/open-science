@@ -213,6 +213,39 @@ describe('ActiveModelSelect', () => {
     expect(option?.getAttribute('data-disabled')).toBeNull()
   })
 
+  it.each([
+    ['codebuddy-subscription', 'CodeBuddy', 'chat-completions'],
+    ['claude-shared', 'Claude Code', 'messages'],
+    ['claude-isolated', 'Claude Code', 'messages'],
+    ['codex-shared', 'Codex or Open-Science Agent', 'responses'],
+    ['codex-isolated', 'Codex', 'responses']
+  ] as const)('explains the framework restriction for %s', (type, required, endpoint) => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: FRAMEWORKS,
+      providers: [
+        provider({
+          id: 'subscription',
+          type,
+          codexHarnessAvailable: type !== 'codex-isolated',
+          apiEndpoints: [endpoint],
+          models: ['subscription-model']
+        })
+      ]
+    })
+    render()
+    openSelect()
+
+    expect(document.body.querySelector('[data-slot="select-label"]')?.textContent).toContain(
+      `Requires ${required}`
+    )
+    const option = optionByText('subscription-model')
+    expect(option?.getAttribute('aria-disabled')).toBe('true')
+    expect(option?.getAttribute('aria-label')).toBe(
+      `Switch the agent framework to ${required} to use subscription-model with this subscription.`
+    )
+  })
+
   it('explains a model-specific endpoint mismatch on hover', async () => {
     const setActiveProvider = vi.fn().mockResolvedValue(undefined)
     useSettingsStore.setState({

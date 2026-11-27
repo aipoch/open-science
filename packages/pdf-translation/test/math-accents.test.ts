@@ -92,6 +92,29 @@ it.each([
   if (accepted) expect(result[0]).toMatchObject({ indices: [1, 2], label: 'Fˆ' })
 })
 
+it.each([false, true])(
+  'proves a native dot above one Greek math letter (detached=%s)',
+  (detached) => {
+    const base: NativeMathObject = {
+      i: 2,
+      text: 'θ',
+      fontName: 'CMMI10',
+      size: 10,
+      bounds: [0, 0, 5.6, 6.4]
+    }
+    const mark: NativeMathObject = {
+      i: 1,
+      text: '˙',
+      fontName: 'CMR10',
+      size: 10,
+      bounds: detached ? [7, 7.6, 8.1, 8.7] : [2.5, 7.6, 3.6, 8.7]
+    }
+    expect(resolveNativeMathAccents([mark, base])).toMatchObject(
+      detached ? [] : [{ indices: [1, 2], labels: ['θ˙', '˙θ'] }]
+    )
+  }
+)
+
 it.each(
   ['native-math-accent-geometry.jsonl', 'native-short-macron.jsonl'].flatMap((file) =>
     readPdfTranslationCases<{
@@ -125,3 +148,35 @@ it('resolves the Planck constant only with matching native ink and source intent
   expect(nativeMathSymbolText(glyph, 'OtherMath10', true)).toBe('~')
   expect(nativeMathSymbolText({ text: '~', bounds: [0, 0, 5.9, 1.8] }, 'MSBM10', true)).toBe('~')
 })
+
+it.each([
+  { name: 'native adjacent tilde', change: 'none', accepted: true },
+  { name: 'intervening object', change: 'sequence', accepted: false },
+  { name: 'different native font', change: 'font', accepted: false },
+  { name: 'different point size', change: 'size', accepted: false },
+  { name: 'detached mark', change: 'geometry', accepted: false },
+  { name: 'missing native character bounds', change: 'glyph', accepted: false }
+])(
+  'admits a raised tilde after a fused equality only with native proof: $name',
+  ({ change, accepted }) => {
+    const mark: NativeMathObject = {
+      i: 4,
+      text: '˜ ',
+      fontName: change === 'font' ? 'CMR9' : 'CMR10',
+      size: change === 'size' ? 9 : 10,
+      bounds: change === 'geometry' ? [11, 8, 14.4, 9] : [1.8, 8, 5.2, 9]
+    }
+    const base: NativeMathObject = {
+      i: change === 'sequence' ? 6 : 5,
+      text: 'Γ =',
+      fontName: 'CMR10',
+      size: 10,
+      bounds: [0, 0, 17, 6.8],
+      glyphs: change === 'glyph' ? undefined : [{ text: 'Γ', offset: 0, bounds: [0, 0, 6.8, 6.8] }]
+    }
+
+    expect(resolveNativeMathAccents([mark, base])[0]?.labels.includes('Γ =˜') ?? false).toBe(
+      accepted
+    )
+  }
+)

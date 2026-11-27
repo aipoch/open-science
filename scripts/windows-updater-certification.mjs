@@ -992,12 +992,19 @@ const isForeignOccupancy = (status) =>
   status.reason === 'installation-busy' &&
   status.recovery?.detail === 'foreign-process'
 
+const isTransientRuntimeDisconnect = (status) =>
+  status.state === 'ready' &&
+  status.reason === 'runtime-not-controlled' &&
+  status.error === 'Desktop runtime is disconnected.'
+
 const waitForInstallRetry = async (invoke) => {
   const status = await waitFor(
     'external file holder to release installation files',
     async () => {
       const checked = await invoke('recheck')
-      return isForeignOccupancy(checked) ? undefined : checked
+      return isForeignOccupancy(checked) || isTransientRuntimeDisconnect(checked)
+        ? undefined
+        : checked
     },
     30_000
   )
@@ -1421,7 +1428,10 @@ const main = async () => {
       await runProcess(uninstallHelper, ['update-handoff', '--install-path', installDirectory], {
         env
       })
-      await uninstallAndVerify(installDirectory, env, { processRoot: root })
+      await uninstallAndVerify(installDirectory, env, {
+        processRoot: root,
+        rollbackVersion: observation?.rollback?.version
+      })
       if (nextPreparation) {
         await rejects(
           stat(nextPreparation),

@@ -16,7 +16,12 @@ import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProv
 import { useNativePdfVisibility } from '../../pdf-annotations/use-native-pdf-visibility'
 import { usePdfExport } from '../../pdf-annotations/use-pdf-export'
 import { PdfTranslationExport } from './PdfTranslationExport'
-import { renderPdfNativeLinks, type PdfLinkDestination } from './pdf-native-links'
+import {
+  renderIndexedFigureLinks,
+  renderPdfNativeLinks,
+  type FigureLinkAnchor,
+  type PdfLinkDestination
+} from './pdf-native-links'
 import { PdfSearchTextCache } from './pdf-search-text-cache'
 import { usePdfTranslationCheckpoint } from './use-pdf-translation-checkpoint'
 import {
@@ -135,6 +140,7 @@ import { usePdfAnnotations } from '../../pdf-annotations/pdf-annotations-context
 import { subscribePdfReadingReveal } from '../../pdf-reading-reveal'
 import { resolvePdfContextTarget } from '../../use-pdf-context-action'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
+import { PdfSelectionTranslation } from './PdfSelectionTranslation'
 import { PreviewTextAnnotationSurface } from '../PreviewTextAnnotationSurface'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import {
@@ -150,7 +156,10 @@ import { createPreviewResourceKey } from '../preview-resource-key'
 import type { PreviewFileRendererProps } from '../preview-types'
 import { useNearViewport } from '../useNearViewport'
 import { usePreviewResourceGeneration } from '../usePreviewResourceGeneration'
+import { PdfFigurePreviewPanel } from './PdfFigurePreviewPanel'
 import { PdfFiguresView } from './PdfFiguresView'
+import { buildPdfFigureIndex } from './pdf-figure-index'
+import { createPdfPagePreviewCache, loadPdfFigurePreview } from './pdf-figure-selections'
 import { PdfNotebookView } from './PdfNotebookView'
 import { PdfOutlineSidebar, type PdfOutlineItem } from './PdfOutlineSidebar'
 import {
@@ -322,9 +331,17 @@ const isEditableTarget = (target: EventTarget | null): boolean =>
   target instanceof HTMLTextAreaElement ||
   (target instanceof HTMLElement && target.isContentEditable)
 
-const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
+type PdfFindTerm = { text: string; scope: 'original' | 'translated-pdf' | 'translated-paragraph' }
+
+const pdfLayerText = (
+  root: Element,
+  range?: Range
+): { text: string; nodes: Text[]; starts: number[] } => {
   const spans = Array.from(root.querySelectorAll('span')).filter(
-    (span): span is HTMLSpanElement => span.firstChild instanceof Text && Boolean(span.textContent)
+    (span): span is HTMLSpanElement =>
+      span.firstChild instanceof Text &&
+      Boolean(span.textContent) &&
+      (!range || range.intersectsNode(span.firstChild))
   )
   const nodes = spans.map((span) => span.firstChild as Text)
   const starts: number[] = []
@@ -342,8 +359,33 @@ const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
       }
     }
     starts.push(text.length)
-    text += node.data
+    const start = range?.startContainer === node ? range.startOffset : 0
+    const end = range?.endContainer === node ? range.endOffset : node.length
+    text += node.data.slice(start, end)
   }
+  return { text, nodes, starts }
+}
+
+const selectedFindTerm = (reader: HTMLElement): PdfFindTerm | undefined => {
+  const selection = reader.ownerDocument.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return
+  const range = selection.getRangeAt(0)
+  const ancestor = range.commonAncestorContainer
+  const element = ancestor instanceof Element ? ancestor : ancestor.parentElement
+  const body = element?.closest('[data-pdf-text-layer], [data-translation-text]')
+  if (!body || !reader.contains(body) || body.closest('[inert]')) return
+  const text = (
+    body.matches('[data-pdf-text-layer]') && !element?.closest('span')
+      ? pdfLayerText(body, range).text
+      : selection.toString()
+  ).trim()
+  if (!text || /[\r\n]/u.test(text)) return
+  if (body.matches('[data-translation-text]')) return { text, scope: 'translated-paragraph' }
+  return { text, scope: body.closest('[data-pdf-translated-page]') ? 'translated-pdf' : 'original' }
+}
+
+const textRangesForQuery = (root: HTMLElement, query: string): Range[] => {
+  const { text, nodes, starts } = pdfLayerText(root)
   const normalizedText = text.toLocaleLowerCase()
   const normalizedQuery = query.toLocaleLowerCase()
   if (!normalizedQuery) return []
@@ -1049,6 +1091,7 @@ const PdfSearchControls = ({
         <Search className="ml-1 size-3.5 shrink-0 text-text-300" aria-hidden="true" />
         <Input
           autoFocus
+          data-pdf-document-search
           type="search"
           data-preview-escape-boundary
           value={query}
@@ -1287,6 +1330,22 @@ const MAX_CANVAS_AREA = 16 * 1024 * 1024
 // a 2x display, so normal zoom stays crisp, while capping the deepest zoom so a few near-viewport
 // pages cannot each allocate the full canvas-area budget and spike renderer memory.
 const MAX_RENDER_SCALE = 5
+
+function pdfPageRasterScale(
+  { width, height }: { width: number; height: number },
+  cssWidth: number,
+  pixelRatio: number
+): number {
+  const physicalWidth = (cssWidth > 0 ? cssWidth : width) * Math.max(1, pixelRatio || 1)
+  // The canvas limits take precedence over the intrinsic floor for oversized pages.
+  return Math.min(
+    Math.max(1, physicalWidth / width),
+    MAX_RENDER_SCALE,
+    MAX_CANVAS_DIMENSION / width,
+    MAX_CANVAS_DIMENSION / height,
+    Math.sqrt(MAX_CANVAS_AREA / (width * height))
+  )
+}
 
 // PDF.js rejects an in-flight render with this when cancel() is called; it is an expected teardown,
 // not a page failure, so scroll-out, preview switches, and resize rerenders must not surface it.
@@ -1953,6 +2012,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   onPageReady,
   onNavigate,
   linksEnabled,
+  figureIndex,
   regionSelectionIntent,
   quickTextMark,
   onRegionSelected,
@@ -1976,8 +2036,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   onSelectBookmark?: (id?: string) => void
   onTextLayerRendered?: () => void
   onPageReady: () => void
-  onNavigate: (destination: PdfLinkDestination) => void
+  onNavigate: (
+    destination: PdfLinkDestination,
+    reference?: string,
+    anchor?: FigureLinkAnchor
+  ) => void
   linksEnabled: boolean
+  figureIndex?: ReadonlyMap<string, PdfLinkDestination>
   regionSelectionIntent?: PdfRegionIntent
   pdfProseRegionIdentityKey?: string
   quickTextMark?: PdfTextMarkStyle
@@ -1992,16 +2057,21 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   const textLayerHostRef = useRef<HTMLDivElement | null>(null)
   const textLayerRef = useRef<PdfTextLayerBuilder | undefined>(undefined)
   const linkLayerHostRef = useRef<HTMLDivElement | null>(null)
+  const indexedLinksRef = useRef<HTMLDivElement>(null)
+  const [linkEpoch, setLinkEpoch] = useState(0)
   const linkLayerId = useId()
   const pageRef = useRef<Awaited<ReturnType<PdfDocument['getPage']>> | undefined>(undefined)
   const renderTaskRef = useRef<
     ReturnType<Awaited<ReturnType<PdfDocument['getPage']>>['render']> | undefined
   >(undefined)
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const [aspectRatio, setAspectRatio] = useState(3 / 4)
-  const [pageRotation, setPageRotation] = useState(0)
-  // Bumped when a fresh page proxy is acquired so rasterization re-runs against the new page.
-  const [pageEpoch, setPageEpoch] = useState(0)
+  // A fresh viewport also invalidates paint when a translated page has the same dimensions.
+  const [baseViewport, setBaseViewport] = useState<{
+    width: number
+    height: number
+    rotation: number
+  }>()
+  const pageRotation = baseViewport?.rotation ?? 0
 
   // Acquire the page once while it is near the viewport and keep it alive; width changes then
   // re-rasterize this same page rather than reloading it through the range transport.
@@ -2042,8 +2112,8 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
           return
         }
         pageRef.current = acquiredPage
-        setPageRotation(acquiredPage.getViewport({ scale: 1 }).rotation ?? 0)
-        setPageEpoch((epoch) => epoch + 1)
+        const { width, height, rotation } = acquiredPage.getViewport({ scale: 1 })
+        setBaseViewport({ width, height, rotation })
       })
       .catch((error: unknown) => {
         if (!canceled) {
@@ -2075,12 +2145,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     if (status === 'ready') onPageReady()
   }, [status, onPageReady])
 
-  // Rasterize the live page at the target width; re-runs on width change without reacquiring it.
-  // Tied to isNearViewport so a scroll-out flips this effect's canceled flag and stops a rerender.
+  const rasterScale =
+    baseViewport && pdfPageRasterScale(baseViewport, pageWidth, window.devicePixelRatio)
+  // CSS can resize the existing bitmap while the intrinsic floor or canvas cap holds.
   useEffect(() => {
     const page = pageRef.current
     const canvas = canvasRef.current
-    if (!isNearViewport || !page || !canvas) return
+    if (!isNearViewport || !page || !canvas || rasterScale === undefined) return
 
     let canceled = false
     const draw = async (): Promise<void> => {
@@ -2095,33 +2166,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       // bail before touching a disposed page or detached canvas.
       if (canceled || pageRef.current !== page) return
 
-      const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1)
-      const baseViewport = page.getViewport({ scale: 1 })
-      // Rasterize at the physical pixels the page occupies on screen (never below intrinsic size)
-      // so zoom stays crisp at any DPI, capped by MAX_RENDER_SCALE so the deepest zoom cannot
-      // allocate the full canvas budget per page.
-      const targetCssWidth = pageWidth > 0 ? pageWidth : baseViewport.width
-      const desiredScale = Math.max(
-        1,
-        Math.min(MAX_RENDER_SCALE, (targetCssWidth * devicePixelRatio) / baseViewport.width)
-      )
-      // Hard cap so neither backing dimension nor total area exceeds browser canvas limits — must
-      // win over the intrinsic floor, or a page taller than the limit at scale 1 renders blank.
-      const limitScale = Math.min(
-        MAX_CANVAS_DIMENSION / baseViewport.width,
-        MAX_CANVAS_DIMENSION / baseViewport.height,
-        Math.sqrt(MAX_CANVAS_AREA / (baseViewport.width * baseViewport.height))
-      )
-      const scale = Math.min(desiredScale, limitScale)
-      const viewport = page.getViewport({ scale })
+      const viewport = page.getViewport({ scale: rasterScale })
       const paintCanvas = preservePaintOnRefresh
         ? canvas.ownerDocument.createElement('canvas')
         : canvas
       const context = paintCanvas.getContext('2d')
       if (!context) throw new Error('Canvas 2D context unavailable.')
 
-      // Match the actual PDF page geometry so landscape and non-standard pages are not stretched.
-      setAspectRatio(viewport.width / viewport.height)
       paintCanvas.width = viewport.width
       paintCanvas.height = viewport.height
       const renderTask = page.render({
@@ -2164,9 +2215,9 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     }
   }, [
     isNearViewport,
-    pageEpoch,
+    baseViewport,
     pageNumber,
-    pageWidth,
+    rasterScale,
     nativeAnnotationRevision,
     preservePaintOnRefresh
   ])
@@ -2191,6 +2242,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       const textLayer = new TextLayerBuilder({
         pdfPage: page,
         onAppend: (layer: HTMLDivElement) => {
+          if (canceled || pageRef.current !== page || textLayerRef.current !== textLayer) return
           layer.style.setProperty('--total-scale-factor', String(viewport.scale))
           layer.style.setProperty('--scale-round-x', '1px')
           layer.style.setProperty('--scale-round-y', '1px')
@@ -2201,11 +2253,16 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       })
       textLayerRef.current = textLayer
       await textLayer.render({ viewport })
-      if (textLayerRef.current === textLayer) textLayerRef.current = undefined
-      if (canceled || pageRef.current !== page) return
+      // PDF.js registers even completed layers for global selection. Keep the
+      // builder until disposal; a superseded late render must unregister itself.
+      if (canceled || pageRef.current !== page || textLayerRef.current !== textLayer) {
+        textLayer.cancel()
+        return
+      }
       for (const span of textLayer.div.querySelectorAll('span')) {
         if (!span.textContent?.trim()) span.classList.add('pdf-text-layer-whitespace')
       }
+      setLinkEpoch((epoch) => epoch + 1)
       retryPendingAnnotationReveal()
       onTextLayerRendered?.()
     }
@@ -2221,7 +2278,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       textLayerRef.current = undefined
       host.replaceChildren()
     }
-  }, [isNearViewport, onTextLayerRendered, pageEpoch, pageNumber, pageWidth])
+  }, [isNearViewport, onTextLayerRendered, baseViewport, pageNumber, pageWidth])
 
   useEffect(() => {
     const page = pageRef.current
@@ -2242,9 +2299,13 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       signal: controller.signal,
       onNavigate,
       label: t('Open link')
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted) console.error('Failed to render PDF links', error)
     })
+      .then(() => {
+        if (!controller.signal.aborted) setLinkEpoch((epoch) => epoch + 1)
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) console.error('Failed to render PDF links', error)
+      })
     return () => {
       unregister()
       dispose()
@@ -2252,7 +2313,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   }, [
     document,
     isNearViewport,
-    pageEpoch,
+    baseViewport,
     pageWidth,
     nativeAnnotationRevision,
     onNavigate,
@@ -2260,7 +2321,15 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
     t
   ])
 
-  const displayedAspectRatio = geometry ? geometry.width / geometry.height : aspectRatio
+  useLayoutEffect(() => {
+    const host = indexedLinksRef.current
+    const textLayer = textLayerHostRef.current?.querySelector<HTMLElement>('.pdf-text-layer')
+    if (!host || !textLayer || !figureIndex?.size || !linksEnabled) return
+    return renderIndexedFigureLinks({ host, textLayer, index: figureIndex, pageNumber, onNavigate })
+  }, [figureIndex, linkEpoch, linksEnabled, pageNumber, onNavigate, isNearViewport, pageWidth])
+
+  const pageSize = geometry ?? baseViewport
+  const displayedAspectRatio = pageSize ? pageSize.width / pageSize.height : 3 / 4
   const displayedStatus = isNearViewport ? status : 'idle'
 
   const pageContent = (
@@ -2285,6 +2354,14 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
             className="pointer-events-none block size-full object-contain"
           />
           {<div ref={textLayerHostRef} className="absolute inset-0" />}
+          {figureIndex?.size ? (
+            <div
+              ref={indexedLinksRef}
+              className="pointer-events-none absolute inset-0 z-[1]"
+              data-pdf-indexed-links
+              inert={!linksEnabled}
+            />
+          ) : null}
           <div
             ref={linkLayerHostRef}
             id={linkLayerId}
@@ -2319,6 +2396,9 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
       {annotationProps && isNearViewport ? (
         <PreviewTextAnnotationSurface
           {...annotationProps}
+          SelectionTranslation={
+            annotationProps.item.source === 'literature' ? PdfSelectionTranslation : undefined
+          }
           sourcePageNumber={pageNumber}
           pdfEvidenceSource={pdfEvidenceSource}
           pdfBookmarkSource={pdfBookmarkSource}
@@ -2519,7 +2599,11 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
   ])
 
   const currentState = documentState?.requestKey === resourceRequestKey ? documentState : null
-  const singlePage = currentState?.status === 'ready' && currentState.document.numPages === 1
+  const usesLiteratureReader = source === 'literature' && Boolean(props.annotationProps)
+  const singlePage =
+    !usesLiteratureReader &&
+    currentState?.status === 'ready' &&
+    currentState.document.numPages === 1
   const onReadingPositionChange = props.onReadingPositionChange
   useEffect(() => {
     if (singlePage) onReadingPositionChange?.({ pageNumber: 1, pageCount: 1 })
@@ -2528,7 +2612,7 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
   const [multiPageKey, setMultiPageKey] = useState<string>()
   if (
     currentState?.status === 'ready' &&
-    currentState.document.numPages > 1 &&
+    (currentState.document.numPages > 1 || usesLiteratureReader) &&
     multiPageKey !== requestKey
   )
     setMultiPageKey(requestKey)
@@ -2541,7 +2625,7 @@ export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Elem
       />
     )
   }
-  if (currentState?.status === 'ready' && currentState.document.numPages === 1) {
+  if (singlePage) {
     return (
       <SinglePagePdfPreview
         key={resourceRequestKey}
@@ -2624,7 +2708,13 @@ const PdfReaderContent = ({
   const generation = usePreviewResourceGeneration(retainRecoveryViewport)
   const resourceRequestKey = `${requestKey}:${generation}`
   const pendingLinkRef = useRef<
-    { destination: PdfLinkDestination; translated: boolean; sourcePageNumber?: number } | undefined
+    | {
+        destination: PdfLinkDestination
+        translated: boolean
+        sourcePageNumber?: number
+        centerAnchor?: boolean
+      }
+    | undefined
   >(undefined)
   const pendingAnnotationPageRef = useRef<number | undefined>(undefined)
   const [readingHistory, setReadingHistory] = useState<{
@@ -2679,6 +2769,28 @@ const PdfReaderContent = ({
     contentFirst?: boolean
   }>()
   const [readingMode, setReadingMode] = useState<'original' | 'figures' | 'notes'>('original')
+  const [figurePreviewState, setFigurePreview] = useState<{
+    key: string
+    source?: PdfStructureSource
+    image: string
+    caption?: string
+    reference: string
+    destination: PdfLinkDestination
+    figureDestination?: PdfLinkDestination
+    anchor: FigureLinkAnchor | undefined
+    session: number
+  }>()
+  const figurePreviewSession = useRef(0)
+  const figurePreviewRequest = useRef<AbortController | null>(null)
+  const figurePreviewTrigger = useRef<HTMLElement | null>(null)
+  const dismissFigurePreview = useCallback(() => {
+    figurePreviewRequest.current?.abort()
+    setFigurePreview(undefined)
+    if (figurePreviewTrigger.current?.isConnected)
+      figurePreviewTrigger.current.focus({ preventScroll: true })
+    else scrollRef.current?.focus({ preventScroll: true })
+    figurePreviewTrigger.current = null
+  }, [])
   const [figuresVisited, setFiguresVisited] = useState(false)
   const [figuresBusy, setFiguresBusy] = useState(false)
   const [outlineOpen, setOutlineOpen] = useState(false)
@@ -2920,6 +3032,33 @@ const PdfReaderContent = ({
     documentState?.requestKey === resourceRequestKey ? documentState : null
   const hasError = currentDocumentState?.status === 'error'
   const document = currentDocumentState?.status === 'ready' ? currentDocumentState.document : null
+  const [paintedDocument, setPaintedDocument] = useState<PdfDocument | null>(null)
+  const handleOriginalPageReady = useCallback(() => {
+    setPaintedDocument(document)
+    handleTextLayerRendered()
+  }, [document, handleTextLayerRendered])
+  const [indexedDocument, setIndexedDocument] = useState<{
+    document: PdfDocument
+    index: ReadonlyMap<string, PdfLinkDestination>
+  }>()
+  useEffect(() => {
+    if (!document || document !== paintedDocument || presentation === 'search') return
+    const controller = new AbortController()
+    void buildPdfFigureIndex(document, controller.signal)
+      .then((index) => {
+        if (!controller.signal.aborted) setIndexedDocument({ document, index })
+      })
+      .catch(() => {
+        /* Native links remain available when text cannot be read. */
+      })
+    return () => controller.abort()
+  }, [document, paintedDocument, presentation])
+  const pagePreviewCache = useMemo(
+    () => document && createPdfPagePreviewCache(document),
+    [document]
+  )
+  useEffect(() => () => pagePreviewCache?.clear(), [pagePreviewCache])
+
   const sourceIdentity =
     currentDocumentState?.status === 'ready' ? currentDocumentState.sourceIdentity : undefined
   const nativeAnnotationRevision = useNativePdfVisibility(
@@ -3200,6 +3339,20 @@ const PdfReaderContent = ({
       translatedDocument.state.failure.code
     )
   const effectiveRendition = currentTranslation && pairedDocument ? rendition : 'original'
+  const figurePreviewKey = `${resourceRequestKey}:${readingMode}:${effectiveRendition}:${cursorMode}`
+  const figurePreview =
+    figurePreviewState?.key === figurePreviewKey && figurePreviewState.source === figuresSource
+      ? figurePreviewState
+      : undefined
+  if (figurePreviewState && !figurePreview) setFigurePreview(undefined)
+  useLayoutEffect(() => {
+    const request = figurePreviewRequest
+    request.current?.abort()
+    figurePreviewTrigger.current = null
+    return () => {
+      request.current?.abort()
+    }
+  }, [resourceRequestKey, figuresSource, readingMode, effectiveRendition, cursorMode])
   const reflowPageNumbers = pairedDocument?.sourcePageNumbers
   const reflowSourcePages = pairedDocument?.sourcePages
   const reflowPageForSource = useCallback(
@@ -3323,6 +3476,8 @@ const PdfReaderContent = ({
   }, [outlineItems])
   const resolvedPageLabels = pageLabels?.requestKey === requestKey ? pageLabels.labels : null
   const scrollToPage = useCallback((pageNumber: number): void => {
+    figurePreviewRequest.current?.abort()
+    setFigurePreview(undefined)
     outlineClickRef.current = undefined
     setSelectedOutline(undefined)
     pendingLinkRef.current = undefined
@@ -3385,7 +3540,12 @@ const PdfReaderContent = ({
     setSelectedOutline({ requestKey: resourceRequestKey, id: item.id })
   }
   const navigateToLink = useCallback(
-    (destination: PdfLinkDestination, translated: boolean, sourcePageNumber?: number): void => {
+    (
+      destination: PdfLinkDestination,
+      translated: boolean,
+      sourcePageNumber?: number,
+      centerAnchor = false
+    ): void => {
       const anchor = readViewportAnchor(scrollRef.current)
       if (anchor)
         setReadingHistory((history) => ({
@@ -3394,20 +3554,86 @@ const PdfReaderContent = ({
           forward: []
         }))
       scrollToPage(destination.pageNumber)
-      pendingLinkRef.current = { destination, translated, sourcePageNumber }
+      pendingLinkRef.current = { destination, translated, sourcePageNumber, centerAnchor }
       scrollRef.current?.focus({ preventScroll: true })
     },
     [resourceRequestKey, zoom, rendition, scrollToPage]
   )
   const navigateOriginalLink = useCallback(
-    (destination: PdfLinkDestination): void => {
+    (destination: PdfLinkDestination, centerAnchor = false): void => {
       navigateToLink(
         { ...destination, pageNumber: viewPageForSource(destination.pageNumber) },
         false,
-        destination.pageNumber
+        destination.pageNumber,
+        centerAnchor
       )
     },
     [navigateToLink, viewPageForSource]
+  )
+  const previewOriginalLink = useCallback(
+    (destination: PdfLinkDestination, reference?: string, anchor?: FigureLinkAnchor): void => {
+      figurePreviewRequest.current?.abort()
+      setFigurePreview(undefined)
+      if (!reference || !pagePreviewCache || presentation === 'search') {
+        navigateOriginalLink(destination)
+        return
+      }
+      const controller = new AbortController()
+      figurePreviewRequest.current = controller
+      const { signal } = controller
+      const session = ++figurePreviewSession.current
+      const trigger = anchor?.trigger ?? window.document.activeElement
+      const show = (
+        image: string,
+        caption?: string,
+        figureDestination?: PdfLinkDestination
+      ): void => {
+        if (signal.aborted) return
+        figurePreviewTrigger.current = trigger instanceof HTMLElement ? trigger : null
+        setFigurePreview({
+          anchor,
+          session,
+          image,
+          caption,
+          figureDestination,
+          reference,
+          destination,
+          key: figurePreviewKey,
+          source: figuresSource
+        })
+      }
+      let exact = false
+      let pagePreview: Promise<string | undefined> | undefined
+      const showPage = (): Promise<string | undefined> => {
+        pagePreview ??= pagePreviewCache
+          .load(destination.pageNumber, signal)
+          .then((image) => {
+            if (image && !exact) show(image)
+            return image
+          })
+          .catch(() => undefined)
+        return pagePreview
+      }
+      void (async () => {
+        const preview = figuresSource
+          ? await loadPdfFigurePreview(
+              figuresSource,
+              destination,
+              reference,
+              signal,
+              showPage
+            ).catch(() => undefined)
+          : undefined
+        if (signal.aborted) return
+        if (preview) {
+          exact = true
+          show(preview.image, preview.caption, preview.destination)
+        } else if (!(await showPage()) && !signal.aborted) {
+          navigateOriginalLink(destination)
+        }
+      })()
+    },
+    [figuresSource, figurePreviewKey, navigateOriginalLink, pagePreviewCache, presentation]
   )
   const navigateTranslatedLink = useCallback(
     (destination: PdfLinkDestination): void => {
@@ -3419,6 +3645,8 @@ const PdfReaderContent = ({
     const target = readingHistory[direction].at(-1)
     const anchor = readViewportAnchor(scrollRef.current)
     if (!target || !anchor) return
+    figurePreviewRequest.current?.abort()
+    setFigurePreview(undefined)
     const opposite = direction === 'back' ? 'forward' : 'back'
     pendingLinkRef.current = undefined
     viewportAnchorRef.current = target.anchor
@@ -3490,6 +3718,7 @@ const PdfReaderContent = ({
       return
     }
     let canceled = false
+    const debounceMs = searchTextCacheRef.current.canScanQuickly(searchDocument.numPages) ? 40 : 180
     const timer = setTimeout(() => {
       void (async () => {
         setSearchIncomplete(false)
@@ -3541,7 +3770,7 @@ const PdfReaderContent = ({
           revealSearchMatch({ pageNumber: matches[0].pageNumber, occurrence: 0 })
         }
       })()
-    }, 180)
+    }, debounceMs)
     return () => {
       canceled = true
       clearTimeout(timer)
@@ -3613,7 +3842,7 @@ const PdfReaderContent = ({
       bounds.top +
       pending.destination.y * bounds.height -
       viewport.top -
-      Math.min(72, viewport.height / 4)
+      (pending.centerAnchor ? viewport.height / 2 : Math.min(72, viewport.height / 4))
   }, [readingHistory, textLayerEpoch, currentPage, zoom, effectiveRendition])
 
   useEffect(() => {
@@ -3782,13 +4011,16 @@ const PdfReaderContent = ({
     setSelectedSearchIndex(nextIndex)
     revealSearchMatch(nextMatch)
   }
-  const closeSearch = (): void => {
-    setSearchOpen(false)
-    setSearchQuery('')
+  const changeSearchQuery = (query: string): void => {
+    setSearchQuery(query)
     setSearchResults([])
     setSearchResultCount(0)
     setSearchIncomplete(false)
     setSelectedSearchIndex(0)
+  }
+  const closeSearch = (): void => {
+    setSearchOpen(false)
+    changeSearchQuery('')
     searchTextCacheRef.current.clear()
     updatePdfSearchHighlights(scrollRef.current, '', undefined)
     scrollRef.current?.focus()
@@ -3871,19 +4103,25 @@ const PdfReaderContent = ({
       }
     })
   }
-  const openDocumentSearch = (): void => {
+  const openDocumentSearch = (term?: PdfFindTerm): void => {
+    const translated = term
+      ? term.scope !== 'original'
+      : effectiveRendition === 'translated' || focusedTranslation
     if (
-      !pairedDocument &&
       currentTranslation &&
-      (effectiveRendition === 'translated' || focusedTranslation)
+      translated &&
+      (!pairedDocument || term?.scope === 'translated-paragraph')
     ) {
+      if (term) setTranslationQuery(term.text)
       openTranslationSearch()
       return
     }
-    setSearchTranslated(
-      Boolean(pairedDocument && (effectiveRendition === 'translated' || focusedTranslation))
-    )
+    if (term && term.text !== searchQuery) changeSearchQuery(term.text)
+    setSearchTranslated(Boolean(pairedDocument && translated))
     setSearchOpen(true)
+    if (searchOpen) {
+      readerRef.current?.querySelector<HTMLInputElement>('[data-pdf-document-search]')?.focus()
+    }
   }
   const selectTranslation = useCallback(
     (unit: PdfTranslationUnit, fragmentIndex: number): void => {
@@ -4401,7 +4639,10 @@ const PdfReaderContent = ({
           ['area', 'area-annotation', 'text-annotation'].includes(cursorMode)
         }
         data-preview-escape-boundary={
-          floatingNavigation || floatingNotes || (source === 'literature' && selectedBookmarkId)
+          figurePreview ||
+          floatingNavigation ||
+          floatingNotes ||
+          (source === 'literature' && selectedBookmarkId)
             ? ''
             : undefined
         }
@@ -4412,6 +4653,12 @@ const PdfReaderContent = ({
           const target = event.target instanceof Element ? event.target : null
           const layer = target?.closest('[role="dialog"], [role="menu"]')
           if (layer && !layer.contains(event.currentTarget)) return
+          if (event.key === 'Escape' && !event.nativeEvent.isComposing && figurePreview) {
+            event.preventDefault()
+            event.stopPropagation()
+            dismissFigurePreview()
+            return
+          }
           if (
             event.key === 'Escape' &&
             !event.nativeEvent.isComposing &&
@@ -4463,7 +4710,14 @@ const PdfReaderContent = ({
           if (primaryModifier && event.key.toLowerCase() === 'f') {
             event.preventDefault()
             event.stopPropagation()
-            openDocumentSearch()
+            if (
+              event.target instanceof HTMLInputElement &&
+              event.target.matches('[data-pdf-document-search], [data-translation-search]')
+            )
+              return
+            openDocumentSearch(
+              isEditableTarget(event.target) ? undefined : selectedFindTerm(event.currentTarget)
+            )
             return
           }
           if (currentTranslation && (effectiveRendition === 'translated' || focusedTranslation))
@@ -4821,9 +5075,11 @@ const PdfReaderContent = ({
                   ref={scrollRef}
                   data-pdf-cursor-mode={cursorMode}
                   onWheelCapture={() => {
+                    if (!figurePreview) figurePreviewRequest.current?.abort()
                     pendingLinkRef.current = undefined
                   }}
                   onPointerDownCapture={() => {
+                    if (!figurePreview) figurePreviewRequest.current?.abort()
                     pendingLinkRef.current = undefined
                   }}
                   onKeyDownCapture={(event) => {
@@ -4839,8 +5095,10 @@ const PdfReaderContent = ({
                         'End',
                         ' '
                       ].includes(event.key)
-                    )
+                    ) {
+                      if (!figurePreview) figurePreviewRequest.current?.abort()
                       pendingLinkRef.current = undefined
+                    }
                   }}
                   className={cn(
                     'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50',
@@ -4936,8 +5194,13 @@ const PdfReaderContent = ({
                               ).map((sourcePage) => (
                                 <div key={sourcePage} className="relative mb-3 last:mb-0">
                                   <PdfPageCanvas
-                                    onPageReady={handleTextLayerRendered}
-                                    onNavigate={navigateOriginalLink}
+                                    onPageReady={handleOriginalPageReady}
+                                    figureIndex={
+                                      indexedDocument?.document === document
+                                        ? indexedDocument?.index
+                                        : undefined
+                                    }
+                                    onNavigate={previewOriginalLink}
                                     linksEnabled={cursorMode === 'select'}
                                     nativeAnnotationRevision={nativeAnnotationRevision}
                                     document={document}
@@ -5042,6 +5305,25 @@ const PdfReaderContent = ({
                     </div>
                   ) : null}
                 </div>
+                {figurePreview ? (
+                  <PdfFigurePreviewPanel
+                    key={figurePreview.session}
+                    anchor={figurePreview.anchor}
+                    reference={figurePreview.reference}
+                    page={figurePreview.destination.pageNumber}
+                    image={figurePreview.image}
+                    caption={figurePreview.caption}
+                    pageCache={pagePreviewCache}
+                    onClose={dismissFigurePreview}
+                    onNavigate={() =>
+                      navigateOriginalLink(
+                        figurePreview.figureDestination ?? figurePreview.destination,
+                        !figurePreview.figureDestination
+                      )
+                    }
+                    onImageError={() => navigateOriginalLink(figurePreview.destination)}
+                  />
+                ) : null}
                 {document && presentation !== 'search' ? (
                   <div
                     className={cn(
@@ -5069,13 +5351,7 @@ const PdfReaderContent = ({
                         current={searchResultCount > 0 ? selectedSearchIndex + 1 : 0}
                         total={searchResultCount}
                         incomplete={searchIncomplete}
-                        onQueryChange={(query) => {
-                          setSearchQuery(query)
-                          setSearchResults([])
-                          setSearchResultCount(0)
-                          setSearchIncomplete(false)
-                          setSelectedSearchIndex(0)
-                        }}
+                        onQueryChange={changeSearchQuery}
                         onFindAgain={findAgain}
                         onClose={closeSearch}
                       />
@@ -5524,7 +5800,11 @@ const PdfReaderContent = ({
                 data-pdf-notes-sidebar={showNotesSidebar || undefined}
               >
                 <PdfNotebookView
-                  key={`${pdfBookmarkSource?.projectId}:${pdfBookmarkSource?.versionId}:${pdfBookmarkSource?.checksum}`}
+                  key={
+                    attachmentVersionId
+                      ? `literature:${attachmentVersionId}`
+                      : `${pdfBookmarkSource?.projectId}:${pdfBookmarkSource?.versionId}:${pdfBookmarkSource?.checksum}`
+                  }
                   source={pdfBookmarkSource}
                   active={readingMode === 'notes' || showNotesSidebar}
                   sidebar={showNotesSidebar}

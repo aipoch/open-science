@@ -1,3 +1,4 @@
+import type { ProviderRequestPolicy } from '@aipoch/providers/transport'
 import type {
   OfficialVendorId,
   CustomReasoningEffortTransport,
@@ -12,8 +13,10 @@ export type ResponsesToChatCompletionsBridgeTarget = {
   onProviderFailure?: ProviderFailureObserver
   baseUrl: string
   key?: string
+  requestPolicy?: ProviderRequestPolicy
   vendorId?: OfficialVendorId
   reasoningEffortTransport?: CustomReasoningEffortTransport
+  reasoningSupported?: boolean
   // Codex uses a catalog model for its local metadata; bridge providers may need a different
   // upstream model id (for example, DeepSeek's model name).
   model?: string

@@ -1,6 +1,4 @@
 import { ApplicationStartup } from './ApplicationStartup'
-import { drainWorkspaceRuntimeEventsForPersistence } from '@/lib/acp/useWorkspaceAgentRuntime'
-import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
@@ -206,7 +204,7 @@ beforeEach(() => {
     orgCaseDraft: null,
     retryOrgCaseUpload: false
   })
-  useSettingsStore.setState({ lab: undefined })
+  useSettingsStore.setState({ lab: undefined, isLoaded: true, onboardingCompletedAt: 1 })
   useOrgCaseStore.getState().reset()
 })
 
@@ -1898,11 +1896,15 @@ it('never labels required Literature PDF evidence as Essential export', async ()
   )
 })
 
-const sensitiveFailure: PackageOperationSnapshot = {
+const sensitiveReview: PackageOperationSnapshot = {
   ...snapshot,
-  state: 'failed',
-  progress: { phase: 'validating' },
-  error: 'Sensitive content detected',
+  state: 'awaiting-selection',
+  progress: { phase: 'confirming' },
+  sensitiveExportReview: {
+    expiresAt: 2_000_000_000_000,
+    destination: '/tmp/review.science',
+    fileDigest: { sizeBytes: 7, checksum: 'c'.repeat(64) }
+  },
   sensitiveContent: [
     {
       location: 'session.json',
@@ -1921,7 +1923,7 @@ it('requires fresh acknowledgement, sends the bound action once, and resets afte
   let reject!: (error: Error) => void
   const packageOperation = vi.fn((request: { action: string }) =>
     request.action === 'snapshot'
-      ? Promise.resolve(sensitiveFailure)
+      ? Promise.resolve(sensitiveReview)
       : new Promise((_, rejectPromise) => {
           reject = rejectPromise
         })
@@ -1929,7 +1931,7 @@ it('requires fresh acknowledgement, sends the bound action once, and resets afte
   vi.stubGlobal('api', {
     sessions: { packageOperation, onPackageOperation: () => () => undefined }
   })
-  usePackageOperationStore.setState({ operation: sensitiveFailure, open: true })
+  usePackageOperationStore.setState({ operation: sensitiveReview, open: true })
   await act(async () => root.render(<SessionPackageOperation />))
   const checkbox = document.querySelector<HTMLInputElement>('input[type="checkbox"]')!
   expect(checkbox).not.toBeNull()
@@ -1946,9 +1948,8 @@ it('requires fresh acknowledgement, sends the bound action once, and resets afte
     packageOperation.mock.calls.filter(
       ([request]) => request.action === 'export-with-sensitive-content'
     )
-  ).toEqual([[{ action: 'export-with-sensitive-content', operationId: sensitiveFailure.id }]])
-  expect(drainWorkspaceRuntimeEventsForPersistence).toHaveBeenCalledWith('s')
-  expect(flushSessionPersistence).toHaveBeenCalled()
+  ).toEqual([[{ action: 'export-with-sensitive-content', operationId: sensitiveReview.id }]])
+  expect(document.body.textContent).toContain('/tmp/review.science')
   expect(button('Export anyway').disabled).toBe(true)
   expect(checkbox.disabled).toBe(true)
   await act(async () => reject(new Error('Export failed again')))
@@ -1960,16 +1961,16 @@ it('requires fresh acknowledgement, sends the bound action once, and resets afte
   expect(document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(false)
   await act(async () => document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
   await act(async () =>
-    usePackageOperationStore.getState().receive({ ...sensitiveFailure, id: 'replacement' })
+    usePackageOperationStore.getState().receive({ ...sensitiveReview, id: 'replacement' })
   )
   expect(button('Export anyway').disabled).toBe(true)
 })
 
 it.each([
-  { ...sensitiveFailure, kind: 'fork' as const },
-  { ...sensitiveFailure, kind: 'import' as const },
-  { ...sensitiveFailure, sensitiveContent: undefined },
-  { ...sensitiveFailure, cleanupPending: true }
+  { ...sensitiveReview, kind: 'fork' as const },
+  { ...sensitiveReview, kind: 'import' as const },
+  { ...sensitiveReview, state: 'failed' as const, sensitiveExportReview: undefined },
+  { ...sensitiveReview, cleanupPending: true }
 ])('hides sensitive export acknowledgement for ineligible operation %#', async (operation) => {
   vi.stubGlobal('api', {
     sessions: { packageOperation: async () => operation, onPackageOperation: () => () => undefined }
@@ -1980,6 +1981,22 @@ it.each([
   expect(
     [...document.querySelectorAll('button')].some((item) => item.textContent === 'Export anyway')
   ).toBe(false)
+})
+
+it('shows the Desktop handoff without an approval control in the local Web UI', async () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+  vi.stubGlobal('api', {
+    sessions: {
+      packageOperation: async () => sensitiveReview,
+      onPackageOperation: () => () => undefined
+    }
+  })
+  usePackageOperationStore.getState().receive(sensitiveReview)
+  await act(async () => root.render(<SessionPackageOperation />))
+  expect(document.body.textContent).toContain('Open Open-Science Desktop to review this export.')
+  expect(document.querySelector('input[type="checkbox"]')).toBeNull()
+  expect(document.body.textContent).not.toContain('Export anyway')
 })
 
 it.each(['import', 'fork'] as const)(
@@ -2118,6 +2135,38 @@ it('opens newly launched receipt progress even after the previous package dialog
     ]
   })
   expect(usePackageOperationStore.getState().open).toBe(true)
+})
+
+it('keeps an incoming import pending until onboarding finishes, then shows the destination picker', async () => {
+  const incoming: PackageOperationSnapshot = {
+    id: 'first-launch-import',
+    kind: 'import',
+    state: 'running',
+    progress: { phase: 'validating' },
+    importFilename: 'research.science'
+  }
+  let notify!: (value: PackageOperationSnapshot) => void
+  vi.stubGlobal('api', {
+    packagePresentation: {
+      getState: async () => incoming,
+      onStateChanged: (listener: typeof notify) => {
+        notify = listener
+        return () => undefined
+      }
+    }
+  })
+  useSettingsStore.setState({ isLoaded: false, onboardingCompletedAt: undefined })
+  await act(async () => root.render(<ApplicationStartup>{null}</ApplicationStartup>))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async () => {
+    useSettingsStore.setState({ isLoaded: true })
+    notify({ ...incoming, state: 'awaiting-selection', progress: { phase: 'selecting' } })
+  })
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async () => useSettingsStore.setState({ onboardingCompletedAt: 42 }))
+  const dialog = document.querySelector('[role="dialog"]')
+  expect(dialog?.textContent).toContain('research.science')
+  expect(dialog?.textContent).toContain('Destination project')
 })
 
 it('shows native preparation before backend readiness and keeps one dialog through fast receipt', async () => {

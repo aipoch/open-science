@@ -318,6 +318,8 @@ export type NotebookOutput =
       // image/png is base64.
       type: 'display'
       data: Record<string, string>
+      /** Read projection only. Stored records retain the captured MIME bundle. */
+      deferredImageTypes?: string[]
     }
 
 export type NotebookWorkingFile = {
@@ -860,6 +862,12 @@ export const isNotebookRunCursor = (value: unknown): value is NotebookRunCursor 
   )
 }
 
+export type NotebookRunFigureRequest = NotebookSessionRequest & {
+  runId: string
+  outputIndex: number
+  mimeType: string
+}
+
 export type NotebookRunEvidenceRequest = NotebookSessionRequest & { runId: string }
 
 export type NotebookRunEvidenceSnapshot = Pick<
@@ -879,6 +887,8 @@ export type NotebookSessionStateRequest = NotebookSessionRequest & {
   historyLimit?: number
   /** Prefer a smaller initial Run window when opening the Notebook preview. */
   previewHistory?: true
+  /** Return captured image MIME types without transferring their payloads. */
+  deferImages?: true
 }
 
 // Read-only, process-local view of the selected live data-kernel namespace. These values are never

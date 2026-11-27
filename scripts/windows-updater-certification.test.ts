@@ -191,6 +191,25 @@ describe('Windows updater certification', () => {
     expect(invoke.mock.calls).toEqual([['apply'], ['recheck'], ['apply']])
   })
 
+  it('waits through a transient runtime disconnect before retrying apply', async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        state: 'ready',
+        reason: 'installation-busy',
+        recovery: { detail: 'foreign-process' }
+      })
+      .mockResolvedValueOnce({
+        state: 'ready',
+        reason: 'runtime-not-controlled',
+        error: 'Desktop runtime is disconnected.'
+      })
+      .mockResolvedValueOnce({ state: 'ready', recovery: { canRetryInstall: true } })
+      .mockResolvedValueOnce({ state: 'applying' })
+    await applyWithOccupancyRecheck(invoke)
+    expect(invoke.mock.calls).toEqual([['apply'], ['recheck'], ['recheck'], ['apply']])
+  })
+
   it('releases its owned handle even if the application fails to identify the blocker', async () => {
     const release = vi.fn(async () => undefined)
     await expect(

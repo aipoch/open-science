@@ -44,6 +44,8 @@ import {
 } from './SettingsLayout'
 import { useImageModelSettings } from './use-image-model-settings'
 import { ImageServiceTest } from './ImageServiceTest'
+import { ProviderPicker, SelectedProviderCard } from './ProviderKindPicker'
+import type { ProviderPickerEntry } from './provider-picker-catalog'
 import { ProviderKindIcon } from './provider-icons'
 import { modelCatalogErrorMessage } from './model-catalog-feedback'
 
@@ -72,6 +74,13 @@ const presetLabels: Record<ImageModelPresetId, string> = {
   'seedream/5.5': 'Seedream 5.5'
 }
 
+const imageServiceVendorId = (
+  service: ImageServiceConfiguration | undefined,
+  snapshot: ImageModelSettingsSnapshot
+): ImageVendorId | undefined =>
+  service?.vendorId ??
+  snapshot.availableProviders.find((account) => account.id === service?.providerId)?.vendorId
+
 export const ImageModelSelector = ({
   state,
   onManage
@@ -97,19 +106,24 @@ export const ImageModelSelector = ({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="none">{t('Not configured')}</SelectItem>
-            {snapshot?.services.flatMap((service) =>
-              service.models.map((model) => (
+            {snapshot?.services.flatMap((service) => {
+              const vendorId = imageServiceVendorId(service, snapshot)
+              const iconKey = vendorId ? `official:${vendorId}` : 'custom'
+              return service.models.map((model) => (
                 <SelectItem
                   key={`${service.id}:${model.id}`}
                   disabled={!service.configured}
                   value={JSON.stringify({ serviceId: service.id, modelId: model.id })}
                 >
-                  <span className="truncate">
-                    {service.name} · {model.label ?? model.wireModelId}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <ProviderKindIcon kindKey={iconKey} className="size-4" />
+                    <span className="truncate">
+                      {service.name} · {model.label ?? model.wireModelId}
+                    </span>
                   </span>
                 </SelectItem>
               ))
-            )}
+            })}
           </SelectContent>
         </Select>
         <Button variant="outline" onClick={onManage}>
@@ -191,6 +205,42 @@ export const ImageServicesPanel = ({
         )}
       </div>
     )
+  if (view.kind === 'image-service-create' && !view.vendorId) {
+    const entries: ProviderPickerEntry<ImageVendorId | 'custom'>[] = [
+      {
+        key: 'custom',
+        label: t('Custom HTTP service'),
+        category: 'custom',
+        disabled: false,
+        searchText: 'customhttpservice'
+      },
+      ...IMAGE_VENDOR_CATALOG.map((vendor) => {
+        const hosts = vendor.regions.map((region) => new URL(region.baseUrl).host)
+        return {
+          key: vendor.id,
+          iconKey: `official:${vendor.id}`,
+          label: vendor.label,
+          category: 'vendor' as const,
+          host: hosts[0],
+          regionCount: hosts.length > 1 ? hosts.length : undefined,
+          disabled: false,
+          searchText: [vendor.id, ...hosts, ...vendor.models.map((model) => model.wireModelId)]
+            .join(' ')
+            .toLowerCase()
+            .replace(/\s+/g, '')
+        }
+      })
+    ]
+    return (
+      <div className="p-5">
+        <ProviderPicker
+          entries={entries}
+          searchLabel={t('Search image services')}
+          onSelect={(vendorId) => navigate({ kind: 'image-service-create', vendorId })}
+        />
+      </div>
+    )
+  }
   if (view.kind !== 'image-services')
     return (
       <div className="flex h-full min-h-0 flex-col">
@@ -199,7 +249,13 @@ export const ImageServicesPanel = ({
           <ErrorNotice inline description={t('This model service has been removed.')} />
         ) : (
           <ImageServiceEditor
-            key={existing?.id ?? 'new'}
+            key={view.kind === 'image-service-create' ? view.vendorId : view.serviceId}
+            initialVendorId={view.kind === 'image-service-create' ? view.vendorId : undefined}
+            onChangeVendor={
+              view.kind === 'image-service-create'
+                ? () => navigate({ kind: 'image-service-create' })
+                : undefined
+            }
             service={existing}
             snapshot={snapshot}
             busy={busy}
@@ -253,10 +309,7 @@ export const ImageServicesPanel = ({
           ) : (
             <ul className="space-y-2">
               {snapshot.services.map((service) => {
-                const vendorId =
-                  service.vendorId ??
-                  snapshot.availableProviders.find((account) => account.id === service.providerId)
-                    ?.vendorId
+                const vendorId = imageServiceVendorId(service, snapshot)
                 const models = service.models
                   .map((model) => model.label ?? model.wireModelId)
                   .join(' · ')
@@ -344,6 +397,8 @@ export const ImageServicesPanel = ({
 }
 
 const ImageServiceEditor = ({
+  initialVendorId,
+  onChangeVendor,
   service,
   snapshot,
   busy,
@@ -351,6 +406,8 @@ const ImageServiceEditor = ({
   onCancel,
   onRemove
 }: {
+  initialVendorId?: ImageVendorId | 'custom'
+  onChangeVendor?: () => void
   service?: ImageModelSettingsSnapshot['services'][number]
   snapshot: ImageModelSettingsSnapshot
   busy: boolean
@@ -362,13 +419,11 @@ const ImageServiceEditor = ({
   const [id] = useState(() => service?.id ?? crypto.randomUUID())
   const [name, setName] = useState(service?.name ?? '')
   const [vendorId, setVendorId] = useState<ImageVendorId | 'custom'>(
-    service?.vendorId ??
-      snapshot.availableProviders.find((entry) => entry.id === service?.providerId)?.vendorId ??
-      'custom'
+    imageServiceVendorId(service, snapshot) ?? initialVendorId ?? 'custom'
   )
   const vendor = IMAGE_VENDOR_CATALOG.find((entry) => entry.id === vendorId)
   const accounts = snapshot.availableProviders.filter((entry) => entry.vendorId === vendorId)
-  const [providerId, setProviderId] = useState(service?.providerId)
+  const [providerId, setProviderId] = useState(service ? service.providerId : accounts[0]?.id)
   const [officialBaseUrl, setOfficialBaseUrl] = useState(
     service?.baseUrl ?? vendor?.regions[0].baseUrl ?? ''
   )
@@ -530,54 +585,63 @@ const ImageServiceEditor = ({
         disabled={busy || refreshing}
         className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5"
       >
-        <div className="space-y-1.5">
-          <Label className={fieldLabelClassName} htmlFor="image-service-account">
-            {t('Provider type')}
-          </Label>
-          <Select
-            value={vendorId}
+        {onChangeVendor ? (
+          <SelectedProviderCard
+            iconKey={vendor ? `official:${vendor.id}` : 'custom'}
+            label={vendor?.label ?? t('Custom HTTP service')}
             disabled={busy}
-            onValueChange={(value: ImageVendorId | 'custom') => {
-              resetCatalog()
-              setVendorId(value)
-              const next = IMAGE_VENDOR_CATALOG.find((entry) => entry.id === value)
-              setProviderId(
-                snapshot.availableProviders.find((entry) => entry.vendorId === value)?.id
-              )
-              setOfficialBaseUrl(next?.regions[0].baseUrl ?? '')
-              setWorkspaceUrl('')
-              setApiKey('')
-              setKeyVisible(false)
-            }}
-          >
-            <SelectTrigger id="image-service-account">
-              <span className="flex min-w-0 items-center gap-2">
-                <ProviderKindIcon kindKey={vendor ? `official:${vendor.id}` : 'custom'} />
-                <span className="truncate">{vendor?.label ?? t('Custom HTTP service')}</span>
-              </span>
-            </SelectTrigger>
-            <SelectContent scrollToTopOnOpen>
-              <SelectGroup>
-                <SelectLabel>{t('Official API')}</SelectLabel>
-                {IMAGE_VENDOR_CATALOG.map((vendor) => (
-                  <SelectItem
-                    key={vendor.id}
-                    value={vendor.id}
-                    icon={<ProviderKindIcon kindKey={`official:${vendor.id}`} />}
-                  >
-                    <span className="truncate">{vendor.label}</span>
+            onChange={onChangeVendor}
+          />
+        ) : (
+          <div className="space-y-1.5">
+            <Label className={fieldLabelClassName} htmlFor="image-service-account">
+              {t('Provider type')}
+            </Label>
+            <Select
+              value={vendorId}
+              disabled={busy}
+              onValueChange={(value: ImageVendorId | 'custom') => {
+                resetCatalog()
+                setVendorId(value)
+                const next = IMAGE_VENDOR_CATALOG.find((entry) => entry.id === value)
+                setProviderId(
+                  snapshot.availableProviders.find((entry) => entry.vendorId === value)?.id
+                )
+                setOfficialBaseUrl(next?.regions[0].baseUrl ?? '')
+                setWorkspaceUrl('')
+                setApiKey('')
+                setKeyVisible(false)
+              }}
+            >
+              <SelectTrigger id="image-service-account">
+                <span className="flex min-w-0 items-center gap-2">
+                  <ProviderKindIcon kindKey={vendor ? `official:${vendor.id}` : 'custom'} />
+                  <span className="truncate">{vendor?.label ?? t('Custom HTTP service')}</span>
+                </span>
+              </SelectTrigger>
+              <SelectContent scrollToTopOnOpen>
+                <SelectGroup>
+                  <SelectLabel>{t('Official API')}</SelectLabel>
+                  {IMAGE_VENDOR_CATALOG.map((vendor) => (
+                    <SelectItem
+                      key={vendor.id}
+                      value={vendor.id}
+                      icon={<ProviderKindIcon kindKey={`official:${vendor.id}`} />}
+                    >
+                      <span className="truncate">{vendor.label}</span>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+                <SelectGroup>
+                  <SelectLabel>{t('Other')}</SelectLabel>
+                  <SelectItem value="custom" icon={<ProviderKindIcon kindKey="custom" />}>
+                    {t('Custom HTTP service')}
                   </SelectItem>
-                ))}
-              </SelectGroup>
-              <SelectGroup>
-                <SelectLabel>{t('Other')}</SelectLabel>
-                <SelectItem value="custom" icon={<ProviderKindIcon kindKey="custom" />}>
-                  {t('Custom HTTP service')}
-                </SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </div>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label className={fieldLabelClassName} htmlFor="image-service-name">
             {t('Name')}

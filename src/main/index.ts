@@ -1,3 +1,4 @@
+import { netFetchStandard } from './network-fetch-electron'
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
 import { readServiceLifetime } from './local-service-lifetime'
 import { assertDesktopRuntimeRestartAllowed } from './desktop-runtime-recovery'
@@ -52,7 +53,8 @@ import {
   net,
   powerMonitor,
   protocol,
-  session
+  session,
+  shell
 } from 'electron'
 import type { BaseWindow, MenuItem, MenuItemConstructorOptions, WebContents } from 'electron'
 import { dirname, join, resolve } from 'node:path'
@@ -78,6 +80,7 @@ import {
   installationRootForEntry
 } from './update/installation-protection'
 import { applyPreparedWindowsUpdate } from './update/windows-desktop-version'
+import { openSystemProcessManager } from './system-process-manager'
 import {
   discardPreparedMacInstallation,
   prepareSupervisedMacInstallation,
@@ -123,6 +126,7 @@ import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron
 import { createDesktopNativeHandler } from './desktop-native-electron'
 import { createElectronSessionDiagnosticsFallback } from './session-diagnostics/electron-fallback'
 import { parseWebModeOptions } from './web-service/options'
+import { installCliLauncher, uninstallCliLauncher } from './cli-install/launcher'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import { desktopQuitImpactChanged, type DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
@@ -857,7 +861,8 @@ async function startDesktop(): Promise<void> {
     'update:cancel',
     'update:apply',
     'update:recheck',
-    'update:recover'
+    'update:recover',
+    'update:open-process-manager'
   ])
   const recoveryReadChannels = new Set([
     'sessions:list',
@@ -876,6 +881,7 @@ async function startDesktop(): Promise<void> {
     'compute:list',
     'notebook:background-tasks',
     'notebook:run-evidence',
+    'notebook:run-figure',
     'notebook:state'
   ])
   const installRelay = (): void => {
@@ -1914,7 +1920,16 @@ async function startDesktop(): Promise<void> {
         : linuxDownloads?.then((policy) => policy?.preference)
   const macBundle = dirname(dirname(dirname(process.execPath)))
   const macCache = join(app.getPath('home'), 'Library', 'Caches')
+  const macSparkle =
+    desktopStable && process.platform === 'darwin' && !usesSupervisedInstall('darwin', 'update.zip')
+      ? (await import('./update/mac-sparkle')).loadMacSparkle(
+          process.resourcesPath,
+          macCache,
+          netFetchStandard
+        )
+      : undefined
   const update = createUpdateStrategy(process.platform, {
+    macSparkle,
     downloadPreference: backgroundDownloads,
     translate,
     getStartupOptions: () => client!.runtimeInfo().startupOptions,
@@ -1951,7 +1966,9 @@ async function startDesktop(): Promise<void> {
         }
       : {})
   })
-  registerUpdateIpcHandlers(update, undefined, requireRecoveryFrame)
+  registerUpdateIpcHandlers(update, undefined, requireRecoveryFrame, () =>
+    openSystemProcessManager(process.platform, (path) => shell.openPath(path))
+  )
   const stopUpdates = startUpdateScheduler(
     update,
     undefined,
@@ -1970,7 +1987,7 @@ async function startDesktop(): Promise<void> {
           canDownload: async (bytes) => {
             if (linuxDownloads) return (await linuxDownloads)?.canDownload(bytes) ?? false
             return process.platform === 'darwin'
-              ? canDownloadMacUpdate(macBundle, macCache, bytes)
+              ? canDownloadMacUpdate(macBundle, macCache, macSparkle?.artifact?.zipSize ?? bytes)
               : process.env.LOCALAPPDATA
                 ? canDownloadWindowsUpdate(bytes, process.env.LOCALAPPDATA)
                 : false
@@ -2228,14 +2245,21 @@ async function startDesktop(): Promise<void> {
         !updateCommitted &&
         !work?.preserveService
       ) {
-        const stage = await planMacUpdateOnQuit(update, nativeUpdater, macBundle, macCache, () =>
-          inspectInstallationAvailability(
-            {
-              installationRoot: installationRootForEntry(backendPaths.entry),
-              allowedProcessIds: allowedInstallationProcessIds
-            },
-            AbortSignal.timeout(10_000)
-          )
+        const patch = macSparkle?.isReady(update.getStatus().latest)
+        const stage = await planMacUpdateOnQuit(
+          update,
+          nativeUpdater,
+          macBundle,
+          macCache,
+          () =>
+            inspectInstallationAvailability(
+              {
+                installationRoot: installationRootForEntry(backendPaths.entry),
+                allowedProcessIds: allowedInstallationProcessIds
+              },
+              AbortSignal.timeout(10_000)
+            ),
+          macSparkle
         )
         if (stage) {
           const targetVersion = update.getStatus().latest
@@ -2244,7 +2268,13 @@ async function startDesktop(): Promise<void> {
             timeoutMs: MAC_NATIVE_PREPARATION_TIMEOUT_MS + MAC_HANDOFF_ACK_TIMEOUT_MS,
             run: async () => {
               await stage()
-              if (!(await macQuitHandoff('watch', app.getVersion(), [macCache, targetVersion])))
+              if (
+                !(await macQuitHandoff('watch', app.getVersion(), [
+                  macCache,
+                  targetVersion,
+                  ...(patch ? ['sparkle'] : [])
+                ]))
+              )
                 bootstrapLog.warn('macOS update handoff observer unavailable')
             }
           }
@@ -2321,7 +2351,54 @@ async function startDesktop(): Promise<void> {
   cleanupStartupClient = undefined
   diagnostics.operation.complete()
 }
-void startDesktop().catch(async (error: unknown) => {
+
+const CLI_INSTALL_MODE = '--install-cli'
+const CLI_UNINSTALL_MODE = '--uninstall-cli'
+
+const runCliInstallerMode = async (
+  mode: typeof CLI_INSTALL_MODE | typeof CLI_UNINSTALL_MODE
+): Promise<void> => {
+  const configRoot = resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
+  const profilePath = resolveElectronProfile({
+    appData: app.getPath('appData'),
+    configRoot,
+    packaged: app.isPackaged
+  })
+  app.setPath('userData', profilePath)
+  app.setPath('sessionData', profilePath)
+  await app.whenReady()
+  const backendPaths = desktopBackendPaths({
+    applicationPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    packaged: app.isPackaged
+  })
+  const environment = {
+    platform: process.platform,
+    appExecPath: process.execPath,
+    nodeExecPath: backendPaths.command,
+    cliEntryPath: app.isPackaged
+      ? join(process.resourcesPath, 'backend', 'cli.mjs')
+      : join(app.getAppPath(), 'cli', 'index.mjs'),
+    appImagePath: process.env.APPIMAGE,
+    packaged: app.isPackaged,
+    homeDir: app.getPath('home'),
+    userDataDir: profilePath,
+    pathVar: process.env.PATH ?? ''
+  }
+  const status =
+    mode === CLI_INSTALL_MODE
+      ? await installCliLauncher(environment)
+      : await uninstallCliLauncher(environment)
+  process.stdout.write(`${JSON.stringify(status)}\n`)
+  app.exit(0)
+}
+
+const installerMode = process.argv.find((arg) =>
+  [CLI_INSTALL_MODE, CLI_UNINSTALL_MODE].includes(arg)
+) as typeof CLI_INSTALL_MODE | typeof CLI_UNINSTALL_MODE | undefined
+
+const startup = installerMode ? runCliInstallerMode(installerMode) : startDesktop()
+void startup.catch(async (error: unknown) => {
   browserImports.failPending()
   const failureFields = {
     ...diagnosticErrorFields(error),
@@ -2343,6 +2420,11 @@ void startDesktop().catch(async (error: unknown) => {
         ? error.message
         : String(error)
   // Failed identity preflight must not yield to Chromium's profile/key initialization.
+  if (installerMode) {
+    process.stderr.write(`${message}\n`)
+    app.exit(1)
+    return
+  }
   if (!app.isReady()) {
     // This path must not await: preserve the diagnostic before the immediate process exit.
     writeFatalLogSync('desktop-bootstrap', 'desktop startup failed', failureFields)

@@ -8,23 +8,29 @@ import {
   PDFArray,
   PDFDict,
   PDFDocument,
+  PDFHexString,
   PDFName,
   PDFOperator,
   PDFOperatorNames,
   PDFRawStream,
   PDFString,
   StandardFonts,
+  beginText,
   clip,
   concatTransformationMatrix,
   decodePDFRawStream,
   degrees,
   endPath,
+  endText,
   popGraphicsState,
   pushGraphicsState,
   rectangle,
   rgb,
   setFillingColor,
+  setFontAndSize,
   setGraphicsState,
+  setTextMatrix,
+  showText,
   type PDFFont
 } from 'pdf-lib'
 import type { PDFPageProxy } from 'pdfjs-dist'
@@ -38,9 +44,131 @@ import {
 import { extractPdfTranslationSource } from '../src/reader/extraction.js'
 import { pdfTranslationLayoutFragments } from '../src/reader/fragments.js'
 import { createPdfTranslationSource } from '../src/reader/source.js'
+import { getPdfTranslationTextContent } from '../src/reader/text-content.js'
 import { PdfTranslationWriter } from '../src/writer.js'
 import { readPdfTranslationCases } from './fixtures/read-cases.js'
 import { TestCallerRegistry } from './support/callers.js'
+
+it.each([false, true])(
+  'checks the right ink overhang of an owned paragraph row (occupied strip: %s)',
+  async (occupied): Promise<void> => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.TimesRoman),
+      page = pdf.addPage([600, 800]),
+      caller = lease(),
+      line = 'A plain steel rail runs between the flat walls',
+      rows = [line, line, line + ',', line, line],
+      expectedText = '测量结果已核对。',
+      width = font.widthOfTextAtSize(line, 12) - 0.5
+    for (const [index, text] of rows.entries()) {
+      page.drawText(text, { font, size: 12, x: 40, y: 700 - 15 * index })
+    }
+    page.drawText('Sidebar.', { font, size: 12, x: 300, y: 700 })
+    if (occupied) {
+      page.drawRectangle({ x: 40 + width + 0.5, y: 676, width: 0.75, height: 1 })
+    }
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const output = await new PdfTranslationWriter(entry).generateDetailed(
+        {
+          id: 'owned-row-right-overhang',
+          data: await pdf.save(),
+          pages: [{ width: 600, height: 800 }],
+          preserveUnsupported: true,
+          preserveUnmatched: true,
+          units: [
+            {
+              source: rows.join(' '),
+              translation: expectedText,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 40 / 600, y: 90 / 800, width: width / 600, height: 75 / 800 },
+                  items: rows.map((text, index) => ({ text, index: index * 2 }))
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(output!.layoutFailures).toEqual(
+        occupied ? [expect.objectContaining({ code: 'unsupported-layout', unitIndex: 0 })] : []
+      )
+      task = getDocument({ data: output!.data.slice(), useSystemFonts: true })
+      const content = await (await (await task.promise).getPage(1)).getTextContent(),
+        text = content.items.flatMap((item) => ('str' in item ? [item.str] : [])).join(' ')
+      expect(text).toContain('Sidebar.')
+      expect(text).toContain(occupied ? line : expectedText)
+      expect(text).not.toContain(occupied ? expectedText : line)
+    } finally {
+      await task?.destroy()
+      caller.release()
+    }
+  }
+)
+
+it.each([true, false])(
+  'allows a descender at an independently verified next-row boundary: %s',
+  async (verified) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.TimesRoman),
+      page = pdf.addPage([600, 800]),
+      caller = lease(),
+      upper = 'The spring study calibrates the model.',
+      lower = 'Keep this row.',
+      tail = 'An independent note.',
+      translation = '此研究校准了模型。',
+      lowerSnapshot = verified ? lower : 'A different row.'
+    page.drawText(upper, { font, size: 12, x: 40, y: 700 })
+    page.drawText(lower, { font, size: 12, x: 40, y: 687 })
+    page.drawText(tail, { font, size: 12, x: 40, y: 665 })
+    const fragment = (
+      top: number,
+      bottom: number,
+      index: number,
+      text: string
+    ): PdfTranslationPdfRequest['units'][number]['fragments'][number] => ({
+      pageNumber: 1,
+      rect: { x: 39 / 600, y: (800 - top) / 800, width: 245 / 600, height: (top - bottom) / 800 },
+      items: [{ index, text }]
+    })
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const output = await new PdfTranslationWriter(entry).generateDetailed(
+        {
+          id: 'adjacent-descender',
+          data: await pdf.save(),
+          pages: [{ width: 600, height: 800 }],
+          preserveUnsupported: true,
+          preserveUnmatched: true,
+          units: [
+            { source: upper, translation, fragments: [fragment(713, 698, 0, upper)] },
+            {
+              source: `${lowerSnapshot} Stale final line.`,
+              translation: `${lowerSnapshot} Stale final line.`,
+              fragments: [
+                fragment(698, 682, 1, lowerSnapshot),
+                fragment(678, 660, 2, 'Stale final line.')
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(output!.layoutFailures.some(({ unitIndex }) => unitIndex === 0)).toBe(!verified)
+      task = getDocument({ data: output!.data.slice(), useSystemFonts: true })
+      const content = await (await (await task.promise).getPage(1)).getTextContent()
+      const actual = content.items.flatMap((item) => ('str' in item ? [item.str] : [])).join(' ')
+      expect(actual).toContain(verified ? translation : upper)
+      expect(actual).toContain(lower)
+      expect(actual).toContain(tail)
+    } finally {
+      await task?.destroy()
+      caller.release()
+    }
+  }
+)
 
 function expectSamePixels(actual: Uint8ClampedArray, expected: Uint8ClampedArray): void {
   if (!Buffer.from(actual).equals(Buffer.from(expected))) {
@@ -9533,109 +9661,122 @@ it.each(
   }
 })
 
-it.each(['flat', 'covered-shadow', 'transparent', 'stripe', 'raster-text', 'partial'] as const)(
-  'preserves raster backdrop and neighbors for native label: %s',
-  async (kind) => {
-    const pdf = await PDFDocument.create(),
-      page = pdf.addPage([400, 600]),
-      font = await pdf.embedFont(StandardFonts.Helvetica),
-      canvas = createCanvas(200, 60),
-      context = canvas.getContext('2d')
-    context.fillStyle = ['transparent', 'covered-shadow'].includes(kind)
+it.each([
+  'flat',
+  'covered-shadow',
+  'transparent',
+  'stripe',
+  'raster-text',
+  'partial',
+  'partial-white',
+  'partial-white-with-ink'
+] as const)('preserves raster backdrop and neighbors for native label: %s', async (kind) => {
+  const pdf = await PDFDocument.create(),
+    page = pdf.addPage([400, 600]),
+    font = await pdf.embedFont(StandardFonts.Helvetica),
+    canvas = createCanvas(200, 60),
+    context = canvas.getContext('2d')
+  context.fillStyle = kind.startsWith('partial-white')
+    ? '#ffffff'
+    : ['transparent', 'covered-shadow'].includes(kind)
       ? 'rgba(0, 100, 200, 0.5)'
       : '#0064c8'
-    context.fillRect(0, 0, 200, 60)
-    if (kind === 'stripe') {
-      context.fillStyle = '#ff0000'
-      context.fillRect(45, 0, 5, 60)
-    }
-    if (kind === 'raster-text') {
-      const fixtureFont = GlobalFonts.registerFromPath(
-        resolve('resources/NotoSansSC-Regular.otf'),
-        'RasterBackdropTest'
-      )
-      if (!fixtureFont) throw new Error('Raster backdrop fixture font is unavailable.')
-      try {
-        context.fillStyle = '#ffffff'
-        context.font = '12px RasterBackdropTest'
-        context.fillText('Raster content', 15, 38)
-      } finally {
-        GlobalFonts.remove(fixtureFont)
-      }
-    }
-    const image = await pdf.embedPng(canvas.toBuffer('image/png'))
-    page.drawImage(image, { x: kind === 'partial' ? 130 : 90, y: 480, width: 200, height: 60 })
-    if (kind === 'covered-shadow')
-      page.drawRectangle({
-        x: 90,
-        y: 480,
-        width: 200,
-        height: 60,
-        color: rgb(0, 100 / 255, 200 / 255)
-      })
-    page.drawText('Measured response', { x: 100, y: 500, size: 12, font })
-    page.drawText('12', { x: 340, y: 500, size: 12, font })
-    const data = await pdf.save(),
-      caller = lease(),
-      original = getDocument({ data: data.slice(), useSystemFonts: true })
-    let target: ReturnType<typeof getDocument> | undefined
+  context.fillRect(0, 0, 200, 60)
+  if (kind === 'stripe' || kind === 'partial-white-with-ink') {
+    context.fillStyle = '#ff0000'
+    context.fillRect(45, 0, 5, 60)
+  }
+  if (kind === 'raster-text') {
+    const fixtureFont = GlobalFonts.registerFromPath(
+      resolve('resources/NotoSansSC-Regular.otf'),
+      'RasterBackdropTest'
+    )
+    if (!fixtureFont) throw new Error('Raster backdrop fixture font is unavailable.')
     try {
-      const { source } = await extractPdfTranslationSource({
-        document: await original.promise,
-        resourceRequestKey: 'raster-backdrop',
-        signal: caller.lease.signal
-      })
-      const unit = source.units.find((unit) => unit.source === 'Measured response')!
-      expect(unit).toBeDefined()
-      const output = await new PdfTranslationWriter(entry).generate(
-        {
-          id: 'raster-backdrop',
-          data,
-          pages: source.pages,
-          preserveUnsupported: true,
-          units: [{ ...unit, translation: '测量响应' }]
-        },
-        caller.lease
-      )
-      target = getDocument({ data: output!, useSystemFonts: true })
-      const before = await original.promise,
-        after = await target.promise,
-        text = (await (await after.getPage(1)).getTextContent()).items
-          .filter((item) => 'str' in item)
-          .map((item) => item.str)
-          .join(''),
-        translated = kind === 'flat' || kind === 'covered-shadow'
-      expect(text).toContain(translated ? '测量响应' : 'Measured response')
-      expect(text).toContain('12')
-      const render = async (document: typeof before): Promise<Buffer> => {
-        const page = await document.getPage(1),
-          viewport = page.getViewport({ scale: 2 }),
-          canvas = createCanvas(viewport.width, viewport.height),
-          context = canvas.getContext('2d')
-        await page.render({
-          canvas: null,
-          canvasContext: context as unknown as CanvasRenderingContext2D,
-          viewport
-        }).promise
-        if (translated) {
-          const rect = unit.fragments[0].rect
-          context.clearRect(
-            Math.floor(rect.x * viewport.width) - 2,
-            Math.floor(rect.y * viewport.height) - 2,
-            Math.ceil(rect.width * viewport.width) + 4,
-            Math.ceil(rect.height * viewport.height) + 4
-          )
-        }
-        return Buffer.from(context.getImageData(0, 0, canvas.width, canvas.height).data)
-      }
-      expect((await render(after)).equals(await render(before))).toBe(true)
+      context.fillStyle = '#ffffff'
+      context.font = '12px RasterBackdropTest'
+      context.fillText('Raster content', 15, 38)
     } finally {
-      await target?.destroy()
-      await original.destroy()
-      caller.release()
+      GlobalFonts.remove(fixtureFont)
     }
   }
-)
+  const image = await pdf.embedPng(canvas.toBuffer('image/png'))
+  page.drawImage(image, {
+    x: kind.startsWith('partial') ? 130 : 90,
+    y: 480,
+    width: 200,
+    height: 60
+  })
+  if (kind === 'covered-shadow')
+    page.drawRectangle({
+      x: 90,
+      y: 480,
+      width: 200,
+      height: 60,
+      color: rgb(0, 100 / 255, 200 / 255)
+    })
+  page.drawText('Measured response', { x: 100, y: 500, size: 12, font })
+  page.drawText('12', { x: 340, y: 500, size: 12, font })
+  const data = await pdf.save(),
+    caller = lease(),
+    original = getDocument({ data: data.slice(), useSystemFonts: true })
+  let target: ReturnType<typeof getDocument> | undefined
+  try {
+    const { source } = await extractPdfTranslationSource({
+      document: await original.promise,
+      resourceRequestKey: 'raster-backdrop',
+      signal: caller.lease.signal
+    })
+    const unit = source.units.find((unit) => unit.source === 'Measured response')!
+    expect(unit).toBeDefined()
+    const output = await new PdfTranslationWriter(entry).generate(
+      {
+        id: 'raster-backdrop',
+        data,
+        pages: source.pages,
+        preserveUnsupported: true,
+        units: [{ ...unit, translation: '测量响应' }]
+      },
+      caller.lease
+    )
+    target = getDocument({ data: output!, useSystemFonts: true })
+    const before = await original.promise,
+      after = await target.promise,
+      text = (await (await after.getPage(1)).getTextContent()).items
+        .filter((item) => 'str' in item)
+        .map((item) => item.str)
+        .join(''),
+      translated = ['flat', 'covered-shadow', 'partial-white'].includes(kind)
+    expect(text).toContain(translated ? '测量响应' : 'Measured response')
+    expect(text).toContain('12')
+    const render = async (document: typeof before): Promise<Buffer> => {
+      const page = await document.getPage(1),
+        viewport = page.getViewport({ scale: 2 }),
+        canvas = createCanvas(viewport.width, viewport.height),
+        context = canvas.getContext('2d')
+      await page.render({
+        canvas: null,
+        canvasContext: context as unknown as CanvasRenderingContext2D,
+        viewport
+      }).promise
+      if (translated) {
+        const rect = unit.fragments[0].rect
+        context.clearRect(
+          Math.floor(rect.x * viewport.width) - 2,
+          Math.floor(rect.y * viewport.height) - 2,
+          Math.ceil(rect.width * viewport.width) + 4,
+          Math.ceil(rect.height * viewport.height) + 4
+        )
+      }
+      return Buffer.from(context.getImageData(0, 0, canvas.width, canvas.height).data)
+    }
+    expect((await render(after)).equals(await render(before))).toBe(true)
+  } finally {
+    await target?.destroy()
+    await original.destroy()
+    caller.release()
+  }
+})
 
 it.each(
   readPdfTranslationCases<{ name: string; kind: string; translated: boolean }>(
@@ -11698,22 +11839,190 @@ it.each([
   }
 )
 
-it('writes translated prose with native floor delimiters', async () => {
+it.each(['single', 'merged', 'chain'])('writes native slanted relations: %s', async (layout) => {
+  const mergedRows = layout === 'merged',
+    chain = layout === 'chain'
+  // Minimal synthetic Type1C font with two outlined slanted relation glyphs.
+  const fontProgram = Buffer.from(
+    'AQAEBAABAQEHTVNBTTEwAAEBAQ2L+xz5oPkQBdYP2xEAAgEBESRsZXNzb3JlcXVhbHNsYW50Z3JlYXRlcm9yZXF1YWxzbGFudAAAAAGHAYgAAwEBAixVDvmd+VuLFfyA99D4gPeli7r89/u0i1X49/vZBYsiFfz398SLV/j3+1wFDvmd3osV+ID30PyA96WLuvj3+7SLVfz3+9kFiyIV+Pf3xItX/Pf7XAUO',
+    'base64'
+  )
+  const pdf = await PDFDocument.create(),
+    page = pdf.addPage([420, 340]),
+    body = await pdf.embedFont(StandardFonts.TimesRoman),
+    context = pdf.context,
+    face = PDFName.of('MSAM10'),
+    symbol = PDFName.of('Relation')
+  const font = context.obj({
+    Type: 'Font',
+    Subtype: 'Type1',
+    BaseFont: face,
+    FirstChar: 54,
+    LastChar: 62,
+    Widths: [777, 0, 0, 0, 0, 0, 0, 0, 777],
+    Encoding: {
+      Type: 'Encoding',
+      BaseEncoding: 'WinAnsiEncoding',
+      Differences: [54, PDFName.of('lessorequalslant'), 62, PDFName.of('greaterorequalslant')]
+    },
+    FontDescriptor: context.register(
+      context.obj({
+        Type: 'FontDescriptor',
+        FontName: face,
+        Flags: 4,
+        FontBBox: [0, -136, 777, 636],
+        ItalicAngle: 0,
+        Ascent: 636,
+        Descent: -136,
+        CapHeight: 636,
+        StemV: 45,
+        FontFile3: context.register(context.flateStream(fontProgram, { Subtype: 'Type1C' }))
+      })
+    ),
+    ToUnicode: context.register(
+      context.flateStream(
+        '/CIDInit /ProcSet findresource begin 12 dict begin begincmap ' +
+          '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def ' +
+          '/CMapName /Relations def /CMapType 2 def 1 begincodespacerange <00> <FF> endcodespacerange ' +
+          '1 beginbfchar <20> <0020> endbfchar endcmap CMapName currentdict /CMap defineresource pop end end'
+      )
+    )
+  })
+  page.node.setFontDictionary(symbol, context.register(font))
+  const size = 12,
+    baseline = 285
+  const relation = (hex: string, x: number, y: number): void => {
+    page.pushOperators(
+      beginText(),
+      setFontAndSize(symbol, size),
+      setTextMatrix(1, 0, 0, 1, x, y),
+      showText(PDFHexString.of(hex)),
+      endText()
+    )
+  }
+  const precedingRow = 'The estimate remains valid in both regimes.'
+  const rowAdvance = 14
+  if (mergedRows) page.drawText(precedingRow, { font: body, size, x: 40, y: baseline + rowAdvance })
+  const chainPrefix = 'The chosen parameter lies in the closed interval 0 ',
+    ordinarySource = 'We select a ⩽ 2 and b ⩾ 3 with ordinary c > 0 and 6 samples.'
+  let relationStart
+  if (chain) {
+    const greek = await pdf.embedFont(StandardFonts.Symbol)
+    page.drawText(chainPrefix, { font: body, size, x: 40, y: baseline })
+    relationStart = 40 + body.widthOfTextAtSize(chainPrefix, size)
+    relation('36', relationStart, baseline)
+    const lambda = relationStart + size * 0.777 + 3
+    page.drawText('λ', { font: greek, size, x: lambda, y: baseline })
+    const second = lambda + greek.widthOfTextAtSize('λ', size) + 3
+    relation('36', second, baseline)
+    page.drawText(' 1.', { font: body, size, x: second + size * 0.777, y: baseline })
+  } else {
+    let x = 40
+    for (const [text, hex] of [
+      ['We select a ', '36'],
+      [' 2 and b ', '3E'],
+      [' 3 with ordinary c > 0 and 6 samples.', '']
+    ]) {
+      page.drawText(text, { font: body, size, x, y: baseline })
+      x += body.widthOfTextAtSize(text, size)
+      if (hex) {
+        relation(hex, x, baseline)
+        x += size * 0.777
+      }
+    }
+  }
+  relation('36', 180, 245)
+  const data = await pdf.save(),
+    original = getDocument({ data: data.slice(), fontExtraProperties: true }),
+    caller = lease()
+  let target: ReturnType<typeof getDocument> | undefined
+  try {
+    const document = await original.promise
+    const { source } = await extractPdfTranslationSource({
+      document,
+      resourceRequestKey: 'native-slanted-relations',
+      signal: caller.lease.signal
+    })
+    expect(source.units.map((unit) => [unit.source, unit.sourceOnly])).toEqual([
+      [
+        chain ? `${chainPrefix}⩽ λ ⩽ 1.` : (mergedRows ? precedingRow + ' ' : '') + ordinarySource,
+        undefined
+      ],
+      ['⩽', true]
+    ])
+    const translation = chain
+      ? '取 0 ⩽ λ ⩽ 1。'
+      : (mergedRows ? '在这两种情况下，估计值均有效。' : '') +
+        '选取 a ⩽ 2 与 b ⩾ 3，且 c > 0，共 6 个样本。'
+    const unit = source.units[0]
+    const [fragment] = unit.fragments
+    const { rect, items } = fragment
+    const advance = rowAdvance / source.pages[0].height
+    const firstRow = { ...rect, height: rect.height - advance }
+    // Supply the two aligned rows separately to exercise the writer's merge.
+    const fragments = mergedRows
+      ? [
+          { ...fragment, rect: firstRow, items: items.slice(0, 1) },
+          { ...fragment, rect: { ...firstRow, y: rect.y + advance }, items: items.slice(1) }
+        ]
+      : unit.fragments
+    const result = await new PdfTranslationWriter(entry).generateDetailed(
+      {
+        id: 'native-slanted-relations',
+        data,
+        pages: source.pages,
+        preserveUnsupported: true,
+        units: [{ ...unit, fragments, translation }]
+      },
+      caller.lease
+    )
+    expect(result.layoutFailures).toEqual([])
+    target = getDocument({ data: result.data.slice(), fontExtraProperties: true })
+    const content = await getPdfTranslationTextContent(await (await target.promise).getPage(1))
+    expect(
+      content.items
+        .flatMap((item) => ('str' in item ? [item.str] : []))
+        .join('')
+        .replace(/\s/gu, '')
+    ).toBe((translation + '⩽').replace(/\s/gu, ''))
+    if (chain) {
+      const relations = content.items
+        .filter((item) => 'str' in item)
+        .filter(({ str }) => str.trim() === '⩽')
+      expect(relations).toHaveLength(3)
+      expect(relations[0].transform[4]).toBeLessThan(relationStart! - 20)
+      expect(relations[1].transform[4] - relations[0].transform[4]).toBeLessThan(30)
+      expect(relations[2].transform.slice(4)).toEqual([180, 245])
+    }
+  } finally {
+    await target?.destroy()
+    await original.destroy()
+    caller.release()
+  }
+})
+
+it.each([
+  ['', ''],
+  ['≥', '≥'],
+  ['≤', '≤'],
+  ['≥', '≤']
+])('writes native floor delimiters (%s to %s)', async (relation, targetRelation) => {
   const pdf = await PDFDocument.create()
   const text = await pdf.embedFont(StandardFonts.TimesRoman)
   const math = await pdf.embedFont(StandardFonts.Symbol)
   const page = pdf.addPage([420, 340])
   const caller = lease()
-  const source = 'The result is ⌊x/4⌋.'
-  const translation = '结果为⌊x/4⌋。'
+  const source = 'The result is ⌊x/4⌋' + (relation ? ' ' + relation + ' 2.' : '.')
+  const translation = '结果为⌊x/4⌋' + (relation ? ' ' + targetRelation + ' 2。' : '。')
+  const exact = relation === targetRelation
   const size = 12
   let x = 40
   for (const [value, font] of [
     ['The result is ', text],
     ['\uF8F1', math],
     ['x/4', text],
-    ['\uF8FC', math],
-    ['.', text]
+    ['\uF8FC' + (relation ? ' ' + relation : ''), math],
+    [relation ? ' 2.' : '.', text]
   ] as const) {
     page.drawText(value, { font, size, x, y: 285 })
     x += font.widthOfTextAtSize(value, size)
@@ -11729,7 +12038,7 @@ it('writes translated prose with native floor delimiters', async () => {
             '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def ' +
             '/CMapName /FloorFixture def /CMapType 2 def ' +
             '1 begincodespacerange <00> <FF> endcodespacerange ' +
-            '2 beginbfchar <EC> <230A> <FC> <230B> endbfchar ' +
+            '5 beginbfchar <EC> <230A> <FC> <230B> <20> <0020> <A3> <2264> <B3> <2265> endbfchar ' +
             'endcmap CMapName currentdict /CMap defineresource pop end end'
         )
       )
@@ -11757,7 +12066,11 @@ it('writes translated prose with native floor delimiters', async () => {
       },
       caller.lease
     )
-    expect(output?.layoutFailures).toEqual([])
+    expect(output?.layoutFailures).toEqual(
+      exact
+        ? []
+        : [{ code: 'font', phase: 'planning', pageNumbers: [1], fragmentCount: 1, unitIndex: 0 }]
+    )
     task = getDocument({ data: output!.data })
     const contents = await (await (await task.promise).getPage(1)).getTextContent()
     expect(
@@ -11765,7 +12078,7 @@ it('writes translated prose with native floor delimiters', async () => {
         .flatMap((item) => ('str' in item ? [item.str] : []))
         .join('')
         .replace(/\s/gu, '')
-    ).toBe(translation)
+    ).toBe((exact ? translation : source).replace(/\s/gu, ''))
   } finally {
     await task?.destroy()
     caller.release()
@@ -11827,6 +12140,233 @@ it.each([
           .join('')
           .replace(/\s/gu, '')
       ).toBe((exact ? translation : source).replace(/\s/gu, ''))
+    } finally {
+      await task?.destroy()
+      caller.release()
+    }
+  }
+)
+
+it.each([
+  ['tiny internal displacement', true, 7.55, 0],
+  ['tiny URI displacement', false, 7.55, -0.046],
+  ['larger internal displacement', true, 7.4, -0.196]
+] as const)(
+  'keeps a tall numeric hit and its glyph aligned for %s',
+  async (_, internal, top, dy) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.TimesRoman),
+      page = pdf.addPage([600, 800]),
+      [x, y, size] = [40, 700, 9],
+      prefix = 'The final measured results are summarized in Table ',
+      suffix = ' for all test samples.',
+      source = prefix + '1' + suffix,
+      translation = '见表1，其中汇总了所有受测样本的最终测量结果。',
+      labelX = x + font.widthOfTextAtSize(prefix, size),
+      labelWidth = font.widthOfTextAtSize('1', size),
+      rect = [labelX - 0.5, y - 4, labelX + labelWidth + 0.5, y + 10.5]
+    page.drawText(prefix, { font, size, x, y })
+    page.drawText('1', { font, size, x: labelX, y })
+    page.drawText(suffix, { font, size, x: labelX + labelWidth, y })
+    page.node.set(
+      PDFName.of('Annots'),
+      pdf.context.obj([
+        pdf.context.register(
+          pdf.context.obj({
+            Type: 'Annot',
+            Subtype: 'Link',
+            Rect: rect,
+            Border: [0, 0, 0],
+            ...(internal
+              ? { Dest: [page.ref, PDFName.of('XYZ'), x, y, 0] }
+              : { A: { S: 'URI', URI: PDFString.of('https://example.org/reference') } })
+          })
+        )
+      ])
+    )
+    const caller = lease()
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const saved = await new PdfTranslationWriter(entry).generateDetailed(
+        {
+          id: 'tall-numeral-hit',
+          preserveUnsupported: true,
+          data: await pdf.save(),
+          pages: [{ width: 600, height: 800 }],
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: {
+                    x: x / 600,
+                    y: (800 - y - top) / 800,
+                    width: (font.widthOfTextAtSize(source, size) + 1) / 600,
+                    height: (top + 2.5) / 800
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(saved?.layoutFailures).toEqual([])
+      task = getDocument({ data: saved!.data, useSystemFonts: true })
+      const document = await task.promise,
+        target = await document.getPage(1),
+        items = (await target.getTextContent()).items.filter((item) => 'str' in item),
+        links = await target.getAnnotations()
+      expect(
+        items
+          .map(({ str }) => str)
+          .join('')
+          .replace(/\s/gu, '')
+      ).toBe(translation)
+      expect(links).toHaveLength(1)
+      const [link] = links,
+        numeral = items.find(({ str }) => str === '1')!,
+        dx = numeral.transform[4] - labelX
+      expect(dx).toBeLessThan(-100)
+      expect(numeral.height).toBeCloseTo(size, 3)
+      expect(numeral.width).toBeCloseTo(labelWidth, 3)
+      expect(numeral.transform[5]).toBeCloseTo(y + dy, 3)
+      for (const [index, value] of rect.entries())
+        expect(link.rect[index]).toBeCloseTo(value + (index % 2 ? dy : dx), 3)
+      if (internal) {
+        expect(await document.getPageIndex(link.dest[0])).toBe(0)
+        expect(link.dest.slice(1)).toEqual([{ name: 'XYZ' }, x, y, 0])
+      } else expect(link.url).toBe('https://example.org/reference')
+    } finally {
+      await task?.destroy()
+      caller.release()
+    }
+  }
+)
+
+it.each([true, false])(
+  'keeps a proven front-matter affiliation centered (%s)',
+  async (centered) => {
+    const document = await PDFDocument.create(),
+      font = await document.embedFont(StandardFonts.TimesRoman),
+      page = document.addPage([612, 792]),
+      source = 'Department of Atmospheric Physics, Ridge Institute',
+      translation = '大气物理系，山岭研究所',
+      size = 12,
+      width = font.widthOfTextAtSize(source, size),
+      left = (612 - width) / 2
+    for (const [text, y, shift] of [
+      ['Mira Sample', 652, centered ? 0 : 20],
+      [source, 635, 0],
+      ['Ravi Example', 611, 0]
+    ] as const)
+      page.drawText(text, {
+        x: (612 - font.widthOfTextAtSize(text, size)) / 2 + shift,
+        y,
+        font,
+        size
+      })
+
+    const caller = lease()
+    try {
+      const output = await new PdfTranslationWriter(entry).generateDetailed(
+        {
+          id: 'centered-affiliation',
+          data: await document.save(),
+          pages: [{ width: 612, height: 792 }],
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: {
+                    x: (left - 0.5) / 612,
+                    y: 147 / 792,
+                    width: (width + 1) / 612,
+                    height: 15 / 792
+                  }
+                }
+              ]
+            }
+          ],
+          preserveUnsupported: true
+        },
+        caller.lease
+      )
+      expect(output?.layoutFailures).toEqual([])
+      const task = getDocument({ data: output!.data })
+      try {
+        const text = await (await (await task.promise).getPage(1)).getTextContent()
+        const translated = text.items.find((item) => 'str' in item && item.str === translation)
+        expect(translated).toBeDefined()
+        if (translated && 'str' in translated) {
+          if (centered) expect(translated.transform[4] + translated.width / 2).toBeCloseTo(306, 0)
+          else expect(translated.transform[4]).toBeCloseTo(left - 0.5, 0)
+        }
+      } finally {
+        await task.destroy()
+      }
+    } finally {
+      caller.release()
+    }
+  }
+)
+
+it.each([true, false])(
+  'keeps the mathematical tilde with an unchanged operand: %s',
+  async (same) => {
+    const pdf = await PDFDocument.create()
+    const page = pdf.addPage([600, 800])
+    const font = await pdf.embedFont(StandardFonts.Helvetica)
+    const math = await pdf.embedFont(StandardFonts.Symbol)
+    const leading = 'The asymptotic estimate is '
+    const source = leading + '∼ (λ)'
+    const translation = same ? '渐近估计值 ∼ (λ)' : '渐近估计值 ∼ (μ)'
+    page.drawText(leading, { font, size: 12, x: 40, y: 700 })
+    page.drawText('∼ (λ)', {
+      font: math,
+      size: 12,
+      x: 40 + font.widthOfTextAtSize(leading, 12),
+      y: 700
+    })
+    const caller = lease()
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const output = await new PdfTranslationWriter(entry).generateDetailed(
+        {
+          id: 'mathematical-tilde',
+          data: await pdf.save(),
+          pages: [{ width: 600, height: 800 }],
+          preserveUnsupported: true,
+          units: [
+            {
+              source,
+              translation,
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 39 / 600, y: 85 / 800, width: 350 / 600, height: 25 / 800 },
+                  items: [{ index: 0, text: source }]
+                }
+              ]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(output?.layoutFailures).toHaveLength(same ? 0 : 1)
+      task = getDocument({ data: output!.data.slice() })
+      const content = await getPdfTranslationTextContent(await (await task.promise).getPage(1))
+      expect(
+        content.items
+          .flatMap((item) => ('str' in item ? [item.str] : []))
+          .join('')
+          .replace(/\s/gu, '')
+      ).toBe((same ? translation : source).replace(/\s/gu, ''))
     } finally {
       await task?.destroy()
       caller.release()

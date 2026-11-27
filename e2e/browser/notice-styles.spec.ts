@@ -417,3 +417,34 @@ for (const width of [320, 768]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   })
 }
+
+for (const stacked of [false, true]) {
+  test(`update toast respects titlebar and viewport bounds (${stacked ? 'stacked' : 'standalone'})`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1000, height: 600 })
+    await page.goto(`/notice-styles.html?locale=zh-Hans&toastPosition${stacked ? '&stacked' : ''}`)
+    const toast = page.getByTestId('update-outcome-toast')
+    for (const titlebar of ['', 'fullscreen', null]) {
+      await page.evaluate((value) => {
+        if (value === null) document.documentElement.removeAttribute('data-windows-titlebar')
+        else document.documentElement.setAttribute('data-windows-titlebar', value)
+      }, titlebar)
+      const top = titlebar === '' ? 48 : 12
+      await expect.poll(async () => (await toast.boundingBox())?.y).toBe(top)
+      const bounds = (await toast.boundingBox())!
+      expect(bounds.x + bounds.width / 2).toBeCloseTo(500, 0)
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(600)
+    }
+    await page.evaluate(() => document.documentElement.setAttribute('data-windows-titlebar', ''))
+    await page.setViewportSize({ width: 320, height: 160 })
+    const scroller = stacked ? page.locator('[data-action-toast-stack]') : toast
+    const bounds = (await scroller.boundingBox())!
+    expect(bounds.y).toBe(stacked ? 36 : 48)
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(160)
+    const dismiss = toast.getByRole('button')
+    await dismiss.scrollIntoViewIfNeeded()
+    await dismiss.click()
+    await expect(toast).toHaveCount(0)
+  })
+}

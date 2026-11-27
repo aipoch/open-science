@@ -89,7 +89,7 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
               return (
                 spelling === part.label ||
                 (raisedDigits &&
-                  /^[⁰¹²³⁴⁵⁶⁷⁸⁹]+$/u.test(spelling) &&
+                  /^(?:⁻|[⁰¹²³⁴⁵⁶⁷⁸⁹]+)$/u.test(spelling) &&
                   spelling.normalize('NFKC') === part.label)
               )
             })() &&
@@ -129,6 +129,926 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
       if (ordinal < 0 || from.length !== to.length) return
       pushNativeGroup(start, end, parts, baseline, to[ordinal], needsInlineReflow)
     }
+  // A numeric uncertainty can share its base with a prose run. Preserve the
+  // complete native stack only when both signed values travel with that base.
+  const uncertainty =
+      /(?<![\p{L}\p{M}\p{N}_.])([0-9]{1,4})(\+[0-9]{1,3})(−)([0-9]{1,3})(?![\p{L}\p{M}\p{N}_.+−])/gu,
+    sourceUncertainties = [...source.matchAll(uncertainty)],
+    targetUncertainties = [...translation.matchAll(uncertainty)]
+  for (const token of sourceUncertainties) {
+    const start = token.index + token[1].length,
+      end = token.index + token[0].length,
+      parts = nativeParts(start, end, 3)
+    if (!parts) continue
+    const [upper, minus, lower] = parts,
+      bases = markers.filter(
+        (marker) =>
+          marker.sourceOffset <= token.index &&
+          marker.sourceOffset + marker.label.length === start &&
+          marker.label.endsWith(token[1]) &&
+          source.slice(marker.sourceOffset, start) === marker.label
+      ),
+      base = bases[0]
+    if (
+      bases.length !== 1 ||
+      base.sourceIndices.length !== 1 ||
+      base.sourceIndices[0] + 1 !== upper.sourceIndices[0] ||
+      base.bounds?.length !== 4 ||
+      !base.bounds.every(Number.isFinite) ||
+      !body(base) ||
+      !/^(?:[A-Z]{6}\+)?CMR10$/u.test(base.fontName) ||
+      parts.some((part, i) => part.label !== token[i + 2] || !small(part)) ||
+      ![upper, lower].every((part) => /^(?:[A-Z]{6}\+)?CMR7$/u.test(part.fontName)) ||
+      !/^(?:[A-Z]{6}\+)?CMSY7$/u.test(minus.fontName) ||
+      Math.abs(upper.scale - lower.scale) > 0.01 ||
+      !sameStyle(minus, lower)
+    )
+      continue
+    const height = base.bounds[3] - base.bounds[1]
+    if (
+      !(height > 0) ||
+      ![base, ...parts].every(
+        (part) =>
+          Math.abs(part.baseline - base.baseline - part.rise) < 0.01 &&
+          part.bounds[2] > part.bounds[0] &&
+          part.bounds[3] > part.bounds[1]
+      ) ||
+      upper.rise < height * 0.3 ||
+      upper.rise > height * 0.65 ||
+      lower.rise < -height * 0.5 ||
+      lower.rise > -height * 0.15 ||
+      upper.bounds[0] < base.bounds[2] ||
+      upper.bounds[0] - base.bounds[2] > height * 0.25 ||
+      lower.bounds[0] < minus.bounds[2] ||
+      lower.bounds[0] - minus.bounds[2] > height * 0.25 ||
+      Math.abs(upper.bounds[0] - minus.bounds[0]) > height * 0.15 ||
+      Math.abs(upper.bounds[2] - lower.bounds[2]) > height * 0.25 ||
+      upper.bounds[1] < lower.bounds[3]
+    )
+      continue
+    const from = sourceUncertainties.filter((match) => match[0] === token[0]),
+      to = targetUncertainties.filter((match) => match[0] === token[0])
+    if (from.length !== to.length) continue
+    pushNativeGroup(start, end, parts, base, to[from.indexOf(token)].index + token[1].length, true)
+  }
+
+  // PDF.js can insert spaces around a native symbolic superscript.
+  for (const match of source.matchAll(/∼ [A-Z] [a-z](?![\p{L}\p{M}\p{N}_])/gu)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 3)
+    if (!parts) continue
+    const [relation, base, exponent] = parts,
+      face = /^(?:[A-Z]{6}\+)?CMMI(9|10)$/u.exec(base.fontName)?.[1],
+      relationFace = /^(?:[A-Z]{6}\+)?CMSY(9|10)$/u.exec(relation.fontName)?.[1],
+      exponentFace = /^(?:[A-Z]{6}\+)?CMMI(6|7)$/u.exec(exponent.fontName)?.[1],
+      gap = exponent.bounds[0] - base.bounds[2],
+      height = base.bounds[3] - base.bounds[1]
+    if (
+      !face ||
+      relationFace !== face ||
+      Number(face) - Number(exponentFace) !== 3 ||
+      occurrences(source, match[0]).length !== 1 ||
+      !body(relation) ||
+      !body(base) ||
+      !small(exponent) ||
+      [relation, base, exponent].some((part, i) => part.sourceOffset !== start + 2 * i) ||
+      Math.abs(relation.baseline - base.baseline) >= 0.01 ||
+      Math.abs(exponent.baseline - base.baseline - exponent.rise) >= 0.01 ||
+      exponent.rise < height * 0.45 ||
+      exponent.rise > height * 0.7 ||
+      !(gap >= 0 && gap <= height * 0.2) ||
+      center(exponent) <= center(base) ||
+      relation.bounds[2] >= base.bounds[0] ||
+      base.bounds[0] - relation.bounds[2] > height * 0.7
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+  // Keep an indexed function and its powered cardinality denominator
+  // together. A flat spelling alone does not identify either script level.
+  const cardinalityRatio =
+    /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}_])[a-z][A-Z]\([A-Z]\)\/\|[A-Z]\|\|[A-Z]\|(?![\p{Script=Latin}\p{Script=Greek}\p{N}_|])/gu
+  const sourceCardinalities = [...source.matchAll(cardinalityRatio)],
+    targetCardinalities = [...translation.matchAll(cardinalityRatio)],
+    ratioFonts = [
+      'CMMI10',
+      'CMMI8',
+      'CMR10',
+      'CMMI10',
+      'CMR10',
+      'CMMI10',
+      'CMSY10',
+      'CMMI10',
+      'CMSY10',
+      'CMSY8',
+      'CMMI8',
+      'CMSY8'
+    ]
+  for (const match of sourceCardinalities) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, ratioFonts.length)
+    if (!parts) continue
+    const base = parts[0],
+      index = parts[1],
+      exponent = parts[9],
+      height = parts[6].bounds[3] - parts[6].bounds[1]
+    if (
+      !parts.every((part, i) => {
+        const row = i >= 9 ? exponent : i === 1 ? index : base,
+          gap = i ? part.bounds[0] - parts[i - 1].bounds[2] : 0
+        return (
+          part.sourceOffset === start + i &&
+          part.label === match[0][i] &&
+          part.fontName?.replace(/^[A-Z]{6}\+/u, '') === ratioFonts[i] &&
+          (row === base ? body(part) : small(part)) &&
+          sameStyle(part, row) &&
+          Math.abs(part.baseline - base.baseline - part.rise) < 0.01 &&
+          gap >= 0 &&
+          gap <= height * 0.26
+        )
+      }) ||
+      index.rise < -height * 0.25 ||
+      index.rise > -height * 0.08 ||
+      exponent.rise < height * 0.3 ||
+      exponent.rise > height * 0.55
+    )
+      continue
+    const to = targetCardinalities.filter(([token]) => token === match[0])
+    if (to.length === 1 && sourceCardinalities.filter(([token]) => token === match[0]).length === 1)
+      pushNativeGroup(start, end, parts, base, to[0].index, true)
+  }
+  // A prose run can own the opening "(2" of a product. Repaint that
+  // opening and keep both independently raised factors as one native run.
+  const raisedProduct =
+    /\([1-9]([a-z])\)−\1−[1-9][a-z](?:\|[A-Z]\([a-z]\)\||[a-z])[A-Z](?![\p{Script=Latin}\p{Script=Greek}\p{N}_])/gu
+  const sourceProducts = [...source.matchAll(raisedProduct)],
+    targetProducts = [...translation.matchAll(raisedProduct)],
+    productFonts = [
+      'CMMI10',
+      'CMR10',
+      'CMSY8',
+      'CMMI8',
+      'CMSY8',
+      'CMR8',
+      'CMMI10',
+      'CMSY8',
+      'CMMI8',
+      'CMR8',
+      'CMMI8',
+      'CMR8',
+      'CMSY8',
+      'CMMI10'
+    ]
+  for (const match of sourceProducts) {
+    const fencedExponent = match[0].includes('|'),
+      fonts = fencedExponent ? productFonts : [...productFonts.slice(0, 7), 'CMMI8', 'CMMI10'],
+      start = match.index + 2,
+      end = match.index + match[0].length,
+      parts = nativeParts(start, end, fonts.length)
+    if (!parts) continue
+    const base = parts[1],
+      exponent = parts[2],
+      height = base.bounds[3] - base.bounds[1],
+      prefix = markers.find(
+        (part) =>
+          part.sourceOffset + part.label.length === start &&
+          source.slice(part.sourceOffset, start) === part.label &&
+          part.label.endsWith(match[0].slice(0, 2)) &&
+          part.sourceIndices.length === 1 &&
+          part.sourceIndices[0] + 1 === parts[0].sourceIndices[0]
+      )
+    if (
+      !prefix ||
+      !body(prefix) ||
+      prefix.fontName?.replace(/^[A-Z]{6}\+/u, '') !== 'CMR10' ||
+      !Number.isFinite(prefix.baseline) ||
+      Math.abs(prefix.baseline - base.baseline) >= 0.01 ||
+      prefix.bounds?.length !== 4 ||
+      !prefix.bounds.every(Number.isFinite) ||
+      !parts.every((part, i) => {
+        const raised = (i >= 2 && i <= 5) || (i >= 7 && i < fonts.length - 1),
+          gap = part.bounds[0] - (parts[i - 1] ?? prefix).bounds[2]
+        return (
+          part.sourceOffset === start + i &&
+          part.label === match[0][i + 2] &&
+          part.fontName?.replace(/^[A-Z]{6}\+/u, '') === fonts[i] &&
+          (raised ? small(part) && sameStyle(part, exponent) : body(part)) &&
+          Math.abs(part.baseline - base.baseline - part.rise) < 0.01 &&
+          gap >= 0 &&
+          gap <= height * 0.26
+        )
+      }) ||
+      exponent.rise < height * 0.3 ||
+      exponent.rise > height * 0.55
+    )
+      continue
+    const to = targetProducts.filter(([label]) => label === match[0])
+    if (to.length === 1 && sourceProducts.filter(([label]) => label === match[0]).length === 1)
+      pushNativeGroup(start, end, parts, base, to[0].index + 2, true)
+  }
+  // In a product of powers, a raised exponent can itself have an
+  // exponent. Require all three baselines before retaining the native runs.
+  const nestedPowerProduct =
+    /\([1-9]([a-z])\)−\1[2-9][a-z][a-z][A-Z] \1(?![\p{Script=Latin}\p{Script=Greek}\p{N}_])/gu
+  const sourceNestedProducts = [...source.matchAll(nestedPowerProduct)],
+    targetNestedProducts = [...translation.matchAll(nestedPowerProduct)],
+    nestedProductFonts = [
+      'CMR10',
+      'CMMI10',
+      'CMR10',
+      'CMSY8',
+      'CMMI8',
+      'CMR6',
+      'CMMI10',
+      'CMMI8',
+      'CMMI10',
+      'CMMI8'
+    ]
+  for (const match of sourceNestedProducts) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, nestedProductFonts.length)
+    if (!parts) continue
+    const base = parts[2],
+      upper = parts[3],
+      inner = parts[5],
+      height = base.bounds[3] - base.bounds[1]
+    if (
+      parts.map((part) => part.label).join('') !== match[0].replace(' ', '') ||
+      !parts.every((part, i) => {
+        const level = i === 3 || i === 4 || i === 7 || i === 9 ? upper : i === 5 ? inner : base,
+          gap = i ? part.bounds[0] - parts[i - 1].bounds[2] : 0
+        return (
+          part.sourceOffset === start + i + (i > 0 ? 1 : 0) + (i === 9 ? 1 : 0) &&
+          part.fontName?.replace(/^[A-Z]{6}\+/u, '') === nestedProductFonts[i] &&
+          (level === base ? body(part) : small(part) && sameStyle(part, level)) &&
+          Math.abs(part.baseline - base.baseline - part.rise) < 0.01 &&
+          gap >= 0 &&
+          gap <= height * 0.25
+        )
+      }) ||
+      upper.rise < height * 0.3 ||
+      upper.rise > height * 0.55 ||
+      inner.scale < upper.scale * 0.65 ||
+      inner.scale > upper.scale * 0.8 ||
+      inner.rise - upper.rise < height * 0.18 ||
+      inner.rise - upper.rise > height * 0.35
+    )
+      continue
+    const to = targetNestedProducts.filter(([label]) => label === match[0])
+    if (
+      to.length === 1 &&
+      sourceNestedProducts.filter(([label]) => label === match[0]).length === 1
+    )
+      pushNativeGroup(start, end, parts, base, to[0].index, true)
+  }
+  // A call can form the complete fenced base of a raised variable.
+  for (const match of source.matchAll(
+    /(?<!\|)\|[A-Z] \([a-z]\)\|[a-z](?![\p{Script=Latin}\p{Script=Greek}\p{N}_])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length,
+      fonts = ['CMSY10', 'CMMI10', 'CMR10', 'CMMI10', 'CMR10', 'CMSY10', 'CMMI8'],
+      parts = nativeParts(start, end, fonts.length)
+    if (!parts) continue
+    const base = parts[0],
+      exponent = parts.at(-1),
+      height = base.bounds[3] - base.bounds[1]
+    if (
+      !parts.every((part, i) => {
+        const offset = i + Number(i >= 2),
+          gap = i ? part.bounds[0] - parts[i - 1].bounds[2] : 0
+        return (
+          part.sourceOffset === start + offset &&
+          part.label === match[0][offset] &&
+          part.fontName?.replace(/^[A-Z]{6}\+/u, '') === fonts[i] &&
+          (part === exponent ? small(part) : body(part)) &&
+          Math.abs(part.baseline - base.baseline - part.rise) < 0.01 &&
+          gap >= 0 &&
+          gap <= height * 0.25
+        )
+      }) ||
+      exponent.rise < height * 0.3 ||
+      exponent.rise > height * 0.55
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+  // A raised variable after a closing fence belongs to the argument
+  // expression. Keep the fenced native glyphs and exponent on the same row.
+  const fencedPower =
+    /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}_])[A-Za-z][A-Za-z0-9]{0,5}(\([A-Z]\)[a-z])(?![\p{Script=Latin}\p{Script=Greek}\p{N}_])/gu
+  const sourceFencedPowers = [...source.matchAll(fencedPower)],
+    targetFencedPowers = [...translation.matchAll(fencedPower)]
+  for (const match of sourceFencedPowers) {
+    const end = match.index + match[0].length,
+      start = end - match[1].length,
+      parts = nativeParts(start, end, 4)
+    if (!parts) continue
+    const [opening, base, closing, exponent] = parts,
+      height = closing.bounds[3] - closing.bounds[1]
+    if (
+      !parts.every(
+        (part, index) =>
+          part.sourceOffset === start + index &&
+          Number.isFinite(part.baseline) &&
+          Math.abs(part.baseline - closing.baseline - part.rise) < 0.01
+      ) ||
+      !/^(?:[A-Z]{6}\+)?CMR10$/u.test(closing.fontName) ||
+      opening.fontName !== closing.fontName ||
+      !/^(?:[A-Z]{6}\+)?CMMI10$/u.test(base.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMMI8$/u.test(exponent.fontName) ||
+      ![opening, base, closing].every((part) => body(part) && sameStyle(part, closing)) ||
+      !small(exponent) ||
+      exponent.rise < height * 0.3 ||
+      exponent.rise > height * 0.5 ||
+      center(exponent) <= center(base) ||
+      parts.slice(1).some((part, index) => {
+        const gap = part.bounds[0] - parts[index].bounds[2]
+        return gap < 0 || gap > height * 0.2
+      })
+    )
+      continue
+    const targets = targetFencedPowers.filter(([label]) => label === match[0])
+    if (
+      targets.length === 1 &&
+      sourceFencedPowers.filter(([label]) => label === match[0]).length === 1
+    )
+      pushNativeGroup(start, end, parts, closing, targets[0].index + start - match.index, true)
+  }
+  // A separated numeric power can be the numerator of an inline
+  // ratio. Carry the original base and exponent together, with the
+  // existing ratio break rule keeping the following division attached.
+  const poweredRatio =
+    /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}_])([a-z]?[A-Z] \d)\/\d{1,2}(?![\p{Script=Latin}\p{Script=Greek}\p{N}_/])/gu
+  const sourceRatios = [...source.matchAll(poweredRatio)],
+    targetRatios = [...translation.matchAll(poweredRatio)],
+    provedRatios = new Map(),
+    // A terminal ratio and a mid-sentence ratio can occupy different source
+    // rows. Use their punctuation to identify them without crossing rows.
+    sentenceEnd = (text, match) =>
+      /^[ \t]*[.。](?!\d)/u.test(text.slice(match.index + match[0].length))
+  for (const match of sourceRatios) {
+    const start = match.index,
+      end = start + match[1].length,
+      parts = nativeParts(start, end, 2)
+    if (!parts) continue
+    const [base, exponent] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      gap = exponent.bounds[0] - base.bounds[2]
+    if (
+      base.sourceOffset !== start ||
+      exponent.sourceOffset !== end - 1 ||
+      base.label + ' ' + exponent.label !== match[1] ||
+      !/^(?:[A-Z]{6}\+)?CMMI10$/u.test(base.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMR8$/u.test(exponent.fontName) ||
+      !body(base) ||
+      !small(exponent) ||
+      ![base.baseline, exponent.baseline].every(Number.isFinite) ||
+      Math.abs(exponent.baseline - base.baseline - exponent.rise) >= 0.01 ||
+      exponent.rise < height * 0.35 ||
+      exponent.rise > height * 0.55 ||
+      gap < 0 ||
+      gap > height * 0.18 ||
+      center(exponent) <= center(base)
+    )
+      continue
+    if (!provedRatios.has(match[0])) provedRatios.set(match[0], [])
+    provedRatios.get(match[0]).push({ match, start, end, parts })
+  }
+  for (const [spelling, proofs] of provedRatios) {
+    const from = sourceRatios.filter(([label]) => label === spelling),
+      to = targetRatios.filter(([label]) => label === spelling)
+    if (from.length !== to.length) continue
+    if (from.length === 1) {
+      const [{ start, end, parts }] = proofs
+      pushNativeGroup(start, end, parts, parts[0], to[0].index, true)
+      continue
+    }
+    for (const terminal of [false, true]) {
+      const sourceRows = from.filter((match) => sentenceEnd(source, match) === terminal),
+        targetRows = to.filter((match) => sentenceEnd(translation, match) === terminal),
+        provedRows = proofs.filter(({ match }) => sentenceEnd(source, match) === terminal)
+      if (provedRows.length !== sourceRows.length || sourceRows.length !== targetRows.length)
+        continue
+      for (const [i, { start, end, parts }] of provedRows.entries())
+        pushNativeGroup(start, end, parts, parts[0], targetRows[i].index, true)
+    }
+  }
+  // Latin Modern can draw a complete symbolic exponent as three separate objects.
+  for (const match of source.matchAll(
+    /(?<![\p{L}\p{M}\p{N}_])[2-9][a-z]−[1-9](?![\p{L}\p{M}\p{N}_])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 4)
+    if (!parts) continue
+    const [base, variable, minus, constant] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      faces = [
+        /^(?:[A-Z]{6}\+)?LMMathItalic([78])-Regular$/u,
+        /^(?:[A-Z]{6}\+)?LMMathSymbols([78])-Regular$/u,
+        /^(?:[A-Z]{6}\+)?LMRoman([78])-Regular$/u
+      ],
+      scriptFace = faces[0].exec(variable.fontName)?.[1]
+    if (
+      !body(base) ||
+      !/^(?:[A-Z]{6}\+)?LMRoman10-Regular$/u.test(base.fontName) ||
+      !scriptFace ||
+      [variable, minus, constant].some((part, index) => {
+        const gap = part.bounds[0] - parts[index].bounds[2]
+        return (
+          part.sourceOffset !== start + index + 1 ||
+          part.label !== match[0][index + 1] ||
+          faces[index].exec(part.fontName)?.[1] !== scriptFace ||
+          !small(part) ||
+          !sameStyle(part, variable) ||
+          !(Math.abs(part.baseline - base.baseline - part.rise) <= 0.01) ||
+          !(part.rise > height * 0.4 && part.rise < height * 0.65) ||
+          center(part) <= center(base) ||
+          gap < 0 ||
+          gap > height * 0.24
+        )
+      }) ||
+      base.sourceOffset !== start ||
+      base.label !== match[0][0]
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+  // A comparison and its italic variable can share one native object.
+  // Keep that whole run with the adjacent, smaller roman index.
+  for (const match of source.matchAll(
+    /(?<=\d )[<>] [\u{1D434}-\u{1D467}][a-z]{2,3}(?= [<>≤≥] \d)/gu
+  )) {
+    const start = match.index,
+      end = match.index + match[0].length,
+      parts = nativeParts(start, end, 2)
+    if (!parts) continue
+    const [base, index] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      gap = index.bounds[0] - base.bounds[2],
+      drop = base.baseline - index.baseline
+    if (
+      !/^[<>] [\u{1D434}-\u{1D467}]$/u.test(base.label) ||
+      !/^[a-z]{2,3}$/u.test(index.label) ||
+      base.sourceOffset !== start ||
+      index.sourceOffset !== start + base.label.length ||
+      index.sourceOffset + index.label.length !== end ||
+      !body(base) ||
+      !small(index) ||
+      !Number.isFinite(drop) ||
+      Math.abs(drop + index.rise) >= 0.01 ||
+      drop < height * 0.1 ||
+      drop > height * 0.35 ||
+      gap < -height * 0.1 ||
+      gap > height * 0.25 ||
+      index.bounds[3] <= base.bounds[1] ||
+      index.bounds[1] >= base.bounds[1] ||
+      index.bounds[3] > base.bounds[3]
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+  // Preserve a raised Computer Modern comparison painted as two script runs.
+  for (const match of source.matchAll(/[A-Za-z]≤[a-z]/gu)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 3)
+    if (!parts) continue
+    const [base, relation, operand] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      rise = relation.baseline - base.baseline
+    if (
+      base.sourceOffset !== start ||
+      base.label !== match[0][0] ||
+      relation.sourceOffset !== start + 1 ||
+      relation.label !== '≤' ||
+      operand.sourceOffset !== start + 2 ||
+      operand.label !== match[0][2] ||
+      !/^(?:[A-Z]{6}\+)?(?:CMMI10|EUFM10)$/u.test(base.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMSY7$/u.test(relation.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMMI7$/u.test(operand.fontName) ||
+      !body(base) ||
+      !small(relation) ||
+      !sameStyle(relation, operand) ||
+      !(rise >= height * 0.4 && rise <= height * 0.85) ||
+      !(Math.abs(relation.baseline - operand.baseline) < 0.01) ||
+      parts.slice(1).some((part, index) => {
+        const gap = part.bounds[0] - parts[index].bounds[2]
+        return center(part) <= center(base) || gap < 0 || gap > height * 0.28
+      })
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+  // TeX can raise the colon slightly within a definition operator.
+  for (const match of source.matchAll(/:=/gu)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 2)
+    if (!parts) continue
+    const [colon, equal] = parts,
+      height = colon.bounds[3] - colon.bounds[1],
+      rise = colon.baseline - equal.baseline,
+      gap = equal.bounds[0] - colon.bounds[2]
+    if (
+      !body(colon) ||
+      !body(equal) ||
+      colon.fontName !== equal.fontName ||
+      !/^(?:[A-Z]{6}\+)?LMRoman10-Regular$/u.test(equal.fontName) ||
+      colon.scale !== equal.scale ||
+      !(rise > 0.1 && rise <= height * 0.15) ||
+      gap < 0 ||
+      gap > height * 0.22 ||
+      equal.bounds[1] < colon.bounds[1] ||
+      equal.bounds[3] > colon.bounds[3]
+    )
+      continue
+    addNativeGroup(start, end, parts, equal, true)
+  }
+  // A tightly attached quantity symbol can follow a separately painted
+  // negative power. Preserve its sign, magnitude and symbol as one group.
+  for (const match of source.matchAll(/(?<=[∼≈]\s)10⁻[⁰¹²³⁴⁵⁶⁷⁸⁹]{1,2}[a-z](?![\p{L}\p{N}_])/gu)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 4, true)
+    if (!parts) continue
+    const [base, sign, exponent, symbol] = parts,
+      height = base.bounds[3] - base.bounds[1]
+    if (
+      base.label !== '10' ||
+      sign.label !== '−' ||
+      !/^\d{1,2}$/u.test(exponent.label) ||
+      symbol.label !== match[0].at(-1) ||
+      !body(base) ||
+      !body(symbol) ||
+      !/^(?:[A-Z]{6}\+)?CMR10$/u.test(base.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMSY7$/u.test(sign.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMR7$/u.test(exponent.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMMI10$/u.test(symbol.fontName) ||
+      !small(sign) ||
+      !sameStyle(sign, exponent) ||
+      sign.rise < height * 0.3 ||
+      sign.rise > height * 0.7 ||
+      ![sign, exponent].every((part) => center(part) > center(base)) ||
+      parts.slice(1).some((part, index) => {
+        const previous = parts[index]
+        const gap = part.bounds[0] - previous.bounds[2]
+        return (
+          part.sourceOffset !== previous.sourceOffset + previous.label.length ||
+          gap < 0 ||
+          gap > height * 0.3
+        )
+      })
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+  // Opposite TeX indices share the same attachment point. Their flattened
+  // spelling can follow an adjacent coefficient; preserve only the three glyphs.
+  const opposed =
+    /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}_.,])\d{1,3}([A-Z][a-z]{2})(?![\p{Script=Latin}\p{Script=Greek}\p{N}_])/gu
+  const opposedSources = [...source.matchAll(opposed)],
+    opposedTargets = [...translation.matchAll(opposed)]
+  for (const match of opposedSources) {
+    const end = match.index + match[0].length,
+      start = end - match[1].length,
+      parts = nativeParts(start, end, 3)
+    if (!parts) continue
+    const [base, upper, lower] = parts,
+      height = base.bounds[3] - base.bounds[1]
+    if (
+      !body(base) ||
+      !/^(?:[A-Z]{6}\+)?CMMI10$/u.test(base.fontName ?? '') ||
+      base.label !== match[1][0] ||
+      parts.some((part, i) => part.sourceOffset !== start + i || part.label !== match[1][i]) ||
+      ![upper, lower].every(
+        (part) =>
+          small(part) &&
+          /^(?:[A-Z]{6}\+)?CMMI7$/u.test(part.fontName ?? '') &&
+          Math.abs(part.baseline - base.baseline - part.rise) <= 0.01 &&
+          Math.abs(part.bounds[0] - base.bounds[2]) <= height * 0.2
+      ) ||
+      Math.abs(upper.scale - lower.scale) >= 0.01 ||
+      Math.abs(upper.bounds[0] - lower.bounds[0]) >= height * 0.15 ||
+      upper.rise < height * 0.35 ||
+      upper.rise > height * 0.7 ||
+      lower.rise > -height * 0.2 ||
+      lower.rise < -height * 0.5 ||
+      center(upper) <= center(base) ||
+      center(lower) >= center(base)
+    )
+      continue
+    const from = opposedSources.filter((entry) => entry[0] === match[0]),
+      to = opposedTargets.filter((entry) => entry[0] === match[0])
+    if (from.length !== to.length) continue
+    const target = to[from.indexOf(match)]
+    pushNativeGroup(
+      start,
+      end,
+      parts,
+      base,
+      target.index + target[0].length - match[1].length,
+      true
+    )
+  }
+
+  // A blackboard capital and its native italic script are one identifier.
+  const blackboardIndices = new Map()
+  for (const match of source.matchAll(/\b(?:[A-Z][a-z]|[RZ][A-Z])\b/gu)) {
+    const start = match.index,
+      end = start + match[0].length
+    if (
+      boundary.test([...source.slice(0, start)].at(-1) ?? '') ||
+      boundary.test([...source.slice(end)][0] ?? '')
+    )
+      continue
+    const parts = nativeParts(start, end, 2)
+    if (!parts) continue
+    const [base, script] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      gap = script.bounds[0] - base.bounds[2],
+      lowered =
+        /^[a-z]$/u.test(script.label) &&
+        /^(?:[A-Z]{6}\+)?CMMI(?:8|B9)$/u.test(script.fontName) &&
+        script.rise <= -height * 0.16 &&
+        script.rise >= -height * 0.28 &&
+        script.bounds[3] > base.bounds[1] &&
+        center(script) < center(base),
+      raised =
+        /^[RZ]$/u.test(base.label) &&
+        /^(?:[A-Z]{6}\+)?CMMI[78]$/u.test(script.fontName) &&
+        script.rise >= height * 0.42 &&
+        script.rise <= height * 0.65 &&
+        script.bounds[1] < base.bounds[3] &&
+        center(script) > center(base)
+    if (
+      base.label !== match[0][0] ||
+      script.label !== match[0][1] ||
+      !/^(?:[A-Z]{6}\+)?MSBM10$/u.test(base.fontName) ||
+      !body(base) ||
+      !small(script) ||
+      ![base.baseline, script.baseline].every(Number.isFinite) ||
+      Math.abs(script.baseline - base.baseline - script.rise) >= 0.01 ||
+      gap < 0 ||
+      gap > height * 0.1 ||
+      (!lowered && !raised)
+    )
+      continue
+    const label = match[0]
+    if (!blackboardIndices.has(label)) blackboardIndices.set(label, [])
+    blackboardIndices.get(label).push({ start, end, parts })
+  }
+  for (const [label, pairs] of blackboardIndices) {
+    const from = occurrences(source, label),
+      to = occurrences(translation, label)
+    // An identical spelling in prose or at the opposite script level cannot replace a formula.
+    const relation = (text, offset) => /([∈⊂])\s*$/u.exec(text.slice(0, offset))?.[1],
+      upperScript = /^[A-Z]$/u.test(label[1]),
+      dimensionProduct = (text, offset) => /^\s*[×·]/u.test(text.slice(offset + label.length))
+    if (
+      from.length !== pairs.length ||
+      from.length !== to.length ||
+      pairs.some(
+        ({ parts }, index) =>
+          Math.sign(parts[1].rise) !== Math.sign(pairs[0].parts[1].rise) ||
+          (parts[1].rise > 0 &&
+            relation(source, from[index]) !== relation(translation, to[index])) ||
+          (upperScript &&
+            (dimensionProduct(source, from[index]) || dimensionProduct(translation, to[index])))
+      )
+    )
+      continue
+    for (const [index, { start, end, parts }] of pairs.entries())
+      pushNativeGroup(start, end, parts, parts[0], to[index], true)
+  }
+  // Treat a parenthesized sequence and its lowered range as one native run.
+  for (const match of source.matchAll(
+    /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}_])(?:\([A-Z]([a-z])\)\1[≤≥]\d|\([a-z]([a-z])\)\2∈[A-Z])(?![\p{Script=Latin}\p{Script=Greek}\p{N}_])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length,
+      membership = Boolean(match[2]),
+      separate = nativeParts(start, end, 7),
+      shared = !separate && membership ? nativeParts(start + 1, end, 6) : undefined,
+      parts = separate ?? shared
+    if (!parts) continue
+    const [base, index, closing, lower, relation, bound] = shared ? parts : parts.slice(1),
+      opening = shared
+        ? markers.find(
+            (part) =>
+              part.sourceOffset + part.label.length === start + 1 &&
+              part.label.endsWith('(') &&
+              source.slice(part.sourceOffset, start + 1) === part.label &&
+              part.sourceIndices.length === 1 &&
+              part.sourceIndices[0] === base.sourceIndices[0] - 1 &&
+              part.bounds?.length === 4 &&
+              part.bounds.every(Number.isFinite)
+          )
+        : parts[0],
+      height = closing.bounds[3] - closing.bounds[1]
+    if (
+      !opening ||
+      parts.some((part, i) => {
+        const offset = i + Number(Boolean(shared))
+        return part.sourceOffset !== start + offset || part.label !== match[0][offset]
+      }) ||
+      ![opening, base, closing].every((part) => body(part) && sameStyle(part, opening)) ||
+      closing.fontName !== opening.fontName ||
+      lower.fontName !== index.fontName ||
+      !(relation.label === '∈'
+        ? /^(?:[A-Z]{6}\+)?CMR12$/u.test(opening.fontName) &&
+          /^(?:[A-Z]{6}\+)?CMMI12$/u.test(base.fontName) &&
+          /^(?:[A-Z]{6}\+)?CMMI8$/u.test(index.fontName) &&
+          bound.fontName === index.fontName &&
+          /^(?:[A-Z]{6}\+)?CMSY8$/u.test(relation.fontName)
+        : /^(?:[A-Z]{6}\+)?LMRoman10-Regular$/u.test(opening.fontName) &&
+          /^(?:[A-Z]{6}\+)?LMMathItalic10-Regular$/u.test(base.fontName) &&
+          /^(?:[A-Z]{6}\+)?LMMathItalic8-Regular$/u.test(index.fontName) &&
+          /^(?:[A-Z]{6}\+)?LMMathSymbols8-Regular$/u.test(relation.fontName) &&
+          /^(?:[A-Z]{6}\+)?LMRoman8-Regular$/u.test(bound.fontName)) ||
+      !small(index) ||
+      index.rise > -height * 0.1 ||
+      index.rise < -height * 0.25 ||
+      ![lower, relation, bound].every((part) => sameStyle(part, index)) ||
+      parts.some((part, i) => {
+        const gap = i || shared ? part.bounds[0] - (parts[i - 1] ?? opening).bounds[2] : 0
+        return (
+          !(Math.abs(part.baseline - opening.baseline - part.rise) < 0.01) ||
+          gap < -height * 0.15 ||
+          gap > height * 0.2
+        )
+      }) ||
+      groups.some((group) =>
+        parts.some((part) => group.sourceIndices.includes(part.sourceIndices[0]))
+      )
+    )
+      continue
+    if (shared) {
+      const from = occurrences(source, match[0]),
+        to = occurrences(translation, match[0])
+      if (from.length === 1 && to.length === 1 && from[0] === start)
+        pushNativeGroup(start + 1, end, parts, closing, to[0] + 1, true)
+    } else addNativeGroup(start, end, parts, opening, true)
+  }
+  // A TeX interval may share its opening with prose. Keep its complete native
+  // closing run and raised dimension together, using the whole interval to match.
+  for (const match of source.matchAll(
+    /(?<![\p{L}\p{N}_])\[-?\d+(?:\.\d+)?,[ \t]*(-?\d+(?:\.\d+)?\])([a-z])(?![\p{L}\p{N}_])/gu
+  )) {
+    const end = match.index + match[0].length,
+      closingAt = end - match[1].length - 1,
+      parts = nativeParts(closingAt, end, 2)
+    if (!parts) continue
+    const [closing, dimension] = parts,
+      height = closing.bounds[3] - closing.bounds[1],
+      gap = dimension.bounds[0] - closing.bounds[2]
+    if (
+      closing.sourceOffset !== closingAt ||
+      dimension.sourceOffset !== end - 1 ||
+      closing.label !== match[1] ||
+      dimension.label !== match[2] ||
+      !/^(?:[A-Z]{6}\+)?CMR(?:9|10|12)$/u.test(closing.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMMI[678]$/u.test(dimension.fontName) ||
+      !body(closing) ||
+      !small(dimension) ||
+      Math.abs(dimension.baseline - closing.baseline - dimension.rise) >= 0.01 ||
+      dimension.rise < height * 0.25 ||
+      dimension.rise > height * 0.65 ||
+      gap < 0 ||
+      gap > height * 0.35 ||
+      center(dimension) <= center(closing) ||
+      groups.some((group) =>
+        parts.some((part) => group.sourceIndices.includes(part.sourceIndices[0]))
+      )
+    )
+      continue
+    const from = occurrences(source, match[0]),
+      to = occurrences(translation, match[0]),
+      ordinal = from.indexOf(match.index)
+    if (ordinal >= 0 && from.length === to.length)
+      pushNativeGroup(closingAt, end, parts, closing, to[ordinal] + closingAt - match.index, true)
+  }
+  // A smaller infinity beside the native norm symbol belongs to its base row.
+  for (const match of source.matchAll(/(?<![\p{L}\p{N}_])ℓ∞(?![\p{L}\p{N}_])/gu)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 2)
+    if (!parts) continue
+    const [norm, index] = parts,
+      height = norm.bounds[3] - norm.bounds[1],
+      gap = index.bounds[0] - norm.bounds[2]
+    if (
+      norm.sourceOffset !== start ||
+      index.sourceOffset !== start + 1 ||
+      norm.label !== 'ℓ' ||
+      index.label !== '∞' ||
+      !/^(?:[A-Z]{6}\+)?CMMI(?:9|10|12)$/u.test(norm.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMSY[678]$/u.test(index.fontName) ||
+      !body(norm) ||
+      !small(index) ||
+      Math.abs(index.baseline - norm.baseline - index.rise) >= 0.01 ||
+      index.rise > -height * 0.08 ||
+      index.rise < -height * 0.38 ||
+      gap < 0 ||
+      gap > height * 0.3 ||
+      center(index) >= center(norm) ||
+      groups.some((group) =>
+        parts.some((part) => group.sourceIndices.includes(part.sourceIndices[0]))
+      )
+    )
+      continue
+    addNativeGroup(start, end, parts, norm, true)
+  }
+  // The extracted space before a raised TeX prime does not make it a prose row.
+  for (const match of source.matchAll(
+    /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}_′″])([A-Za-z]) (′{1,2})(?![\p{Script=Latin}\p{Script=Greek}\p{N}_′″])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 2)
+    if (!parts) continue
+    const [base, prime] = parts,
+      derivative = /^[a-z]$/u.test(match[1]),
+      h = base.bounds[3] - base.bounds[1],
+      gap = prime.bounds[0] - base.bounds[2]
+    if (
+      base.sourceOffset !== start ||
+      prime.sourceOffset !== start + 2 ||
+      base.label !== match[1] ||
+      prime.label !== match[2] ||
+      !(
+        derivative ? /^(?:[A-Z]{6}\+)?(?:CMMI|CMBX)(?:9|10)$/u : /^(?:[A-Z]{6}\+)?CMMI(?:9|10)$/u
+      ).test(base.fontName) ||
+      !(derivative ? /^(?:[A-Z]{6}\+)?CMSY[78]$/u : /^(?:[A-Z]{6}\+)?CMSY[68]$/u).test(
+        prime.fontName
+      ) ||
+      !body(base) ||
+      prime.scale < 0.65 ||
+      prime.scale > 0.75 ||
+      ![base.baseline, prime.baseline].every(Number.isFinite) ||
+      Math.abs(prime.baseline - base.baseline - prime.rise) >= 0.01 ||
+      prime.rise < h * (derivative ? 0.3 : 0.5) ||
+      prime.rise > h * (derivative ? 0.62 : 0.7) ||
+      gap < 0 ||
+      gap > h * 0.15 ||
+      center(prime) <= center(base) ||
+      prime.bounds[1] >= base.bounds[3]
+    )
+      continue
+    const argument = derivative && /^\([a-z]\)/u.exec(source.slice(end))?.[0]
+    if (derivative && source[end] === '(' && !argument) continue
+    if (argument) {
+      const from = occurrences(source, match[0]),
+        to = occurrences(translation, match[0]),
+        ordinal = from.indexOf(start)
+      if (
+        ordinal < 0 ||
+        from.length !== to.length ||
+        !translation.startsWith(argument, to[ordinal] + match[0].length)
+      )
+        continue
+      pushNativeGroup(start, end, parts, base, to[ordinal], true)
+    } else addNativeGroup(start, end, parts, base, true)
+  }
+  // TeX can expose a blackboard-bold space and its raised dimension as one flat token.
+  // Retain the complete native dimension product only when all four painters agree.
+  for (const match of source.matchAll(
+    /(?<=∈ )R[A-Z][×·](?:[A-Z]{1,3}|[a-z])(?![A-Za-z\p{Script=Greek}\d])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 4)
+    if (!parts) continue
+    const [base, dimension, operator, parameter] = parts,
+      height = base.bounds[3] - base.bounds[1]
+    if (
+      !/^(?:[A-Z]{6}\+)?MSBM10$/u.test(base.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMMI7$/u.test(dimension.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMSY7$/u.test(operator.fontName) ||
+      !/^(?:[A-Z]{6}\+)?(?:CMMI7|CMR7|NimbusRomNo9L-Regu)$/u.test(parameter.fontName) ||
+      !body(base) ||
+      dimension.scale < 0.68 ||
+      dimension.scale > 0.73 ||
+      dimension.rise < height * 0.42 ||
+      dimension.rise > height * 0.65 ||
+      !parts.slice(1).every((part, index) => {
+        const gap = part.bounds[0] - parts[index].bounds[2]
+        return (
+          sameStyle(part, dimension) &&
+          Number.isFinite(part.baseline) &&
+          Math.abs(part.baseline - base.baseline - part.rise) < 0.01 &&
+          gap >= -height * 0.08 &&
+          gap <= height * 0.32
+        )
+      })
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
   // A native mathematical capital can carry a smaller TeX index even when
   // extracted text spells both as a flat token. Its native run may begin with
   // a membership symbol, and the capital may overhang the lowered index.
@@ -383,13 +1303,226 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
     if (from.length !== to.length || from.some((entry, index) => entry[1] !== to[index][1]))
       continue
     const target = to[from.indexOf(match)]
-    pushNativeGroup(
-      start,
-      end,
-      parts.slice(1),
-      base,
-      target.index + target[0].length - label.length
+    const targetOffset = target.index + target[0].length - label.length
+    // The bare blackboard recognizer may already prove this exact native pair.
+    if (
+      groups.some(
+        (group) =>
+          group.sourceOffset === start &&
+          group.targetOffset === targetOffset &&
+          group.label === label &&
+          group.sourceIndices.length === parts.length - 1 &&
+          parts
+            .slice(1)
+            .every((part, index) => part.sourceIndices[0] === group.sourceIndices[index])
+      )
     )
+      continue
+    pushNativeGroup(start, end, parts.slice(1), base, targetOffset)
+  }
+  // Preserve the entire raised exponent when TeX paints its slash separately.
+  for (const match of source.matchAll(
+    /(?<![\p{L}\p{M}\p{N}_])([a-z])([1-9]\/[2-9])(?![\p{L}\p{M}\p{N}_/])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 4)
+    if (!parts) continue
+    const [base, numerator, slash, denominator] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      rise = numerator.baseline - base.baseline
+    if (
+      !body(base) ||
+      !/^(?:[A-Z]{6}\+)?CMMI10$/u.test(base.fontName) ||
+      ![numerator, denominator].every((part) => /^(?:[A-Z]{6}\+)?CMR8$/u.test(part.fontName)) ||
+      !/^(?:[A-Z]{6}\+)?CMMI8$/u.test(slash.fontName) ||
+      !Number.isFinite(rise) ||
+      rise < height * 0.55 ||
+      rise > height * 0.95 ||
+      parts.some((part, index) => {
+        if (part.label !== match[0][index] || part.sourceOffset !== start + index) return true
+        if (!index) return false
+        const gap = part.bounds[0] - parts[index - 1].bounds[2]
+        return (
+          !small(part) ||
+          !sameStyle(numerator, part) ||
+          !Number.isFinite(part.baseline) ||
+          Math.abs(part.baseline - base.baseline - rise) > 0.01 ||
+          Math.abs(part.rise - rise) > 0.01 ||
+          part.bounds[1] <= base.baseline ||
+          gap < 0 ||
+          gap > height * 0.3
+        )
+      })
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+
+  // Preserve native symbolic powers beside their exact decimal base.
+  const symbolicPowers =
+    /(?<![\p{L}\p{M}\p{N}_])([1-9][0-9]{0,2})(−[a-z]|[a-z][2-9]?)(?![\p{L}\p{M}\p{N}_])/gu
+  for (const match of source.matchAll(symbolicPowers)) {
+    const start = match.index + match[1].length,
+      end = match.index + match[0].length,
+      parts = nativeParts(start, end, match[2].length),
+      from = occurrences(source, match[0]),
+      to = occurrences(translation, match[0])
+    if (!parts || from.length !== to.length) continue
+    const [first, second] = parts,
+      bases = markers.filter(
+        (part) =>
+          part.sourceOffset <= match.index &&
+          part.sourceOffset + part.label.length === start &&
+          source.slice(part.sourceOffset, start) === part.label &&
+          body(part)
+      )
+    if (bases.length !== 1) continue
+    const [base] = bases,
+      signed = match[2].startsWith('−'),
+      scriptFace = /^(?:[A-Z]{6}\+)?CMSY([678])$/u.exec(first.fontName)?.[1],
+      height = base.bounds?.[3] - base.bounds?.[1],
+      raise = first.baseline - base.baseline,
+      gap = first.bounds[0] - base.bounds[2]
+    if (
+      first.sourceOffset !== start ||
+      first.label !== match[2][0] ||
+      !nativeParts(base.sourceOffset, end, 1 + parts.length) ||
+      !(signed ? /^(?:[A-Z]{6}\+)?CMR(?:9|10|12)$/u : /^(?:[A-Z]{6}\+)?CMR10$/u).test(
+        base.fontName
+      ) ||
+      !(signed ? scriptFace : /^(?:[A-Z]{6}\+)?CMMI7$/u.test(first.fontName)) ||
+      !small(first) ||
+      !(raise > height * 0.3 && raise < height * 0.7) ||
+      center(first) <= center(base) ||
+      !(gap >= 0 && gap < height * 0.22)
+    )
+      continue
+    if (signed) {
+      const innerGap = second.bounds[0] - first.bounds[2]
+      if (
+        second.sourceOffset !== start + 1 ||
+        second.label !== match[2][1] ||
+        second.fontName?.replace(/^[A-Z]{6}\+/u, '') !== `CMMI${scriptFace}` ||
+        !sameStyle(first, second) ||
+        Math.abs(second.baseline - first.baseline) >= 0.01 ||
+        innerGap < 0 ||
+        innerGap >= height * 0.25
+      )
+        continue
+    } else if (second) {
+      const innerRaise = second.baseline - first.baseline,
+        innerGap = second.bounds[0] - first.bounds[2]
+      if (
+        second.sourceOffset !== start + 1 ||
+        second.label !== match[2][1] ||
+        !/^(?:[A-Z]{6}\+)?CMR5$/u.test(second.fontName) ||
+        !(second.scale >= 0.45 && second.scale < first.scale * 0.8) ||
+        !(innerRaise > height * 0.3 && innerRaise < height * 0.7) ||
+        center(second) <= center(first) ||
+        !(innerGap >= 0 && innerGap < height * 0.22)
+      )
+        continue
+    }
+    const ordinal = from.indexOf(match.index)
+    if (ordinal < 0) continue
+    if (base.sourceOffset === match.index) {
+      pushNativeGroup(match.index, end, [base, ...parts], base, to[ordinal], true)
+      continue
+    }
+    pushNativeGroup(start, end, parts, base, to[ordinal] + match[1].length, true)
+  }
+  // A raised parenthesized order and lowered index can share a blackboard
+  // capital. Move their complete native glyphs together, even for split runs.
+  for (const match of source.matchAll(/[A-Z](\([a-z0-9]{1,2}\))([1-9][0-9]?[a-z]?)/gu)) {
+    const start = match.index,
+      end = start + match[0].length,
+      count = markers.filter(
+        (part) => part.sourceOffset >= start && part.sourceOffset < end
+      ).length,
+      parts = count >= 3 && count <= 8 && nativeParts(start, end, count)
+    if (!parts) continue
+    const [base, ...indices] = parts,
+      lowerOffset = start + 1 + match[1].length,
+      upper = indices.filter((part) => part.sourceOffset < lowerOffset),
+      lower = indices.filter((part) => part.sourceOffset >= lowerOffset),
+      height = base.bounds[3] - base.bounds[1]
+    if (
+      !/^(?:[A-Z]{6}\+)?MSBM10$/u.test(base.fontName) ||
+      !body(base) ||
+      base.sourceOffset !== start ||
+      base.label !== match[0][0] ||
+      indices.some(
+        (part, index) => part.sourceOffset !== parts[index].sourceOffset + parts[index].label.length
+      ) ||
+      ![upper, lower].every(
+        (run, index) =>
+          run.map((part) => part.label).join('') === match[index + 1] &&
+          run.every(
+            (part, at) =>
+              small(part) &&
+              /^(?:[A-Z]{6}\+)?CM(?:R|MI)7$/u.test(part.fontName) &&
+              sameStyle(part, run[0]) &&
+              Math.abs(part.baseline - base.baseline - part.rise) < 0.01 &&
+              (at
+                ? Math.abs(part.bounds[0] - run[at - 1].bounds[2]) < height * 0.2
+                : Math.abs(part.bounds[0] - base.bounds[2]) < height * 0.25)
+          )
+      ) ||
+      upper[0].rise < height * 0.4 ||
+      upper[0].rise > height ||
+      lower[0].rise > -height * 0.15 ||
+      lower[0].rise < -height * 0.6 ||
+      Math.abs(upper[0].bounds[0] - lower[0].bounds[0]) > height * 0.15 ||
+      upper.some((part) => center(part) <= center(base)) ||
+      lower.some((part) => center(part) >= center(base)) ||
+      parts.map((part) => part.label).join('') !== match[0]
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
+  }
+  // Cambria Math may paint a mathematical capital, its subscript, and its
+  // parenthesized order in five adjacent objects, with overlapping script rails.
+  for (const match of source.matchAll(/([\u{1D434}-\u{1D44D}])(\d{1,3})\((\d{1,2})\)/gu)) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 5)
+    if (!parts) continue
+    const [base, lower, open, order, close] = parts,
+      height = base.bounds[3] - base.bounds[1]
+    if (
+      !/^(?:[A-Z]{6}\+)?CambriaMath$/u.test(base.fontName) ||
+      !body(base) ||
+      lower.label !== match[2] ||
+      open.label !== '(' ||
+      order.label !== match[3] ||
+      close.label !== ')' ||
+      parts.map((part) => part.label).join('') !== match[0] ||
+      parts
+        .slice(1)
+        .some(
+          (part, i) =>
+            !small(part) ||
+            part.fontName !== base.fontName ||
+            Math.abs(part.scale - lower.scale) >= 0.02 ||
+            part.sourceOffset !== parts[i].sourceOffset + parts[i].label.length
+        ) ||
+      lower.rise >= -height * 0.2 ||
+      lower.rise <= -height * 0.6 ||
+      open.rise <= height * 0.4 ||
+      open.rise >= height ||
+      Math.abs(lower.bounds[0] - base.bounds[2]) >= height * 0.15 ||
+      Math.abs(open.bounds[0] - lower.bounds[0]) >= height * 0.3 ||
+      center(lower) >= center(base) ||
+      [open, order, close].some(
+        (part, i) =>
+          Math.abs(part.baseline - open.baseline) >= 0.01 ||
+          center(part) <= center(base) ||
+          Math.abs(part.bounds[0] - [base, open, order][i].bounds[2]) >= height * 0.25
+      )
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
   }
   // Move the complete raised order and lowered index with their native base.
   for (const match of source.matchAll(/\p{Script=Greek}\(\d{1,2}\)\d{2,6}(?=\s*=)/gu)) {
@@ -524,6 +1657,51 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
     }
     addNativeGroup(start, end, parts, base)
   }
+  // A native restriction operator owns the lowered operand and its raised
+  // star. Keep all three runs together rather than detaching either script.
+  const restriction = /↾[A-Z]∗(?![\p{Script=Latin}\p{Script=Greek}\p{N}_∗])/gu
+  const sourceRestrictions = [...source.matchAll(restriction)]
+  const targetRestrictions = [...translation.matchAll(restriction)]
+  for (const match of sourceRestrictions) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 3)
+    if (!parts || parts.map((part) => part.label).join('') !== match[0]) continue
+    const [operator, operand, star] = parts,
+      height = operator.bounds[3] - operator.bounds[1]
+    if (
+      !parts.every((part) => Number.isFinite(part.baseline)) ||
+      !body(operator) ||
+      !/^(?:[A-Z]{6}\+)?MSAM10$/u.test(operator.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMMI8$/u.test(operand.fontName) ||
+      !/^(?:[A-Z]{6}\+)?CMSY6$/u.test(star.fontName) ||
+      !small(operand) ||
+      operand.rise < -height * 0.3 ||
+      operand.rise > -height * 0.1 ||
+      star.scale < operand.scale * 0.65 ||
+      star.scale > operand.scale * 0.8 ||
+      star.rise - operand.rise < height * 0.12 ||
+      star.rise - operand.rise > height * 0.3 ||
+      parts.slice(1).some((part, index) => {
+        const previous = parts[index],
+          gap = part.bounds[0] - previous.bounds[2]
+        return (
+          part.sourceOffset !== start + index + 1 ||
+          Math.abs(part.baseline - operator.baseline - part.rise) >= 0.01 ||
+          gap < 0 ||
+          gap > height * 0.18
+        )
+      })
+    )
+      continue
+    const matching = targetRestrictions.filter(([label]) => label === match[0])
+    if (
+      matching.length !== 1 ||
+      sourceRestrictions.filter(([label]) => label === match[0]).length !== 1
+    )
+      continue
+    pushNativeGroup(start, end, parts, operator, matching[0].index, true)
+  }
   // Publishers can insert a space between a body variable and its native
   // scripts (W Qi), with a comma sharing the variable's object. Keep the
   // complete script stack; the body object and its punctuation remain prose.
@@ -608,6 +1786,41 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
       baselineIndex: base.sourceIndices[0],
       scriptOnly: true
     })
+  }
+  // NewTX paints an italic mathematical base and the lowered suffix
+  // independently. Keep the joined native identifier on its source body row.
+  for (const match of source.matchAll(
+    /(?<![\p{L}\p{M}\p{N}_])([\u{1d434}-\u{1d467}])([a-z]{2,3}|ℓ)(?![\p{L}\p{M}\p{N}_])/gu
+  )) {
+    const start = match.index,
+      end = start + match[0].length,
+      parts = nativeParts(start, end, 2)
+    if (!parts) continue
+    const [base, index] = parts,
+      height = base.bounds[3] - base.bounds[1],
+      gap = index.bounds[0] - base.bounds[2]
+    if (
+      base.sourceOffset !== start ||
+      base.label !== match[1] ||
+      index.sourceOffset !== start + base.label.length ||
+      index.label !== match[2] ||
+      !/^(?:[A-Z]{6}\+)?NewTXMI$/u.test(base.fontName) ||
+      !(index.label === 'ℓ'
+        ? /^(?:[A-Z]{6}\+)?NewTXMI7$/u.test(index.fontName)
+        : /^(?:[A-Z]{6}\+)?TeXGyreTermesX-Regular$/u.test(index.fontName)) ||
+      !body(base) ||
+      !small(index) ||
+      !(Math.abs(index.baseline - base.baseline - index.rise) < 0.01) ||
+      index.rise < -height * 0.36 ||
+      index.rise > -height * 0.1 ||
+      gap < -height * 0.2 ||
+      gap > height * 0.25 ||
+      index.bounds[0] <= base.bounds[0] ||
+      index.bounds[3] <= base.bounds[1] ||
+      center(index) >= center(base)
+    )
+      continue
+    addNativeGroup(start, end, parts, base, true)
   }
   // Mathematical alphabets use surrogate pairs. Keep their original UTF-16
   // offsets, and match only complete two-letter identifiers. The bundled font
@@ -1186,8 +2399,15 @@ export const resolveNestedScriptGroups = (source, translation, markers) => {
 // Equal occurrence counts allow each proven occurrence to retain its own styling.
 // Extra target occurrences need consistent evidence for every source occurrence.
 export const resolveScientificScriptSpans = (source, translation, markers) => {
-  const sourceTokens = identifiers(source),
-    targetTokens = identifiers(translation),
+  // Two Latin indices separated by a comma require the native lowered-index witness below.
+  const tokens = (text) => [
+    ...identifiers(text),
+    ...text.matchAll(
+      /(?<![A-Za-z\p{Script=Greek}\d])[A-Za-z]{2},[A-Za-z](?![A-Za-z\p{Script=Greek}\d])/gu
+    )
+  ]
+  const sourceTokens = tokens(source),
+    targetTokens = tokens(translation),
     groups = new Map(),
     runs = []
   for (const marker of [...markers].sort((a, b) => a.sourceOffset - b.sourceOffset)) {
@@ -1226,7 +2446,11 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
   for (const run of runs) run.label = run.label.replace(/[,.;:]+$/u, '')
   // Prove the lowered index against its complete native base.
   const hasNativeLoweredIndex = (match, run) => {
-    if (run.rise >= 0 || !/^[A-Za-z\p{Script=Greek}\d]{1,3}$/u.test(run.label)) return false
+    if (
+      run.rise >= 0 ||
+      !/^(?:[A-Za-z\p{Script=Greek}\d]{1,3}|[A-Za-z],[A-Za-z])$/u.test(run.label)
+    )
+      return false
     const bases = markers.filter(
       (base) =>
         base.sourceOffset === match.index &&
@@ -1313,6 +2537,7 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
       )
     )
       continue
+    if (/^[A-Za-z],[A-Za-z]$/u.test(run.label) && !hasNativeLoweredIndex(token, run)) continue
     const prefixLength = run.sourceOffset - token.index,
       prefix = token[0].slice(0, prefixLength).trimEnd(),
       nativeDifferenceIndex = prefix === '∆' && hasNativeLoweredIndex(token, run),
@@ -1405,7 +2630,7 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
       continue
     const group = `${token[0]}:${prefixLength}:${run.label.length}`,
       entries = groups.get(group) ?? []
-    entries.push({ ...run, prefixLength, identifier: token[0] })
+    entries.push({ ...run, prefixLength, identifier: token[0], nativeDifferenceIndex })
     groups.set(group, entries)
   }
   const spans = []
@@ -1415,6 +2640,20 @@ export const resolveScientificScriptSpans = (source, translation, markers) => {
       targetMatches = targetTokens.filter((match) => match[0] === identifier),
       first = entries[0],
       prefixLength = first.prefixLength
+    // An exact indexed operand can come back with Greek delta in place of TeX's
+    // increment glyph. Match the isolated factors even inside an unspaced product.
+    if (first.nativeDifferenceIndex && targetMatches.length < sourceMatches.length) {
+      const alias = `Δ${identifier.slice(1)}`
+      if (!source.includes(alias)) {
+        const equivalents = [...translation.matchAll(/Δ[a-z]{1,3}(?![A-Za-z\d_])/gu)].filter(
+          (match) => match[0] === alias
+        )
+        if (targetMatches.length + equivalents.length === sourceMatches.length) {
+          targetMatches.push(...equivalents)
+          targetMatches.sort((a, b) => a.index - b.index)
+        }
+      }
+    }
     if (
       entries.some((entry) => entry.prefixLength !== prefixLength || !sameStyle(entry, first)) ||
       entries.some(
@@ -1759,6 +2998,128 @@ export const resolveExplicitTransposeIndices = (source, translation, markers) =>
     result.push(...evidence.flatMap((marker) => marker.sourceIndices))
   }
   return [...new Set(result)]
+}
+
+// PDF text extraction flattens native scripts. When the translated
+// text spells out the same expression, keep that explicit notation and use the
+// original script runs as part of the base's row during layout planning.
+export const resolveExplicitScriptIndices = (source, translation, markers, bodySize) => {
+  if (!/[¹²³⁴ˣ^_]/u.test(translation) || !Number.isFinite(bodySize) || bodySize <= 0) return []
+  const indices = []
+  const flattened = [
+    ...source.matchAll(
+      /(?<![\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_])([A-Za-z\p{Script=Greek}]|[1-9]\d{0,3}|\((?:log ){1,2}[A-Za-z]\)|lim) ?(\d{1,3}\/[\d\p{Script=Greek}]{1,3}|\d{1,3}[+−-][A-Za-z\p{Script=Greek}]|[oO]\(1(?:\/ ?(?:log ){1,2}[A-Za-z])?\)|[x\p{Script=Greek}]|[1-4]|[A-Za-z]→(?:∞|0))(?![\p{Script=Latin}\p{Script=Greek}\p{N}\p{M}_^/])/gu
+    )
+  ]
+  const order = /^[oO]\(1(?:\/ ?(?:log ){1,2}[A-Za-z])?\)$/u
+  const scriptKey = (value) => (order.test(value) ? value.replace('/ ', '/') : value)
+  const provedPowers = new Map()
+  for (const match of flattened) {
+    const [spelling, baseLabel, exponent] = match,
+      limit = baseLabel === 'lim',
+      spacedOrder = order.test(exponent),
+      baseEnd = match.index + baseLabel.length,
+      start = match.index + spelling.length - exponent.length,
+      end = start + exponent.length,
+      pieces = markers.filter((part) => part.sourceOffset >= start && part.sourceOffset < end),
+      base = markers.find(
+        (part) =>
+          part.sourceOffset + part.label.length === baseEnd &&
+          source.slice(part.sourceOffset, baseEnd) === part.label
+      )
+    if (
+      !base ||
+      !pieces.length ||
+      limit !== exponent.includes('→') ||
+      base.scale < 0.9 ||
+      base.scale > 1.1 ||
+      !Number.isFinite(base.rise) ||
+      Math.abs(base.rise) >= 0.01 ||
+      !/^(?:[A-Z]{6}\+)?CM(?:MI|R)\d{1,2}$/u.test(base.fontName) ||
+      (baseLabel.startsWith('(') ? base.label !== ')' : !base.label.endsWith(baseLabel))
+    )
+      continue
+    const chain = [base, ...pieces]
+    if (
+      !chain.every(
+        (part) =>
+          [part.baseline, part.rise, part.scale].every(Number.isFinite) &&
+          part.bounds?.length === 4 &&
+          part.bounds.every(Number.isFinite) &&
+          part.bounds[0] < part.bounds[2] &&
+          part.bounds[1] < part.bounds[3] &&
+          part.sourceIndices.length === 1 &&
+          Number.isInteger(part.sourceIndices[0])
+      )
+    )
+      continue
+    let cursor = start
+    if (
+      !pieces.every((part, i) => {
+        const prior = chain[i],
+          rise = part.baseline - base.baseline,
+          gap = part.bounds[0] - prior.bounds[2]
+        if (
+          part.sourceOffset < cursor ||
+          (part.sourceOffset !== cursor &&
+            (!spacedOrder || source.slice(cursor, part.sourceOffset) !== ' ')) ||
+          source.slice(part.sourceOffset, part.sourceOffset + part.label.length) !== part.label ||
+          part.sourceIndices[0] !== prior.sourceIndices[0] + 1 ||
+          !/^(?:[A-Z]{6}\+)?CM(?:MI|R|SY)\d{1,2}$/u.test(part.fontName) ||
+          part.scale < 0.5 ||
+          part.scale >= 0.85 ||
+          !sameStyle(part, pieces[0]) ||
+          (limit
+            ? rise >= -bodySize * 0.08 || rise <= -bodySize * 0.35
+            : rise <= bodySize * 0.2 || rise >= bodySize * 0.7) ||
+          Math.abs(rise - part.rise) >= 0.01 ||
+          (limit ? part.bounds[3] >= base.bounds[3] : part.bounds[1] <= base.baseline) ||
+          gap < -bodySize * 0.1 ||
+          gap > bodySize * 0.25
+        )
+          return false
+        cursor = part.sourceOffset + part.label.length
+        return true
+      }) ||
+      cursor !== end
+    )
+      continue
+    const key = baseLabel + '^(' + scriptKey(exponent) + ')'
+    if (!provedPowers.has(key)) provedPowers.set(key, [])
+    provedPowers.get(key).push({ match, pieces })
+  }
+  for (const proved of provedPowers.values()) {
+    const [, base, exponent] = proved[0].match
+    const sourceCount = flattened.filter(
+        ([, b, e]) => b === base && scriptKey(e) === scriptKey(exponent)
+      ).length,
+      escaped = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'),
+      raised = order.test(exponent)
+        ? escaped(scriptKey(exponent)).replace('/', '/ ?')
+        : escaped(exponent),
+      unicode = /^[1-4]$/u.test(exponent) ? '|¹²³⁴'[Number(exponent)] : exponent === 'x' ? 'ˣ' : '',
+      // A single letter or a balanced order expression needs no outer parentheses.
+      spelling =
+        base === 'lim'
+          ? 'lim_\\(' + raised + '\\)'
+          : escaped(base) +
+            '(?:\\^(?:\\(' +
+            raised +
+            '\\)' +
+            (/^\p{Script=Greek}$/u.test(exponent) || order.test(exponent) ? '|' + raised : '') +
+            ')' +
+            (unicode ? '|' + unicode : '') +
+            ')',
+      target = new RegExp(
+        '(?<![\\p{Script=Latin}\\p{Script=Greek}\\p{N}\\p{M}_])' +
+          spelling +
+          '(?![\\p{Script=Latin}\\p{Script=Greek}\\p{N}\\p{M}_^/])',
+        'gu'
+      )
+    if (sourceCount === proved.length && [...translation.matchAll(target)].length === sourceCount)
+      indices.push(...proved.flatMap(({ pieces }) => pieces.flatMap((part) => part.sourceIndices)))
+  }
+  return indices
 }
 
 // Complete negative powers can retain their native group or use explicit caret

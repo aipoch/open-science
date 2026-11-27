@@ -25,6 +25,7 @@ import {
   type NotebookExecutionAdmission
 } from './execution-admission'
 import {
+  ABANDONED_NOTEBOOK_PREPARATION,
   NotebookExecutionIntentOwner,
   notebookExecutionIntent,
   notebookUserOperation,
@@ -84,6 +85,7 @@ import {
   analyzeNotebookSourceOffMainThread
 } from './source-analysis-worker'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
+import type { PendingNotebookReview } from '../../shared/acp-permission-contract'
 import type { PackageMirror } from '../../shared/mirror'
 import type {
   AbortNotebookCodeCellRequest,
@@ -111,6 +113,7 @@ import type {
   NotebookRunSummary,
   NotebookSessionReference,
   NotebookBackgroundTaskSnapshot,
+  NotebookRunFigureRequest,
   NotebookRunEvidenceRequest,
   NotebookRunEvidenceSnapshot,
   NotebookSessionRequest,
@@ -511,6 +514,7 @@ const projectNotebookMemoryPolicyState = (
   reason: state.reason.code,
   remainingThresholdRatio: state.reason.remainingThresholdRatio,
   detail: state.reason.detail,
+  ...(state.reason.diagnostic ? { diagnostic: state.reason.diagnostic } : {}),
   source: state.source,
   executionScope: state.executionScope,
   checkedAt: Date.now(),
@@ -673,8 +677,11 @@ class NotebookRuntimeService {
       signal,
       executionScope,
       assertHostCurrent: () => intent?.assertExecutable(),
-      onRejected: (state) => {
-        const refusalId = intent?.block(state.status)
+      onRejected: (state, recheck) => {
+        const refusalId = intent?.block(state.status, {
+          recheckMemory: recheck,
+          errorCategory: state.reason.code
+        })
         if (context)
           this.notifyMemoryPolicyRejected(
             {
@@ -762,8 +769,11 @@ class NotebookRuntimeService {
           intent?.assertExecutable()
           assertHostCurrent?.(boundary)
         },
-        onRejected: (state) => {
-          const refusalId = intent?.block(state.status)
+        onRejected: (state, recheck) => {
+          const refusalId = intent?.block(state.status, {
+            recheckMemory: recheck,
+            errorCategory: state.reason.code
+          })
           this.notifyMemoryPolicyRejected(
             {
               projectId: resolveProjectId(request, this.options.projectId),
@@ -784,11 +794,17 @@ class NotebookRuntimeService {
     })
   }
   private executionApproval: NotebookExecutionApproval | undefined
+  private pendingNotebookReviews:
+    ((sessionId: string) => readonly PendingNotebookReview[]) | undefined
   private runtimeBindingApproval: NotebookRuntimeBindingApproval | undefined
   private readonly runtimeBindingPermissionPolicies = new WeakMap<AbortSignal, 'none'>()
 
-  setExecutionApproval(approve: NotebookExecutionApproval): void {
+  setExecutionApproval(
+    approve: NotebookExecutionApproval,
+    pendingNotebookReviews?: (sessionId: string) => readonly PendingNotebookReview[]
+  ): void {
     this.executionApproval = approve
+    this.pendingNotebookReviews = pendingNotebookReviews
   }
 
   setRuntimeBindingApproval(approve: NotebookRuntimeBindingApproval): void {
@@ -843,12 +859,25 @@ class NotebookRuntimeService {
     binding: NotebookSessionRuntimeBinding,
     operation: 'bind' | 'switch',
     signal?: AbortSignal,
-    requireHostDecision = false,
-    permissionPrompts?: 'none'
+    {
+      requireHostDecision = false,
+      requireRunnable = false,
+      permissionPrompts,
+      provenanceContext
+    }: {
+      requireHostDecision?: boolean
+      requireRunnable?: boolean
+      permissionPrompts?: 'none'
+      provenanceContext?: NotebookSessionRequest['provenanceContext']
+    } = {}
   ): Promise<void> {
     signal?.throwIfAborted()
     const target = await this.runtimeBindingOwner.resolveBindingTarget(language, binding.runtimeId)
     signal?.throwIfAborted()
+    if (requireRunnable && (!target.runnable || target.binding.status !== 'active'))
+      throw new Error(
+        'The selected Notebook runtime is not ready. Recheck this language and exact runtime before starting research.'
+      )
     if (!this.runtimeBindingOwner.sameTarget(binding, target.binding)) {
       throw new Error(
         'The selected Notebook runtime changed before approval. Select an enabled runtime again.'
@@ -912,7 +941,14 @@ class NotebookRuntimeService {
           label: binding.label,
           interpreterPath: binding.interpreterPath,
           previousRuntimeId: current?.runtimeId,
-          previousLabel: current?.label
+          previousLabel: current?.label,
+          ...(provenanceContext
+            ? {
+                projectId: session.projectId,
+                promptMessageId: provenanceContext.promptMessageId,
+                messageBranchId: provenanceContext.messageBranchId
+              }
+            : {})
         }
       },
       signal,
@@ -969,6 +1005,7 @@ class NotebookRuntimeService {
   private async prepareRuntimeSelection(
     session: RuntimeSession,
     language: NotebookLanguage,
+    request: RunNotebookCellRequest,
     signal?: AbortSignal
   ): Promise<void> {
     if (
@@ -1009,15 +1046,12 @@ class NotebookRuntimeService {
           language,
           selected.runtimeId,
           (binding) =>
-            this.reviewRuntimeBinding(
-              session,
-              language,
-              binding,
-              'bind',
-              signal,
-              false,
-              signal ? this.runtimeBindingPermissionPolicies.get(signal) : undefined
-            ),
+            this.reviewRuntimeBinding(session, language, binding, 'bind', signal, {
+              permissionPrompts: signal
+                ? this.runtimeBindingPermissionPolicies.get(signal)
+                : undefined,
+              provenanceContext: request.provenanceContext
+            }),
           () => signal?.throwIfAborted()
         )
         if ('error' in result) throw new Error(result.error)
@@ -1092,6 +1126,9 @@ class NotebookRuntimeService {
         notebookCodeRisk: {
           runId: run.runId,
           language: run.kernelKind,
+          projectId: session.projectId,
+          promptMessageId: run.promptMessageId,
+          messageBranchId: run.messageBranchId,
           ...(run.shellRuntime?.kind === 'powershell'
             ? { shellRuntime: { kind: 'powershell' } }
             : {}),
@@ -1151,6 +1188,11 @@ class NotebookRuntimeService {
   private environmentStartupBarrier: Promise<void> = Promise.resolve()
   private runLifecycleRecovery: Promise<void> | undefined
   private runLifecycleRecoveryFailed = false
+  private kernelProcessRecoveryTail: Promise<void> = Promise.resolve()
+  private readonly scheduledKernelProcessRecoveries = new Map<string | undefined, Promise<void>>()
+  private kernelProcessRecoveryRunning = false
+  private kernelProcessRecoveryPauses = 0
+  private kernelProcessRecoveryDisposed = false
   private readonly backgroundRuns = new Map<
     string,
     {
@@ -1190,9 +1232,12 @@ class NotebookRuntimeService {
       }
     })
     const runtimeRoot = getRuntimeRoot(options.dataRoot)
+    this.runtimeLogger = options.logger ?? createLogger('notebook:runtime')
     this.kernelProcessLifecycle = new KernelProcessLifecycleOwner({
       storageRoot: options.dataRoot,
-      platform: options.platform
+      platform: options.platform,
+      onRecoveryDeferred: (diagnostic) =>
+        this.runtimeLogger.warn('Notebook kernel process recovery deferred', diagnostic)
     })
     const workingCache = managedNotebookWorkingCache(options.platform, !options.installPackagesImpl)
     this.repairPolicy = new NotebookRuntimeRepairPolicy(runtimeRoot)
@@ -1228,7 +1273,6 @@ class NotebookRuntimeService {
             ? this.runtimeBindingOwner.dependencyInterpreter(run.kernelKind, run.runtimeId)
             : Promise.resolve(undefined)
       })
-    this.runtimeLogger = options.logger ?? createLogger('notebook:runtime')
     this.environmentOperations = new NotebookEnvironmentOperations({
       recovery: this.recoveryCoordinator,
       bindings: this.runtimeBindingOwner,
@@ -1274,7 +1318,9 @@ class NotebookRuntimeService {
         cancelShellRuns: (scope, reason) => this.executionOwner.cancelShellRuns(scope, reason)
       },
       waitForRevocationDrains: () => this.environmentOperations.waitForRevocationDrains(),
-      ensureProcessRecovery: (laneKey) => this.kernelProcessLifecycle.ensureReadyForLane(laneKey),
+      ensureProcessRecovery: async (laneKey) => {
+        this.scheduleKernelProcessRecovery(laneKey)
+      },
       processLifecycle: this.kernelProcessLifecycle,
       executorFactory: options.executorFactory,
       defaultExecutorOptions: () => ({
@@ -1326,9 +1372,11 @@ class NotebookRuntimeService {
       sessions: () => this.sessions.values(),
       ensureRecovered: () => this.ensureRecovered(),
       assertPrefixRecoverable: (prefix) => this.assertPrefixRecoverable(prefix),
+      hasUnreapedKernelProcesses: (environment) => this.hasUnreapedKernelProcesses(environment),
       environmentOperations: this.environmentOperations,
       runtimeRepair: this.runtimeRepair,
-      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled
+      isAgentEnvironmentCreationEnabled: this.agentEnvironmentCreationEnabled,
+      invalidateDiscovery: (language) => this.runtimeBindingOwner.invalidateDiscovery(language)
     })
     this.environmentStateTracker =
       options.environmentStateTracker ??
@@ -1347,7 +1395,8 @@ class NotebookRuntimeService {
       locale: options.locale ?? DEFAULT_LOCALE,
       mirrorProbe: options.mirrorProbe,
       resolvePackageMirror: options.getPackageMirror,
-      ensureRecovered: () => this.ensureRecovered(),
+      ensureRecovered: (laneKey) => this.ensureRecovered(laneKey),
+      hasUnsettledKernelCleanup: (environment) => this.hasUnsettledKernelCleanup(environment),
       loadSession: (request) => this.sessionLifecycle.ensure(request),
       findSession: (sessionId) => this.sessions.get(this.sessionLifecycle.rootLane(sessionId)),
       sessions: () => this.sessions.values(),
@@ -1361,6 +1410,7 @@ class NotebookRuntimeService {
       environmentOperations: this.environmentOperations,
       recovery: this.recoveryCoordinator,
       environmentStateTracker: this.environmentStateTracker,
+      invalidateDiscovery: (language) => this.runtimeBindingOwner.invalidateDiscovery(language),
       installPackages: options.installPackagesImpl ?? installEnvironmentPackages,
       ...(options.processSandbox
         ? {
@@ -1585,6 +1635,186 @@ class NotebookRuntimeService {
     return this.resourceReleases.project(request.projectId)
   }
 
+  async inspectTaskExecution(
+    request: NotebookExecutionIntentScope & {
+      includeSessionRefusal?: true
+      taskWindow?: { startedAt: number; completedAt?: number }
+    }
+  ): Promise<import('../../shared/task-api').TaskNotebookExecution> {
+    const { projectId, sessionId, promptMessageId } = request
+    const scope = { projectId, sessionId }
+    const current = this.executionIntents.current(scope)
+    const intent =
+      promptMessageId === current?.scope.promptMessageId
+        ? current
+        : promptMessageId
+          ? this.executionIntents.resolve(scope, promptMessageId)
+          : undefined
+    // The Session can still be blocked while its latest prompt is not bound to the refusal.
+    const observedIntent = request.includeSessionRefusal && current?.refusalId ? current : intent
+    const inTaskWindow = (at: number | undefined): boolean =>
+      !request.taskWindow ||
+      (at !== undefined &&
+        at >= request.taskWindow.startedAt &&
+        (request.taskWindow.completedAt === undefined || at < request.taskWindow.completedAt))
+    const observedPromptId =
+      observedIntent === intent ? promptMessageId : observedIntent?.scope.promptMessageId
+    const origin = {
+      ...scope,
+      ...(observedPromptId ? { promptMessageId: observedPromptId } : {}),
+      ...(observedIntent?.scope.messageBranchId
+        ? { messageBranchId: observedIntent.scope.messageBranchId }
+        : {}),
+      ...(observedIntent?.scope.continuedFromRefusalId
+        ? { continuedFromRefusalId: observedIntent.scope.continuedFromRefusalId }
+        : {})
+    }
+    const currentRefusal = observedIntent?.refusalId && inTaskWindow(observedIntent.refusalAt)
+    if (currentRefusal && observedIntent.refusalReason === ABANDONED_NOTEBOOK_PREPARATION) {
+      return {
+        ...origin,
+        status: 'failed',
+        reasonCode: 'notebook_pre_dispatch_failed',
+        kernelDispatched: false,
+        retryable: false
+      }
+    }
+    if (currentRefusal && observedIntent.hasClaimedContinuation) {
+      return {
+        ...origin,
+        status: 'failed',
+        reasonCode: 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION',
+        refusalId: observedIntent.refusalId,
+        refusalReason: observedIntent.refusalReason,
+        retryable: false
+      }
+    }
+    if (currentRefusal && observedIntent === current) {
+      return {
+        ...origin,
+        status: 'waiting_for_user',
+        reasonCode: 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION',
+        refusalId: observedIntent.refusalId,
+        refusalReason: observedIntent.refusalReason,
+        owner: 'user',
+        requiresUser: true,
+        retryable: false,
+        next: {
+          action: 'continue_notebook_in_app',
+          message:
+            'Resolve the cause, then have the user open the affected Session and branch in the Open-Science desktop app connected to this service. In Compute, choose Continue Notebook work. Recheck the same Session afterward.'
+        }
+      }
+    }
+    const branch = request.messageBranchId ?? intent?.scope.messageBranchId
+    const runs = promptMessageId
+      ? (await this.repository.readSessionRuns(projectId, sessionId)).filter(
+          (run) =>
+            run.source === 'agent' &&
+            run.promptMessageId === promptMessageId &&
+            (branch === undefined || run.messageBranchId === branch) &&
+            inTaskWindow(run.admittedAt ?? run.startedAt)
+        )
+      : []
+    const pendingReviews =
+      promptMessageId && request.taskWindow?.completedAt === undefined
+        ? this.pendingNotebookReviews?.(sessionId)
+        : undefined
+    const runtimeReview = pendingReviews?.find(
+      (review) =>
+        review.kind === 'runtime' &&
+        review.projectId === projectId &&
+        review.promptMessageId === promptMessageId &&
+        (branch === undefined || review.messageBranchId === branch)
+    )
+    if (runtimeReview?.kind === 'runtime') {
+      return {
+        ...origin,
+        messageBranchId: runtimeReview.messageBranchId,
+        ...(runtimeReview.language ? { language: runtimeReview.language } : {}),
+        kernelDispatched: false,
+        status: 'waiting_for_user',
+        reasonCode: 'notebook_runtime_review_required',
+        owner: 'user',
+        requiresUser: true,
+        retryable: false,
+        next: {
+          action: 'review_notebook_runtime_in_app',
+          message:
+            'The user needs to approve the selected Notebook environment. This review does not indicate a missing installation. Use get_setup_status to check the language and open_setup with section notebook if the user wants to open Notebook settings. Ask the user to respond to Confirm Notebook kernel and environment in the original Session and branch on the same profile, then recheck this Run.'
+        }
+      }
+    }
+    const activeRuns = runs.filter((run) => run.status === 'queued' || run.status === 'running')
+    const awaitingReview = activeRuns.findLast((run) =>
+      pendingReviews?.some((review) => review.kind === 'code' && review.runId === run.runId)
+    )
+    if (awaitingReview) {
+      return {
+        ...origin,
+        ...(awaitingReview.messageBranchId
+          ? { messageBranchId: awaitingReview.messageBranchId }
+          : {}),
+        notebookRunId: awaitingReview.runId,
+        kernelDispatched: false,
+        status: 'waiting_for_user',
+        reasonCode: 'notebook_code_review_required',
+        owner: 'user',
+        requiresUser: true,
+        retryable: false,
+        next: {
+          action: 'review_notebook_code_in_app',
+          message:
+            'Ask the user to open the original Session and branch in Open-Science on the same profile and decide the pending Notebook code review. Recheck this Run after the user responds.'
+        }
+      }
+    }
+    const lastRun = runs.findLast(
+      (run): run is typeof run & { kernelKind: NotebookLanguage } =>
+        run.kernelKind === 'python' || run.kernelKind === 'r'
+    )
+    if (!lastRun) {
+      return {
+        ...origin,
+        status: 'unconfirmed',
+        reasonCode: intent?.refusalId ? 'notebook_intent_stopped' : 'notebook_evidence_unavailable'
+      }
+    }
+    const status = lastRun.status
+    const evidence = {
+      ...origin,
+      ...(lastRun.messageBranchId ? { messageBranchId: lastRun.messageBranchId } : {}),
+      notebookRunId: lastRun.runId,
+      language: lastRun.kernelKind,
+      ...(lastRun.frozenRuntimeTarget?.runtimeId || lastRun.runtimeId
+        ? { runtimeId: lastRun.frozenRuntimeTarget?.runtimeId ?? lastRun.runtimeId }
+        : {}),
+      ...(lastRun.frozenRuntimeTarget?.source
+        ? { runtimeSource: lastRun.frozenRuntimeTarget.source }
+        : {}),
+      ...(lastRun.kernelDispatched === undefined
+        ? {}
+        : { kernelDispatched: lastRun.kernelDispatched })
+    }
+    if (status === 'queued') return { ...evidence, status: 'preparing' }
+    if (status === 'running') return { ...evidence, status }
+    if (status === 'completed') {
+      return lastRun.kernelDispatched === true
+        ? { ...evidence, status }
+        : { ...evidence, status: 'unconfirmed', reasonCode: 'notebook_dispatch_unconfirmed' }
+    }
+    return {
+      ...evidence,
+      status: 'failed',
+      reasonCode:
+        status !== 'failed'
+          ? `notebook_${status}`
+          : lastRun.kernelDispatched === false
+            ? 'notebook_pre_dispatch_failed'
+            : 'notebook_execution_failed'
+    }
+  }
+
   async releaseSessionResources(
     request: ReleaseNotebookSessionResourcesRequest,
     assertCurrent: () => void
@@ -1661,7 +1891,6 @@ class NotebookRuntimeService {
                 : ('python' as const)
           const environment =
             kind === 'repl' ? undefined : item.processKey.slice(item.processKey.indexOf(':') + 1)
-          const epoch = session.currentKernelEpochId(item.processKey)
           return {
             ...item,
             projectId: session.projectId,
@@ -1670,19 +1899,27 @@ class NotebookRuntimeService {
             kind,
             environment,
             terminate: async () => {
-              const stopping = item.terminate().then(async () => {
-                if (
-                  this.sessions.get(session.lane) === session &&
-                  session.currentKernelEpochId(item.processKey) === epoch
+              const ownsEpoch =
+                item.kernelEpochId !== undefined &&
+                this.sessions.get(session.lane) === session &&
+                session.currentKernelEpochId(item.processKey) === item.kernelEpochId
+              const stopping = item.terminate()
+              if (!ownsEpoch) return stopping
+
+              // The executor has detached the process. Invalidate its epoch before an admitted
+              // run resumes dispatch, and fence fresh work only until status is persisted.
+              const projection = session.retireKernelEpochAndProject(item.processKey, async () => {
+                await this.sessionLifecycle.persistKernelStatus(
+                  session,
+                  'terminated',
+                  item.processKey
                 )
-                  await this.sessionLifecycle.projectKernelIdleShutdown(
-                    session.lane,
-                    kind,
-                    environment
-                  )
+                this.sessionLifecycle.notifyChanged(session)
               })
-              session.blockKernelExecutionUntil(item.processKey, stopping)
-              await stopping
+              session.blockKernelExecutionUntil(item.processKey, projection)
+              const results = await Promise.allSettled([stopping, projection])
+              const failure = results.find((result) => result.status === 'rejected')
+              if (failure) throw failure.reason
             }
           }
         })
@@ -1824,6 +2061,14 @@ class NotebookRuntimeService {
     return this.changeRuntimeBinding(request, 'bind', signal, admission?.requireHostDecision)
   }
 
+  async bindTaskRuntime(
+    request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
+    signal: AbortSignal
+  ): Promise<void> {
+    const result = await this.changeRuntimeBinding(request, 'bind', signal, false, true)
+    if ('error' in result) throw new Error(result.error)
+  }
+
   // An explicit switch stops the previous kernel before committing the new runtime selection.
   async switchRuntime(
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
@@ -1836,7 +2081,8 @@ class NotebookRuntimeService {
     request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string },
     operation: 'bind' | 'switch',
     signal?: AbortSignal,
-    requireHostDecision = false
+    requireHostDecision = false,
+    requireRunnable = false
   ): Promise<RuntimeBindingOperationResult> {
     return this.sessionLifecycle.runProjectOperation(request, (deletionSignal) =>
       this.runtimeBindingOwner.runWrite(
@@ -1870,8 +2116,12 @@ class NotebookRuntimeService {
                     binding,
                     operation,
                     signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
-                    requireHostDecision,
-                    readTrustedNotebookBindingPermissionPrompts(request)
+                    {
+                      requireHostDecision,
+                      requireRunnable,
+                      permissionPrompts: readTrustedNotebookBindingPermissionPrompts(request),
+                      provenanceContext: request.provenanceContext
+                    }
                   )
                 }
                 if (operation === 'bind') {
@@ -2864,6 +3114,26 @@ class NotebookRuntimeService {
     )
   }
 
+  async runFigure(request: NotebookRunFigureRequest): Promise<string | null> {
+    if (
+      !request.runId ||
+      !Number.isSafeInteger(request.outputIndex) ||
+      request.outputIndex < 0 ||
+      typeof request.mimeType !== 'string' ||
+      !request.mimeType.startsWith('image/')
+    )
+      return null
+    return this.readHistory(request, async (projectId) => {
+      const session = await this.sessionForHistoryRead(request, projectId)
+      return this.sessionReadModel.runFigure(
+        session?.projectId ?? projectId,
+        session?.sessionId ?? request.sessionId,
+        request,
+        session
+      )
+    })
+  }
+
   async runEvidence(
     request: NotebookRunEvidenceRequest
   ): Promise<NotebookRunEvidenceSnapshot | null> {
@@ -2927,7 +3197,8 @@ class NotebookRuntimeService {
           request.historySummaryFrameId,
           request.historyBefore,
           historyLimit,
-          historyByteLimit
+          historyByteLimit,
+          request.deferImages
         )
       }
       return this.sessionReadModel.state(
@@ -2936,7 +3207,8 @@ class NotebookRuntimeService {
         request.historySummaryFrameId,
         request.historyBefore,
         historyLimit,
-        historyByteLimit
+        historyByteLimit,
+        request.deferImages
       )
     })
   }
@@ -3034,7 +3306,7 @@ class NotebookRuntimeService {
         const restartTransition = (async (): Promise<void> => {
           try {
             await session.drainExecution(processKey)
-            await session.terminateExecutor(language, environment)
+            await session.restartExecutorProcess(language, environment)
             if (hasTargetState) {
               await this.sessionLifecycle.persistKernelStatus(session, 'idle', processKey)
             }
@@ -3288,6 +3560,43 @@ class NotebookRuntimeService {
     this.sessionLifecycle.releaseProjectDeletion(projectId)
   }
 
+  private scheduleKernelProcessRecovery(laneKey?: string): void {
+    // Admissions can repeat while the OS is still checking an old process. Keep one task per
+    // lane (or global scan), with a bounded backlog. Later admissions can try again.
+    const scheduled = this.scheduledKernelProcessRecoveries
+    if (
+      this.kernelProcessRecoveryPauses > 0 ||
+      this.kernelProcessRecoveryDisposed ||
+      scheduled.has(laneKey) ||
+      (laneKey !== undefined && scheduled.size >= 64)
+    ) {
+      return
+    }
+    const cleanup = this.kernelProcessRecoveryTail.then(async () => {
+      if (scheduled.get(laneKey) !== cleanup) return
+      await this.recoverKernelProcesses(laneKey)
+    })
+    scheduled.set(laneKey, cleanup)
+    this.kernelProcessRecoveryTail = cleanup.finally(() => {
+      if (scheduled.get(laneKey) === cleanup) scheduled.delete(laneKey)
+    })
+  }
+
+  private async recoverKernelProcesses(laneKey?: string): Promise<void> {
+    this.kernelProcessRecoveryRunning = true
+    try {
+      if (laneKey !== undefined) await this.kernelProcessLifecycle.ensureReadyForLane(laneKey)
+      else await this.kernelProcessLifecycle.recover({ allowUnverifiedReceipts: true })
+    } catch (error) {
+      this.runtimeLogger.warn('Notebook kernel process recovery failed', {
+        lane: laneKey ?? 'global',
+        ...errorLogFields(error)
+      })
+    } finally {
+      this.kernelProcessRecoveryRunning = false
+    }
+  }
+
   // Crash recovery (WS13): reconcile any runtime operation the previous process left in flight. Run at
   // app startup and refresh guarded startup blocks before new writes. For each journalled op: if a child
   // MIGHT still be running, BLOCK its target and leave the entry (recovery never signals the orphan);
@@ -3303,17 +3612,16 @@ class NotebookRuntimeService {
     this.runLifecycleRecovery ??= (async () => {
       // Publish every startup recovery before yielding so new work cannot race any owner.
       const runRecovery = this.repository.recoverAllRunLifecycles()
-      const kernelRecovery = this.kernelProcessLifecycle.recover({
-        allowUnverifiedReceipts: true
-      })
+      this.scheduleKernelProcessRecovery()
       const operationRecovery = this.recoveryCoordinator.recover()
       const shellRecovery = this.shellProcessOwnership.recover()
-      const recoveries = [shellRecovery, runRecovery, kernelRecovery, operationRecovery] as const
+      const recoveries = [shellRecovery, runRecovery, operationRecovery] as const
       const [, recoveredRuns] = await Promise.all(recoveries).catch(async (error: unknown) => {
         // Preserve the first failure, but do not release retry while another owner mutates storage.
         await Promise.allSettled(recoveries)
         throw error
       })
+      this.runtimeBindingOwner.invalidateDiscovery()
       if (this.options.onBackgroundRunTerminal) {
         await Promise.all(
           recoveredRuns.map(async ({ projectId, sessionId, run }) => {
@@ -3348,16 +3656,15 @@ class NotebookRuntimeService {
   }
 
   async ensureEnvironmentStatusReady(): Promise<void> {
-    // Startup already reconciles kernel receipts. Reading status only needs its outcome and the
-    // current environment journal, even if an identifiable kernel still fences a future write.
+    // Startup schedules kernel cleanup in the background. Reading status only needs the current
+    // environment journal, independently of old kernel receipt settlement.
     if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
     await this.recoveryCoordinator.ensureReady()
   }
 
   async ensureRecovered(laneKey?: string): Promise<void> {
     if (this.runLifecycleRecovery) await this.recoverInterruptedOperations()
-    if (laneKey) await this.kernelProcessLifecycle.ensureReadyForLane(laneKey)
-    else await this.kernelProcessLifecycle.ensureReady()
+    this.scheduleKernelProcessRecovery(laneKey)
     await this.recoveryCoordinator.ensureReady()
   }
 
@@ -3413,6 +3720,28 @@ class NotebookRuntimeService {
     this.recoveryCoordinator.clearRuntimeBlock(runtimeId)
   }
 
+  hasUnreapedKernelProcesses(environment: string): boolean {
+    return this.kernelProcessLifecycle.hasReceiptsForEnvironment(environment)
+  }
+
+  private hasUnsettledKernelCleanup(environment: string): boolean {
+    // Installers can run alongside current idle interpreters. A detached or previous-owner
+    // interpreter may still be executing outside the environment lease.
+    const activeEpochIds = new Set<string>()
+    for (const session of this.sessions.values()) {
+      for (const process of session.monitoredProcesses()) {
+        if (
+          process.kernelEpochId &&
+          session.currentKernelEpochId(process.processKey) === process.kernelEpochId &&
+          (process.status === 'idle' || process.status === 'running')
+        ) {
+          activeEpochIds.add(process.kernelEpochId)
+        }
+      }
+    }
+    return this.kernelProcessLifecycle.hasReceiptsForEnvironment(environment, { activeEpochIds })
+  }
+
   async prepareRuntimeRepair(
     language: NotebookLanguage,
     target: ExplicitRuntimeRepairTarget
@@ -3436,6 +3765,12 @@ class NotebookRuntimeService {
     } else {
       binding = await this.runtimeBindingOwner.requireManagedDefault(language, target.runtimeId)
     }
+    if (
+      this.kernelProcessLifecycle.hasReceiptsForEnvironment(environment, {
+        previousOwnerOnly: true
+      })
+    )
+      throw new Error('Notebook processes using this environment could not be stopped.')
     await this.runtimeRepair.prepareExplicitRepair(language, binding)
   }
 
@@ -3443,8 +3778,10 @@ class NotebookRuntimeService {
   // This is deliberately separate from managePackages(): an ordinary install may clear an
   // interrupted-install marker, but it must never release a protected-identity quarantine.
   async completeRuntimeRepair(language: NotebookLanguage): Promise<void> {
+    this.runtimeBindingOwner.invalidateDiscovery(language)
     const replacement = await this.runtimeBindingOwner.requireManagedDefault(language)
     await this.runtimeRepair.completeExplicitRepair(language, replacement)
+    this.runtimeBindingOwner.invalidateDiscovery(language)
   }
 
   // Releases ONE prefix from the global corrupt-journal write barrier. Called by a force Reset (via the
@@ -3496,18 +3833,38 @@ class NotebookRuntimeService {
     reaped: boolean
     legacyShellRecovery?: { token: string; count: number }
   }> {
+    this.kernelProcessRecoveryPauses++
+    // Discard queued scans and drain the in-flight scan alongside the current Session teardown.
+    this.scheduledKernelProcessRecoveries.clear()
+    if (
+      this.kernelProcessRecoveryPauses === 1 &&
+      !this.kernelProcessRecoveryDisposed &&
+      !this.kernelProcessRecoveryRunning &&
+      this.kernelProcessLifecycle.hasReceipts()
+    ) {
+      // A termination proof can arrive after the previous scan and without another Notebook run.
+      this.kernelProcessRecoveryTail = this.kernelProcessRecoveryTail.then(() =>
+        this.recoverKernelProcesses()
+      )
+    }
+    const kernelRecovery = this.kernelProcessRecoveryTail
     const releaseFence = this.executionOwner.fenceShellRuns({ global: true })
     try {
-      const shell = await this.executionOwner.cancelShellRuns(
+      const shellShutdown = this.executionOwner.cancelShellRuns(
         {},
         new Error('Notebook runtime is shutting down.')
       )
-      const sessions = await this.sessionLifecycle.shutdownAll(
+      const sessionShutdown = this.sessionLifecycle.shutdownAll(
         options?.afterShutdown
           ? async () => {
+              const [shell] = await Promise.all([shellShutdown, kernelRecovery])
               if (!shell.reaped)
                 throw new Error(
                   'Shell processes could not be stopped. Folder policy was not changed.'
+                )
+              if (this.kernelProcessLifecycle.hasReceipts())
+                throw new Error(
+                  'Notebook processes could not be stopped. Folder policy was not changed.'
                 )
               if (this.shellProcessOwnership.hasReceipts())
                 await this.shellProcessOwnership.recover()
@@ -3516,9 +3873,25 @@ class NotebookRuntimeService {
             }
           : undefined
       )
-      if (!options?.afterShutdown && shell.reaped && sessions.reaped)
+      const [shellResult, sessionResult, kernelResult] = await Promise.allSettled([
+        shellShutdown,
+        sessionShutdown,
+        kernelRecovery
+      ])
+      if (shellResult.status === 'rejected') throw shellResult.reason
+      if (sessionResult.status === 'rejected') throw sessionResult.reason
+      if (kernelResult.status === 'rejected') throw kernelResult.reason
+      const shell = shellResult.value
+      const sessions = sessionResult.value
+      const kernelRecoveryReaped = !this.kernelProcessLifecycle.hasReceipts()
+      if (!options?.afterShutdown && shell.reaped && sessions.reaped && kernelRecoveryReaped)
         await this.repository.checkpointPendingRuns()
-      if (shell.reaped && sessions.reaped && options?.legacyShellRecoveryToken) {
+      if (
+        shell.reaped &&
+        sessions.reaped &&
+        kernelRecoveryReaped &&
+        options?.legacyShellRecoveryToken
+      ) {
         try {
           this.shellProcessOwnership.archiveLegacyLaunches(options.legacyShellRecoveryToken)
         } catch {
@@ -3536,7 +3909,7 @@ class NotebookRuntimeService {
               .then(() => true)
               .catch(() => false)
       return {
-        reaped: shell.reaped && shellRecoveryReaped && sessions.reaped,
+        reaped: shell.reaped && shellRecoveryReaped && sessions.reaped && kernelRecoveryReaped,
         ...(!shellRecoveryReaped && shell.reaped && sessions.reaped
           ? { legacyShellRecovery: this.shellProcessOwnership.getLegacyRecovery() }
           : {})
@@ -3544,6 +3917,7 @@ class NotebookRuntimeService {
     } finally {
       // shutdownAll is reusable when an update/migration is cancelled.
       releaseFence()
+      this.kernelProcessRecoveryPauses--
       this.idleReclamation.refresh()
     }
   }
@@ -3553,6 +3927,9 @@ class NotebookRuntimeService {
   // migration gates retain the reusable shutdown contract so a refused/cancelled flow can resume work.
   dispose(): Promise<{ reaped: boolean }> {
     if (this.disposalPromise) return this.disposalPromise
+    this.kernelProcessRecoveryDisposed = true
+    this.scheduledKernelProcessRecoveries.clear()
+    const kernelRecovery = this.kernelProcessRecoveryTail
     this.memoryPolicyDisposed = true
     this.memoryPolicyUnsubscribe?.()
 
@@ -3567,39 +3944,38 @@ class NotebookRuntimeService {
     // quit budget before kernel teardown even starts. Await both so non-quit module disposal still leaves
     // no recovery work behind once this terminal operation resolves.
     const recoveryDisposal = this.recoveryCoordinator.dispose()
-    const shutdown = this.executionOwner
+    const shellDisposal = this.executionOwner
       .cancelShellRuns({}, new Error('Notebook runtime is shutting down.'))
       .then(
-        async (shell) => {
-          const shellRecoveryReaped =
-            shell.reaped && !this.shellProcessOwnership.hasReceipts()
-              ? true
-              : await this.shellProcessOwnership
-                  .recover()
-                  .then(() => true)
-                  .catch(() => false)
-          const sessions = await this.sessionLifecycle.dispose()
-          return { reaped: shellRecoveryReaped && sessions.reaped }
-        },
+        (shell) =>
+          shell.reaped && !this.shellProcessOwnership.hasReceipts()
+            ? true
+            : this.shellProcessOwnership.recover().then(
+                () => true,
+                () => false
+              ),
         async (error: unknown) => {
-          const results = await Promise.allSettled([
-            this.shellProcessOwnership.recover(),
-            this.sessionLifecycle.dispose()
-          ])
-          const failures = results.flatMap((result) =>
-            result.status === 'rejected' ? [result.reason] : []
-          )
-          if (failures.length)
+          try {
+            await this.shellProcessOwnership.recover()
+          } catch (recoveryError) {
             throw new AggregateError(
-              [error, ...failures],
+              [error, recoveryError],
               'Notebook cleanup failed after Shell cancellation failed.'
             )
+          }
           throw error
         }
       )
-    const disposal = Promise.allSettled([shutdown, recoveryDisposal, idleDisposal])
-      .then(async ([shutdownResult, recoveryResult, idleResult]) => {
-        const failures = [shutdownResult, recoveryResult, idleResult]
+    const sessionDisposal = this.sessionLifecycle.dispose()
+    const disposal = Promise.allSettled([
+      shellDisposal,
+      sessionDisposal,
+      kernelRecovery,
+      recoveryDisposal,
+      idleDisposal
+    ])
+      .then(async (results) => {
+        const failures = results
           .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
           .map((result) => result.reason)
         if (failures.length === 1) throw failures[0]
@@ -3609,7 +3985,15 @@ class NotebookRuntimeService {
             'Multiple notebook runtime resources failed to dispose.'
           )
         }
-        const result = (shutdownResult as PromiseFulfilledResult<{ reaped: boolean }>).value
+        const [shell, sessions] = results
+        const result = {
+          reaped:
+            shell.status === 'fulfilled' &&
+            shell.value &&
+            sessions.status === 'fulfilled' &&
+            sessions.value.reaped &&
+            !this.kernelProcessLifecycle.hasReceipts()
+        }
         if (result.reaped) await this.repository.checkpointPendingRuns()
         return result
       })

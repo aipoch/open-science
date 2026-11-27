@@ -66,6 +66,8 @@ export type NotebookSandboxInvocation = Readonly<{
   sessionId: string
   projectId: string
   runtime: 'python' | 'r' | 'repl' | 'bash'
+  /** Original owner keeps persistent process cleanup and verification after launch. */
+  kernelEpochId?: string
   /** Exact public hostnames granted only to this wrapped process. */
   allowedNetworkHosts?: readonly string[]
   localRpcSocketPath?: string

@@ -425,6 +425,33 @@ describe('HomePage package export progress', () => {
 })
 
 describe('HomePage environment repair notice', () => {
+  it('defers pending project creation until the onboarding backdrop becomes active', async () => {
+    useNavigationStore.setState({ pendingProjectCreation: true })
+
+    await act(async () =>
+      root.render(
+        <HomePage
+          isActive={false}
+          canDeleteProjects={false}
+          hasCompleteSessionCatalog
+          onOpenGlobalSearch={vi.fn()}
+        />
+      )
+    )
+
+    expect(document.body.textContent).not.toContain('Group related sessions under a project.')
+    expect(useNavigationStore.getState().pendingProjectCreation).toBe(true)
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    expect(document.body.textContent).toContain('Group related sessions under a project.')
+    expect(useNavigationStore.getState().pendingProjectCreation).toBe(false)
+  })
+
   it('consumes a global-search request and opens the New Project dialog', async () => {
     useNavigationStore.setState({ pendingProjectCreation: true })
 
@@ -680,43 +707,51 @@ describe('HomePage activity overview', () => {
     expect(action.classList).not.toContain('sm:group-hover:opacity-100')
   })
 
-  it('explains unavailable archive in menu content without relying on native title', async () => {
-    useProjectStore.setState({
-      ...createInitialProjectState(),
-      projects: [project],
-      isLoaded: true
-    })
-    useSessionStore.setState({
-      ...createInitialSessionState(),
-      sessions: [
-        sessionWithDelegatedRuns('idle', [
+  it.each([undefined, 600_000])(
+    'explains the archive block for delegated work with archivedAt=%s',
+    async (archivedAt) => {
+      useProjectStore.setState({
+        ...createInitialProjectState(),
+        projects: [project],
+        isLoaded: true
+      })
+      useSessionStore.setState({
+        ...createInitialSessionState(),
+        sessions: [
           {
-            frameId: 'branch-a-child',
-            originMessageId: 'branch-a-prompt',
-            startedAt: 500_000,
-            status: 'running'
+            ...sessionWithDelegatedRuns('idle', [
+              {
+                frameId: 'branch-a-child',
+                originMessageId: 'branch-a-prompt',
+                startedAt: 500_000,
+                status: 'running'
+              }
+            ]),
+            archivedAt
           }
-        ])
-      ]
-    })
+        ]
+      })
 
-    await act(async () =>
-      root.render(
-        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      await act(async () =>
+        root.render(
+          <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+        )
       )
-    )
-    openRadixMenu(
-      container.querySelector<HTMLButtonElement>('[aria-label="Open actions for Research project"]')
-    )
+      openRadixMenu(
+        container.querySelector<HTMLButtonElement>(
+          '[aria-label="Open actions for Research project"]'
+        )
+      )
 
-    const archiveItem = Array.from(
-      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
-    ).find((item) => item.textContent?.trim().startsWith('Archive'))
-    expect(archiveItem?.getAttribute('aria-disabled')).toBe('true')
-    expect(document.body.querySelector('[role="menu"]')?.textContent).toContain(
-      'Finish or stop active sessions before archiving this project.'
-    )
-  })
+      const archiveItem = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')
+      ).find((item) => item.textContent?.trim().startsWith('Archive'))
+      expect(archiveItem?.getAttribute('aria-disabled')).toBe('true')
+      expect(document.body.querySelector('[role="menu"]')?.textContent).toContain(
+        'Finish or stop active sessions before archiving this project.'
+      )
+    }
+  )
 
   it('pins and unpins a Project from the first menu action', async () => {
     const updateProject = vi.fn(async ({ pinned }: { pinned?: boolean }) => {

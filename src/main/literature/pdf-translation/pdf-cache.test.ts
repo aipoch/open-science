@@ -141,6 +141,23 @@ it('publishes only after verification and survives restart; authorized source bi
   expect(f.writer.generateDetailed).toHaveBeenCalledTimes(1)
 })
 
+it('keeps an edition with omitted links out of the persistent PDF cache', async () => {
+  const f = await setup()
+  const request = { ...f.request, preserveUnsupported: true }
+  const strict = await f.cache.generate(request, f.caller)
+  expect(strict?.cacheToken).toBeDefined()
+  await f.cache.recordLayout(f.report(strict!), f.caller)
+  f.writer.generateDetailed.mockResolvedValueOnce({
+    data: Buffer.from('%PDF-link-omitted'),
+    layoutFailures: [],
+    omittedLinks: [{ pageNumber: 1, index: 0, rect: [40, 50, 60, 70] }]
+  })
+  const output = await f.cache.generate({ ...request, allowLinkOmission: true }, f.caller)
+  expect(output?.omittedLinks).toHaveLength(1)
+  expect(output?.cacheToken).toBeUndefined()
+  expect(await readdir(f.directory)).toHaveLength(1)
+})
+
 it('checks source permission again before returning a hit', async () => {
   const f = await setup()
   await f.publish()

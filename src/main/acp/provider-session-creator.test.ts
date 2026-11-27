@@ -1,3 +1,4 @@
+import { taskRunTracing } from './task-run-tracing'
 import type { ActiveSession, ClientConnection, McpServer } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -47,6 +48,7 @@ const createHarness = (options: {
     appliedModel: undefined
     configOptions: undefined
   }>
+  traceReadiness?: () => Promise<{ ready: boolean }>
   registerSessionSpecialist?: () => void
   pushEvent?: () => void
   emitState?: () => void
@@ -79,6 +81,7 @@ const createHarness = (options: {
   }))
   const connection = {
     agent: {
+      request: options.traceReadiness,
       buildSession
     }
   } as unknown as ClientConnection
@@ -211,6 +214,21 @@ const createHarness = (options: {
 }
 
 describe('AcpProviderSessionCreator', () => {
+  it.each(['claude-code', 'open-science-agent'] as const)(
+    'refuses unavailable tracing before creating a %s session',
+    async (id) => {
+      const traceReadiness = vi.fn(async () => ({ ready: false }))
+      const harness = createHarness({ framework: getAgentFramework(id), traceReadiness })
+      const traced = { projectId: 'project', [taskRunTracing]: true }
+      await expect(harness.creator.create(traced)).rejects.toThrow(
+        id === 'open-science-agent' ? 'OTLP_TRACES_ENDPOINT' : 'built-in Open-Science Agent'
+      )
+      expect(traceReadiness).toHaveBeenCalledTimes(id === 'open-science-agent' ? 1 : 0)
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.buildSession).not.toHaveBeenCalled()
+    }
+  )
+
   it.each(['primary', 'side-chat', 'restricted-inference'] as const)(
     'sets the built-in Agent session lifetime for %s',
     async (role) => {
@@ -434,6 +452,19 @@ describe('AcpProviderSessionCreator', () => {
     expect(harness.registry.lookup('provider-session')?.attachment?.session).toBe(harness.session)
     expect(harness.session.dispose).not.toHaveBeenCalled()
     expect(harness.release).not.toHaveBeenCalled()
+  })
+
+  it('leaves fresh Main context unconfirmed when capability commit fails', async () => {
+    const failure = new Error('Capability commit failed.')
+    const harness = createHarness({})
+    harness.commit.mockImplementationOnce(() => {
+      throw failure
+    })
+
+    await expect(harness.creator.create({ cwd: '/workspace' })).rejects.toBe(failure)
+
+    expect(harness.registry.lookup('provider-session')?.aggregate.isFreshMainContext()).toBe(false)
+    expect(harness.session.dispose).toHaveBeenCalledOnce()
   })
 
   it('builds prompt guidance from the effective provisioned capability descriptor', async () => {

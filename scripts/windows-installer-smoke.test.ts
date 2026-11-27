@@ -139,6 +139,45 @@ describe('Windows installer smoke plan', () => {
     }
   })
 
+  it.each([
+    ['1.3.4', 'file', true],
+    ['1.3.5', 'file', false],
+    [undefined, 'file', false],
+    ['1.3.4', 'directory', false]
+  ] as const)(
+    'checks debug.log after rollback to %s (%s)',
+    async (rollbackVersion, kind, allowed) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-uninstall-residue-'))
+      try {
+        await writeFile(join(root, 'Uninstall open-science.exe'), '')
+        const log = join(root, 'debug.log')
+        if (kind === 'file') await writeFile(log, '')
+        else await mkdir(log)
+        const result = uninstallAndVerify(
+          root,
+          {},
+          {
+            rollbackVersion,
+            terminate: async () => {},
+            run: async () => {
+              // Let the real cleanup poll inspect the directory once before its deadline.
+              vi.spyOn(Date, 'now')
+                .mockReturnValueOnce(0)
+                .mockReturnValueOnce(0)
+                .mockReturnValue(60_000)
+              return { code: 0 }
+            }
+          }
+        )
+        if (allowed) await expect(result).resolves.toBeUndefined()
+        else await expect(result).rejects.toThrow(/Install directory entries: .*debug\.log/)
+      } finally {
+        vi.restoreAllMocks()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.skipIf(process.platform !== 'win32')(
     'passes the exact cleanup directory through actual PowerShell parsing',
     async () => {
@@ -208,7 +247,42 @@ ${script}`
     })
     expect(script).toContain('ExecutablePath.StartsWith')
     expect(script).not.toContain('CommandLine')
+    expect(script).toContain('Wait-Process')
+    expect(script).toContain('Start-Sleep -Milliseconds 300')
   })
+
+  it.skipIf(process.platform !== 'win32')(
+    'waits for matched processes to exit before returning',
+    async () => {
+      let result: Awaited<ReturnType<typeof runProcess>> | undefined
+      await terminateDirectoryProcesses(
+        'D:\\owned smoke root',
+        async (executable, args, options) => {
+          const script = args[3]
+          const probe = `
+function Get-CimInstance {
+  [pscustomobject]@{ ExecutablePath = 'D:\\owned smoke root\\open-science.exe'; ProcessId = 202 }
+}
+function Stop-Process {
+  param([int]$Id, [switch]$Force, [string]$ErrorAction)
+  [Console]::Write("stop:$Id,")
+}
+function Wait-Process {
+  param([int]$Id, [int]$Timeout, [string]$ErrorAction)
+  [Console]::Write("wait:\${Id}:\${Timeout},")
+}
+${script}`
+          result = await runProcess(executable, [...args.slice(0, 3), probe, ...args.slice(4)], {
+            ...options,
+            allowNonZero: true
+          })
+          return result
+        }
+      )
+      expect(result?.code, result?.stderr).toBe(0)
+      expect(result?.stdout).toBe('stop:202,wait:202:10,')
+    }
+  )
 
   it('derives the packaged version from stable and nightly installer names', () => {
     expect(installerVersion('aipoch-open-science-0.8.0-win-x64-setup.exe')).toBe('0.8.0')

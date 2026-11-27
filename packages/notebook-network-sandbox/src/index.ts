@@ -54,6 +54,7 @@ class NotebookSandboxPreparationCleanupError extends Error {
 
 type ActiveCommand = {
   target: NotebookSandboxTarget
+  kernelEpochId?: string
   onNetworkAccessRequest: NotebookSandboxCommand['onNetworkAccessRequest']
   controller: AbortController
   preparation: Promise<void>
@@ -228,6 +229,7 @@ class NotebookNetworkSandbox {
     let finishPreparation!: () => void
     const activeCommand: ActiveCommand = {
       target,
+      kernelEpochId: command.kernelEpochId,
       onNetworkAccessRequest: command.onNetworkAccessRequest,
       controller,
       preparation: new Promise<void>((resolve) => (finishPreparation = resolve)),
@@ -517,7 +519,14 @@ class NotebookNetworkSandbox {
     }
     if (command.cleanupTask) return command.cleanupTask
     const retry = Boolean(command.cleanupRequest)
-    command.cleanupRequest ??= { reason, processOutcome }
+    if (
+      command.cleanupRequest === undefined ||
+      (command.kernelEpochId &&
+        processStateForOutcome(command.cleanupRequest.processOutcome) === 'termination-unknown' &&
+        processStateForOutcome(processOutcome) === 'started-and-reaped')
+    ) {
+      command.cleanupRequest = { reason: command.cleanupRequest?.reason ?? reason, processOutcome }
+    }
     command.cleanupTask = (async () => {
       const retainedOutcome = command.cleanupRequest!.processOutcome
       if (
@@ -557,7 +566,14 @@ class NotebookNetworkSandbox {
   async #reconcilePendingCommands(target: NotebookSandboxTarget): Promise<void> {
     const pending = [...this.#activeCommands.entries()].filter(
       ([, command]) =>
-        Boolean(command.cleanupRequest) && sharesCleanupDomain(command.target, target)
+        command.cleanupRequest !== undefined &&
+        // The original persistent kernel owner retries its own launched process cleanup.
+        !(
+          command.kernelEpochId &&
+          command.prepared &&
+          processStateForOutcome(command.cleanupRequest.processOutcome) !== 'never-started'
+        ) &&
+        sharesCleanupDomain(command.target, target)
     )
     if (pending.length === 0) return
     const results = await Promise.all(
@@ -586,6 +602,7 @@ class NotebookNetworkSandbox {
 }
 
 export { NotebookNetworkSandbox, NotebookSandboxPreparationError }
+export { probeLinuxIsolation } from '../runtime/src/platform/linux-isolation.js'
 export { mapWsl2Path, wslUncDistro } from '../runtime/src/platform/wsl2-isolation.js'
 // Shared transport accepts an already validated numeric destination, preserving DNS pinning.
 export {

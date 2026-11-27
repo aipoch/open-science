@@ -300,7 +300,7 @@ it.each<[FailureReason, NoticeActionId, readonly NoticeActionId[]]>([
   ['service/response-interrupted', 'retry', []],
   ['service/response-invalid', 'retry', ['open-provider-settings']],
   ['service/provider-error', 'retry', ['open-provider-settings']],
-  ['input/context-overflow', 'compact', ['remove-attachments']]
+  ['input/context-overflow', 'compact', ['remove-attachments', 'open-provider-settings']]
 ])('offers the recovery actions for %s', (reason, primaryAction, secondaryActions) => {
   expect(
     noticePresentation({

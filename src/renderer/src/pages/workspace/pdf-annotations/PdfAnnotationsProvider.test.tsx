@@ -2,10 +2,14 @@
 import { act, useEffect } from 'react'
 import { useTagStore } from '@/stores/tag-store'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PdfAnnotationsProvider } from './PdfAnnotationsProvider'
 import { usePdfAnnotations, type PdfAnnotationPort } from './pdf-annotations-context'
-import type { PdfAnnotation, PdfAnnotationListResult } from '../../../../../shared/pdf-annotations'
+import {
+  PDF_ANNOTATION_LIMITS,
+  type PdfAnnotation,
+  type PdfAnnotationListResult
+} from '../../../../../shared/pdf-annotations'
 
 const annotation: PdfAnnotation = {
   id: 'a1',
@@ -664,6 +668,99 @@ it('uses the shared Literature version scope for writes and history without a Se
     literatureVersionId: 'v1',
     id: 'a1',
     expectedUpdatedAt: annotation.updatedAt
+  })
+})
+
+describe('Literature reading-order preview', () => {
+  const source = { ...annotation.target.source, projectId: undefined }
+  const items = Array.from({ length: PDF_ANNOTATION_LIMITS.pageSize }, (_, index) => ({
+    ...annotation,
+    id: `reading-${index}`,
+    projectId: undefined,
+    sessionId: undefined,
+    literatureVersionId: 'v1',
+    target: { ...annotation.target, source }
+  }))
+  const chronological = items[items.length - 1]
+  const firstPage = {
+    items: [chronological],
+    source,
+    total: 1_000,
+    nextCursor: { id: chronological.id, createdAt: chronological.createdAt }
+  }
+  const preview = { items, source, total: firstPage.total }
+  const render = async (version = 'v1'): Promise<void> => {
+    await act(async () =>
+      root.render(
+        <PdfAnnotationsProvider literatureVersionId={version}>
+          <Probe />
+        </PdfAnnotationsProvider>
+      )
+    )
+  }
+
+  it('publishes the reading prefix separately until chronological pagination completes', async () => {
+    installStore()
+    const tail = deferred<PdfAnnotationListResult>()
+    vi.mocked(window.api.pdfAnnotations.list)
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(preview)
+      .mockReturnValueOnce(tail.promise)
+    await render()
+    expect(port.loading).toBe(true)
+    expect(port.initialReadingPage).toEqual({ source, items })
+    expect(port.annotations).toEqual([])
+    expect(port.forSource(source)).toEqual([])
+    expect(port.total).toBe(0)
+    await act(async () => tail.resolve({ ...preview, items: items.slice(0, -1) }))
+    expect(port.loading).toBe(false)
+    expect(port.initialReadingPage).toBeUndefined()
+    expect(port.forSource(source)).toHaveLength(items.length)
+  })
+
+  it('invalidates a displayed reading prefix and does not restore a deleted pending row', async () => {
+    installStore()
+    const tail = deferred<PdfAnnotationListResult>()
+    vi.mocked(window.api.pdfAnnotations.list)
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce(preview)
+      .mockReturnValueOnce(tail.promise)
+    await render()
+    const notify = vi.mocked(window.api.pdfAnnotations.onChanged).mock.calls[0][0]
+    await act(async () => notify({ scope: { literatureVersionId: 'other' }, id: chronological.id }))
+    expect(port.initialReadingPage).toBeDefined()
+    await act(async () => notify({ scope: { literatureVersionId: 'v1' }, id: chronological.id }))
+    expect(port.initialReadingPage).toBeUndefined()
+    await act(async () => tail.resolve({ ...preview, items: items.slice(0, -1) }))
+    expect(port.forSource(source)).toHaveLength(items.length - 1)
+    expect(port.forSource(source)).not.toContainEqual(chronological)
+  })
+
+  it('ignores the old reading prefix when changing Literature attachment', async () => {
+    installStore()
+    const oldPreview = deferred<PdfAnnotationListResult>()
+    vi.mocked(window.api.pdfAnnotations.list)
+      .mockResolvedValueOnce(firstPage)
+      .mockReturnValueOnce(oldPreview.promise)
+    await render()
+    await render('v2')
+    await act(async () => oldPreview.resolve(preview))
+    expect(port.document?.versionId).toBe('v2')
+    expect(port.initialReadingPage).toBeUndefined()
+    expect(port.annotations).toEqual([])
+  })
+
+  it('falls back to the chronological load when the reading prefix request fails', async () => {
+    installStore()
+    vi.mocked(window.api.pdfAnnotations.list)
+      .mockResolvedValueOnce(firstPage)
+      .mockRejectedValueOnce(new Error('Reading preview unavailable'))
+      .mockResolvedValueOnce({ ...preview, items: items.slice(0, -1) })
+    await render()
+    expect(port.loading).toBe(false)
+    expect(port.loadError).toBeUndefined()
+    expect(port.initialReadingPage).toBeUndefined()
+    expect(port.forSource(source)).toHaveLength(items.length)
   })
 })
 

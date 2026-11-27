@@ -989,7 +989,7 @@ describe('BackendRoutePlanner model-change projection', () => {
       backendId: 'codex:provider-a',
       route: 'codex-bridge',
       model: 'model-a',
-      sessionModel: 'gpt-5.4',
+      sessionModel: 'gpt-5.5',
       sessionModelRequired: false,
       supportsImageInput: false,
       reasoningEffort: 'max',

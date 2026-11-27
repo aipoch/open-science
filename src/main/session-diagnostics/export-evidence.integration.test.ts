@@ -6,11 +6,62 @@ import { afterEach, expect, it } from 'vitest'
 import { createLogger, errorLogFields, flushLogs, initLogger } from '@aipoch/diagnostics/node'
 import { logPermissionDiagnostic } from '../permission-grants/diagnostics'
 import { exportDiagnosticFiles } from '../diagnostics/integration-test-helpers'
+import { NotebookExecutionIntent } from '../notebook/execution-intent'
 
 const roots: string[] = []
 afterEach(async () => {
   await flushLogs()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+it('links a refused Notebook dispatch to its first stop in the exported main log', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'notebook-refusal-diagnostics-'))
+  roots.push(root)
+  const logDir = join(root, 'logs')
+  const configRoot = join(root, 'config')
+  await mkdir(configRoot)
+  initLogger({ logDir, runId: 'backend', mirrorToConsole: false })
+  const scope = {
+    projectId: 'project',
+    sessionId: 'session',
+    promptMessageId: 'correction',
+    messageBranchId: 'branch'
+  }
+  const intent = new NotebookExecutionIntent(scope)
+  const reason = 'originating-execution-context-unavailable'
+  const origin = { phase: 'prompt-admission', mode: 'reviewer', originMessageId: 'reviewed' }
+  const operationId = intent.block(reason, origin)
+  intent.block('manual-release')
+  expect(() => intent.assertDispatch('PRIVATE_RPC_CREDENTIAL', 'executeControl')).toThrow()
+  await flushLogs()
+
+  const files = await exportDiagnosticFiles(
+    {
+      configRoot,
+      dataRoot: join(root, 'data'),
+      logPath: join(logDir, 'main.log'),
+      appVersion: 'test'
+    },
+    { projectId: 'project', sessionId: 'session', selectedItems: ['log:main.log'] }
+  )
+  const exported = files['logs/main.log']
+  expect(
+    exported
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+  ).toMatchObject([
+    {
+      event: 'Notebook execution context stopped',
+      diagnostics: { ...scope, ...origin, operationId, reason }
+    },
+    {
+      event: 'Notebook execution request refused',
+      diagnostics: { operationId, operation: 'executeControl', reason, startedAt: intent.refusalAt }
+    }
+  ])
+  expect(await readFile(join(logDir, 'main.log'), 'utf8')).not.toContain('PRIVATE_RPC_CREDENTIAL')
+  expect(exported).not.toContain('PRIVATE_RPC_CREDENTIAL')
 })
 
 it('preserves Notebook cleanup and Shell termination evidence in the diagnostic archive', async () => {

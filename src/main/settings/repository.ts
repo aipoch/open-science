@@ -3,6 +3,7 @@ import {
   type ProviderCatalogState
 } from '../../shared/provider-model-catalog-codec'
 import {
+  availableOfficialModelIds,
   isCatalogModelAvailable,
   KILO_FREE_MODEL_ID,
   resolveOfficialModelCatalog
@@ -13,7 +14,12 @@ import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { BootstrapError } from '../../shared/bootstrap'
-import { getOfficialVendor } from '@aipoch/providers'
+import {
+  configuredProviderConnectionKind,
+  getOfficialVendor,
+  sameConfiguredProviderConnection,
+  selectConfiguredModelId
+} from '@aipoch/providers'
 import type { LanguagePreference } from '../../shared/locale'
 import type { PackageMirror } from '../../shared/mirror'
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
@@ -146,6 +152,8 @@ const sameCatalogTarget = (left: StoredProvider, right: StoredProvider): boolean
   left.type === right.type &&
   left.vendorId === right.vendorId &&
   left.region === right.region &&
+  sameConfiguredProviderConnection(left, right) &&
+  ((!left.cloudflare && !left.manualConnection) || left.model === right.model) &&
   left.keyRef === right.keyRef &&
   isDeepStrictEqual(left.catalogParameters ?? {}, right.catalogParameters ?? {})
 
@@ -230,19 +238,33 @@ class SettingsRepository {
   }
 
   /** Provision Kilo and select its free route when users skip onboarding. */
-  async addOnboardingKiloProvider(): Promise<void> {
+  async addOnboardingKiloProvider(framework?: AgentFrameworkId): Promise<void> {
     await this.mutate((settings) => {
-      if (settings.onboardingCompletedAt !== undefined) return settings
-      const existing = settings.providers.find(isKiloProvider)
-      if (!existing && settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers)
+      if (framework === undefined && settings.onboardingCompletedAt !== undefined) return settings
+      const existing = settings.providers.find(
+        (provider) => isKiloProvider(provider) && (framework === undefined || !provider.keyRef)
+      )
+      if (
+        framework !== undefined &&
+        (settings.agentFrameworkId !== framework ||
+          (settings.activeProviderId &&
+            (settings.activeProviderId !== existing?.id ||
+              settings.activeModel !== KILO_FREE_MODEL_ID)))
+      )
+        throw new BootstrapError('configuration_conflict')
+      if (!existing && settings.providers.length >= PROVIDER_RESOURCE_LIMITS.providers) {
+        if (framework !== undefined) throw new BootstrapError('configuration_conflict')
         return settings
+      }
       const provider = existing ?? createDefaultKiloProvider(settings)
       if (
         !resolveOfficialModelCatalog({ ...provider, hasKey: false }).some(
           (model) => model.id === KILO_FREE_MODEL_ID && isCatalogModelAvailable(model)
         )
-      )
+      ) {
+        if (framework !== undefined) throw new BootstrapError('runtime_unavailable')
         return settings
+      }
       return {
         ...settings,
         kiloDefaultInitialized: true,
@@ -324,6 +346,8 @@ class SettingsRepository {
     provider: StoredProvider,
     existingId?: string,
     configEdit?: {
+      expectedFramework?: AgentFrameworkId
+      createOnly?: boolean
       expectedConfigRevision?: number
       catalogBaseline?: ProviderCatalogState
       validationMatches?: (merged: StoredProvider) => boolean
@@ -335,10 +359,16 @@ class SettingsRepository {
     guard?: { expectedLabCatalogToken?: string; isCurrent?: () => boolean }
   ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      if (
+        configEdit?.expectedFramework !== undefined &&
+        settings.agentFrameworkId !== configEdit.expectedFramework
+      )
+        throw new BootstrapError('configuration_conflict')
       if (guard?.isCurrent && !guard.isCurrent()) {
         throw new Error('Lab catalog changed. The stale catalog was not written.')
       }
       const index = settings.providers.findIndex((existing) => existing.id === provider.id)
+      if (configEdit?.createOnly && index >= 0) throw new BootstrapError('configuration_conflict')
       if (existingId && !settings.providers.some(({ id }) => id === existingId))
         throw new Error('Provider no longer exists.')
       const source = settings.providers.find(({ id }) => id === (existingId ?? provider.id))
@@ -414,14 +444,27 @@ class SettingsRepository {
             ? { ...provider, codexAutoUseHttps: true }
             : provider
       } else providers.push(provider)
+      let activeModel = settings.activeModel
+      if (
+        configEdit &&
+        settings.activeProviderId === provider.id &&
+        (provider.type === 'custom' || configuredProviderConnectionKind(provider.vendorId))
+      ) {
+        const availableIds =
+          provider.type === 'custom'
+            ? (provider.localModels?.map(({ id }) => id) ??
+              (provider.model ? [provider.model] : []))
+            : availableOfficialModelIds(provider)
+        // Apply explicit single-model edits to the current selection. Sessions keep their own pins.
+        const changedSingleModel =
+          provider.type === 'official' && !provider.manualModels && source?.model !== provider.model
+        if (changedSingleModel || !activeModel || !availableIds.includes(activeModel))
+          activeModel = selectConfiguredModelId(provider.model, availableIds)
+      }
       return {
         ...settings,
         providers,
-        // A custom provider has one model. Keep its active selection in the same save so
-        // validation and runtime resolution cannot keep using the model from before the edit.
-        ...(configEdit && provider.type === 'custom' && settings.activeProviderId === provider.id
-          ? { activeModel: provider.model }
-          : {}),
+        ...(activeModel !== settings.activeModel ? { activeModel } : {}),
         ...(isClaudeSubscriptionProvider(provider.type) &&
         isClaudeSubscriptionProviderId(provider.id)
           ? { claudeSubscriptionProviderId: provider.id }
@@ -849,8 +892,13 @@ class SettingsRepository {
 
   // Sets (or clears) the active provider pointer and its model, ignoring ids that do not exist. The
   // caller (service) resolves the concrete model, so an undefined model here clears it.
-  async setActiveProvider(id: string | undefined, model?: string): Promise<StoredSettings> {
+  async setActiveProvider(
+    id: string | undefined,
+    model?: string,
+    assertCurrent?: (settings: StoredSettings) => void
+  ): Promise<StoredSettings> {
     return this.mutate((settings) => {
+      assertCurrent?.(settings)
       if (id !== undefined && !settings.providers.some((provider) => provider.id === id)) {
         return settings
       }

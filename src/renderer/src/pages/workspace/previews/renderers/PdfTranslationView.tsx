@@ -239,6 +239,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
   const detailsId = useId()
   const selectedRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchToggleRef = useRef<HTMLButtonElement>(null)
   const [copiedId, setCopiedId] = useState<string>()
   const [filter, setFilter] = useState<'all' | 'issues' | 'translated' | 'failed' | 'unfilled'>(
     'all'
@@ -246,6 +247,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
   const [localSearchOpen, setLocalSearchOpen] = useState(Boolean(query.trim()))
   const searchOpen = controlledSearchOpen ?? localSearchOpen
   const [reviewOpen, setReviewOpen] = useState(!collapsed || Boolean(query.trim() || selectedId))
+  const reviewVisible = reviewOpen || searchOpen
   const [reviewContext, setReviewContext] = useState({ collapsed, selectedId, query })
   if (
     reviewContext.collapsed !== collapsed ||
@@ -258,8 +260,8 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
     else if (collapsed && !reviewContext.collapsed && !selectedId) setReviewOpen(false)
   }
   useEffect(() => {
-    onReviewOpenChange?.(reviewOpen)
-  }, [onReviewOpenChange, reviewOpen])
+    onReviewOpenChange?.(reviewVisible)
+  }, [onReviewOpenChange, reviewVisible])
   useEffect(() => {
     selectedRef.current?.scrollIntoView({ block: 'nearest' })
   }, [selectedId])
@@ -341,6 +343,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
   )
   const deferredQuery = useDeferredValue(query)
   const normalizedQuery = deferredQuery.trim().toLocaleLowerCase()
+  const metadataQuery = normalizedQuery.replace(/^#/, '')
   const units = useMemo(
     () =>
       translation.units.filter(
@@ -351,16 +354,24 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
             (filter === 'failed' && unit.translationFailed) ||
             (filter === 'unfilled' && isCurrentTranslation(unit) && unfilledIds.has(unit.id))) &&
           (!normalizedQuery ||
+            (metadataQuery &&
+              (String(paragraphNumbers.get(unit.id)) === metadataQuery ||
+                unit.fragments.some(
+                  (fragment) => String(fragment.pageNumber) === metadataQuery
+                ))) ||
             ((isCurrentTranslation(unit) || unit.translationFailed) &&
               (isCurrentTranslation(unit) ? unit.translation : unit.source)
                 .toLocaleLowerCase()
                 .includes(normalizedQuery)))
       ),
-    [normalizedQuery, filter, unfilledIds, translation.units]
+    [metadataQuery, normalizedQuery, filter, unfilledIds, translation.units, paragraphNumbers]
   )
   return (
     <TooltipProvider delayDuration={100} skipDelayDuration={300}>
-      <div className="shrink-0 border-t border-border" data-state={reviewOpen ? 'open' : 'closed'}>
+      <div
+        className="shrink-0 border-t border-border"
+        data-state={reviewVisible ? 'open' : 'closed'}
+      >
         <div
           className="sticky top-0 z-10 border-b border-border bg-background"
           data-translation-review-header
@@ -369,7 +380,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
             <Button
               variant="ghost"
               size="sm"
-              aria-pressed={reviewOpen}
+              aria-pressed={reviewVisible}
               className="group min-h-10 min-w-0 flex-1 justify-start gap-2 rounded-md px-2 py-2 text-left hover:bg-muted/50 aria-expanded:bg-muted/50"
               onClick={() => setReviewOpen((open) => !open)}
             >
@@ -377,7 +388,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                 aria-hidden="true"
                 className={cn(
                   'size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none',
-                  reviewOpen && 'rotate-90'
+                  reviewVisible && 'rotate-90'
                 )}
               />
               <span className="min-w-0 flex-1 truncate">{t('Translation')}</span>
@@ -404,6 +415,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={searchOpen ? t('Close search') : t('Search translation')}
+                  ref={searchToggleRef}
                   aria-pressed={searchOpen}
                   className="size-8 shrink-0 hover:bg-muted/50 aria-pressed:bg-muted/50"
                   onClick={toggleSearch}
@@ -500,7 +512,7 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
             ))}
           </div>
         </div>
-        {reviewOpen ? (
+        {reviewVisible ? (
           <div className="space-y-2 px-5 pb-3 pt-2">
             {searchOpen ? (
               <label className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -510,6 +522,13 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                   data-translation-search
                   value={query}
                   onChange={(event) => onQueryChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape' || event.nativeEvent.isComposing) return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    toggleSearch()
+                    searchToggleRef.current?.focus({ preventScroll: true })
+                  }}
                   className="min-w-0 rounded-md border border-input bg-background px-2 py-2 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </label>
@@ -618,7 +637,8 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                                           'This translation is not yet placed in the PDF. You can read it here.'
                                         )}
                                 </p>
-                                {layoutFailures?.[unit.id] ? (
+                                {layoutFailures?.[unit.id] &&
+                                (selectedId !== unit.id || !unfilledIds.has(unit.id)) ? (
                                   <LayoutFailureDetails
                                     failure={layoutFailures[unit.id]}
                                     retained={retainedIds.has(unit.id)}
@@ -642,13 +662,9 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                                     aria-label={
                                       layoutBusy
                                         ? t('Preparing translated PDF…')
-                                        : unchangedLayoutIds.has(unit.id)
-                                          ? t('Layout unchanged')
-                                          : t('Retry PDF layout')
+                                        : t('Retry PDF layout')
                                     }
-                                    disabled={
-                                      layoutBusy || retryDisabled || unchangedLayoutIds.has(unit.id)
-                                    }
+                                    disabled={layoutBusy || retryDisabled}
                                     onClick={() => onRetryLayout(unit.id)}
                                   >
                                     {layoutBusy ? (
@@ -666,18 +682,13 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                                 <p>
                                   {layoutBusy
                                     ? t('Preparing translated PDF…')
-                                    : unchangedLayoutIds.has(unit.id)
-                                      ? t('Layout unchanged')
-                                      : t('Retry PDF layout')}
+                                    : t('Retry PDF layout')}
                                 </p>
+                                {unchangedLayoutIds.has(unit.id) && <p>{t('Layout unchanged')}</p>}
                                 <p>
-                                  {unchangedLayoutIds.has(unit.id)
-                                    ? t(
-                                        'Retrying did not change this passage. You can read its translation here.'
-                                      )
-                                    : t(
-                                        'Rebuild the PDF using saved translations, without calling the model.'
-                                      )}
+                                  {t(
+                                    'Rebuild the PDF using saved translations, without calling the model.'
+                                  )}
                                 </p>
                               </TooltipContent>
                             </Tooltip>
@@ -773,6 +784,14 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                         className="overflow-hidden"
                       >
                         <div className="space-y-2 border-t border-primary/15 px-3 py-3">
+                          {unfilledIds.has(unit.id) && layoutFailures?.[unit.id] ? (
+                            <div className="text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                              <LayoutFailureDetails
+                                failure={layoutFailures[unit.id]}
+                                retained={retainedIds.has(unit.id)}
+                              />
+                            </div>
+                          ) : null}
                           {!isCurrentTranslation(unit) && !unit.translationFailed ? (
                             <p className="text-xs text-status-warning-foreground dark:text-status-warning-dark-foreground">
                               {t('Source changed. This translation is for review only.')}

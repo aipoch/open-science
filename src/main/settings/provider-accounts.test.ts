@@ -19,7 +19,7 @@ import type { ClaudeSharedAuthControllerPort, ClaudeSharedAuthStatus } from './c
 import type { XaiOAuthControllerPort } from './xai-oauth'
 import type { ValidateProviderResult } from '../../shared/settings'
 import type { ResolvedProvider } from './provider-env'
-import type { StoredSettings } from './types'
+import type { StoredProvider, StoredSettings } from './types'
 import { getAgentFramework } from '../agent-framework'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
@@ -55,6 +55,264 @@ const deferred = <T>(): {
 }
 
 describe('ProviderAccountsModule', () => {
+  it('tests and saves the same Foundry model when the selected deployment was removed', async () => {
+    await repository.setAgentFramework('open-science-agent')
+    const draft = {
+      type: 'official',
+      vendorId: 'microsoft-foundry',
+      manualConnection: { location: 'research', protocol: 'chat-completions' },
+      model: 'removed-deployment',
+      manualModels: [{ id: 'new-deployment' }],
+      key: 'fixture'
+    } as const
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    expect(await module.validateProvider({ draft })).toMatchObject({ ok: true })
+    expect(await module.validateProvider({ edit: draft })).toMatchObject({ ok: true })
+    expect(await module.saveValidatedProvider(draft)).toMatchObject({ validation: { ok: true } })
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).model)).toEqual([
+      'new-deployment',
+      'new-deployment',
+      'new-deployment'
+    ])
+    expect((await repository.getSettings()).providers[0].model).toBe('new-deployment')
+  })
+
+  it('updates the active model when a validated edit changes the configured model', async () => {
+    const framework = getAgentFramework('open-science-agent')
+    await repository.setAgentFramework(framework.id)
+    const original = {
+      id: 'vectrust',
+      type: 'official',
+      vendorId: 'vectrust',
+      manualConnection: { location: 'api.openai-next.com', protocol: 'chat-completions' },
+      model: 'gpt-6.2-sol',
+      key: 'fixture'
+    } as const
+    await module.upsertProvider(original)
+    await module.setActiveProvider(original.id, original.model)
+    vi.stubGlobal('fetch', async () =>
+      Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
+    )
+
+    const next = 'gpt-6.2-astra'
+    expect(
+      await module.saveValidatedProvider({
+        ...original,
+        model: next,
+        key: undefined,
+        requireExisting: true
+      })
+    ).toMatchObject({ validation: { ok: true }, providerId: original.id })
+    const {
+      providers: [stored],
+      activeModel
+    } = await repository.getSettings()
+    expect(activeModel).toBe(next)
+    expect(
+      module.resolveRuntimeTarget(
+        stored,
+        { kind: 'configured', requestedModel: activeModel },
+        framework
+      ).effectiveModel
+    ).toBe(next)
+  })
+
+  it('recovers the current Cloudflare model on load and still rejects a pinned model from the old mode', async () => {
+    const old = '@cf/openai/gpt-oss-20b'
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        version: 2,
+        activeProviderId: 'gateway',
+        activeModel: old,
+        providers: [
+          {
+            id: 'gateway',
+            type: 'official',
+            vendorId: 'cloudflare-ai-gateway',
+            name: 'Gateway',
+            cloudflare: { accountId: 'a'.repeat(32), gatewayId: 'research', mode: 'anthropic' },
+            model: old,
+            manualModels: [{ id: old }]
+          }
+        ]
+      })
+    )
+
+    const {
+      providers: [stored],
+      activeModel
+    } = await repository.getSettings()
+    const framework = getAgentFramework('claude-code')
+    expect(activeModel).toBe('claude-sonnet-5-5')
+    expect(
+      module.resolveRuntimeTarget(
+        stored,
+        { kind: 'configured', requestedModel: activeModel },
+        framework
+      ).effectiveModel
+    ).toBe(activeModel)
+    expect(() =>
+      module.resolveRuntimeTarget(stored, { kind: 'required', model: old }, framework)
+    ).toThrow(/not available/)
+  })
+
+  it('reopens cloud model rows and uses the selected model’s own limits and reasoning', async () => {
+    const request = {
+      id: 'foundry',
+      type: 'official',
+      vendorId: 'microsoft-foundry',
+      manualConnection: { location: 'research', protocol: 'chat-completions' },
+      key: 'fixture',
+      manualModels: [
+        { id: 'research-fast', displayName: 'Fast', contextWindow: 96_000 },
+        {
+          id: 'research-deep',
+          displayName: 'Deep',
+          contextWindow: 128_000,
+          reasoningEffortPreset: 'low-high'
+        }
+      ]
+    } as const
+    await module.upsertProvider(request)
+    const reopened = (await new SettingsRepository(dir).getSettings()).providers[0]
+    expect(reopened.model).toBe('research-fast')
+    expect(module.toProviderView(reopened).manualModels).toEqual(request.manualModels)
+    expect(module.toProviderView(reopened).models).toEqual(['research-fast', 'research-deep'])
+    expect(
+      module.resolveRuntimeModelCatalog(reopened, {
+        id: 'open-science-agent',
+        supportedApiTypes: ['chat-completions']
+      })
+    ).toEqual([
+      expect.objectContaining({
+        effectiveModel: 'research-fast',
+        provider: expect.objectContaining({ contextWindow: 96_000 }),
+        reasoningEffortProfile: { supported: false }
+      }),
+      expect.objectContaining({
+        effectiveModel: 'research-deep',
+        provider: expect.objectContaining({ contextWindow: 128_000 }),
+        reasoningEffortProfile: { supported: true, slots: ['low', 'high', 'high', 'high', 'high'] }
+      })
+    ])
+  })
+
+  it('uses published and deployment context windows after reopening saved providers', async () => {
+    const cloudflare = {
+      id: 'workers-ai',
+      type: 'official',
+      vendorId: 'cloudflare-ai-gateway',
+      cloudflare: { accountId: 'a'.repeat(32), gatewayId: 'research', mode: 'rest' },
+      model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      key: 'test-cloudflare-key'
+    } as const
+    const foundry = {
+      id: 'foundry',
+      type: 'official',
+      vendorId: 'microsoft-foundry',
+      manualConnection: { location: 'research', protocol: 'chat-completions' },
+      model: 'deployment-opaque-id',
+      contextWindow: 96_000,
+      key: 'test-foundry-key'
+    } as const
+
+    await module.upsertProvider(cloudflare)
+    await module.upsertProvider(foundry)
+    const stored = async (id: string): Promise<StoredProvider> =>
+      (await new SettingsRepository(dir).getSettings()).providers.find((p) => p.id === id)!
+    expect(module.resolveProvider(await stored(cloudflare.id)).contextWindow).toBe(24_000)
+    const workers = await stored(cloudflare.id)
+    expect(module.resolveActiveModel(workers, '@cf/openai/gpt-oss-20b')).toBe(
+      '@cf/openai/gpt-oss-20b'
+    )
+    expect(module.resolveProvider(workers, '@cf/openai/gpt-oss-20b')).toMatchObject({
+      apiEndpoints: ['chat-completions'],
+      contextWindow: 128_000
+    })
+    expect(module.resolveProvider(await stored(foundry.id)).contextWindow).toBe(96_000)
+
+    await module.upsertProvider({
+      ...cloudflare,
+      key: undefined,
+      model: '@cf/openai/gpt-oss-120b'
+    })
+    expect(module.resolveProvider(await stored(cloudflare.id)).contextWindow).toBe(128_000)
+
+    const invalidSwitch = {
+      ...cloudflare,
+      cloudflare: { ...cloudflare.cloudflare, mode: 'anthropic' },
+      key: 'test-anthropic-key',
+      model: 'claude-sonnet-5-5',
+      manualModels: [{ id: 'claude-sonnet-5-5' }, { id: cloudflare.model }]
+    } as const
+    await expect(module.upsertProvider(invalidSwitch)).rejects.toThrow('incompatible')
+    expect((await stored(cloudflare.id)).cloudflare?.mode).toBe('rest')
+
+    await module.upsertProvider({
+      ...foundry,
+      contextWindow: undefined,
+      key: undefined,
+      name: 'Renamed'
+    })
+    expect(module.resolveProvider(await stored(foundry.id)).contextWindow).toBe(96_000)
+    await module.upsertProvider({
+      ...foundry,
+      contextWindow: undefined,
+      key: undefined,
+      model: 'another-deployment'
+    })
+    expect(module.resolveProvider(await stored(foundry.id)).contextWindow).toBeUndefined()
+  })
+
+  it('resolves Vectrust context defaults for the selected protocol and retains a saved override', async () => {
+    const provider = {
+      id: 'vectrust',
+      type: 'official',
+      vendorId: 'vectrust',
+      model: 'gpt-6.2-sol',
+      key: 'test-vectrust-key'
+    } as const
+    const location = 'api.openai-next.com'
+    const read = async (): Promise<ResolvedProvider> => {
+      const { providers } = await new SettingsRepository(dir).getSettings()
+      return module.resolveProvider(providers.find(({ id }) => id === provider.id)!)
+    }
+
+    await module.upsertProvider({
+      ...provider,
+      manualConnection: { location, protocol: 'chat-completions' }
+    })
+    expect(await read()).toMatchObject({
+      contextWindow: 1_050_000,
+      apiEndpoints: ['chat-completions']
+    })
+    await module.upsertProvider({
+      ...provider,
+      manualConnection: { location, protocol: 'responses' }
+    })
+    expect(await read()).toMatchObject({ contextWindow: 1_050_000, apiEndpoints: ['responses'] })
+    const messages = {
+      ...provider,
+      model: 'claude-sonnet-5-5',
+      manualConnection: { location, protocol: 'messages' }
+    } as const
+    await module.upsertProvider(messages)
+    expect(await read()).toMatchObject({ contextWindow: 1_000_000, apiEndpoints: ['messages'] })
+    await module.upsertProvider({ ...messages, contextWindow: 200_000 })
+    expect((await read()).contextWindow).toBe(200_000)
+    await module.upsertProvider({ ...messages, model: 'constructor' })
+    expect((await read()).contextWindow).toBe(32_768)
+    expect(await module.refreshProviderModels({ providerId: provider.id })).toMatchObject({
+      ok: false,
+      code: 'unsupported'
+    })
+  })
+
   it.each([undefined, '', '   ', 'not-a-url'])(
     'rejects local invalid base URL %s without either probe',
     async (baseUrl) => {
@@ -1431,7 +1689,8 @@ describe('ProviderAccountsModule', () => {
     const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth').mockResolvedValue({
       authenticated: true,
       model: 'model',
-      models: ['model']
+      models: ['model'],
+      modelReasoningEfforts: { model: ['high'] }
     })
     const login = { site: 'internal', action: 'login', mode: 'shared' } as const
     const id = codeBuddyAccounts.internal.id
@@ -1449,12 +1708,14 @@ describe('ProviderAccountsModule', () => {
       )
       expect(await stored()).toMatchObject({
         codeBuddyAuthMode: 'shared',
-        fetchedModels: ['model']
+        fetchedModels: ['model'],
+        modelReasoningEfforts: { model: ['high'] }
       })
       auth.mockClear()
       await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
       expect((await stored())?.disconnectedAt).toEqual(expect.any(Number))
       expect((await stored())?.fetchedModels).toBeUndefined()
+      expect((await stored())?.modelReasoningEfforts).toBeUndefined()
       expect(await module.codeBuddyAccount({ site: 'internal', action: 'status' })).toMatchObject({
         ok: false
       })
@@ -1473,10 +1734,20 @@ describe('ProviderAccountsModule', () => {
   it('replaces only the refreshed CodeBuddy catalog, keeps it on failure, and clears it on logout', async () => {
     const auth = vi.spyOn(codeBuddyAuth, 'runCodeBuddyAuth')
     try {
-      auth.mockResolvedValue({ authenticated: true, model: 'old', models: ['old'] })
+      auth.mockResolvedValue({
+        authenticated: true,
+        model: 'old',
+        models: ['old'],
+        modelReasoningEfforts: { old: ['low', 'high'] }
+      })
       await module.codeBuddyAccount({ site: 'internal', action: 'login' })
       await module.codeBuddyAccount({ site: 'external', action: 'login' })
-      auth.mockResolvedValue({ authenticated: true, model: 'new', models: ['new'] })
+      auth.mockResolvedValue({
+        authenticated: true,
+        model: 'new',
+        models: ['new'],
+        modelReasoningEfforts: { new: ['high'] }
+      })
       await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })
       auth.mockResolvedValue({ authenticated: true })
       expect(await module.codeBuddyAccount({ site: 'internal', action: 'refresh' })).toMatchObject({
@@ -1487,6 +1758,9 @@ describe('ProviderAccountsModule', () => {
       expect(
         (await records()).find((p) => p.id === codeBuddyAccounts.internal.id)?.fetchedModels
       ).toEqual(['new'])
+      expect(
+        (await records()).find((p) => p.id === codeBuddyAccounts.internal.id)?.modelReasoningEfforts
+      ).toEqual({ new: ['high'] })
       auth.mockResolvedValue({ authenticated: false })
       await module.codeBuddyAccount({ site: 'internal', action: 'logout' })
       const providers = await records()
@@ -1494,6 +1768,7 @@ describe('ProviderAccountsModule', () => {
       expect(china).toBeDefined()
       expect(china?.model).toBeUndefined()
       expect(china?.fetchedModels).toBeUndefined()
+      expect(china?.modelReasoningEfforts).toBeUndefined()
       expect(providers.find((p) => p.id === codeBuddyAccounts.external.id)?.fetchedModels).toEqual([
         'old'
       ])

@@ -53,18 +53,17 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-### 💡 AIPOCH Open-Science v1.3.3 更新
+### 💡 AIPOCH Open-Science v1.3.5 更新
 
-_2026 年 11 月 21 日_
+_2026 年 11 月 24 日_
 
-- **自動更新**：在 macOS 上，符合條件的更新可在你退出應用程式時自行安裝；在 Windows 和 Linux 上，更新可在你的工作過程中為下次啟動預備——背景下載需要不受限制的網路與儲存空間，手動更新路徑依然保留。
-- **內建 Agent 成為預設**：新專案與新工作階段在任何地方（包含全新安裝的 CLI 與 SDK）皆以內建 Open-Science Agent 啟動；外部 Agent 執行環境只在你選用時才按需安裝。
-- **更精簡的應用程式**：macOS 與 Windows 上的安裝檔案更小，內建離線 npm 執行環境改為以 Node 22 編譯，不再隨附一千多個鬆散的套件檔案。
-- **統一的圖像編輯**：編輯指令位於對話輸入列中，從任何預覽皆可透過滑鼠停駐或鍵盤操作進入編輯，全程支援版本瀏覽。
-- **失敗會說明原因**：請求、載入、匯入與 Notebook 失敗現在會指明實際發生的狀況，並區分已停止的執行與從未回應的工作。
-- **設定捷徑回來了**：Skills、Specialists 與 Connectors 重新回到「設定」中，各自開啟所屬類別，並返回你原先所在的位置。
+- **macOS 更新更小**：應用程式內更新改為下載簽章差量，而非完整安裝程式，大多數更新只需傳輸一小部分資料。
+- **閱讀文獻不再打斷思路**：圖表可從內文引用處直接預覽，選取的段落會在 PDF 閱讀器中原位翻譯。
+- **更多模型連線方式**：雲端閘道（Cloudflare AI Gateway、AWS Bedrock Runtime、Microsoft Foundry、Vectrust）與本機預設（Ollama、LM Studio、llama.cpp、vLLM）加入供應商目錄。
+- **更輕、更穩的應用程式**：對話紀錄與 Notebook 圖表改為按需載入，Notebook 在繼續工作前會重新檢查記憶體准入。
+- **更可靠的復原**：工作階段復原在供應商無法使用時仍可繼續，PDF 翻譯更忠實地保留原生版面配置。
 
-[查看 v1.3.3 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.3.3)
+[查看 v1.3.5 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.3.5)
 
 <a id="share-your-research"></a>
 

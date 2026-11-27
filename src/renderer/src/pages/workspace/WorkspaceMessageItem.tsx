@@ -4,6 +4,7 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatDisplayNumber } from '@/lib/locale-format'
 import { cn, formatByteSize } from '@/lib/utils'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 import { useSessionStore } from '@/stores/session-store'
@@ -27,10 +28,20 @@ import {
   Pencil
 } from 'lucide-react'
 import { Collapsible } from 'radix-ui'
-import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AcpTurnTokenUsage } from '../../../../shared/acp-usage-contract'
 import type { ProvenanceMessagePart } from '../../../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../../../shared/artifact-version-locator'
 import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { PersistedRuntimeSegment } from '../../../../shared/conversation-graph'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
@@ -78,6 +89,7 @@ import { ArtifactPreview } from './artifact-preview'
 import {
   ARTIFACT_PREVIEW_BYTES,
   getArtifactName,
+  getArtifactPreviewFormat,
   isPendingArtifactPublication,
   shouldReadArtifactPreview
 } from './artifact-preview-utils'
@@ -244,7 +256,9 @@ const TurnTokenUsage = ({
   const frameworkName = framework?.displayName
   const providerId = resolveSessionProviderId(runtimeIdentity?.backendId)
   const provider = providers?.find((candidate) => candidate.id === providerId)
-  const kindKey = provider ? providerKindKey(provider.type, provider.vendorId) : undefined
+  const kindKey = provider
+    ? providerKindKey(provider.type, provider.vendorId, provider.localPresetId)
+    : undefined
   const model = runtimeIdentity?.model?.trim()
   const accessibleLabel = usage
     ? t('Token usage for this response')
@@ -873,6 +887,7 @@ const VisibleArtifactPreview = ({
         // An in-flight thumbnail can settle after unmount or after desktop shutdown starts.
         if (
           canceled ||
+          useDesktopRuntimeRecoveryStore.getState().closing ||
           (error instanceof Error &&
             String(error).endsWith('ApplicationCommandError: The local service is stopping.'))
         )
@@ -915,18 +930,40 @@ const ArtifactCard = ({
   const sizeLabel = formatByteSize(artifact.size) ?? ''
   const [setElement, isNearViewport] = useNearViewport<HTMLButtonElement>()
   const publicationPending = isPendingArtifactPublication(artifact)
+  const isPdf = getArtifactPreviewFormat(artifact) === 'pdf'
+  // The publication event can replace a Version locator with a storage path for the same PDF.
+  // Keep the thumbnail attached to the immutable Version across that metadata update.
+  const thumbnailPath =
+    isPdf &&
+    artifact.resolvedProjectId &&
+    artifact.resolvedSessionId &&
+    artifact.artifactId &&
+    artifact.versionId
+      ? createArtifactVersionLocator({
+          projectId: artifact.resolvedProjectId,
+          appSessionId: artifact.resolvedSessionId,
+          artifactId: artifact.artifactId,
+          versionId: artifact.versionId
+        })
+      : artifact.path
   const requestKey = JSON.stringify([
     artifact.id,
     artifact.artifactId ?? null,
     artifact.versionId ?? null,
     artifact.resolvedProjectId ?? null,
     artifact.resolvedSessionId ?? null,
-    artifact.path,
+    thumbnailPath,
     artifact.size ?? null,
     artifact.mtimeMs ?? null
   ])
-  const missing = useUnavailablePreviewProbe({
+  const [missingPdfKey, setMissingPdfKey] = useState<string>()
+  const reportPdfUnavailable = useCallback(
+    (unavailable: boolean) => setMissingPdfKey(unavailable ? requestKey : undefined),
+    [requestKey]
+  )
+  const probeMissing = useUnavailablePreviewProbe({
     enabled:
+      !isPdf &&
       isNearViewport &&
       !publicationPending &&
       Boolean(artifact.resolvedProjectId && artifact.artifactId),
@@ -939,6 +976,7 @@ const ArtifactCard = ({
     size: artifact.size,
     mtimeMs: artifact.mtimeMs
   })
+  const missing = isPdf ? !publicationPending && missingPdfKey === requestKey : probeMissing
 
   return (
     <GeneratedFileCard
@@ -952,17 +990,21 @@ const ArtifactCard = ({
       preview={
         <>
           <span className={cn('block size-full', missing && 'opacity-40')}>
-            {/* Unmount the reader outside the overscan window so message history stays lightweight. */}
-            {publicationPending ? null : isNearViewport ? (
+            {/* PDFs own visibility and availability as part of their shared thumbnail job. */}
+            {publicationPending ? null : isNearViewport && !isPdf ? (
               <VisibleArtifactPreview artifact={artifact} requestKey={requestKey} />
             ) : (
               <ArtifactPreview
-                artifact={artifact}
+                artifact={
+                  thumbnailPath === artifact.path ? artifact : { ...artifact, path: thumbnailPath }
+                }
                 projectId={artifact.resolvedProjectId}
                 sessionId={artifact.resolvedSessionId}
                 managedFileId={artifact.artifactId}
                 selectedVersionId={artifact.versionId}
-                isVisible={false}
+                isVisible={isNearViewport}
+                pdfIsVisible={isPdf ? isNearViewport : undefined}
+                onPdfUnavailableChange={isPdf ? reportPdfUnavailable : undefined}
               />
             )}
           </span>

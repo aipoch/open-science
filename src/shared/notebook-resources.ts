@@ -24,6 +24,7 @@ export type NotebookPendingDecision = {
   sessionId: string
   refusalId: string
   messageBranchId?: string
+  kind?: 'memory'
 }
 
 export type NotebookSessionResources = {

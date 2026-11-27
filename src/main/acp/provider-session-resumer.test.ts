@@ -31,6 +31,9 @@ import {
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
 
+import { taskRunTracing } from './task-run-tracing'
+import { HARNESS_TRACE_READINESS_METHOD } from '../harness-acp/config'
+
 const diagnosticLogs = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
@@ -442,6 +445,24 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it.each([true, false])(
+    'refuses an unconfigured exporter before attaching or refreshing the Session (attached=%s)',
+    async (attached) => {
+      const harness = createHarness({
+        attached,
+        initialBackend: { ...backend, framework: getAgentFramework('open-science-agent') }
+      })
+      harness.request.mockResolvedValueOnce({ ready: false })
+      const traced = { cwd: '/workspace', [taskRunTracing]: true }
+      await expect(harness.resume(traced)).rejects.toThrow('OTLP_TRACES_ENDPOINT')
+      expect(harness.request).toHaveBeenCalledOnce()
+      expect(harness.request.mock.calls[0][0]).toBe(HARNESS_TRACE_READINESS_METHOD)
+      expect(harness.configurePermissionProfile).not.toHaveBeenCalled()
+      expect(harness.provision).not.toHaveBeenCalled()
+      expect(harness.adopt).not.toHaveBeenCalled()
+    }
+  )
+
   it('preserves the selected CodeBuddy subscription site when refreshing Notebook credentials', async () => {
     const beforePromptDispatch = vi.fn().mockResolvedValue(undefined)
     const harness = createHarness({
@@ -682,6 +703,55 @@ describe('AcpProviderSessionResumer', () => {
     expect(assertResumeAllowed).not.toHaveBeenCalled()
     expect(transfer.writerReleased).toBe(false)
     expect(harness.adopt).not.toHaveBeenCalled()
+  })
+
+  it.each([codexResponsesBackend, codexResponsesCompatibilityBackend, codexBridgeBackend])(
+    'retries only a confirmed Codex writer handoff on $modelRoute',
+    async (initialBackend) => {
+      const threadId = '12345678-1234-4234-8234-123456789abc'
+      const harness = createHarness({
+        initialBackend: { ...initialBackend, providerContinuityToken: 'same-provider' },
+        providerSessionId: threadId
+      })
+      const busy = acp.RequestError.invalidRequest({ reason: 'thread_active_writer', threadId })
+      const request = {
+        providerSessionId: threadId,
+        providerContinuityToken: 'same-provider',
+        previousBackendId: initialBackend.backendId,
+        previousFrameworkId: 'codex' as const
+      }
+      harness.request.mockRejectedValueOnce(busy)
+      await expect(harness.resume(request)).rejects.toBe(busy)
+      expect(harness.request).toHaveBeenCalledTimes(1)
+
+      harness.request.mockRejectedValueOnce(busy)
+      await expect(
+        harness.resume(request, { providerSessionId: threadId, writerReleased: true })
+      ).resolves.toMatchObject({ sessionId: 'stable-app-session' })
+      expect(harness.request).toHaveBeenCalledTimes(3)
+      expect(harness.attachSession).toHaveBeenCalledOnce()
+      expect(harness.adopt).not.toHaveBeenCalled()
+    }
+  )
+
+  it('abandons a Codex handoff retry when the resume times out', async () => {
+    const threadId = '12345678-1234-4234-8234-123456789abc'
+    const harness = createHarness({
+      initialBackend: codexResponsesBackend,
+      providerSessionId: threadId
+    })
+    const rejected = Promise.withResolvers<void>()
+    harness.request.mockImplementationOnce(async () => {
+      rejected.resolve()
+      throw acp.RequestError.invalidRequest({ reason: 'thread_active_writer', threadId })
+    })
+    const result = harness.resume({}, { providerSessionId: threadId, writerReleased: true })
+    const failure = expect(result).rejects.toThrow('timed out')
+    await rejected.promise
+    harness.fireTimeout()
+    await failure
+    expect(harness.request).toHaveBeenCalledOnce()
+    expect(harness.attachSession).not.toHaveBeenCalled()
   })
 
   it('does not trust an unconfirmed writer transfer', async () => {

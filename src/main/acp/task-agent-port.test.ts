@@ -8,6 +8,7 @@ import {
   toAcpSessionAgentTarget,
   type SessionAgentTargetSource
 } from './session-agent-target'
+import { requiresTaskRunTracing, taskRunTracing } from './task-run-tracing'
 import { createAcpTaskAgentPort } from './task-agent-port'
 
 const taskProvenanceContext = (promptMessageId: string): AgentTurnProvenanceContext => ({
@@ -23,7 +24,9 @@ const taskProvenanceContext = (promptMessageId: string): AgentTurnProvenanceCont
 describe('ACP Task Agent port', () => {
   it('exposes only the Task execution capabilities', () => {
     expectTypeOf<keyof TaskAgentPort>().toEqualTypeOf<
+      | 'delegateInteractions'
       | 'withSessionAvailable'
+      | 'assertAttachedTracingReady'
       | 'listAttachedSessionIds'
       | 'createSession'
       | 'resumeSession'
@@ -31,6 +34,12 @@ describe('ACP Task Agent port', () => {
       | 'setMemoryEnabled'
       | 'prompt'
       | 'cancelPrompt'
+      | 'getTaskPermissions'
+      | 'respondTaskPermission'
+      | 'restoreTaskPermission'
+      | 'respondDelegatedPlan'
+      | 'questions'
+      | 'setContinuationTracker'
     >()
   })
 
@@ -368,17 +377,21 @@ describe('ACP Task Agent port', () => {
         promptMessageId: 'prompt-1',
         provenanceContext: taskProvenanceContext('prompt-1'),
         text: 'Research this.',
-        permissionPrompts: 'none'
+        permissionPrompts: 'none',
+        otelTraces: true
       },
       { onPromptAdmitted, onProviderPromptAccepted }
     )
 
     expect(sendPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({ permissionPrompts: 'none' }),
+      expect.objectContaining({ permissionPrompts: 'none', [taskRunTracing]: true }),
       expect.any(Function),
       onPromptAdmitted,
       'task'
     )
+    const forwarded = sendPrompt.mock.calls[0][0]
+    expect(forwarded).not.toHaveProperty('otelTraces')
+    expect(requiresTaskRunTracing(structuredClone(forwarded))).toBe(false)
     expect(onPromptAdmitted).toHaveBeenCalledOnce()
     expect(onProviderPromptAccepted).toHaveBeenCalledOnce()
   })

@@ -47,16 +47,10 @@ import { createSkillRuntimeAcpServerConfig } from '../skills/runtime-mcp-config'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-constants'
 
 const CODEX_PROVIDER_ID = 'open-science'
-// Catalog model used only for Codex's local metadata; the Responses bridge rewrites it to the selected
-// upstream provider model, so it never appears in the provider UI and does not decide which model
-// answers. It MUST be a classic tool-mode entry (tool_mode unset), not a `code_mode_only` model like
-// the gpt-5.6-* family: code-mode models advertise no function tools and instead drive an
-// OpenAI-hosted code-execution host that a custom Chat Completions gateway cannot provide, so Codex
-// sends zero tools and the agent can only chat. gpt-5.4 advertises the `shell_command` function tool
-// and accepts a 1M context override, while the bridge forwards those tools to Chat Completions.
-// (apply_patch is still a freeform tool the bridge
-// filters, so file edits route through shell rather than the dedicated patch tool.)
-export const CODEX_BRIDGE_MODEL = 'gpt-5.4'
+// The bridge needs a bundled classic-tool model to expose function-shaped MCP tools. The native
+// 0.166.0 catalog lists gpt-5.5 in classic mode. The bridge sends the selected upstream model ID.
+export const CODEX_BRIDGE_MODEL = 'gpt-5.5'
+const CODEX_BRIDGE_BUNDLED_CONTEXT_WINDOW = 272_000
 const CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95
 const CODEX_AUTO_COMPACT_CONTEXT_WINDOW_PERCENT = 90
 const CODEX_NATIVE_MODEL_CATALOG_FILENAME_PREFIX = 'model-catalog-'
@@ -74,6 +68,8 @@ const CODEX_BUNDLED_MODEL_IDS_BY_VERSION = {
   ],
   [CODEX_VERSION]: [
     'gpt-6-astra',
+    'gpt-6.1-sol',
+    'gpt-6.1-terra',
     'gpt-6-sol',
     'gpt-6-luna',
     'gpt-daybreak-blue-latest',
@@ -82,9 +78,6 @@ const CODEX_BUNDLED_MODEL_IDS_BY_VERSION = {
     'gpt-5.6-terra',
     'gpt-5.6-luna',
     'gpt-5.5',
-    'gpt-5.4',
-    'gpt-5.4-mini',
-    'gpt-5.2',
     'codex-auto-review'
   ]
 } satisfies Record<string, readonly string[]>
@@ -273,7 +266,7 @@ const buildCodexConfig = (provider: {
   return {
     ...buildCodexModelOptions(provider),
     // Model metadata can enable native delegation even when both feature flags are off.
-    // Codex 0.157.1 config::multi_agent_version_override requires agents.enabled=false.
+    // Codex config::multi_agent_version_override requires agents.enabled=false.
     agents: { enabled: false },
     features: CODEX_DISABLED_NATIVE_FEATURES,
     memories: CODEX_DISABLED_NATIVE_MEMORY,
@@ -435,6 +428,10 @@ const buildSpawnEnvironment = (
   return {
     ...env,
     ...input.env,
+    // Use the host's ACP approval flow until the session applies its selected profile.
+    INITIAL_AGENT_MODE: 'workspace-write',
+    // AIR is negotiated for failure reporting. The host does not request model-generated suggestions.
+    CODEX_ACP_PROMPT_SUGGESTIONS: 'false',
     ...nodeRuntimeEnvironment()
   }
 }
@@ -444,7 +441,12 @@ const mapCodexPermissionProfile = (
   modes: SessionModeState | null | undefined
 ): PermissionProfileApplication => {
   const availableModeIds = modes?.availableModes.map((mode) => mode.id) ?? []
-  const modeId = CODEX_MODE_IDS[profile]
+  // In ACP 2.6 'agent' selects a model-based reviewer. 'workspace-write' retains
+  // the host's conservative review policy. Older adapters only advertised 'agent'.
+  const modeId =
+    profile === 'auto' && availableModeIds.includes('workspace-write')
+      ? 'workspace-write'
+      : CODEX_MODE_IDS[profile]
   const available = availableModeIds.includes(modeId)
   const conservativeModeId = CODEX_MODE_IDS.ask
   const conservativeModeAvailable = availableModeIds.includes(conservativeModeId)
@@ -470,7 +472,12 @@ const mapCodexPermissionProfile = (
       currentModeId: appliedModeId ?? modes?.currentModeId,
       availableModeIds,
       ...(profile === 'auto'
-        ? { autoReviewStrategy: available ? ('native' as const) : ('conservative' as const) }
+        ? {
+            autoReviewStrategy:
+              appliedModeId === CODEX_MODE_IDS.auto
+                ? ('native' as const)
+                : ('conservative' as const)
+          }
         : {}),
       fullAccessAvailable,
       ...(!available
@@ -582,7 +589,7 @@ export const createCodexFramework = ({
             }
           : {}),
         // Model metadata can enable native delegation even when both feature flags are off.
-        // Codex 0.157.1 config::multi_agent_version_override requires agents.enabled=false.
+        // Codex config::multi_agent_version_override requires agents.enabled=false.
         agents: { enabled: false },
         features: CODEX_DISABLED_NATIVE_FEATURES,
         memories: CODEX_DISABLED_NATIVE_MEMORY,
@@ -627,8 +634,18 @@ export const createCodexFramework = ({
         : undefined
 
     const codexHome = codexStorageDir(ctx.storageRoot)
+    // The classic tool model caps the native context at 272k even when model_context_window
+    // requests more. A larger upstream window needs its own immutable catalog entry.
     const modelCatalog = useChatBridge
-      ? undefined
+      ? provider.contextWindow && provider.contextWindow > CODEX_BRIDGE_BUNDLED_CONTEXT_WINDOW
+        ? buildCodexNativeModelCatalog({
+            model: CODEX_BRIDGE_MODEL,
+            contextWindow: provider.contextWindow,
+            supportsImageInput: provider.supportsImageInput,
+            reasoningEffort: ctx.reasoningEffort,
+            reasoningEfforts: ctx.reasoningEfforts
+          })
+        : undefined
       : buildCodexNativeModelCatalog(
           {
             ...provider,
@@ -681,7 +698,7 @@ export const createCodexFramework = ({
       configFiles: [
         {
           path: join(codexStorageDir(ctx.storageRoot), 'config.toml'),
-          content: 'cli_auth_credentials_store = "ephemeral"\n',
+          content: 'cli_auth_credentials_store = "ephemeral"\nthread_unload_delay_secs = 0\n',
           mode: 0o600
         },
         ...(modelCatalogPath && modelCatalogContent

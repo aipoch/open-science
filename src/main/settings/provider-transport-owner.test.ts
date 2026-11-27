@@ -875,6 +875,31 @@ describe('ProviderTransportOwner generations', () => {
     expect(bridge.close).toHaveBeenCalledOnce()
   })
 
+  it('passes the active model reasoning capability to the CodeBuddy selector', async () => {
+    const selector = makeResponsesToChatCompletionsBridge(0)
+    const bridge = makeOpenAiBridge(0)
+    const createResponsesToChatCompletionsBridge = vi.fn(() => selector)
+    const owner = new ProviderTransportOwner({
+      createResponsesToChatCompletionsBridge,
+      createProtocolForwardingBridge: () => bridge
+    })
+    const target: ProviderRuntimeTarget = {
+      ...makeTarget(),
+      reasoningEffortProfile: { supported: false }
+    }
+
+    const generation = await owner.acquire({
+      activeTarget: target,
+      plan: { ...makePlan({ kind: 'direct' }), modelRoute: 'codebuddy-openai' }
+    })
+
+    expect(createResponsesToChatCompletionsBridge).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningSupported: false }),
+      { skillSelectorFailureMode: 'throw' }
+    )
+    await generation.release()
+  })
+
   it('routes CodeBuddy xAI subscription traffic through the OAuth bridge', async () => {
     const selector = makeResponsesToChatCompletionsBridge(0)
     const oauthBridge = makeOpenAiBridge(0)

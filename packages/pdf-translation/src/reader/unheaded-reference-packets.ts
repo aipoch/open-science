@@ -1,6 +1,7 @@
 import {
   isRaisedReferenceOrdinal,
   isTightRaisedReferenceOrdinal,
+  isCompactRaisedReferenceOrdinal,
   type NativeReferenceEvidence
 } from './native-reference-evidence.js'
 import type { PdfLayoutPage, PdfLayoutTextItem, PdfTranslationLayout } from './layout.js'
@@ -36,10 +37,18 @@ export function nativeOwnedUnheadedReferenceRoles(
       second = pair[1],
       terminalPage = !second,
       standalone = first.items.findIndex((item) => item.str === '[1]'),
+      invertedStart =
+        second && !pages[at + 2]
+          ? first.items.findIndex((item) =>
+              /^\[1\] \p{Lu}[\p{L}\p{M}.’'–-]+, \p{Lu}\./u.test(item.str)
+            )
+          : -1,
       begin =
         standalone >= 0
           ? standalone
-          : first.items.findIndex((item) => /^\[1\] \p{Lu}\./u.test(item.str))
+          : first.items.findIndex(
+              (item, i) => i === invertedStart || /^\[1\] \p{Lu}\./u.test(item.str)
+            )
     if (
       begin < 0 ||
       (second && second.page !== first.page + 1) ||
@@ -89,7 +98,9 @@ export function nativeOwnedUnheadedReferenceRoles(
       !pages[at + 2] &&
       !!contact &&
       !!contactMarker &&
-      /^(?:Electronic address: )?[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/u.test(contact.str) &&
+      /^(?:Electronic address: |Contact author: )?[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/u.test(
+        contact.str
+      ) &&
       (/^[∗*]$/u.test(contactMarker.str) || raisedContribution) &&
       valid(contact) &&
       valid(contactMarker) &&
@@ -108,6 +119,36 @@ export function nativeOwnedUnheadedReferenceRoles(
       contactMarker.transform[5] > contact.transform[5] &&
       contactMarker.transform[5] - contact.transform[5] < em * 0.6
     const prior = before.at(afterContact ? (raisedContribution ? -5 : -3) : -1)
+    // A formal disclosure can end the article above a smaller, two-page bibliography.
+    const [disclosure, lead, end] = before.slice(-3),
+      afterDisclosure =
+        invertedStart >= 0 &&
+        begin === invertedStart &&
+        disclosure?.str === 'Competing interests' &&
+        /^(?:The )?authors (?:declare|report) no(?: [\p{L}]+)* [\p{L}]+-$/iu.test(
+          lead?.str ?? ''
+        ) &&
+        /^[\p{L}]+ interests\.$/iu.test(end?.str ?? '') &&
+        [disclosure, lead, end].every(valid) &&
+        disclosure.fontName !== lead.fontName &&
+        lead.fontName === end.fontName &&
+        disclosure.height === lead.height &&
+        lead.height === end.height &&
+        disclosure.transform[4] > first.width / 2 &&
+        disclosure.transform[5] === lead.transform[5] &&
+        Math.abs(disclosure.transform[5] - end.transform[5] - end.height * 1.15) <
+          end.height * 0.03 &&
+        end.transform[5] - start.transform[5] > end.height * 4 &&
+        end.transform[5] - start.transform[5] < end.height * 7 &&
+        start.transform[4] < first.width / 2 &&
+        em > end.height * 0.85 &&
+        em < end.height * 0.95 &&
+        nativeReferenceRoleRowClosed(first, [
+          first.items.indexOf(disclosure),
+          first.items.indexOf(lead)
+        ]) &&
+        nativeReferenceRoleRowClosed(first, [first.items.indexOf(end)])
+    if (invertedStart === begin && !afterDisclosure) continue
     if (
       (terminalPage && !afterContact) ||
       !prior ||
@@ -163,12 +204,26 @@ export function nativeOwnedUnheadedReferenceRoles(
       prior.height <= font ||
       entries.length > 10000 ||
       entries.some(
-        (e) => !e.owner || !valid(e.item) || Math.abs(e.item.height - font) > font * 0.02
+        (e) =>
+          !e.owner ||
+          (!afterDisclosure && (!valid(e.item) || Math.abs(e.item.height - font) > font * 0.02))
       )
     )
       continue
+    // A corporate web citation can wrap its URL between final-page columns.
+    const terminalWebStart = (e: (typeof entries)[number], index: number): boolean =>
+      embedded &&
+      !!second &&
+      !pages[at + 2] &&
+      e.page === second &&
+      /^\[\d{1,4}\] (?:\p{Lu}[\p{L}\p{M}’-]+ ){1,6}\p{Lu}[\p{L}\p{M}’-]+,$/u.test(e.item.str) &&
+      /^https?:\/\/(?:[a-z\d](?:[a-z\d-]*[a-z\d])?\.)+$/iu.test(
+        entries[index + 1]?.item.str ?? ''
+      ) &&
+      Math.abs(e.item.transform[5] - entries[index + 1]?.item.transform[5]) < font * 0.02
     const starts = entries.flatMap((e, index) => {
-      if (afterContact) return marker(e.item.str) ? [index] : []
+      if (terminalWebStart(e, index)) return [index]
+      if (afterContact || afterDisclosure) return marker(e.item.str) ? [index] : []
       return (embedded ? /^\[\d{1,4}\] \p{Lu}\./u : /^\[\d{1,4}\]$/u).test(e.item.str)
         ? [index]
         : []
@@ -247,7 +302,7 @@ export function nativeOwnedUnheadedReferenceRoles(
       continue
     const records = starts.map((index, n) => entries.slice(index, starts[n + 1] ?? entries.length))
     const hangingX: number[] = []
-    const complete = records.every((record) => {
+    const trusted = records.filter((record) => {
       const s = embedded
           ? text(record).replace(/(?<=[\p{L}])([´`¨]) (?=\p{Ll})/gu, '$1')
           : text(record),
@@ -264,29 +319,79 @@ export function nativeOwnedUnheadedReferenceRoles(
         )
       const citationAuthors =
         /^\[\d{1,4}\] (?:(?:\p{Lu}\.(?:-\p{Lu}\.)?\s*){1,5}(?:[\p{L}’'-]+ ){1,3}\p{Lu}[\p{L}.’'-]+|\p{Lu}[\p{L}.’'-]+\s+(?:\p{Lu}\.\s*){1,5}|(?:\p{Lu}[\p{L}.’'-]+ ){1,2}\p{Lu}[\p{L}.’'-]+)(?:,| and )/u
+      // A font change after ‘et al.’ can split the comma into a separate native item.
       const terminalEtAl =
-        terminalRight && /^\[\d{1,4}\] (?:\p{Lu}\.\s*){1,5}\p{Lu}[\p{L}’'-]+ et al\., /u.test(s)
-      const terminalArchive = terminalEtAl && /, [a-z]+-[a-z]+\/\d{7}\.$/u.test(s)
+        (terminalRight ||
+          (embedded && second && !pages[at + 2] && /\((?:18|19|20)\d{2}\)\.$/u.test(last))) &&
+        /^\[\d{1,4}\] (?:\p{Lu}\.\s*){1,5}\p{Lu}[\p{L}’'-]+ et al\. ?, /u.test(s)
+      const terminalArchive = terminalRight && terminalEtAl && /, [a-z]+-[a-z]+\/\d{7}\.$/u.test(s)
+      // A classified preprint can place its dated title and locator on adjacent rows.
+      const previous = record.at(-2),
+        locator = record.at(-1)!
+      const classifiedPreprint =
+        afterContact &&
+        !!second &&
+        locator.page === second &&
+        previous?.page === second &&
+        previous.item.transform[5] - locator.item.transform[5] > font * 0.8 &&
+        last.startsWith('arXiv:') &&
+        /\(20(\d{2})\), arXiv:\1(?:0[1-9]|1[0-2])\.\d{4,5}(?:v[1-9]\d*)? \[[A-Za-z][A-Za-z\d-]*(?:\.[A-Za-z][A-Za-z\d-]*)?\]\.$/u.test(
+          previous.item.str + ' ' + last
+        )
       const terminalEdition =
         terminalRight && /\((?:[^()]+, )?(?:18|19|20)\d{2}\), \d{1,2}(?:st|nd|rd|th) ed\.$/u.test(s)
+      const wrappedWeb =
+        record.length === 4 &&
+        terminalWebStart(record[0], entries.indexOf(record[0])) &&
+        /^[a-z]{2,12}\/$/u.test(record[2].item.str) &&
+        /^\((?:18|19|20)\d{2}\)\.$/u.test(record[3].item.str) &&
+        column(record[0]) === 0 &&
+        column(record[2]) === 1 &&
+        Math.abs(record[2].item.transform[5] - record[3].item.transform[5]) < font * 0.02 &&
+        record[1].item.fontName === record[2].item.fontName &&
+        record[0].item.fontName === record[3].item.fontName
       const credited =
         author.test(s) ||
+        wrappedWeb ||
         terminalEtAl ||
         (afterContact && citationAuthors.test(s) && /(?:18|19|20)\d{2}\)/u.test(s))
+      // Publisher typography retains a separately styled year and volume.
+      const invertedAuthor =
+        /^\[\d{1,4}\] \p{Lu}[\p{L}\p{M}’'´\x60¨–-]+, (?:\p{Lu}\.(?:-\p{Lu}\.)? *){1,5}/u.test(s)
+      const journalEnding =
+        /\b(?:18|19|20)\d{2} *, \d{1,4} *, \d{1,10}(?: *[–-] *\d{1,10})? *\.$/u.test(s)
+      const archiveEnding =
+        /\b(?:18|19|20)\d{2} *; .*arXiv:\d{4}\. *\d{4,5} *\.$/u.test(s) ||
+        /\barXiv (?:18|19|20)\d{2} *,$/u.test(s)
+      const invertedRecord =
+        afterDisclosure &&
+        invertedAuthor &&
+        (journalEnding || archiveEnding) &&
+        record.some(
+          ({ item }) =>
+            /^(?:18|19|20)\d{2}$/u.test(item.str) && item.fontName !== record[0].item.fontName
+        )
       if (
         record.length > 600 ||
         s.length > 4000 ||
-        !(/\.$/u.test(last) || (terminalPage && /\((?:18|19|20)\d{2}\);$/u.test(last))) ||
-        (!internalReference &&
-          (!credited ||
-            (!dated(tail) &&
-              !terminalArchive &&
-              !terminalEdition &&
-              !(
-                terminalPage &&
-                dated(s) &&
-                /(?:pp\. \d+[–-]\d+|[a-z]+- [a-z]+\/\d{7}|to appear in [^;]+)\.$/u.test(s)
-              ))))
+        (afterDisclosure &&
+          (!invertedRecord ||
+            record.some(
+              ({ item }) => !valid(item) || Math.abs(item.height - font) > font * 0.02
+            ))) ||
+        (!invertedRecord &&
+          (!(/\.$/u.test(last) || (terminalPage && /\((?:18|19|20)\d{2}\);$/u.test(last))) ||
+            (!internalReference &&
+              (!credited ||
+                (!dated(tail) &&
+                  !terminalArchive &&
+                  !classifiedPreprint &&
+                  !terminalEdition &&
+                  !(
+                    terminalPage &&
+                    dated(s) &&
+                    /(?:pp\. \d+[–-]\d+|[a-z]+- [a-z]+\/\d{7}|to appear in [^;]+)\.$/u.test(s)
+                  ))))))
       )
         return false
       for (const e of record) {
@@ -355,7 +460,9 @@ export function nativeOwnedUnheadedReferenceRoles(
       })
     })
     if (
-      !complete ||
+      (afterDisclosure
+        ? trusted.length < records.length * 0.75
+        : trusted.length !== records.length) ||
       (embedded && hangingX.filter(Number.isFinite).length !== (terminalPage ? 1 : 2))
     )
       continue
@@ -367,7 +474,13 @@ export function nativeOwnedUnheadedReferenceRoles(
     )
       continue
     const keys = new Set(entries.map((e) => e.key)),
-      selectedOwners = new Set(entries.map((e) => e.owner))
+      trustedEntries = trusted.flat(),
+      trustedKeys = new Set(trustedEntries.map((e) => e.key)),
+      selectedOwners = new Set(
+        trustedEntries
+          .map((e) => e.owner)
+          .filter((owner) => !afterDisclosure || owner.items.every((key) => trustedKeys.has(key)))
+      )
     if (
       [...selectedOwners].some(
         (unit) =>
@@ -412,8 +525,10 @@ export function nativeOwnedUnheadedReferenceRoles(
               contactMarker!,
               contact!
             ].map((item) => page.items.indexOf(item))
-          : []),
-        ...entries.filter((e) => e.page === page).map((e) => e.index)
+          : afterDisclosure && page === first
+            ? [disclosure, lead, end].map((item) => page.items.indexOf(item))
+            : []),
+        ...trustedEntries.filter((e) => e.page === page).map((e) => e.index)
       ])
     )
     if (witnesses.some((w) => !w)) continue
@@ -537,7 +652,8 @@ function terminalRightSuperscriptRoles(
   entries: Entry[],
   author: (text: string) => boolean,
   terminal: (text: string) => boolean,
-  requireEmbeddedNote: boolean
+  requireEmbeddedNote: boolean,
+  allowFunded = false
 ): { selected: Entry[]; note?: Entry[] } | undefined {
   const raised = isTightRaisedReferenceOrdinal
   const starts = entries.flatMap(({ item }, i) =>
@@ -569,11 +685,30 @@ function terminalRightSuperscriptRoles(
     selected.some(({ item }) => !valid(item) || item.transform[4] <= p.width / 2)
   )
     return
+  const acknowledgment = allowFunded
+    ? entries
+        .slice(0, at)
+        .findLastIndex(
+          ({ item }) =>
+            /^Acknowledg(?:e)?ments$/iu.test(item.str) &&
+            valid(item) &&
+            item.transform[4] < p.width / 2
+        )
+    : -1
+  const funding =
+    acknowledgment >= 0 && requireEmbeddedNote ? text(entries.slice(acknowledgment + 1, at)) : ''
+  const funded =
+    requireEmbeddedNote &&
+    acknowledgment >= 0 &&
+    /^This (?:work|research) was supported by /u.test(funding) &&
+    /\bGrant No\. \d/u.test(funding) &&
+    /\d+\)\.$/u.test(funding)
+  if (allowFunded && !funded) return
   const markers = selected.flatMap(({ item }, index) =>
     raised(item, selected[index + 1]?.item) ? [index] : []
   )
   if (
-    markers.length < 5 ||
+    markers.length < (funded ? 8 : 5) ||
     markers.length > 256 ||
     markers[0] !== 0 ||
     markers.some((index, i) => Number(selected[index].item.str) !== i + 1)
@@ -634,15 +769,29 @@ function terminalRightSuperscriptRoles(
       .join('')
       .replace(requireEmbeddedNote ? /[¯´¨]/gu : /[¯´]/gu, '')
       .trim()
-    const body = text(record),
-      hasAuthor = author(head)
+    const body = text(record)
+    const hasAuthor =
+      author(head) ||
+      (funded &&
+        /^\p{Lu}[\p{L}\p{M}.'’–-]+(?: (?:\p{Lu}[\p{L}\p{M}.'’–-]*|d[aeo]|de)){1,5}(?:,| and )/u.test(
+          head.replace(/ˇ/gu, '')
+        ))
+    const citedSoftware =
+      funded &&
+      /\b(?:software|tool|library)\b/iu.test(body) &&
+      /\(available at: https:\/\/\s*[a-z\d.-]+\.[a-z]{2,}(?:\/[\w./-]*)?\s*(?:\)\.|\.\))$/iu.test(
+        body
+      )
     if (
-      hasAuthor &&
-      (terminal(body) || (requireEmbeddedNote && /, (?:18|19|20)\d{2}, unpublished\.$/u.test(body)))
+      citedSoftware ||
+      (hasAuthor &&
+        (terminal(body) ||
+          (!funded && requireEmbeddedNote && /, (?:18|19|20)\d{2}, unpublished\.$/u.test(body))))
     )
       continue
     if (
       !requireEmbeddedNote ||
+      funded ||
       note ||
       i < 3 ||
       i >= markers.length - 3 ||
@@ -655,7 +804,7 @@ function terminalRightSuperscriptRoles(
       return
     note = [marker, ...record]
   }
-  if (requireEmbeddedNote && !note) return
+  if (requireEmbeddedNote && !funded && !note) return
   const keys = new Set(selected.map((e) => e.key)),
     bounds = union(selected.map((e) => box(p, e.item)))
   if (
@@ -671,6 +820,136 @@ function terminalRightSuperscriptRoles(
     selected.map((e) => e.index)
   )
   if (witness && nativeReferenceRoleFontsCurrent(witness)) return { selected, note }
+}
+
+// A compact superscript list can start below funding prose and resume on a
+// reference-only page. The paired pages prove source ownership.
+function terminalCompactSuperscripts(
+  pages: PdfLayoutPage[],
+  entries: Entry[][],
+  pageCount: number | undefined,
+  author: (text: string) => boolean,
+  terminal: (text: string) => boolean
+): Entry[] | undefined {
+  const [before, after] = pages
+  if (
+    !after ||
+    after.page !== pageCount ||
+    before.page + 1 !== after.page ||
+    pages.some((page) => page.rotation !== 0 || page.items.length > 10000)
+  )
+    return
+  const marks = entries.map((row) =>
+    row.flatMap(({ item }, i) =>
+      isCompactRaisedReferenceOrdinal(item, row[i + 1]?.item) ? [i] : []
+    )
+  )
+  const start = marks[0].find((i) => entries[0][i].item.str === '1')
+  if (start === undefined || marks[1][0] !== 0) return
+  const prefix = entries[0].slice(0, start),
+    lastBody = prefix.at(-1)?.owner,
+    first = entries[0][start],
+    opening = entries[0][start + 1].item
+  if (
+    !lastBody ||
+    lastBody.sourceOnly ||
+    !/^(?:The authors|We) (?:would like to thank|thank|gratefully acknowledge)\b.{1,300}\b(?:grant|award)\b[^.!?]{1,60}\.$/u.test(
+      lastBody.source
+    ) ||
+    first.item.transform[4] <= before.width / 2 ||
+    first.item.transform[5] > before.height * 0.25 ||
+    prefix.at(-1)!.item.transform[5] - opening.transform[5] < opening.height * 2 ||
+    prefix.at(-1)!.item.transform[5] - opening.transform[5] > opening.height * 4 ||
+    marks[0].filter((i) => i >= start).length < 3 ||
+    marks[1].length < 5 ||
+    marks[0].length + marks[1].length > 256 ||
+    entries[1][0].item.transform[4] > after.width * 0.2 ||
+    entries[1][0].item.transform[5] < after.height * 0.86
+  )
+    return
+  let ordinal = 1
+  const selected: Entry[] = []
+  for (let n = 0; n < pages.length; n++) {
+    const p = pages[n],
+      lane = entries[n],
+      offsets = marks[n].filter((i) => n || i >= start),
+      rail = lane[offsets[0]].item.transform[4],
+      em = opening.height
+    let prior: PdfLayoutTextItem | undefined
+    for (const [i, offset] of offsets.entries()) {
+      const [marker, ...record] = lane.slice(offset, offsets[i + 1])
+      if (
+        Number(marker.item.str) !== ordinal++ ||
+        !valid(marker.item) ||
+        Math.abs(marker.item.transform[4] - rail) > em * 0.03 ||
+        record.length === 0 ||
+        record.length > 100 ||
+        record.some(
+          ({ item }) =>
+            !valid(item) ||
+            Math.abs(item.height - em) > em * 0.02 ||
+            item.transform[4] < rail - em * 0.03 ||
+            item.transform[4] + item.width > rail + p.width * 0.39
+        )
+      )
+        return
+      const body = text(record).replace(/(\p{Lu}\.) - (?=\p{Ll})/gu, '$1-')
+      if (
+        !(
+          author(body.replace(/^(\p{Lu}\. )\p{Ll} (?=\p{Lu})/u, '$1')) ||
+          /^\p{Lu}\.-\p{Ll}+ \p{Lu}\p{L}+,/u.test(body)
+        ) ||
+        !terminal(body) ||
+        !(
+          record.some(
+            ({ item }) => item.fontName !== opening.fontName && /^\d{1,6}$/u.test(item.str)
+          ) || /\barXiv:\d{4}\.\d{4,5}(?:v\d+)?\b/iu.test(body)
+        )
+      )
+        return
+      const rows: Entry[][] = []
+      for (const entry of record) {
+        const row = rows.at(-1)
+        if (row && Math.abs(row[0].item.transform[5] - entry.item.transform[5]) < em * 0.02)
+          row.push(entry)
+        else rows.push([entry])
+      }
+      for (const [j, row] of rows.entries()) {
+        const first = row[0].item
+        const pitch = prior ? prior.transform[5] - first.transform[5] : em * 1.15
+        if (
+          pitch < em * 1.08 ||
+          pitch > em * 1.23 ||
+          (j > 0 && Math.abs(first.transform[4] - rail) > em * 0.03) ||
+          (row.at(-1) !== lane.at(-1) &&
+            !nativeReferenceRoleRowClosed(
+              p,
+              (j ? row : [marker, ...row]).map(({ index }) => index)
+            )) ||
+          row.some(({ item }, k) => k > 0 && item.transform[4] < row[k - 1].item.transform[4])
+        )
+          return
+        prior = first
+      }
+      selected.push(marker, ...record)
+    }
+    const pageRange = lane.slice(offsets[0])
+    const bounds = union(pageRange.map(({ item }) => box(p, item)))
+    if (
+      bounds.x < 0 ||
+      bounds.y < 0 ||
+      bounds.right > p.width ||
+      bounds.bottom > p.height ||
+      lane.slice(0, offsets[0]).some(({ item }) => valid(item) && overlaps(bounds, box(p, item)))
+    )
+      return
+    const fonts = nativeReferenceRolePageFonts(
+      p,
+      pageRange.map(({ index }) => index)
+    )
+    if (!fonts || !nativeReferenceRoleFontsCurrent(fonts)) return
+  }
+  return selected
 }
 
 /** Superscript ordinals are a separate contract from bracketed bibliography
@@ -693,6 +972,48 @@ export function nativeSuperscriptReferencePackets(
     /^(?:\p{Lu}\.(?:-\p{Lu}\.)?\s*){1,4}\p{Lu}[\p{L}\p{M}.'’–-]+(?:[ ,]|$)/u.test(s)
   const terminal = (s: string): boolean =>
     /\((?:[^()[\]]{1,80},\s*)?(?:18|19|20)\d{2}\)(?:\s+p\.\s+\d+)?\.$/u.test(s)
+  const lastPages = pages.slice(-2)
+  const compact = terminalCompactSuperscripts(
+    lastPages,
+    lastPages.map((p) =>
+      p.items.flatMap((item, index) =>
+        item.str.trim()
+          ? [
+              {
+                item,
+                index,
+                key: `${p.page}:${index}`,
+                owner: owners.get(`${p.page}:${index}`)!
+              }
+            ]
+          : []
+      )
+    ),
+    pageCount,
+    author,
+    terminal
+  )
+  if (
+    compact &&
+    compact.every(
+      (e) =>
+        e.owner &&
+        !repeated.has(e.key) &&
+        e.owner.originalStrings[e.owner.items.indexOf(e.key)] === e.item.str
+    )
+  ) {
+    const keys = new Set(compact.map(({ key }) => key))
+    for (const owner of new Set(compact.map(({ owner }) => owner)))
+      if (
+        !owner.sourceOnly &&
+        !owner.preserve &&
+        owner.items.every((key) => keys.has(key)) &&
+        owner.risks.every(
+          (risk) => risk === 'possible-continuation' || risk === 'ambiguous-line-hyphen'
+        )
+      )
+        result.add(owner.items.join('|'))
+  }
   for (const p of pages) {
     const evidence = p.nativeNumberedPacketEvidence
     if (p.rotation !== 0 || p.items.length > 10000) continue
@@ -703,7 +1024,10 @@ export function nativeSuperscriptReferencePackets(
     )
     const terminalRight =
       p === pages.at(-1) && p.page === pageCount
-        ? terminalRightSuperscriptRoles(p, entries, author, terminal, !!evidence?.complete)
+        ? (terminalRightSuperscriptRoles(p, entries, author, terminal, !!evidence?.complete) ??
+          (evidence?.complete
+            ? terminalRightSuperscriptRoles(p, entries, author, terminal, true, true)
+            : undefined))
         : undefined
     if (terminalRight) {
       const { selected, note } = terminalRight,
@@ -811,6 +1135,20 @@ export function nativeSuperscriptReferencePackets(
       )
     )
       continue
+    const footer =
+      separated &&
+      p === pages.at(-1) &&
+      p.page === pageCount &&
+      entries[0].item.str === String(p.page) &&
+      entries[0].item.transform[5] > p.height * 0.92 &&
+      entries
+        .slice(0, entries.indexOf(markers[0]))
+        .some(
+          ({ item }) =>
+            /^Acknowledg(?:e)?ments$/iu.test(item.str) &&
+            item.transform[4] > p.width / 2 &&
+            item.transform[5] > centeredRule.baseline
+        )
     const records = markers.map((m, at) => {
       const end = markers[at + 1]?.index ?? Infinity,
         items = entries.filter((e) => e.index >= m.index && e.index < end),
@@ -821,7 +1159,8 @@ export function nativeSuperscriptReferencePackets(
           items.length <= 600 &&
           s.length <= 4000 &&
           (separated ? fullAuthor(s) : author(s)) &&
-          terminal(s)
+          (terminal(s) ||
+            (footer && /(?:\((?:18|19|20)\d{2}\)|\barXiv:\d{4}\.\d{4,5}(?:v\d+)?\.)$/iu.test(s)))
       }
     })
     if (records.slice(0, -1).some((r) => !r.complete)) continue
@@ -840,12 +1179,29 @@ export function nativeSuperscriptReferencePackets(
     if (
       separated &&
       closed.some(({ items: record }) =>
-        record
-          .slice(1)
-          .some(
-            ({ item }) =>
-              Math.abs(item.height - record[1].item.height) > record[1].item.height * 0.02
+        record.slice(1).some(({ item }, index) => {
+          const em = record[1].item.height
+          if (Math.abs(item.height - em) <= em * 0.02) return false
+          const prior = record[index]?.item,
+            next = record[index + 2]?.item
+          return !(
+            footer &&
+            item.fontName === record[0].item.fontName &&
+            item.height === record[0].item.height &&
+            /^\d{1,2}$/u.test(item.str) &&
+            prior &&
+            next &&
+            Math.abs(prior.height - em) < em * 0.02 &&
+            Math.abs(next.height - em) < em * 0.02 &&
+            Math.abs(prior.transform[5] - next.transform[5]) < em * 0.02 &&
+            Math.abs(prior.transform[5] - item.transform[5]) > em * 0.08 &&
+            Math.abs(prior.transform[5] - item.transform[5]) < em * 0.46 &&
+            item.transform[4] >= prior.transform[4] + prior.width - em * 0.05 &&
+            item.transform[4] - prior.transform[4] - prior.width < em * 0.35 &&
+            next.transform[4] >= item.transform[4] + item.width - em * 0.04 &&
+            next.transform[4] - item.transform[4] - item.width < em * 0.12
           )
+        })
       )
     )
       continue
@@ -937,13 +1293,75 @@ function terminal(s: string, style: 'initials' | 'surname'): boolean {
   )
 }
 
+// A finished two-column body can leave a smaller, balanced bibliography below it.
+function terminalBibliographyAfterProse(
+  page: PdfLayoutPage,
+  owns: (index: number) => Unit | undefined
+): string[] {
+  if (page.rotation) return []
+  const visible = page.items.flatMap((item, index) => (item.str.trim() ? [{ item, index }] : []))
+  const start = visible.findIndex(({ item }) => marker(item.str)?.[1] === '1')
+  const first = visible[start]?.item,
+    preceding = visible[start - 1],
+    folio = visible.at(-1)
+  if (!first || !preceding || !folio || ![first, preceding.item, folio.item].every(valid)) return []
+  const em = first.height,
+    middle = page.width / 2,
+    top = first.transform[5],
+    x = (part: Pick<Entry, 'item'>): number => part.item.transform[4],
+    y = (part: Pick<Entry, 'item'>): number => part.item.transform[5],
+    left = first.transform[4]
+  const before = visible.slice(0, start),
+    proposed = visible.slice(start, -1)
+  if (
+    top < page.height * 0.48 ||
+    top > page.height * 0.7 ||
+    left >= middle ||
+    preceding.item.height < em * 1.05 ||
+    x(preceding) <= middle ||
+    !/[.!?]$/u.test(preceding.item.str) ||
+    y(preceding) - top < em * 4 ||
+    y(preceding) - top > em * 8 ||
+    folio.item.str !== String(page.page) ||
+    y(folio) > page.height * 0.08 ||
+    Math.abs(x(folio) + folio.item.width / 2 - middle) > em * 0.12 ||
+    before.some(
+      (part) =>
+        !valid(part.item) ||
+        y(part) < top + em * 3 ||
+        /\b(?:reference|citation|bibliograph\w*)\s+examples?\b/iu.test(part.item.str)
+    ) ||
+    !before.some(
+      (part) =>
+        Math.abs(x(part) - left) < em * 0.1 &&
+        part.item.width > page.width * 0.36 &&
+        part.item.height > em * 1.05
+    ) ||
+    !before.some(
+      (part) =>
+        x(part) > middle && part.item.width > page.width * 0.36 && part.item.height > em * 1.05
+    )
+  )
+    return []
+  const entries: Entry[] = []
+  for (const { item, index } of proposed) {
+    const owner = owns(index),
+      key = `${page.page}:${index}`
+    if (!valid(item) || !owner || owner.originalStrings[owner.items.indexOf(key)] !== item.str)
+      return []
+    entries.push({ item, index, key, owner })
+  }
+  return closedTerminalBibliography(page, entries, preceding, undefined, true)
+}
+
 // A terminal bibliography can share a page with a separate acknowledgments
 // heading. The first right-column rows can close the last left-column record.
 function closedTerminalBibliography(
   page: PdfLayoutPage,
   entries: Entry[],
   boundary: Pick<Entry, 'item' | 'index'>,
-  rule?: Extract<NativeReferenceEvidence, { complete: true }>['rules'][number]
+  rule?: Extract<NativeReferenceEvidence, { complete: true }>['rules'][number],
+  afterProse = false
 ): string[] {
   if (entries.length < 2 || entries.length > 2048) return []
   const em = entries[0].item.height,
@@ -964,7 +1382,7 @@ function closedTerminalBibliography(
       Math.abs((rule.left + rule.right) / 2 - middle) > em * 0.5
     )
       return []
-  } else {
+  } else if (!afterProse) {
     const heading = boundary.item
     if (
       !valid(heading) ||
@@ -1013,10 +1431,12 @@ function closedTerminalBibliography(
   const lanes = [rows.slice(0, turn), rows.slice(turn)],
     x = (row: Row): number => row.entries[0].item.transform[4],
     number = (row: Row): number => Number(marker(row.entries[0].item.str)?.[1] ?? 0),
-    citationTail = rule
-      ? /\b\d{1,3}(?:\([A-Za-z0-9]+\))?:[A-Za-z]?\d+(?:[-–][A-Za-z]?\d+)?, \d{4}\.$/u
-      : /\d{1,4} *, \d{1,9}(?:[-–]\d+)? \((?:18|19|20)\d{2}\)\.$/u,
-    end = rule ? /(?:^|,)\s*(?:18|19|20)\d{2}\.$/u : citationTail,
+    citationTail = afterProse
+      ? /(?:\d{1,4}(?:\(\d+\))?:\d{1,9}(?:[–-] ?\d+)?|\bpages \d+[–-] ?\d+), (?:18|19|20)\d{2}\.$/u
+      : rule
+        ? /\b\d{1,3}(?:\([A-Za-z0-9]+\))?:[A-Za-z]?\d+(?:[-–][A-Za-z]?\d+)?, \d{4}\.$/u
+        : /\d{1,4} *, \d{1,9}(?:[-–]\d+)? \((?:18|19|20)\d{2}\)\.$/u,
+    end = afterProse || rule ? /(?:^|,)\s*(?:18|19|20)\d{2}\.$/u : citationTail,
     pitch = rows[0].baseline - rows[1].baseline,
     firstRight = lanes[1].findIndex((row) => number(row)),
     carry = lanes[1].slice(0, firstRight)
@@ -1040,6 +1460,7 @@ function closedTerminalBibliography(
       inset = wraps[0] && x(wraps[0])
     if (
       starts.length < 4 ||
+      (afterProse && !leftColumn && Math.abs(boundary.item.transform[4] - margin) > em * 0.1) ||
       wraps.length < 2 ||
       inset < margin + em ||
       inset > margin + em * 3 ||
@@ -1064,13 +1485,24 @@ function closedTerminalBibliography(
           crossesColumn && !rule
             ? text([...record, ...carry].flatMap((row) => row.entries))
             : value,
-        credited = rule
-          ? /^\[\d{1,4}\] \p{Lu}[\p{L}\p{M} .,’'&-]{2,120}[.,] /u.test(value)
-          : /^\[\d{1,4}\] (?:\p{Lu}\.(?:-\p{Lu}\.)? *){1,5}\p{Lu}[\p{L}\p{M}.’'-]+(?:, | and )/u.test(
+        credited = afterProse
+          ? /^\[\d{1,4}\] (?:\p{Lu}\. *){1,5}\p{Lu}[\p{L}\p{M}’'-]+(?:\. | and | et al\. )/u.test(
               completeValue
-            )
+            ) &&
+            (crossesColumn ? [...record, ...carry] : record)
+              .flatMap((row) => row.entries)
+              .some(
+                ({ item }) =>
+                  item.fontName !== entries[0].item.fontName && /\p{L}{3}/u.test(item.str)
+              )
+          : rule
+            ? /^\[\d{1,4}\] \p{Lu}[\p{L}\p{M} .,’'&-]{2,120}[.,] /u.test(value)
+            : /^\[\d{1,4}\] (?:\p{Lu}\.(?:-\p{Lu}\.)? *){1,5}\p{Lu}[\p{L}\p{M}.’'-]+(?:, | and )/u.test(
+                completeValue
+              )
       if (
         !credited ||
+        (afterProse && !citationTail.test(completeValue)) ||
         (crossesColumn ? (rule && !value.endsWith(',')) || end.test(value) : !end.test(value)) ||
         record.slice(0, -1).some((row) => end.test(text(row.entries)))
       )
@@ -1259,35 +1691,162 @@ function bibliographyBeforeAcknowledgments(
     : []
 }
 
+type ReferencePart = { page: PdfLayoutPage; item: PdfLayoutTextItem; index: number }
+
+function referenceParts(page: PdfLayoutPage): ReferencePart[] {
+  return page.items.flatMap((item, index) => (item.str.trim() ? [{ page, item, index }] : []))
+}
+
+function consecutiveReferenceRows(parts: ReferencePart[], tolerance: number): ReferencePart[][] {
+  const rows: ReferencePart[][] = []
+  for (const part of parts) {
+    const previous = rows.at(-1)
+    if (
+      previous &&
+      previous[0].page === part.page &&
+      Math.abs(part.item.transform[5] - previous[0].item.transform[5]) < tolerance
+    )
+      previous.push(part)
+    else rows.push([part])
+  }
+  return rows
+}
+
+function referencePartKey({ page, index }: ReferencePart): string {
+  return `${page.page}:${index}`
+}
+
+function originalReferenceOwner(
+  part: ReferencePart,
+  owns: (page: PdfLayoutPage, index: number) => Unit | undefined
+): Unit | undefined {
+  const owner = owns(part.page, part.index)
+  return owner?.originalStrings[owner.items.indexOf(referencePartKey(part))] === part.item.str
+    ? owner
+    : undefined
+}
+
+function hasReferencePageFonts(page: PdfLayoutPage, indices: number[]): boolean {
+  const witness = nativeReferenceRolePageFonts(page, indices)
+  return !!witness && nativeReferenceRoleFontsCurrent(witness)
+}
+
 // A run of journal citations and numbered prose notes can share the same
 // bibliography. Only independently closed citation records are source-only.
-function nativeMixedBibliographyAfterContact(
+function nativeMixedBibliography(
   pages: PdfLayoutPage[],
-  owns: (page: PdfLayoutPage, index: number) => Unit | undefined
+  owns: (page: PdfLayoutPage, index: number) => Unit | undefined,
+  boundary: 'contact' | 'data-availability' | 'two-contacts' | 'divided-columns' | 'separate-pages'
 ): string[] {
-  type Part = { page: PdfLayoutPage; item: PdfLayoutTextItem; index: number }
-  const items = (page: PdfLayoutPage): Part[] =>
-    page.items.flatMap((item, index) => (item.str.trim() ? [{ page, item, index }] : []))
-  const bibliographyPages = pages.slice(-3)
+  const afterDataAvailability = boundary === 'data-availability'
+  const pageCount = boundary === 'contact' ? 3 : 2
+  const afterTwoContacts = boundary === 'two-contacts'
+  const afterDivider = boundary === 'divided-columns'
+  const separatePages = boundary === 'separate-pages'
+  const pageRails = afterDivider || separatePages
+  const bibliographyPages = pages.slice(-pageCount)
   if (
-    bibliographyPages.length !== 3 ||
+    bibliographyPages.length !== pageCount ||
+    bibliographyPages.some((page, index) => page.page !== bibliographyPages[0].page + index) ||
     bibliographyPages.some((page) => page.rotation) ||
     bibliographyPages.reduce((count, page) => count + page.items.length, 0) > 10000
   )
     return []
   const [first, ...continuations] = bibliographyPages,
-    firstItems = items(first),
+    firstItems = referenceParts(first),
     begin = firstItems.findIndex(({ item }) => marker(item.str)?.[1] === '1'),
     start = firstItems[begin]
-  if (!start || begin < 5) return []
+  if (!start || (separatePages ? begin !== 0 : begin < 5)) return []
   const em = start.item.height,
-    x = (part: Part): number => part.item.transform[4],
-    y = (part: Part): number => part.item.transform[5],
+    x = (part: ReferencePart): number => part.item.transform[4],
+    y = (part: ReferencePart): number => part.item.transform[5],
     same = (n: number): boolean => Math.abs(n) < em * 0.04,
     [asterisk, email, dagger, address] = firstItems.slice(begin - 4, begin),
-    contact = (part: Part): boolean => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/iu.test(part.item.str)
-  if (
-    !valid(start.item) ||
+    contact = (part: ReferencePart): boolean => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/iu.test(part.item.str)
+  if (!valid(start.item) || x(start) < first.width / 2 !== pageRails) return []
+  const beforeFooter = (page: PdfLayoutPage): ReferencePart[] => {
+    const entries = referenceParts(page)
+    const last = entries.at(-1)
+    return last &&
+      valid(last.item) &&
+      last.item.str === String(page.page) &&
+      y(last) < page.height * 0.08 &&
+      Math.abs(x(last) + last.item.width / 2 - page.width / 2) < em * 0.1
+      ? entries.slice(0, -1)
+      : []
+  }
+  // A closed acknowledgments section and centered folios bound the separate reference pages.
+  if (separatePages) {
+    const prior = pages.at(-3)
+    if (
+      !prior ||
+      prior.page + 1 !== first.page ||
+      prior.rotation ||
+      bibliographyPages.some(
+        (page) => page.width !== prior.width || page.height !== prior.height
+      ) ||
+      y(start) < first.height * 0.82
+    )
+      return []
+    const preceding = beforeFooter(prior)
+    const heading = preceding.findLastIndex(({ item }) => /^ACKNOWLEDGMENTS$/iu.test(item.str))
+    const body = preceding.slice(heading + 1)
+    const marker = preceding[heading - 1]
+    if (
+      heading < 1 ||
+      !/^[IVXL]{1,5}\.$/u.test(marker.item.str) ||
+      ![marker, preceding[heading]].every(
+        ({ item }) => valid(item) && item.fontName === marker.item.fontName
+      ) ||
+      marker.item.fontName === start.item.fontName ||
+      !same(y(marker) - y(preceding[heading])) ||
+      x(marker) <= prior.width / 2 ||
+      x(preceding[heading]) <= x(marker) + marker.item.width ||
+      y(marker) >= prior.height * 0.24 ||
+      body.length < 2 ||
+      body.length > 6 ||
+      !/[.!?]$/u.test(body.at(-1)?.item.str ?? '') ||
+      !body.every(
+        ({ item }, n) =>
+          valid(item) &&
+          item.fontName === start.item.fontName &&
+          item.height > em * 1.05 &&
+          item.transform[4] > prior.width / 2 &&
+          (!n || Math.abs(y(body[n - 1]) - item.transform[5] - item.height * 1.15) < em * 0.1)
+      )
+    )
+      return []
+  } else if (afterDivider) {
+    if (!centeredBibliographyDivider(first, start.item, true)) return []
+  } else if (afterDataAvailability) {
+    const [heading, prose, link] = firstItems.slice(begin - 3, begin)
+    if (
+      ![heading, prose, link].every(({ item }) => valid(item)) ||
+      !/^Data availability(?: statement)?$/iu.test(heading.item.str) ||
+      !/^(?:at )?https:\/\/doi\.org\/10\.\d{4,9}\/[^\s]+\.$/iu.test(link.item.str) ||
+      heading.item.fontName === link.item.fontName ||
+      link.item.fontName !== start.item.fontName ||
+      prose.item.fontName !== link.item.fontName ||
+      !same(heading.item.height - em) ||
+      !same(prose.item.height - em) ||
+      !same(link.item.height - em) ||
+      !same(y(heading) - y(prose) - (y(prose) - y(link))) ||
+      Math.abs(y(prose) - y(link) - em * 1.15) > em * 0.08 ||
+      y(link) - y(start) < em * 1.8 ||
+      y(link) - y(start) > em * 2.5 ||
+      x(link) <= first.width / 2 ||
+      Math.abs(x(heading) - x(link)) > em * 0.5 ||
+      x(start) - x(link) < em * 0.7 ||
+      x(start) - x(link) > em * 2 ||
+      x(prose) < x(link) ||
+      Math.abs(x(prose) - x(start)) > em * 0.2 ||
+      [heading, prose, link].some(({ index }) => !nativeReferenceRoleRowClosed(first, [index])) ||
+      y(start) > first.height * 0.5
+    )
+      return []
+    const witness = nativeReferenceRolePageFonts(first, [heading.index, prose.index, link.index])
+    if (!witness || !nativeReferenceRoleFontsCurrent(witness)) return []
+  } else if (
     ![asterisk, email, dagger, address].every(({ item }) => valid(item)) ||
     !/^[∗*]$/u.test(asterisk.item.str) ||
     dagger.item.str !== '†' ||
@@ -1300,37 +1859,129 @@ function nativeMixedBibliographyAfterContact(
     y(address) - y(start) < em ||
     y(address) - y(start) > em * 1.5 ||
     x(email) <= x(start) ||
-    x(start) < first.width / 2 ||
-    y(start) > first.height * 0.25 ||
-    !firstItems.slice(0, begin - 4).some(({ item }) => /^Acknowledg(?:e)?ments$/iu.test(item.str))
+    y(start) > first.height * (afterTwoContacts ? 0.75 : 0.25) ||
+    (!afterTwoContacts &&
+      !firstItems
+        .slice(0, begin - 4)
+        .some(({ item }) => /^Acknowledg(?:e)?ments$/iu.test(item.str)))
   )
     return []
 
-  const all = firstItems.slice(begin)
+  if (afterTwoContacts) {
+    const preceding = firstItems[begin - 5]
+    const pitch = y(email) - y(address)
+    if (
+      !valid(preceding.item) ||
+      !/\p{L}{3,}[.!?]$/u.test(preceding.item.str) ||
+      preceding.item.height < em * 1.05 ||
+      x(preceding) >= x(start) ||
+      x(start) - x(preceding) > em ||
+      y(preceding) - y(email) < em * 4 ||
+      y(preceding) - y(email) > em * 8 ||
+      pitch < em * 1.1 ||
+      pitch > em * 1.25 ||
+      email.item.str === address.item.str ||
+      email.item.fontName !== start.item.fontName ||
+      address.item.fontName !== start.item.fontName ||
+      asterisk.item.fontName !== dagger.item.fontName ||
+      !same(asterisk.item.height - dagger.item.height) ||
+      asterisk.item.height < em * 0.55 ||
+      asterisk.item.height > em * 0.8 ||
+      !same(y(asterisk) - y(email) - (y(dagger) - y(address))) ||
+      y(asterisk) - y(email) < em * 0.3 ||
+      y(asterisk) - y(email) > em * 0.6 ||
+      !same(x(asterisk) + asterisk.item.width - x(dagger) - dagger.item.width) ||
+      x(asterisk) <= x(start) ||
+      x(asterisk) + asterisk.item.width >= x(email) ||
+      x(email) - x(start) < em * 1.2 ||
+      x(email) - x(start) > em * 2 ||
+      ![email, address].every(({ index }) => nativeReferenceRoleRowClosed(first, [index]))
+    )
+      return []
+    const witness = nativeReferenceRolePageFonts(
+      first,
+      [asterisk, email, dagger, address].map(({ index }) => index)
+    )
+    if (!witness || !nativeReferenceRoleFontsCurrent(witness)) return []
+  }
+  const all = separatePages ? beforeFooter(first) : firstItems.slice(begin)
+  if (!all.length) return []
+  let pageCarry: ReferencePart | undefined
   for (const page of continuations) {
-    const [folio, ...body] = items(page)
+    if (separatePages) {
+      const body = beforeFooter(page)
+      if (!body[0] || !marker(body[0].item.str) || y(body[0]) < page.height * 0.82) return []
+      all.push(...body)
+      continue
+    }
+    const [folio, ...body] = referenceParts(page)
+    const previous = all.at(-1)
+    const lead = body[0]
+    const following = lead && body.find((part) => y(lead) - y(part) > em)
+    // At this page seam the last citation can end after a single wrapped line.
+    if (
+      afterTwoContacts &&
+      previous &&
+      lead &&
+      following &&
+      first.width === page.width &&
+      first.height === page.height &&
+      !marker(lead.item.str) &&
+      marker(following.item.str) &&
+      valid(previous.item) &&
+      valid(lead.item) &&
+      previous.item.fontName === start.item.fontName &&
+      lead.item.fontName === previous.item.fontName &&
+      same(previous.item.height - em) &&
+      same(lead.item.height - em) &&
+      x(previous) > first.width / 2 &&
+      y(previous) < first.height * 0.12 &&
+      y(lead) > page.height * 0.88 &&
+      /\p{L}-$/u.test(previous.item.str) &&
+      /^\p{Ll}/u.test(lead.item.str) &&
+      y(lead) - y(following) < em * 1.25 &&
+      x(lead) - x(following) > em &&
+      x(lead) - x(following) < em * 3
+    )
+      pageCarry = lead
+    const opening = pageCarry && pageCarry === lead ? following : lead
     if (
       !folio ||
       !body.length ||
       folio.item.str !== String(page.page) ||
       y(folio) < page.height * 0.92 ||
       x(folio) < page.width * 0.85 ||
-      !marker(body[0].item.str) ||
-      x(body[0]) > page.width * 0.2 ||
-      y(body[0]) < page.height * 0.8
+      !opening ||
+      !marker(opening.item.str) ||
+      x(opening) > page.width * 0.2 ||
+      y(opening) < page.height * 0.8 ||
+      (afterTwoContacts && y(start) > first.height * 0.25 && !pageCarry)
     )
       return []
     all.push(...body)
   }
 
-  const column = (part: Part): number => (x(part) < part.page.width / 2 ? 0 : 1),
-    startRail = [all.find((part) => column(part) === 0), start]
+  const column = (part: ReferencePart): number => (x(part) < part.page.width / 2 ? 0 : 1)
+  const startRails = pageRails
+    ? bibliographyPages.map((page) =>
+        [0, 1].map((col) =>
+          all.find((part) => part.page === page && column(part) === col && marker(part.item.str))
+        )
+      )
+    : []
+  if (startRails.some((rails) => rails.some((rail) => !rail))) return []
+  const startRail = [
+    all.find((part) => column(part) === 0 && (!pageCarry || marker(part.item.str))),
+    start
+  ]
+  const railFor = (part: ReferencePart): ReferencePart | undefined =>
+    pageRails ? startRails[part.page.page - first.page]?.[column(part)] : startRail[column(part)]
   const starts = all.flatMap((part, index) => {
-    const head = startRail[column(part)]
+    const head = railFor(part)
     return head &&
       Math.abs(x(part) - x(head)) < em * 0.75 &&
       same(part.item.height - em) &&
-      part.item.fontName === start.item.fontName &&
+      part.item.fontName === (pageRails ? head.item.fontName : start.item.fontName) &&
       marker(part.item.str)
       ? [index]
       : []
@@ -1347,6 +1998,9 @@ function nativeMixedBibliographyAfterContact(
     /^\[\d{1,4}\]\s+(?:\p{Lu}\.(?:-\p{Lu}\.)?\s*){1,5}(?:(?:d[aeiou]|del|van|von|ten|der|den|ter)\s+){0,2}\p{Lu}[\p{L}\p{M}’'\x60´¨ˆ˜¸˝^.-]+(?:\s+\p{Lu}[\p{L}\p{M}’'\x60´¨ˆ˜¸˝^.-]+){0,2}(?:,|\s+and\s+|\s+et al\.,)/u
   const publicationEnd =
     /(?:\((?:1[6-9]|20)\d{2}\)|\([^()]{2,105}, (?:1[6-9]|20)\d{2}\)|\((?:[^()]{2,105}, )?(?:1[6-9]|20)\d{2}\) pp\. \d+[–-]\d+|\((?:1[6-9]|20)\d{2}\), [a-z]+:\d{4}\.\d{4,5})\s*\.$/iu
+  const articleWithLocator =
+    /(?:\b(?:19|20)\d{2}\) pp?\. \d+(?:[-–—]\d+)?|\((?:19|20)\d{2}\), arXiv:\d{4}\.\d{4,5} \[[a-z][a-z.-]+\])\.$/iu
+  const corporateAuthor = /^\[\d{1,4}\] [A-Z]{2,}(?: \p{Lu}[\p{L}-]+){2,7},/u
   const selected = new Set<string>(),
     recordOwners = new Set<Unit>()
   let closed = 0
@@ -1358,25 +2012,37 @@ function nativeMixedBibliographyAfterContact(
         .replace(/\s+/gu, ' ')
         .replace(/(?<=\p{L})([´`¨ˆ˜¸˝^]) (?=\p{Ll})/gu, '$1')
         .trim()
+    const head = record[0]
+    const previous = all[starts[index - 1]]
+    // An idem entry may refer to the immediately preceding, closed record on this rail.
+    const sameAuthor =
+      afterDataAvailability &&
+      /^\[\d{1,4}\] Id\.? *, in .+\b[vp]\. \d/u.test(value) &&
+      previous?.page === head.page &&
+      Math.abs(x(previous) - x(head)) < em * 0.05 &&
+      selected.has(referencePartKey(previous))
     if (
-      !credited.test(value) ||
-      !publicationEnd.test(value) ||
+      (!sameAuthor &&
+        !credited.test(value) &&
+        !(separatePages && corporateAuthor.test(value)) &&
+        !(
+          afterDivider &&
+          /^\[\d{1,4}\] \p{Lu}[\p{L}\p{M}'’.-]+(?: \p{Lu}[\p{L}\p{M}'’.-]*){1,4} *(?:,| and )/u.test(
+            value
+          ) &&
+          /“[^”]+”/u.test(value)
+        )) ||
+      !(publicationEnd.test(value) || (separatePages && articleWithLocator.test(value))) ||
       record.length > 100 ||
       record.some(({ item }) => !valid(item) || !same(item.height - em))
     )
       continue
-    const rows: Part[][] = []
-    for (const part of record) {
-      const previous = rows.at(-1)
-      if (previous && part.page === previous[0].page && same(y(part) - y(previous[0])))
-        previous.push(part)
-      else rows.push([part])
-    }
+    const rows = consecutiveReferenceRows(record, em * 0.04)
     if (
       !rows.every((row, n) => {
         const [head] = row,
           previous = rows[n - 1]?.[0],
-          rail = startRail[column(head)]
+          rail = railFor(head)
         return (
           nativeReferenceRoleRowClosed(
             head.page,
@@ -1384,22 +2050,22 @@ function nativeMixedBibliographyAfterContact(
           ) &&
           (!previous ||
             (!!rail &&
-              head.page === previous.page &&
               x(head) - x(rail) > em &&
               x(head) - x(rail) < em * 3 &&
-              (column(head) === column(previous)
-                ? Math.abs(y(previous) - y(head) - em * 1.15) < em * 0.08
-                : column(previous) === 0 && y(head) - y(previous) > em)))
+              (head.page === previous.page
+                ? column(head) === column(previous)
+                  ? Math.abs(y(previous) - y(head) - em * 1.15) < em * 0.08
+                  : column(previous) === 0 && y(head) - y(previous) > em
+                : head === pageCarry)))
         )
       })
     )
       continue
     closed++
     for (const part of record) {
-      const owner = owns(part.page, part.index),
-        key = `${part.page.page}:${part.index}`
-      if (!owner || owner.originalStrings[owner.items.indexOf(key)] !== part.item.str) return []
-      selected.add(key)
+      const owner = originalReferenceOwner(part, owns)
+      if (!owner) return []
+      selected.add(referencePartKey(part))
       recordOwners.add(owner)
     }
   }
@@ -1407,34 +2073,421 @@ function nativeMixedBibliographyAfterContact(
   const signatures = [...recordOwners]
     .filter((owner) => owner.items.every((key) => selected.has(key)))
     .map((owner) => owner.items.join('|'))
-  if (closed < starts.length * 0.75) return []
+  if (
+    closed < starts.length * (afterDataAvailability ? 2 / 3 : 0.75) ||
+    (pageCarry && !selected.has(referencePartKey(pageCarry)))
+  )
+    return []
   for (const page of bibliographyPages) {
     const indices = all
-      .filter((part) => part.page === page && selected.has(`${page.page}:${part.index}`))
+      .filter((part) => part.page === page && selected.has(referencePartKey(part)))
       .map((part) => part.index)
-    const witness = nativeReferenceRolePageFonts(page, indices)
-    if (!witness || !nativeReferenceRoleFontsCurrent(witness)) return []
+    if (!hasReferencePageFonts(page, indices)) return []
   }
   return signatures
 }
 
 // A centered rule can separate a closed two-column bibliography from the
 // final acknowledgments even when the bibliographic band starts high on the page.
-function centeredBibliographyDivider(p: PdfLayoutPage, first: PdfLayoutTextItem): boolean {
+function centeredBibliographyDivider(
+  p: PdfLayoutPage,
+  first: PdfLayoutTextItem,
+  allowEarlierRules = false
+): boolean {
   const proof = p.nativeReferenceEvidence
-  if (!proof?.complete || proof.rules.length !== 1) return false
-  const [rule] = proof.rules
-  const size = rule.right - rule.left
-  const gap = rule.baseline - first.transform[5]
-  return (
-    rule.operators.length >= 2 &&
-    size > p.width * 0.3 &&
-    size < p.width * 0.5 &&
-    Math.abs((rule.left + rule.right) / 2 - p.width / 2) < first.height * 0.3 &&
-    first.transform[4] < p.width / 2 &&
-    gap > first.height * 2.5 &&
-    gap < first.height * 4.3
+  if (!proof?.complete || (!allowEarlierRules && proof.rules.length !== 1)) return false
+  return proof.rules.some((rule) => {
+    const size = rule.right - rule.left
+    const gap = rule.baseline - first.transform[5]
+    return (
+      rule.operators.length >= 2 &&
+      size > p.width * 0.3 &&
+      size < p.width * 0.5 &&
+      Math.abs((rule.left + rule.right) / 2 - p.width / 2) < first.height * 0.3 &&
+      first.transform[4] < p.width / 2 &&
+      gap > first.height * 2.5 &&
+      gap < first.height * 4.3 &&
+      proof.rules.every((other) => other === rule || other.baseline - rule.baseline > first.height)
+    )
+  })
+}
+
+// Journal citations can stop at a numbered prose note that continues overleaf.
+function journalRunBeforeNumberedNote(
+  page: PdfLayoutPage,
+  owns: (index: number) => Unit | undefined
+): string[] {
+  if (page.rotation !== 0 || page.items.length > 10000) return []
+  const content = page.items.flatMap((item, index) => (item.str.trim() ? [{ item, index }] : [])),
+    start = content.findIndex(
+      ({ item }) => item.transform[4] > page.width / 2 && /^\[1\] \p{Lu}\./u.test(item.str)
+    ),
+    contact = content[start - 1],
+    star = content[start - 2]?.item
+  if (start < 2 || !contact || !star) return []
+  const first = content[start].item,
+    em = first.height,
+    left = first.transform[4],
+    contactGap = contact.item.transform[5] - first.transform[5]
+  if (
+    ![first, contact.item, star].every(valid) ||
+    !/^Corresponding author:\s*[^\s@]+@[^\s@]+\.[a-z]{2,}\.$/iu.test(contact.item.str) ||
+    !/^[∗*]$/u.test(star.str) ||
+    contact.item.fontName !== first.fontName ||
+    contact.item.height !== em ||
+    contactGap < em ||
+    contactGap > em * 1.5 ||
+    star.transform[4] < left ||
+    star.transform[4] + star.width > contact.item.transform[4] ||
+    star.transform[5] <= contact.item.transform[5] ||
+    star.transform[5] - contact.item.transform[5] > em * 0.6 ||
+    star.height >= em * 0.8 ||
+    !nativeReferenceRoleRowClosed(page, [contact.index])
   )
+    return []
+
+  const end = content.findIndex(
+      ({ item }, at) =>
+        at > start && /^\[\d{1,4}\] (?:An?|The) \p{Ll}+(?: \p{Ll}+){3}/u.test(item.str)
+    ),
+    note = content[end]?.item
+  if (!note || !valid(note) || note.fontName !== first.fontName || note.height !== em) return []
+  const entries: Entry[] = [],
+    rows: Row[] = []
+  for (const { item, index } of content.slice(start, end)) {
+    const owner = owns(index),
+      key = `${page.page}:${index}`
+    if (
+      !owner ||
+      owner.originalStrings[owner.items.indexOf(key)] !== item.str ||
+      !valid(item) ||
+      item.height !== em ||
+      item.transform[4] <= page.width / 2 ||
+      item.transform[4] + item.width > page.width
+    )
+      return []
+    const entry = { item, index, key, owner },
+      row = rows.at(-1),
+      y = item.transform[5]
+    entries.push(entry)
+    if (row && Math.abs(row.baseline - y) < em * 0.02) row.entries.push(entry)
+    else rows.push({ baseline: y, entries: [entry] })
+  }
+  const starts = rows.flatMap((row, index) => (marker(row.entries[0].item.str) ? [index] : [])),
+    number = (row: Row): number => Number(marker(row.entries[0].item.str)?.[1]),
+    rail = (row: Row): number => row.entries[0].item.transform[4],
+    hanging = rows.find((row) => !number(row)),
+    pitch = rows.length > 1 ? rows[0].baseline - rows[1].baseline : 0
+  if (
+    starts[0] !== 0 ||
+    starts.length < 6 ||
+    !hanging ||
+    pitch < em ||
+    pitch > em * 1.4 ||
+    Number(marker(note.str)?.[1]) !== starts.length + 1 ||
+    Math.abs(note.transform[4] - left) > em * 0.75 ||
+    Math.abs(rows.at(-1)!.baseline - note.transform[5] - pitch) > em * 0.04 ||
+    rows.some((row, index) => {
+      const x = rail(row),
+        numbered = number(row)
+      return (
+        row.entries[0].item.fontName !== first.fontName ||
+        (numbered
+          ? Math.abs(x - left) > em * 0.75
+          : x - left < em || x - left > em * 2.5 || Math.abs(x - rail(hanging)) > em * 0.04) ||
+        (index > 0 && Math.abs(rows[index - 1].baseline - row.baseline - pitch) > em * 0.04) ||
+        !nativeReferenceRoleRowClosed(
+          page,
+          row.entries.map(({ index }) => index)
+        )
+      )
+    })
+  )
+    return []
+  const author =
+      /^\[\d{1,4}\]\s+(?:\p{Lu}\.(?:-\p{Lu}\.)?\s*){1,5}(?:(?:d[aeiou]|del|van|von|ten|der|den|ter)\s+){0,2}\p{Lu}[\p{L}\p{M}’'\x60´¨ˆ˜¸˝^.-]+(?:,|\s+and\s+|\s+et al\.\s*,)/u,
+    locator = /\b\d{1,4}\s*,\s*[A-Z]?\d{1,12}\s+\((?:18|19|20)\d{2}\)\.$/u
+  if (
+    starts.some((at, index) => {
+      const record = rows.slice(at, starts[index + 1]),
+        value = text(record.flatMap((row) => row.entries)).replace(
+          /(?<=\p{L})([´`¨]) (?=\p{Ll})/gu,
+          '$1'
+        )
+      return number(rows[at]) !== index + 1 || !author.test(value) || !locator.test(value)
+    })
+  )
+    return []
+  const keys = new Set(entries.map(({ key }) => key)),
+    owners = [...new Set(entries.map(({ owner }) => owner))]
+  if (owners.some((owner) => owner.items.some((key) => !keys.has(key)))) return []
+  const witness = nativeReferenceRolePageFonts(page, [
+    content[start - 2].index,
+    contact.index,
+    ...entries.map(({ index }) => index),
+    content[end].index
+  ])
+  return witness && nativeReferenceRoleFontsCurrent(witness)
+    ? owners.map((owner) => owner.items.join('|'))
+    : []
+}
+
+// A headingless terminal bibliography can use standalone same-size numbers and hanging indents.
+function terminalHangingBibliography(
+  page: PdfLayoutPage,
+  owns: (index: number) => Unit | undefined
+): string[] {
+  if (page.rotation !== 0 || page.items.length > 1000) return []
+  const entries = page.items.flatMap((item, index) => (item.str.trim() ? [{ item, index }] : []))
+  const first = entries[0]?.item,
+    firstBody = entries[1]?.item
+  if (!first || !firstBody || first.str !== '1' || first.transform[5] < page.height * 0.8) return []
+  const em = first.height,
+    rail = first.transform[4],
+    left = firstBody.transform[4]
+  if (left - rail < em || left - rail > em * 3 || rail > page.width * 0.2) return []
+  const at = (value: number, target: number): boolean => Math.abs(value - target) < em * 0.05
+  const records: string[][] = []
+  const owners = new Set<Unit>()
+  let previous: PdfLayoutTextItem | undefined
+  let ordinal: (typeof entries)[number] | undefined
+  for (const entry of entries) {
+    const { item, index } = entry
+    const owner = owns(index)
+    if (
+      !valid(item) ||
+      item.fontName !== first.fontName ||
+      !at(item.height, em) ||
+      !owner ||
+      owner.originalStrings[owner.items.indexOf(`${page.page}:${index}`)] !== item.str
+    )
+      return []
+    const bounds = box(page, item)
+    if (bounds.x < 0 || bounds.y < 0 || bounds.right > page.width || bounds.bottom > page.height)
+      return []
+    owners.add(owner)
+    if (at(bounds.x, rail)) {
+      if (ordinal || bounds.right >= left || item.str !== String(records.length + 1)) return []
+      ordinal = entry
+      records.push([])
+      continue
+    }
+    const record = records.at(-1)
+    const pitch = previous ? previous.transform[5] - item.transform[5] : em * 1.15
+    if (!record || !at(bounds.x, left) || pitch < em * 1.05 || pitch > em * 1.3) return []
+    if (ordinal && !at(ordinal.item.transform[5], item.transform[5])) return []
+    if (!nativeReferenceRoleRowClosed(page, ordinal ? [ordinal.index, index] : [index])) return []
+    ordinal = undefined
+    record.push(item.str)
+    previous = item
+  }
+  if (
+    records.length < 4 ||
+    records.some((rows) => {
+      const citation = rows.join(' ')
+      return (
+        rows.length < 2 ||
+        rows.length > 8 ||
+        !/^\p{Lu}[\p{L}\p{M}’'.-]+,\s+\p{Lu}/u.test(citation) ||
+        !/["„“].+["“”]/u.test(citation) ||
+        !dated(citation) ||
+        !/(?:https?:\/\/\S+|\((?:18|19|20)\d{2}\):\s+\d+[–-]\d+)\.$/u.test(rows.at(-1)!)
+      )
+    })
+  )
+    return []
+  if (
+    records.filter((rows) => /https:\/\/doi\.org\/10\.\d{4,9}\/\S+\.$/u.test(rows.at(-1)!)).length <
+    records.length / 2
+  )
+    return []
+  const indices = entries.map(({ index }) => index)
+  const keys = new Set(indices.map((index) => `${page.page}:${index}`))
+  if ([...owners].some((owner) => owner.items.some((key) => !keys.has(key)))) return []
+  const witness = nativeReferenceRolePageFonts(page, indices)
+  return witness && nativeReferenceRoleFontsCurrent(witness)
+    ? [...owners].map((owner) => owner.items.join('|'))
+    : []
+}
+
+// A terminal bibliography can start a new record in the right column or carry
+// the previous record over the gutter.
+function terminalBracketedColumns(
+  page: PdfLayoutPage,
+  previous: PdfLayoutPage,
+  owns: (page: PdfLayoutPage, index: number) => Unit | undefined
+): string[] {
+  if (
+    page.rotation ||
+    page.items.length > 1000 ||
+    previous.page + 1 !== page.page ||
+    previous.rotation ||
+    previous.width !== page.width ||
+    previous.height !== page.height
+  )
+    return []
+  const visible = referenceParts(page),
+    folio = visible[0]?.item,
+    middle = page.width / 2
+  if (
+    folio?.str === String(page.page) &&
+    valid(folio) &&
+    folio.transform[5] > page.height * 0.92 &&
+    folio.transform[4] > middle
+  )
+    visible.shift()
+  const first = visible[0]?.item,
+    split = visible.findIndex(({ item }) => item.transform[4] > middle),
+    right = visible[split]?.item,
+    start = Number(marker(first?.str ?? '')?.[1])
+  if (
+    !start ||
+    split < 1 ||
+    first.transform[5] < page.height * 0.8 ||
+    Math.abs(first.transform[5] - right.transform[5]) > first.height * 0.05 ||
+    (!marker(right.str) && !/^\p{Ll}/u.test(right.str))
+  )
+    return []
+  const em = first.height,
+    near = (a: number, b: number): boolean => Math.abs(a - b) < em * 0.05,
+    references: string[] = [],
+    claimed = new Set<string>(),
+    owners = new Set<Unit>()
+  const locator =
+    /(?:\(\s*(?:18|19|20)\d{2}\)|,\s+(?:18|19|20)\d{2}\))(?:\s+pp?\.\s+\d{1,6}(?:[-–]\d{1,6})?)?\s*\.$/u
+  const volumePages =
+    /\b\p{Lu}[\p{L}\p{M}-]*\.?\s*,\s+\d{1,4}(?:[-–]\d{1,4})?(?:\(\d{1,4}\))?\s*:\s*\d{1,9}(?:\s*[-–]\s*\d{1,9})?,\s+(?:18|19|20)\d{2}\./u
+  const periodical = (value: string): boolean => {
+    const match = volumePages.exec(value)
+    if (!match) return false
+    const suffix = value.slice(match.index + match[0].length)
+    // A special-issue title may follow a completed locator over a native word wrap.
+    return (
+      !suffix ||
+      /^ \p{Lu}\p{Ll}{1,9}-\n\p{Ll}+(?: (?:\p{Lu}[\p{L}-]+|and|of|in|the)){2,8}\.$/u.test(suffix)
+    )
+  }
+  const edition = /\b\p{Lu}[\p{L} -]+, \d{1,3} edition, (?:18|19|20)\d{2}\.$/u
+  const closed = (value: string): boolean => {
+    const trimmed = value.trim()
+    return locator.test(trimmed) || periodical(trimmed) || edition.test(trimmed)
+  }
+  const standaloneSentence = /^\p{L}+(?: \p{Ll}[\p{L}’\x27-]*){3,}[.!?]$/u
+  let expected = start
+  for (const [column, lane] of [visible.slice(0, split), visible.slice(split)].entries()) {
+    for (const part of lane) {
+      const { item } = part,
+        owner = originalReferenceOwner(part, owns),
+        bounds = box(page, item)
+      if (
+        !valid(item) ||
+        !near(item.height, em) ||
+        bounds.x < (column === 0 ? 0 : middle) ||
+        bounds.right > (column === 0 ? middle : page.width) ||
+        bounds.y < 0 ||
+        bounds.bottom > page.height ||
+        !owner ||
+        owner.figure ||
+        owner.referenceBoundary
+      )
+        return []
+      claimed.add(referencePartKey(part))
+      owners.add(owner)
+    }
+    const rows = consecutiveReferenceRows(lane, em * 0.05)
+    const edge = Math.max(
+      ...rows.flatMap((parts) =>
+        marker(parts[0].item.str) ? parts.map(({ item }) => item.transform[4] + item.width) : []
+      )
+    )
+    const rail = rows.find((parts) => !marker(parts[0].item.str))?.[0].item.transform[4]
+    if (rail === undefined || !Number.isFinite(edge)) return []
+    let markers = 0
+    for (const [index, row] of rows.entries()) {
+      const head = row[0].item,
+        number = marker(head.str),
+        pitch = index ? rows[index - 1][0].item.transform[5] - head.transform[5] : em
+      if (
+        pitch < em ||
+        pitch > em * 1.3 ||
+        (!number && !near(head.transform[4], rail)) ||
+        !nativeReferenceRoleRowClosed(
+          page,
+          row.map((part) => part.index)
+        )
+      )
+        return []
+      if (number) {
+        const indent = rail - head.transform[4]
+        if (
+          Number(number[1]) !== expected++ ||
+          indent < em ||
+          indent > em * 2.5 ||
+          head.fontName !== first.fontName
+        )
+          return []
+        references.push('')
+        markers++
+      }
+      const record = references.length - 1
+      if (record < 0) return []
+      const priorText = references[record].trim()
+      const line = row.map(({ item }) => item.str).join(' '),
+        joined = (references[record] + line).trim(),
+        closesRecord = closed(joined),
+        lineEdge = Math.max(...row.map(({ item }) => item.transform[4] + item.width))
+      // Until the locator, hanging rows must reach the column edge. An open
+      // continuation at the top of the right rail must also split a word
+      // within that rail or across the gutter.
+      if (
+        !number &&
+        (closed(priorText) ||
+          standaloneSentence.test(line) ||
+          (!closesRecord &&
+            (!near(edge, lineEdge) ||
+              (column === 1 &&
+                !markers &&
+                !/\p{L}-$/u.test(line) &&
+                !(index === 0 && /\p{L}-$/u.test(priorText))))))
+      )
+        return []
+      references[record] = joined + '\n'
+    }
+    if (markers < 3) return []
+  }
+  const journalLocator = /\b[A-Z]?\d+(?:[-–]\d+)?\s+\((?:18|19|20)\d{2}\)\s*\.$/iu
+  const author = /^\[\d+\]\s+\p{Lu}\.\s*\p{Lu}/u
+  if (
+    references.length < 8 ||
+    references.some((reference) => !closed(reference)) ||
+    references.filter((reference) => author.test(reference)).length < references.length * 0.75 ||
+    references.filter(
+      (reference) => journalLocator.test(reference.trim()) || periodical(reference.trim())
+    ).length <
+      references.length / 2 ||
+    [...owners].some((owner) => owner.items.some((key) => !claimed.has(key)))
+  )
+    return []
+  if (start > 1) {
+    const prior = previous.items.filter((item) => item.str.trim()),
+      priorStart = prior.findLastIndex((item) => Number(marker(item.str)?.[1]) === start - 1),
+      tail = prior.slice(priorStart)
+    if (
+      priorStart < 0 ||
+      tail.length < 2 ||
+      !author.test(tail[0].str) ||
+      tail[0].fontName !== first.fontName ||
+      !closed(tail.map((item) => item.str).join(' ')) ||
+      tail.some((item) => !valid(item) || !near(item.height, em) || item.transform[4] <= middle)
+    )
+      return []
+  }
+  return hasReferencePageFonts(
+    page,
+    visible.map(({ index }) => index)
+  )
+    ? [...owners].map((owner) => owner.items.join('|'))
+    : []
 }
 
 /** Whole ordered native owners only. No initial-page metrics, heading guess or
@@ -1453,6 +2506,13 @@ export function nativeClosedUnheadedReferencePackets(
     }
   for (const page of pages) {
     for (const signature of one(page)) accepted.add(signature)
+    if (page === pages.at(-2) && pages.at(-1)?.page === page.page + 1) {
+      for (const signature of journalRunBeforeNumberedNote(page, (index) => {
+        const key = `${page.page}:${index}`
+        return counts.get(key) === 1 ? owners.get(key) : undefined
+      }))
+        accepted.add(signature)
+    }
     if (page !== pages.at(-1)) continue
     for (const signature of bibliographyBeforeAcknowledgments(page, (index) => {
       const key = `${page.page}:${index}`
@@ -1485,9 +2545,9 @@ export function nativeClosedUnheadedReferencePackets(
     // The acknowledgments can end directly above a one-column reference packet.
     const rightStart = page.items.findIndex(
       (item) =>
-        /^\[1\] \p{Lu}\./u.test(item.str) &&
+        /^\[1\] \p{Lu}[. ]/u.test(item.str) &&
         item.transform[4] > page.width / 2 &&
-        item.transform[5] < page.height * 0.6
+        item.transform[5] < page.height * 0.75
     )
     if (rightStart >= 0)
       for (const signature of one(page, rightStart, false, false, true)) accepted.add(signature)
@@ -1498,10 +2558,28 @@ export function nativeClosedUnheadedReferencePackets(
     if (acknowledgedStart >= 0)
       for (const signature of one(page, acknowledgedStart, true)) accepted.add(signature)
   }
-  for (const signature of nativeMixedBibliographyAfterContact(pages, (page, index) => {
+  const owns = (page: PdfLayoutPage, index: number): Unit | undefined => {
     const key = `${page.page}:${index}`
     return counts.get(key) === 1 ? owners.get(key) : undefined
-  }))
+  }
+  const last = pages.at(-1),
+    previous = pages.at(-2)
+  if (last && previous)
+    for (const signature of terminalBracketedColumns(last, previous, owns)) accepted.add(signature)
+  if (last && pages.at(-2)?.page === last.page - 1)
+    for (const signature of terminalBibliographyAfterProse(last, (index) => owns(last, index)))
+      accepted.add(signature)
+  if (last && pages.at(-2)?.page === last.page - 1)
+    for (const signature of terminalHangingBibliography(last, (index) => owns(last, index)))
+      accepted.add(signature)
+  for (const signature of nativeMixedBibliography(pages, owns, 'contact')) accepted.add(signature)
+  for (const signature of nativeMixedBibliography(pages, owns, 'two-contacts'))
+    accepted.add(signature)
+  for (const signature of nativeMixedBibliography(pages, owns, 'data-availability'))
+    accepted.add(signature)
+  for (const signature of nativeMixedBibliography(pages, owns, 'separate-pages'))
+    accepted.add(signature)
+  for (const signature of nativeMixedBibliography(pages, owns, 'divided-columns'))
     accepted.add(signature)
   return accepted
 
@@ -1531,8 +2609,27 @@ export function nativeClosedUnheadedReferencePackets(
         (!proof?.complete || (proof.rules.length > 0 && !divider)))
     )
       return []
+    const noteStart = terminalRight ? p.items.findLastIndex((item) => !!marker(item.str)) : -1
+    const note = p.items[noteStart]
+    const precedingNote =
+      note && p.items.findLast((item, index) => index < noteStart && !!item.str.trim())
+    const last = note && p.items.findLast((item) => item.str.trim())
+    const trailingProse =
+      noteStart > (terminalStart ?? 0) &&
+      !!note &&
+      !!precedingNote &&
+      !!last &&
+      /^\[\d{1,4}\] (?:This|These|The) (?:\p{Ll}+ ){4,}/u.test(note.str) &&
+      !dated(note.str) &&
+      /[.!?]$/u.test(last.str) &&
+      valid(note) &&
+      note.transform[4] > p.width / 2 &&
+      precedingNote.transform[5] - note.transform[5] > note.height &&
+      precedingNote.transform[5] - note.transform[5] < note.height * 1.5 &&
+      nativeReferenceRoleRowClosed(p, [noteStart])
     const entries: Entry[] = []
     for (const [index, item] of p.items.entries()) {
+      if (trailingProse && index >= noteStart) break
       if (!item.str.trim() || index < (terminalStart ?? 0)) continue
       const key = `${p.page}:${index}`,
         owner = owners.get(key),
@@ -1613,6 +2710,7 @@ export function nativeClosedUnheadedReferencePackets(
         ))
     )
       return []
+    let proseAcknowledgment = false
     if (terminalBand) {
       const baseline = starts[0].item.transform[5],
         preceding = p.items
@@ -1621,6 +2719,31 @@ export function nativeClosedUnheadedReferencePackets(
       const preamble = afterAcknowledgment
         ? preceding.filter((item) => item.transform[5] === preceding.at(-1)?.transform[5])
         : preceding
+      const last = preceding.at(-1),
+        ending = last && owners.get(`${p.page}:${p.items.indexOf(last)}`)
+      proseAcknowledgment =
+        terminalRight &&
+        !!last &&
+        !!ending &&
+        !ending.sourceOnly &&
+        /^(?:The authors|We) (?:thank|gratefully acknowledge)\b/iu.test(ending.source) &&
+        ending.items.every((key, n) => {
+          const index = Number(key.split(':')[1]),
+            item = p.items[index]
+          return (
+            index < terminalStart &&
+            counts.get(key) === 1 &&
+            key === `${p.page}:${index}` &&
+            !!item &&
+            item.str === ending.originalStrings[n] &&
+            valid(item) &&
+            item.transform[4] > p.width / 2 &&
+            last.fontName === item.fontName &&
+            item.height > font * 1.05
+          )
+        }) &&
+        last.transform[5] - baseline > font * 3 &&
+        last.transform[5] - baseline < font * 8
       if (
         afterAcknowledgment &&
         (!/\b(?:is|are|was|were) supported by\b/iu.test(
@@ -1636,9 +2759,17 @@ export function nativeClosedUnheadedReferencePackets(
         (terminalRight
           ? columns.length !== 1 ||
             body.some(({ item }) => item.transform[4] <= p.width / 2) ||
-            !preceding.some((item) => valid(item) && /^Acknowledg(?:e)?ments\./iu.test(item.str))
+            (!proseAcknowledgment &&
+              !preceding.some((item) => valid(item) && /^Acknowledg(?:e)?ments\./iu.test(item.str)))
           : columns.length !== 2 || columns[0].x >= p.width / 2 || columns[1].x <= p.width / 2) ||
         starts.length < 6 ||
+        (terminalRight && baseline >= p.height * 0.6 && !(proseAcknowledgment && trailingProse)) ||
+        (trailingProse &&
+          (!proseAcknowledgment ||
+            note.fontName !== starts[0].item.fontName ||
+            note.height !== font ||
+            Math.abs(note.transform[4] - columns[0].x) > font * 0.75 ||
+            Number(marker(note.str)?.[1]) !== starts.length + 1)) ||
         starts.some((entry, n) => Number(marker(entry.item.str)![1]) !== n + 1) ||
         columns.some(
           ({ x, starts }) =>
@@ -1663,19 +2794,23 @@ export function nativeClosedUnheadedReferencePackets(
         )
       )
         return []
-      const witness = nativeReferenceRolePageFonts(
-        p,
-        entries.map((e) => e.index)
-      )
+      const witness = nativeReferenceRolePageFonts(p, [
+        ...entries.map((e) => e.index),
+        ...(trailingProse ? [noteStart] : [])
+      ])
       if (!witness || !nativeReferenceRoleFontsCurrent(witness)) return []
     }
     const preprint = /\[(?:arXiv:\d{4}\.\d{4,5} \[[a-z.-]+\]|[a-z.-]+\/\d{7})\]\.$/u
+    const barePreprint = /\b[a-z]+(?:-[a-z]+)?\/\d{7}\.$/u
+    const compoundLocator =
+      /(?:, (?:18|19|20)\d{2}\)|\b\d{1,4} \((?:18|19|20)\d{2}\) [A-Z]\d{1,8}(?:[A-Z–-]\d{1,8})?|\b\d{1,4} , \d{1,12}|\(to be published\))\.$/u
     const closesRecord = (source: string, style: 'initials' | 'surname'): boolean =>
       wholeFinalPage
         ? /(?:\b\d{1,3} *, \d{1,9}(?:[-–]\d+|\([A-Z]\))? |\b(?:Thesis|Institute|Press) [^()]{1,60} |\b[A-Z]\d{4,7} )\((?:18|19|20)\d{2}\)\.$|\b[a-z]+(?:-[a-z]+)?\/\d{7}\]?\.$/u.test(
             source
           )
         : (terminalRight && preprint.test(source)) ||
+          (trailingProse && (compoundLocator.test(source) || barePreprint.test(source))) ||
           terminal(source, style) ||
           (dividedBand && /, (?:18|19|20)\d{2}, pp\. \d+[–-]\d+\.$/u.test(source)) ||
           (terminalBand &&
@@ -1715,7 +2850,14 @@ export function nativeClosedUnheadedReferencePackets(
               ? 'initials'
               : undefined
             : terminalRight
-              ? /^\[\d+\] (?:\p{Lu}\.\s*){1,5}\p{Lu}[\p{L}’'-]+(?:,|\s+et al\.(?:\s+\[[\p{L}\d -]+\])?\s*,)/u.test(
+              ? (trailingProse &&
+                  (/^\[\d+\] (?:\p{Lu}\.\s*){1,5}\p{Lu}[\p{L}’'-]+(?:[,.(]| +\()/u.test(source) ||
+                    invertedBibliographyAuthor.test(source.replace(/^\[\d+\]\s*/u, '')))) ||
+                (proseAcknowledgment &&
+                  /^\[\d+\] (?:\p{Lu}(?:\.\s*| +)){1,5}\p{Lu}[\p{L}’'-]+(?:[,.]| +(?:and|et al\.) )/u.test(
+                    source
+                  )) ||
+                /^\[\d+\] (?:\p{Lu}\.\s*){1,5}\p{Lu}[\p{L}’'-]+(?:,|\s+et al\.(?:\s+\[[\p{L}\d -]+\])?\s*,)/u.test(
                   source
                 )
                 ? 'initials'
@@ -1735,11 +2877,20 @@ export function nativeClosedUnheadedReferencePackets(
                   r.entries[0].item.transform[4] >= column.x + font * 0.8))
           ) &&
           closesRecord(source, style) &&
-          !physical
-            .slice(0, -1)
-            .some((_, i) =>
-              closesRecord(text(physical.slice(0, i + 1).flatMap((r) => r.entries)), style)
-            ) &&
+          !physical.slice(0, -1).some(
+            (_, i) =>
+              closesRecord(text(physical.slice(0, i + 1).flatMap((r) => r.entries)), style) &&
+              (!trailingProse ||
+                physical.slice(i + 1).some((row) => {
+                  const continuation = text(row.entries)
+                  return (
+                    !/\b\d{1,4} *, *\d{1,12} \((?:18|19|20)\d{2}\)/u.test(continuation) &&
+                    !preprint.test(continuation) &&
+                    !compoundLocator.test(continuation) &&
+                    !barePreprint.test(continuation)
+                  )
+                }))
+          ) &&
           packetOwners.every((u) => u.items.every((k) => keys.has(k)))
         records.push({
           complete,

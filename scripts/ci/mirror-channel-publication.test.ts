@@ -2,7 +2,9 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
-import { load } from 'js-yaml'
+import { pathToFileURL } from 'node:url'
+import { gzipSync } from 'node:zlib'
+import { dump, load } from 'js-yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const feeds = [
@@ -39,7 +41,20 @@ function fixture(): {
   // Pin Node and Bash so runner-installed wrappers cannot replace the fixture PATH.
   symlinkSync(process.execPath, join(bin, 'node'))
   mkdirSync(channel, { recursive: true })
-  mkdirSync(join(root, 'dist-assets'))
+  const dist = join(root, 'dist-assets')
+  const previousStable = '2.0.0'
+  const macZips = (version: string): string[] =>
+    ['arm64', 'x64'].map((arch) => `aipoch-open-science-${version}-mac-${arch}.zip`)
+  const blockmap = gzipSync(
+    JSON.stringify({
+      version: '2',
+      files: [{ name: 'file', offset: 0, sizes: [17], checksums: ['fixture'] }]
+    })
+  )
+  const previousDir = join(channel, 'releases', previousStable)
+  mkdirSync(previousDir, { recursive: true })
+  for (const zip of macZips(previousStable))
+    writeFileSync(join(previousDir, zip + '.blockmap'), blockmap)
   writeFileSync(
     join(bin, 'aws'),
     `#!/usr/bin/env node
@@ -74,12 +89,21 @@ else {
   }
   const stage = (version: string): void => {
     writeFileSync(join(root, 'version.json'), JSON.stringify({ version }) + '\n')
-    writeFileSync(join(root, 'dist-assets', 'installer.deb'), 'fixture installer')
-    for (const name of feeds)
-      writeFileSync(
-        join(root, 'dist-assets', name),
-        `version: ${version}\nfiles:\n  - url: releases/${version}/installer.deb\n    size: 17\n`
-      )
+    rmSync(dist, { recursive: true, force: true })
+    mkdirSync(dist)
+    const zips = macZips(version)
+    for (const file of ['installer.deb', ...zips])
+      writeFileSync(join(dist, file), 'fixture installer')
+    for (const zip of zips) writeFileSync(join(dist, zip + '.blockmap'), blockmap)
+    for (const name of feeds) {
+      const installers = name.endsWith('-mac.yml')
+        ? zips.filter(
+            (zip) => name === 'latest-mac.yml' || zip.endsWith(`-${name.split('-')[0]}.zip`)
+          )
+        : ['installer.deb']
+      const files = installers.map((file) => ({ url: `releases/${version}/${file}`, size: 17 }))
+      writeFileSync(join(dist, name), dump({ version, files }))
+    }
   }
   const snapshot = (): Record<string, string> =>
     Object.fromEntries(
@@ -87,13 +111,22 @@ else {
     )
   const run = (version: string, mode = 'backfill', failKey = '', bootstrap = false): void => {
     const workflow = load(readFileSync('.github/workflows/mirror-to-website.yml', 'utf8')) as {
-      jobs: { mirror: { steps: Array<{ name: string; run?: string }> } }
+      jobs: { mirror: { steps: Array<{ name: string; if?: string; run?: string }> } }
     }
     const steps = workflow.jobs.mirror.steps
     const start = steps.findIndex((step) => step.name === 'Sync installers to versioned path')
     expect(start).toBeGreaterThanOrEqual(0)
+    // The fixture never sets dry_run; windows_delta_repair mode is the only repair intent.
+    const repair = mode === 'windows_delta_repair'
+    const condition = (expression: string | undefined): boolean => {
+      const body = expression?.replace(/^\$\{\{|\}\}$/g, '').trim()
+      if (!body) return true
+      if (body === '!inputs.dry_run && !inputs.windows_delta_repair') return !repair
+      if (body === '!inputs.dry_run && inputs.windows_delta_repair') return repair
+      throw new Error(`Unsupported workflow step condition in test: ${expression}`)
+    }
     for (const step of steps.slice(start)) {
-      if (!step.run) continue
+      if (!step.run || !condition(step.if)) continue
       execFileSync('/bin/bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', step.run], {
         cwd: root,
         // Do not inherit host AWS environment or credentials. PATH begins with the only AWS used.
@@ -104,6 +137,8 @@ else {
           S3_BUCKET: 'fixture-bucket',
           S3_PREFIX: 'stable',
           VERSION: version,
+          PREVIOUS_STABLE: previousStable,
+          CDN_BASE_URL: pathToFileURL(dirname(channel)).href,
           MODE: mode,
           BOOTSTRAP_LINUX_ARM64: String(bootstrap),
           FAIL_KEY: failKey
@@ -113,7 +148,7 @@ else {
       })
     }
   }
-  current('2.0.0')
+  current(previousStable)
   return { root, channel, current, stage, snapshot, run }
 }
 

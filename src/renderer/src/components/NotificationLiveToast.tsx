@@ -15,6 +15,7 @@ import {
   useState
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import { RESEARCH_FILM_NOTIFICATION_PREFIX } from '../../../shared/notifications'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -135,7 +136,9 @@ const NotificationLiveToastContent = (): React.JSX.Element | null => {
         item.sequence > previousSequence &&
         item.readAt === undefined &&
         item.targetInvalidatedAt === undefined &&
-        (!activeSessionId || item.sessionId !== activeSessionId)
+        (item.dedupeKey.startsWith(RESEARCH_FILM_NOTIFICATION_PREFIX) ||
+          !activeSessionId ||
+          item.sessionId !== activeSessionId)
     )
     if (added.length === 0) return
 

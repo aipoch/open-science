@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
+import { validateMacBlockmap } from './release-artifact-validation.mjs'
 import { load } from 'js-yaml'
 
 const {
@@ -106,6 +107,60 @@ execFileSync(
 if (!promote) {
   console.log(`Backfilled ${version}; channel entries unchanged.`)
 } else {
+  const previous = process.env.PREVIOUS_STABLE
+  stable(previous)
+  const macFeed = load(readFileSync('dist-assets/latest-mac.yml', 'utf8'))
+  for (const arch of ['arm64', 'x64']) {
+    for (const release of [version, previous]) {
+      const zip = `aipoch-open-science-${release}-mac-${arch}.zip`
+      const path = `releases/${release}/${zip}`
+      if (release === version && !macFeed.files.some((file) => file.url === path)) {
+        throw new Error(`Missing macOS feed entry: ${path}`)
+      }
+      const patch =
+        release === version && macFeed.files.find((file) => file.url === path)?.sparkleDelta
+      if (patch) {
+        if (patch.from !== previous)
+          throw new Error('Sparkle patch source is not the preceding stable release')
+        const patchUrl = new URL(
+          prefix + '/' + path + '.from-' + previous + '.delta',
+          process.env.CDN_BASE_URL + '/'
+        )
+        const bytes = execFileSync(
+          'curl',
+          [
+            '--fail',
+            '--silent',
+            '--show-error',
+            '--retry',
+            '2',
+            '--max-time',
+            '120',
+            patchUrl.href
+          ],
+          { maxBuffer: patch.size + 1 }
+        )
+        if (
+          bytes.length !== patch.size ||
+          createHash('sha512').update(bytes).digest('base64') !== patch.sha512
+        )
+          throw new Error('CDN Sparkle patch differs from the release asset')
+      }
+      const url = new URL(`${prefix}/${path}.blockmap`, process.env.CDN_BASE_URL + '/')
+      const bytes = execFileSync(
+        'curl',
+        ['--fail', '--silent', '--show-error', '--retry', '2', '--max-time', '30', url.href],
+        { maxBuffer: 16 * 1024 * 1024 }
+      )
+      validateMacBlockmap(bytes, url.href)
+      if (
+        release === version &&
+        !bytes.equals(readFileSync(join('dist-assets', zip + '.blockmap')))
+      ) {
+        throw new Error(`CDN blockmap differs from release asset: ${url}`)
+      }
+    }
+  }
   // Feed writes precede the website/manual manifest. This is not an atomic transaction; same-version
   // retry repairs a partial write, and the preflight prevents an older run overwriting any newer feed.
   for (const name of feeds) upload(join('dist-assets', name), name, false, 'text/yaml')

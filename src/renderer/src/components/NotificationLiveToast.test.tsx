@@ -174,6 +174,24 @@ describe('NotificationLiveToast', () => {
     expect(container.querySelector('[data-testid="notification-live-toast"]')).toBeNull()
   })
 
+  it('shows a film outcome for the conversation already open', async () => {
+    useNavigationStore.setState({ view: 'workspace' })
+    useSessionStore.setState({ selectedSessionId: 'session-1' })
+    await act(async () => root.render(<NotificationLiveToast />))
+    await act(async () => {
+      useNotificationInboxStore.setState({
+        latestSequence: 2,
+        items: [
+          item(2, { dedupeKey: 'research-film:run-1', title: 'Research film ready' }),
+          item(1)
+        ]
+      })
+    })
+    expect(
+      container.querySelector('[data-testid="notification-live-toast"]')?.textContent
+    ).toContain('Research film ready')
+  })
+
   it('withdraws a removed lead and does not carry its count into the next arrival', async () => {
     await act(async () => root.render(<NotificationLiveToast />))
     await act(async () => {

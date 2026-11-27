@@ -122,6 +122,7 @@ type AcpPromptPreparationInput = Readonly<{
   skillImportEnabled: boolean
   skillImportTurnToken: string
   turnSkill: TurnSkillHandle
+  omitMainScopeGuidance?: () => boolean
   protectedContext?: string
   selectedComputeHostIds?: readonly string[]
   turnPromptReminders?: readonly string[]
@@ -360,6 +361,7 @@ class AcpPromptPreparationOwner {
           .filter((segment): segment is string => Boolean(segment))
           .join('\n\n'),
         promptText: requestText,
+        omitMainScopeGuidance: input.omitMainScopeGuidance,
         codex: {
           home: input.backend.adapter.codexHome,
           bridgeSkillsAvailable: input.bridgeSkillsAvailable,

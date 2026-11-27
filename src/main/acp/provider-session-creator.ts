@@ -1,3 +1,4 @@
+import { assertTaskRunTracingReady, requiresTaskRunTracing } from './task-run-tracing'
 import { recordMainAgentContext } from './main-agent-process-ownership'
 import { HARNESS_EPHEMERAL_SESSION, HARNESS_OWNER } from '../harness-acp/config'
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
@@ -81,6 +82,10 @@ export class AcpProviderSessionCreator {
       const connection = await this.deps.ensureConnected(cwd)
       this.deps.assertCurrentConnection(connection)
       const startupBackend = this.deps.currentBackend()
+      if (requiresTaskRunTracing(request)) {
+        await assertTaskRunTracingReady(startupBackend.framework.id, connection)
+        this.deps.assertCurrentConnection(connection)
+      }
       const startupGeneration = this.deps.registry.startupGeneration
       const specialist = await this.resolveSpecialist(request.specialistId, startupBackend)
       const projectContextAppend = await this.resolveProjectAgentContext(projectId)
@@ -178,6 +183,10 @@ export class AcpProviderSessionCreator {
         }
         identityReservation.assertCurrent()
         beforePublish?.()
+        const startsFreshMainContext =
+          provisionedCapability.descriptor.role === 'primary' &&
+          request.specialistId === undefined &&
+          !this.deps.registry.lookup(session.sessionId)
         const { aggregate } = this.deps.registry.publish(identityReservation, session.sessionId, {
           session,
           cwd,
@@ -194,6 +203,7 @@ export class AcpProviderSessionCreator {
         aggregate.setSpecialistId(request.specialistId)
         provisionedCapability.commit(session.sessionId)
         provisionedCapability.registerBridgeMcpSession?.(session.sessionId, session.sessionId)
+        if (startsFreshMainContext) aggregate.confirmFreshMainContext(session)
         provisionalSession = undefined
         identityReservation.release()
         reservation = undefined

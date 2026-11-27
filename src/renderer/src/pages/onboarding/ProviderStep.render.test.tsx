@@ -4,12 +4,21 @@ import { createRoot, type Root } from 'react-dom/client'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { resolveVendorModelApiEndpoints } from '@aipoch/providers'
+import { OFFICIAL_VENDORS, resolveVendorModelApiEndpoints } from '@aipoch/providers'
+import { fireEvent } from '@testing-library/react'
 import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
-import type { ValidateProviderResult, XaiOAuthLoginResult } from '../../../../shared/settings'
+import type {
+  ProviderView,
+  ValidateProviderResult,
+  XaiOAuthLoginResult
+} from '../../../../shared/settings'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ProviderStep } from './ProviderStep'
+
+vi.mock('@/components/react-bits/Silk', () => ({
+  default: () => <div data-testid="silk" />
+}))
 import { useProviderStepOperation } from './use-provider-step-operation'
 import {
   clickButton,
@@ -29,7 +38,13 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
-  resetOnboardingStores('claude-code')
+  resetOnboardingStores()
+  useSettingsStore.setState({
+    preflight: { ...useSettingsStore.getState().preflight, claudeReady: true },
+    detectClaude: vi
+      .fn()
+      .mockResolvedValue({ found: true, path: '/bin/claude', version: '2.1.209' })
+  })
   stubWindowApi()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -48,6 +63,7 @@ type HarnessProps = {
   onBack?: () => void
   onAdvance?: () => void
   initialValue?: ProviderFormValue
+  variant?: 'form' | 'quick'
 }
 
 // The provider draft lives in the wizard shell in production; the harness plays that role so the
@@ -55,7 +71,8 @@ type HarnessProps = {
 const Harness = ({
   onBack = vi.fn(),
   onAdvance = vi.fn(),
-  initialValue
+  initialValue,
+  variant = 'form'
 }: HarnessProps): React.JSX.Element => {
   const [value, setValue] = useState<ProviderFormValue>(
     () => initialValue ?? createEmptyProviderFormValue()
@@ -64,10 +81,12 @@ const Harness = ({
   return (
     <ProviderStep
       operation={operation}
+      onBrowseProviders={vi.fn()}
       formValue={value}
       setFormValue={setValue}
       onBack={onBack}
       onAdvance={onAdvance}
+      variant={variant}
     />
   )
 }
@@ -80,6 +99,7 @@ const renderStep = async (props: HarnessProps = {}): Promise<void> => {
 
 const readyClaudeEnvironment = (): void => {
   useSettingsStore.setState({
+    agentFrameworkId: 'claude-code',
     preflight: {
       claudeReady: true,
       opencodeReady: false,
@@ -116,6 +136,523 @@ const submitClaudeFallbackToken = async (token: string): Promise<void> => {
 }
 
 describe('ProviderStep', () => {
+  it('lists quick-connect vendors and ends with an advanced provider picker action', async () => {
+    await renderStep({ variant: 'quick' })
+
+    for (const vendor of OFFICIAL_VENDORS) {
+      const cards = container.querySelectorAll(`.onboarding-provider-card-${vendor.id}`)
+      expect(cards, vendor.label).toHaveLength(vendor.requiresConnectionConfiguration ? 0 : 1)
+      if (!vendor.requiresConnectionConfiguration) {
+        expect(cards[0].querySelector('h2')?.textContent).toBe(vendor.label)
+      }
+    }
+    const cards = container.querySelectorAll('.onboarding-provider-card')
+    const last = cards[cards.length - 1]
+    expect(last.querySelector('h2')?.textContent).toBe('Looking for another provider?')
+    expect(Array.from(last.querySelectorAll('button'), (button) => button.textContent)).toEqual([
+      'Advanced mode'
+    ])
+    expect(last.querySelector('input')).toBeNull()
+  })
+
+  it('keeps Silk mounted across hover and pause', async () => {
+    await renderStep({ variant: 'quick' })
+
+    const card = container.querySelector<HTMLElement>('.onboarding-provider-card-openai')!
+    const silk = card.querySelector('[data-testid="silk"]')
+    expect(silk).not.toBeNull()
+
+    fireEvent.pointerEnter(card, { pointerType: 'touch' })
+    expect(card.querySelector('.onboarding-provider-silk.is-active')).toBeNull()
+    fireEvent.pointerLeave(card, { pointerType: 'touch' })
+    fireEvent.pointerEnter(card, { pointerType: 'mouse' })
+    expect(card.querySelector('[data-testid="silk"]')).not.toBeNull()
+    expect(card.querySelector('.onboarding-provider-silk')?.classList.contains('is-active')).toBe(
+      true
+    )
+
+    fireEvent.pointerLeave(card, { pointerType: 'mouse' })
+    expect(card.querySelector('[data-testid="silk"]')).toBe(silk)
+    expect(card.querySelector('.onboarding-provider-silk.is-active')).toBeNull()
+  })
+
+  it('keeps quick-connect API keys separate and submits the selected vendor', async () => {
+    readyClaudeEnvironment()
+    const saveValidatedProvider = vi
+      .fn()
+      .mockResolvedValue({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
+    useSettingsStore.setState({ saveValidatedProvider, setActiveProvider: vi.fn() })
+    await renderStep({ variant: 'quick' })
+    const deepseek = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')
+    const minimax = container.querySelector<HTMLInputElement>('#onboarding-key-minimax')
+    expect(deepseek).not.toBeNull()
+    expect(minimax).not.toBeNull()
+    await act(async () => {
+      fireEvent.change(deepseek!, { target: { value: 'test-deepseek-key' } })
+      fireEvent.change(minimax!, { target: { value: 'test-minimax-key' } })
+    })
+    expect(deepseek!.value).toBe('test-deepseek-key')
+    expect(minimax!.value).toBe('test-minimax-key')
+    await act(async () => fireEvent.submit(deepseek!.closest('form')!))
+    expect(useSettingsStore.getState().setAgentFramework).toHaveBeenCalledWith('open-science-agent')
+    expect(useSettingsStore.getState().agentFrameworkId).toBe('open-science-agent')
+    expect(saveValidatedProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'official', vendorId: 'deepseek', key: 'test-deepseek-key' })
+    )
+  })
+
+  it('replaces a failed installation with the next card’s key validation error', async () => {
+    const install = vi.fn().mockResolvedValue({ ok: false, error: 'Installation interrupted' })
+    useSettingsStore.setState({
+      installClaude: install,
+      detectClaude: vi.fn().mockResolvedValue({ found: false }),
+      saveValidatedProvider: vi.fn().mockResolvedValue({
+        validation: { ok: false, category: 'auth', status: 401, message: 'upstream diagnostic' }
+      })
+    })
+    await renderStep({ variant: 'quick' })
+    await clickButton(/Continue with Anthropic/)
+    const message = (): string | undefined =>
+      container.querySelector('.onboarding-quick-feedback [role="alert"]')?.textContent
+    expect(message()).toBe('Could not install Claude Code. Try again.')
+    const details = (): HTMLDetailsElement =>
+      container.querySelector('.onboarding-quick-feedback details')!
+    expect(details().open).toBe(false)
+    expect(details().textContent).toContain('Installation interrupted')
+    const input = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
+    await act(async () => fireEvent.change(input, { target: { value: 'rejected' } }))
+    await act(async () => fireEvent.submit(input.form!))
+    expect(message()).toBe('Authentication failed. Check the API key.')
+    expect(details().open).toBe(false)
+    expect(details().textContent).toContain('HTTP 401')
+    expect(details().textContent).toContain('upstream diagnostic')
+    expect(install).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('.onboarding-quick-feedback')?.textContent).not.toContain(
+      'Installation interrupted'
+    )
+  })
+
+  it('shows a loading indicator while testing a quick-connect API key', async () => {
+    readyClaudeEnvironment()
+    let resolveSave: ((value: ValidateProviderResult) => void) | undefined
+    const saveValidatedProvider = vi.fn(
+      () =>
+        new Promise<{ providerId: string; validation: ValidateProviderResult }>((resolve) => {
+          resolveSave = () =>
+            resolve({ providerId: 'p1', validation: { ok: true, category: 'ok' } })
+        })
+    )
+    useSettingsStore.setState({ saveValidatedProvider, setActiveProvider: vi.fn() })
+    await renderStep({ variant: 'quick' })
+
+    const deepseek = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
+    await act(async () => {
+      fireEvent.change(deepseek, { target: { value: 'test-deepseek-key' } })
+      fireEvent.submit(deepseek.closest('form')!)
+    })
+
+    const submitButton = deepseek.closest('form')?.querySelector('button[type="submit"]')
+    expect(submitButton?.getAttribute('aria-label')).toBe('Test connection and connect')
+    expect((submitButton as HTMLButtonElement | null)?.disabled).toBe(true)
+    expect(submitButton?.querySelector('.animate-spin')).not.toBeNull()
+    const minimax = container.querySelector<HTMLInputElement>('#onboarding-key-minimax')!
+    expect(minimax.closest('form')?.querySelector('.animate-spin')).toBeNull()
+
+    await act(async () => {
+      resolveSave?.({ ok: true, category: 'ok' })
+    })
+  })
+
+  it('offers Claude subscription and switches to Claude Code before signing in', async () => {
+    const setAgentFramework = vi.fn(async () => {
+      useSettingsStore.setState({ agentFrameworkId: 'claude-code' })
+    })
+    const persistProvider = vi.fn().mockResolvedValue('claude-account')
+    const loginSharedClaude = vi.fn(async () => {
+      expect(useSettingsStore.getState().agentFrameworkId).toBe('claude-code')
+      return { ok: true, category: 'ok' as const }
+    })
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      agentFrameworkId: 'open-science-agent',
+      setAgentFramework,
+      persistProvider,
+      loginSharedClaude,
+      setActiveProvider
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-anthropic')!
+    expect(card.textContent).toContain(
+      'Quick sign-in uses your shared Claude CLI profile. For a separate profile, use Advanced options.'
+    )
+    expect(card.textContent).toContain('Use your eligible Claude subscription')
+    expect(card.querySelector('input')).toBeNull()
+    await clickButton(/Continue with Anthropic/)
+    expect(setAgentFramework).toHaveBeenCalledWith('claude-code', { runtimeAlreadyDetected: true })
+    expect(useSettingsStore.getState().installClaude).not.toHaveBeenCalled()
+    expect(persistProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'claude-shared' }))
+    expect(loginSharedClaude).toHaveBeenCalledOnce()
+    expect(setActiveProvider).toHaveBeenCalledWith('claude-account')
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
+  it('repairs a missing Claude ACP adapter before opening shared sign-in', async () => {
+    const prepare = Promise.withResolvers<{ installId: string; ok: boolean }>()
+    const installClaude = vi.fn(() => prepare.promise)
+    const loginSharedClaude = vi.fn().mockResolvedValue({ ok: true })
+    useSettingsStore.setState((state) => ({
+      preflight: { ...state.preflight, claudeReady: false },
+      installClaude,
+      loginSharedClaude,
+      persistProvider: vi.fn().mockResolvedValue('claude'),
+      setActiveProvider: vi.fn()
+    }))
+    const onAdvance = vi.fn()
+    await renderStep({ variant: 'quick', onAdvance })
+    await clickButton(/Continue with Anthropic/)
+    expect(installClaude).toHaveBeenCalledWith('managed', undefined, expect.any(String))
+    expect(loginSharedClaude).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    await act(async () => prepare.resolve({ installId: 'claude-install', ok: true }))
+    expect(loginSharedClaude).toHaveBeenCalledOnce()
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the authorizing card open and ignores a cancelled login even after retry', async () => {
+    const attempts: Array<(result: ValidateProviderResult) => void> = []
+    const cancelSharedClaudeLogin = vi.fn().mockResolvedValue(undefined)
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      persistProvider: vi.fn().mockResolvedValue('claude-account'),
+      loginSharedClaude: vi.fn(
+        () => new Promise<ValidateProviderResult>((resolve) => attempts.push(resolve))
+      ),
+      cancelSharedClaudeLogin,
+      setActiveProvider
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-anthropic')!
+    await clickButton(/Continue with Anthropic/)
+    fireEvent.pointerLeave(card, { pointerType: 'mouse' })
+    expect(container.querySelectorAll('.is-authorizing')).toHaveLength(1)
+    expect(card.classList.contains('is-authorizing')).toBe(true)
+    expect(card.querySelector('.onboarding-provider-silk.is-active')).toBeNull()
+    const cancel = card.querySelector<HTMLButtonElement>('button[aria-label="Cancel sign-in"]')!
+    expect(cancel.previousElementSibling?.textContent).toBe('Signing in…')
+    await act(async () => cancel.click())
+    expect(cancelSharedClaudeLogin).toHaveBeenCalledOnce()
+    expect(card.classList.contains('is-authorizing')).toBe(false)
+    await clickButton(/Continue with Anthropic/)
+    await act(async () => attempts[0]({ ok: true, category: 'ok' }))
+    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(card.classList.contains('is-authorizing')).toBe(true)
+    await act(async () => attempts[1]({ ok: true, category: 'ok' }))
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['local launch error', { cliLaunchFailed: true }, 1],
+    ['account or network rejection', {}, 0],
+    ['cancelled authorization', { cancelled: true }, 0]
+  ] as const)('only repairs a broken CLI: %s', async (_name, flags, count) => {
+    const login = vi.fn().mockResolvedValue({ ok: false, category: 'unknown', ...flags })
+    useSettingsStore.setState({
+      loginSharedClaude: login,
+      persistProvider: vi.fn().mockResolvedValue('claude')
+    })
+    const onAdvance = vi.fn()
+    await renderStep({ variant: 'quick', onAdvance })
+    await clickButton(/Continue with Anthropic/)
+    expect(useSettingsStore.getState().installClaude).toHaveBeenCalledTimes(count)
+    expect(login).toHaveBeenCalledTimes(1 + count)
+    expect(onAdvance).not.toHaveBeenCalled()
+  })
+
+  it('shows install failures below the cards and retries without advancing a cancelled installation', async () => {
+    const pending = Promise.withResolvers<{ installId: string; ok: boolean }>()
+    const login = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+    const install = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: 'Download interrupted' })
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue({ ok: true })
+    const cancel = vi.fn(async () => {
+      pending.resolve({ installId: 'second', ok: true })
+    })
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      detectClaude: vi.fn().mockResolvedValue({ found: false }),
+      installClaude: install,
+      loginSharedClaude: login,
+      cancelSharedClaudeLogin: cancel,
+      persistProvider: vi.fn().mockResolvedValue('claude'),
+      setActiveProvider: vi.fn()
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-anthropic')!
+    await clickButton(/Continue with Anthropic/)
+    expect(container.querySelector('.onboarding-quick-feedback details pre')?.textContent).toBe(
+      'Download interrupted'
+    )
+    expect(login).not.toHaveBeenCalled()
+    await clickButton(/Continue with Anthropic/)
+    expect(card.querySelector('progress')?.hasAttribute('value')).toBe(false)
+    await act(async () =>
+      card.querySelector<HTMLButtonElement>('[aria-label="Cancel sign-in"]')!.click()
+    )
+    expect(cancel).toHaveBeenCalledWith(install.mock.calls[1][2])
+    expect(login).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    await clickButton(/Continue with Anthropic/)
+    expect(login).toHaveBeenCalledOnce()
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
+  it('stops subscription login if the compatible framework cannot be selected', async () => {
+    const persistProvider = vi.fn()
+    const loginSharedClaude = vi.fn()
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      agentFrameworkId: 'open-science-agent',
+      setAgentFramework: vi.fn().mockRejectedValue(new Error('framework save failed')),
+      persistProvider,
+      loginSharedClaude
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    await clickButton(/Continue with Anthropic/)
+    expect(container.textContent).toContain('framework save failed')
+    expect(persistProvider).not.toHaveBeenCalled()
+    expect(loginSharedClaude).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(container.querySelector('button:disabled')).toBeNull()
+  })
+
+  it.each(['open-science-agent', 'claude-code'] as const)(
+    'selects Codex when importing a subscription from %s',
+    async (agentFrameworkId) => {
+      const setAgentFramework = vi.fn(async () => {
+        useSettingsStore.setState({ agentFrameworkId: 'codex' })
+      })
+      const onAdvance = vi.fn()
+      const saveProvider = vi.fn().mockResolvedValue({
+        providerId: 'openai-account',
+        validation: { ok: true, category: 'ok' }
+      })
+      const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+      useSettingsStore.setState({
+        agentFrameworkId,
+        setAgentFramework,
+        saveProvider,
+        setActiveProvider
+      })
+      await renderStep({ variant: 'quick', onAdvance })
+      await clickButton(/^Import existing Codex sign-in$/)
+      expect(setAgentFramework).toHaveBeenCalledWith('codex', { runtimeAlreadyDetected: true })
+      expect(saveProvider).toHaveBeenCalledWith(expect.objectContaining({ type: 'codex-shared' }))
+      expect(onAdvance).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('retries runtime preparation in the original Codex import mode before reading credentials', async () => {
+    const installCodex = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: 'Adapter download interrupted' })
+      .mockResolvedValueOnce({ ok: true })
+    const saveProvider = vi.fn().mockResolvedValue({
+      providerId: 'imported',
+      validation: { ok: true, category: 'ok' }
+    })
+    const loginIsolatedCodex = vi.fn()
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      installCodex,
+      saveProvider,
+      loginIsolatedCodex,
+      setActiveProvider: vi.fn()
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    await clickButton(/^Import existing Codex sign-in$/)
+    expect(installCodex).toHaveBeenCalledWith('managed', expect.any(String))
+    expect(saveProvider).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    await clickButton(/^Retry$/)
+    expect(installCodex).toHaveBeenCalledTimes(2)
+    expect(saveProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'codex-shared', reimportCodexAuthentication: true })
+    )
+    expect(loginIsolatedCodex).not.toHaveBeenCalled()
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
+  it('keeps isolated Codex sign-in on the card through preparation failure, cancellation and retry', async () => {
+    const pending = Promise.withResolvers<{ ok: boolean; installId: string }>()
+    const prepare = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: 'Download interrupted' })
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue({ ok: true })
+    const login = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
+    const cancel = vi.fn(async () => {
+      pending.resolve({ ok: true, installId: 'cancelled' })
+    })
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      agentFrameworkId: 'open-science-agent',
+      installCodex: prepare,
+      cancelCodexLogin: cancel,
+      loginIsolatedCodex: login,
+      persistProvider: vi.fn().mockResolvedValue('isolated'),
+      setActiveProvider: vi.fn()
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-openai')!
+    await clickButton(/^Sign in with Open-Science$/)
+    expect(container.querySelector('.onboarding-quick-feedback details pre')?.textContent).toBe(
+      'Download interrupted'
+    )
+    await clickButton(/^Retry$/)
+    await act(async () => {
+      const states = useSettingsStore.getState().installStates
+      useSettingsStore.setState({
+        installStates: {
+          ...states,
+          codex: {
+            ...states.codex,
+            installProgress: {
+              kind: 'progress',
+              phase: 'downloading',
+              installId: 'x',
+              receivedBytes: 1,
+              totalBytes: 4
+            }
+          }
+        }
+      })
+    })
+    expect(card.querySelector('progress')?.value).toBe(0.25)
+    await act(async () =>
+      card.querySelector<HTMLButtonElement>('[aria-label="Cancel sign-in"]')!.click()
+    )
+    expect(cancel).toHaveBeenCalledWith(prepare.mock.calls[1][1])
+    expect(login).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    await clickButton(/^Sign in with Open-Science$/)
+    expect(useSettingsStore.getState().setAgentFramework).toHaveBeenCalledWith('codex', {
+      runtimeAlreadyDetected: true
+    })
+    expect(useSettingsStore.getState().agentFrameworkId).toBe('codex')
+    expect(login).toHaveBeenCalledOnce()
+    expect(onAdvance).toHaveBeenCalledOnce()
+  })
+
+  it('allows dismissing a failed Codex import and manually switching to cancellable browser sign-in', async () => {
+    let finishLogin!: (result: ValidateProviderResult) => void
+    const loginIsolatedCodex = vi.fn(
+      () =>
+        new Promise<ValidateProviderResult>((resolve) => {
+          finishLogin = resolve
+        })
+    )
+    const rawError =
+      "Error invoking remote method 'settings:upsert-provider': Error: Open-Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open-Science cannot import from. Continue with the Open-Science Codex sign-in instead."
+    const saveProvider = vi.fn().mockRejectedValue(new Error(rawError))
+    const persistProvider = vi.fn().mockResolvedValue('builtin-codex-isolated')
+    const cancelCodexLogin = vi.fn().mockResolvedValue(undefined)
+    const setActiveProvider = vi.fn().mockResolvedValue(undefined)
+    const onAdvance = vi.fn()
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      saveProvider,
+      persistProvider,
+      loginIsolatedCodex,
+      cancelCodexLogin,
+      setActiveProvider
+    })
+    await renderStep({ variant: 'quick', onAdvance })
+    const card = container.querySelector('.onboarding-provider-card-openai')!
+    const [importButton, signInButton] = card.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Codex authentication"] button'
+    )
+    expect(importButton?.textContent).toBe('Import existing Codex sign-in')
+    expect(signInButton?.textContent).toBe('Sign in with Open-Science')
+    expect(card.textContent).not.toContain('Continue with OpenAI')
+    await act(async () => importButton.click())
+    expect(saveProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'codex-shared', reimportCodexAuthentication: true })
+    )
+    const warning = container.querySelector('[data-notice-level="warning"]')!
+    const summary = warning.querySelector('[role="alert"]')!
+    expect(summary.textContent).toContain('No Codex sign-in file was found')
+    expect(summary.textContent).not.toContain(rawError)
+    const details = warning.querySelector('details')!
+    expect(details.open).toBe(false)
+    expect(details.querySelector('pre')?.textContent).toBe(rawError)
+    expect(warning.querySelector('svg')).not.toBeNull()
+    expect(loginIsolatedCodex).not.toHaveBeenCalled()
+    expect(warning.closest('.onboarding-quick-feedback')).not.toBeNull()
+    await act(async () =>
+      warning.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!.click()
+    )
+    expect(container.contains(warning)).toBe(false)
+    await clickButton(/^Sign in with Open-Science$/)
+    expect(saveProvider).toHaveBeenCalledTimes(1)
+    expect(persistProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'codex-isolated' })
+    )
+    expect(loginIsolatedCodex).toHaveBeenCalledOnce()
+    fireEvent.pointerLeave(card, { pointerType: 'mouse' })
+    expect(card.classList.contains('is-authorizing')).toBe(true)
+    expect(card.querySelector('button[aria-busy="true"]')).not.toBeNull()
+    const cancel = card.querySelector<HTMLButtonElement>('[aria-label="Cancel sign-in"]')!
+    await act(async () => cancel.click())
+    expect(cancelCodexLogin).toHaveBeenCalledOnce()
+    await act(async () => finishLogin({ ok: true, category: 'ok' }))
+    expect(setActiveProvider).not.toHaveBeenCalled()
+    expect(onAdvance).not.toHaveBeenCalled()
+    expect(
+      Array.from(card.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Sign in with Open-Science'
+      )?.disabled
+    ).toBe(false)
+  })
+
+  it.each([
+    ['file', false, 'File credential storage is enabled.'],
+    ['os', false, 'Secure key storage is unavailable.'],
+    ['os', true, undefined]
+  ] as const)(
+    'describes quick API key storage for %s with encryption available=%s',
+    async (credentialStore, encryptionAvailable, warning) => {
+      useSettingsStore.setState({ credentialStore, encryptionAvailable })
+      await renderStep({ variant: 'quick' })
+      const input = container.querySelector<HTMLInputElement>('#onboarding-key-deepseek')!
+      const notice = input.ownerDocument.getElementById(
+        input.getAttribute('aria-describedby') ?? ''
+      )
+      if (warning) expect(notice?.textContent).toContain(warning)
+      else expect(notice).toBeNull()
+      expect(
+        input.closest('form')?.textContent?.includes('Secure key storage is unavailable.')
+      ).toBe(credentialStore === 'os' && !encryptionAvailable)
+    }
+  )
+
+  it('keeps the Claude API-key option without changing the framework', async () => {
+    const setAgentFramework = vi.fn()
+    useSettingsStore.setState({ agentFrameworkId: 'open-science-agent', setAgentFramework })
+    await renderStep({ variant: 'quick' })
+    const card = container.querySelector('.onboarding-provider-card-anthropic')!
+    const keyButton = Array.from(card.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Have an API key?'
+    )!
+    await act(async () => keyButton.click())
+    expect(card.querySelector('input')).not.toBeNull()
+    expect(setAgentFramework).not.toHaveBeenCalled()
+  })
+
   it('offers OpenCode Go and Zen when OpenCode is the active framework', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'opencode',
@@ -159,6 +696,88 @@ describe('ProviderStep', () => {
     expect(container.querySelector('[aria-label="API format"]')?.textContent).toContain(
       '/v1/chat/completions'
     )
+  })
+
+  it('reuses an active validated provider configured before Web onboarding', async () => {
+    const onAdvance = vi.fn()
+    const addOnboardingKiloProvider = vi.fn()
+    const provider: ProviderView = {
+      id: 'provider-1',
+      type: 'custom',
+      name: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-pro',
+      apiEndpoints: ['chat-completions'],
+      models: ['deepseek-v4-pro'],
+      supportsImageInput: false,
+      hasKey: true,
+      needsKey: false,
+      lastValidatedAt: 1
+    }
+    useSettingsStore.setState({
+      agentFrameworkId: 'opencode',
+      agentFrameworks: [
+        {
+          id: 'opencode',
+          displayName: 'OpenCode',
+          supportedApiTypes: ['chat-completions', 'messages'],
+          supportsSkills: true
+        }
+      ],
+      activeProviderId: provider.id,
+      providers: [provider],
+      addOnboardingKiloProvider
+    })
+
+    await renderStep({
+      onAdvance,
+      initialValue: { ...createEmptyProviderFormValue(), providerFormTouched: true }
+    })
+
+    expect(container.textContent).toContain('Already configured: DeepSeek (deepseek-v4-pro)')
+    await clickButton(/^Continue$/)
+
+    expect(onAdvance).toHaveBeenCalledOnce()
+    expect(addOnboardingKiloProvider).not.toHaveBeenCalled()
+  })
+
+  it('stops offering native-only Codex credentials after switching to the built-in Agent', async () => {
+    useSettingsStore.setState({
+      ...codexReadyState(),
+      activeProviderId: 'native-codex',
+      activeModel: 'gpt-5',
+      providers: [
+        {
+          id: 'native-codex',
+          name: 'Native Codex',
+          type: 'codex-isolated',
+          codexHarnessAvailable: false,
+          lastValidatedAt: 1,
+          needsKey: false,
+          hasKey: true,
+          model: 'gpt-5',
+          models: ['gpt-5'],
+          supportsImageInput: true
+        }
+      ]
+    })
+    await renderStep()
+    expect(container.textContent).toContain('Already configured: Native Codex')
+    await act(async () => useSettingsStore.setState({ agentFrameworkId: 'open-science-agent' }))
+    expect(container.textContent).not.toContain('Already configured:')
+    expect(container.textContent).toContain('Continue with free Kilo Gateway')
+  })
+
+  it('stays on the provider step when free Kilo could not be activated', async () => {
+    const onAdvance = vi.fn()
+    vi.mocked(useSettingsStore.getState().addOnboardingKiloProvider).mockResolvedValueOnce(
+      undefined
+    )
+    await renderStep({ onAdvance })
+    await clickButton(/^Continue with free Kilo Gateway$/)
+    expect(useSettingsStore.getState().addOnboardingKiloProvider).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Could not save provider.')
+    expect(onAdvance).not.toHaveBeenCalled()
   })
 
   it('preserves a manually chosen API format when revisiting an otherwise blank draft', async () => {
@@ -874,6 +1493,49 @@ describe('ProviderStep', () => {
           expect(onAdvance).not.toHaveBeenCalled()
         }
       })
+    }
+  )
+
+  it.each(['access_denied', 'expired_token'])(
+    'closes a failed xAI device session and obtains a fresh code after %s',
+    async (failure) => {
+      const first = Promise.withResolvers<XaiOAuthLoginResult>()
+      const second = Promise.withResolvers<XaiOAuthLoginResult>()
+      const session = {
+        verificationUri: 'https://auth.x.ai/activate',
+        intervalSeconds: 1,
+        expiresAt: Date.now() + 300000
+      }
+      const begin = vi
+        .fn()
+        .mockResolvedValueOnce({ ...session, userCode: 'FIRST-CODE' })
+        .mockResolvedValueOnce({ ...session, userCode: 'SECOND-CODE' })
+      const onAdvance = vi.fn()
+      useSettingsStore.setState({
+        ...codexReadyState(),
+        persistProvider: vi.fn().mockResolvedValue('xai'),
+        setActiveProvider: vi.fn(),
+        beginXaiOAuthLogin: begin,
+        waitXaiOAuthLogin: vi
+          .fn()
+          .mockReturnValueOnce(first.promise)
+          .mockReturnValueOnce(second.promise)
+      })
+      await renderStep({ variant: 'quick', onAdvance })
+      await clickButton(/Continue with xAI/)
+      expect(useSettingsStore.getState().agentFrameworkId).toBe('open-science-agent')
+      expect(document.body.textContent).toContain('FIRST-CODE')
+      await act(async () => first.reject(new Error(failure)))
+      expect(document.body.textContent).not.toContain('FIRST-CODE')
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+        failure === 'access_denied' ? 'Permission denied' : 'Authorization expired'
+      )
+      expect(container.querySelector('details pre')?.textContent).toBe(failure)
+      expect(onAdvance).not.toHaveBeenCalled()
+      await clickButton(/Continue with xAI/)
+      expect(document.body.textContent).toContain('SECOND-CODE')
+      await act(async () => second.resolve({ validation: { ok: true, category: 'ok' } }))
+      expect(onAdvance).toHaveBeenCalledOnce()
     }
   )
 

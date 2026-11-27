@@ -1,0 +1,47 @@
+Provider icon sources
+
+Cloudflare, AWS, Azure and Ollama
+    LobeHub assets distributed by CC Switch at fca6b1bbeea790387379e970d5f25a2fe027ff85.
+    https://github.com/farion1231/cc-switch/tree/fca6b1bbeea790387379e970d5f25a2fe027ff85/src/icons/extracted
+    See LobeHub-icons-LICENSE. The AWS asset uses the color specified by CC Switch.
+
+llama.cpp
+    ggml-org/llama-brand, logo/svg/app/web/favicon.svg, at 9e91eb167731ae69a3f2108b3b577b6baf32dede.
+    https://github.com/ggml-org/llama-brand
+    https://github.com/ggml-org/llama-brand/blob/9e91eb167731ae69a3f2108b3b577b6baf32dede/BRAND-USAGE.md
+    CC BY-NC 4.0 and the repository's permission to identify llama.cpp in software distributions.
+
+LM Studio
+    LM Studio's official color app icon. https://lmstudio.ai/brand
+
+vLLM
+    vLLM-Logo.svg from the vLLM media kit. https://github.com/vllm-project/media-kit
+
+Vectrust
+    Vectrust's official website mark. https://openai-next.com/brand/vectrust-logo-192.png
+
+Magpie
+    Official Magpie favicon from yetone/magpie.
+    https://github.com/yetone/magpie/blob/6346f3835092400206f330ddf4a4fe1eaef1dc73/site/public/favicon.png
+
+MIT License
+
+Copyright (c) 2026 yetone
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

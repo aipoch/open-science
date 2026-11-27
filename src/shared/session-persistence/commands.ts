@@ -126,7 +126,7 @@ export type ListSessionSummariesResult = {
 }
 
 export type LoadSessionRequest = {
-  projectId: string
+  projectId?: string
   sessionId: string
   /** Request local Session Details recovery after the Session is opened. */
   recoverSessionDetails?: boolean

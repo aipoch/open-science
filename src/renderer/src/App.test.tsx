@@ -1472,11 +1472,15 @@ describe('App startup routing', () => {
       'min-h-svh',
       'items-center',
       'justify-center',
-      'bg-background'
+      'bg-transparent'
     ]) {
       expect(shell?.classList.contains(className)).toBe(true)
     }
     expect(container.querySelector('[data-testid="onboarding-page"]')).toBeNull()
+
+    const home = container.querySelector('[data-testid="home-page"]')
+    expect(home).not.toBeNull()
+    expect(home?.closest('[inert]')?.getAttribute('aria-hidden')).toBe('true')
 
     await act(async () => {
       mocks.onboarding.pending = undefined
@@ -1562,10 +1566,10 @@ describe('App startup routing', () => {
 
     await render()
 
-    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith({
-      isHydrated: false,
-      isReady: false
-    })
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(
+      { isHydrated: false, isReady: false },
+      expect.any(Function)
+    )
   })
 
   it('allows navigation and target-validated deletion after a partial session load', async () => {
@@ -1581,10 +1585,10 @@ describe('App startup routing', () => {
     expect(mocks.lifecycleSync).toHaveBeenCalledWith({
       isSessionPersistenceHydrated: true
     })
-    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith({
-      isHydrated: true,
-      isReady: false
-    })
+    expect(mocks.deepLinkNavigation).toHaveBeenCalledWith(
+      { isHydrated: true, isReady: false },
+      expect.any(Function)
+    )
     expect(
       container.querySelector<HTMLElement>('[data-testid="home-page"]')?.dataset.canDeleteProjects
     ).toBe('true')
@@ -1790,7 +1794,7 @@ describe('App startup routing', () => {
     expect(mocks.settings.openSettingsToPanel).toHaveBeenCalledWith('runtimes')
   })
 
-  it('routes first-run users to onboarding after settings hydration', async () => {
+  it('shows onboarding over an inert home page after settings hydration', async () => {
     mocks.settings.isLoaded = true
     mocks.startupView = 'onboarding'
 
@@ -1801,7 +1805,10 @@ describe('App startup routing', () => {
     expect(envBanner).not.toBeNull()
     await act(async () => envBanner?.click())
     expect(mocks.environment.retry).toHaveBeenCalledOnce()
-    expect(container.querySelector('[data-testid="home-page"]')).toBeNull()
+    const home = container.querySelector('[data-testid="home-page"]')
+    expect(home).not.toBeNull()
+    expect(home?.closest('[inert]')?.getAttribute('aria-hidden')).toBe('true')
+    expect(home?.getAttribute('data-can-delete-projects')).toBe('false')
   })
 
   it('uses lightweight storage status at startup and defers the full scan to onboarding', async () => {

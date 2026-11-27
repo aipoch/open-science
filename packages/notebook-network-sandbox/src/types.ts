@@ -96,6 +96,8 @@ export type NotebookNetworkSandboxStatus =
 export type NotebookSandboxCommand = Readonly<{
   startAudit?: import('../runtime/src/gateway/command-gateway.js').GatewayAuditStart
   target?: NotebookSandboxTarget
+  /** Launched persistent kernels are reaped by their epoch owner and drained on disposal. */
+  kernelEpochId?: string
   command: string
   // Protected Windows launches use the exact process argv so PowerShell never has to initialize the
   // AppContainer's working drive before the requested process can start.

@@ -466,6 +466,71 @@ describe('native framework failure facts', () => {
 })
 
 describe('compatibility bridge upstream status preservation', () => {
+  it('recognizes the terminal connection failure reported by codex-acp 1.6.2 after 502 retries', () => {
+    const message =
+      'unexpected status 502 Bad Gateway: Could not connect to the model provider, url: http://127.0.0.1:43210/v1/responses'
+    const error = agentError('Internal error: ' + message, { message, codexErrorInfo: 'other' })
+    const failure = classifyFailure(collectPromptFailureFacts(error, { model: 'fixture' }))
+    expect(failure).toMatchObject({
+      reason: 'service/connection-failed',
+      diagnostics: { model: 'fixture' }
+    })
+    expect(JSON.stringify(failure)).not.toContain('127.0.0.1')
+    expect(describePromptError(error)).not.toContain('127.0.0.1')
+  })
+
+  it.each([502, 503])('preserves a relayed HTTP %i when Codex flattens its body', (status) => {
+    const label = status === 502 ? 'Bad Gateway' : 'Service Unavailable'
+    const message = `unexpected status ${status} ${label}: Upstream HTTP ${status}: Upstream gateway unavailable, url: http://127.0.0.1:43210/v1/responses`
+    const error = agentError('Internal error: ' + message, { message, codexErrorInfo: 'other' })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(error, { model: 'fixture', providerName: 'Example Provider' })
+    )
+    expect(failure).toMatchObject({
+      reason: 'service/unavailable',
+      responseMessage: 'Upstream gateway unavailable',
+      diagnostics: { status, model: 'fixture', provider: 'Example Provider' }
+    })
+    expect(JSON.stringify(failure)).not.toContain('127.0.0.1')
+    expect(describePromptError(error)).not.toContain('127.0.0.1')
+  })
+
+  it('does not attribute a local response conversion failure to upstream HTTP', () => {
+    const message =
+      'unexpected status 502 Bad Gateway: The model service returned invalid JSON., url: http://127.0.0.1:43210/v1/responses'
+    const facts = collectPromptFailureFacts(
+      agentError('Internal error: ' + message, { message, codexErrorInfo: 'other' })
+    )
+    expect(facts.status).toBeUndefined()
+    expect(facts.origin).not.toBe('provider')
+  })
+
+  it('restores a typed 401 when Codex reports the bridge envelope as other', () => {
+    const message = JSON.stringify({
+      error: { type: 'upstream_error', status: 401, message: 'Credentials rejected' }
+    })
+    const failure = classifyFailure(
+      collectPromptFailureFacts(
+        agentError('Internal error: ' + message, { message, codexErrorInfo: 'other' })
+      )
+    )
+    expect(failure).toMatchObject({
+      reason: 'configuration/auth-failed',
+      diagnostics: { status: 401 }
+    })
+  })
+
+  it('recognizes the native Codex high-demand failure after an upstream 500', () => {
+    const message = 'We’re currently experiencing high demand, which may cause temporary errors.'
+    const failure = classifyFailure(
+      collectPromptFailureFacts(
+        agentError('Internal error: ' + message, { message, codexErrorInfo: 'internalServerError' })
+      )
+    )
+    expect(failure.reason).toBe('service/unavailable')
+    expect(failure.diagnostics.status).toBeUndefined()
+  })
+
   // Compose the bridge's tested HTTP body with each adapter's tested RequestError boundary.
   // These are deterministic boundary fixtures, not a captured native model invocation.
   for (const path of ['codex-bridge', 'claude-code'] as const) {

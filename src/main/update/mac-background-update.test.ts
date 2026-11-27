@@ -96,3 +96,43 @@ it.runIf(process.platform === 'darwin' || process.platform === 'linux')(
     }
   }
 )
+
+it('only admits the current cached patch on a clean, unoccupied ordinary quit', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mac-quit-patch-'))
+  const ready: UpdateStatus = {
+    state: 'ready',
+    current: '1',
+    latest: '2',
+    automaticDownloads: true,
+    artifactSha512: 'digest'
+  }
+  let status = ready
+  const strategy = { getStatus: () => status } as UpdateStrategy
+  const sparkle = {
+    artifact: { patchSize: 1, zipSize: 100, zipSha512: 'digest' },
+    isReady: () => true,
+    install: vi.fn(async () => {})
+  }
+  const plan = (inspect: () => Promise<void>): ReturnType<typeof planMacUpdateOnQuit> =>
+    planMacUpdateOnQuit(strategy, {} as AutoUpdater, directory, directory, inspect, sparkle)
+  try {
+    await expect(
+      plan(async () => {
+        throw Error('occupied')
+      })
+    ).rejects.toThrow('occupied')
+    expect(
+      await plan(async () => {
+        status = { ...ready, automaticDownloads: false }
+      })
+    ).toBe(false)
+    expect(sparkle.install).not.toHaveBeenCalled()
+    status = ready
+    const stage = await plan(async () => {})
+    if (!stage) throw Error('Expected admitted patch')
+    await stage()
+    expect(sparkle.install).toHaveBeenCalledWith('2', false)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

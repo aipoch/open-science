@@ -3,11 +3,30 @@ import { useTranslation } from 'react-i18next'
 import { useTransformEffect } from 'react-zoom-pan-pinch'
 
 import type { createManagedPdfLoadingTask } from '../managed-pdf-document'
+import { pdfjsLib } from '../pdfjs'
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import { ZoomablePreview } from './ZoomablePreview'
 
 type PdfDocument = Awaited<ReturnType<typeof createManagedPdfLoadingTask>['promise']>
 type PdfPage = Awaited<ReturnType<PdfDocument['getPage']>>
+type PdfComplexity = 'unknown' | 'normal' | 'dense'
+
+const DENSE_OPERATOR_COUNT = 10_000
+const DENSE_PATH_COUNT = 8_000
+const DENSE_POSTER_MAX_SCALE = 1.25
+
+const classifyPdfPage = async (page: PdfPage): Promise<PdfComplexity> => {
+  if (typeof page.getOperatorList !== 'function') return 'normal'
+
+  const operators = await page.getOperatorList()
+  const pathCount = operators.fnArray.reduce(
+    (count, operation) => count + (operation === pdfjsLib.OPS.constructPath ? 1 : 0),
+    0
+  )
+  return operators.fnArray.length > DENSE_OPERATOR_COUNT || pathCount > DENSE_PATH_COUNT
+    ? 'dense'
+    : 'normal'
+}
 
 const SinglePageCanvas = ({
   document,
@@ -25,6 +44,13 @@ const SinglePageCanvas = ({
   const [ready, setReady] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [size, setSize] = useState({ width: 0, height: 0 })
+  const [complexityState, setComplexityState] = useState<
+    { page: PdfPage; value: PdfComplexity } | undefined
+  >()
+  const [posterPage, setPosterPage] = useState<PdfPage>()
+  const complexity =
+    complexityState && complexityState.page === page ? complexityState.value : 'unknown'
+  const posterReady = posterPage === page
   const renderRef = useRef<ReturnType<PdfPage['render']> | undefined>(undefined)
   useTransformEffect(({ state }) => {
     // Quantize rerasterization during animated zoom; panning never repaints the PDF.
@@ -82,8 +108,27 @@ const SinglePageCanvas = ({
   }, [document, pageDisposersRef])
 
   useEffect(() => {
+    if (!page) return
+    let canceled = false
+    void classifyPdfPage(page).then(
+      (value) => {
+        if (!canceled) setComplexityState({ page, value })
+      },
+      (reason: unknown) => {
+        if (!canceled) {
+          console.warn('Failed to classify PDF page complexity', reason)
+          setComplexityState({ page, value: 'normal' })
+        }
+      }
+    )
+    return () => {
+      canceled = true
+    }
+  }, [page])
+
+  useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || !page) return
+    if (!canvas || !page || complexity === 'unknown') return
     let canceled = false
     const paint = canvas.ownerDocument.createElement('canvas')
     const draw = async (): Promise<void> => {
@@ -102,12 +147,14 @@ const SinglePageCanvas = ({
         8192 / base.height,
         Math.sqrt((16 * 1024 * 1024) / (base.width * base.height))
       )
-      const viewport = page.getViewport({ scale })
-      paint.width = Math.ceil(viewport.width)
-      paint.height = Math.ceil(viewport.height)
+      const needsPoster = complexity === 'dense' && !posterReady && scale > DENSE_POSTER_MAX_SCALE
+      const renderScale = needsPoster ? DENSE_POSTER_MAX_SCALE : scale
+      const renderViewport = page.getViewport({ scale: renderScale })
+      paint.width = Math.ceil(renderViewport.width)
+      paint.height = Math.ceil(renderViewport.height)
       const context = paint.getContext('2d')
       if (!context) throw new Error('Canvas 2D context unavailable.')
-      const task = page.render({ canvas: paint, canvasContext: context, viewport })
+      const task = page.render({ canvas: paint, canvasContext: context, viewport: renderViewport })
       renderRef.current = task
       try {
         await task.promise
@@ -118,6 +165,7 @@ const SinglePageCanvas = ({
         canvas.height = paint.height
         target.drawImage(paint, 0, 0)
         setReady(true)
+        if (needsPoster) setPosterPage(page)
       } finally {
         if (renderRef.current === task) renderRef.current = undefined
       }
@@ -134,7 +182,7 @@ const SinglePageCanvas = ({
       canceled = true
       renderRef.current?.cancel()
     }
-  }, [page, size, zoom])
+  }, [complexity, page, posterReady, size, zoom])
 
   if (error)
     return (

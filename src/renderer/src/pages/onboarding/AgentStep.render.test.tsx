@@ -76,6 +76,16 @@ const installFromManagedSource = async (frameworkName: string): Promise<void> =>
 }
 
 describe('AgentStep', () => {
+  it('keeps the operation bar fixed while the runtime cards scroll', async () => {
+    await renderStep()
+
+    const footer = container.querySelector('[data-slot="card-footer"]')
+    expect(footer).not.toBeNull()
+    expect(footer?.classList.contains('sticky')).toBe(true)
+    expect(footer?.classList.contains('bottom-0')).toBe(true)
+    expect(footer?.classList.contains('z-10')).toBe(true)
+  })
+
   it('keeps an incompatible Claude installation visible and requires an update', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
@@ -289,7 +299,7 @@ describe('AgentStep', () => {
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       preflight: {
         claudeReady: true,
         opencodeReady: true,
@@ -321,7 +331,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       preflight: {
         claudeReady: true,
         opencodeReady: false,
@@ -375,27 +385,39 @@ describe('AgentStep', () => {
     expect(onContinue).toHaveBeenCalledOnce()
   })
 
-  it('disables Continue when the latest check belongs to another framework', async () => {
-    useSettingsStore.setState({
-      agentFrameworkId: 'opencode',
-      agentFrameworks: twoFrameworks,
-      opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      preflight: {
-        claudeReady: true,
-        opencodeReady: true,
-        codexReady: true,
-        codebuddyReady: false,
-        agentFrameworkId: 'opencode',
-        agentReady: true,
-        activeProviderReady: false
-      },
-      environmentCheck: environment(true)
-    })
+  it.each(['missing', 'for the previous framework'] as const)(
+    'checks the preselected runtime on entry when the last result is %s',
+    async (lastResult) => {
+      const pending = Promise.withResolvers<void>()
+      const checkEnvironment = vi.fn(async () => {
+        await pending.promise
+        const result = environment(true)
+        useSettingsStore.setState({ environmentCheck: result })
+        return result
+      })
+      useSettingsStore.setState({
+        agentFrameworkId: 'claude-code',
+        claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
+        preflight: { ...useSettingsStore.getState().preflight, claudeReady: true },
+        environmentCheck:
+          lastResult === 'missing'
+            ? undefined
+            : { ...environment(true), agentFrameworkId: 'codex' },
+        checkEnvironment
+      })
 
-    await renderStep()
+      await renderStep()
 
-    expect(continueButton()?.disabled).toBe(true)
-  })
+      expect(
+        container.querySelector('[aria-label="Use Claude Agent"]')?.getAttribute('aria-checked')
+      ).toBe('true')
+      expect(continueButton()?.disabled).toBe(true)
+      expect(checkEnvironment).toHaveBeenCalledOnce()
+      await act(async () => pending.resolve())
+      expect(continueButton()?.disabled).toBe(false)
+      expect(checkEnvironment).toHaveBeenCalledOnce()
+    }
+  )
 
   it('blocks continuation while the selected agent is not ready', async () => {
     useSettingsStore.setState({
@@ -463,7 +485,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       setAgentFramework,
       preflight: {
         claudeReady: false,
@@ -483,9 +505,9 @@ describe('AgentStep', () => {
   })
 
   it.each([
-    ['1.1.4', '0.157.1'],
-    ['1.6.2', '0.153.4'],
-    ['1.6.2', undefined]
+    ['1.6.2', '0.166.0'],
+    ['2.6.0', '0.157.1'],
+    ['2.6.0', undefined]
   ])(
     'does not auto-select unsupported Codex %s / %s from a stale ready preflight',
     async (version, nativeVersion) => {
@@ -511,7 +533,7 @@ describe('AgentStep', () => {
 
       expect(setAgentFramework).not.toHaveBeenCalled()
       expect(container.querySelector('[aria-label="Use Codex"]')).toBeNull()
-      expect(container.textContent).toContain('Update required')
+      expect(container.textContent).toContain('Needs repair')
     }
   )
 
@@ -527,7 +549,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       setAgentFramework,
       preflight: {
         claudeReady: false,
@@ -573,7 +595,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '2.6.0', nativeVersion: '0.166.0' },
       installOpencode,
       setAgentFramework,
       checkEnvironment,
@@ -709,7 +731,7 @@ describe('AgentStep', () => {
       agentFrameworks: threeFrameworks,
       claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/bin/opencode' },
-      codex: { resolvedPath: '/bin/codex-acp', nativeVersion: '0.157.1' },
+      codex: { resolvedPath: '/bin/codex-acp', nativeVersion: '0.166.0' },
       isDetectingCodex: true,
       preflight: {
         claudeReady: true,

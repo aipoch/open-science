@@ -16,6 +16,7 @@ import type {
 export type MonitoredKernelProcess = {
   identity: object
   processKey: string
+  kernelEpochId?: string
   lastCell?: NotebookProcessObservation['lastCell']
   pid?: number
   startedAt: number

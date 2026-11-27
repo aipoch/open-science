@@ -238,6 +238,9 @@ describe('continueInterruptedTurn', () => {
     )
 
     expect(startContinuation).toHaveBeenCalledOnce()
+    expect(startContinuation.mock.calls[0][0].text).toContain(
+      'Do not retry the denied operations or use another tool or route to perform them.'
+    )
     expect(startContinuation).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-1',

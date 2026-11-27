@@ -5,10 +5,7 @@ import type { NotebookRunResultDeliveryAdapter } from '../background-result-deli
 import { registerNotebookEnvIpcHandlers } from '../desktop-surface-declarations'
 import { installNotebookEnvironmentSurface } from '../notebook/application'
 import { broadcastNotebookEnvProgress } from '../notebook/env-ipc'
-import {
-  createNotebookEnvironmentLifecycle,
-  type NotebookEnvironmentLifecycle
-} from '../notebook/environment-lifecycle-workflows'
+import { createNotebookEnvironmentLifecycle } from '../notebook/environment-lifecycle-workflows'
 import {
   createProductionProvisioner,
   type ProductionProvisionerDeps
@@ -29,6 +26,7 @@ type NotebookEnvironmentCompositionDependencies = {
   notebookService: Pick<
     NotebookRuntimeService,
     | 'isPrefixRecoveryBlocked'
+    | 'hasUnreapedKernelProcesses'
     | 'clearRecoveryBlock'
     | 'clearRuntimeRecoveryBlock'
     | 'clearCorruptRecoveryBlock'
@@ -64,7 +62,9 @@ export const registerNotebookEnvironmentComposition = async ({
   notebookRunResultDelivery,
   markNotebookResultAuthorityReady,
   declareElectronAdapter
-}: NotebookEnvironmentCompositionDependencies): Promise<NotebookEnvironmentLifecycle> => {
+}: NotebookEnvironmentCompositionDependencies): Promise<
+  ReturnType<typeof createNotebookEnvironmentLifecycle>
+> => {
   // Resolve the shared conda base under the app data root (relocatable, where the runtime install
   // lives) and start the env readiness gate. Named environments resolve the effective conda channel
   // lazily because they are the only path that solves online; default runtime packs use the official
@@ -100,6 +100,8 @@ export const registerNotebookEnvironmentComposition = async ({
         // the startup-gate path the UI-only assertProvisionAllowed guard did not cover. Reads the live
         // blocked set at call time (recovery is awaited before the gate touches any prefix).
         isPrefixBlocked: (prefix) => notebookService.isPrefixRecoveryBlocked(prefix),
+        hasUnreapedKernelProcesses: (environment) =>
+          notebookService.hasUnreapedKernelProcesses(environment),
         // An explicit user Reset (repair with force) clears the in-memory block; the provisioner also
         // clears the retained journal record + sidecar so the quarantine doesn't re-arm next startup.
         clearPrefixBlock: (prefix) => notebookService.clearRecoveryBlock(prefix),

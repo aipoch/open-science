@@ -193,6 +193,21 @@ The suite checks: no empty strings, placeholder parity, correct plural categorie
 Trans tags, no orphaned catalog keys, no missing translations for every `t()` call site, and no
 bare JSX text nodes left unwrapped.
 
+## CLI/MCP Contract
+
+For every new or changed business capability, decide external-agent exposure before coding.
+
+When exposed, register it in the `packages/open-science` Agent capability registry with a stable
+`snake_case` name, the correct group (`discovery`, `setup`, `research`, `delivery`, or
+`literature`), a strict input schema, description, MCP annotations, exposure flags, and a handler
+that reuses the existing Open-Science client or service.
+
+Add unit and real stdio MCP integration tests. Verify correct group isolation. When a first-class CLI
+command is required, update its parsing, help, dispatch, and tests. Record the capability name,
+MCP group, CLI entrypoint, and validation commands in the PR.
+
+For Desktop-only or internal capabilities, record the CLI/MCP boundary and rationale in the PR.
+
 ## Reusable error surfaces
 
 ### ErrorNotice (`src/renderer/src/components/error-notice.tsx`)

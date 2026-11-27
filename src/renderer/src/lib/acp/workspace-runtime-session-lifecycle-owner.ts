@@ -170,7 +170,7 @@ const continueInterruptedWorkspaceTurn = async (
         promptMessageId,
         update,
         contextReset,
-        preparation.id
+        preparation
       )
     if (!prepared) {
       const { failure } = await attemptWorkspacePromptRollback(preparation)

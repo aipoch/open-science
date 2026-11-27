@@ -103,8 +103,9 @@ const composeAcpRuntimeLifecycleOwners = (
     },
     detachSessionConnections: (clearPermissionProfile) => {
       for (const entry of session.sessionRegistry.entries()) {
-        if (entry.attachment) session.sessionRegistry.detach(entry.attachment, 'connection')
-        else entry.aggregate.detachConnection()
+        // Physical teardown keeps context evidence parked until a verified native resume.
+        if (entry.attachment) session.sessionRegistry.detach(entry.attachment, 'connection', true)
+        else entry.aggregate.detachConnection(true)
         if (clearPermissionProfile) entry.aggregate.setPermissionProfile(undefined)
       }
     },

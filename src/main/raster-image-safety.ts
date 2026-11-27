@@ -207,3 +207,17 @@ export const exceedsDecodedImagePixelLimit = (
   size: RasterImageDimensions,
   maxPixels = MAX_DECODED_IMAGE_PIXELS
 ): boolean => size.width < 1 || size.height < 1 || size.width > Math.floor(maxPixels / size.height)
+
+export const isAnimatedPng = (source: Buffer): boolean => {
+  if (!source.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return false
+  // libvips decodes APNG's default frame only; do not silently turn an animation into a still.
+  for (let offset = 8; offset + 12 <= source.byteLength;) {
+    const length = source.readUInt32BE(offset)
+    if (length > source.byteLength - offset - 12) return false
+    const type = source.toString('ascii', offset + 4, offset + 8)
+    if (type === 'acTL') return true
+    if (type === 'IDAT' || type === 'IEND') return false
+    offset += length + 12
+  }
+  return false
+}

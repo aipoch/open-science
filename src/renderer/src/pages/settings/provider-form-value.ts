@@ -1,3 +1,9 @@
+import { PROVIDER_MODEL_LIMIT } from '../../../../shared/configured-provider-model'
+import {
+  providerModelFormRow,
+  providerModelsFromForm,
+  type ProviderModelFormRow
+} from './provider-model-form'
 import {
   codeBuddyAccounts,
   codeBuddySiteForId,
@@ -5,6 +11,23 @@ import {
   type CodeBuddySite
 } from '../../../../shared/codebuddy-subscription'
 import {
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  LOCAL_MODEL_PRESETS,
+  configuredProviderConnectionKind,
+  configuredProviderModelError,
+  configuredProviderPresetModels,
+  configuredProviderProtocol,
+  manualProviderDefinition,
+  publishedManualProviderContextWindow,
+  resolveConfiguredProviderConnection,
+  selectConfiguredModelId,
+  supportsConfiguredProviderModelList,
+  validCloudflareAccountId,
+  validCloudflareGatewayId,
+  type CloudflareGateway,
+  type LocalModelPreset,
+  type LocalProviderPresetId,
+  type ManualProviderConnection,
   type CatalogSnapshot,
   type ModelProtocol,
   OFFICIAL_VENDORS,
@@ -67,6 +90,15 @@ export type ProviderFormValue = {
   // URL and the model catalog then come from the registry rather than these free-text fields.
   vendorId?: OfficialVendorId
   region?: string
+  cloudflare?: CloudflareGateway
+  // Draft rows are scoped to their connection mode. Only the active mode is saved.
+  cloudflareModelDrafts?: Partial<
+    Record<CloudflareGateway['mode'], Pick<ProviderFormValue, 'model' | 'manualModels'>>
+  >
+  manualConnection?: ManualProviderConnection
+  localPresetId?: LocalProviderPresetId
+  localModels?: ProviderModelFormRow[]
+  manualModels?: ProviderModelFormRow[]
   // Plaintext only while the user is typing a new key; empty means "keep the stored key".
   key: string
 }
@@ -97,24 +129,6 @@ type ProviderFormTokenLimits = Pick<
   'contextWindow' | 'maxInputTokens' | 'maxOutputTokens'
 >
 
-// Quick-fill presets for local model servers. Every one serves OpenAI Chat Completions on a
-// well-known loopback port and requires no API key, so applying a preset seeds the base URL and
-// the Chat Completions API format. The model stays for the user to fill: local model ids depend
-// on what they have pulled, so guessing one would be noise. Selecting a preset never blocks
-// editing anything afterwards.
-export type LocalModelPreset = Readonly<{
-  id: string
-  label: string
-  baseUrl: string
-}>
-
-export const LOCAL_MODEL_PRESETS: readonly LocalModelPreset[] = [
-  { id: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434' },
-  { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://localhost:1234' },
-  { id: 'llamacpp', label: 'llama.cpp', baseUrl: 'http://localhost:8080' },
-  { id: 'vllm', label: 'vLLM', baseUrl: 'http://localhost:8000' }
-]
-
 // The form patch a preset applies — or, when the preset is already active, reverts. Tapping the
 // active preset clears exactly what it filled: the base URL, the format it selected (back to the
 // framework's default), and the name it seeded. Fields the user typed themselves — the model
@@ -139,16 +153,118 @@ export const localModelPresetPatch = (
   }
 }
 
-// Both Settings and onboarding persist this shared form. Keep optional-number conversion here so a
-// blank custom value explicitly clears a saved override while non-custom requests omit the fields.
-export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormTokenLimits =>
-  value.type === 'custom'
+// An explicit null clears a saved override. The form uses published limits for exact model IDs.
+export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormTokenLimits => {
+  const contextWindow = value.contextWindow.trim() ? Number(value.contextWindow) : null
+  if (value.type === 'custom') {
+    return {
+      contextWindow: value.localPresetId ? null : contextWindow,
+      maxInputTokens: value.maxInputTokens.trim() ? Number(value.maxInputTokens) : null,
+      maxOutputTokens: value.maxOutputTokens.trim() ? Number(value.maxOutputTokens) : null
+    }
+  }
+  if (value.manualModels) return {}
+  return value.type === 'official' && configuredProviderConnectionKind(value.vendorId)
     ? {
-        contextWindow: value.contextWindow.trim() ? Number(value.contextWindow) : null,
-        maxInputTokens: value.maxInputTokens.trim() ? Number(value.maxInputTokens) : null,
-        maxOutputTokens: value.maxOutputTokens.trim() ? Number(value.maxOutputTokens) : null
+        contextWindow:
+          providerFormPublishedContextWindow(value) === undefined ? contextWindow : null
       }
     : {}
+}
+
+export const providerFormLocalModels = (value: ProviderFormValue): ProviderDraft['localModels'] =>
+  value.type === 'custom' && value.localPresetId
+    ? providerModelsFromForm(value.localModels ?? [])
+    : undefined
+
+export const providerFormManualModels = (value: ProviderFormValue): ProviderDraft['manualModels'] =>
+  value.manualModels && providerModelsFromForm(value.manualModels)
+
+export const providerFormModel = (value: ProviderFormValue): string => {
+  const rows = value.manualModels ?? (value.localPresetId ? (value.localModels ?? []) : undefined)
+  if (!rows) return value.model
+  return (
+    selectConfiguredModelId(
+      value.model,
+      rows.map(({ id }) => id.trim())
+    ) ?? ''
+  )
+}
+
+type CloudModelRoute = Pick<ProviderFormValue, 'vendorId' | 'cloudflare' | 'manualConnection'>
+
+const cloudPresetIds = (value: CloudModelRoute): readonly string[] =>
+  configuredProviderPresetModels(value.vendorId, value)
+
+export const cloudModelFormRows = (
+  value: CloudModelRoute & { model?: string; contextWindow?: number }
+): ProviderModelFormRow[] => {
+  const model = value.model?.trim()
+  const presets = cloudPresetIds(value)
+    .filter((id) => id !== model)
+    .map((id) => providerModelFormRow({ id }))
+  if (model && !configuredProviderModelError(value, model))
+    return [providerModelFormRow({ id: model, contextWindow: value.contextWindow }), ...presets]
+  return presets.length ? presets : [providerModelFormRow()]
+}
+
+export function cloudflareModePatch(
+  value: ProviderFormValue,
+  mode: CloudflareGateway['mode']
+): Partial<ProviderFormValue> {
+  if (!value.cloudflare || value.cloudflare.mode === mode) return {}
+  const cloudflare = { ...value.cloudflare, mode }
+  const draft = value.cloudflareModelDrafts?.[mode]
+  const manualModels =
+    draft?.manualModels ?? cloudModelFormRows({ vendorId: value.vendorId, cloudflare })
+  return {
+    cloudflare,
+    key: '',
+    model: draft?.model ?? manualModels[0].id,
+    manualModels,
+    cloudflareModelDrafts: {
+      ...value.cloudflareModelDrafts,
+      [value.cloudflare.mode]: { model: value.model, manualModels: value.manualModels }
+    }
+  }
+}
+
+export function cloudModelRoutePatch(
+  value: ProviderFormValue,
+  next: Pick<CloudModelRoute, 'manualConnection'>
+): Partial<ProviderFormValue> {
+  const previousPresets = cloudPresetIds(value)
+  const nextPresets = cloudPresetIds({ ...value, ...next })
+  if (
+    previousPresets.length === nextPresets.length &&
+    previousPresets.every((id, index) => id === nextPresets[index])
+  )
+    return {}
+
+  // Prefer the new protocol's presets for the connection test. Keep manually added rows and edits.
+  const retained = (value.manualModels ?? []).filter(
+    (row) =>
+      !previousPresets.includes(row.id.trim()) ||
+      row.displayName ||
+      row.contextWindow ||
+      row.reasoningEffortPreset !== 'unsupported'
+  )
+  const presets: ProviderModelFormRow[] = []
+  let availableRows = PROVIDER_MODEL_LIMIT - retained.length
+  for (const id of nextPresets) {
+    const existing = retained.find((row) => row.id.trim() === id)
+    if (existing) {
+      presets.push(existing)
+    } else if (availableRows > 0) {
+      presets.push({ ...providerModelFormRow(), id })
+      availableRows -= 1
+    }
+  }
+
+  const manualModels = [...presets, ...retained.filter((row) => !presets.includes(row))]
+  if (!manualModels.length) manualModels.push(providerModelFormRow())
+  return { model: manualModels[0].id.trim(), manualModels }
+}
 
 // Chooses the framework's preferred wire protocol for a new custom gateway. This mirrors runtime
 // endpoint selection: Responses wins when available, then Chat Completions, then Messages. The
@@ -162,6 +278,8 @@ export const defaultCustomApiEndpoint = (
 // provider kinds.
 export const providerFormApiEndpoints = (value: ProviderFormValue): ModelProtocol[] => {
   if (value.type === 'official' && value.vendorId) {
+    const protocol = configuredProviderProtocol(value.vendorId, value)
+    if (protocol) return [protocol]
     return resolveVendorModelApiEndpoints(
       value.vendorId,
       value.model.trim() || defaultVendorModel(value.vendorId, value.region)
@@ -170,6 +288,15 @@ export const providerFormApiEndpoints = (value: ProviderFormValue): ModelProtoco
   if (value.type === 'xai-subscription') return ['messages', 'chat-completions', 'responses']
   return [value.apiEndpoint]
 }
+
+export const providerFormPublishedContextWindow = (value: ProviderFormValue): number | undefined =>
+  value.type === 'official' && configuredProviderConnectionKind(value.vendorId)
+    ? publishedManualProviderContextWindow(
+        value.vendorId,
+        providerFormApiEndpoints(value)[0],
+        value.model.trim()
+      )
+    : undefined
 
 // Before an official provider is saved, select the first model that speaks a protocol the active
 // framework consumes directly. If none does, keep the vendor default so the normal compatibility
@@ -234,12 +361,20 @@ export type ProviderFormErrorKey =
   | 'Base URL is required.'
   | CustomProviderBaseUrlError
   | 'Model is required.'
+  | 'Model IDs must be unique.'
+  | 'A model ID is incompatible with the selected Cloudflare connection mode.'
+  | 'Enter a valid Cloudflare Account ID.'
+  | 'Enter a valid Gateway ID.'
+  | 'Enter a valid provider endpoint.'
   | 'API key is required.'
   | 'Context window must be a positive whole number of tokens.'
   | 'Maximum input tokens must be a positive whole number of tokens.'
   | 'Maximum output tokens must be a positive whole number of tokens.'
 
 export type ProviderFormErrors = {
+  accountId?: ProviderFormErrorKey
+  gatewayId?: ProviderFormErrorKey
+  location?: ProviderFormErrorKey
   baseUrl?: ProviderFormErrorKey
   contextWindow?: ProviderFormErrorKey
   key?: ProviderFormErrorKey
@@ -261,6 +396,26 @@ export const getProviderFormErrors = (
   options: { hasStoredKey?: boolean; modelCatalog?: CatalogSnapshot } = {}
 ): ProviderFormErrors => {
   const errors: ProviderFormErrors = {}
+  const rows = value.manualModels ?? (value.localPresetId ? (value.localModels ?? []) : undefined)
+  if (value.type === 'official' && value.vendorId === 'cloudflare-ai-gateway') {
+    const cloudflare = value.cloudflare ?? DEFAULT_CLOUDFLARE_GATEWAY
+    if (!validCloudflareAccountId(cloudflare.accountId))
+      errors.accountId = 'Enter a valid Cloudflare Account ID.'
+    if (!validCloudflareGatewayId(cloudflare.gatewayId))
+      errors.gatewayId = 'Enter a valid Gateway ID.'
+    const ids = rows?.map(({ id }) => id) ?? [value.model]
+    const problems = ids.map((id) => configuredProviderModelError({ cloudflare }, id))
+    if (problems.includes('incompatible-model'))
+      errors.model = 'A model ID is incompatible with the selected Cloudflare connection mode.'
+    else if (problems.includes('model-required')) errors.model = 'Model is required.'
+  }
+
+  if (value.type === 'official' && value.vendorId && manualProviderDefinition(value.vendorId)) {
+    if (!resolveConfiguredProviderConnection(value.vendorId, value))
+      errors.location = 'Enter a valid provider endpoint.'
+    if (!rows && configuredProviderModelError(value, value.model))
+      errors.model = 'Model is required.'
+  }
 
   if (value.type === 'custom') {
     if (!value.baseUrl.trim()) errors.baseUrl = 'Base URL is required.'
@@ -268,16 +423,30 @@ export const getProviderFormErrors = (
       const baseUrlError = getCustomProviderBaseUrlError(value.baseUrl.trim())
       if (baseUrlError) errors.baseUrl = baseUrlError
     }
-    if (!value.model.trim()) errors.model = 'Model is required.'
-    if (positiveWholeNumberError(value.contextWindow)) {
-      errors.contextWindow = 'Context window must be a positive whole number of tokens.'
-    }
+    if (!rows && !value.model.trim()) errors.model = 'Model is required.'
     if (positiveWholeNumberError(value.maxInputTokens)) {
       errors.maxInputTokens = 'Maximum input tokens must be a positive whole number of tokens.'
     }
     if (positiveWholeNumberError(value.maxOutputTokens)) {
       errors.maxOutputTokens = 'Maximum output tokens must be a positive whole number of tokens.'
     }
+  }
+  if (rows) {
+    const ids = rows.map(({ id }) => id.trim())
+    if (!ids.length || ids.some((id) => !id)) errors.model = 'Model is required.'
+    else if (new Set(ids).size !== ids.length) errors.model = 'Model IDs must be unique.'
+    if (rows.some(({ contextWindow }) => positiveWholeNumberError(contextWindow)))
+      errors.contextWindow = 'Context window must be a positive whole number of tokens.'
+  }
+  if (
+    !rows &&
+    ((value.type === 'custom' && !value.localPresetId) ||
+      (value.type === 'official' &&
+        configuredProviderConnectionKind(value.vendorId) &&
+        providerFormPublishedContextWindow(value) === undefined)) &&
+    positiveWholeNumberError(value.contextWindow)
+  ) {
+    errors.contextWindow = 'Context window must be a positive whole number of tokens.'
   }
   if (
     (value.type === 'custom' || value.type === 'official') &&
@@ -297,11 +466,18 @@ export const hasProviderFormErrors = (errors: ProviderFormErrors): boolean =>
 
 // Grouping for the provider-type picker. 'codex' / 'claude' = each vendor's own subscription
 // sign-in, surfaced as its own section (only one is shown at a time, gated on the active
-// framework); 'api' = official vendors via their standard API key; 'other' = the custom gateway.
-export type ProviderKindGroup = 'codex' | 'claude' | 'subscription' | 'api' | 'other'
+// framework). Cloud providers are shown in their own section.
+export type ProviderKindGroup =
+  'codex' | 'claude' | 'subscription' | 'api' | 'cloud' | 'local' | 'other'
 
 export type ProviderKindGroupLabelKey =
-  'Codex subscription' | 'Claude subscription' | 'Subscription' | 'Official API' | 'Other'
+  | 'Codex subscription'
+  | 'Claude subscription'
+  | 'Subscription'
+  | 'Official API'
+  | 'Cloud providers'
+  | 'Local'
+  | 'Other'
 
 // A provider kind's one-line description, as English copy (its own catalog key). The `label` beside it stays a plain
 // string: it is a vendor name from the registry (`Anthropic`, `Moonshot`) or a subscription identity,
@@ -324,6 +500,8 @@ export const PROVIDER_KIND_GROUPS: {
   { id: 'claude', labelKey: 'Claude subscription' },
   { id: 'subscription', labelKey: 'Subscription' },
   { id: 'api', labelKey: 'Official API' },
+  { id: 'cloud', labelKey: 'Cloud providers' },
+  { id: 'local', labelKey: 'Local' },
   { id: 'other', labelKey: 'Other' }
 ]
 
@@ -375,10 +553,17 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   ...OFFICIAL_VENDORS.map((vendor): ProviderKind => ({
     key: `official:${vendor.id}`,
     label: vendor.label,
-    descriptionKey: vendor.supportsAnonymousAccess
-      ? 'Free models work without an API key.'
-      : 'API key — models provided',
-    group: 'api'
+    descriptionKey: vendor.requiresConnectionConfiguration
+      ? undefined
+      : vendor.supportsAnonymousAccess
+        ? 'Free models work without an API key.'
+        : 'API key — models provided',
+    group: vendor.cloudProvider ? 'cloud' : 'api'
+  })),
+  ...LOCAL_MODEL_PRESETS.map(({ id, label }): ProviderKind => ({
+    key: `local:${id}`,
+    label,
+    group: 'local'
   })),
   {
     key: 'custom',
@@ -388,18 +573,67 @@ export const PROVIDER_KINDS: ProviderKind[] = [
   }
 ]
 
+export type ProviderKindAvailability = {
+  // Desktop CodeBuddy accounts; undefined hides them. Listed ids are already added and stay disabled.
+  codeBuddyProviders?: readonly string[]
+  showCodexSubscriptions?: boolean
+  showClaudeIsolated?: boolean
+}
+
+export const providerKindAvailability = (
+  frameworkId: AgentFrameworkId,
+  providers: readonly { id: string }[],
+  desktop: boolean
+): ProviderKindAvailability => ({
+  codeBuddyProviders:
+    frameworkId === 'codebuddy' && desktop ? providers.map(({ id }) => id) : undefined,
+  showCodexSubscriptions: frameworkId === 'codex' || frameworkId === 'open-science-agent',
+  showClaudeIsolated: frameworkId === 'claude-code'
+})
+
+// Whether a provider kind is offered for the active framework. The type dropdown and the Add provider
+// picker share this so both surfaces list the same kinds.
+export const isProviderKindAvailable = (
+  kind: ProviderKind,
+  { codeBuddyProviders, showCodexSubscriptions, showClaudeIsolated }: ProviderKindAvailability
+): boolean => {
+  if (codeBuddySiteForId(kind.key) && !codeBuddyProviders) return false
+  // Codex and the built-in Agent share the app-owned subscription sign-in.
+  if (kind.group === 'codex' && !showCodexSubscriptions) return false
+  // The Claude subscription section mirrors it: gate on Claude Code being active, the only
+  // framework that speaks the app-owned bearer token.
+  if (kind.group === 'claude' && !showClaudeIsolated) return false
+  return true
+}
+
+// Local model presets are offered as their own provider kinds in the Add provider picker. Each one
+// opens a custom gateway seeded with that preset.
+export const LOCAL_MODEL_KIND_PREFIX = 'local:'
+
+export const localModelPresetForKindKey = (key: string): LocalModelPreset | undefined =>
+  key.startsWith(LOCAL_MODEL_KIND_PREFIX)
+    ? LOCAL_MODEL_PRESETS.find((preset) => preset.id === key.slice(LOCAL_MODEL_KIND_PREFIX.length))
+    : undefined
+
 // The patch applied to the form value when a provider-kind is picked. Switching to an official vendor
 // seeds its default region + model; switching to custom clears vendor-only fields and applies the
 // active framework's preferred endpoint.
 export const providerKindPatch = (
   key: string,
-  customApiEndpoint: ModelProtocol = 'messages'
+  customApiEndpoint: ModelProtocol = 'messages',
+  supportedApiTypes?: readonly ModelProtocol[]
 ): Partial<ProviderFormValue> => {
   const reset = {
     codeBuddySite: undefined,
     codeBuddyAuthMode: undefined,
     key: '',
     catalogParameters: undefined,
+    cloudflare: undefined,
+    cloudflareModelDrafts: undefined,
+    manualConnection: undefined,
+    localPresetId: undefined,
+    localModels: undefined,
+    manualModels: undefined,
     vendorId: undefined,
     region: undefined,
     model: '',
@@ -449,16 +683,71 @@ export const providerKindPatch = (
     }
   }
 
+  if (key.startsWith('local:')) {
+    const id = key.slice('local:'.length)
+    const preset = LOCAL_MODEL_PRESETS.find((item) => item.id === id)
+    if (preset) {
+      return {
+        ...reset,
+        type: 'custom',
+        localPresetId: preset.id,
+        name: preset.label,
+        baseUrl: preset.endpointCandidates?.[0] ?? preset.baseUrl,
+        apiEndpoint: 'chat-completions'
+      }
+    }
+  }
+
   if (key.startsWith('official:')) {
     const vendorId = key.slice('official:'.length) as OfficialVendorId
     const vendor = getOfficialVendor(vendorId)
-
+    const manualProvider = manualProviderDefinition(vendorId)
+    const cloudflare =
+      vendorId === 'cloudflare-ai-gateway'
+        ? {
+            ...DEFAULT_CLOUDFLARE_GATEWAY,
+            mode:
+              supportedApiTypes?.includes('messages') &&
+              !supportedApiTypes.includes('chat-completions')
+                ? ('anthropic' as const)
+                : DEFAULT_CLOUDFLARE_GATEWAY.mode
+          }
+        : undefined
+    const manualConnection = manualProvider
+      ? {
+          ...manualProvider.defaultConnection,
+          protocol: supportedApiTypes?.includes(manualProvider.defaultConnection.protocol)
+            ? manualProvider.defaultConnection.protocol
+            : (manualProvider.protocols.find((protocol) => supportedApiTypes?.includes(protocol)) ??
+              manualProvider.defaultConnection.protocol)
+        }
+      : undefined
+    const manualModels = supportsConfiguredProviderModelList(vendorId)
+      ? cloudModelFormRows({ vendorId, cloudflare, manualConnection })
+      : undefined
     return {
       ...reset,
       type: 'official',
       name: vendor?.label,
       vendorId,
-      region: vendor?.regions?.[0]?.id
+      region: vendor?.regions?.[0]?.id,
+      ...(cloudflare && { cloudflare }),
+      ...(manualConnection && {
+        manualConnection,
+        model: configuredProviderPresetModels(vendorId, { manualConnection })[0] ?? ''
+      }),
+      ...(manualModels && { manualModels, model: manualModels[0].id })
+    }
+  }
+
+  const localPreset = localModelPresetForKindKey(key)
+  if (localPreset) {
+    return {
+      ...reset,
+      type: 'custom',
+      name: localPreset.label,
+      baseUrl: localPreset.baseUrl,
+      apiEndpoint: 'chat-completions'
     }
   }
 
@@ -473,9 +762,7 @@ export const providerKindPatch = (
 export const selectedKindKey = (value: ProviderFormValue): string => {
   if (value.type === 'codebuddy-subscription' && value.codeBuddySite)
     return codeBuddyAccounts[value.codeBuddySite].id
-  if (value.type === 'custom') {
-    return 'custom'
-  }
+  if (value.type === 'custom') return providerKindKey(value.type, undefined, value.localPresetId)
   if (value.type === 'claude-shared' || value.type === 'claude-isolated') {
     return 'claude-subscription'
   }
@@ -487,14 +774,15 @@ export const selectedKindKey = (value: ProviderFormValue): string => {
   return value.vendorId ? `official:${value.vendorId}` : 'custom'
 }
 
-// Maps a provider's type + vendor to its icon key ('custom' | 'official:<id>').
-export const providerKindKey = (type: ProviderType, vendorId?: OfficialVendorId): string =>
-  type === 'official' && vendorId
-    ? `official:${vendorId}`
-    : type === 'codex-shared' || type === 'codex-isolated'
-      ? 'codex-subscription'
-      : type === 'claude-shared' || type === 'claude-isolated'
-        ? 'claude-subscription'
-        : type === 'xai-subscription'
-          ? 'xai-subscription'
-          : type
+// Local presets share the custom transport but retain their own presentation identity.
+export function providerKindKey(
+  type: ProviderType,
+  vendorId?: OfficialVendorId,
+  localPresetId?: LocalProviderPresetId
+): string {
+  if (type === 'official' && vendorId) return `official:${vendorId}`
+  if (type === 'custom' && localPresetId) return `local:${localPresetId}`
+  if (type === 'codex-shared' || type === 'codex-isolated') return 'codex-subscription'
+  if (type === 'claude-shared' || type === 'claude-isolated') return 'claude-subscription'
+  return type
+}

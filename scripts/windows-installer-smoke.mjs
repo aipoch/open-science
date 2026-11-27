@@ -1576,7 +1576,7 @@ const terminateDirectoryProcesses = async (directory, run = runProcess) => {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      `$ErrorActionPreference = 'Stop'; $root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedRoot}')); Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
+      `$ErrorActionPreference = 'Stop'; $root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedRoot}')); $processes = Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) }; $processes | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; $processes | ForEach-Object { Wait-Process -Id $_.ProcessId -Timeout 10 -ErrorAction SilentlyContinue | Out-Null; Start-Sleep -Milliseconds 300 }`
     ],
     {}
   )
@@ -1585,7 +1585,12 @@ const terminateDirectoryProcesses = async (directory, run = runProcess) => {
 const uninstallAndVerify = async (
   installDirectory,
   env,
-  { processRoot = installDirectory, terminate = terminateDirectoryProcesses, run = runProcess } = {}
+  {
+    processRoot = installDirectory,
+    rollbackVersion,
+    terminate = terminateDirectoryProcesses,
+    run = runProcess
+  } = {}
 ) => {
   const uninstaller = await findUninstaller(installDirectory)
   const installedPaths = packagedResourcePaths(installDirectory)
@@ -1605,8 +1610,15 @@ const uninstallAndVerify = async (
     ).filter(Boolean)
     if (remainingPaths.length > 0) return undefined
     if (!(await pathExists(installDirectory))) return true
-    const remainingEntries = await readdir(installDirectory)
-    return remainingEntries.every((entry) => entry === basename(uninstaller)) || undefined
+    const remainingEntries = await readdir(installDirectory, { withFileTypes: true })
+    // The released 1.3.4 uninstaller predates cleanup of Chromium's updater-created debug.log.
+    return (
+      remainingEntries.every(
+        (entry) =>
+          entry.name === basename(uninstaller) ||
+          (rollbackVersion === '1.3.4' && entry.name === 'debug.log' && entry.isFile())
+      ) || undefined
+    )
   }
   try {
     await waitFor('the installed application files to be removed', cleanupCheck)

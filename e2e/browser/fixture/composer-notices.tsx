@@ -46,6 +46,7 @@ export function Fixture(): React.JSX.Element {
                       ? {
                           status:
                             category === 'configuration' ? 401 : category === 'input' ? 413 : 503,
+                          adapterCode: 'provider',
                           provider: 'Example Provider',
                           model: 'example-model-with-a-long-name',
                           requestId: 'request-'.repeat(18)

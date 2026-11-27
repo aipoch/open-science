@@ -109,7 +109,7 @@ const configureUnavailableRegistries = async (
   }
   useSettingsStore.setState({
     agentFrameworkId: selected,
-    codex: { version: '1.6.2', nativeVersion: '0.157.1' },
+    codex: { version: '2.6.0', nativeVersion: '0.166.0' },
     environmentCheck,
     agentFrameworks: frameworks.map(({ id, label }) => ({
       id,
@@ -216,7 +216,7 @@ describe('Onboarding navigation regressions', () => {
     await clickButton(/test & continue/i)
     await clickButton(/^back$/i)
     await clickButton(/^continue$/i)
-    expect(findButton(/^skip$/i)?.disabled).toBe(true)
+    expect(findButton(/^Continue with free Kilo Gateway$/)?.disabled).toBe(true)
     expect(findButton(/test & continue/i)?.disabled).toBe(true)
     await act(async () => {
       pending.resolve({ providerId: 'saved-1', validation: { ok: true, category: 'ok' } })

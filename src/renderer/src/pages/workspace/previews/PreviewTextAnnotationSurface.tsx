@@ -2,6 +2,7 @@ import {
   Check,
   Copy,
   Highlighter,
+  Languages,
   ListCollapse,
   MessageCircleQuestionMark,
   Quote
@@ -13,6 +14,7 @@ import type {
   PdfAnnotationTarget
 } from '../../../../../shared/pdf-annotations'
 
+import type { PdfSelectionTranslation } from './renderers/PdfSelectionTranslation'
 import { ErrorNotice } from '@/components/error-notice'
 import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import type {
@@ -387,6 +389,7 @@ export const PreviewTextAnnotationSurface = ({
   onRemoveAnnotation,
   onAnnotationError,
   sourcePageNumber,
+  SelectionTranslation,
   pdfEvidenceSource,
   pdfBookmarkSource,
   pdfPageRotation,
@@ -396,6 +399,7 @@ export const PreviewTextAnnotationSurface = ({
   children
 }: PreviewFileRendererProps & {
   sourcePageNumber?: number
+  SelectionTranslation?: typeof PdfSelectionTranslation
   pdfEvidenceSource?: PdfAnnotation['source']
   pdfBookmarkSource?: PdfAnnotationSource
   pdfPageRotation?: number
@@ -407,6 +411,8 @@ export const PreviewTextAnnotationSurface = ({
   const { t } = useTranslation()
   const bookmarks = useBookmarks()
   const pdfAnnotations = usePdfAnnotations()
+  const canTranslate = Boolean(SelectionTranslation && window.api?.pdfTranslation)
+  const [translationText, setTranslationText] = useState<string>()
   const canSavePrivate = pdfBookmarkSource ? pdfAnnotations.available : bookmarks.available
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -577,6 +583,7 @@ export const PreviewTextAnnotationSurface = ({
     }
     setSelection(undefined)
     setOpen(false)
+    setTranslationText(undefined)
     setNote('')
   }, [])
 
@@ -707,6 +714,7 @@ export const PreviewTextAnnotationSurface = ({
     if (copiedResetRef.current) clearTimeout(copiedResetRef.current)
     setSelection(undefined)
     setOpen(false)
+    setTranslationText(undefined)
     setNote('')
     setCopied(false)
   }, [open])
@@ -773,8 +781,9 @@ export const PreviewTextAnnotationSurface = ({
     if (open) return
     if (
       annotationVersionPending ||
-      (!source && !pdfEvidenceSource && !pdfBookmarkSource) ||
-      (!onAddAnnotation && !canSavePrivate)
+      (!canTranslate &&
+        ((!source && !pdfEvidenceSource && !pdfBookmarkSource) ||
+          (!onAddAnnotation && !canSavePrivate)))
     ) {
       clearDraft()
       return
@@ -1041,7 +1050,7 @@ export const PreviewTextAnnotationSurface = ({
   const canCopy = Boolean(navigator.clipboard)
 
   const triggerActions: readonly AnnotationTriggerAction[] | undefined =
-    pdfEvidenceSource || pdfBookmarkSource
+    pdfEvidenceSource || pdfBookmarkSource || canTranslate
       ? [
           ...(pdfEvidenceSource
             ? [
@@ -1084,9 +1093,32 @@ export const PreviewTextAnnotationSurface = ({
                 }
               ]
             : []),
+          ...(canTranslate
+            ? [
+                {
+                  id: 'translate',
+                  label: t('Translate selection'),
+                  icon: Languages,
+                  separatorBefore: Boolean(pdfEvidenceSource || pdfBookmarkSource),
+                  availableWhenAnnotationBlocked: true,
+                  onActivate: () => {
+                    if (!selection) return
+                    const native = window.getSelection()
+                    const text =
+                      native?.rangeCount &&
+                      !native.isCollapsed &&
+                      native.getRangeAt(0).toString().trim() === selection.quote
+                        ? native.toString().trim()
+                        : selection.quote
+                    setTranslationText(text || selection.quote)
+                    setOpen(true)
+                  }
+                }
+              ]
+            : []),
           {
             id: 'copy',
-            separatorBefore: true,
+            separatorBefore: !canTranslate,
             label: copied ? t('Copied') : t('Copy'),
             icon: copied ? Check : Copy,
             disabled: !canCopy,
@@ -1183,9 +1215,22 @@ export const PreviewTextAnnotationSurface = ({
           backward={selection.backward}
           open={open}
           note={note}
+          alternateContent={
+            open && translationText && SelectionTranslation ? (
+              <SelectionTranslation
+                text={translationText}
+                selectionId={selection.bookmarkId}
+                onClose={clearDraft}
+              />
+            ) : undefined
+          }
           noteInputId={`preview-note-${annotationItem.id}`}
           variant="preview"
           onOpenChange={(next) => {
+            if (!next && translationText) {
+              clearDraft()
+              return
+            }
             setOpen(next)
             if (!next) {
               setNote('')

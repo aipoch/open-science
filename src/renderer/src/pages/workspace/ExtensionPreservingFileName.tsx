@@ -26,29 +26,48 @@ const ExtensionPreservingFileName = ({
   className
 }: ExtensionPreservingFileNameProps): React.JSX.Element => {
   const rootRef = useRef<HTMLSpanElement>(null)
-  const probeRef = useRef<HTMLSpanElement>(null)
   const [measured, setMeasured] = useState<MeasuredName>()
 
   useLayoutEffect(() => {
     const root = rootRef.current
-    const probe = probeRef.current
-    if (!root || !probe) return
+    if (!root) return
+    let context: CanvasRenderingContext2D | null = null
+    // Widths belong to this name and font, and are released when the label unmounts.
+    const widths = new Map<string, number>()
+    let typography: string | undefined
+    let availableWidth = 0
+    let fittedWidth: number | undefined
 
-    const update = (): void => {
-      const width = root.getBoundingClientRect().width
+    const update = (width: number): void => {
+      availableWidth = width
       if (width <= 0) return
-      const widths = new Map<string, number>([['', 0]])
+      context ??= root.ownerDocument.createElement('canvas').getContext('2d')
+      if (!context) return
+      const style = getComputedStyle(root)
+      const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+      const spacing = style.letterSpacing === 'normal' ? '0px' : style.letterSpacing
+      const key = `${font}/${spacing}`
+      const metrics = context
+      if (key !== typography) {
+        typography = key
+        metrics.font = font
+        metrics.letterSpacing = spacing
+        widths.clear()
+        widths.set('', 0)
+        fittedWidth = undefined
+      }
       const measure = (text: string): number => {
         const cached = widths.get(text)
         if (cached !== undefined) return cached
-        probe.textContent = text
-        const result = probe.getBoundingClientRect().width
-        probe.textContent = ''
+        const result = metrics.measureText(text).width
         widths.set(text, result)
         return result
       }
-      const naturalWidth = measure(name)
-      if (naturalWidth <= 0) return
+      // CSS layout rounds fractional canvas advances to its own subpixel grid.
+      const naturalWidth = Math.ceil(measure(name))
+      const fitWidth = Math.min(width, naturalWidth)
+      if (naturalWidth <= 0 || fittedWidth === fitWidth) return
+      fittedWidth = fitWidth
       const parts = getExtensionPreservingFileNameParts(name, { width, measure })
       setMeasured((previous) =>
         previous?.name === name &&
@@ -61,17 +80,25 @@ const ExtensionPreservingFileName = ({
           : { name, naturalWidth, parts }
       )
     }
-    update()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(update)
+    if (typeof ResizeObserver === 'undefined') {
+      update(root.getBoundingClientRect().width)
+      return
+    }
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) update(entry.contentRect.width)
+    })
     observer.observe(root)
-    // Fonts can change text widths even when the container width stays fixed.
-    document.fonts?.addEventListener('loadingdone', update)
+    const fonts = root.ownerDocument.fonts
+    const onFontLoaded = (): void => {
+      typography = undefined
+      update(availableWidth)
+    }
+    fonts?.addEventListener('loadingdone', onFontLoaded)
     return () => {
       observer.disconnect()
-      document.fonts?.removeEventListener('loadingdone', update)
+      fonts?.removeEventListener('loadingdone', onFontLoaded)
     }
-  }, [name])
+  }, [name, className])
 
   const current = measured?.name === name ? measured : undefined
   const { head, tail, extension, isAbbreviated } =
@@ -89,11 +116,6 @@ const ExtensionPreservingFileName = ({
         className
       )}
     >
-      <span
-        ref={probeRef}
-        aria-hidden="true"
-        className="pointer-events-none invisible absolute w-max whitespace-nowrap"
-      />
       <bdi data-testid="file-name-head" className="min-w-0 shrink truncate">
         {head}
       </bdi>

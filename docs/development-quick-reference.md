@@ -129,7 +129,8 @@ and continue to require the certified, version-matched WSL2 assets.
    config root's `.env` for installed runtimes (usually `~/.open-science/.env`).
 2. Restart the backend. Open **Project Settings → Advanced agent options**, enable **Agent
    tracing**, and save. Tracing starts off for each project and the saved setting applies on
-   the next send.
+   the next send. For a single CLI Run, use `open-science run --otel-traces` to authorize that
+   turn independently of the Project setting.
 3. Send a message with Open-Science Agent and look for spans under the `open-science-agent` service.
 
 These switches default to `1`. Set any to `0` in the same configuration source as the endpoint.
@@ -183,6 +184,9 @@ Read the existing owner document before changing one of these areas, then run it
 | Notebook | [Current architecture](PRD.md#8-current-architecture-what-is-actually-implemented) | `npm run typecheck:node`; targeted tests under `src/main/notebook/`                                   |
 | Settings | [Settings design](design.md#settings)                                              | `npm run typecheck`; targeted tests under `src/main/settings/` and `src/renderer/src/pages/settings/` |
 | ACP      | [Current architecture](PRD.md#8-current-architecture-what-is-actually-implemented) | `npm run typecheck:node`; targeted tests under `src/main/acp/`                                        |
+
+Notebook memory thresholds and the optional local policy file are documented in
+[Notebook memory policy](notebook-memory-policy.md).
 
 ## Project Structure
 

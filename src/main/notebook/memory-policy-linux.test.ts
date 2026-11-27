@@ -130,7 +130,8 @@ describe('LinuxMemoryPolicyAdapter', () => {
     })
 
     await expect(adapter.sample(new AbortController().signal)).rejects.toMatchObject({
-      code: 'linux-memory-unavailable'
+      code: 'linux-memory-unavailable',
+      diagnostic: 'linux-cgroup-visibility'
     })
   })
 
@@ -161,7 +162,8 @@ describe('LinuxMemoryPolicyAdapter', () => {
     try {
       const adapter = new LinuxMemoryPolicyAdapter({ procRoot: directory })
       await expect(adapter.sample(new AbortController().signal)).rejects.toMatchObject({
-        code: 'linux-memory-unavailable'
+        code: 'linux-memory-unavailable',
+        diagnostic: 'linux-procfs'
       })
     } finally {
       await rm(directory, { recursive: true, force: true })

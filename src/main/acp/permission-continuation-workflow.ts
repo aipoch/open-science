@@ -10,9 +10,13 @@ import {
 } from '../../shared/acp'
 import type { AcpAppContinuationOwner, AcpContinuationOutcome } from './app-continuation-owner'
 import type { AcpDurableContinuationContextOwner } from './durable-continuation-context-owner'
-import type { RestoredPermissionContinuation } from './permission-broker'
+import {
+  taskPermissionOptions,
+  type RestoredPermissionContinuation,
+  type TaskPermissionDecision
+} from './permission-broker'
 import type { AcpPermissionContext } from './permission-context'
-import type { AcpPermissionWaitOwner } from './permission-wait-owner'
+import { restorableTaskPermission, type AcpPermissionWaitOwner } from './permission-wait-owner'
 import type { AcpRuntimeCallbacks } from './runtime-contract'
 import type { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
@@ -42,6 +46,11 @@ type PermissionContinuationDependencies = Readonly<{
   schedule: (sessionId: string) => void
 }>
 
+export type TaskRestoredPermissionDecision = TaskPermissionDecision & {
+  branchId: string
+  promptMessageId: string
+}
+
 const errorMessage = (error: unknown): string => {
   try {
     const raw = error instanceof Error ? (error as { message?: unknown }).message : error
@@ -69,12 +78,23 @@ class AcpPermissionContinuationWorkflow {
   private readonly continuations = new Map<string, RestoredPermissionContinuation>()
   constructor(private readonly deps: PermissionContinuationDependencies) {}
 
-  async respond(response: AcpPermissionResponse): Promise<AcpStateSnapshot> {
+  async respond(
+    response: AcpPermissionResponse,
+    task?: TaskRestoredPermissionDecision
+  ): Promise<AcpStateSnapshot> {
     const restored = response.restored!
     const activeSession = this.deps.hasActiveSession(restored.sessionId)
     if (!activeSession) throw new Error(`ACP session not found: ${restored.sessionId}`)
     const projectId = this.deps.projectId(restored.sessionId)
     const decision = await this.deps.wait.resolveRestored(response, projectId, restored.sessionId)
+    if (
+      task &&
+      !taskPermissionOptions(decision.permission.request).some(
+        ({ optionId }) => optionId === response.optionId
+      )
+    ) {
+      throw new Error('Task responses must use a current one-shot permission option.')
+    }
     const continuation = await this.deps.context.prepare({
       projectId,
       sessionId: restored.sessionId,
@@ -91,6 +111,7 @@ class AcpPermissionContinuationWorkflow {
       requestId: response.requestId,
       promptMessageId: decision.permission.originatingPromptMessageId,
       fingerprint: decision.permission.fingerprint,
+      ...(task ? { taskResponse: true as const } : {}),
       released: false,
       handoffStarted: false,
       handedOff: false
@@ -100,14 +121,46 @@ class AcpPermissionContinuationWorkflow {
     try {
       // Persist the consumed/non-replayable marker before starting provider work. A process loss or
       // grant failure must never leave a reusable approval without consuming its authority first.
-      await this.deps.wait.beginContinuation(projectId, restored.sessionId, response.requestId)
-      continuationBegan = true
-      await this.deps.permission.prepareRestoredDecision(
-        decision.permission,
-        decision.option,
-        projectId,
-        permissionContinuation
-      )
+      const prepareDecision = async (): Promise<boolean> => {
+        await this.deps.wait.beginContinuation(
+          projectId,
+          restored.sessionId,
+          response.requestId,
+          task &&
+            ((session) => {
+              const current = restorableTaskPermission(session, task.promptMessageId)
+              if (
+                !current ||
+                current.activity.messageBranchId !== task.branchId ||
+                current.permission.request.requestId !== response.requestId ||
+                current.permission.fingerprint !== decision.permission.fingerprint ||
+                !taskPermissionOptions(current.permission.request).some(
+                  ({ optionId }) => optionId === response.optionId
+                )
+              ) {
+                throw new Error(
+                  'The restored permission is no longer current on this Message Branch.'
+                )
+              }
+              task.assertCurrent()
+            })
+        )
+        continuationBegan = true
+        if (task) await task.record('unconfirmed')
+        await this.deps.permission.prepareRestoredDecision(
+          decision.permission,
+          decision.option,
+          projectId,
+          permissionContinuation
+        )
+        return true
+      }
+      if (task) {
+        if (!(await task.commit(prepareDecision)))
+          throw new Error('This Task permission was already answered.')
+      } else {
+        await prepareDecision()
+      }
     } catch (error) {
       this.deps.permission.clearRestoredDecision(restored.sessionId, permissionContinuation)
       if (continuationBegan) {
@@ -138,12 +191,16 @@ class AcpPermissionContinuationWorkflow {
     }
 
     const scope = decision.option?.scope
-    const text = response.cancelled
-      ? PERMISSION_CANCELLED_CONTINUATION_TEXT
-      : decision.denied
-        ? PERMISSION_DENIED_CONTINUATION_TEXT
-        : `The user approved the pending tool permission${scope ? ` for ${scope}` : ''}. Retry only ` +
-          'the exact parked tool call and continue the current task. Do not broaden or reinterpret the approval.'
+    const text = task
+      ? decision.denied
+        ? PERMISSION_CANCELLED_CONTINUATION_TEXT
+        : 'The pending tool permission was approved once for this task. Retry only the exact parked tool call. Do not broaden the approval.'
+      : response.cancelled
+        ? PERMISSION_CANCELLED_CONTINUATION_TEXT
+        : decision.denied
+          ? PERMISSION_DENIED_CONTINUATION_TEXT
+          : `The user approved the pending tool permission${scope ? ` for ${scope}` : ''}. Retry only ` +
+            'the exact parked tool call and continue the current task. Do not broaden or reinterpret the approval.'
     this.deps.continuations.set(restored.sessionId, {
       condition: 'always',
       send: (request, onProviderDispatched) =>

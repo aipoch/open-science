@@ -9,6 +9,7 @@ import { augmentedPathEnv } from './shell-path'
 // CLI; the app never removes them.
 
 export type ClaudeSharedAuthStatus = {
+  cliLaunchFailed?: boolean
   supported: boolean
   authenticated: boolean
   message?: string
@@ -95,7 +96,13 @@ const runBrowserLogin = async (
     return {
       supported: true,
       authenticated: code === 0,
-      ...(code === 0 ? {} : { message: stderr || 'Browser login failed' })
+      ...(code === 0 ? {} : { message: stderr || 'Browser login failed' }),
+      // macOS uses a shell admission gate; 126/127 alone are not evidence of a launch failure.
+      ...(process.platform === 'darwin' &&
+      (code === 126 || code === 127) &&
+      stderr.startsWith('open-science-verification-start:')
+        ? { cliLaunchFailed: true }
+        : {})
     }
   } catch (error) {
     if (signal.aborted) {
@@ -109,7 +116,12 @@ const runBrowserLogin = async (
     return {
       supported: true,
       authenticated: false,
-      message: error instanceof Error ? error.message : 'Browser login failed'
+      message: error instanceof Error ? error.message : 'Browser login failed',
+      ...(['ENOENT', 'EACCES', 'EPERM', 'ENOEXEC', 'ENOTDIR'].includes(
+        (error as NodeJS.ErrnoException)?.code ?? ''
+      )
+        ? { cliLaunchFailed: true }
+        : {})
     }
   }
 }

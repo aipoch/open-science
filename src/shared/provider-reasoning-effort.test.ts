@@ -116,6 +116,21 @@ describe('resolveProviderReasoningEffortProfile', () => {
     ],
     ['unpinned Claude subscription', { type: 'claude-shared' }, undefined, { supported: false }],
     [
+      'CodeBuddy model catalog capability',
+      {
+        type: 'codebuddy-subscription',
+        modelReasoningEfforts: { 'hy4-preview': ['high'] }
+      },
+      'hy4-preview',
+      { supported: true, slots: ['high', 'high', 'high', 'high', 'high'] }
+    ],
+    [
+      'CodeBuddy model without catalog capability',
+      { type: 'codebuddy-subscription', modelReasoningEfforts: { other: ['low', 'high'] } },
+      'hy4-preview',
+      { supported: false }
+    ],
+    [
       'Lab model with explicit effort values',
       {
         type: 'lab',

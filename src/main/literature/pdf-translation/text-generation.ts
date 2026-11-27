@@ -8,11 +8,13 @@ import type {
   CustomReasoningEffortTransport
 } from '@aipoch/providers'
 import type { ProviderTokenUsage } from '@aipoch/providers/client'
+import { withProviderRequestPolicy, type ProviderRequestPolicy } from '@aipoch/providers/transport'
 import { providerAllowsAnonymousAccess } from '../../../shared/provider-url-policy'
 
 export type ProviderTextGenerationConfiguration = Readonly<{
   type: 'custom' | 'official'
   key?: string
+  requestPolicy?: ProviderRequestPolicy
   baseUrl?: string
   chatCompletionsBaseUrl?: string
   apiEndpoints?: readonly ModelProtocol[]
@@ -48,6 +50,9 @@ export function providerTextGenerationTargetKey(target: ProviderTextGenerationTa
     target.provider.apiEndpoints?.map(encodeStoredModelProtocol),
     target.provider.baseUrl,
     target.provider.chatCompletionsBaseUrl,
+    ...(target.provider.requestPolicy?.routeIdentity
+      ? [target.provider.requestPolicy.routeIdentity]
+      : []),
     ...(target.reasoningEffort && target.reasoningEffort !== 'default'
       ? [target.reasoningEffort, target.provider.vendorId, target.provider.reasoningEffortTransport]
       : [])
@@ -82,7 +87,7 @@ export class ProviderTextGenerationService {
     const model = createProvider({
       id: provider.vendorId ?? 'custom',
       key: provider.key,
-      fetch: this.fetchImpl,
+      fetch: withProviderRequestPolicy(this.fetchImpl, provider.requestPolicy, provider.key),
       textGeneration: {
         ...provider,
         reasoningEffortTransport: provider.reasoningEffortTransport,

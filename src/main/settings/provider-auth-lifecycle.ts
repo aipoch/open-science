@@ -86,6 +86,7 @@ class ProviderAuthLifecycleOwner {
   private readonly claudeIsolatedAuth: ClaudeIsolatedAuthControllerPort
   private readonly claudeSharedAuth: ClaudeSharedAuthControllerPort
   private accountMutationTail: Promise<void> = Promise.resolve()
+  private claudeSharedLoginGeneration = 0
   private codexIsolatedLoginGeneration = 0
   private codexHarnessCredentials = new AbortController()
   private codexSignInPending = false
@@ -307,6 +308,7 @@ class ProviderAuthLifecycleOwner {
   }
 
   cancelClaudeLogin(): void {
+    this.claudeSharedLoginGeneration++
     this.claudeSharedAuth.cancelLogin()
   }
 
@@ -508,12 +510,16 @@ class ProviderAuthLifecycleOwner {
   }
 
   async loginClaudeShared(): Promise<ValidateProviderResult> {
+    const generation = this.claudeSharedLoginGeneration
+    const cancelled = { ok: false, category: 'unknown', cancelled: true, applied: false } as const
     const loginTarget = await this.repository.getSettings()
     const targetProvider = loginTarget.providers.find(
       (candidate) => candidate.id === CLAUDE_SHARED_PROVIDER_ID
     )
     this.invalidateClaudeSharedAuthStatus()
+    if (generation !== this.claudeSharedLoginGeneration) return cancelled
     const authStatus = await this.claudeSharedAuth.loginShared()
+    if (generation !== this.claudeSharedLoginGeneration) return cancelled
     this.invalidateClaudeSharedAuthStatus()
     let result = this.claudeSharedAuthValidationResult(authStatus)
 
@@ -538,6 +544,7 @@ class ProviderAuthLifecycleOwner {
     if (result.ok) {
       result = await this.options.runClaudeSubscriptionProbe(resolvedTarget, settings)
     }
+    if (generation !== this.claudeSharedLoginGeneration) return cancelled
     const validationTarget = authStatus.authenticated
       ? targetForValidationResult(result, {
           model: resolvedTarget.model,
@@ -749,7 +756,12 @@ class ProviderAuthLifecycleOwner {
   ): ValidateProviderResult {
     if (status.authenticated) return { ok: true, category: 'ok' }
 
-    return { ok: false, category: 'unknown', message: status.message ?? notSignedInMessage }
+    return {
+      ok: false,
+      category: 'unknown',
+      message: status.message ?? notSignedInMessage,
+      ...(status.cliLaunchFailed && { cliLaunchFailed: true })
+    }
   }
 
   private async validateClaudeSharedProvider(

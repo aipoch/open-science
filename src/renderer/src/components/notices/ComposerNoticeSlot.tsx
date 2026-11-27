@@ -118,9 +118,10 @@ const ComposerFailureNoticeSlot = ({
       value !== undefined &&
       (providerMessage || current.failure.diagnostics.protocol
         ? ['status', 'provider', 'model'].includes(key)
-        : key !== 'raw')
+        : key !== 'raw' && key !== 'adapterCode')
   )
-  const canCopyError = !current.summary || Boolean(diagnostics.details)
+  const showDiagnostics = current.failure.reason !== 'input/image-pixel-limit'
+  const canCopyError = showDiagnostics && (!current.summary || Boolean(diagnostics.details))
   const details = [diagnostics.details, actionFailure?.id === current.id && actionFailure.message]
     .filter(Boolean)
     .join('\n')
@@ -413,7 +414,7 @@ const ComposerFailureNoticeSlot = ({
                 )
               ) : null}
             </div>
-            {details ? (
+            {showDiagnostics && details ? (
               <NoticeDiagnostics
                 key={current.id}
                 errorCode={details}

@@ -113,7 +113,7 @@ const executeToolSchema = {
     .optional()
     .describe('Return after durable admission; keep this Python/R Run active in the Session.'),
   cellId: z.string().min(1).optional(),
-  language: z.enum(['python', 'r']).optional(),
+  language: z.enum(['python', 'r']).optional().describe('Defaults to Python.'),
   kernelSkillIds: z
     .array(z.string().min(1).max(128))
     .optional()
@@ -287,7 +287,7 @@ const LIST_NOTEBOOK_RUNTIMES_DOC = [
 
 const BIND_RUNTIME_DOC = [
   'Bind one enabled runtimeId per language for this session. Disabled/unknown IDs are refused.',
-  'Use bind when no binding exists; otherwise switch. notebook_execute uses it automatically; no per-call runtime.'
+  'Use notebook_execute with the installed, enabled app-managed default. For explicit selection, bind when no binding exists or switch.'
 ].join('\n')
 
 const SWITCH_RUNTIME_DOC = [
@@ -334,13 +334,13 @@ const buildShellExecuteDoc = (
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, launch-context change or idle reclamation resets state; earlier commands are never replayed. Data-kernel cwd; TEMP/TMP may vanish. Handoff: ${handoffVariable}, never relative to cwd.`,
+    `Calls share variables, exports, functions and cwd per lane/runtime. Cancellation, timeout, exit, restart, context changes or idle reclamation reset state without replay. Data-kernel cwd; TEMP/TMP may vanish. Handoff: ${handoffVariable}, never relative to cwd.`,
     exitCodeContract,
     NOTEBOOK_TOOL_REJECTION_GUIDANCE,
-    'For exitCode:null inspect status and recovery. Follow recovery retry prerequisites/guidance. Recovery describes that attempt, not current health; exitCode:null never authorizes repetition.',
-    'Foreground for needed results; background:true for independent work. Accepted background Runs survive Turn end/MCP disconnect; explicitly cancel with background_run.',
-    'Keep commands application-managed: background:true, never &, nohup, setsid, disown, Start-Process, Start-Job or equivalent detachment.',
-    'Do NOT copy a generated notebook output into the workspace here. Publish with `write_artifact_file`, using the same relative filename you saved with; it resolves against session data across platforms.',
+    'For exitCode:null follow status and recovery. Verify remote completion before retrying a timeout.',
+    'Use background:true for independent work. Accepted Runs survive turn end and disconnect; cancel with background_run.',
+    'Never detach with &, nohup, setsid, disown, Start-Process, Start-Job or equivalents.',
+    'Publish Notebook files by relative filename with `write_artifact_file`. Do not copy them via Shell.',
     'One managed command. Python/R: notebook_execute; JavaScript: repl_execute; installs: manage_packages. Never run analysis scripts, inline code or installers here.'
   ].join('\n')
 }
@@ -506,7 +506,9 @@ const callNotebookRpc = async (
       body: JSON.stringify({
         method,
         params: {
-          ...((params ?? {}) as Record<string, unknown>),
+          ...(method === 'state'
+            ? pickDefined(asRecord(params) ?? {}, ['runIds'])
+            : ((params ?? {}) as Record<string, unknown>)),
           sessionId: environment.sessionId,
           workspaceCwd: environment.workspaceCwd,
           projectId,
@@ -550,6 +552,21 @@ const callNotebookRpc = async (
 // one next step chosen by the RPC status so the Agent neither abandons the tool nor loops on it.
 const notebookRpcErrorGuidance = (status: number, error: unknown): string | undefined => {
   const detail = asRecord(error)
+  const code = typeof error === 'string' ? error.split(':', 1)[0] : detail?.code
+  if (
+    typeof error === 'string' &&
+    (error.startsWith('Notebook execution declined:') ||
+      error.startsWith('Notebook runtime selection declined'))
+  ) {
+    return 'Notebook approval was not granted. Do not repeat the action or try another route. Wait for the user to authorize a different action.'
+  }
+  if (
+    code === 'NOTEBOOK_EXECUTION_REQUIRES_USER_ACTION' ||
+    code === 'NOTEBOOK_MEMORY_PRESSURE' ||
+    code === 'NOTEBOOK_MEMORY_UNAVAILABLE'
+  ) {
+    return 'Notebook work is stopped. Do not retry, change tools, language, environment or Session, or delegate it. After resolving the cause, ask the user to choose Continue Notebook work in Compute in the Open-Science desktop app.'
+  }
   if (detail && ['recovery', 'retryable', 'hint', 'guidance'].some((key) => key in detail))
     return undefined
   if (status === 400) return TOOL_ARGUMENT_RECOVERY
@@ -609,6 +626,50 @@ const clipAgentText = (text: string, limit: number): { text: string; clipped: bo
   return {
     text: `${text.slice(0, limit)}\n…[${text.length - limit} chars omitted; full output in notebook preview]`,
     clipped: true
+  }
+}
+
+// Extract only complete, bounded protocol metadata; never guess IDs from partial JSON.
+const stdoutHandoff = (text: string): unknown => {
+  try {
+    const parsed = JSON.parse(text)
+    const handoff = parsed?._handoff
+    if (!handoff || typeof handoff !== 'object' || Array.isArray(handoff)) return undefined
+    return JSON.stringify(handoff, null, 2).length <= 2_000 ? handoff : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Reads persisted output through the existing session-scoped history capability. No kernel
+// execution or arbitrary path access is involved, including after interpreter replacement.
+const notebookOutputPage = (raw: unknown, input: Record<string, unknown>): unknown => {
+  const runIds = input.runIds as string[]
+  const runs = asRecord(raw)?.runs
+  const run = Array.isArray(runs)
+    ? runs.map(asRecord).find((value) => value?.runId === runIds[0])
+    : undefined
+  if (!run)
+    throw new Error(
+      'Saved Notebook run is unavailable in this session; do not repeat the original operation to retrieve its output.'
+    )
+  const stream = input.outputStream as string
+  const value = run[stream] ?? asRecord(run.text)?.[stream]
+  const text = typeof value === 'string' ? value : ''
+  const offset = (input.outputOffset as number | undefined) ?? 0
+  if (offset > text.length) throw new Error('Output offset exceeds saved stream length.')
+  // Bound the serialized page too: escaped control characters can expand sixfold.
+  let end = Math.min(text.length, offset + ((input.outputLimit as number | undefined) ?? 2_000))
+  while (JSON.stringify(text.slice(offset, end)).length > 3_000) end--
+  return {
+    runId: run.runId,
+    status: run.status,
+    stream,
+    offset,
+    nextOffset: end < text.length ? end : null,
+    totalCharacters: text.length,
+    text: text.slice(offset, end),
+    captureTruncated: run.truncated === true
   }
 }
 
@@ -870,6 +931,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     return typeof value === 'string' ? value : ''
   }
   const stdout = clipAgentText(stream('stdout'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
+  const handoff = stdoutHandoff(stream('stdout'))
   const stderr = notebookDiagnosticPreview(stream('stderr'), NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT)
   const traceback = notebookDiagnosticPreview(
     stream('traceback'),
@@ -950,6 +1012,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
     ...(recovery ? { recovery } : {}),
     ...(staleness.value ? { staleness: staleness.value } : {}),
     ...(invalidatedRuns.length ? { invalidatedRuns } : {}),
+    ...(handoff ? { stdoutHandoff: handoff } : {}),
     ...(stdout.text ? { stdout: stdout.text } : {}),
     ...(stderr ? { stderr } : {}),
     ...(traceback ? { traceback } : {}),
@@ -969,7 +1032,7 @@ const compactNotebookExecutionResult = (raw: unknown, input: unknown = {}): unkn
             ? resultCompacted
               ? 'Notebook output was truncated during capture and shortened again for this agent-facing result.'
               : 'Notebook output was truncated during capture.'
-            : 'Agent-facing result shortened; full output remains in the notebook preview.'
+            : 'Agent-facing result shortened. Read saved output with notebook_state using runIds:[runId], outputStream:"stdout", outputOffset:0 and follow nextOffset. Preserve workflow identifiers from stdoutHandoff or the saved stream for later steps. Do not repeat the original operation to retrieve its result.'
         }
       : {})
   }
@@ -1211,6 +1274,8 @@ const serializeNotebookToolResult = (value: unknown, limitChars?: number): strin
     if (typeof diagnostic === 'string' && diagnostic)
       identity[field] = notebookDiagnosticPreview(diagnostic, 512)
   }
+  if (record.stdoutHandoff && JSON.stringify(record.stdoutHandoff, null, 2).length <= 2_000)
+    identity.stdoutHandoff = record.stdoutHandoff
   const recovery = executionRecoveryContext(record.recovery)
   if (recovery) {
     identity.recovery =
@@ -1780,11 +1845,23 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   {
     name: 'notebook_state',
     title: 'Get notebook state',
-    description:
-      'Return compact session state: cell identities, latest run metadata/output preview, cwd/dataRoot, kernel status, and runtime bindings. Full run history stays in the notebook preview.',
+    description: 'Get session state or page saved output by run ID and stream. Follow nextOffset.',
     method: 'state',
-    inputSchema: {},
-    mapResult: compactNotebookStateResult,
+    inputSchema: {
+      runIds: z.array(z.string().min(1).max(256)).length(1).optional(),
+      outputStream: z.enum(['stdout', 'stderr', 'traceback']).optional(),
+      outputOffset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+      outputLimit: z.number().int().min(1).max(2_000).optional()
+    },
+    mapResult: (raw, input) => {
+      const request = asRecord(input) ?? {}
+      if (request.outputStream) {
+        if (!Array.isArray(request.runIds) || request.runIds.length !== 1)
+          throw new Error('Output reads require exactly one run ID.')
+        return notebookOutputPage(raw, request)
+      }
+      return compactNotebookStateResult(raw)
+    },
     resultLimitChars: NOTEBOOK_MCP_STATE_RESULT_LIMIT
   },
   {
@@ -1793,17 +1870,20 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     description: AUTHORIZED_DIRECTORIES_DESCRIPTION,
     method: 'listAuthorizedDirectories',
     inputSchema: {},
-    outputSchema: z.object({
-      revision: z.string(),
-      directories: z.array(
-        z.object({
-          path: z.string(),
-          name: z.string(),
-          access: z.enum(['ro', 'rw']),
-          grantedAt: z.string().datetime()
-        })
-      )
-    }),
+    // These keywords also support MCP's default JSON Schema 2020-12 dialect.
+    outputSchema: z
+      .object({
+        revision: z.string(),
+        directories: z.array(
+          z.object({
+            path: z.string(),
+            name: z.string(),
+            access: z.enum(['ro', 'rw']),
+            grantedAt: z.string().datetime()
+          })
+        )
+      })
+      .meta({ $schema: undefined }),
     mapResult: (raw) => raw
   },
   {
@@ -1837,7 +1917,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_restart',
     title: 'Restart notebook interpreter',
     description:
-      'Verify cleanup and reset variables; a fresh process starts on next execution. Preserves saved history/files. Pass language with environment, kernel:"repl" alone, or nothing to reset all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
+      'Reset interpreter state and start fresh on the next execution. Preserves saved history and files. Pass language with environment, kernel:"repl" alone, or nothing to reset all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
     method: 'restart',
     inputSchema: {
       kernel: z

@@ -99,3 +99,65 @@ it.each([
     }
   }
 )
+
+it('renders missing Unicode script glyphs at the correct height and preserves their extracted text', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.TimesRoman),
+    page = pdf.addPage([600, 800]),
+    registry = new TestCallerRegistry(),
+    caller = registry.acquire({ leaseId: 'subscript-glyphs', surface: 'electron' }),
+    source = 'Measure p1 alongside pi, pk, and 2x.',
+    translation = '记录 p₁、pᵢ、pₖ 和 2ˣ，保留普通数字 1。'
+  page.drawText(source, { font, size: 12, x: 40, y: 700 })
+  let output: ReturnType<typeof getDocument> | undefined
+  try {
+    const result = await new PdfTranslationWriter(() =>
+      resolve('resources/worker.mjs')
+    ).generateDetailed(
+      {
+        id: 'subscript-glyphs',
+        data: await pdf.save(),
+        pages: [{ width: 600, height: 800 }],
+        units: [
+          {
+            source,
+            translation,
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 38 / 600, y: 85 / 800, width: 350 / 600, height: 24 / 800 }
+              }
+            ]
+          }
+        ]
+      },
+      caller.lease
+    )
+    expect(result?.layoutFailures).toEqual([])
+    output = getDocument({ data: result!.data.slice() })
+    const items = (await (await (await output.promise).getPage(1)).getTextContent()).items.flatMap(
+      (item) => ('str' in item ? [item] : [])
+    )
+    expect(
+      items
+        .map((item) => item.str)
+        .join('')
+        .replace(/\s/gu, '')
+    ).toBe(translation.replace(/\s/gu, ''))
+    const body = items.find((item) => item.str.includes('记录'))!
+    for (const [script, rise] of [
+      ['₁', -0.17],
+      ['ᵢ', -0.17],
+      ['ₖ', -0.17],
+      ['ˣ', 0.36]
+    ] as const) {
+      const item = items.find((entry) => entry.str === script)!
+      expect(item.transform[3] / body.transform[3]).toBeCloseTo(0.72, 3)
+      expect((item.transform[5] - body.transform[5]) / body.transform[3]).toBeCloseTo(rise, 3)
+    }
+  } finally {
+    await output?.destroy()
+    caller.release()
+    registry.dispose()
+  }
+})

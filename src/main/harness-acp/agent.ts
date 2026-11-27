@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
 import { SCHEDULE_TURN_META } from '../../shared/session-schedules'
 import * as acp from '@agentclientprotocol/sdk'
@@ -26,10 +27,12 @@ import { createResponsesModel, ResponsesError } from '@aipoch/agent-harness/resp
 import { createMessagesModel, MessagesError } from '@aipoch/agent-harness/messages'
 import {
   HARNESS_AUTH_METHOD,
+  HARNESS_CONTEXT_BUDGET,
   HARNESS_EPHEMERAL_SESSION,
   HARNESS_INSTRUCTIONS,
   HARNESS_TOOL_LESS,
   HARNESS_TRACE_ENABLED,
+  HARNESS_TRACE_READINESS_METHOD,
   HARNESS_OWNER,
   harnessOwnerSchema,
   harnessConfigSchema,
@@ -234,6 +237,7 @@ export function createToolResultClearing(
 
 type Entry = {
   model: string
+  contextBudget: Pick<HarnessConfig, 'protocol' | 'contextWindow'> & { inputBudget: number }
   cancelWebTools(): void
   setScheduleTurn(ref: string | undefined): void
   session: AgentSession
@@ -665,6 +669,11 @@ export function createHarnessAcpAgent(
       signal.throwIfAborted()
       entries.set(id, {
         model: target.model,
+        contextBudget: {
+          protocol: target.protocol,
+          contextWindow: target.contextWindow,
+          inputBudget
+        },
         session,
         tracing: sessionTracing,
         setScheduleTurn: mcp.setScheduleTurn,
@@ -722,6 +731,9 @@ export function createHarnessAcpAgent(
         promptCapabilities: { image: true, audio: false, embeddedContext: true },
         sessionCapabilities: { resume: {}, close: {} }
       }
+    }))
+    .onRequest(HARNESS_TRACE_READINESS_METHOD, z.object({}).strict(), async () => ({
+      ready: (await tracing?.ready) === true
     }))
     .onRequest(acp.methods.agent.authenticate, (context) => {
       if (config || disposed || context.params.methodId !== HARNESS_AUTH_METHOD)
@@ -897,7 +909,12 @@ export function createHarnessAcpAgent(
                   id,
                   status,
                   ...(usage ? { usage } : {})
-                }))
+                })),
+                // A budget stop with no request receipt means the input was too large to dispatch.
+                // Send only the session's route and token limits to the host logger.
+                ...(!entry.cancelled &&
+                  status === 'budget' &&
+                  requests.length === 0 && { [HARNESS_CONTEXT_BUDGET]: entry.contextBudget })
               }
             }
           } finally {

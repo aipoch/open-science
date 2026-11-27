@@ -1,6 +1,6 @@
 import { fork, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { EventEmitter, once } from 'node:events'
+import { EventEmitter, getEventListeners, once } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -439,6 +439,169 @@ it('routes scalar probes without PCM and transfers owned audio buffers to the ge
     expect(worker.postMessage).toHaveBeenCalledWith(audio, [samples.buffer])
     expect(await readdir(root)).toEqual([])
   } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('serves remote speech in-process through the injected transport without forking a speech process', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-remote-speech-'))
+  const worker = stubWorker()
+  const createSpeechProcess = vi.fn()
+  const controller = new AbortController()
+  const speech = {
+    kind: 'remote-http' as const,
+    style: 'audio-speech' as const,
+    endpoint: 'https://api.example.com/v1/audio/speech',
+    model: 'tts-1',
+    apiKey: 'secret'
+  }
+  // Minimal mono 16-bit 24 kHz WAV with one silent frame.
+  const wav = Buffer.alloc(46)
+  wav.write('RIFF', 0)
+  wav.writeUInt32LE(38, 4)
+  wav.write('WAVEfmt ', 8)
+  wav.writeUInt32LE(16, 16)
+  wav.writeUInt16LE(1, 20)
+  wav.writeUInt16LE(1, 22)
+  wav.writeUInt32LE(24000, 24)
+  wav.writeUInt32LE(48000, 28)
+  wav.writeUInt16LE(2, 32)
+  wav.writeUInt16LE(16, 34)
+  wav.write('data', 36)
+  wav.writeUInt32LE(2, 40)
+  const remoteFetch = vi.fn(async () => new Response(new Uint8Array(wav)))
+  try {
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess,
+      remoteFetch: remoteFetch as unknown as typeof fetch,
+      createWorker: () => {
+        queueMicrotask(() => worker.emit('message', { kind: 'synthesize', lane: 0, text: 'one' }))
+        return worker as unknown as Worker
+      }
+    })
+    const result = generate(
+      {
+        speechConcurrency: 1,
+        specPath: 'unused',
+        modelDirectory: 'unused',
+        engineDirectory: 'unused',
+        outputDirectory: join(root, 'output'),
+        speech
+      },
+      controller.signal
+    ).catch((error) => error)
+    // The transport ran in this process: it received the endpoint and decoded WAV audio.
+    await vi.waitFor(() =>
+      expect(remoteFetch).toHaveBeenCalledWith(
+        'https://api.example.com/v1/audio/speech',
+        expect.objectContaining({ method: 'POST' })
+      )
+    )
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'speech-result', lane: 0 }),
+      expect.any(Array)
+    )
+    // Remote synthesis never reaches the speech child process.
+    expect(createSpeechProcess).not.toHaveBeenCalled()
+    controller.abort(new Error('finished remote serving check'))
+    expect(await result).toMatchObject({ message: 'finished remote serving check' })
+    expect(await readdir(root)).toEqual([])
+  } finally {
+    controller.abort()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('leaves no abort listener behind when remote setup fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-remote-setup-fail-'))
+  const controller = new AbortController()
+  try {
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess: vi.fn()
+    })
+    // The credential-bearing endpoint fails eager validation before scratch allocation.
+    const outcome = await generate(
+      {
+        speechConcurrency: 1,
+        specPath: 'unused',
+        modelDirectory: 'unused',
+        engineDirectory: 'unused',
+        outputDirectory: join(root, 'output'),
+        speech: {
+          kind: 'remote-http',
+          style: 'audio-speech',
+          endpoint: 'https://user:pass@example.com/v1/audio/speech',
+          model: 'tts-1'
+        }
+      },
+      controller.signal
+    ).catch((error) => error)
+    expect(outcome).toBeInstanceOf(Error)
+    // A failed setup must not leave a listener (and the state it captures) on a reused signal.
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+    expect(await readdir(root)).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('cancels in-flight remote synthesis when the generation aborts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'film-remote-cancel-'))
+  const worker = stubWorker()
+  const createSpeechProcess = vi.fn()
+  const controller = new AbortController()
+  let observedSignal: AbortSignal | undefined
+  const remoteFetch = vi.fn(
+    (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        observedSignal = init?.signal ?? undefined
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+          { once: true }
+        )
+      })
+  )
+  try {
+    const generate = createResearchVideoGenerator({
+      temporaryRoot: root,
+      createSpeechProcess,
+      remoteFetch: remoteFetch as unknown as typeof fetch,
+      createWorker: () => {
+        queueMicrotask(() => worker.emit('message', { kind: 'synthesize', lane: 0, text: 'one' }))
+        return worker as unknown as Worker
+      }
+    })
+    const result = generate(
+      {
+        speechConcurrency: 1,
+        specPath: 'unused',
+        modelDirectory: 'unused',
+        engineDirectory: 'unused',
+        outputDirectory: join(root, 'output'),
+        speech: {
+          kind: 'remote-http',
+          style: 'audio-speech',
+          endpoint: 'https://api.example.com/v1/audio/speech',
+          model: 'tts-1'
+        }
+      },
+      controller.signal
+    ).catch((error) => error)
+    // Wait until the request is actually in flight, then abort the generation.
+    await vi.waitFor(() => expect(remoteFetch).toHaveBeenCalledOnce())
+    expect(observedSignal?.aborted).toBe(false)
+    controller.abort(new Error('user cancelled'))
+    const outcome = await result
+    expect(outcome).toMatchObject({ message: 'user cancelled' })
+    // The in-flight request's signal fired before cleanup settled.
+    expect(observedSignal?.aborted).toBe(true)
+    expect(createSpeechProcess).not.toHaveBeenCalled()
+    expect(await readdir(root)).toEqual([])
+  } finally {
+    controller.abort()
     await rm(root, { recursive: true, force: true })
   }
 })

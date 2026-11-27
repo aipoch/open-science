@@ -65,6 +65,126 @@ it('runs through public inference capabilities and accounts for one completed at
     await h.owner.shutdown()
   }
 })
+
+it('keeps recognized inline formulas outside the requested translation and skips formula-only blocks', async () => {
+  const h = setup()
+  const source = 'Samples use [2, 5]m and ℓ∞.',
+    formula = '3−q',
+    sources = [source, formula]
+  h.run.mockResolvedValueOnce({
+    text: '样本使用 ⟦PDFMATHA⟧ 和 ⟦PDFMATHB⟧。',
+    stopReason: 'end_turn',
+    usage: { inputTokens: 10, outputTokens: 8, cacheTokens: 0 }
+  })
+  try {
+    const { operationId } = await h.owner.begin(
+      { ...input, sources, batchShortSources: true },
+      h.caller
+    )
+    await expect(
+      h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller)
+    ).resolves.toBe('样本使用 [2, 5]m 和 ℓ∞。')
+    await expect(
+      h.owner.translate({ operationId, sourceIndex: 1, source: formula }, h.caller)
+    ).resolves.toBe(formula)
+    expect(h.run).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining('"source":"Samples use ⟦PDFMATHA⟧ and ⟦PDFMATHB⟧."'),
+        systemPrompt: expect.stringContaining('Copy each ⟦PDFMATH…⟧ formula placeholder')
+      })
+    )
+  } finally {
+    await h.owner.shutdown()
+  }
+})
+
+it.each(['⟦PDFMATHB⟧ 和 ⟦PDFMATHA⟧', '⟦PDFMATHA⟧ 和 ⟦PDFMATHA⟧', '⟦PDFMATHA⟧'])(
+  'rejects reordered, repeated or omitted formula placeholders (%s)',
+  async (output) => {
+    const h = setup()
+    const source = 'Samples use [2, 5]m and ℓ∞.'
+    h.run.mockResolvedValueOnce({
+      text: '样本使用 ' + output + '。',
+      stopReason: 'end_turn',
+      usage: { inputTokens: 10, outputTokens: 8, cacheTokens: 0 }
+    })
+    try {
+      const { operationId } = await h.owner.begin({ ...input, sources: [source] }, h.caller)
+      await expect(
+        h.owner.translate({ operationId, sourceIndex: 0, source }, h.caller)
+      ).rejects.toMatchObject({ code: 'incomplete-output' })
+    } finally {
+      await h.owner.shutdown()
+    }
+  }
+)
+
+it('restores each prefetched formula against its own batch member', async () => {
+  const h = setup()
+  const sources = ['Estimate the scale.', 'Use the range [2, 5]m.']
+  h.run.mockResolvedValueOnce({
+    text: JSON.stringify([
+      { sourceIndex: 0, translation: '估计尺度。' },
+      { sourceIndex: 1, translation: '使用范围 ⟦PDFMATHA⟧。' }
+    ]),
+    stopReason: 'end_turn',
+    usage: { inputTokens: 10, outputTokens: 8, cacheTokens: 0 }
+  })
+  try {
+    const { operationId } = await h.owner.begin(
+      { ...input, sources, batchShortSources: true },
+      h.caller
+    )
+    const translate = (sourceIndex: number) =>
+      h.owner.translate({ operationId, sourceIndex, source: sources[sourceIndex] }, h.caller)
+    await expect(translate(0)).resolves.toBe('估计尺度。')
+    await expect(translate(1)).resolves.toBe('使用范围 [2, 5]m。')
+    expect(h.run).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining('"source":"Use the range ⟦PDFMATHA⟧."'),
+        systemPrompt: expect.stringContaining('Copy each ⟦PDFMATH…⟧ formula placeholder')
+      })
+    )
+  } finally {
+    await h.owner.shutdown()
+  }
+})
+
+it('restores formulas and numeric phrases together on a numeric retry', async () => {
+  const h = setup()
+  const source = 'Use the range [2, 5]m with 12 samples.'
+  h.run
+    .mockResolvedValueOnce({
+      text: '采用范围 ⟦PDFMATHA⟧ 进行采样。',
+      stopReason: 'end_turn',
+      usage: { inputTokens: 10, outputTokens: 8, cacheTokens: 0 }
+    })
+    .mockResolvedValueOnce({
+      text: '在范围 ⟦PDFMATHA⟧ 内使用 <q0>12 个样本</q0>。',
+      stopReason: 'end_turn',
+      usage: { inputTokens: 10, outputTokens: 8, cacheTokens: 0 }
+    })
+  try {
+    const { operationId } = await h.owner.begin({ ...input, sources: [source] }, h.caller)
+    const request = { operationId, sourceIndex: 0, source }
+    await expect(h.owner.translate(request, h.caller)).rejects.toMatchObject({
+      code: 'incomplete-output'
+    })
+    await expect(h.owner.translate(request, h.caller)).resolves.toBe(
+      '在范围 [2, 5]m 内使用 12 个样本。'
+    )
+    expect(h.run).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          '"source":"Use the range ⟦PDFMATHA⟧ with <q0>12 samples</q0>."'
+        )
+      })
+    )
+  } finally {
+    await h.owner.shutdown()
+  }
+})
+
 it('fences a stale reader before any model request', async () => {
   const h = setup()
   h.abort.abort()

@@ -16,6 +16,7 @@ type UpdateStore = {
   cancel: () => Promise<void>
   recheck: () => Promise<void>
   recover: () => Promise<void>
+  openProcessManager: () => Promise<boolean>
   apply: (options?: UpdateApplyOptions) => Promise<void>
 }
 
@@ -183,6 +184,8 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   recover: async () => {
     await acceptUpdateResponse(() => window.api.update.recover())
   },
+
+  openProcessManager: async () => window.api.update.openProcessManager(),
 
   apply: async (options?: UpdateApplyOptions) => {
     acknowledgedOutcome = undefined

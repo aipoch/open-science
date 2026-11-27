@@ -1,4 +1,8 @@
 import {
+  configuredProviderConnectionKind,
+  resolveConfiguredProviderCatalog,
+  type CloudflareGateway,
+  type ManualProviderConnection,
   getOfficialVendor,
   resolveVendorBaseUrl,
   resolveVendorModelCatalog,
@@ -14,6 +18,8 @@ import {
 } from '@aipoch/providers'
 import { getOfficialVendorModelIds } from './provider-model-policy'
 import { kiloModelSupportsAnonymousAccess } from './provider-url-policy'
+import type { ProviderModel } from './configured-provider-model'
+import { resolveReasoningEffortProfile } from './reasoning-effort'
 
 export const KILO_FREE_MODEL_ID = 'kilo-auto/free'
 
@@ -23,10 +29,15 @@ export type OfficialCatalogSource = {
   needsKey?: boolean
   keyRef?: string
   region?: string
+  cloudflare?: CloudflareGateway
+  manualConnection?: ManualProviderConnection
+  model?: string
+  contextWindow?: number
   fetchedModels?: readonly string[]
   // ProviderView already contains the region and legacy discovery policy applied by main.
   models?: readonly string[]
   modelCatalog?: CatalogSnapshot
+  manualModels?: readonly ProviderModel[]
 }
 
 export const usesBundledModelCatalog = (vendorId: OfficialVendorId | undefined): boolean =>
@@ -62,10 +73,44 @@ function resolveSnapshotRoutes(
   return routes
 }
 
-/** Membership comes from the latest complete snapshot; bundled values only fill missing metadata. */
+/** Membership comes from the configured list or latest complete snapshot. */
 export function resolveOfficialModelCatalog(source: OfficialCatalogSource): CatalogModel[] {
   const { vendorId, region, modelCatalog } = source
   if (!vendorId) return []
+  if (configuredProviderConnectionKind(vendorId)) {
+    const models =
+      source.manualModels && new Map(source.manualModels.map((model) => [model.id, model]))
+    return resolveConfiguredProviderCatalog(
+      vendorId,
+      source,
+      source.model,
+      models && [...models.keys()]
+    ).map(({ id, routes, publishedContextWindow, defaultContextWindow }) => {
+      const configured = models?.get(id)
+      if (configured) {
+        const effort = resolveReasoningEffortProfile(
+          configured.reasoningEffortPreset ?? 'unsupported'
+        )
+        return {
+          id,
+          name: configured.displayName,
+          contextWindow: configured.contextWindow ?? publishedContextWindow,
+          reasoningEffort: effort.supported
+            ? { supported: true, values: [...new Set(effort.slots)] }
+            : { supported: false },
+          routes
+        }
+      }
+      return {
+        id,
+        contextWindow:
+          publishedContextWindow ??
+          (id === source.model ? source.contextWindow : undefined) ??
+          defaultContextWindow,
+        routes
+      }
+    })
+  }
   const vendor = getOfficialVendor(vendorId)
   if (!vendor) return []
   const keylessKilo =
@@ -151,4 +196,11 @@ export function isCatalogModelAvailable(model: CatalogModel): boolean {
   return (
     !isRetired(model.lifecycle ?? '') && (!model.routes || Object.keys(model.routes).length > 0)
   )
+}
+
+/** Share catalog availability between settings recovery and runtime selection. */
+export function availableOfficialModelIds(source: OfficialCatalogSource): string[] {
+  return resolveOfficialModelCatalog(source)
+    .filter(isCatalogModelAvailable)
+    .map(({ id }) => id)
 }

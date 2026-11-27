@@ -2,9 +2,14 @@ import { Readable } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { pipeline } from 'node:stream/promises'
 import { randomBytes } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import type { ServerResponse } from 'node:http'
 import { providerErrorExcerpt } from '@aipoch/providers/errors'
-import { observeProviderFailure } from './provider-failure-observation'
+import {
+  PROVIDER_CONNECTION_FAILED_PREFIX,
+  upstreamHttpErrorPrefix
+} from '../../shared/failure/messages'
+import { observeProviderFailure, safeNetworkErrorCode } from './provider-failure-observation'
 import type {
   ResponsesConnection,
   ResponsesModelTarget,
@@ -34,7 +39,8 @@ import {
 import {
   DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
   ResponseBodyLimitError,
-  fetchProviderRequest
+  fetchProviderRequest,
+  withProviderRequestPolicy
 } from '@aipoch/providers/transport'
 
 import { selectChatSkills } from './chat-skill-selector'
@@ -162,9 +168,16 @@ export class ResponsesToChatCompletionsBridge {
           ...(this.target.vendorId ? { vendorId: this.target.vendorId } : {}),
           ...(this.target.reasoningEffortTransport
             ? { reasoningEffortTransport: this.target.reasoningEffortTransport }
+            : {}),
+          ...(this.target.reasoningSupported !== undefined
+            ? { reasoningSupported: this.target.reasoningSupported }
             : {})
         },
-        fetchImpl: this.fetchImpl,
+        fetchImpl: withProviderRequestPolicy(
+          this.fetchImpl,
+          this.target.requestPolicy,
+          this.target.key
+        ),
         timeoutMs: this.options.skillSelectorTimeoutMs ?? 15_000,
         maxResponseBytes: this.options.maxResponseBytes ?? DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
         signal: signal
@@ -188,6 +201,8 @@ export class ResponsesToChatCompletionsBridge {
       this.target.model !== target.model ||
       this.target.vendorId !== target.vendorId ||
       this.target.reasoningEffortTransport !== target.reasoningEffortTransport ||
+      this.target.reasoningSupported !== target.reasoningSupported ||
+      !isDeepStrictEqual(this.target.requestPolicy, target.requestPolicy) ||
       this.target.key !== target.key
     this.target = target
     if (changed) {
@@ -481,11 +496,31 @@ export class ResponsesToChatCompletionsBridge {
       return
     }
     const startedAt = Date.now()
-    const upstream = await fetchProviderRequest(this.fetchImpl, chatUrl(target.baseUrl), {
+    const fetchUpstream = withProviderRequestPolicy(
+      this.fetchImpl,
+      target.requestPolicy,
+      target.key
+    )
+    const upstream = await fetchProviderRequest(fetchUpstream, chatUrl(target.baseUrl), {
       method: 'POST',
       headers,
       body: chatRequestBody,
       signal: request.signal
+    }).catch((error: unknown) => {
+      const errorCode = safeNetworkErrorCode(error)
+      const fetchFailed =
+        error instanceof TypeError &&
+        error.message === 'fetch failed' &&
+        !(error.cause instanceof Error && error.cause.message === 'bad port')
+      if (request.signal.aborted || (!errorCode && !fetchFailed)) throw error
+      response.setHeader('x-open-science-provider-failure', 'connection')
+      log.warn('bridge upstream connection failed', {
+        model: chatRequest.model,
+        phase: 'fetch',
+        durationMs: Math.max(0, Date.now() - startedAt),
+        ...(errorCode ? { errorCode } : {})
+      })
+      throw new ResponsesProtocolError(PROVIDER_CONNECTION_FAILED_PREFIX, 502, 'upstream_error')
     })
     const logUpstreamFailure = (
       phase: 'upstream-http' | 'response',
@@ -526,7 +561,9 @@ export class ResponsesToChatCompletionsBridge {
       json(response, providerErrorClientStatus(upstream.status), {
         error: {
           type: 'upstream_error',
-          message,
+          // Codex keeps only the message after retrying 5xx responses. Preserve its source.
+          message:
+            upstream.status >= 500 ? upstreamHttpErrorPrefix(upstream.status) + message : message,
           status: upstream.status
         }
       })

@@ -105,6 +105,7 @@ export type FetchedBundle = {
 
 export type RuntimeRepairOptions = {
   force?: boolean
+  signal?: AbortSignal
   // Runs after queued cancellation is consumed, before acquiring the environment lock so active
   // kernels can release their execution leases. Per-language cancellation is ignored afterward.
   onStarting?: () => Promise<void> | void
@@ -227,6 +228,9 @@ export type ProvisionerDeps<Context = unknown> = {
   // survivor — so the startup gate's restore/upgrade/repair is guarded too, not just the UI handlers.
   // Injected by main/ipc.ts from the notebook service; unset in unit tests (nothing is blocked).
   isPrefixBlocked?: (prefix: string) => boolean
+  // Consulted before removing or upgrading an existing environment. Fresh provisioning and
+  // verification can proceed while the Notebook runtime reconciles old kernel receipts.
+  hasUnreapedKernelProcesses?: (environment: string) => boolean
   // Clears the in-memory recovery block for a prefix (service.blockedPrefixes). Called by an EXPLICIT
   // user recovery (repair with force) so a quarantined runtime can be reset — the manual recovery entry
   // the auto-path can't provide for an unprobeable/uncertain block.
@@ -331,8 +335,8 @@ const CREATE_TICK_GAIN = 0.12
 // The provisioning contract consumed via IPC by Workstream D (contract §4).
 export interface RuntimeProvisioner {
   status(): ProvisionStatus
-  provisionPython(onProgress: (p: ProvisionProgress) => void): Promise<void>
-  provisionR(onProgress: (p: ProvisionProgress) => void): Promise<void>
+  provisionPython(onProgress: (p: ProvisionProgress) => void, signal?: AbortSignal): Promise<void>
+  provisionR(onProgress: (p: ProvisionProgress) => void, signal?: AbortSignal): Promise<void>
   upgradeIfNeeded(onProgress: (p: ProvisionProgress) => void): Promise<void>
   // `force` = explicit user recovery: clears a recovery quarantine (block + retained journal record +
   // sidecar) before rebuilding, so a stuck/uncertain runtime can be reset. Auto/startup repair omits it
@@ -912,12 +916,22 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     return this.deps.withPrefixLock ? this.deps.withPrefixLock(envName, fn) : fn()
   }
 
+  private assertKernelProcessesStopped(environment: string): void {
+    if (this.deps.hasUnreapedKernelProcesses?.(environment))
+      throw new Error('Notebook processes using this environment could not be stopped.')
+  }
+
+  private removeExistingPrefix(environment: string, prefix: string): void {
+    if (existsSync(prefix)) this.assertKernelProcessesStopped(environment)
+    rmSync(prefix, { recursive: true, force: true })
+  }
+
   private cleanupLegacyDefaultPrefix(name: string): void {
     if (this.platform !== 'win32') return
     if (name !== DEFAULT_PY_ENV && name !== DEFAULT_R_ENV) return
     const legacy = legacyDefaultEnvPrefix(this.deps.root, name)
     if (envPrefix(this.deps.root, name, 'win32') === legacy) return
-    if (this.deps.isPrefixBlocked?.(legacy)) return
+    if (this.deps.isPrefixBlocked?.(legacy) || this.deps.hasUnreapedKernelProcesses?.(name)) return
     try {
       rmSync(legacy, { recursive: true, force: true })
     } catch {
@@ -951,22 +965,36 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
   // any work, and the provisioning flag + abort controller cover the whole run. repair uses this too, so
   // a cancel that arrived while the Reset was queued aborts BEFORE the destructive rm — never leaving a
   // deleted-but-not-rebuilt env. The wrapped body must NOT call beginLanguageRun itself (single owner).
-  private async runLanguage(language: NotebookLanguage, run: () => Promise<void>): Promise<void> {
+  private async runLanguage(
+    language: NotebookLanguage,
+    run: () => Promise<void>,
+    signal?: AbortSignal
+  ): Promise<void> {
+    signal?.throwIfAborted()
     this.beginLanguageRun(language)
+    const controller = this.abort
+    const cancel = (): void => {
+      if (!this.uninterruptible.has(language)) controller?.abort(signal?.reason)
+    }
+    signal?.addEventListener('abort', cancel, { once: true })
     this.provisioning = true
     try {
       // Reject before repair preparation can invalidate bindings, stop kernels or delete a prefix.
       this.assertLanguagePath(language)
       await run()
     } finally {
+      signal?.removeEventListener('abort', cancel)
       this.provisioning = false
       this.endLanguageRun(language)
     }
   }
 
-  async provisionPython(rawProgress: (p: ProvisionProgress) => void): Promise<void> {
+  async provisionPython(
+    rawProgress: (p: ProvisionProgress) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
     return this.withEnvPrefixLock(DEFAULT_PY_ENV, () =>
-      this.runLanguage('python', () => this.doProvisionPython(rawProgress))
+      this.runLanguage('python', () => this.doProvisionPython(rawProgress), signal)
     )
   }
 
@@ -991,9 +1019,12 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     }
   }
 
-  async provisionR(rawProgress: (p: ProvisionProgress) => void): Promise<void> {
+  async provisionR(
+    rawProgress: (p: ProvisionProgress) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
     return this.withEnvPrefixLock(DEFAULT_R_ENV, () =>
-      this.runLanguage('r', () => this.doProvisionR(rawProgress))
+      this.runLanguage('r', () => this.doProvisionR(rawProgress), signal)
     )
   }
 
@@ -1045,6 +1076,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
       if (
         !this.hasUnsupportedRPath() &&
         rMaterialized(this.deps.root, this.platform) &&
+        !this.deps.hasUnreapedKernelProcesses?.(DEFAULT_R_ENV) &&
         !this.deps.isPrefixBlocked?.(envPrefix(this.deps.root, DEFAULT_R_ENV, this.platform))
       ) {
         onProgress({ phase: 'upgrade-r', event: { code: 'updating-r-packages' }, progress: 0.6 })
@@ -1081,7 +1113,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     // write into a half-deleted prefix. The rebuild calls the LOCK-FREE do* variants (not the public
     // provision*), which would otherwise re-acquire this same exclusive lock and deadlock.
     // Consume queued cancellation before preparation can invalidate bindings or persist isolation.
-    return this.runLanguage(lang, async () => {
+    const rebuild = async (): Promise<void> => {
       try {
         if (opts?.onStarting) {
           // Preparation invalidates bindings and stops kernels that may hold shared leases.
@@ -1094,6 +1126,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
           // Check before any destructive work; global/quit cancellation also remains effective.
           this.abort?.signal.throwIfAborted()
           this.uninterruptible.add(lang)
+          if (existsSync(prefix)) this.assertKernelProcessesStopped(spec.name)
           if (opts?.force) {
             // EXPLICIT user recovery: clear the quarantine (in-memory block + retained journal record +
             // sidecar) so the rebuild below — and its inner materialize — aren't refused by the block
@@ -1107,10 +1140,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
           }
           // Manual repair / corruption path (spec §6.3): delete the env prefix then re-provision fresh.
           // For python also clear the marker so a partially-deleted state cannot read as ready.
-          rmSync(envPrefix(this.deps.root, spec.name, this.platform), {
-            recursive: true,
-            force: true
-          })
+          this.removeExistingPrefix(spec.name, prefix)
           if (lang === 'python') {
             rmSync(readyMarkerPath(this.deps.root), { force: true })
             // The terminal progress event belongs to the complete repair operation, so defer it
@@ -1142,7 +1172,8 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
       } finally {
         this.uninterruptible.delete(lang)
       }
-    })
+    }
+    return this.runLanguage(lang, rebuild, opts?.signal)
   }
 
   // Rebuilds envs captured by a data-root relocation (runtime-relocation.exportRuntimeLocks) offline
@@ -1286,7 +1317,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
                       // conda-meta with no interpreter, which would wedge `create -p` forever) — clear it
                       // so the offline recreate starts clean. No abort signal: restore has no per-language
                       // cancel path, and this.abort may belong to a concurrent default provision.
-                      rmSync(prefix, { recursive: true, force: true })
+                      this.removeExistingPrefix(name, prefix)
                       return this.deps.runArgv(
                         createFromLockArgv(this.deps.mm, this.deps.root, prefix, lockPath),
                         undefined,
@@ -1397,7 +1428,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
               signal?.throwIfAborted()
               // Clear a half-built prefix from an interrupted prior create (incl. conda-meta-but-no-
               // interpreter) so micromamba doesn't abort on it.
-              this.clearIncompletePrefix(prefix, bin)
+              this.prepareExistingPrefixForCreate(name, prefix, bin)
               // Named creates use their own caller signal. Never substitute this.abort here: that controller
               // belongs to a concurrently running default provision and would cross-cancel unrelated work.
               await this.deps.runArgv(
@@ -1504,8 +1535,8 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
           )
           await this.runWithMaxPathRecovery(() =>
             withSharedCacheLocks(this.cacheLockKeys(this.cache), async () => {
+              this.prepareExistingPrefixForCreate(name, prefix, bin)
               prefixWriteStarted = true
-              this.clearIncompletePrefix(prefix, bin)
               await this.deps.runArgv(
                 createFromLockArgv(this.deps.mm, this.deps.root, prefix, lockPath, {
                   offline: false
@@ -1551,7 +1582,11 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
           // still fail. Remove only this attempt's partial prefix, before its journal is cleared,
           // so a transient failure can retry the same lock. Unknown workers retain their files
           // and the existing recovery barrier; pre-existing environments returned above.
-          if (prefixWriteStarted && !isChildUnconfirmedError(error)) {
+          if (
+            prefixWriteStarted &&
+            !isChildUnconfirmedError(error) &&
+            !this.deps.hasUnreapedKernelProcesses?.(name)
+          ) {
             rmSync(prefix, { recursive: true, force: true })
           }
           throw error
@@ -1632,7 +1667,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     } catch {
       // A failed create can leave R.exe before the prefix is runnable. Do not apply an additive
       // upgrade onto unknown partial state; clear it and recreate exactly from the published lock.
-      rmSync(prefix, { recursive: true, force: true })
+      this.removeExistingPrefix(DEFAULT_R_ENV, prefix)
       await this.materialize(DEFAULT_R_SPEC, onProgress)
       return
     }
@@ -1643,6 +1678,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
     spec: EnvSpec,
     onProgress: (p: ProvisionProgress) => void
   ): Promise<void> {
+    this.assertKernelProcessesStopped(spec.name)
     // Legacy upgrades retain the readiness baseline; new libraries apply to fresh materialization.
     const fetchCache = this.legacyCache
     const bundle = await this.deps.fetchBundle(
@@ -1737,8 +1773,9 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
   //     refused a prefix a live orphan might still be writing, so nothing else is producing this dir.
   // A complete env returns via the idempotent verify path before reaching a create, so a real
   // environment is never nuked here.
-  private clearIncompletePrefix(prefix: string, bin: string): void {
+  private prepareExistingPrefixForCreate(environment: string, prefix: string, bin: string): void {
     if (!existsSync(prefix)) return
+    this.assertKernelProcessesStopped(environment)
     const complete = existsSync(join(prefix, 'conda-meta')) && existsSync(bin)
     if (complete) return
     rmSync(prefix, { recursive: true, force: true })
@@ -1770,7 +1807,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
       } catch {
         // A prior failed create can leave an interpreter file before the environment is runnable.
         // Remove that partial prefix so Retry performs a complete verified rebuild.
-        rmSync(prefix, { recursive: true, force: true })
+        this.removeExistingPrefix(spec.name, prefix)
       }
     }
 
@@ -1845,7 +1882,7 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
           return withSharedCacheLocks(this.cacheLockKeys(cache), () => {
             // Clear a half-built prefix from an interrupted prior attempt (incl. conda-meta-but-no-
             // interpreter) so micromamba doesn't abort on it.
-            this.clearIncompletePrefix(prefix, bin)
+            this.prepareExistingPrefixForCreate(spec.name, prefix, bin)
             return this.deps.runArgv(
               createFromLockArgv(this.deps.mm, this.deps.root, prefix, lockPath),
               this.abort?.signal,
@@ -1892,9 +1929,9 @@ export class DefaultRuntimeProvisioner<Context = unknown> implements RuntimeProv
           // to delete; the failed prefix is cleared below before the retry.
           if (!repaired && !windowsAccessViolation) throw error
           // Micromamba never reported a successful transaction, so even a prefix that already has
-          // conda-meta + an interpreter may be only partially linked. Do not let clearIncompletePrefix's
-          // normal fast path mistake those two artifacts for a committed environment on the retry.
-          if (windowsAccessViolation) rmSync(prefix, { recursive: true, force: true })
+          // conda-meta + an interpreter may be only partially linked. Bypass the normal fast path that
+          // preserves prefixes with both artifacts.
+          if (windowsAccessViolation) this.removeExistingPrefix(spec.name, prefix)
           onProgress({
             phase: `create-${spec.language}`,
             event: windowsAccessViolation
