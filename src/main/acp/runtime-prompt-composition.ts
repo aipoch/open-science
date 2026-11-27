@@ -624,7 +624,11 @@ const composeAcpRuntimePromptOwners = (
         }
         if (!intent) {
           intent = new NotebookExecutionIntent(scope)
-          intent.block('originating-execution-context-unavailable')
+          intent.block('originating-execution-context-unavailable', {
+            phase: 'prompt-admission',
+            mode: mode.kind === 'application' ? mode.attribution.feature : mode.kind,
+            originMessageId: request.provenanceContext?.originMessageId
+          })
         }
         remember(intent)
         return undefined
@@ -661,7 +665,12 @@ const composeAcpRuntimePromptOwners = (
           if (!isCurrent()) return
           log.warn('Notebook Agent repeated a stopped execution', {
             sessionId: appSessionId,
-            providerSessionId
+            providerSessionId,
+            messageBranchId: request.provenanceContext?.messageBranchId,
+            promptMessageId: request.provenanceContext?.promptMessageId,
+            operationId: intent.refusalId,
+            reason: intent.refusalReason,
+            startedAt: intent.refusalAt
           })
           stopObservation = requestPlanReviewProviderStop({
             notify: () =>

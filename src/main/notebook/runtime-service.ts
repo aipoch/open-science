@@ -678,7 +678,10 @@ class NotebookRuntimeService {
       executionScope,
       assertHostCurrent: () => intent?.assertExecutable(),
       onRejected: (state, recheck) => {
-        const refusalId = intent?.block(state.status, recheck)
+        const refusalId = intent?.block(state.status, {
+          recheckMemory: recheck,
+          errorCategory: state.reason.code
+        })
         if (context)
           this.notifyMemoryPolicyRejected(
             {
@@ -767,7 +770,10 @@ class NotebookRuntimeService {
           assertHostCurrent?.(boundary)
         },
         onRejected: (state, recheck) => {
-          const refusalId = intent?.block(state.status, recheck)
+          const refusalId = intent?.block(state.status, {
+            recheckMemory: recheck,
+            errorCategory: state.reason.code
+          })
           this.notifyMemoryPolicyRejected(
             {
               projectId: resolveProjectId(request, this.options.projectId),
