@@ -6,11 +6,11 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { terminateProcessTree } from '../process-tree'
-import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import {
   controlKernelTreeReaping,
   type KernelTreeReap
-} from './fixtures/controlled-kernel-tree-reaping'
+} from '../../../test/fixtures/controlled-kernel-tree-reaping'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'

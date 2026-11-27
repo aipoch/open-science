@@ -17,7 +17,7 @@
     "src/main/notebook/environment-operations.test.ts",
     "src/main/notebook/environment-operations.ts",
     "src/main/notebook/kernel-degraded-recovery.test.ts",
-    "src/main/notebook/fixtures/controlled-kernel-tree-reaping.ts",
+    "test/fixtures/controlled-kernel-tree-reaping.ts",
     "src/main/notebook/kernel-executor.test.ts",
     "src/main/notebook/kernel-executor.ts",
     "src/main/notebook/kernel-exit-diagnostics.test.ts",

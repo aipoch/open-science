@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { vi } from 'vitest'
-import { terminateProcessTree, type ProcessTreeKillResult } from '../../process-tree'
-import * as windowsProcessTree from '../../process-tree-windows'
+import { terminateProcessTree, type ProcessTreeKillResult } from '../../src/main/process-tree'
+import * as windowsProcessTree from '../../src/main/process-tree-windows'
 
 export type KernelTreeReap = (
   child: ChildProcess,

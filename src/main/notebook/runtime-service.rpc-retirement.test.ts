@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { fetchLocalRpc } from '../local-rpc-transport'
 import {
   controlKernelTreeReaping,
   type KernelTreeReap
-} from './fixtures/controlled-kernel-tree-reaping'
+} from '../../../test/fixtures/controlled-kernel-tree-reaping'
+import { fetchLocalRpc } from '../local-rpc-transport'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { NotebookLocalRpcServer } from './local-rpc-server'
