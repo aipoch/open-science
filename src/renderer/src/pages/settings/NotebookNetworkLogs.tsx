@@ -383,8 +383,8 @@ function NetworkLogContent(): React.JSX.Element {
             <p className="p-4 text-sm text-muted-foreground">{t('No matching network records.')}</p>
           ) : null}
         </div>
-        <div className="sticky bottom-0 z-20 flex shrink-0 items-end justify-between gap-3">
-          <div className="space-y-1">
+        <div className="sticky bottom-0 z-20 flex shrink-0 items-center justify-end gap-3">
+          <div className="ms-auto flex items-center gap-3">
             <label htmlFor="network-log-days" className="text-xs text-muted-foreground">
               {t('Retention days')}
             </label>

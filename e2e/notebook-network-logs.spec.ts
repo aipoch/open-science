@@ -106,7 +106,14 @@ test('queries daily network logs on demand and confirms retention changes', asyn
     return toggle!
   }
   const retentionFilter = settings.getByRole('combobox', { name: 'Retention days', exact: true })
+  const retentionLabel = settings.getByText('Retention days', { exact: true })
   const footerBox = await retentionFilter.boundingBox()
+  const retentionLabelBox = await retentionLabel.boundingBox()
+  expect(retentionLabelBox!.x + retentionLabelBox!.width).toBeLessThan(footerBox!.x)
+  expect(retentionLabelBox!.y + retentionLabelBox!.height / 2).toBeCloseTo(
+    footerBox!.y + footerBox!.height / 2,
+    0
+  )
   const table = settings.getByRole('table')
   const header = table.getByRole('columnheader').first()
   const headerBox = await header.boundingBox()
