@@ -85,6 +85,7 @@ const harness = (
     sessions: () => [],
     ensureRecovered: vi.fn().mockResolvedValue(undefined),
     assertPrefixRecoverable: vi.fn(),
+    hasUnreapedKernelProcesses: vi.fn(() => false),
     environmentOperations: {
       runMutation: vi.fn(async (_environment, operation) => operation())
     },

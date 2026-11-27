@@ -18,6 +18,7 @@ import {
 } from '../../shared/notebook-network'
 import type { SetNotebookNetworkRequest } from '../../shared/settings'
 import type { SettingsRepository } from './repository'
+import type { ApplySharedDestination } from './types'
 
 const mergeById = <T extends { id: string }>(
   current: readonly T[],
@@ -97,6 +98,32 @@ class NotebookNetworkSettingsOwner {
       () => undefined,
       () => undefined
     )
+    return operation
+  }
+
+  // Provider and rule commit together in the repository, ordered with edits and gateway refreshes.
+  commitSharedDestination(write: (apply: ApplySharedDestination) => Promise<void>): Promise<void> {
+    const refresh = async (): Promise<void> => this.options.apply(await this.readAndReconcile())
+    const operation = this.writeTail.then(() =>
+      write(async (undoWrite) => {
+        try {
+          await refresh()
+        } catch (error) {
+          const errors = [error]
+          for (const recover of [undoWrite, refresh]) {
+            try {
+              await recover()
+            } catch (rollbackError) {
+              errors.push(rollbackError)
+            }
+          }
+          if (errors.length > 1)
+            throw new AggregateError(errors, 'Could not apply or restore Notebook network access.')
+          throw error
+        }
+      })
+    )
+    this.writeTail = operation.catch(() => {})
     return operation
   }
 

@@ -1,3 +1,4 @@
+import { providerNetworkDestinationIsTrusted } from '../../shared/provider-network-authorization'
 import { normalizeMessagesRootUrl, resolveChatCompletionsBaseUrl } from '@aipoch/providers/protocol'
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import type { ProviderAccountsModule, ProviderRuntimeTarget } from './provider-accounts'
@@ -38,7 +39,11 @@ export class ProviderRuntimeHealthOwner {
 
         const provider = this.providers.resolveProvider(
           current,
-          failure.model ?? target.effectiveModel
+          failure.model ?? target.effectiveModel,
+          providerNetworkDestinationIsTrusted(
+            current.baseUrl ?? '',
+            _settings.notebookNetwork?.trustedPrivateDestinations ?? []
+          )
         )
         const { endpoint } = failure
         const url = endpointBase(target.provider, endpoint)

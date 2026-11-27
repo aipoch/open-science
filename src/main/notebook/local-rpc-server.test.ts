@@ -649,7 +649,13 @@ describe('notebook local RPC server', () => {
     try {
       bind('turn-1')
       expect((await call()).body).toMatchObject({
-        error: { recovery: { kernel: { cleanup: 'unverified' } } }
+        error: {
+          recovery: {
+            execution: 'may-have-run',
+            retryAfter: 'runtime-ready',
+            kernel: { kind: 'repl', signal: 'SIGKILL' }
+          }
+        }
       })
       if (['other-interpreter', 'newer-epoch', 'older-epoch', 'other-turn'].includes(scenario)) {
         if (scenario === 'other-turn') bind('turn-2')

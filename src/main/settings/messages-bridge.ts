@@ -1,3 +1,4 @@
+import { resolveProviderHttpAccess } from './provider-http-access'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -51,6 +52,8 @@ const upstreamOrigin = (baseUrl: string): string | undefined => {
 export type MessagesBridgeTarget = Readonly<{
   id: string
   onProviderFailure?: ProviderFailureObserver
+  allowInsecureHttp?: boolean
+  isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   baseUrl: string
   key?: string
   requestPolicy?: ProviderRequestPolicy
@@ -199,14 +202,16 @@ export class MessagesBridge {
       providerRequestHeadersFingerprint(headersToForward),
       body
     )
+    const baseUrl = normalizeMessagesRootUrl(target.baseUrl)
+    if (!baseUrl) throw new Error('The Messages provider target has no valid base URL.')
+    const upstreamUrl = `${baseUrl}${requestUrl.pathname}${requestUrl.search}`
+    const allowInsecureHttp = await resolveProviderHttpAccess(target, upstreamUrl)
     const replay = this.deterministicErrors.get(replayKey)
     if (replay) {
       response.writeHead(replay.status, replay.headers)
       response.end(replay.body)
       return
     }
-    const baseUrl = normalizeMessagesRootUrl(target.baseUrl)
-    if (!baseUrl) throw new Error('The Messages provider target has no valid base URL.')
     const startedAt = Date.now()
     let upstream: Response
     try {
@@ -215,8 +220,9 @@ export class MessagesBridge {
           withProviderRequestPolicy(this.fetchImpl, target.requestPolicy, target.key),
           response
         ),
-        `${baseUrl}${requestUrl.pathname}${requestUrl.search}`,
+        upstreamUrl,
         {
+          allowInsecureHttp,
           method: 'POST',
           headers: headersToForward,
           body,

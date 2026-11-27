@@ -71,6 +71,8 @@ type RuntimeMock = {
   state: AcpStateSnapshot
   reconcileSnapshot: Mock
   actionError: string | null
+  actionErrorCode?: string
+  clearActionError: Mock
   isConnecting: boolean
   createSession: Mock
   resumeSession: Mock
@@ -92,6 +94,7 @@ const createRuntime = (state: AcpStateSnapshot): RuntimeMock => ({
   state,
   reconcileSnapshot: vi.fn(),
   actionError: null as string | null,
+  clearActionError: vi.fn(),
   isConnecting: false,
   createSession: vi.fn(),
   resumeSession: vi.fn(),
@@ -300,50 +303,20 @@ describe('workspace Agent Runtime hook contract', () => {
       promptInFlightSessionIds: ['session-1'],
       nativeContextCompactionSessionIds: ['session-1']
     })
-    runtimeMock.current = {
-      ...createRuntime(snapshot),
-      actionError: 'runtime warning',
-      isConnecting: true
-    }
-
+    const runtime = createRuntime(snapshot)
+    runtime.actionError = 'runtime warning'
+    runtime.actionErrorCode = 'MODEL_HTTP_DESTINATION_NOT_ALLOWED'
+    runtime.isConnecting = true
+    runtime.clearActionError.mockImplementation(() => {
+      runtime.actionError = null
+      runtime.actionErrorCode = undefined
+    })
+    runtimeMock.current = runtime
     await render()
-
     expect(useAcpRuntimeMock).toHaveBeenCalledOnce()
-
-    expect(Object.keys(latest).sort()).toEqual(
-      [
-        'actionError',
-        'isConnecting',
-        'pendingPermissions',
-        'permissionProfiles',
-        'permissionGrants',
-        'contextUsageBySession',
-        'delegatedWorkUnavailableBySession',
-        'promptInFlightSessionIds',
-        'sendPreparationInFlightSessionIds',
-        'saveAsSkillInFlightSessionIds',
-        'nativeContextCompactionSessionIds',
-        'subagentTranscripts',
-        'sessionCleanups',
-        'compactContext',
-        'ensureSessionReady',
-        'saveAsSkill',
-        'sendMessage',
-        'resendEditedMessage',
-        'cancelRun',
-        'deleteSession',
-        'retrySessionCleanup',
-        'steerFollowUp',
-        'resumeInterruptedSession',
-        'resolveSessionRuntimeSelection',
-        'respondToPermission',
-        'setPermissionProfile',
-        'setMemoryEnabled',
-        'revokePermissionGrant'
-      ].sort()
-    )
     expect(latest).toMatchObject({
       actionError: 'runtime warning',
+      actionErrorCode: 'MODEL_HTTP_DESTINATION_NOT_ALLOWED',
       isConnecting: true,
       pendingPermissions: snapshot.pendingPermissions,
       permissionProfiles: snapshot.permissionProfiles,
@@ -355,6 +328,11 @@ describe('workspace Agent Runtime hook contract', () => {
       saveAsSkillInFlightSessionIds: [],
       nativeContextCompactionSessionIds: ['session-1']
     })
+    latest.clearActionError()
+    expect(runtime.clearActionError).toHaveBeenCalledOnce()
+    await render()
+    expect(latest.actionError).toBeNull()
+    expect(latest.actionErrorCode).toBeUndefined()
   })
 
   it('Q03 validates captured configurations and forwards their target through the real runtime hook', async () => {

@@ -1,3 +1,5 @@
+import { providerNetworkDestination } from '../../shared/provider-network-authorization'
+import { modelHttpDestinationDenied } from './provider-http-access'
 import { resolveConfiguredProviderTarget } from './manual-provider-target'
 import { codeBuddyBaseModels, codeBuddySiteForId } from '../../shared/codebuddy-subscription'
 import {
@@ -186,7 +188,8 @@ class ProviderRuntimeProjectionOwner {
   resolveRuntimeTarget(
     storedProvider: StoredProvider,
     selection: RuntimeProviderModelSelection,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] },
+    options: Readonly<{ allowInsecureHttp?: boolean }> = {}
   ): ProviderRuntimeTarget {
     const implicitModel =
       selection.kind !== 'required' &&
@@ -216,7 +219,11 @@ class ProviderRuntimeProjectionOwner {
             requestedModel: storedProvider.model ?? defaultVendorModel('openai')
           }
         : selection
-    const target = this.resolveProviderTarget(storedProvider, modelSelection)
+    const target = this.resolveProviderTarget(
+      storedProvider,
+      modelSelection,
+      options.allowInsecureHttp
+    )
     return this.withFramework(target, framework)
   }
 
@@ -246,7 +253,8 @@ class ProviderRuntimeProjectionOwner {
 
   resolveProviderTarget(
     storedProvider: StoredProvider,
-    selection: RuntimeProviderModelSelection
+    selection: RuntimeProviderModelSelection,
+    allowInsecureHttp = false
   ): ProviderRuntimeTarget {
     const availableModels = this.availableModels(storedProvider)
     // Preserve pinned IDs for history; reject continuation rather than silently selecting another model.
@@ -298,7 +306,7 @@ class ProviderRuntimeProjectionOwner {
       )
     }
 
-    const provider = this.resolveProvider(storedProvider, effectiveModel)
+    const provider = this.resolveProvider(storedProvider, effectiveModel, allowInsecureHttp)
 
     return this.providerTarget(
       storedProvider,
@@ -335,7 +343,8 @@ class ProviderRuntimeProjectionOwner {
 
   resolveRuntimeModelCatalog(
     storedProvider: StoredProvider,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] },
+    options: Readonly<{ allowInsecureHttp?: boolean }> = {}
   ): ProviderRuntimeTarget[] {
     const { vendorId } = storedProvider
     if (storedProvider.type === 'official' && vendorId) {
@@ -366,7 +375,7 @@ class ProviderRuntimeProjectionOwner {
         isModelStreamingCompatible(framework.id, storedProvider.modelStreaming?.[model])
       )
       .map((model) =>
-        this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
+        this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework, options)
       )
   }
 
@@ -380,7 +389,11 @@ class ProviderRuntimeProjectionOwner {
     )
   }
 
-  resolveProvider(provider: StoredProvider, modelOverride?: string): ResolvedProvider {
+  resolveProvider(
+    provider: StoredProvider,
+    modelOverride?: string,
+    allowInsecureHttp = false
+  ): ResolvedProvider {
     if (provider.type === 'codebuddy-subscription') {
       const codeBuddySite = codeBuddySiteForId(provider.id)
       if (!codeBuddySite) throw new Error('Invalid CodeBuddy provider ID.')
@@ -393,8 +406,12 @@ class ProviderRuntimeProjectionOwner {
       }
     }
     if (provider.type === 'custom' && provider.baseUrl) {
-      const error = getCustomProviderBaseUrlError(provider.baseUrl)
-      if (error) throw new Error(error)
+      const error = getCustomProviderBaseUrlError(provider.baseUrl, { allowInsecureHttp })
+      if (error) {
+        if (!allowInsecureHttp && providerNetworkDestination(provider.baseUrl))
+          throw modelHttpDestinationDenied()
+        throw new Error(error)
+      }
     }
     const key =
       provider.type === 'xai-subscription'
@@ -471,6 +488,7 @@ class ProviderRuntimeProjectionOwner {
         ? {}
         : { codexAutoUseHttps: provider.codexAutoUseHttps }),
       baseUrl: provider.baseUrl,
+      ...(allowInsecureHttp ? { allowInsecureHttp: true } : {}),
       model,
       ...(contextWindow === undefined ? {} : { contextWindow }),
       ...(provider.type === 'custom' && provider.maxInputTokens !== undefined

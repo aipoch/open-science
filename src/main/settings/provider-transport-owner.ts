@@ -22,7 +22,8 @@ import {
   type ModelProtocol,
   type ModelReasoningEffort
 } from '@aipoch/providers'
-import { resolveProviderOutputLimit } from './provider-env'
+import { resolveProviderOutputLimit, type ResolvedProvider } from './provider-env'
+import { providerNetworkAuthority } from '../../shared/provider-network-authorization'
 
 import {
   CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
@@ -159,6 +160,7 @@ type ProviderTransportOwnerOptions = {
     failure: ProviderFailureObservation
   ) => Promise<void>
   getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
+  isProviderHttpAllowed?: (url: string) => Promise<boolean>
   getLabAccessToken?: (forceRefresh?: boolean, expectedServerUrl?: string) => Promise<string>
   bindCodexHarnessConnection?: BindCodexHarnessConnection
   createResponsesToChatCompletionsBridge?: (
@@ -253,6 +255,7 @@ class ProviderTransportOwner {
   ) => ChatCompletionsCompatibilityBridgePort
   private readonly createXaiOAuthProviderBridge: CreateXaiOAuthProviderBridge
   private readonly nextGenerationId: () => string
+  private readonly isProviderHttpAllowed: ProviderTransportOwnerOptions['isProviderHttpAllowed']
   private readonly getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
   private readonly getLabAccessToken?: (
     forceRefresh?: boolean,
@@ -267,6 +270,17 @@ class ProviderTransportOwner {
     string,
     NativeResponsesCompatibilityEntry
   >()
+
+  private providerHttpAccess(provider: ResolvedProvider): Readonly<{
+    allowInsecureHttp?: true
+    isInsecureHttpAllowed?: (url: string) => Promise<boolean>
+  }> {
+    if (providerNetworkAuthority(provider.baseUrl ?? '')?.protocol !== 'http') return {}
+    return {
+      ...(provider.allowInsecureHttp ? { allowInsecureHttp: true as const } : {}),
+      ...(this.isProviderHttpAllowed ? { isInsecureHttpAllowed: this.isProviderHttpAllowed } : {})
+    }
+  }
 
   constructor(options: ProviderTransportOwnerOptions = {}) {
     this.onProviderFailure = options.onProviderFailure
@@ -291,6 +305,7 @@ class ProviderTransportOwner {
     this.createXaiOAuthProviderBridge =
       options.createXaiOAuthProviderBridge ?? createXaiOAuthProviderBridge
     this.nextGenerationId = options.nextGenerationId ?? randomUUID
+    this.isProviderHttpAllowed = options.isProviderHttpAllowed
     this.getXaiOAuthAccessToken = options.getXaiOAuthAccessToken
     this.getLabAccessToken = options.getLabAccessToken
     this.bindCodexHarnessConnection = options.bindCodexHarnessConnection
@@ -411,6 +426,7 @@ class ProviderTransportOwner {
                   {
                     ...this.healthObservation(snapshot),
                     id: route.id,
+                    ...this.providerHttpAccess(provider),
                     baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
                     key: provider.key,
                     ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
@@ -427,6 +443,7 @@ class ProviderTransportOwner {
                   {
                     ...this.healthObservation(snapshot),
                     id: route.id,
+                    ...this.providerHttpAccess(provider),
                     wire,
                     endpoint: endpoint!,
                     key: provider.key,
@@ -566,6 +583,7 @@ class ProviderTransportOwner {
                       {
                         ...this.healthObservation(candidate),
                         id: planned.id,
+                        ...this.providerHttpAccess(candidate.provider),
                         baseUrl: planned.endpoint!,
                         ...credentials,
                         model,
@@ -583,6 +601,7 @@ class ProviderTransportOwner {
                       {
                         ...this.healthObservation(candidate),
                         id: planned.id,
+                        ...this.providerHttpAccess(candidate.provider),
                         wire: planned.wire,
                         endpoint: planned.endpoint!,
                         ...credentials,
@@ -659,6 +678,7 @@ class ProviderTransportOwner {
         ? this.createChatCompletionsCompatibilityBridge({
             ...this.healthObservation(input.activeTarget),
             wire: transport.wire,
+            ...this.providerHttpAccess(provider),
             endpoint: codeBuddyCompatibilityEndpoint(provider, transport.wire),
             ...(provider.requestPolicy && { requestPolicy: provider.requestPolicy }),
             ...(provider.key ? { key: provider.key } : {}),
@@ -687,9 +707,7 @@ class ProviderTransportOwner {
                       'chat-completions',
                       endpoint,
                       input.activeTarget,
-                      {
-                        adaptRequest: adaptCodeBuddyChatCompletionsRequest
-                      }
+                      { adaptRequest: adaptCodeBuddyChatCompletionsRequest }
                     )
                   ],
                   targetId
@@ -702,6 +720,7 @@ class ProviderTransportOwner {
                   [
                     {
                       ...this.healthObservation(input.activeTarget),
+                      ...this.providerHttpAccess(provider),
                       id: targetId,
                       wire: 'chat-completions',
                       endpoint,
@@ -720,7 +739,11 @@ class ProviderTransportOwner {
         : createCodeBuddySkillSelectorTransport({
             activeTarget: input.activeTarget,
             ...(input.plan.sessionEffort ? { reasoningEffort: input.plan.sessionEffort } : {}),
-            createSelector: this.createResponsesToChatCompletionsBridge
+            createSelector: (target, options) =>
+              this.createResponsesToChatCompletionsBridge(
+                { ...target, ...this.providerHttpAccess(provider) },
+                options
+              )
           })
     try {
       const connection = await bridge.start()
@@ -788,6 +811,7 @@ class ProviderTransportOwner {
       return Object.freeze({
         ...this.healthObservation(candidate),
         id: planned.id,
+        ...this.providerHttpAccess(candidate.provider),
         wire: 'responses',
         endpoint: `${baseUrl}/responses`,
         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
@@ -884,6 +908,7 @@ class ProviderTransportOwner {
                       {
                         ...this.healthObservation(candidate),
                         id: targetId,
+                        ...this.providerHttpAccess(candidate.provider),
                         wire: 'chat-completions',
                         endpoint: resolveChatCompletionsUrl(candidate.provider)!,
                         adaptStream: bufferChatCompletionsToolNames,
@@ -901,6 +926,7 @@ class ProviderTransportOwner {
                       {
                         ...this.healthObservation(candidate),
                         id: targetId,
+                        ...this.providerHttpAccess(candidate.provider),
                         baseUrl: normalizeMessagesRootUrl(candidate.provider.baseUrl ?? ''),
                         ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
                         ...(candidate.provider.requestPolicy && {
@@ -1082,7 +1108,12 @@ class ProviderTransportOwner {
           : this.createMessagesBridge(
               transport.targets.map(({ runtimeTarget, ...target }) => ({
                 ...target,
-                ...(runtimeTarget ? this.healthObservation(runtimeTarget) : {})
+                ...(runtimeTarget
+                  ? {
+                      ...this.healthObservation(runtimeTarget),
+                      ...this.providerHttpAccess(runtimeTarget.provider)
+                    }
+                  : {})
               })),
               transport.initialTargetId
             )
@@ -1138,6 +1169,7 @@ class ProviderTransportOwner {
       return {
         ...this.healthObservation(candidate),
         baseUrl: lab?.endpoint ?? targetBaseUrl,
+        ...(!lab ? this.providerHttpAccess(candidate.provider) : {}),
         vendorId: candidate.provider.vendorId,
         key: candidate.provider.key,
         ...(candidate.provider.type === 'xai-subscription'
@@ -1236,6 +1268,7 @@ class ProviderTransportOwner {
       return {
         ...this.healthObservation(candidate),
         baseUrl: targetBaseUrl,
+        ...this.providerHttpAccess(candidate.provider),
         key: candidate.provider.key,
         vendorId: candidate.provider.vendorId,
         ...(candidate.provider.requestPolicy && {

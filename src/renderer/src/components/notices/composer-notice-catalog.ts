@@ -25,6 +25,7 @@ export type NoticePresentation = Readonly<{
   level: 'warning' | 'error' | 'info'
   titleKey: string
   descriptionKey: string
+  informationalOnly?: boolean
   primaryAction?: NoticeActionId
   secondaryActions: readonly NoticeActionId[]
   feedback: 'link' | 'primary' | 'none'
@@ -84,6 +85,15 @@ export const noticeCatalog = {
 
 // Unknown reasons retain category copy.
 export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> = {
+  'configuration/model-http-destination-not-allowed': {
+    level: 'warning',
+    titleKey: 'Model request blocked',
+    descriptionKey:
+      'The HTTP address for this model is missing from the allowlist. If you trust the address, verify and save the provider in Model settings, then retry. Saving grants both the Agent and Notebook access to this address.',
+    informationalOnly: true,
+    secondaryActions: [],
+    feedback: 'none'
+  },
   'configuration/selected-provider-unavailable': {
     level: 'warning',
     titleKey: 'Session model unavailable',
@@ -166,6 +176,13 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
       'The model provider could not complete the request. Retry or check the model provider settings.',
     primaryAction: 'retry',
     secondaryActions: ['open-provider-settings']
+  },
+  'input/image-pixel-limit': {
+    level: 'warning',
+    titleKey: 'Image resolution is too high',
+    descriptionKey: 'Resize the image to 64 megapixels or less and send it again.',
+    secondaryActions: [],
+    feedback: 'none'
   },
   'input/context-overflow': {
     ...noticeCatalog.input,

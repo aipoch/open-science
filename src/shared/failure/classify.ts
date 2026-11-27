@@ -1,3 +1,4 @@
+import { MODEL_HTTP_DESTINATION_NOT_ALLOWED } from '../application-command-contract'
 import { readProviderErrorCode } from './contract'
 import type { ClassifiedFailure, FailureFacts } from './contract'
 import { recognizeProvider } from './recognizers/provider'
@@ -7,6 +8,19 @@ import { recognizeEnvironment } from './recognizers/environment'
 import { recognizeSession } from './recognizers/session'
 
 export const classifyFailure = (facts: FailureFacts): ClassifiedFailure => {
+  if (facts.origin === 'operation' && facts.code === MODEL_HTTP_DESTINATION_NOT_ALLOWED)
+    return {
+      category: 'configuration',
+      reason: 'configuration/model-http-destination-not-allowed',
+      diagnostics: {
+        code: facts.code,
+        model: facts.model,
+        provider: facts.provider,
+        protocol: facts.protocol,
+        status: facts.status,
+        requestId: facts.requestId
+      }
+    }
   let recognized: ClassifiedFailure | undefined
   for (const recognize of [
     recognizeSession,

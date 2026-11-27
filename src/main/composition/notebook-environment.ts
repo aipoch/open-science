@@ -26,6 +26,7 @@ type NotebookEnvironmentCompositionDependencies = {
   notebookService: Pick<
     NotebookRuntimeService,
     | 'isPrefixRecoveryBlocked'
+    | 'hasUnreapedKernelProcesses'
     | 'clearRecoveryBlock'
     | 'clearRuntimeRecoveryBlock'
     | 'clearCorruptRecoveryBlock'
@@ -99,6 +100,8 @@ export const registerNotebookEnvironmentComposition = async ({
         // the startup-gate path the UI-only assertProvisionAllowed guard did not cover. Reads the live
         // blocked set at call time (recovery is awaited before the gate touches any prefix).
         isPrefixBlocked: (prefix) => notebookService.isPrefixRecoveryBlocked(prefix),
+        hasUnreapedKernelProcesses: (environment) =>
+          notebookService.hasUnreapedKernelProcesses(environment),
         // An explicit user Reset (repair with force) clears the in-memory block; the provisioner also
         // clears the retained journal record + sidecar so the quarantine doesn't re-arm next startup.
         clearPrefixBlock: (prefix) => notebookService.clearRecoveryBlock(prefix),

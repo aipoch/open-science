@@ -8,6 +8,7 @@ export type NotebookExecutionRecovery = Readonly<{
     exitCode: number | null
     signal: string | null
     cause: 'os-memory-pressure' | 'nul-initialization-unavailable' | 'unknown'
-    cleanup: 'verified' | 'unverified'
+    // Historical Notebook recovery records included process cleanup evidence.
+    cleanup?: 'verified' | 'unverified'
   }>
 }>

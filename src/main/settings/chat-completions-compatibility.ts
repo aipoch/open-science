@@ -1,3 +1,4 @@
+import { resolveProviderHttpAccess } from './provider-http-access'
 import {
   observeProviderFailure,
   type ProviderFailureObserver
@@ -31,6 +32,8 @@ type CompatibilityWire = 'messages' | 'responses'
 
 export type ChatCompletionsCompatibilityTarget = Readonly<{
   onProviderFailure?: ProviderFailureObserver
+  allowInsecureHttp?: boolean
+  isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   endpoint: string
   key?: string
   requestPolicy?: ProviderRequestPolicy
@@ -102,12 +105,14 @@ export class ChatCompletionsCompatibilityBridge {
     if (this.target.key) headers.authorization = `Bearer ${this.target.key}`
     if (this.target.wire === 'messages') headers['anthropic-version'] = '2023-06-01'
     const startedAt = Date.now()
+    const allowInsecureHttp = await resolveProviderHttpAccess(this.target, this.target.endpoint)
     const fetchUpstream = withProviderRequestPolicy(
       this.fetchImpl,
       this.target.requestPolicy,
       this.target.key
     )
     const upstream = await fetchProviderRequest(fetchUpstream, this.target.endpoint, {
+      allowInsecureHttp,
       method: 'POST',
       headers,
       body: JSON.stringify(upstreamBody),

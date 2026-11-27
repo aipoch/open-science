@@ -1,4 +1,8 @@
 import {
+  parseApplicationCommandError,
+  type ApplicationCommandErrorCode
+} from '../../../../shared/application-command-contract'
+import {
   getDesktopRuntimeEpoch,
   registerDesktopRecoveryReader,
   useDesktopRuntimeRecoveryStore
@@ -55,9 +59,13 @@ type ValueAction<Value> = () => Promise<Value>
 type PendingSetter = Dispatch<SetStateAction<boolean>>
 
 // Normalizes thrown values from IPC calls into UI-safe text.
-const getErrorMessage = (error: unknown): string => {
-  if (error instanceof Error) return error.message
-  return String(error)
+const actionErrorDetail = (
+  error: unknown
+): { message: string; code?: ApplicationCommandErrorCode } => {
+  const commandError = parseApplicationCommandError(error)
+  return commandError
+    ? { message: commandError.message, code: commandError.code }
+    : { message: error instanceof Error ? error.message : String(error) }
 }
 
 const awaitCurrentEpoch = async <Value>(epoch: number, work: Promise<Value>): Promise<Value> => {
@@ -80,7 +88,9 @@ const useAcpRuntime = (): {
   reconcileSnapshot: (snapshot: AcpStateSnapshot) => void
   subscribeRuntimeEvents?: (listener: RuntimeEventListener) => () => void
   currentRuntimeEvents: () => readonly AcpRuntimeEvent[]
+  actionErrorCode?: ApplicationCommandErrorCode
   actionError: string | null
+  clearActionError: () => void
   isConnecting: boolean
   isDisconnecting: boolean
   connect: (cwd?: string) => Promise<AcpRuntimeState | undefined>
@@ -163,7 +173,7 @@ const useAcpRuntime = (): {
   const [state, setState] = useState<AcpStateSnapshot>(emptyAcpState)
   const stateRef = useRef(state)
   const serviceScopeRef = useRef(getAcpRuntimeSnapshotScope())
-  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<ReturnType<typeof actionErrorDetail> | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
   const actionGenerationRef = useRef(0)
@@ -271,7 +281,7 @@ const useAcpRuntime = (): {
       } catch (error) {
         if (isMounted && epoch === getDesktopRuntimeEpoch()) {
           runtimeEventOwner.observeInitialSnapshot([])
-          setActionError(getErrorMessage(error))
+          setActionError(actionErrorDetail(error))
         }
       }
     }
@@ -314,16 +324,24 @@ const useAcpRuntime = (): {
     []
   )
 
-  const beginAction = useCallback((setPending?: PendingSetter): number => {
-    const generation = ++actionGenerationRef.current
+  // A fresh draft must also ignore failures from actions still running in the previous conversation.
+  const clearActionError = useCallback((): void => {
+    actionGenerationRef.current += 1
     setActionError(null)
-    if (setPending) {
-      const count = (pendingActionCountsRef.current.get(setPending) ?? 0) + 1
-      pendingActionCountsRef.current.set(setPending, count)
-      if (count === 1) setPending(true)
-    }
-    return generation
   }, [])
+
+  const beginAction = useCallback(
+    (setPending?: PendingSetter): number => {
+      clearActionError()
+      if (setPending) {
+        const count = (pendingActionCountsRef.current.get(setPending) ?? 0) + 1
+        pendingActionCountsRef.current.set(setPending, count)
+        if (count === 1) setPending(true)
+      }
+      return actionGenerationRef.current
+    },
+    [clearActionError]
+  )
 
   const finishPendingAction = useCallback((setPending?: PendingSetter): void => {
     if (!setPending) return
@@ -352,7 +370,7 @@ const useAcpRuntime = (): {
         return state
       } catch (error) {
         if (epoch === getDesktopRuntimeEpoch() && generation === actionGenerationRef.current)
-          setActionError(getErrorMessage(error))
+          setActionError(actionErrorDetail(error))
         return undefined
       } finally {
         if (epoch === getDesktopRuntimeEpoch()) finishPendingAction(setPending)
@@ -383,7 +401,7 @@ const useAcpRuntime = (): {
           epoch === getDesktopRuntimeEpoch() &&
           generation === actionGenerationRef.current
         )
-          setActionError(getErrorMessage(error))
+          setActionError(actionErrorDetail(error))
         throw error
       } finally {
         if (epoch === getDesktopRuntimeEpoch()) finishPendingAction(setPending)
@@ -620,7 +638,7 @@ const useAcpRuntime = (): {
         return state
       } catch (error) {
         if (epoch === getDesktopRuntimeEpoch() && generation === actionGenerationRef.current)
-          setActionError(getErrorMessage(error))
+          setActionError(actionErrorDetail(error))
         throw error
       }
     },
@@ -638,7 +656,7 @@ const useAcpRuntime = (): {
         return state
       } catch (error) {
         if (epoch === getDesktopRuntimeEpoch() && generation === actionGenerationRef.current)
-          setActionError(getErrorMessage(error))
+          setActionError(actionErrorDetail(error))
         throw error
       }
     },
@@ -672,7 +690,9 @@ const useAcpRuntime = (): {
     reconcileSnapshot: applySnapshot,
     subscribeRuntimeEvents,
     currentRuntimeEvents: runtimeEventOwner.currentEvents,
-    actionError,
+    actionError: actionError?.message ?? null,
+    actionErrorCode: actionError?.code,
+    clearActionError,
     isConnecting,
     isDisconnecting,
     connect,

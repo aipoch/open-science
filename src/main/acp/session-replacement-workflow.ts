@@ -66,6 +66,7 @@ export class AcpSessionReplacementWorkflow {
     )
     if (reserved.collision) throw reserved.collision
     const identity = reserved.reservation
+    aggregate?.clearFreshMainContext()
     aggregate?.setMemoryEnabled(request.memoryEnabled !== false)
 
     try {

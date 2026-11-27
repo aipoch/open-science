@@ -111,6 +111,7 @@ type NotebookNetworkDecisionRequest = Readonly<{
 
 type PendingCommandCleanup = Readonly<{
   target: NotebookSandboxTarget
+  kernelEpochId?: string
   retry: () => Promise<NotebookSandboxCleanupResult>
 }>
 
@@ -289,6 +290,7 @@ type RetainedCommandRoot = {
   debt: boolean
   blocked: boolean
   preparationCleanupReady: boolean
+  kernelEpochId?: string
   recovered: boolean
 }
 
@@ -599,8 +601,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         const target = invocation.target ?? { kind: 'native' as const }
         // Retain only the original cleanup capabilities. Admission of another command is not
         // proof that these resources were reaped (notably on macOS).
-        const pending = [...this.pendingCommandCleanups].filter((cleanup) =>
-          sameCleanupDomain(cleanup.target, target)
+        const pending = [...this.pendingCommandCleanups].filter(
+          (cleanup) => !cleanup.kernelEpochId && sameCleanupDomain(cleanup.target, target)
         )
         if (pending.length > 0) {
           Object.assign(error, {
@@ -725,6 +727,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     try {
       wrapped = await this.sandbox!.wrap({
         target,
+        ...(invocation.kernelEpochId ? { kernelEpochId: invocation.kernelEpochId } : {}),
         command: commandLine(
           invocation,
           invocation.target?.kind === 'wsl2' ? 'linux' : this.platform
@@ -809,7 +812,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           if (policySignal.aborted) return false
           if (liveSettings.mode === 'strict')
             return strictNetworkRuleMatches(
-              liveSettings.strictWhitelist ?? [],
+              buildNotebookNetworkPolicy(liveSettings).strictWhitelist ?? [],
               request.host,
               request.port ?? 443,
               request.protocol ?? 'https'
@@ -1122,17 +1125,31 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     let cleanupOutcome: NotebookSandboxProcessOutcome | undefined
     const pendingCleanup: PendingCommandCleanup = {
       target,
+      get kernelEpochId() {
+        return cleanupOutcome && cleanupOutcome.processState !== 'never-started'
+          ? invocation.kernelEpochId
+          : undefined
+      },
       retry: () => cleanup(cleanupReason!, cleanupOutcome!)
     }
     const cleanup: NotebookSandboxedSpawn['cleanup'] = (reason, processOutcome) => {
       unsubscribeFullAccess?.()
       unsubscribeFullAccess = undefined
       cleanupReason ??= reason
-      cleanupOutcome ??= processOutcome
       if (cleanupPromise) return cleanupPromise
+      // An executor retry may bring newer proof from the same process owner.
+      if (
+        cleanupOutcome === undefined ||
+        (invocation.kernelEpochId &&
+          cleanupOutcome.processState === 'termination-unknown' &&
+          processOutcome.processState === 'started-and-reaped')
+      ) {
+        cleanupOutcome = processOutcome
+      }
       if (retained) {
         retained.debt = true
         retained.blocked = true
+        retained.kernelEpochId = pendingCleanup.kernelEpochId
       }
       activeExecutionGrants = new Set()
       executionActive = false
@@ -2106,13 +2123,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   private async reconcilePendingCommandCleanups(target: NotebookSandboxTarget): Promise<void> {
-    const pending = [...this.pendingCommandCleanups].filter((cleanup) =>
-      sameCleanupDomain(cleanup.target, target)
+    const pending = [...this.pendingCommandCleanups].filter(
+      (cleanup) => !cleanup.kernelEpochId && sameCleanupDomain(cleanup.target, target)
     )
     const results = await Promise.all(pending.map((cleanup) => cleanup.retry()))
     if (this.platform === 'darwin' && target.kind === 'native') {
       for (const [root, retained] of this.retainedCommandRoots) {
-        if (retained.recovered || !retained.debt) continue
+        // Launched kernels are still owned by the executor. Their receipts remain subject
+        // to filesystem identity checks before any new command directory is created.
+        if (retained.recovered || !retained.debt || retained.kernelEpochId) continue
         if (retained.preparationCleanupReady) {
           await this.removeCommandTemporaryRoot(root, `${root}.receipt`).then(
             () => this.pendingTemporaryRoots.delete(root),

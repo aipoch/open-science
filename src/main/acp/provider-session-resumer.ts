@@ -705,7 +705,10 @@ export class AcpProviderSessionResumer {
     writerTransfer?: AcpSessionWriterTransfer,
     knownWriterConnection?: ClientConnection
   ): Promise<AcpCreateSessionResponse> {
-    const affinity = this.deps.registry.lookup(request.sessionId)?.aggregate.snapshot()
+    const aggregate = this.deps.registry.lookup(request.sessionId)?.aggregate
+    const affinity = aggregate?.snapshot()
+    if (compatibleOnly || writerTransfer || request.specialistId !== undefined)
+      aggregate?.clearFreshMainContext()
     const persistedProviderSessionId = affinity?.providerSessionId ?? request.providerSessionId
     const backend = this.deps.currentBackend()
     if (requiresTaskRunTracing(request)) {
@@ -797,6 +800,7 @@ export class AcpProviderSessionResumer {
     let provisionalSession: ActiveSession | undefined
     try {
       let backend = this.deps.currentBackend()
+      const resumedFrameworkId = backend.framework.id
       this.assertSkillScopeRefreshSupported(request.sessionId)
       const ownsCurrentWriter = knownWriterConnection === connection
       const releasedWriter =
@@ -1045,6 +1049,12 @@ export class AcpProviderSessionResumer {
           specialistProjection = await resolveSpecialistProjection(specialistId, backend)
           continue
         }
+        const resumesFreshMainContext =
+          resumedProviderSessionId === providerSessionId &&
+          backend.framework.id === resumedFrameworkId &&
+          this.deps.registry
+            .lookup(request.sessionId)
+            ?.aggregate.canResumeFreshMainContext(providerSessionId, resumedFrameworkId)
         const { aggregate } = this.deps.registry.publish(identity, request.sessionId, {
           session: provisionalSession,
           cwd,
@@ -1061,6 +1071,7 @@ export class AcpProviderSessionResumer {
         aggregate.setSpecialistId(specialistId)
         capability.commit(request.sessionId)
         capability.registerBridgeMcpSession?.(request.sessionId, resumedProviderSessionId)
+        if (resumesFreshMainContext) aggregate.confirmFreshMainContext(provisionalSession)
         capability = undefined
         provisionalSession = undefined
         identity.release()
@@ -1126,6 +1137,7 @@ export class AcpProviderSessionResumer {
     projectId: string,
     identity: AcpPrimarySessionIdentityReservation
   ): Promise<AcpCreateSessionResponse> {
+    this.deps.registry.lookup(request.sessionId)?.aggregate.clearFreshMainContext()
     return this.deps.adopter.adopt(request.sessionId, {
       connection,
       cwd,

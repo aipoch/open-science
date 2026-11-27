@@ -45,6 +45,7 @@ export type ProductionProvisionerOptions = {
   // Forwarded to ProvisionerDeps.isPrefixBlocked: lets the notebook service veto a prefix write the
   // startup gate/UI would otherwise perform over a possibly-live orphan (see runtime-service).
   isPrefixBlocked?: (prefix: string) => boolean
+  hasUnreapedKernelProcesses?: (environment: string) => boolean
   // Forwarded to ProvisionerDeps.clearPrefixBlock: an explicit user Reset clears the service's block.
   clearPrefixBlock?: (prefix: string) => void
   // Forwarded to ProvisionerDeps.clearRuntimeBlock: Reset also clears an interrupted install's runtime-ID
@@ -264,6 +265,7 @@ export const createProductionProvisioner = (
         })
       }),
     isPrefixBlocked: opts.isPrefixBlocked,
+    hasUnreapedKernelProcesses: opts.hasUnreapedKernelProcesses,
     clearPrefixBlock: opts.clearPrefixBlock,
     clearRuntimeBlock: opts.clearRuntimeBlock,
     clearCorruptBlock: opts.clearCorruptBlock,

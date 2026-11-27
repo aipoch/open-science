@@ -84,3 +84,14 @@ export const safeNetworkErrorCode = (error: unknown): string | undefined => {
   }
   return undefined
 }
+
+// SDKs can replace error codes with generic HTTP categories. Correlate their returned request ID
+// with the local bridge response before attributing a forbidden response to the allowlist.
+const recentDenials = new Set<string>()
+export function recordModelHttpDenial(requestId: string): void {
+  recentDenials.add(requestId)
+  if (recentDenials.size > 256) recentDenials.delete(recentDenials.values().next().value!)
+}
+
+export const isLocalModelHttpDenial = (requestId: unknown): requestId is string =>
+  typeof requestId === 'string' && recentDenials.has(requestId)

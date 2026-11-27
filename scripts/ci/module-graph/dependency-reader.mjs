@@ -85,6 +85,9 @@ export function createDependencyReader(
     paths: {
       ...packagePaths,
       '@aipoch/notebook-network-sandbox': ['packages/notebook-network-sandbox/src/index.ts'],
+      '@aipoch/notebook-network-sandbox/network-address': [
+        'packages/notebook-network-sandbox/src/network-address.ts'
+      ],
       '@aipoch/process-tree-native': ['packages/process-tree-native/index.d.ts'],
       '@aipoch/safe-file-publisher-native': ['packages/safe-file-publisher-native/index.d.ts'],
       '@aipoch/credential-identity-probe-native': [

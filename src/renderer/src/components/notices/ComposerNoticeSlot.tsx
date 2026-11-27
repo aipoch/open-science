@@ -109,7 +109,9 @@ const ComposerFailureNoticeSlot = ({
     ? (current.summary.description ?? '')
     : excerpt
       ? `${t(presentation.descriptionKey)} ${excerpt}`
-      : current.source === 'session' && current.failure.diagnostics.protocol
+      : !presentation.informationalOnly &&
+          current.source === 'session' &&
+          current.failure.diagnostics.protocol
         ? t('This turn was interrupted. Resume to continue.')
         : t(presentation.descriptionKey)
   const diagnostics = formatNoticeDiagnostics(current, title, description)
@@ -120,7 +122,11 @@ const ComposerFailureNoticeSlot = ({
         ? ['status', 'provider', 'model'].includes(key)
         : key !== 'raw' && key !== 'adapterCode')
   )
-  const canCopyError = !current.summary || Boolean(diagnostics.details)
+  const showDiagnostics = current.failure.reason !== 'input/image-pixel-limit'
+  const canCopyError =
+    showDiagnostics &&
+    !presentation.informationalOnly &&
+    (!current.summary || Boolean(diagnostics.details))
   const details = [diagnostics.details, actionFailure?.id === current.id && actionFailure.message]
     .filter(Boolean)
     .join('\n')
@@ -165,7 +171,9 @@ const ComposerFailureNoticeSlot = ({
     (canCopyError && action === 'copy-error') ||
     Boolean(handlers[action] && (handlers[action]?.available?.(notice) ?? true))
   const primaryAction = (notice: ComposerNotice): NoticeActionId | undefined => {
-    const action = noticePresentation(notice.failure, notice.operation).primaryAction
+    const item = noticePresentation(notice.failure, notice.operation)
+    if (item.informationalOnly) return undefined
+    const action = item.primaryAction
     return notice.source === 'session' && available('resume', notice)
       ? 'resume'
       : action && available(action, notice)
@@ -413,7 +421,7 @@ const ComposerFailureNoticeSlot = ({
                 )
               ) : null}
             </div>
-            {details ? (
+            {showDiagnostics && details ? (
               <NoticeDiagnostics
                 key={current.id}
                 errorCode={details}

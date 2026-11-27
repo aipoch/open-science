@@ -285,6 +285,10 @@ it('discovers the reviewed mainline subset and retains every other case in the f
       'electron-foundation.spec.ts: creates a project through the desktop stack and reloads it after relaunch'
     ],
     conversation: [
+      'custom-provider-http.spec.ts: explains shared HTTP access in the provider form and grants it only on save',
+      'custom-provider-http.spec.ts: restores the blocked conversation across restart and resumes after reauthorization',
+      'custom-provider-http.spec.ts: shows the local denial when an existing conversation switches to an untrusted HTTP provider',
+      'custom-provider-http.spec.ts: starts a clean draft after the first message in a new session was blocked',
       'workspace-conversation.spec.ts: expands the selected table across repeated portal lifecycles',
       'workspace-conversation.spec.ts: resolves Agent permission requests through both Allow and Deny decisions'
     ],

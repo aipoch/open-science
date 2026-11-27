@@ -9,10 +9,14 @@ import {
   normalizeNotebookNetworkSettings,
   notebookNetworkSettingsAllowDomain,
   parseCustomAllowedDomainInput,
-  validateCustomAllowedDomain
+  validateCustomAllowedDomain,
+  effectiveNotebookStrictWhitelist
 } from './notebook-network'
 
-import { OPEN_SCIENCE_DOMAIN_GROUP_IDS as settingDomainGroups } from './notebook-network-settings'
+import {
+  OPEN_SCIENCE_DOMAIN_GROUP_IDS as settingDomainGroups,
+  trustedDestinationId
+} from './notebook-network-settings'
 
 it('preserves the public domain group identity across the settings boundary', () => {
   expect(OPEN_SCIENCE_DOMAIN_GROUP_IDS).toBe(settingDomainGroups)
@@ -414,4 +418,64 @@ it('migrates obsolete HTTPS domain exceptions without broadening HTTP/IP authori
     { hostname: 'private.internal', protocol: 'http', port: 8080 }
   ])
   expect(normalizeNotebookNetworkSettings(JSON.parse(JSON.stringify(settings)))).toEqual(settings)
+})
+
+describe('shared Agent and Notebook HTTP rules', () => {
+  it('uses the shared destination identity when strict mode contains a duplicate', () => {
+    const shared = {
+      sharedWithAgent: true as const,
+      hostname: 'gateway.example',
+      port: 8080,
+      protocol: 'http' as const,
+      approvedAddresses: []
+    }
+    const settings = {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      mode: 'strict' as const,
+      strictWhitelist: [
+        {
+          id: 'strict-duplicate',
+          hostnamePattern: shared.hostname,
+          port: shared.port,
+          protocol: shared.protocol,
+          origin: 'manual' as const
+        }
+      ],
+      trustedPrivateDestinations: [shared]
+    }
+
+    expect(effectiveNotebookStrictWhitelist(settings)).toEqual([
+      expect.objectContaining({
+        id: trustedDestinationId(shared),
+        hostnamePattern: shared.hostname,
+        port: shared.port,
+        protocol: shared.protocol
+      })
+    ])
+  })
+
+  it('projects an exact shared destination into strict Notebook policy', () => {
+    const policy = buildNotebookNetworkPolicy({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      mode: 'strict',
+      strictWhitelist: [],
+      trustedPrivateDestinations: [
+        {
+          sharedWithAgent: true,
+          hostname: 'gateway.example',
+          port: 8080,
+          protocol: 'http',
+          approvedAddresses: []
+        }
+      ]
+    })
+    expect(policy.strictWhitelist).toEqual([
+      expect.objectContaining({
+        hostnamePattern: 'gateway.example',
+        port: 8080,
+        protocol: 'http',
+        origin: 'manual'
+      })
+    ])
+  })
 })

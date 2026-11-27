@@ -1,3 +1,4 @@
+import { recordModelHttpDenial } from '../settings/provider-failure-observation'
 import { classifyFailure } from '../../shared/failure/classify'
 import { describe, expect, it } from 'vitest'
 import { RequestError } from '@agentclientprotocol/sdk'
@@ -684,4 +685,38 @@ describe('compatibility bridge upstream status preservation', () => {
     const error = RequestError.resourceNotFound('file:///missing')
     expect(classifyFailure(collectPromptFailureFacts(error)).category).toBe('internal')
   })
+})
+
+it('identifies a bridge denial across structured and wrapped SDK errors', () => {
+  const requestId = 'local-bridge-denial'
+  recordModelHttpDenial(requestId)
+  const code = 'MODEL_HTTP_DESTINATION_NOT_ALLOWED'
+  const wrapped = (id: string): Error =>
+    agentError(
+      'Internal error: API Error: 403 ' +
+        JSON.stringify({
+          error: { code, request_id: id, type: 'permission_error', message: 'Denied' }
+        })
+    )
+  const harness = (id: string, status: number): Error =>
+    agentError('Provider HTTP error', {
+      errorKind: 'provider-error',
+      protocol: 'messages',
+      status,
+      requestId: id,
+      code
+    })
+  for (const error of [wrapped(requestId), harness(requestId, 403)])
+    expect(classifyFailure(collectPromptFailureFacts(error))).toMatchObject({
+      reason: 'configuration/model-http-destination-not-allowed',
+      diagnostics: { code, requestId }
+    })
+  for (const error of [
+    wrapped('provider-id'),
+    harness('provider-id', 403),
+    harness(requestId, 502)
+  ])
+    expect(classifyFailure(collectPromptFailureFacts(error)).reason).not.toBe(
+      'configuration/model-http-destination-not-allowed'
+    )
 })

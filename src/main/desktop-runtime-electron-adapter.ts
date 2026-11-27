@@ -8,6 +8,8 @@ import {
   RENDERER_CONTRACT_CATALOG
 } from '../shared/renderer-contract-catalog'
 import {
+  acpSessionAdmissionIpcResult,
+  isAcpSessionAdmissionChannel,
   isSessionReadChannel,
   toApplicationCommandErrorEnvelope
 } from '../shared/application-command-contract'
@@ -95,6 +97,7 @@ export function installDesktopRuntimeElectronAdapter(
       ipcMainHandle(channel, async (event, ...args) => {
         const invoke = (): Promise<unknown> => forward(event, channel, args)
         if (isSessionReadChannel(channel)) return sessionReadIpcResult(invoke)
+        if (isAcpSessionAdmissionChannel(channel)) return acpSessionAdmissionIpcResult(invoke)
         if (!enveloped.has(channel)) return invoke()
         try {
           return { ok: true, result: await invoke() }
