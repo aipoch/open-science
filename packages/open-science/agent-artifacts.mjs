@@ -22,6 +22,7 @@ const outputName = z
   .max(255)
   .describe('Exact Artifact name requested for this Run.')
 const transferBudget = 300_000
+const MAX_TIMER_DELAY_MS = 2_147_483_647
 const readOnly = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -57,11 +58,11 @@ function projectArtifact(artifact, runId) {
   }
 }
 
-const loadArtifacts = async (client, sessionId, signal, run) => {
+const loadArtifacts = async (client, sessionId, signal, run, timeoutMs) => {
   if (run && run.sessionId !== sessionId) {
     throw new AgentError('invalid_request', { message: 'The Run does not belong to this Session.' })
   }
-  const listed = await client.listArtifacts(sessionId, { signal })
+  const listed = await client.listArtifacts(sessionId, { signal, timeoutMs })
   const produced =
     run && new Set(run.artifacts?.map((artifact) => artifact.versionId ?? artifact.id))
   return listed
@@ -81,7 +82,7 @@ const defaultOutput = (profile, { downloadId, name }) => {
 async function download({ sessionId, downloadId, outputPath, timeoutMs }, context) {
   const { signal, getClient, configRoot } = context
   const client = await getClient()
-  const artifacts = await loadArtifacts(client, sessionId, signal)
+  const artifacts = await loadArtifacts(client, sessionId, signal, undefined, timeoutMs)
   const artifact = artifacts.find((artifact) => artifact.downloadId === downloadId)
   if (!artifact) throw new AgentError('artifact_not_found')
   const path = outputPath ?? defaultOutput(client.configRoot ?? configRoot, artifact)
@@ -188,12 +189,16 @@ export const artifactCapabilities = [
     name: 'list_artifacts',
     description:
       'List published Artifacts for a Session; use the downloadId directly. Pass runId to restrict results to outputs from that Run.',
-    inputSchema: z.strictObject({ sessionId, runId: runId.optional() }),
+    inputSchema: z.strictObject({
+      sessionId,
+      runId: runId.optional(),
+      timeoutMs: z.number().int().positive().max(MAX_TIMER_DELAY_MS).default(transferBudget)
+    }),
     annotations: readOnly,
-    async handler({ sessionId, runId }, { getClient, signal }) {
+    async handler({ sessionId, runId, timeoutMs }, { getClient, signal }) {
       const client = await getClient()
-      const run = runId ? await client.getRun(runId, { signal }) : undefined
-      return loadArtifacts(client, sessionId, signal, run)
+      const run = runId ? await client.getRun(runId, { signal, timeoutMs }) : undefined
+      return loadArtifacts(client, sessionId, signal, run, timeoutMs)
     }
   },
   {
@@ -208,7 +213,7 @@ export const artifactCapabilities = [
         .describe(
           'Absolute path in an existing directory. Default: <profile>/agent-delivery/<downloadId>/<Artifact name>.'
         ),
-      timeoutMs: z.number().int().min(1).max(transferBudget).default(transferBudget)
+      timeoutMs: z.number().int().positive().max(MAX_TIMER_DELAY_MS).default(transferBudget)
     }),
     annotations: { ...readOnly, readOnlyHint: false, idempotentHint: false },
     handler: download

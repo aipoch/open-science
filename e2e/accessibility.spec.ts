@@ -118,24 +118,29 @@ const focusWithTab = async (page: Page, target: Locator, maxTabs = 80): Promise<
   return true
 }
 
-test('reports accessibility violations in startup and home surfaces', async ({ app }) => {
-  await expect(
-    app.page.getByRole('heading', { name: 'Set up your research workspace.' })
-  ).toBeVisible()
-  await scanAccessibility(app.page, 'Onboarding')
-  const continueButton = app.page.getByRole('button', { name: 'Continue', exact: true })
-  await expect(continueButton).toBeEnabled()
-  await continueButton.focus()
-  await continueButton.press('Enter')
-  const locationStep = app.page.getByRole('region', { name: 'Choose data location' })
-  await expect(locationStep).toBeVisible()
-  await expectKeyboardOutcome(app.page, 'Onboarding step focus', async () => {
-    await expect(
-      app.page.getByRole('heading', { name: 'Where should Open-Science store your data?' })
-    ).toBeFocused()
-  })
-  await scanAccessibility(app.page, 'Onboarding step focus')
+test('opens quick connect and advanced onboarding options with the keyboard', async ({ app }) => {
+  const { page } = app
+  const dialog = page.getByRole('dialog', { name: 'Open-Science onboarding' })
+  const next = dialog.getByRole('button', { name: 'Next', exact: true })
+  await expect(next).toBeVisible()
+  await expectKeyboardOutcome(page, 'Onboarding', () => expect(dialog).toBeFocused())
+  await scanAccessibility(page, 'Onboarding')
 
+  // In collect-all mode a keyboard finding is recorded; continue to the next scan surface.
+  if (await focusWithTab(page, next)) await page.keyboard.press('Enter')
+  else await next.click()
+  const advanced = dialog.getByRole('button', { name: 'Advanced options' })
+  await expect(advanced).toBeVisible()
+  await expectKeyboardOutcome(page, 'Onboarding step focus', () => expect(dialog).toBeFocused())
+  await page.keyboard.press('Shift+Tab')
+  if (await focusWithTab(page, advanced)) await page.keyboard.press('Enter')
+  else await advanced.click()
+  await expect(dialog.getByRole('region', { name: 'Choose data location' })).toBeVisible()
+  await expectKeyboardOutcome(page, 'Onboarding step focus', () => expect(dialog).toBeFocused())
+  await scanAccessibility(page, 'Onboarding step focus')
+})
+
+test('reports accessibility violations on home at desktop and narrow widths', async ({ app }) => {
   const page = await app.completeOnboarding()
   await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
   await scanAccessibility(page, 'Home')

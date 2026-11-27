@@ -3098,10 +3098,14 @@ describe('notebook runtime service', () => {
     expect(availableSessions).toEqual(['session-1'])
   })
 
-  it('keeps failed executor cleanup fenced until the original owner is retried', async () => {
+  it('resumes execution and retries the original owner after a shutdown error', async () => {
     const root = await createStorageRoot()
     const shutdownError = new Error('kernel teardown failed')
-    const shutdown = vi.fn(async () => ({ reaped: true })).mockRejectedValueOnce(shutdownError)
+    const originalShutdown = vi
+      .fn(async () => ({ reaped: true }))
+      .mockRejectedValueOnce(shutdownError)
+    const replacementShutdown = vi.fn(async () => ({ reaped: true }))
+    const nextShutdown = vi.fn(() => replacementShutdown).mockReturnValueOnce(originalShutdown)
     const service = new NotebookRuntimeService({
       memoryPolicy: healthyNotebookMemoryPolicy(),
       configRoot: root,
@@ -3117,7 +3121,7 @@ describe('notebook runtime service', () => {
           cwdAfter: request.cwd,
           outputs: []
         }),
-        shutdown
+        shutdown: nextShutdown()
       })
     })
 
@@ -3138,11 +3142,12 @@ describe('notebook runtime service', () => {
         code: 'after-failed-shutdown',
         language: 'python'
       })
-    ).resolves.toMatchObject({ status: 'failed', script: 'after-failed-shutdown' })
+    ).resolves.toMatchObject({ status: 'completed', script: 'after-failed-shutdown' })
     await expect(
       service.shutdown({ sessionId: 'session-1', workspaceCwd: root })
     ).resolves.toMatchObject({ status: 'shutdown' })
-    expect(shutdown).toHaveBeenCalledTimes(2)
+    expect(originalShutdown).toHaveBeenCalledTimes(2)
+    expect(replacementShutdown).toHaveBeenCalledOnce()
     await expect(
       service.execute({
         sessionId: 'session-1',
@@ -12459,7 +12464,7 @@ describe('notebook runtime service', () => {
       })
 
     it.each([true, false])(
-      'admits default R with an unrelated Windows kernel receipt only when already ready (ready=%s)',
+      'admits default R with an unrelated Windows kernel receipt and provisions when needed (ready=%s)',
       async (ready) => {
         const root = await createStorageRoot()
         const previous = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
@@ -12487,9 +12492,8 @@ describe('notebook runtime service', () => {
             code: '1',
             language: 'r'
           })
-          expect(run.status, run.text.traceback).toBe(ready ? 'completed' : 'failed')
-          if (!ready) expect(run.text.traceback).toContain('KERNEL_STARTUP_FENCE')
-          expect(provisionR).not.toHaveBeenCalled()
+          expect(run.status, run.text.traceback).toBe('completed')
+          expect(provisionR).toHaveBeenCalledTimes(ready ? 0 : 1)
           expect(existsSync(receipt.path)).toBe(true)
         } finally {
           await service.dispose()

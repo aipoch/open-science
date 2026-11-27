@@ -83,6 +83,83 @@ const windowsProcessBirthIfLive = (pid: number): string | undefined => {
 const windowsProcessIdentityMatches = (pid: number, birth: string): boolean => {
   return windowsProcessBirthIfLive(pid) === birth
 }
+// Playwright launches Electron through a shell on Windows. Capture both identities while
+// they are live so cleanup can still verify survivors after the shell exits.
+const captureWindowsElectronTree = async (
+  application: ElectronApplication,
+  child: ReturnType<ElectronApplication['process']>
+): Promise<Map<number, string>> => {
+  if (!child.pid) throw new Error('Electron E2E launcher PID is unavailable.')
+  const birth =
+    child.exitCode == null && child.signalCode == null
+      ? windowsProcessBirthIfLive(child.pid)
+      : undefined
+  const processes = await application.evaluate(({ app }) => {
+    const { createRequire } = process.getBuiltinModule('node:module')
+    const { join } = process.getBuiltinModule('node:path')
+    const binding = createRequire(join(app.getAppPath(), 'package.json'))(
+      '@aipoch/process-tree-native'
+    ) as typeof import('@aipoch/process-tree-native')
+    // Capture the fixture app's live tree from inside its root before killing the launcher.
+    const members = (): number[] => [process.pid, ...binding.windowsCurrentProcessDescendants()]
+    const births = members().map(
+      (pid) => [pid, binding.getWindowsProcessCreationTime(pid)] as const
+    )
+    const current = new Set(members())
+    if (!births[0]?.[1]) throw new Error('Could not identify the Electron process.')
+    return births.filter(
+      (entry): entry is readonly [number, string] =>
+        entry[1] !== null &&
+        current.has(entry[0]) &&
+        binding.getWindowsProcessCreationTime(entry[0]) === entry[1]
+    )
+  })
+  const owned = new Map(processes)
+  if (birth !== undefined) owned.set(child.pid, birth)
+  return owned
+}
+
+const reapWindowsElectronTree = async (owned: Map<number, string>): Promise<void> => {
+  const deadline = Date.now() + 10_000
+  // An intermediate launcher can exit before taskkill reaches every captured descendant.
+  await terminateWindowsProcessesByIdentity(new Map(owned), deadline)
+  for (;;) {
+    const observed = listWindowsProcesses()
+    const liveOwned = new Set<number>()
+    for (const [pid, birth] of owned) {
+      if (windowsProcessIdentityMatches(pid, birth)) liveOwned.add(pid)
+    }
+    const discovered = new Map<number, string>()
+    for (const { pid, ppid } of observed) {
+      if (owned.has(pid) || !liveOwned.has(ppid)) continue
+      const birth = windowsProcessBirthIfLive(pid)
+      if (birth === undefined) continue
+      const current = listWindowsProcesses().find(
+        (candidate) => candidate.pid === pid && candidate.ppid === ppid
+      )
+      if (!current) continue
+      const parentBirth = owned.get(ppid)
+      if (parentBirth === undefined || !windowsProcessIdentityMatches(ppid, parentBirth)) continue
+      if (!windowsProcessIdentityMatches(pid, birth)) continue
+      owned.set(pid, birth)
+      discovered.set(pid, birth)
+    }
+    if (discovered.size) await terminateWindowsProcessesByIdentity(discovered, deadline)
+    const remaining = observed.filter(({ pid }) => {
+      const birth = owned.get(pid)
+      return birth !== undefined && windowsProcessIdentityMatches(pid, birth)
+    })
+    if (remaining.length === 0) {
+      return
+    }
+    if (Date.now() >= deadline)
+      throw new Error(
+        `Electron E2E cleanup still observes PIDs ${remaining.map(({ pid, ppid, executablePath }) => JSON.stringify({ pid, ppid, executablePath })).join(', ')}.`
+      )
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+}
+
 type E2eWindowMode = 'hidden' | 'normal'
 
 const assertPackagedElectronIdentity = (
@@ -343,6 +420,10 @@ const CLEANUP_GRACEFUL_TIMEOUT_MS =
 const CLEANUP_FORCED_TIMEOUT_MS =
   process.platform === 'win32' ? 30_000 : process.platform === 'darwin' ? 20_000 : 10_000
 const CLEANUP_REAP_RETRY_DELAY_MS = 100
+// POSIX process-tree termination can spend up to 4 seconds per attempt (3 seconds graceful plus
+// 1 second SIGKILL confirmation). Two attempts stay within the Linux and macOS forced-cleanup budgets;
+// Windows taskkill needs the wider retry window because its completion is asynchronous on hosted CI.
+const CLEANUP_REAP_ATTEMPTS = process.platform === 'win32' ? 5 : 2
 
 const closeElectronApplicationForCleanup = async (
   target: ElectronCleanupTarget,
@@ -395,7 +476,7 @@ type ElectronApp = {
   ) => Promise<Page>
 
   readonly page: Page
-  openAdditionalRenderer: () => Promise<Page>
+  openAdditionalRenderer: (options?: { mouseAndTouch?: boolean }) => Promise<Page>
   readNotebookFixtureRuns: (projectId: string, sessionId: string) => Promise<NotebookRunRecord[]>
   authenticatedWebUrl: () => Promise<string>
   allowRendererConsoleError: (text: string) => void
@@ -1255,9 +1336,9 @@ class ElectronAppHarness implements ElectronApp {
     })
   }
 
-  async openAdditionalRenderer(): Promise<Page> {
+  async openAdditionalRenderer({ mouseAndTouch = false } = {}): Promise<Page> {
     const next = this.runningApplication.waitForEvent('window')
-    await this.runningApplication.evaluate(({ app }) => {
+    await this.runningApplication.evaluate(({ app }, mixedInput) => {
       const { createRequire } = process.getBuiltinModule('node:module')
       const { join, sep } = process.getBuiltinModule('node:path')
       const { realpathSync } = process.getBuiltinModule('node:fs')
@@ -1270,11 +1351,22 @@ class ElectronAppHarness implements ElectronApp {
           typeof entry.exports?.createMainWindow === 'function'
       )
       if (!module) throw new Error('Built main-window factory is not loaded.')
+      if (mixedInput) {
+        // Blink bit masks: the primary pointer is a hovering mouse; a coarse pointer is also available.
+        app.commandLine.appendSwitch(
+          'blink-settings',
+          'primaryPointerType=4,availablePointerTypes=6,primaryHoverType=2,availableHoverTypes=2'
+        )
+      }
       module.exports.createMainWindow()
-    })
+    }, mouseAndTouch)
     const page = await next
     await page.waitForFunction(() => Boolean(window.api?.databaseStartup))
     await waitForRendererReady(page)
+    if (mouseAndTouch)
+      await this.runningApplication.evaluate(({ app }) =>
+        app.commandLine.removeSwitch('blink-settings')
+      )
     return page
   }
 
@@ -1990,94 +2082,15 @@ class ElectronAppHarness implements ElectronApp {
     if (!application) throw new Error('No Electron process is available to terminate.')
     const child = this.applicationProcess
     if (!child) throw new Error('No captured Electron child is available to terminate.')
-    if (process.platform === 'win32' && !child.pid)
-      throw new Error('Electron crash simulation has no launcher PID.')
-    const launcherBirth =
-      process.platform === 'win32' && child.pid ? windowsProcessBirthIfLive(child.pid) : undefined
-    if (
-      process.platform === 'win32' &&
-      child.pid &&
-      launcherBirth === undefined &&
-      windowsProcessIsAlive(child.pid)
-    )
-      throw new Error(
-        `Electron crash simulation cannot capture the launcher birth identity for PID ${child.pid}.`
-      )
     await this.stopElectronTrace(application)
-    const windowsProcesses =
+    const windowsTree =
       process.platform === 'win32'
-        ? await application.evaluate(({ app }) => {
-            const { createRequire } = process.getBuiltinModule('node:module')
-            const { join } = process.getBuiltinModule('node:path')
-            const binding = createRequire(join(app.getAppPath(), 'package.json'))(
-              '@aipoch/process-tree-native'
-            ) as typeof import('@aipoch/process-tree-native')
-            // Capture the fixture app's live tree from inside its root before killing the launcher.
-            const members = (): number[] => [
-              process.pid,
-              ...binding.windowsCurrentProcessDescendants()
-            ]
-            const births = members().map(
-              (pid) => [pid, binding.getWindowsProcessCreationTime(pid)] as const
-            )
-            const current = new Set(members())
-            return births.filter(
-              (entry): entry is readonly [number, string] =>
-                entry[1] !== null &&
-                current.has(entry[0]) &&
-                binding.getWindowsProcessCreationTime(entry[0]) === entry[1]
-            )
-          })
+        ? await captureWindowsElectronTree(application, child)
         : undefined
     const result = await terminateProcessTree(child, options.force ? 'SIGKILL' : undefined)
-    let reaped = result.reaped
-    // Windows termination is asynchronous even when taskkill succeeds. Playwright's child is
-    // a shell, so wait for the observed Electron descendants too before reusing the profile lock.
-    if (windowsProcesses) {
-      const owned = new Map(windowsProcesses)
-      if (child.pid && launcherBirth !== undefined) owned.set(child.pid, launcherBirth)
-      const deadline = Date.now() + 10_000
-      // An intermediate launcher can exit before taskkill reaches every captured descendant.
-      await terminateWindowsProcessesByIdentity(new Map(owned), deadline)
-      for (;;) {
-        const observed = listWindowsProcesses()
-        const liveOwned = new Set<number>()
-        for (const [pid, birth] of owned) {
-          if (windowsProcessIdentityMatches(pid, birth)) liveOwned.add(pid)
-        }
-        const discovered = new Map<number, string>()
-        for (const { pid, ppid } of observed) {
-          if (owned.has(pid) || !liveOwned.has(ppid)) continue
-          const birth = windowsProcessBirthIfLive(pid)
-          if (birth === undefined) continue
-          const current = listWindowsProcesses().find(
-            (candidate) => candidate.pid === pid && candidate.ppid === ppid
-          )
-          if (!current) continue
-          const parentBirth = owned.get(ppid)
-          if (parentBirth === undefined || !windowsProcessIdentityMatches(ppid, parentBirth))
-            continue
-          if (!windowsProcessIdentityMatches(pid, birth)) continue
-          owned.set(pid, birth)
-          discovered.set(pid, birth)
-        }
-        if (discovered.size) await terminateWindowsProcessesByIdentity(discovered, deadline)
-        const remaining = observed.filter(({ pid }) => {
-          const birth = owned.get(pid)
-          return birth !== undefined && windowsProcessIdentityMatches(pid, birth)
-        })
-        if (remaining.length === 0) {
-          reaped = true
-          break
-        }
-        if (Date.now() >= deadline)
-          throw new Error(
-            `Electron crash simulation still observes PIDs ${remaining.map(({ pid, ppid, executablePath }) => JSON.stringify({ pid, ppid, executablePath })).join(', ')}.`
-          )
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      }
-    }
-    if (!reaped) throw new Error('Electron crash simulation did not reap the process tree.')
+    if (windowsTree) await reapWindowsElectronTree(windowsTree)
+    else if (!result.reaped)
+      throw new Error('Electron crash simulation did not reap the process tree.')
     this.resourceProfiler?.detach(application)
     this.application = undefined
     this.applicationProcess = undefined
@@ -2406,6 +2419,8 @@ class ElectronAppHarness implements ElectronApp {
     this.application = undefined
     this.applicationProcess = undefined
     this.currentPage = undefined
+    let windowsTree: Map<number, string> | undefined
+    let captureError: unknown
     let service: Awaited<ReturnType<typeof observeFixtureService>>
     try {
       await runFixtureCleanup([
@@ -2420,6 +2435,14 @@ class ElectronAppHarness implements ElectronApp {
           closeElectronApplicationForCleanup(
             {
               close: async () => {
+                if (process.platform === 'win32') {
+                  windowsTree = await captureWindowsElectronTree(application, child).catch(
+                    (error: unknown) => {
+                      captureError = error
+                      return undefined
+                    }
+                  )
+                }
                 if (requireGraceful && page) {
                   const readWindowId = async (): Promise<number> =>
                     (await application.browserWindow(page)).evaluate((window) => window.id)
@@ -2442,13 +2465,30 @@ class ElectronAppHarness implements ElectronApp {
                 await application.close()
               },
               forceClose: async () => {
-                let result = await terminateProcessTree(child)
-                if (!result.reaped) {
-                  await new Promise((resolve) => setTimeout(resolve, CLEANUP_REAP_RETRY_DELAY_MS))
-                  result = await terminateProcessTree(child)
+                if (windowsTree && child.pid) {
+                  const birth = windowsTree.get(child.pid)
+                  if (birth && windowsProcessIdentityMatches(child.pid, birth))
+                    await terminateProcessTree(child)
+                  return reapWindowsElectronTree(windowsTree)
                 }
-                if (!result.reaped)
-                  throw new Error('Electron E2E forced close did not reap the process tree.')
+                if (captureError)
+                  process.stderr.write(
+                    `Electron cleanup could not capture Windows identities: ${String(captureError)}\n`
+                  )
+                for (let attempt = 0; attempt < CLEANUP_REAP_ATTEMPTS; attempt += 1) {
+                  if (
+                    process.platform === 'win32' &&
+                    (child.exitCode != null || child.signalCode != null)
+                  )
+                    throw new Error(
+                      'Electron launcher exited without a verified process-tree snapshot.'
+                    )
+                  const result = await terminateProcessTree(child)
+                  if (result.reaped) return
+                  if (attempt + 1 < CLEANUP_REAP_ATTEMPTS)
+                    await new Promise((resolve) => setTimeout(resolve, CLEANUP_REAP_RETRY_DELAY_MS))
+                }
+                throw new Error('Electron E2E forced close did not reap the process tree.')
               }
             },
             {

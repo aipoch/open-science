@@ -114,6 +114,7 @@ import {
   createEmptyProviderFormValue,
   defaultCustomApiEndpoint,
   defaultProviderKindKey,
+  providerKindAvailability,
   getProviderFormErrors,
   hasProviderFormErrors,
   providerFormApiEndpoints,
@@ -1109,15 +1110,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     ((modelView.kind === 'create' && Boolean(modelView.providerKindKey)) ||
       modelView.kind === 'edit')
   // Kinds offered when adding a provider; the picker and the form's type dropdown share them.
-  const createKindAvailability = {
-    codeBuddyProviders:
-      agentFrameworkId === 'codebuddy' && isDesktopRenderer()
-        ? providers.map((provider) => provider.id)
-        : undefined,
-    showCodexSubscriptions:
-      agentFrameworkId === 'codex' || agentFrameworkId === 'open-science-agent',
-    showClaudeIsolated: agentFrameworkId === 'claude-code'
-  }
+  const createKindAvailability = providerKindAvailability(
+    agentFrameworkId,
+    providers,
+    isDesktopRenderer()
+  )
   // Resolve the edited provider from the live store so a model refresh (which updates the cache) is
   // reflected in the form; undefined until the provider is found (or when creating).
   const editingProvider =

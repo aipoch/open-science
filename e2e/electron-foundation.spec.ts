@@ -168,9 +168,6 @@ test('creates a project through the desktop stack and reloads it after relaunch 
   app
 }) => {
   await app.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-  await expect(
-    app.page.getByRole('heading', { name: 'Set up your research workspace.' })
-  ).toBeVisible()
 
   // Seed only the external-provider-dependent prerequisite. The journey remains visible UI backed
   // by the production preload bridge, main process, and project database.

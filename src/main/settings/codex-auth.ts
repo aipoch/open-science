@@ -7,6 +7,7 @@ import { Readable, Writable } from 'node:stream'
 
 import * as acp from '@agentclientprotocol/sdk'
 
+import { CODEX_IMPORT_FILE_MISSING_MESSAGE } from '../../shared/codex-runtime'
 import type { CodexSubscriptionTransport } from '../../shared/settings'
 import {
   createPosixProcessTreeOwnership,
@@ -338,7 +339,8 @@ const isCodexCredentialStoreAssignment = (line: string): boolean =>
 // cannot observe or mutate the user's global Codex CLI credential.
 const serializeCodexCredentialStore = (
   existingConfigToml: string,
-  credentialStore: 'file' | 'ephemeral'
+  credentialStore: 'file' | 'ephemeral',
+  unloadIdleThreads = false
 ): string => {
   const lines = existingConfigToml.split(/\r?\n/)
   const result: string[] = []
@@ -347,6 +349,14 @@ const serializeCodexCredentialStore = (
   for (const line of lines) {
     if (/^\s*\[/.test(line)) inTopLevel = false
     if (inTopLevel && isCodexCredentialStoreAssignment(line)) continue
+    if (
+      inTopLevel &&
+      unloadIdleThreads &&
+      /^\s*(?:thread_unload_delay_secs|"thread_unload_delay_secs"|'thread_unload_delay_secs')\s*=/.test(
+        line
+      )
+    )
+      continue
     result.push(line)
   }
 
@@ -367,15 +377,13 @@ const serializeCodexCredentialStore = (
     0,
     credentialStore === 'file'
       ? CODEX_FILE_CREDENTIAL_STORE
-      : 'cli_auth_credentials_store = "ephemeral"'
+      : 'cli_auth_credentials_store = "ephemeral"',
+    ...(unloadIdleThreads ? ['thread_unload_delay_secs = 0'] : [])
   )
   result.push('')
 
   return result.join('\n')
 }
-
-const serializeCodexFileCredentialStore = (existingConfigToml: string): string =>
-  serializeCodexCredentialStore(existingConfigToml, 'file')
 
 // Persisted pre-brand markers remain technical compatibility identities. Match only complete
 // known marker lines; ordinary comments and user TOML values keep their original spelling.
@@ -641,8 +649,10 @@ const ensureCodexAuthConfigHome = async (
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
 
-  const nextConfigToml = serializeCodexFileCredentialStore(
-    serializeCodexSubscriptionTransport(existingConfigToml, transport)
+  const nextConfigToml = serializeCodexCredentialStore(
+    serializeCodexSubscriptionTransport(existingConfigToml, transport),
+    'file',
+    true
   )
   if (nextConfigToml !== existingConfigToml) {
     await writePrivateFileAtomically(configPath, nextConfigToml)
@@ -777,9 +787,7 @@ const readCodexAuthenticationSnapshot = async (
       // A missing auth.json most often means Codex keeps its credential in the OS credential store
       // (macOS Keychain / Windows Credential Manager / Linux keyring). Name that boundary instead of
       // surfacing a generic import failure that reads like a required second sign-in.
-      throw new Error(
-        'Open-Science could not find a file-backed Codex credential to import. Your existing Codex sign-in may be stored in the system credential store, which Open-Science cannot import from. Continue with the Open-Science Codex sign-in instead.'
-      )
+      throw new Error(CODEX_IMPORT_FILE_MISSING_MESSAGE)
     }
     throw new Error('The selected Codex profile does not contain importable authentication.')
   }

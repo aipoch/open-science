@@ -454,6 +454,19 @@ describe('AcpProviderSessionCreator', () => {
     expect(harness.release).not.toHaveBeenCalled()
   })
 
+  it('leaves fresh Main context unconfirmed when capability commit fails', async () => {
+    const failure = new Error('Capability commit failed.')
+    const harness = createHarness({})
+    harness.commit.mockImplementationOnce(() => {
+      throw failure
+    })
+
+    await expect(harness.creator.create({ cwd: '/workspace' })).rejects.toBe(failure)
+
+    expect(harness.registry.lookup('provider-session')?.aggregate.isFreshMainContext()).toBe(false)
+    expect(harness.session.dispose).toHaveBeenCalledOnce()
+  })
+
   it('builds prompt guidance from the effective provisioned capability descriptor', async () => {
     const harness = createHarness({ descriptorCapabilities: [] })
     const enabledHarness = createHarness({ descriptorCapabilities: ['skill-import'] })

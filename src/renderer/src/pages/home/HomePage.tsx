@@ -114,6 +114,7 @@ type HomeSessionUpdate = {
 }
 
 type HomePageProps = {
+  isActive?: boolean
   canDeleteProjects: boolean
   hasCompleteSessionCatalog: boolean
   catalogRecovery?: SessionCatalogRecovery
@@ -186,6 +187,7 @@ const withSessionDescriptionTooltip = (
 
 // Landing screen: pick a project or jump back into a recent session.
 const HomePage = ({
+  isActive = true,
   canDeleteProjects,
   hasCompleteSessionCatalog,
   catalogRecovery,
@@ -480,12 +482,13 @@ const HomePage = ({
   )
 
   useEffect(() => {
-    if (!pendingProjectCreation) return
+    // Keep queued navigation intact while Home is the inactive onboarding backdrop.
+    if (!isActive || !pendingProjectCreation) return
     queueMicrotask(() => {
       openCreateDialog()
       consumeProjectCreation()
     })
-  }, [consumeProjectCreation, openCreateDialog, pendingProjectCreation])
+  }, [consumeProjectCreation, isActive, openCreateDialog, pendingProjectCreation])
 
   const retryProjectLoad = (): void => {
     if (isRetryingProjects) return
@@ -645,7 +648,7 @@ const HomePage = ({
 
   return (
     <TooltipProvider>
-      <ProjectPackageDropZone canImport className="relative h-svh">
+      <ProjectPackageDropZone canImport={isActive} className="relative h-svh">
         <main className="flex h-svh flex-col overflow-hidden bg-bg-10 text-text-000">
           {/* Keep only the title and toolbar fixed; status cards scroll with projects and cases. */}
           <div className="max-h-[50%] shrink-0 overflow-y-auto">

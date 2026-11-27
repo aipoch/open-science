@@ -1652,7 +1652,7 @@ class NotebookLocalRpcServer {
       // Resume and capability discovery grant reads, never another user execution context.
       // Keep this refusal local to the credential so the first trusted user prompt can mint.
       intent = new NotebookExecutionIntent({ projectId, sessionId: resolvedSessionId })
-      intent.block('originating-execution-context-unavailable')
+      intent.block('originating-execution-context-unavailable', { phase: 'session-bootstrap' })
     }
     let binding: NotebookRpcSessionBinding = {
       sessionId: resolvedSessionId,
@@ -1778,7 +1778,10 @@ class NotebookLocalRpcServer {
         projectId: scope.projectId,
         sessionId: scope.sessionId
       })
-      intent.block('originating-execution-context-unavailable')
+      intent.block('originating-execution-context-unavailable', {
+        phase: 'delegated-connection',
+        originMessageId: scope.promptMessageId
+      })
     }
     if (intent)
       this.service.rememberExecutionIntent?.(
@@ -3249,10 +3252,10 @@ class NotebookLocalRpcServer {
             resolvedParams.op === 'send_message'))
       if (authenticatedBinding?.isControl && startsDerivedWork && !controlAuthority?.active)
         throw new RpcHttpError(403, 'New execution requires an exact trusted control invocation.')
-      if (startsDerivedWork) executionIntent?.assertDispatch(executionCredential)
+      if (startsDerivedWork) executionIntent?.assertDispatch(executionCredential, method)
       if (executionIntent) {
         if (startsNotebookExecution(method, resolvedParams))
-          executionIntent.assertDispatch(executionCredential)
+          executionIntent.assertDispatch(executionCredential, method)
         markNotebookExecutionIntent(resolvedParams, executionIntent, executionCredential)
         if (
           ['execute', 'runCell', 'executeControl', 'executeShell'].includes(method) &&

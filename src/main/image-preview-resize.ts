@@ -1,5 +1,9 @@
 import { IMAGE_PREVIEW_BUSY_MESSAGE } from '../shared/preview-resources'
-import { exceedsDecodedImagePixelLimit, MAX_DECODED_IMAGE_PIXELS } from './raster-image-safety'
+import {
+  isAnimatedPng,
+  exceedsDecodedImagePixelLimit,
+  MAX_DECODED_IMAGE_PIXELS
+} from './raster-image-safety'
 
 export const MAX_PREVIEW_SOURCE_PIXELS = 64_000_000
 export const IMAGE_THUMBNAIL_EDGE = 192
@@ -26,20 +30,6 @@ let pending = 0
 let retainedBytes = 0
 const waitingPreviews: Array<() => void> = []
 const waitingThumbnails: Array<() => void> = []
-
-const isAnimatedPng = (source: Buffer): boolean => {
-  if (!source.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return false
-  // libvips decodes APNG's default frame only; do not silently turn an animation into a still.
-  for (let offset = 8; offset + 12 <= source.byteLength;) {
-    const length = source.readUInt32BE(offset)
-    if (length > source.byteLength - offset - 12) return false
-    const type = source.toString('ascii', offset + 4, offset + 8)
-    if (type === 'acTL') return true
-    if (type === 'IDAT' || type === 'IEND') return false
-    offset += length + 12
-  }
-  return false
-}
 
 export const resizeImagePreview = async (
   size: number,

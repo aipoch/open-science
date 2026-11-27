@@ -489,7 +489,9 @@ it.each([1, 75])(
   }
 )
 
-it('reports credential recovery during startup as a failure after draining resources', async () => {
+it('preserves the startup credential failure even if diagnostic cleanup fails', async () => {
+  const { ResourceRecording } = await import('./resource-diagnostics/recording')
+  vi.spyOn(ResourceRecording.prototype, 'close').mockRejectedValueOnce(new Error('cleanup failed'))
   process.exitCode = undefined
   const attemptId = 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b'
   vi.stubEnv('OPEN_SCIENCE_STARTUP_ATTEMPT', attemptId)
@@ -502,6 +504,10 @@ it('reports credential recovery during startup as a failure after draining resou
   expect(f.log.error).toHaveBeenCalledWith('credential recovery required', {
     reason: 'decryption-failed'
   })
+  expect(f.log.error).toHaveBeenCalledWith(
+    'startup failed',
+    expect.objectContaining({ recoveryReason: 'decryption-failed' })
+  )
   expect(f.closeNetwork).toHaveBeenCalledOnce()
   expect(f.closeOwnership).toHaveBeenCalledOnce()
   expect(f.disposeCipher).toHaveBeenCalledOnce()
@@ -665,6 +671,8 @@ it('mirrors a fatal service report and keeps recoverable background errors in th
   const send = await startHealthyRuntime()
   await waitForReady(send)
   const mirror = f.initLogs.mock.lastCall![0].mirrorToConsole
+  expect(mirror('credential-identity', 'Secret Service metadata probe failed')).toBe(true)
+  expect(mirror('credential-identity', 'identity probe completed')).toBe(false)
   const error = new Error('diagnostic fixture')
   f.createLifetime.mock.lastCall![0].report(error)
   expect(mirror('node-runtime', f.log.error.mock.lastCall![0])).toBe(false)

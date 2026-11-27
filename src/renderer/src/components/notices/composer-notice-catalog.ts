@@ -177,6 +177,13 @@ export const reasonCatalog: Partial<Record<FailureReason, NoticePresentation>> =
     primaryAction: 'retry',
     secondaryActions: ['open-provider-settings']
   },
+  'input/image-pixel-limit': {
+    level: 'warning',
+    titleKey: 'Image resolution is too high',
+    descriptionKey: 'Resize the image to 64 megapixels or less and send it again.',
+    secondaryActions: [],
+    feedback: 'none'
+  },
   'input/context-overflow': {
     ...noticeCatalog.input,
     titleKey: 'The input is too long',

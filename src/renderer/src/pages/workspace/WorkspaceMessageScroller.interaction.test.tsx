@@ -4831,6 +4831,92 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(window.api.previewResources.acquire).not.toHaveBeenCalled()
   })
 
+  it('uses the PDF thumbnail request to detect a missing generated file', async () => {
+    const enterViewport = installIntersectionObserver()
+    const acquire = vi.fn().mockRejectedValue(new Error('ENOENT: no such file'))
+    window.api.previewResources.acquire = acquire
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const session = createSession({
+      status: 'idle',
+      messages: [
+        createMessage({
+          id: 'pdf-reply',
+          role: 'agent',
+          content: 'Generated a scatter plot',
+          artifactIds: ['scatter-version-1']
+        })
+      ],
+      artifacts: [
+        {
+          id: 'scatter-version-1',
+          artifactId: 'scatter-file',
+          versionId: 'scatter-version-1',
+          isPublished: true,
+          kind: 'managed-file',
+          path: '/workspace/scatter.pdf',
+          name: 'scatter.pdf',
+          mimeType: 'application/pdf'
+        }
+      ]
+    })
+
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+      )
+    })
+    const card = container.querySelector('button[aria-label="Preview generated file scatter.pdf"]')
+    expect(card).not.toBeNull()
+    expect(acquire).not.toHaveBeenCalled()
+
+    await act(async () => enterViewport())
+
+    expect(acquire).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ fileId: 'scatter-file', versionId: 'scatter-version-1' })
+    )
+    expect(window.api.artifacts.readPreview).not.toHaveBeenCalled()
+    expect(card?.textContent).toContain('Missing')
+  })
+
+  it('keeps an in-flight PDF thumbnail when publication updates the storage path', async () => {
+    const enterViewport = installIntersectionObserver()
+    const acquire = vi.fn(() => new Promise<ManagedPreviewResource>(() => undefined))
+    window.api.previewResources.acquire = acquire
+    const { MessageArtifactList } = await import('./WorkspaceMessageItem')
+    const chart: React.ComponentProps<typeof MessageArtifactList>['artifacts'][number] = {
+      id: 'scatter-version-1',
+      artifactId: 'scatter-file',
+      versionId: 'scatter-version-1',
+      resolvedProjectId: 'project-1',
+      resolvedSessionId: 'session-1',
+      isPublished: true,
+      kind: 'managed-file',
+      path: 'artifact-version:project-1/session-1/scatter-file/scatter-version-1',
+      name: 'scatter.pdf',
+      mimeType: 'application/pdf'
+    }
+    const onPreview = vi.fn()
+    root = createRoot(container)
+    const render = async (artifact: typeof chart): Promise<void> => {
+      await act(async () =>
+        root.render(<MessageArtifactList artifacts={[artifact]} onPreviewArtifact={onPreview} />)
+      )
+      await act(async () => enterViewport())
+    }
+
+    await render(chart)
+    expect(acquire).toHaveBeenCalledTimes(1)
+    await render({ ...chart, path: '/workspace/versions/scatter-version-1/content' })
+    expect(acquire).toHaveBeenCalledTimes(1)
+
+    await render({ ...chart, versionId: 'scatter-version-2' })
+    expect(acquire).toHaveBeenCalledTimes(2)
+    expect(acquire).toHaveBeenLastCalledWith(
+      expect.objectContaining({ fileId: 'scatter-file', versionId: 'scatter-version-2' })
+    )
+  })
+
   it('keeps a published artifact named .pending previewable', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const session = createSession({

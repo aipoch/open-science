@@ -357,6 +357,39 @@ const TokenLimitField = ({
   </div>
 )
 
+type CodexAuthMode = 'codex-shared' | 'codex-isolated'
+
+const CodexAuthSelect = ({
+  value,
+  disabled,
+  onChange
+}: {
+  value: CodexAuthMode
+  disabled?: boolean
+  onChange: (value: CodexAuthMode) => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  return (
+    <Select
+      value={value}
+      disabled={disabled}
+      onValueChange={(type) => onChange(type as CodexAuthMode)}
+    >
+      <SelectTrigger aria-label={t('Codex authentication')} disabled={disabled}>
+        <span>
+          {value === 'codex-shared'
+            ? t('Import existing Codex sign-in')
+            : t('Sign in with Open-Science')}
+        </span>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="codex-shared">{t('Import existing Codex sign-in')}</SelectItem>
+        <SelectItem value="codex-isolated">{t('Sign in with Open-Science')}</SelectItem>
+      </SelectContent>
+    </Select>
+  )
+}
+
 // The form shares credential and model fields across custom, official, and preset connections.
 // Local presets keep the custom transport; cloud forms collect the coordinates their vendor needs.
 // The reveal control applies only to newly typed credentials held in the current draft.
@@ -410,7 +443,8 @@ const ProviderForm = ({
   const fileCredentialNotice = useFileCredentialNotice()
   const isCustom = value.type === 'custom'
   const isOfficial = value.type === 'official'
-  const isCodexSubscription = value.type === 'codex-shared' || value.type === 'codex-isolated'
+  const providerType = value.type
+  const isCodexSubscription = providerType === 'codex-shared' || providerType === 'codex-isolated'
   const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
   const isCodeBuddySubscription = value.type === 'codebuddy-subscription'
   const isXaiSubscription = value.type === 'xai-subscription'
@@ -965,25 +999,11 @@ const ProviderForm = ({
           <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
             <div className="space-y-1.5">
               <span className={fieldLabelClassName}>{t('Codex authentication')}</span>
-              <Select
-                value={value.type}
+              <CodexAuthSelect
+                value={providerType}
                 disabled={disabled}
-                onValueChange={(type) =>
-                  onChange({ type: type as 'codex-shared' | 'codex-isolated' })
-                }
-              >
-                <SelectTrigger aria-label={t('Codex authentication')} disabled={disabled}>
-                  <span>
-                    {value.type === 'codex-shared'
-                      ? t('Import existing Codex sign-in')
-                      : t('Sign in with Open-Science')}
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="codex-shared">{t('Import existing Codex sign-in')}</SelectItem>
-                  <SelectItem value="codex-isolated">{t('Sign in with Open-Science')}</SelectItem>
-                </SelectContent>
-              </Select>
+                onChange={(type) => onChange({ type })}
+              />
             </div>
             <p className="text-xs text-muted-foreground">
               {value.type === 'codex-shared'
@@ -1749,4 +1769,5 @@ const ProviderForm = ({
   )
 }
 
-export { ProviderForm }
+export { CodexAuthSelect, ProviderForm }
+export type { CodexAuthMode }

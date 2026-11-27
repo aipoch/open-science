@@ -60,6 +60,10 @@ export type SessionBusinessRecord =
       // Omission preserves order; an array describes membership/order; null removes an optional
       // collection. Thus an absent activities field and an explicitly empty array stay distinct.
       readonly order?: readonly string[] | null
+      // Journal v2: a suffix-only membership change names just the appended IDs, so replay keeps
+      // the roster it already holds instead of re-reading every historical ID. At most one of
+      // order and append is present per update.
+      readonly append?: readonly string[]
     }
   | { readonly type: 'snapshot'; readonly document: JournalValue }
   | AssistantTextRecord
@@ -294,12 +298,26 @@ export const diffSessionRecords = (
     const oldOrder = oldValues && [...oldValues.keys()]
     const newOrder = [...newValues.keys()]
     const changedOrder = !oldOrder || !isDeepStrictEqual(oldOrder, newOrder)
+    // A suffix-only change is the common append case: replay already holds the previous roster,
+    // so only the new tail IDs need to be written. Any deletion or reorder still restates order.
+    let appended: readonly string[] | undefined
+    if (
+      changedOrder &&
+      oldOrder !== undefined &&
+      newOrder.length > oldOrder.length &&
+      oldOrder.every((key, position) => newOrder[position] === key)
+    )
+      appended = newOrder.slice(oldOrder.length)
     if (upserts.length || changedOrder)
       records.push({
         type: 'entities',
         collection: name,
         upserts,
-        ...(changedOrder ? { order: newOrder } : {})
+        ...(appended === undefined
+          ? changedOrder
+            ? { order: newOrder }
+            : {}
+          : { append: appended })
       })
   }
   return validateSessionRecords(records)
@@ -307,9 +325,13 @@ export const diffSessionRecords = (
 
 export const validateSessionRecords = (
   input: unknown,
-  options?: { parsed: true }
+  // `journalVersion` is the grammar version of the record's own journal envelope. Live callers
+  // omit it because they encode the current version; parsers pass the line's version so an older
+  // line cannot carry newer record grammar.
+  options?: { parsed: true; journalVersion?: number }
 ): readonly SessionBusinessRecord[] => {
   if (!Array.isArray(input) || input.length > 100_000) return fail('Invalid Session record batch.')
+  const journalVersion = options?.journalVersion ?? 2
   // Disk records already came from JSON.parse; freeze/validate them in place. Live callers
   // still normalize into owned copies so later caller mutations cannot change saved records.
   const records = (
@@ -361,16 +383,28 @@ export const validateSessionRecords = (
       )
         return fail('Invalid Session metadata record.')
     } else if (value.type === 'entities') {
+      const orderKey = 'order' in value ? 'order' : 'append' in value ? 'append' : undefined
       if (
-        !exact(value, ['type', 'collection', 'upserts', ...('order' in value ? ['order'] : [])]) ||
+        !exact(value, [
+          'type',
+          'collection',
+          'upserts',
+          ...(orderKey === undefined ? [] : [orderKey])
+        ]) ||
         typeof value.collection !== 'string' ||
         !names.includes(value.collection as SessionRecordCollection) ||
         !index(value.upserts) ||
-        ('order' in value &&
+        (orderKey === 'order' &&
           value.order !== null &&
           (!Array.isArray(value.order) ||
             !value.order.every(id) ||
             new Set(value.order).size !== value.order.length)) ||
+        (orderKey === 'append' && journalVersion < 2) ||
+        (orderKey === 'append' &&
+          (!Array.isArray(value.append) ||
+            value.append.length === 0 ||
+            !value.append.every(id) ||
+            new Set(value.append).size !== value.append.length)) ||
         (value.order === null && (value.upserts as unknown[]).length !== 0)
       )
         return fail('Invalid Session entity record.')
@@ -475,15 +509,7 @@ export const applySessionRecord = (
     owner[field] === undefined ? new Map<string, Record<string, unknown>>() : index(owner[field])
   if (!previous) return fail('Session entity collection has invalid or duplicate IDs.')
   const updated = { ...owner } as Record<string, JournalValue>
-  if (record.order === null) delete updated[field]
-  else {
-    for (const value of record.upserts) {
-      const key = value.id as string
-      if (!previous.has(key) && record.order === undefined)
-        return fail('New Session entity requires an explicit order.')
-      previous.set(key, value)
-    }
-    const order = record.order ?? [...previous.keys()]
+  const writeOrder = (order: readonly string[]): void => {
     const members = new Set(order)
     if (record.upserts.some((value) => !members.has(value.id as string)))
       return fail('Session upsert is absent from the final order.')
@@ -494,6 +520,28 @@ export const applySessionRecord = (
         return value as ObjectValue
       })
     )
+  }
+  if (record.order === null) delete updated[field]
+  else if (record.append !== undefined) {
+    // Journal v2 append: the replayed roster stays authoritative and this record only names the
+    // IDs added after it, so capture the previous order before upserts land in the map.
+    if (owner[field] === undefined)
+      return fail('Session entity append requires an existing collection.')
+    const appended = record.append
+    const previousOrder = [...previous.keys()]
+    for (const value of record.upserts) previous.set(value.id as string, value)
+    const existing = new Set(previousOrder)
+    if (appended.some((key) => existing.has(key)))
+      return fail('Session entity append repeats an existing ID.')
+    writeOrder([...previousOrder, ...appended])
+  } else {
+    for (const value of record.upserts) {
+      const key = value.id as string
+      if (!previous.has(key) && record.order === undefined)
+        return fail('New Session entity requires an explicit order.')
+      previous.set(key, value)
+    }
+    writeOrder(record.order ?? [...previous.keys()])
   }
   const nextSession =
     scope === 'session'

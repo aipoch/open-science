@@ -1984,11 +1984,15 @@ class SettingsService {
     return this.lab.logout()
   }
 
-  cancelCodexLogin(): void {
+  cancelCodexLogin(signInInstallId?: string): void | Promise<void> {
+    if (signInInstallId !== undefined)
+      return this.runtimeManager.cancelSignInInstall(signInInstallId)
     this.providers.cancelCodexLogin()
   }
 
-  cancelClaudeLogin(): void {
+  cancelClaudeLogin(signInInstallId?: string): void | Promise<void> {
+    if (signInInstallId !== undefined)
+      return this.runtimeManager.cancelSignInInstall(signInInstallId)
     this.providers.cancelClaudeLogin()
   }
 

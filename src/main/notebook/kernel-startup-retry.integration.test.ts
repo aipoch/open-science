@@ -1,8 +1,7 @@
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 
 import { createRuntimeConfig } from '../../../packages/notebook-network-sandbox/src/config'
 import { windowsLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
@@ -22,7 +21,7 @@ it.skipIf(process.platform !== 'win32').each([
       ]
     : [])
 ])(
-  'retries only a proven reaped R lane (protected: $protectedMode, admission crash: $crashAdmission)',
+  'executes a new R epoch after an interrupted startup (protected: $protectedMode, admission crash: $crashAdmission)',
   async ({ protectedMode, crashAdmission }) => {
     const root = await mkdtemp(join(tmpdir(), 'kernel-startup-retry-'))
     const loop = join(root, 'loop.cjs')
@@ -136,25 +135,14 @@ it.skipIf(process.platform !== 'win32').each([
              })\n`
             : "process.stdin.once('data', () => process.exit(1))\n"
       )
-      const failed = await executor.execute(request).catch((error) => {
-        expect(error).toBeInstanceOf(NotebookExecutionStopError)
-        return undefined
-      })
-      if (failed) {
-        expect(failed.status, failed.stderr).toBe('failed')
-        expect(failed.stderr).toContain('Notebook kernel process exited with exit code 1')
-      }
+      const failed = await executor.execute(request)
+      expect(failed.status, failed.stderr).toBe('failed')
+      expect(failed.recovery?.retryAfter).toBe('runtime-ready')
       if (protectedMode && !crashAdmission) {
         descendantPid = Number(await readFile(join(root, 'descendant.pid'), 'utf8'))
       }
       if (crashAdmission) {
         descendantPid = Number(await readFile(join(root, 'loop.pid'), 'utf8'))
-      }
-      const ledger = join(root, 'runtime', 'kernel-processes')
-      const entries = await readdir(ledger)
-      for (const entry of entries) {
-        const record = JSON.parse(await readFile(join(ledger, entry), 'utf8'))
-        expect(() => process.kill(record.pid, 0)).toThrow()
       }
       if (crashAdmission) await rm(join(root, 'loop.pid'))
       await writeFile(
@@ -170,9 +158,10 @@ it.skipIf(process.platform !== 'win32').each([
         stdout: 'RETRY_OK'
       })
       if (descendantPid) {
-        // Do not wait for descendant cleanup before requesting the replacement. Admission must
-        // complete the teardown itself; the crashed workload cannot survive a successful retry.
-        expect(() => process.kill(descendantPid!, 0)).toThrow()
+        // Replacement executes independently while background cleanup reaps the old descendant.
+        await vi.waitFor(() => expect(() => process.kill(descendantPid!, 0)).toThrow(), {
+          timeout: 10_000
+        })
       }
     } finally {
       if (descendantPid) {

@@ -8,10 +8,13 @@ import type { Sharp } from 'sharp'
 import { ResourceBudgetExceededError } from '../resource-budget'
 import {
   exceedsDecodedImagePixelLimit,
+  isAnimatedPng,
   MAX_DECODED_IMAGE_PIXELS,
   readRasterImageDimensions,
   type RasterImageDimensions
 } from '../raster-image-safety'
+
+const MAX_STATIC_ATTACHMENT_PIXELS = 64_000_000
 
 // Images larger than this are downscaled/re-encoded before inlining so a single upload never
 // blows past the model's per-image (~5MB) and total-request (~32MB) limits after base64 growth.
@@ -89,6 +92,7 @@ export type InlineImageBudget = {
 }
 
 export type ImageContentErrorCode =
+  | 'IMAGE_PIXEL_LIMIT_EXCEEDED'
   | 'IMAGE_DECODE_FAILED'
   | 'IMAGE_PROCESSING_FAILED'
   | 'IMAGE_PAYLOAD_TOO_LARGE'
@@ -299,6 +303,17 @@ const processImageBytes = async (
   }
   const source = sharp(bytes, inputOptions)
   const metadata = await source.metadata().catch((error: unknown) => {
+    if (
+      pixelLimit === MAX_STATIC_ATTACHMENT_PIXELS &&
+      error instanceof Error &&
+      error.message === 'Input image exceeds pixel limit'
+    ) {
+      throw new ImageContentError(
+        'IMAGE_PIXEL_LIMIT_EXCEEDED',
+        'Static image exceeds the 64 megapixel input limit.',
+        { cause: error }
+      )
+    }
     throw new ImageContentError('IMAGE_DECODE_FAILED', 'Could not decode the image source.', {
       cause: error
     })
@@ -501,8 +516,16 @@ export const prepareModelImageData = async (
       { sourceBytes: size, limitBytes: MAX_AUTO_PROCESS_IMAGE_BYTES }
     )
   }
+  const mimeType = detectedImageMimeType(bytes)
+  const dimensions = mimeType && readRasterImageDimensions(bytes, mimeType)
+  const largeStill =
+    dimensions &&
+    dimensions.width > 0 &&
+    dimensions.height > 0 &&
+    exceedsDecodedImagePixelLimit(dimensions) &&
+    !isAnimatedPng(bytes)
   try {
-    if (size <= MAX_INLINE_IMAGE_BYTES) {
+    if (!largeStill && size <= MAX_INLINE_IMAGE_BYTES) {
       const { default: sharp } = await import('sharp')
       const image = sharp(bytes, {
         animated: true,
@@ -540,7 +563,13 @@ export const prepareModelImageData = async (
           }
         )
     }
-    const processed = await processImageBytes(bytes, 'sharp-raster')
+    const processed = await processImageBytes(
+      bytes,
+      'sharp-raster',
+      {},
+      undefined,
+      largeStill ? MAX_STATIC_ATTACHMENT_PIXELS : MAX_DECODED_IMAGE_PIXELS
+    )
     return { data: processed.data, mimeType: processed.mimeType }
   } catch (error) {
     if (error instanceof ImageContentError) {

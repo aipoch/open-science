@@ -88,6 +88,7 @@ const harness = (
     locale: 'en-US',
     resolvePackageMirror: vi.fn(() => ({ pypiIndex: 'https://mirror/simple' })),
     ensureRecovered: vi.fn().mockResolvedValue(undefined),
+    hasUnsettledKernelCleanup: vi.fn(() => false),
     loadSession: vi.fn().mockResolvedValue(activeSession),
     findSession: vi.fn((sessionId) =>
       sessionId === activeSession.sessionId ? activeSession : undefined

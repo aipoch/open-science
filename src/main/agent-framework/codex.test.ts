@@ -462,7 +462,7 @@ describe('codexFramework', () => {
     })
     expect(config.configFiles?.[0]).toEqual({
       path: join('/data', 'codex', 'config.toml'),
-      content: 'cli_auth_credentials_store = "ephemeral"\n',
+      content: 'cli_auth_credentials_store = "ephemeral"\nthread_unload_delay_secs = 0\n',
       mode: 0o600
     })
     const modelCatalogFile = config.configFiles?.[1]
@@ -512,7 +512,7 @@ describe('codexFramework', () => {
       expect(config.configFiles).toEqual([
         {
           path: join('/data', 'codex', 'config.toml'),
-          content: 'cli_auth_credentials_store = "ephemeral"\n',
+          content: 'cli_auth_credentials_store = "ephemeral"\nthread_unload_delay_secs = 0\n',
           mode: 0o600
         }
       ])
@@ -606,7 +606,7 @@ describe('codexFramework', () => {
     expect(config.configFiles).toEqual([
       {
         path: join('/data', 'codex', 'config.toml'),
-        content: 'cli_auth_credentials_store = "ephemeral"\n',
+        content: 'cli_auth_credentials_store = "ephemeral"\nthread_unload_delay_secs = 0\n',
         mode: 0o600
       }
     ])
@@ -724,7 +724,9 @@ describe('codexFramework', () => {
     })
     // The bridge aliases its app-owned namespaced notebook tools, so no Codex tool-deferral override
     // belongs in config.toml.
-    expect(config.configFiles?.[0]?.content).toBe('cli_auth_credentials_store = "ephemeral"\n')
+    expect(config.configFiles?.[0]?.content).toBe(
+      'cli_auth_credentials_store = "ephemeral"\nthread_unload_delay_secs = 0\n'
+    )
     expect(config.authentication).toBeUndefined()
     expect(config.sessionModel).toBe(CODEX_BRIDGE_MODEL)
     expect(config.providerConfiguration).toEqual({

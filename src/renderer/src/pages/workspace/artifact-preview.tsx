@@ -303,7 +303,9 @@ export const ArtifactPreview = ({
   sessionId,
   managedFileId,
   selectedVersionId,
-  isVisible = true
+  isVisible = true,
+  pdfIsVisible,
+  onPdfUnavailableChange
 }: {
   artifact: MessageArtifact
   preview?: ArtifactPreviewResult
@@ -313,6 +315,8 @@ export const ArtifactPreview = ({
   managedFileId?: string
   selectedVersionId?: string
   isVisible?: boolean
+  pdfIsVisible?: boolean
+  onPdfUnavailableChange?: (unavailable: boolean) => void
 }): React.JSX.Element => {
   const artifactName = getArtifactName(artifact)
   // Renderer selection is source-neutral; source remains relevant only to the nested file reader.
@@ -343,6 +347,8 @@ export const ArtifactPreview = ({
         mimeType={artifact.mimeType}
         size={artifact.size}
         mtimeMs={artifact.mtimeMs}
+        isVisible={pdfIsVisible}
+        onUnavailableChange={onPdfUnavailableChange}
       />
     )
   }

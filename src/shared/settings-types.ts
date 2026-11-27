@@ -586,6 +586,8 @@ export type ValidationCategory =
   | 'unknown'
 
 export type ValidateProviderResult = {
+  // The login process could not be launched locally, before account authorization.
+  cliLaunchFailed?: boolean
   // Exact prospective model and route tested by the edit/save operation.
   testedTarget?: ProviderValidationTarget
   ok: boolean
@@ -687,6 +689,8 @@ export type NodeInstallHint = {
 }
 
 export type InstallClaudeRequest = {
+  // Correlates a cancellable onboarding install without affecting installs started in Settings.
+  signInAttemptId?: string
   source: ClaudeInstallSource
   // Optional trusted-source preference for an explicit install request. Automatic setup omits this
   // field and lets the installer try the official registry and China-friendly mirror in order.
@@ -712,6 +716,8 @@ export type CodexInstallSource = Exclude<ClaudeInstallSource, 'official-script'>
 // Codex supports only an app-managed bundle or the upstream npm-global adapter. Authentication is
 // always provider API-key based; ChatGPT/local Codex login is intentionally absent.
 export type InstallCodexRequest = {
+  // Onboarding probes the pair before installing and can cancel its own attempt.
+  signInAttemptId?: string
   source: CodexInstallSource
 }
 

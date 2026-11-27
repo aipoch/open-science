@@ -1993,7 +1993,7 @@ describe('repl_execute tool', () => {
     }
   })
 
-  it('delivers verified REPL exit recovery in the immediate MCP response and history', async () => {
+  it('delivers REPL exit recovery in the immediate MCP response and history', async () => {
     const root = await mkdtemp(join(tmpdir(), 'repl-exit-mcp-'))
     const recovery = {
       execution: 'may-have-run' as const,
@@ -2002,8 +2002,7 @@ describe('repl_execute tool', () => {
         kind: 'repl' as const,
         signal: 'SIGKILL',
         exitCode: null,
-        cause: 'unknown' as const,
-        cleanup: 'verified' as const
+        cause: 'unknown' as const
       }
     }
     const service = new NotebookRuntimeService({
@@ -2055,7 +2054,9 @@ describe('repl_execute tool', () => {
       const result = JSON.parse(text)
       expect(response.isError).toBe(true)
       expect(result).toMatchObject({ runId: run.runId, status: 'failed', recovery })
-      expect(result.recovery.guidance).toContain('no extra restart')
+      expect(result.recovery.guidance).toContain(
+        'The next execution starts a fresh interpreter if needed.'
+      )
       expect(run.recovery).toEqual(recovery)
     } finally {
       await client.close()

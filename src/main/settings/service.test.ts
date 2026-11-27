@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { MINIMUM_CODEX_CLI_VERSION } from '../../shared/codex-runtime'
 import { defaultVendorModel } from '../../shared/provider-model-policy'
 import type { ClaudeDetectResult } from '../../shared/settings'
 import {
@@ -181,6 +182,8 @@ type ManagedInstallImpl = (options: {
 }>
 
 type ManagedCodexInstallImpl = (options: {
+  existingCodexPath?: string
+  signal?: AbortSignal
   installId: string
   onEvent: (event: { kind: string; installId: string }) => void
   dataRoot: string
@@ -212,6 +215,7 @@ const createService = (
     codebuddyDetected?: { path: string; version: string }
     allocateOpenCodeUsagePort?: () => Promise<number>
     codexDetected?: { path: string; version: string; nativePath?: string; nativeVersion?: string }
+    codexDetectDeps?: Partial<NonNullable<SettingsServiceOptions['codexDetectDeps']>>
     managedCodexAdapterPath?: string
     managedCodexNativePath?: string
     // Simulates an external native Codex CLI reachable only via the augmented PATH (e.g. Homebrew),
@@ -320,7 +324,8 @@ const createService = (
       smokeInitialize: () => Promise.resolve(options.codexSmokeOk ?? true),
       resolveNpmBinDirs: () => Promise.resolve([]),
       managedAdapterPath: options.managedCodexAdapterPath ?? options.codexDetected?.path,
-      managedCodexPath: options.managedCodexNativePath ?? options.codexDetected?.nativePath
+      managedCodexPath: options.managedCodexNativePath ?? options.codexDetected?.nativePath,
+      ...options.codexDetectDeps
     },
     codexAuth: options.codexAuth,
     resolveCodexProxyEnvironment:
@@ -1302,6 +1307,7 @@ describe('SettingsService: providers', () => {
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
       [
         'cli_auth_credentials_store = "file"',
+        'thread_unload_delay_secs = 0',
         '# Open-Science: begin imported Codex route selection',
         'model_provider = "subscription-route"',
         '# Open-Science: end imported Codex route selection',
@@ -2033,7 +2039,7 @@ describe('SettingsService: providers', () => {
     expect(codexAuth.cancelLogin).toHaveBeenCalledOnce()
     expect(codexAuth.logoutIsolated).not.toHaveBeenCalled()
     await expect(readFile(appConfigPath, 'utf8')).resolves.toBe(
-      'cli_auth_credentials_store = "file"\n'
+      'cli_auth_credentials_store = "file"\nthread_unload_delay_secs = 0\n'
     )
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.lastValidatedAt).toBeUndefined()
@@ -3742,7 +3748,7 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.env.NO_PROXY).toContain('127.0.0.1')
     expect(backend.proxyEnvironmentMode).toBe('replace')
     expect(await readFile(join(storageRoot, 'codex-subscription', 'config.toml'), 'utf8')).toBe(
-      'cli_auth_credentials_store = "file"\n'
+      'cli_auth_credentials_store = "file"\nthread_unload_delay_secs = 0\n'
     )
     expect(await readFile(join(storageRoot, 'codex', 'config.toml'), 'utf8')).toBe(
       'model = "account-default"\ncli_auth_credentials_store = "ephemeral"\n'
@@ -5908,6 +5914,23 @@ describe('installClaude (app-managed source)', () => {
     expect(disposed).toBe(true)
   })
 
+  it('cancels only the managed install owned by the sign-in attempt', async () => {
+    const service = createService(undefined, {
+      installManagedClaudeImpl: async ({ installId, signal }) => {
+        await new Promise<void>((resolve) =>
+          signal!.addEventListener('abort', () => resolve(), { once: true })
+        )
+        return { result: { ok: false, installId, error: 'Cancelled' } }
+      }
+    })
+    const install = service.installClaude({ source: 'managed', signInAttemptId: 'card-1' }, vi.fn())
+    await service.cancelClaudeLogin('other-card')
+    expect(service.hasActiveInstall()).toBe(true)
+    await service.cancelClaudeLogin('card-1')
+    expect((await install).ok).toBe(false)
+    expect(service.hasActiveInstall()).toBe(false)
+  })
+
   it('routes managed installs through the managed installer and persists the resolved path', async () => {
     const service = createService(undefined, {
       installManagedClaudeImpl: async ({ installId }) => ({
@@ -5923,7 +5946,7 @@ describe('installClaude (app-managed source)', () => {
     const snapshot = await service.getSettingsView()
     expect(snapshot.claude).toEqual({
       resolvedPath: '/data/claude-code/bin/claude',
-      version: '2.1.209'
+      version: '2.1.118'
     })
   })
 
@@ -6041,6 +6064,111 @@ describe('installOpencode', () => {
 })
 
 describe('installCodex', () => {
+  it('discovers the managed adapter and an existing native CLI for first-run sign-in without installing', async () => {
+    const install = vi.fn()
+    const adapterPath = '/managed/adapter/index.js'
+    const nativePath = '/usr/local/bin/codex'
+    const service = createService(undefined, {
+      managedCodexAdapterPath: adapterPath,
+      codexExternalNative: { path: nativePath, version: `codex-cli ${MINIMUM_CODEX_CLI_VERSION}` },
+      installManagedCodexImpl: install
+    })
+    expect((await repository.getSettings()).codex?.nativePath).toBeUndefined()
+    const result = await service.installCodex(
+      { source: 'managed', signInAttemptId: 'login' },
+      vi.fn()
+    )
+    expect(result.ok).toBe(true)
+    expect((await repository.getSettings()).codex).toMatchObject({
+      resolvedPath: adapterPath,
+      nativePath
+    })
+    expect(install).not.toHaveBeenCalled()
+  })
+
+  it('cancels only the matching sign-in installation when the managed adapter is missing', async () => {
+    const started = Promise.withResolvers<Parameters<ManagedCodexInstallImpl>[0]>()
+    const nativePath = '/usr/local/bin/codex'
+    const service = createService(undefined, {
+      codexExternalNative: { path: nativePath, version: `codex-cli ${MINIMUM_CODEX_CLI_VERSION}` },
+      installManagedCodexImpl: async (options) => {
+        started.resolve(options)
+        await new Promise<void>((resolve) =>
+          options.signal!.addEventListener('abort', () => resolve(), { once: true })
+        )
+        return { result: { installId: options.installId, ok: false } }
+      }
+    })
+    const pending = service.installCodex({ source: 'managed', signInAttemptId: 'owner' }, vi.fn())
+    const options = await Promise.race([
+      started.promise,
+      pending.then(() => {
+        throw new Error('Codex preparation finished before installation started')
+      })
+    ])
+    try {
+      expect(options.existingCodexPath).toBe(nativePath)
+      await service.cancelCodexLogin('other')
+      expect(options.signal?.aborted).toBe(false)
+    } finally {
+      await service.cancelCodexLogin('owner')
+    }
+    await expect(pending).resolves.toMatchObject({ ok: false, error: 'Installation cancelled.' })
+    expect((await repository.getSettings()).codex?.nativePath).toBeUndefined()
+  })
+
+  it.each([
+    { adapter: true, supportedCli: true },
+    { adapter: false, supportedCli: true },
+    { adapter: true, supportedCli: false }
+  ])(
+    'prepares sign-in with an older bundled CLI (adapter=$adapter, supported PATH CLI=$supportedCli)',
+    async ({ adapter, supportedCli }) => {
+      const bundled = '/Applications/ChatGPT.app/Contents/Resources/codex'
+      const nativePath = '/opt/test/bin/codex'
+      const adapterPath = '/managed/adapter/index.js'
+      const install = vi.fn<ManagedCodexInstallImpl>(async ({ installId }) => ({
+        result: { installId, ok: false, error: 'installer called' }
+      }))
+      const smokeInitialize = vi.fn(async () => true)
+      const service = createService(undefined, {
+        managedCodexAdapterPath: adapter ? adapterPath : undefined,
+        codexDetectDeps: {
+          platform: 'darwin',
+          env: { PATH: dirname(nativePath) },
+          getCodexVersion: async (path) =>
+            path === bundled
+              ? 'codex-cli 0.157.1'
+              : supportedCli && path === nativePath
+                ? MINIMUM_CODEX_CLI_VERSION
+                : undefined,
+          smokeInitialize
+        },
+        installManagedCodexImpl: install
+      })
+      const result = await service.installCodex(
+        { source: 'managed', signInAttemptId: 'login' },
+        vi.fn()
+      )
+      if (adapter && supportedCli) {
+        expect(result.ok).toBe(true)
+        expect(smokeInitialize).toHaveBeenCalledWith(
+          adapterPath,
+          { codexPath: nativePath },
+          expect.any(AbortSignal)
+        )
+        expect((await repository.getSettings()).codex?.nativePath).toBe(nativePath)
+        expect(install).not.toHaveBeenCalled()
+      } else {
+        expect(install).toHaveBeenCalledOnce()
+        expect(install.mock.calls[0][0].existingCodexPath).toBe(
+          supportedCli ? nativePath : undefined
+        )
+        expect(result.error).toBe('installer called')
+      }
+    }
+  )
+
   it('persists the managed adapter and native Codex pair', async () => {
     const service = createService(undefined, {
       installManagedCodexImpl: async ({ installId }) => ({

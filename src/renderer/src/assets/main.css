@@ -128,6 +128,122 @@ html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) 
   }
 }
 
+@custom-variant onboarding-narrow (@media (max-width: 680px));
+@custom-variant onboarding-short (@media (max-height: 740px));
+
+@theme {
+  --ease-onboarding-default: ease;
+  --ease-onboarding: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-onboarding-ring: onboarding-ring-gather 3.06s var(--ease-onboarding) both;
+  --animate-onboarding-download: onboarding-download-pending 1.6s ease-in-out infinite alternate;
+  --animate-onboarding-guide: onboarding-guide-cycle 5.2s linear both;
+  --font-onboarding-serif: Georgia, 'Times New Roman', serif;
+}
+
+@theme inline {
+  --shadow-onboarding-shell:
+    var(--shadow-dialog), 0 1.5rem 5rem color-mix(in oklab, var(--foreground) 18%, transparent);
+  --shadow-onboarding-card-hover:
+    var(--shadow-card), 0 0.5rem 1.5rem color-mix(in oklab, var(--provider-accent) 12%, transparent);
+  --shadow-onboarding-guide-focus: 0 0 0 3px color-mix(in oklab, var(--primary) 25%, transparent);
+
+  --background-image-onboarding-silk:
+    radial-gradient(
+      circle at 17% 26%,
+      color-mix(in oklab, var(--provider-accent) 42%, transparent) 0 1px,
+      transparent 1.25px
+    ),
+    repeating-linear-gradient(
+      38deg,
+      transparent 0 2.8rem,
+      color-mix(in oklab, var(--provider-accent) 14%, transparent) 3rem 3.25rem,
+      transparent 3.5rem 6.4rem
+    ),
+    linear-gradient(
+      25deg,
+      color-mix(in oklab, var(--provider-accent) 26%, transparent),
+      transparent 68%
+    );
+  --background-image-onboarding-guide-bars: repeating-linear-gradient(
+    90deg,
+    transparent 0 0.8rem,
+    color-mix(in oklab, var(--primary) 70%, transparent) 0.8rem 1.25rem,
+    transparent 1.25rem 1.7rem
+  );
+  --background-image-onboarding-guide-scatter:
+    radial-gradient(circle at 30% 40%, var(--primary) 0 0.14rem, transparent 0.16rem),
+    radial-gradient(circle at 62% 65%, var(--primary) 0 0.14rem, transparent 0.16rem),
+    radial-gradient(circle at 76% 30%, var(--primary) 0 0.14rem, transparent 0.16rem);
+  --background-image-onboarding-card: linear-gradient(
+    165deg,
+    color-mix(in oklab, var(--provider-accent) 22%, var(--bg-10)),
+    color-mix(in oklab, var(--provider-accent) 6%, var(--bg-10)) 65%,
+    var(--bg-10)
+  );
+  --background-image-onboarding-sheen: linear-gradient(
+    120deg,
+    transparent,
+    color-mix(in oklab, var(--bg-000) 24%, transparent),
+    transparent
+  );
+  --background-image-onboarding-tray: linear-gradient(
+    transparent,
+    color-mix(in oklab, var(--bg-10) 46%, transparent)
+  );
+}
+
+@utility onboarding-card-palette {
+  /* Provider cards keep the approved dark glass palette in both app themes. */
+  --bg-10: hsl(60 3% 10%);
+  --bg-000: hsl(48 4% 15%);
+  --bg-200: hsl(50 3% 18%);
+  --bg-300: hsl(48 3% 22%);
+  --bg-400: hsl(46 3% 28%);
+  --border: #3a3931;
+  --input: #3a3931;
+  --text-000: hsl(48 12% 92%);
+  --text-100: hsl(45 5% 80%);
+  --text-200: hsl(45 5% 76%);
+  --text-300: hsl(45 4% 72%);
+  --foreground: #e8e6df;
+  --card: #26251f;
+  --card-foreground: #e8e6df;
+  --muted-foreground: hsl(45 5% 78%);
+  --primary: oklch(0.72 0.1 184);
+  --primary-foreground: oklch(0.18 0.03 190);
+  --shadow-card-value: 0 0 0 1px rgb(0 0 0 / 0.5), 0 4px 24px rgb(0 0 0 / 0.45);
+}
+
+@keyframes onboarding-ring-gather {
+  0% {
+    opacity: 0.82;
+    transform: rotate(0deg) scale(1);
+  }
+  62% {
+    opacity: 0.82;
+    transform: rotate(240deg) scale(0.92);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(540deg) scale(0.12);
+  }
+}
+
+@keyframes onboarding-download-pending {
+  to {
+    background-position: right center;
+  }
+}
+
+@keyframes onboarding-guide-cycle {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* The annotate trigger hangs below the selection's last line, inside a transcript row whose
    `content-visibility: auto` containment makes it a stacking context. Later sibling rows and
    the composer card would otherwise paint over the trigger whenever it overhangs its row, so

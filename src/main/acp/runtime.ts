@@ -1216,6 +1216,10 @@ class AcpRuntime {
     return this.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().frameworkId
   }
 
+  clearFreshMainContext(sessionId: string): void {
+    this.sessionRegistry.lookup(sessionId)?.aggregate.clearFreshMainContext()
+  }
+
   // Invokes the framework's own context compaction command on the attached agent session. The
   // command is an internal control turn: fresh usage updates are retained, while its command
   // echo/status output is not projected into the user's conversation.
