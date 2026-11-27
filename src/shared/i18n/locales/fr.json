@@ -8164,6 +8164,8 @@
     "Request failed": "Échec de la requête",
     "Model request failed": "La requête au modèle a échoué",
     "The model provider could not complete the request. Retry or check the model provider settings.": "Le fournisseur de modèle n’a pas pu terminer la requête. Réessayez ou vérifiez ses paramètres.",
+    "Image resolution is too high": "La résolution de l’image est trop élevée",
+    "Resize the image to 64 megapixels or less and send it again.": "Réduisez l’image à 64 mégapixels maximum, puis envoyez-la à nouveau.",
     "The input is too long": "Le contenu saisi est trop long",
     "Shorten the conversation or remove some attachments, then retry.": "Raccourcissez la conversation ou retirez certaines pièces jointes, puis réessayez.",
     "Check your credentials, model and account settings, then retry.": "Vérifiez vos identifiants et les paramètres du modèle et du compte, puis réessayez.",

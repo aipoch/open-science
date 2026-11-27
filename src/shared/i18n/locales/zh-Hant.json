@@ -7828,6 +7828,8 @@
     "Request failed": "請求失敗",
     "Model request failed": "模型請求失敗",
     "The model provider could not complete the request. Retry or check the model provider settings.": "模型服務商未能完成請求。請重試或檢查模型服務商設定。",
+    "Image resolution is too high": "圖片解析度過高",
+    "Resize the image to 64 megapixels or less and send it again.": "請將圖片縮小至 6400 萬畫素以內，再重新傳送。",
     "The input is too long": "輸入內容過長",
     "Shorten the conversation or remove some attachments, then retry.": "請縮短對話內容或移除部分附件，然後重試。",
     "Check your credentials, model and account settings, then retry.": "請檢查憑證、模型和帳戶設定，然後重試。",

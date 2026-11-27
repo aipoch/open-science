@@ -5,7 +5,11 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import sharp from 'sharp'
 
-import { buildImageContentData, prepareImageContentData } from './attachment-media'
+import {
+  buildImageContentData,
+  prepareModelImageData,
+  prepareImageContentData
+} from './attachment-media'
 
 let root: string | undefined
 
@@ -61,6 +65,8 @@ describe('sharp image-processing adapter', () => {
     })
       .jpeg()
       .toFile(filePath)
+    const attachment = await prepareModelImageData(await readFile(filePath))
+    expect((await sharp(Buffer.from(attachment.data, 'base64')).metadata()).width).toBe(1568)
     await expect(prepareImageContentData(filePath)).rejects.toThrow(/pixel processing limit/u)
     await expect(
       prepareImageContentData(filePath, { maxSize: 1200 }, undefined, undefined, true)
@@ -82,6 +88,20 @@ describe('sharp image-processing adapter', () => {
     ).resolves.toMatchObject({
       crop: { left: 3100, top: 1700, right: 3500, bottom: 1950 },
       outputSize: { width: 400, height: 250 }
+    })
+  })
+
+  it('distinguishes a confirmed static pixel overflow from unreadable image data', async () => {
+    const png = await sharp({
+      create: { width: 8001, height: 8000, channels: 3, background: 'white' }
+    })
+      .png({ compressionLevel: 1 })
+      .toBuffer()
+    await expect(prepareModelImageData(png)).rejects.toMatchObject({
+      code: 'IMAGE_PIXEL_LIMIT_EXCEEDED'
+    })
+    await expect(prepareModelImageData(png.subarray(0, 33))).rejects.toMatchObject({
+      code: 'IMAGE_DECODE_FAILED'
     })
   })
 
