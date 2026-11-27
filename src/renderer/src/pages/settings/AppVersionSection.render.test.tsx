@@ -260,10 +260,13 @@ describe('AppVersionSection', () => {
     expect(check).toHaveBeenCalledOnce()
   })
 
-  it('shows an update action when a new version is available', () => {
+  it('emphasizes the update action and opens the update dialog when a new version is available', () => {
     useUpdateStore.setState({
       status: { state: 'available', current: '0.2.0', latest: '0.3.0', notes: 'n' }
     })
+    const openDialog = vi
+      .spyOn(useUpdateStore.getState(), 'openDialog')
+      .mockImplementation(() => {})
 
     act(() => {
       root.render(<AppVersionSection />)
@@ -273,7 +276,10 @@ describe('AppVersionSection', () => {
       /update to 0\.3\.0/i.test(element.textContent ?? '')
     )
 
-    expect(button).toBeDefined()
+    expect(button?.dataset.variant).toBe('default')
+    expect(button?.querySelector('.update-reminder-attention[aria-hidden="true"]')).not.toBeNull()
+    act(() => button!.click())
+    expect(openDialog).toHaveBeenCalledOnce()
   })
 
   it.each([

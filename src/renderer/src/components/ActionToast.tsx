@@ -59,7 +59,7 @@ const ActionToast = ({
         if (!event.currentTarget.contains(event.relatedTarget)) setFocusedWithin(false)
       }}
       className={cn(
-        'pointer-events-auto fixed inset-x-3 top-3 mx-auto z-toast flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[calc(100svh-1.5rem)] flex-wrap items-start gap-3 overflow-y-auto shadow-notice',
+        'pointer-events-auto fixed inset-x-3 top-[calc(var(--windows-titlebar-height,0px)+0.75rem)] mx-auto z-toast flex w-[min(24rem,calc(100vw-1.5rem))] max-h-[calc(100svh-var(--windows-titlebar-height,0px)-1.5rem)] flex-wrap items-start gap-3 overflow-y-auto shadow-notice',
         detail ? 'rounded-2xl' : noticeSurfaceClassName,
         !detail && [noticeCapsuleClassName, 'w-fit max-w-[min(24rem,calc(100vw-1.5rem))]'],
         className
@@ -109,7 +109,7 @@ const ActionToastStack = ({
   <div
     data-action-toast-stack
     ref={ref}
-    className="pointer-events-none fixed inset-x-0 top-0 z-toast flex max-h-svh flex-col items-center gap-2 overflow-y-auto px-3 pt-3 pb-10 [&>div]:static [&>div]:max-w-[min(24rem,100%)] [&>div:not([data-action-toast-compact])]:w-full [&>div]:shrink-0"
+    className="pointer-events-none fixed inset-x-0 top-[var(--windows-titlebar-height,0px)] z-toast flex max-h-[calc(100svh-var(--windows-titlebar-height,0px))] flex-col items-center gap-2 overflow-y-auto px-3 pt-3 pb-10 [&>div]:static [&>div]:max-w-[min(24rem,100%)] [&>div:not([data-action-toast-compact])]:w-full [&>div]:shrink-0"
   >
     {children}
   </div>

@@ -167,8 +167,28 @@ const resetOnboardingStores = (
     installCodeBuddy: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
     installCodex: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
     installOpencode: vi.fn().mockResolvedValue({ installId: 'i', ok: true }),
-    setAgentFramework: vi.fn().mockResolvedValue(undefined),
+    setAgentFramework: vi.fn(async (id: AgentFrameworkId) => {
+      useSettingsStore.setState({ agentFrameworkId: id })
+    }),
     completeOnboarding: vi.fn().mockResolvedValue(undefined),
+    addOnboardingKiloProvider: vi.fn(async () => {
+      const provider = {
+        id: 'test-kilo',
+        name: 'Kilo Gateway',
+        type: 'official' as const,
+        vendorId: 'kilo' as const,
+        model: 'kilo-auto/free',
+        models: ['kilo-auto/free'],
+        supportsImageInput: false,
+        needsKey: false,
+        hasKey: false
+      }
+      useSettingsStore.setState({
+        providers: [provider],
+        activeProviderId: provider.id,
+        activeModel: provider.model
+      })
+    }),
     cancelCodexLogin: vi.fn().mockResolvedValue(undefined),
     cancelIsolatedClaudeLogin: vi.fn().mockResolvedValue(undefined),
     cancelSharedClaudeLogin: vi.fn().mockResolvedValue(undefined),

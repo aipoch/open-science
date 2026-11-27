@@ -7,6 +7,7 @@ import { InlineNotice } from '@/components/ui/inline-notice'
  * contrast: pass (semantic Settings tokens) · slop: pass
  */
 import {
+  ArrowUp,
   CircleCheck,
   CircleHelp,
   Download,
@@ -17,7 +18,7 @@ import {
   Shield
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useEffect, useRef } from 'react'
+import { Fragment, useEffect, useRef } from 'react'
 
 import { license as licenseId } from '../../../../../package.json'
 import { AppLogo } from '@/components/AppLogo'
@@ -78,8 +79,9 @@ const AppVersionSection = ({
 
   const version = appInfo?.version ?? status.current
   const isChecking = status.state === 'checking'
+  const isAvailable = status.state === 'available'
   const isDownloading = status.state === 'downloading'
-  const hasUpdate = status.state === 'available' || isDownloading || status.state === 'ready'
+  const hasUpdate = isAvailable || isDownloading || status.state === 'ready'
   const helpPreviewClassName =
     previewState === 'hover'
       ? 'is-hover bg-muted'
@@ -341,14 +343,34 @@ const AppVersionSection = ({
                     )}
                 </div>
                 {hasUpdate ? (
-                  <Button type="button" size="sm" variant="outline" onClick={() => openDialog()}>
-                    {status.state === 'ready'
-                      ? status.applyKind === 'restart'
-                        ? t('Restart to update')
-                        : t('Open installer')
-                      : isDownloading
-                        ? t('View details')
-                        : t('Update to {{version}}', { version: status.latest })}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={isAvailable ? 'default' : 'outline'}
+                    className={isAvailable ? 'update-reminder relative isolate' : undefined}
+                    data-state={isAvailable ? status.state : undefined}
+                    onClick={() => openDialog()}
+                  >
+                    {isAvailable && (
+                      <Fragment key={status.latest}>
+                        <span className="update-reminder-attention" aria-hidden="true">
+                          <span className="update-reminder-sheen" />
+                          <span className="update-reminder-orbit" />
+                        </span>
+                        <span className="update-reminder-mark" aria-hidden="true">
+                          <ArrowUp className="size-3.5" strokeWidth={2.25} />
+                        </span>
+                      </Fragment>
+                    )}
+                    <span className="relative z-10">
+                      {status.state === 'ready'
+                        ? status.applyKind === 'restart'
+                          ? t('Restart to update')
+                          : t('Open installer')
+                        : isDownloading
+                          ? t('View details')
+                          : t('Update to {{version}}', { version: status.latest })}
+                    </span>
                   </Button>
                 ) : null}
               </div>

@@ -698,7 +698,7 @@ export const createCodexFramework = ({
       configFiles: [
         {
           path: join(codexStorageDir(ctx.storageRoot), 'config.toml'),
-          content: 'cli_auth_credentials_store = "ephemeral"\n',
+          content: 'cli_auth_credentials_store = "ephemeral"\nthread_unload_delay_secs = 0\n',
           mode: 0o600
         },
         ...(modelCatalogPath && modelCatalogContent

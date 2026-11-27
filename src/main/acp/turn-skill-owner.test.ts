@@ -215,7 +215,7 @@ describe('AcpTurnSkillOwner', () => {
   })
 
   it.each([codexFramework, opencodeFramework])(
-    'revokes earlier Specialist scope on every Main %s turn without reloading',
+    'revokes earlier Specialist scope on %s for unconfirmed context and steering',
     async (framework) => {
       const requestSkillsReload = vi.fn()
       const owner = new AcpTurnSkillOwner({ requestSkillsReload })
@@ -232,6 +232,12 @@ describe('AcpTurnSkillOwner', () => {
       expect(prepared.skillScopeGuidance).toContain(
         'earlier Specialist identity and Specialist-specific Skill or Connector scope'
       )
+      const followUp = await owner.presentFollowUp({
+        frameworkId: framework.id,
+        text: 'also check the figures',
+        selectedSkillIds: []
+      })
+      expect(followUpPromptText(followUp)).toContain('<open_science_main_agent_scope>')
       expect(requestSkillsReload).not.toHaveBeenCalled()
     }
   )
@@ -824,6 +830,7 @@ describe('AcpTurnSkillOwner', () => {
       frameworkId: codeBuddyFramework.id,
       selectionText: requestText,
       promptText: requestText,
+      omitMainScopeGuidance: () => true,
       codebuddy: {
         root,
         selectorAvailable: true,
@@ -836,6 +843,8 @@ describe('AcpTurnSkillOwner', () => {
     expect(prepared.skillRuntimeAllowlist).toEqual([])
     expect(prepared.codexSkillInputs).toEqual([])
     expect(prepared.skillActivityInputs).toEqual([{ name: 'mcp-pubmed', path: pubmedPath }])
+    expect(prepared.skillScopeGuidance).toContain('<open_science_codebuddy_skill_route>')
+    expect(prepared.skillScopeGuidance).not.toContain('<open_science_main_agent_scope>')
     expect(prepared.skillScopeGuidance).toContain('mcp-pubmed')
     expect(prepared.skillScopeGuidance).toContain('already loaded by Open-Science')
     expect(prepared.skillScopeGuidance).toContain('PUBMED_ROUTE_SENTINEL')

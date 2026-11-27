@@ -1,4 +1,4 @@
-import { fork, type ChildProcess } from 'node:child_process'
+import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
 import { researchFilmResources } from './resources.js'
 import type { ResearchVideoSpeechInput, ResearchVideoWorkerMessage } from './generation.js'
 
@@ -19,8 +19,8 @@ export class ResearchVideoSpeechCleanupError extends Error {
   }
 }
 
-export const forkSpeechProcess = (): ChildProcess =>
-  fork(researchFilmResources().speechProcessPath, [], {
+export const forkSpeechProcess = (): ChildProcess => {
+  const options: ForkOptions & { windowsHide: boolean } = {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined,
@@ -28,8 +28,11 @@ export const forkSpeechProcess = (): ChildProcess =>
     },
     execArgv: [],
     serialization: 'advanced',
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc']
-  })
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    windowsHide: true
+  }
+  return fork(researchFilmResources().speechProcessPath, [], options)
+}
 
 /** Owns exactly one leaf process. A signal, error or IPC disconnect does not prove exit. */
 export function ownSpeechProcess(

@@ -45,6 +45,8 @@ const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 120_000
 // Cover the service's 40s authentication-aware stop budget plus exit-record observation.
 const STOP_TIMEOUT_MS = 42_000
+const ARTIFACT_REQUEST_TIMEOUT_MS = 5 * 60 * 1_000
+const MAX_TIMER_DELAY_MS = 2_147_483_647
 const usage = `Usage: open-science <command> [options]
 
 Commands:
@@ -96,8 +98,8 @@ Commands:
   plan approve <session-id> --artifact-version <id> --revision <number> --branch <id>
   plan reject <session-id> --artifact-version <id> --revision <number> --branch <id>
   plan revise <session-id> --artifact-version <id> --revision <number> --branch <id> --feedback <text>
-  artifacts list <session-id>
-  artifacts download <download-id> --session <session-id> [--output <path>]
+  artifacts list <session-id> [--timeout-ms <ms>]
+  artifacts download <download-id> --session <session-id> [--output <path>] [--timeout-ms <ms>]
   literature search [query] [--project <id-or-name>] [--limit <n>] [--offset <n>]
   literature show <item-id>
   literature styles
@@ -151,7 +153,7 @@ Options:
   --request-id <id>      Stable submission identity for lookup and safe retries
   --wait                 Observe the Run until completion or attention (default: 10s, max: 30s)
   --return-on-attention  Accepted for older scripts; --wait now returns on attention
-  --timeout-ms <ms>      Bound startup or observation of a Run or package operation
+  --timeout-ms <ms>      Bound startup, Run observation, package, or Artifact requests
   --output <path>        Destination path (session export, artifacts download)
   --style <style-id>     Citation style (literature format)
   --locale <locale>      Citation locale: en-US (default) or zh-CN (literature format)
@@ -519,7 +521,7 @@ export const parseCliArgs = (argv) => {
   }
   if (options.timeoutMs !== undefined) {
     const timeoutMs = Number(options.timeoutMs)
-    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMER_DELAY_MS) {
       throw new CliUsageError(`Invalid timeout: ${options.timeoutMs}`)
     }
     options.timeoutMs = timeoutMs
@@ -605,14 +607,16 @@ export const parseCliArgs = (argv) => {
   }
   const isPackageTransfer =
     command === 'session' && ['export', 'import', 'fork'].includes(subcommand)
+  const isArtifactRequest = command === 'artifacts' && ['list', 'download'].includes(subcommand)
   if (
     options.timeoutMs !== undefined &&
     !isPackageTransfer &&
+    !isArtifactRequest &&
     command !== 'start' &&
     (command !== 'run' || (subcommand && subcommand !== 'wait') || !options.wait)
   ) {
     throw new CliUsageError(
-      '--timeout-ms requires start, run --wait, run wait or session export/import/fork.'
+      '--timeout-ms requires start, run --wait, run wait, session export/import/fork, or artifacts list/download.'
     )
   }
   if (command === 'session' && subcommand === 'import') {
@@ -2148,7 +2152,14 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
   if (command === 'artifacts' && subcommand === 'list') {
     const sessionId = positionals[0]
     if (!sessionId) throw new CliUsageError('Session id is required.')
-    outputValue(await call('list_artifacts', { sessionId }), options, deps)
+    outputValue(
+      await call('list_artifacts', {
+        sessionId,
+        timeoutMs: options.timeoutMs ?? ARTIFACT_REQUEST_TIMEOUT_MS
+      }),
+      options,
+      deps
+    )
     return
   }
   if (command === 'artifacts' && subcommand === 'download') {
@@ -2159,6 +2170,7 @@ export const runTaskCommand = async (parsed, dependencies = {}) => {
       await call('download_artifact', {
         sessionId: options.session,
         downloadId,
+        timeoutMs: options.timeoutMs ?? ARTIFACT_REQUEST_TIMEOUT_MS,
         ...(options.output ? { outputPath: resolve(options.output) } : {})
       }),
       options,

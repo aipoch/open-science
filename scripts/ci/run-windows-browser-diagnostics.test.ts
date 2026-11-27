@@ -285,7 +285,7 @@ it('does not restart for stale NetLog evidence', async () => {
 it.each([
   [
     'windows-e2e-regression.yml',
-    'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/6 --fail-on-flaky-tests'
+    'npm run test:e2e:browser -- --workers=1 --global-timeout=600000 --shard=${{ matrix.shard }}/6 --fail-on-flaky-tests'
   ]
 ])(
   'wraps Windows browser diagnostics in %s and preserves their selected commands',

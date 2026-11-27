@@ -199,6 +199,7 @@ export type NotebookSessionExecutor<
   shutdown: () => Promise<{ reaped: boolean }>
   restart?: () => Promise<void>
   terminate?: (kind: 'python' | 'r' | 'repl', env: string) => Promise<void>
+  restartProcess?: (kind: 'python' | 'r' | 'repl', env: string) => Promise<void>
   resources?: () => NotebookOwnedResource[]
   monitoredProcesses?: () => import('./process-monitor').MonitoredKernelProcess[]
   idleProcesses?: () => Array<{
@@ -206,6 +207,8 @@ export type NotebookSessionExecutor<
     processKey: string
     executionDomain?: 'host'
     release: () => Promise<boolean>
+    // Detaches the idle process while its executor retains responsibility for reaping it.
+    retire?: () => boolean
   }>
 }
 
@@ -325,6 +328,11 @@ export class NotebookSessionAggregate<
   private executorValue: NotebookSessionExecutor<Request, Result>
   private executorGenerationValue: NotebookSessionExecutorGeneration
   private executorGenerationActive = true
+  // A reusable stop can leave physical cleanup owned by an executor whose callbacks are retired.
+  private readonly retiredExecutors = new Map<
+    NotebookSessionExecutor<Request, Result>,
+    NotebookSessionExecutorGeneration
+  >()
   // Serializes lifecycle callback commits with executor teardown. Teardown synchronously closes
   // admission, then drains the callbacks that already proved ownership before replacing/removing the
   // executor, so their persistence cannot land on a successor.
@@ -629,14 +637,21 @@ export class NotebookSessionAggregate<
   resources(
     afterRelease?: (resource: NotebookOwnedResource) => Promise<void>
   ): NotebookOwnedResource[] {
-    const generation = this.executorGenerationValue
-    const resources = new Map(
-      (this.executorValue.resources?.() ?? []).map((resource) => [resource.identity, resource])
-    )
-    for (const slot of this.kernelEpochs.values()) {
-      if (slot.cleanupResource) resources.set(slot.cleanupResource.identity, slot.cleanupResource)
+    const resources = new Map<
+      object,
+      { resource: NotebookOwnedResource; generation: NotebookSessionExecutorGeneration }
+    >()
+    for (const [executor, generation] of this.ownedExecutors()) {
+      for (const resource of executor.resources?.() ?? []) {
+        resources.set(resource.identity, { resource, generation })
+      }
     }
-    return Array.from(resources.values(), (resource) => {
+    for (const slot of this.kernelEpochs.values()) {
+      const resource = slot.cleanupResource
+      if (resource)
+        resources.set(resource.identity, { resource, generation: this.executorGenerationValue })
+    }
+    return Array.from(resources.values(), ({ resource, generation }) => {
       const slot = resource.processKey ? this.kernelEpochs.get(resource.processKey) : undefined
       const ownedSlot = slot?.ownership.id === resource.kernelEpochId ? slot : undefined
       return {
@@ -646,31 +661,28 @@ export class NotebookSessionAggregate<
         laneKey: notebookLaneKey(this.lane),
         executorGeneration: generation,
         ...(ownedSlot?.cleanupResource ? { phase: 'cleanup-pending' as const } : {}),
-        retainForRelease: () => {
-          if (ownedSlot && this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot)
-            ownedSlot.cleanupResource = resource
-        },
         release: async () => {
-          if (ownedSlot && this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot) {
-            ownedSlot.cleanupResource = resource
-          }
           const result = await resource.release()
-          if (!result.reaped) return result
           const currentSlot = resource.processKey
             ? this.kernelEpochs.get(resource.processKey)
             : undefined
-          // A retired epoch can still need projection if no replacement owns the process key.
-          if (currentSlot && currentSlot !== ownedSlot)
-            return { ...result, projection: 'complete' as const }
+          if (
+            !ownedSlot ||
+            currentSlot !== ownedSlot ||
+            this.executorGenerationValue !== generation
+          )
+            return result.reaped ? { ...result, projection: 'complete' as const } : result
+
+          // A detached epoch is no longer runnable even if the executor still owns its cleanup.
+          // Project that transition once, while this slot still owns the process key.
+          ownedSlot.cleanupResource = resource
           try {
-            if (this.executorGenerationValue === generation) await afterRelease?.(resource)
-            if (ownedSlot) {
-              await this.onKernelEpochsRetired?.([ownedSlot.ownership])
-              if (this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot) {
-                await this.retireKernelEpochs([ownedSlot.ownership.processKey], false)
-              }
+            await afterRelease?.(resource)
+            await this.onKernelEpochsRetired?.([ownedSlot.ownership])
+            if (this.kernelEpochs.get(ownedSlot.ownership.processKey) === ownedSlot) {
+              await this.retireKernelEpochs([ownedSlot.ownership.processKey], false)
             }
-            return { ...result, projection: 'complete' as const }
+            return result.reaped ? { ...result, projection: 'complete' as const } : result
           } catch (error) {
             return { ...result, projection: 'failed' as const, error }
           }
@@ -680,7 +692,16 @@ export class NotebookSessionAggregate<
   }
 
   monitoredProcesses(): import('./process-monitor').MonitoredKernelProcess[] {
-    return this.executorValue.monitoredProcesses?.() ?? []
+    return Array.from(this.ownedExecutors().keys()).flatMap(
+      (executor) => executor.monitoredProcesses?.() ?? []
+    )
+  }
+
+  private ownedExecutors(): Map<
+    NotebookSessionExecutor<Request, Result>,
+    NotebookSessionExecutorGeneration
+  > {
+    return new Map(this.retiredExecutors).set(this.executorValue, this.executorGenerationValue)
   }
 
   setKernelStatus(processKey: string, status: NotebookKernelMetadata['lastKnownStatus']): void {
@@ -800,6 +821,21 @@ export class NotebookSessionAggregate<
     await this.retireKernelEpochs([processKey])
   }
 
+  async retireKernelEpochAndProject(
+    processKey: string,
+    project: () => Promise<void>
+  ): Promise<void> {
+    // Detach synchronously, then put persistence on the lifecycle queue that existing FIFO
+    // entries drain before they dispatch a replacement.
+    const generation = this.executorGenerationValue
+    const retirement = this.retireKernelEpoch(processKey)
+    const projection = this.runExecutorLifecycleCallback(generation, async () => {
+      await retirement
+      await project()
+    })
+    await Promise.all([retirement, projection])
+  }
+
   private async retireKernelEpochs(processKeys: readonly string[], finalize = true): Promise<void> {
     const epochs = processKeys.flatMap((processKey) => {
       const slot = this.kernelEpochs.get(processKey)
@@ -843,9 +879,19 @@ export class NotebookSessionAggregate<
   }
 
   async terminateExecutor(kind: 'python' | 'r' | 'repl', env: string): Promise<void> {
-    const processKey = kind === 'repl' ? 'repl' : `${kind}:${env}`
-    await (this.executorValue.terminate?.(kind, env) ?? Promise.resolve())
-    await this.retireKernelEpoch(processKey)
+    const results = await Promise.allSettled(
+      Array.from(this.ownedExecutors().keys(), async (executor) => executor.terminate?.(kind, env))
+    )
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure) throw failure.reason
+    await this.retireKernelEpoch(kind === 'repl' ? 'repl' : `${kind}:${env}`)
+  }
+
+  async restartExecutorProcess(kind: 'python' | 'r' | 'repl', env: string): Promise<void> {
+    const executor = this.executorValue
+    if (executor.restartProcess) await executor.restartProcess(kind, env)
+    else await executor.terminate?.(kind, env)
+    await this.retireKernelEpoch(kind === 'repl' ? 'repl' : `${kind}:${env}`)
   }
 
   async restartExecutor(
@@ -856,35 +902,54 @@ export class NotebookSessionAggregate<
       await this.retireKernelEpochs([...this.kernelEpochs.keys()])
       return
     }
-    this.executorGenerationActive = false
-    const lifecycleDrain = this.executorLifecycleQueue
-    await lifecycleDrain
-    await this.executorValue.shutdown()
+    await this.shutdownExecutor()
+    await this.resumeExecutor(replacement)
+  }
+
+  // Admission calls this after the registry's reusable teardown gate has settled.
+  resumeExecutor(replacement: () => NotebookSessionOwnedExecutor<Request, Result>): Promise<void> {
+    if (this.executorGenerationActive) return Promise.resolve()
     const next = replacement()
     this.executorValue = next.executor
     this.executorGenerationValue = next.generation
     this.executorGenerationActive = true
-    await this.retireKernelEpochs([...this.kernelEpochs.keys()])
+    const epochs = Array.from(this.kernelEpochs.values(), ({ ownership }) => ownership)
+    const retirement = this.retireKernelEpochs([...this.kernelEpochs.keys()], false).then(
+      async () => {
+        if (epochs.length > 0) await this.onKernelEpochsRetired?.(epochs)
+      }
+    )
+    this.executorLifecycleQueue = retirement.catch(() => undefined)
+    this.releaseMcpRpcConnection()
+    return retirement
   }
 
   async shutdownExecutor(): Promise<{ reaped: boolean }> {
     if (this.activeWriteValue) {
       this.abortCellWrite(this.activeWriteValue.cellId, this.activeWriteValue.writeId)
     }
-    const executor = this.executorValue
     this.executorGenerationActive = false
     for (const processKey of this.kernelStatuses.keys())
       this.setKernelStatus(processKey, 'terminated')
-    const lifecycleDrain = this.executorLifecycleQueue
-    await lifecycleDrain
-    const result = await executor.shutdown()
-    if (!result.reaped) return result
+    await this.executorLifecycleQueue
+    const results = await Promise.allSettled(
+      Array.from(this.ownedExecutors(), async ([executor, generation]) => {
+        this.retiredExecutors.set(executor, generation)
+        const result = await executor.shutdown()
+        if (result.reaped) this.retiredExecutors.delete(executor)
+        return result
+      })
+    )
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure) throw failure.reason
+    if (results.some((result) => result.status !== 'fulfilled' || !result.value.reaped))
+      return { reaped: false }
     this.releaseMcpRpcConnection()
     await this.onKernelEpochsRetired?.(
-      [...this.kernelEpochs.values()].map(({ ownership }) => ownership)
+      Array.from(this.kernelEpochs.values(), ({ ownership }) => ownership)
     )
     await this.retireKernelEpochs([...this.kernelEpochs.keys()], false)
-    return result
+    return { reaped: true }
   }
 
   async resolveMcpRpcConnection(

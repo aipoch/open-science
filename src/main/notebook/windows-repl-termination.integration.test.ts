@@ -37,7 +37,6 @@ import { NotebookNetworkSandbox } from '../../../packages/notebook-network-sandb
 import { NotebookKernelExecutor } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import type { NotebookProcessSandbox } from './process-sandbox'
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
 configureTestRuntimeMetadata()
@@ -371,7 +370,7 @@ it
       (['shutdown', 'restart', 'execute'] as const).map((recovery) => ({ proof, recovery }))
     )
   )(
-  'reconciles a failed REPL only with a valid native termination proof ($proof/$recovery)',
+  'runs a fresh REPL after an early native exit ($proof/$recovery)',
   async ({ proof, recovery }) => {
     const root = await mkdtemp(join(tmpdir(), 'os-repl-termination-'))
     const sandbox = new NotebookNetworkSandbox({
@@ -379,12 +378,13 @@ it
       policy: { allowedDomains: [], deniedDomains: [] }
     })
     vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
-    const nativeLaunches: ReturnType<typeof windowsSupervisedLaunch>[] = []
+    let nativeLaunchCount = 0
+    let firstLaunchProof = proof
     // Automatic exit cleanup may retry before execute settles. Keep the injected fault active
     // until the caller observes quarantine instead of making it depend on a probe count.
     let recoveryAllowed = false
     backend.wrap.mockImplementation(async (request) => {
-      const first = nativeLaunches.length === 0
+      const first = nativeLaunchCount === 0
       const launch = windowsSupervisedLaunch({
         command: '',
         executable: request.executable,
@@ -398,19 +398,20 @@ it
         gatewayPort: 61200,
         gatewayCredentials: { username: 'unused', password: 'unused' }
       })
-      nativeLaunches.push(launch)
+      nativeLaunchCount++
+      if (!first) return launch
       return {
         ...launch,
         confirmProcessTreeTermination: async () => {
-          if (proof === 'missing') return false
-          if (proof === 'error') throw new Error('Native proof unavailable')
-          if (proof === 'late' && !recoveryAllowed) return false
+          if (firstLaunchProof === 'missing') return false
+          if (firstLaunchProof === 'error') throw new Error('Native proof unavailable')
+          if (firstLaunchProof === 'late' && !recoveryAllowed) return false
           return launch.confirmProcessTreeTermination()
         },
         confirmProcessState: async () => {
-          if (proof === 'missing' || (proof === 'late' && !recoveryAllowed))
+          if (firstLaunchProof === 'missing' || (firstLaunchProof === 'late' && !recoveryAllowed))
             return 'termination-unknown'
-          if (proof === 'error') throw new Error('Native proof unavailable')
+          if (firstLaunchProof === 'error') throw new Error('Native proof unavailable')
           return launch.confirmProcessState()
         }
       }
@@ -424,6 +425,7 @@ it
           args: invocation.args,
           cwd: root,
           env: invocation.env,
+          kernelEpochId: invocation.kernelEpochId,
           onNetworkAccessRequest: async () => false
         })
         return {
@@ -471,15 +473,11 @@ it
       timeoutMs: 10_000
     }
     try {
-      const failed = executor.execute(request)
-      if (proof === 'valid') {
-        await expect(failed).resolves.toMatchObject({
-          status: 'failed',
-          stderr: expect.stringContaining('Notebook kernel process exited with exit code 1.')
-        })
-      } else {
-        await expect(failed).rejects.toBeInstanceOf(NotebookExecutionStopError)
-      }
+      await expect(executor.execute(request)).resolves.toMatchObject({
+        status: 'failed',
+        recovery: { execution: 'may-have-run', retryAfter: 'runtime-ready' },
+        stderr: expect.stringContaining('Notebook kernel process exited with exit code 1.')
+      })
       const oldReceipts = lifecycle ? await readdir(join(root, 'runtime', 'kernel-processes')) : []
       if (lifecycle) expect(oldReceipts).toHaveLength(1)
       recoveryAllowed = true
@@ -487,40 +485,44 @@ it
       if (recovery === 'shutdown') {
         await expect(executor.shutdown()).resolves.toEqual({ reaped: recoverable })
       } else if (recovery === 'restart') {
-        if (recoverable) await expect(executor.restart()).resolves.toBeUndefined()
-        else await expect(executor.restart()).rejects.toThrow('restart refused')
+        await expect(executor.restart()).resolves.toBeUndefined()
       }
       for (let attempt = 0; attempt < 3; attempt++) {
-        if (recoverable) {
-          await expect(executor.execute(request)).resolves.toMatchObject({
-            status: 'completed',
-            stdout: expect.stringContaining('REPL_RECOVERED')
-          })
-        } else {
-          await expect(executor.execute(request)).rejects.toBeInstanceOf(NotebookExecutionStopError)
-        }
-      }
-      if (lifecycle) {
-        const receipts = await readdir(join(root, 'runtime', 'kernel-processes'))
-        expect(receipts).toHaveLength(1)
-        expect(receipts).not.toContain(oldReceipts[0])
-      }
-    } finally {
-      await executor.shutdown()
-      // Only the first native launch fails in a red run. Verify its real proof before releasing
-      // this test's socket-free backend fixture, without weakening the production gate.
-      if (
-        nativeLaunches.length === 1 &&
-        (await nativeLaunches[0].confirmProcessTreeTermination())
-      ) {
-        backend.cleanupAfterCommand.mockResolvedValue({
-          processesTerminated: true,
-          networkClosed: true,
-          temporaryResourcesRemoved: true
+        const result = await executor.execute(request)
+        expect(result, result.stderr).toMatchObject({
+          status: 'completed',
+          stdout: expect.stringContaining('REPL_RECOVERED')
         })
       }
-      await sandbox.dispose()
-      await rm(root, { recursive: true, force: true })
+      expect(nativeLaunchCount).toBe(2)
+      if (!recoverable) {
+        expect(executor.resources()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ kind: 'repl', phase: 'cleanup-pending' }),
+            expect.objectContaining({ kind: 'repl', phase: 'idle' })
+          ])
+        )
+      }
+      if (lifecycle) {
+        await vi.waitFor(
+          async () => {
+            const receipts = await readdir(join(root, 'runtime', 'kernel-processes'))
+            expect(receipts).toHaveLength(1)
+            expect(receipts).not.toContain(oldReceipts[0])
+          },
+          { timeout: 10_000 }
+        )
+      }
+    } finally {
+      // Remove the test fault so teardown can verify both Jobs with real native proof.
+      firstLaunchProof = 'valid'
+      recoveryAllowed = true
+      try {
+        await expect(executor.shutdown()).resolves.toEqual({ reaped: true })
+      } finally {
+        await sandbox.dispose()
+        await rm(root, { recursive: true, force: true })
+      }
     }
   },
   30_000

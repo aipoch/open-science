@@ -62,7 +62,7 @@ describe('NotebookSessionAggregate', () => {
   })
 
   it.each([false, true])(
-    'projects cleanup of a retired epoch only if it has no replacement (replacement: %s)',
+    'never projects cleanup of a retired epoch (replacement: %s)',
     async (replaceEpoch) => {
       const resource = {
         identity: {},
@@ -104,7 +104,7 @@ describe('NotebookSessionAggregate', () => {
         projection: 'complete'
       })
       expect(resource.release).toHaveBeenCalledOnce()
-      expect(project).toHaveBeenCalledTimes(replaceEpoch ? 0 : 1)
+      expect(project).not.toHaveBeenCalled()
       expect(session.currentKernelEpochId('repl')).toBe(replacement)
     }
   )

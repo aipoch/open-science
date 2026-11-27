@@ -86,7 +86,9 @@ export async function composeBackendLifecycle({
           return notebookService.createExecutionIntent(scope)
         }
         const missing = new NotebookExecutionIntent(scope)
-        missing.block('originating-execution-context-unavailable')
+        missing.block('originating-execution-context-unavailable', {
+          phase: 'artifact-reproducibility'
+        })
         return missing
       },
       createExecutionAdmission: (

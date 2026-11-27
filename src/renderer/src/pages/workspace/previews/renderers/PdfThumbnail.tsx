@@ -25,7 +25,8 @@ type ThumbnailCacheEntry = RenderedThumbnail & {
 const thumbnailCache = new Map<string, ThumbnailCacheEntry>()
 let thumbnailCacheBytes = 0
 let activeRenderCount = 0
-const pendingRenders: Array<() => void> = []
+type PendingRender = { priority: number; start: () => void }
+const pendingRenders: PendingRender[] = []
 type ThumbnailJob = {
   promise: Promise<void>
   subscribers: number
@@ -70,7 +71,7 @@ const cacheThumbnail = (key: string, entry: ThumbnailCacheEntry): void => {
   }
 }
 
-const acquireRenderSlot = (signal: AbortSignal): Promise<void> => {
+const acquireRenderSlot = (signal: AbortSignal, priority: number): Promise<void> => {
   if (signal.aborted) return Promise.reject(createAbortError())
   if (activeRenderCount < MAX_CONCURRENT_RENDERS) {
     activeRenderCount += 1
@@ -90,28 +91,32 @@ const acquireRenderSlot = (signal: AbortSignal): Promise<void> => {
       resolve()
     }
     const cancel = (): void => {
-      const index = pendingRenders.indexOf(start)
+      const index = pendingRenders.indexOf(queued)
       if (index >= 0) pendingRenders.splice(index, 1)
       reject(createAbortError())
     }
 
-    pendingRenders.push(start)
+    const queued: PendingRender = { priority, start }
+    const index = pendingRenders.findIndex((entry) => entry.priority < priority)
+    if (index < 0) pendingRenders.push(queued)
+    else pendingRenders.splice(index, 0, queued)
     signal.addEventListener('abort', cancel, { once: true })
   })
 }
 
 const runWithRenderSlot = async <Result,>(
   task: () => Promise<Result>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  priority: number
 ): Promise<Result> => {
-  await acquireRenderSlot(signal)
+  await acquireRenderSlot(signal, priority)
 
   try {
     if (signal.aborted) throw createAbortError()
     return await task()
   } finally {
     activeRenderCount -= 1
-    pendingRenders.shift()?.()
+    pendingRenders.shift()?.start()
   }
 }
 
@@ -187,38 +192,43 @@ const renderFirstPage = async (
 const createThumbnailJob = (
   requestKey: string,
   request: AcquireManagedPreviewRequest,
-  renderWidth: number
+  renderWidth: number,
+  priority: number
 ): ThumbnailJob => {
   const abortController = new AbortController()
-  const promise = runWithRenderSlot(async () => {
-    let resource: ManagedPreviewResource | undefined
+  const promise = runWithRenderSlot(
+    async () => {
+      let resource: ManagedPreviewResource | undefined
 
-    try {
-      resource = await window.api.previewResources.acquire(request)
-      if (abortController.signal.aborted) throw createAbortError()
+      try {
+        resource = await window.api.previewResources.acquire(request)
+        if (abortController.signal.aborted) throw createAbortError()
 
-      // The main-process stat is authoritative when validating a renderer-side cached image.
-      const cached = getCachedThumbnail(requestKey)
-      if (cached?.resourceVersion === resource.version && cached.fileSize === resource.size) {
-        return
-      }
+        // The main-process stat is authoritative when validating a renderer-side cached image.
+        const cached = getCachedThumbnail(requestKey)
+        if (cached?.resourceVersion === resource.version && cached.fileSize === resource.size) {
+          return
+        }
 
-      const entry = await renderFirstPage(resource, abortController.signal, renderWidth)
-      if (abortController.signal.aborted) {
-        URL.revokeObjectURL(entry.url)
-        throw createAbortError()
+        const entry = await renderFirstPage(resource, abortController.signal, renderWidth)
+        if (abortController.signal.aborted) {
+          URL.revokeObjectURL(entry.url)
+          throw createAbortError()
+        }
+        cacheThumbnail(requestKey, {
+          ...entry,
+          fileSize: resource.size,
+          resourceVersion: resource.version
+        })
+      } finally {
+        if (resource) {
+          await window.api.previewResources.release({ resourceId: resource.id })
+        }
       }
-      cacheThumbnail(requestKey, {
-        ...entry,
-        fileSize: resource.size,
-        resourceVersion: resource.version
-      })
-    } finally {
-      if (resource) {
-        await window.api.previewResources.release({ resourceId: resource.id })
-      }
-    }
-  }, abortController.signal).catch((error: unknown) => {
+    },
+    abortController.signal,
+    priority
+  ).catch((error: unknown) => {
     if (abortController.signal.aborted) throw createAbortError()
     throw error
   })
@@ -238,10 +248,12 @@ const createThumbnailJob = (
 const subscribeThumbnailJob = (
   requestKey: string,
   request: AcquireManagedPreviewRequest,
-  renderWidth: number
+  renderWidth: number,
+  priority: number
 ): { promise: Promise<void>; unsubscribe: () => void } => {
   // Duplicate tiles share one acquire/render job; the final subscriber owns cancellation.
-  const job = thumbnailJobs.get(requestKey) ?? createThumbnailJob(requestKey, request, renderWidth)
+  const job =
+    thumbnailJobs.get(requestKey) ?? createThumbnailJob(requestKey, request, renderWidth, priority)
   job.subscribers += 1
   let subscribed = true
 
@@ -278,7 +290,9 @@ export const PdfThumbnail = ({
   mtimeMs,
   fit = 'cover',
   align = 'center',
-  renderWidth = THUMBNAIL_WIDTH
+  renderWidth = THUMBNAIL_WIDTH,
+  isVisible,
+  onUnavailableChange
 }: {
   path: string
   name: string
@@ -293,6 +307,9 @@ export const PdfThumbnail = ({
   fit?: 'cover' | 'contain' | 'intrinsic'
   align?: 'start' | 'center'
   renderWidth?: number
+  /** When supplied, the owner controls visibility and this component skips its own observer. */
+  isVisible?: boolean
+  onUnavailableChange?: (unavailable: boolean) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const resourceKey = usePreviewResourceKey({
@@ -308,6 +325,7 @@ export const PdfThumbnail = ({
   })
   const requestKey = `${resourceKey}:pdf-thumbnail:${renderWidth}`
   const [setElement, isNearViewport] = useNearViewport<HTMLDivElement>()
+  const visible = isVisible ?? isNearViewport
   const [result, setResult] = useState<{ requestKey: string; status: 'ready' | 'error' } | null>(
     null
   )
@@ -317,13 +335,13 @@ export const PdfThumbnail = ({
   const retryRef = useRef({ requestKey, used: false })
   useEffect(() => {
     if (retryRef.current.requestKey !== requestKey) retryRef.current = { requestKey, used: false }
-    if (!isNearViewport && hasCurrentError && !retryRef.current.used) {
+    if (!visible && hasCurrentError && !retryRef.current.used) {
       retryRef.current.used = true
       setResult(null)
     }
-  }, [requestKey, isNearViewport, hasCurrentError])
+  }, [requestKey, visible, hasCurrentError])
   // Off-screen tiles retain only an encoded thumbnail and do not keep a PDF document alive.
-  const shouldRender = isNearViewport && !hasCurrentError && (!hasCurrentResult || !cached)
+  const shouldRender = visible && !hasCurrentError && (!hasCurrentResult || !cached)
 
   useEffect(() => {
     if (!shouldRender || !desktopRuntimeWritable()) return
@@ -339,18 +357,22 @@ export const PdfThumbnail = ({
         selectedVersionId,
         mimeType
       }),
-      renderWidth
+      renderWidth,
+      isVisible === true ? 1 : 0
     )
     let subscribed = true
     void subscription.promise
       .then(() => {
         if (!subscribed) return
         setResult({ requestKey, status: 'ready' })
+        onUnavailableChange?.(false)
       })
       .catch((error: unknown) => {
-        if (isAbortError(error)) return
-        if (!isUnavailableFileError(error)) console.error('Failed to render PDF thumbnail', error)
-        if (subscribed) setResult({ requestKey, status: 'error' })
+        if (!subscribed || isAbortError(error)) return
+        const unavailable = isUnavailableFileError(error)
+        if (!unavailable) console.error('Failed to render PDF thumbnail', error)
+        setResult({ requestKey, status: 'error' })
+        onUnavailableChange?.(unavailable)
       })
 
     return () => {
@@ -364,6 +386,8 @@ export const PdfThumbnail = ({
     projectId,
     renderWidth,
     requestKey,
+    isVisible,
+    onUnavailableChange,
     selectedVersionId,
     sessionId,
     shouldRender,
@@ -372,7 +396,7 @@ export const PdfThumbnail = ({
 
   return (
     <div
-      ref={setElement}
+      ref={isVisible === undefined ? setElement : undefined}
       className={
         fit === 'intrinsic'
           ? `flex w-full ${cached ? 'items-start' : 'h-64 items-center'} ${align === 'start' ? 'justify-start' : 'justify-center'}`

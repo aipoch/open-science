@@ -305,7 +305,7 @@ class NotebookDataExecutionAdmissionOwner {
       environment,
       runtimeRoot: session.runtimeRoot,
       sessionId: session.sessionId,
-      ensureRecovered: this.options.ensureRecovered,
+      ensureRecovered: () => this.options.ensureRecovered(notebookLaneKey(session.lane)),
       ...(agentInitiated
         ? {
             assertCreationAllowed: async () => {

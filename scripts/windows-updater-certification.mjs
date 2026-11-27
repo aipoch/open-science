@@ -1428,7 +1428,10 @@ const main = async () => {
       await runProcess(uninstallHelper, ['update-handoff', '--install-path', installDirectory], {
         env
       })
-      await uninstallAndVerify(installDirectory, env, { processRoot: root })
+      await uninstallAndVerify(installDirectory, env, {
+        processRoot: root,
+        rollbackVersion: observation?.rollback?.version
+      })
       if (nextPreparation) {
         await rejects(
           stat(nextPreparation),

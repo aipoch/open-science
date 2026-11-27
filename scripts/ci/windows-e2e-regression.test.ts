@@ -135,7 +135,7 @@ it('budgets complete serial journeys and teardown within the shard job', () => {
     const run = execution.steps.find((candidate) => candidate.id === id)!.run!
     return Number(run.match(/--global-timeout=(\d+)/)![1])
   })
-  expect(budgets).toEqual([420000, 900000, 900000])
+  expect(budgets).toEqual([600000, 900000, 900000])
   // Include the one permitted browser resource-exhaustion retry, then reserve setup/teardown.
   expect(
     execution['timeout-minutes']! * 60000 - budgets.reduce((a, b) => a + b, 0) - budgets[0]

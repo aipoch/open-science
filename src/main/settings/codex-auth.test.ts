@@ -213,7 +213,9 @@ describe('ensureCodexAuthHome', () => {
     const configPath = join(codexSubscriptionStorageDir(root), 'config.toml')
     try {
       await ensureCodexAuthHome('isolated', root, 'auto')
-      expect(await readFile(configPath, 'utf8')).toBe('cli_auth_credentials_store = "file"\n')
+      expect(await readFile(configPath, 'utf8')).toBe(
+        'cli_auth_credentials_store = "file"\nthread_unload_delay_secs = 0\n'
+      )
 
       await ensureCodexAuthHome('isolated', root, 'https')
       let configToml = await readFile(configPath, 'utf8')
@@ -227,7 +229,9 @@ describe('ensureCodexAuthHome', () => {
       expect(configToml).not.toContain('open-science-chatgpt-https')
 
       await ensureCodexAuthHome('isolated', root, 'auto')
-      expect(await readFile(configPath, 'utf8')).toBe('cli_auth_credentials_store = "file"\n')
+      expect(await readFile(configPath, 'utf8')).toBe(
+        'cli_auth_credentials_store = "file"\nthread_unload_delay_secs = 0\n'
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -235,7 +239,7 @@ describe('ensureCodexAuthHome', () => {
 
   it('creates the same app-owned home with file-only credentials and Auto transport for both auth modes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codex-auth-home-'))
-    const expectedConfig = autoTransportConfig()
+    const expectedConfig = 'cli_auth_credentials_store = "file"\nthread_unload_delay_secs = 0\n'
     try {
       await ensureCodexAuthHome('shared', root)
       expect(existsSync(codexSubscriptionStorageDir(root))).toBe(true)
@@ -264,6 +268,7 @@ describe('ensureCodexAuthHome', () => {
         [
           'model = "account-default"',
           'cli_auth_credentials_store = "auto"',
+          '"thread_unload_delay_secs" = 60',
           '',
           '[model_providers.local]',
           'base_url = "http://127.0.0.1:1087/v1"',
@@ -275,6 +280,8 @@ describe('ensureCodexAuthHome', () => {
       await ensureCodexAuthHome('isolated', root)
 
       const configToml = await readFile(join(home, 'config.toml'), 'utf8')
+      expect(configToml.match(/thread_unload_delay_secs/g)).toHaveLength(1)
+      expect(configToml).toContain('thread_unload_delay_secs = 0')
       expect(configToml).toContain('cli_auth_credentials_store = "file"')
       expect(configToml).not.toContain('open-science-chatgpt-')
       expect(configToml).toContain('[model_providers.local]\nbase_url = "http://127.0.0.1:1087/v1"')

@@ -120,6 +120,7 @@ vi.mock('pdfjs-dist/web/pdf_viewer.mjs', () => ({
 vi.mock('../pdfjs', () => ({
   pdfjsLib: {
     getDocument: vi.fn(),
+    OPS: { constructPath: 91 },
     AnnotationMode: { ENABLE_STORAGE: 3 },
     TextLayer: class {
       constructor(
@@ -325,6 +326,80 @@ describe('PdfPreviewContent', () => {
         expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
       }
     )
+
+    it('shows a low-resolution poster before refining a dense single-page PDF', async () => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+      vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(2)
+      const render = vi.fn((parameters: { viewport: { width: number; height: number } }) => {
+        void parameters
+        return { promise: Promise.resolve(), cancel: vi.fn() }
+      })
+      const densePage = {
+        getViewport: vi.fn(({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale
+        })),
+        getOperatorList: vi.fn().mockResolvedValue({
+          fnArray: Array.from({ length: 10_001 }, () => 91),
+          argsArray: []
+        }),
+        getTextContent: vi.fn().mockResolvedValue({ items: [], styles: {} }),
+        render,
+        cleanup: vi.fn()
+      }
+      getPage.mockResolvedValue(densePage)
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          getPage,
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+
+      await act(async () => {
+        root.render(<PdfPreviewContent path="dense.pdf" name="dense.pdf" />)
+      })
+      await waitFor(() => expect(render).toHaveBeenCalledTimes(2))
+
+      const firstViewport = render.mock.calls[0][0].viewport
+      const refinedViewport = render.mock.calls[1][0].viewport
+      expect(firstViewport.width).toBeLessThan(refinedViewport.width)
+      expect(densePage.getOperatorList).toHaveBeenCalledOnce()
+    })
+
+    it('does not render a duplicate poster when the target fits the poster scale', async () => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+      vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(1)
+      const render = vi.fn((parameters: { viewport: { width: number; height: number } }) => {
+        void parameters
+        return { promise: Promise.resolve(), cancel: vi.fn() }
+      })
+      const densePage = {
+        getViewport: vi.fn(({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale
+        })),
+        getOperatorList: vi.fn().mockResolvedValue({
+          fnArray: Array.from({ length: 10_001 }, () => 91),
+          argsArray: []
+        }),
+        getTextContent: vi.fn().mockResolvedValue({ items: [], styles: {} }),
+        render,
+        cleanup: vi.fn()
+      }
+      getPage.mockResolvedValue(densePage)
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({ numPages: 1, getPage, destroy: destroyDocument }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+
+      await act(async () => root.render(<PdfPreviewContent path="fits.pdf" name="fits.pdf" />))
+      await waitFor(() => expect(render).toHaveBeenCalledOnce())
+      expect(render.mock.calls[0][0].viewport.width).toBe(600)
+    })
 
     it('cancels a pending single-page render before destroying its document and resource', async () => {
       const cancel = vi.fn()
@@ -2409,6 +2484,17 @@ describe('PdfPreviewContent', () => {
           .getByRole('button', { name: 'View translated PDF' })
           .getAttribute('aria-pressed')
       ).toBe('true')
+      if (kind === 'artifact') {
+        const paragraph = translationSidebar.querySelector('[data-translation-text]')!
+        window.getSelection()!.selectAllChildren(paragraph)
+        await act(async () => fireEvent.keyDown(paragraph, { key: 'f', metaKey: true }))
+        const input = within(translationSidebar).getByRole<HTMLInputElement>('textbox', {
+          name: 'Search translation'
+        })
+        expect(input.value).toBe('细胞')
+        window.getSelection()!.removeAllRanges()
+        await act(async () => fireEvent.keyDown(input, { key: 'Escape' }))
+      }
       vi.mocked(Element.prototype.scrollIntoView).mockClear()
       await act(async () =>
         within(translationSidebar)
@@ -2501,6 +2587,22 @@ describe('PdfPreviewContent', () => {
           row.querySelector('[data-pdf-translated-page] [data-pdf-text-layer]')?.textContent
         ).toContain('细胞')
       )
+      if (kind === 'artifact') {
+        const originalText = row.querySelector('[data-pdf-text-layer] span')!
+        const translatedSpan = row.querySelector(
+          '[data-pdf-translated-page] [data-pdf-text-layer] span'
+        )!
+        // Keyboard selection may be in the other column from the last pointer interaction.
+        await act(async () => fireEvent.pointerDown(originalText))
+        window.getSelection()!.selectAllChildren(translatedSpan)
+        await act(async () => fireEvent.keyDown(translatedSpan, { key: 'f', ctrlKey: true }))
+        expect(
+          screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search document' }).value
+        ).toBe('细胞')
+        expect(screen.getByRole('button', { name: 'Search in Translation' })).toBeTruthy()
+        window.getSelection()!.removeAllRanges()
+        await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close search' })))
+      }
       await openReadingView()
       await act(async () => {
         fireEvent.click(
@@ -3126,7 +3228,20 @@ describe('PdfPreviewContent', () => {
     expect(paragraph.getAttribute('aria-expanded')).toBe('true')
     expect(document.activeElement).toBe(paragraph)
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
-    await act(async () => paragraph.click())
+    const text = container.querySelector<HTMLElement>('[data-translation-text]')!
+    const node = text.firstChild!
+    window.getSelection()!.setBaseAndExtent(node, 0, node, 'Translated'.length)
+    await act(async () => fireEvent.keyDown(text, { key: 'f', metaKey: true }))
+    const searchInput = screen.getByRole<HTMLInputElement>('textbox', {
+      name: 'Search translation'
+    })
+    expect(searchInput.value).toBe('Translated')
+    await waitFor(() => expect(document.activeElement).toBe(searchInput))
+    window.getSelection()!.removeAllRanges()
+    await act(async () => {
+      paragraph.focus()
+      paragraph.click()
+    })
     expect(paragraph.getAttribute('aria-expanded')).toBe('false')
     expect(document.activeElement).toBe(paragraph)
     await act(async () =>
@@ -5189,6 +5304,62 @@ describe('PdfPreviewContent', () => {
     expect(outsideShortcut.defaultPrevented).toBe(false)
   })
 
+  it('finds selected PDF text and preserves a typed query on repeated Ctrl+F', async () => {
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/workspace/selected.pdf" name="selected.pdf" />)
+    })
+    const span = await waitFor(() => {
+      const text = container.querySelector('[data-pdf-text-layer] span')
+      expect(text?.textContent?.trim()).toBeTruthy()
+      return text!
+    })
+    const selection = window.getSelection()!
+    selection.selectAllChildren(span)
+    const term = selection.toString().trim()
+    await act(async () => fireEvent.keyDown(span, { key: 'f', ctrlKey: true }))
+    const input = screen.getByRole('searchbox', { name: 'Search document' }) as HTMLInputElement
+    expect(input.value).toBe(term)
+    await waitFor(() => expect(input.parentElement?.textContent).toContain('1/1'))
+    await act(async () => fireEvent.change(input, { target: { value: 'custom' } }))
+    selection.selectAllChildren(span)
+    await act(async () => fireEvent.keyDown(input, { key: 'f', ctrlKey: true }))
+    expect(input.value).toBe('custom')
+    const multiline = document.createTextNode('First line\nsecond line')
+    span.append(multiline)
+    selection.selectAllChildren(multiline)
+    await act(async () => fireEvent.keyDown(span, { key: 'f', ctrlKey: true }))
+    expect(input.value).toBe('custom')
+    multiline.remove()
+    selection.selectAllChildren(screen.getByRole('button', { name: 'Next match' }))
+    await act(async () => fireEvent.keyDown(span, { key: 'f', metaKey: true }))
+    expect(input.value).toBe('custom')
+    selection.removeAllRanges()
+  })
+
+  it('ignores a selection owned by another PDF reader', async () => {
+    await act(async () => {
+      root.render(
+        <>
+          <PdfPreviewContent path="/workspace/first.pdf" name="first.pdf" />
+          <PdfPreviewContent path="/workspace/second.pdf" name="second.pdf" />
+        </>
+      )
+    })
+    const first = screen.getByRole('region', { name: 'first.pdf scrollable preview' })
+    const second = screen.getByRole('region', { name: 'second.pdf scrollable preview' })
+    const span = await waitFor(() => {
+      const text = first.querySelector('[data-pdf-text-layer] span')
+      expect(text?.textContent?.trim()).toBeTruthy()
+      return text!
+    })
+    window.getSelection()!.selectAllChildren(span)
+    await act(async () => fireEvent.keyDown(second, { key: 'f', ctrlKey: true }))
+    expect(screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search document' }).value).toBe(
+      ''
+    )
+    window.getSelection()!.removeAllRanges()
+  })
+
   it('preserves word gaps and line endings while searching PDF text items', async () => {
     const highlights = { delete: vi.fn(), set: vi.fn() }
     const constructedHighlights: Range[][] = []
@@ -5229,25 +5400,18 @@ describe('PdfPreviewContent', () => {
       root.render(<PdfPreviewContent path="/workspace/search-spacing.pdf" name="search.pdf" />)
     })
     await vi.waitFor(() => expect(container.querySelector('canvas')).not.toBeNull())
-    const scroll = container.querySelector<HTMLElement>('[role="region"]')!
-    await act(async () =>
-      scroll.dispatchEvent(
-        new KeyboardEvent('keydown', {
-          key: 'f',
-          metaKey: true,
-          bubbles: true,
-          cancelable: true
-        })
-      )
-    )
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Search document"]')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(
-        input,
-        'method uses retrieval'
-      )
-      input.dispatchEvent(new Event('input', { bubbles: true }))
+    const layer = await vi.waitFor(() => {
+      const layer = container.querySelector('[data-pdf-text-layer]')
+      expect(layer?.querySelectorAll('span')).toHaveLength(2)
+      return layer!
     })
+    const [first, second] = layer.querySelectorAll('span')
+    const selection = window.getSelection()!
+    selection.setBaseAndExtent(second!.firstChild!, 4, first!.firstChild!, 4)
+    expect(selection.toString()).toBe('methoduses')
+    await act(async () => fireEvent.keyDown(layer, { key: 'f', ctrlKey: true }))
+    const input = screen.getByRole<HTMLInputElement>('searchbox', { name: 'Search document' })
+    expect(input.value).toBe('method uses')
 
     await vi.waitFor(() => expect(input.parentElement?.textContent).toContain('1/1'))
     await vi.waitFor(() => expect(highlights.set).toHaveBeenCalledWith('pdf-search-results', {}))

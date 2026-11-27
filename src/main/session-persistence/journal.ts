@@ -105,14 +105,16 @@ const fail = (message: string): never => {
 }
 const exact = (value: Record<string, unknown>, keys: string[]): boolean =>
   Object.keys(value).length === keys.length && Object.keys(value).every((key) => keys.includes(key))
-const SESSION_JOURNAL_VERSION = 1
-const assertJournalVersion = (value: Record<string, unknown>): void => {
+const SESSION_JOURNAL_VERSION = 2
+// An unversioned line is interpreted as the current version, matching the released reader.
+const assertJournalVersion = (value: Record<string, unknown>): number => {
   const version = Object.hasOwn(value, 'journalVersion')
     ? value.journalVersion
     : SESSION_JOURNAL_VERSION
   if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1)
     return fail('Invalid Session journal version.')
   if (version > SESSION_JOURNAL_VERSION) throw new SessionJournalVersionError()
+  return version
 }
 const exactJournalEnvelope = (value: Record<string, unknown>, keys: string[]): boolean =>
   exact(value, Object.hasOwn(value, 'journalVersion') ? [...keys, 'journalVersion'] : keys)
@@ -482,7 +484,7 @@ export class SessionJournalStore {
         return fail('Session journal contains an invalid complete record.')
       }
       if (!object(value)) return fail('Invalid Session journal record.')
-      assertJournalVersion(value)
+      const journalVersion = assertJournalVersion(value)
       if (document === undefined) {
         if (!exactJournalEnvelope(value, ['type', 'document']) || value.type !== 'session_snapshot')
           return fail('Session journal must start with its initial snapshot.')
@@ -499,7 +501,7 @@ export class SessionJournalStore {
           value.revision !== revisionOf(document) + 1
         )
           return fail('Session journal record has invalid schema or revision.')
-        const records = validateSessionRecords(value.records, { parsed: true })
+        const records = validateSessionRecords(value.records, { parsed: true, journalVersion })
         observer?.visit(records as unknown as JournalValue)
         document = this.applyRecords(document, records, observer?.visit)
         if (revisionOf(document) !== value.revision)

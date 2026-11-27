@@ -24,7 +24,7 @@ import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { macAcceptance } from './macos-acceptance.mjs'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
-import { fencePrompt, retryFencePrompt, exerciseKernelFence } from './kernel-fence.mjs'
+import { kernelRecoveryRequest, exerciseKernelRecovery } from './kernel-fence.mjs'
 
 // A provider-boundary fault used by the Resume recovery journey. Application state and IPC stay real.
 const failResumeAttachmentWhenRequested = async (cwd) => {
@@ -60,6 +60,7 @@ const NOTEBOOK_LONG_MUTATION_PROMPT = 'Verify a long Notebook mutation.'
 const NOTEBOOK_REAL_ENVIRONMENT_PROMPT = 'Verify a real Notebook environment.'
 const NOTEBOOK_PACKAGE_CANCELLATION_PROMPT = 'Verify Notebook package cancellation.'
 const ARTIFACT_PROVENANCE_PROMPT = 'Create a provenance artifact.'
+const PDF_CHART_ARTIFACTS_PROMPT = 'Create the PDF chart preview fixtures.'
 const PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT = 'Create preview context menu artifacts.'
 const SPREADSHEET_SEARCH_ARTIFACT_PROMPT = 'Create spreadsheet search fixture.'
 const PREVIEW_CONTEXT_MENU_DOCX_BASE64 =
@@ -1565,6 +1566,41 @@ const createLongFilenameArtifacts = async (sessionId) => {
     }
   })
   return 'Long filename artifacts published.'
+}
+
+const createPdfChartArtifacts = async (sessionId) => {
+  const { PDFDocument, rgb } = await import('pdf-lib')
+  await withMcpClient(sessionId, 'open-science-artifacts', async (client) => {
+    for (const [filename, dotCount] of [
+      ['dense-scatter-a.pdf', 12150],
+      ['dense-scatter-b.pdf', 11125],
+      ['ordinary-scatter.pdf', 120]
+    ]) {
+      const pdf = await PDFDocument.create()
+      const page = pdf.addPage([600, 400])
+      for (let i = 0; i < dotCount; i++) {
+        page.drawCircle({
+          x: 20 + ((i * 2117) % 56000) / 100,
+          y: 20 + ((i * 1013) % 36000) / 100,
+          size: 1.4,
+          color: i % 2 ? rgb(0.15, 0.4, 0.7) : rgb(0.65, 0.2, 0.25)
+        })
+      }
+      const result = toolResult(
+        'write_artifact_file',
+        await client.callTool({
+          name: 'write_artifact_file',
+          arguments: {
+            filename,
+            mimeType: 'application/pdf',
+            source: { kind: 'inline', content: await pdf.saveAsBase64(), encoding: 'base64' }
+          }
+        })
+      )
+      if (!result.artifact?.version_id) throw new Error('PDF chart was not staged.')
+    }
+  })
+  return 'PDF chart files published.'
 }
 
 const createPreviewContextMenuArtifacts = async (sessionId) => {
@@ -3161,24 +3197,9 @@ if (process.argv.includes('--version')) {
               return `Notebook update ready: ${JSON.stringify({ replPid: repl.pid, shellPid })}`
             }
           )
-        } else if (
-          prompt.includes(fencePrompt) ||
-          prompt.includes(retryFencePrompt) ||
-          (() => {
-            const normalized = prompt.replace(/\s+/gu, '')
-            return (
-              normalized.includes('inspect_packages') &&
-              normalized.includes('reportlab') &&
-              normalized.includes('PyMuPDF')
-            )
-          })()
-        ) {
-          const normalized = prompt.replace(/\s+/gu, '')
-          const retry =
-            prompt.includes(retryFencePrompt) ||
-            (!normalized.includes('manage_packages') && !normalized.includes('manage_environments'))
+        } else if (prompt.includes(kernelRecoveryRequest)) {
           reply = await withMcpClient(context.params.sessionId, 'open-science-notebook', (client) =>
-            exerciseKernelFence(client, retry)
+            exerciseKernelRecovery(client, prompt, toolResult)
           )
         } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
           reply = await verifyWindowsReplLifecycle(context.params.sessionId)
@@ -3374,6 +3395,8 @@ if (process.argv.includes('--version')) {
           if (controlResultValue(result).marker !== 'markdown-task-read-verified')
             throw new Error(JSON.stringify(result))
           reply = 'Markdown task read verified.'
+        } else if (prompt.includes(PDF_CHART_ARTIFACTS_PROMPT)) {
+          reply = await createPdfChartArtifacts(context.params.sessionId)
         } else if (prompt.includes('Create long filename artifacts.')) {
           reply = await createLongFilenameArtifacts(context.params.sessionId)
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {

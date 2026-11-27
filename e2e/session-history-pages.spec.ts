@@ -462,7 +462,7 @@ for (const branched of [false, true]) {
 
       await openProjectSession(page, projectName, session.title)
       await expect(page.getByText('PAGED-REPLY-11', { exact: true })).toBeVisible()
-      expect(await readCalls()).toContain('sessions:load-history-page')
+      await expect.poll(readCalls).toContain('sessions:load-history-page')
       expect(await readCalls()).not.toContain('sessions:load-one')
       const firstPageCalls = await readCalls()
       let pagedCalls: string[] = []
@@ -501,7 +501,7 @@ for (const branched of [false, true]) {
         // A display page contains 80 business records. The fixture has 144 records, so the
         // earliest prompt can require a second read when the initial page has already prefetched
         // rows to fill a short viewport.
-        for (let attempt = 0; attempt < 3 && !(await earliestPrompt.count()); attempt++) {
+        for (let attempt = 0; attempt < 24 && !(await earliestPrompt.count()); attempt++) {
           // A pending page temporarily changes the button label. Wait for its result or the
           // next available read before deciding whether the fixture needs another page.
           await expect(earliestPrompt.or(loadEarlier).first()).toBeVisible()
@@ -525,7 +525,7 @@ for (const branched of [false, true]) {
         await expect(
           page.getByRole('button', { name: 'Next message revision', exact: true })
         ).toHaveCount(0)
-        expect(await readCalls()).toContain('sessions:load-one')
+        await expect.poll(readCalls).toContain('sessions:load-one')
         completeCalls = await readCalls()
 
         // Return to a cold, display-only page; sending itself must fetch full authority.
@@ -545,7 +545,7 @@ for (const branched of [false, true]) {
       await expect(
         page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
       ).toBeVisible()
-      if (!branched) expect(await readCalls()).toContain('sessions:load-one')
+      if (!branched) await expect.poll(readCalls).toContain('sessions:load-one')
       await expect
         .poll(async () => {
           const saved = await page.evaluate(

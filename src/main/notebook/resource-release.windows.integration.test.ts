@@ -386,7 +386,7 @@ describe.skipIf(process.platform !== 'win32')(
       }
     }, 30_000)
 
-    it('retries incomplete original cleanup without releasing a same-session Shell successor or another session', async () => {
+    it('retries incomplete original cleanup without releasing replacement interpreters', async () => {
       const native: typeof import('@aipoch/process-tree-native') = requireNative(
         '../../../packages/process-tree-native'
       )
@@ -490,16 +490,22 @@ describe.skipIf(process.platform !== 'win32')(
           expect(native.getWindowsProcessCreationTime(pid)).not.toBe(birth)
           expect(inspectOwnedWindowsProcessIds()).not.toContain(pid)
         }
-        // The executor fences the exact process key until its original cleanup completes.
-        await expect(
-          service.executeControl(
-            withNotebookExecutionIntent(
-              { ...scope, code: 'globalThis.mustNotStart = 1' },
-              service.createExecutionIntent(scope)
-            )
-          )
-        ).rejects.toThrow(/process tree.*stopped|cleanup.*incomplete/i)
         const freshIntent = service.createExecutionIntent(scope)
+        const replacement = await service.executeControl(
+          withNotebookExecutionIntent(
+            { ...scope, code: 'globalThis.kept = 89; console.log(process.pid)' },
+            freshIntent
+          )
+        )
+        expect(replacement.status).toBe('completed')
+        const replacementPid = Number(replacement.stdout.trim())
+        const replacementBirth = native.getWindowsProcessCreationTime(replacementPid)
+        expect(replacementBirth).not.toBeNull()
+        const replacementOwner = service
+          .ownedResources(scope)
+          .find(({ group, phase }) => group === 'kernel' && phase === 'idle')!
+        expect(replacementOwner.kernelEpochId).not.toBe(originalOwner.kernelEpochId)
+
         const successor = await service.executeShell(
           withNotebookExecutionIntent(
             {
@@ -547,9 +553,10 @@ describe.skipIf(process.platform !== 'win32')(
         expect(
           cleanups.every(({ proofPath }) => proofPath === receipt.windowsProcessTreeProof.path)
         ).toBe(true)
-        expect(service.ownedResources(scope).map(({ identity }) => identity)).toEqual([
-          successorOwner.identity
-        ])
+        expect(new Set(service.ownedResources(scope).map(({ identity }) => identity))).toEqual(
+          new Set([replacementOwner.identity, successorOwner.identity])
+        )
+        expect(native.getWindowsProcessCreationTime(replacementPid)).toBe(replacementBirth)
         expect(native.getWindowsProcessCreationTime(successorPid)).toBe(successorBirth)
         expect(native.getWindowsProcessCreationTime(retainedPid)).toBe(retainedBirth)
         await expect(
@@ -560,14 +567,6 @@ describe.skipIf(process.platform !== 'win32')(
             )
           )
         ).resolves.toMatchObject({ exitCode: 0, stdout: `74|${successorPid}` })
-        const replacement = await service.executeControl({
-          ...scope,
-          code: 'globalThis.kept = 89; console.log(process.pid)'
-        })
-        expect(replacement.status).toBe('completed')
-        const replacementPid = Number(replacement.stdout.trim())
-        const replacementBirth = native.getWindowsProcessCreationTime(replacementPid)
-        expect(replacementBirth).not.toBeNull()
         const cleanupCount = cleanups.length
         expect((await service.retryResourceRelease(request, () => undefined)).status).toBe(
           'released'

@@ -1115,8 +1115,10 @@ for (const variant of [
         .getByRole('button', { name: /Read paragraph/ })
       const review = panel.getByRole('button', { name: /^Translation \d+$/ })
       if ((await review.getAttribute('aria-pressed')) === 'true') await review.click()
+      await expect(review).toHaveAttribute('aria-pressed', 'false')
       await expect(marker).toHaveCount(0)
       await review.click()
+      await expect(review).toHaveAttribute('aria-pressed', 'true')
       await expect(marker).toHaveCount(1)
       await panel.getByRole('button', { name: 'Close translation', exact: true }).click()
       await expect(marker).toHaveCount(0)
@@ -1139,19 +1141,25 @@ for (const variant of [
       await expect(warningTip).toContainText(
         'This passage is translated, but its original layout was retained in the PDF.'
       )
-      await expect(warningTip).toContainText(
-        'These source pages were kept in their original form because their links could not be remapped safely.'
-      )
+      await expect(
+        panel
+          .locator('[data-layout-failure]')
+          .getByText(
+            'These source pages were kept in their original form because their links could not be remapped safely.',
+            { exact: true }
+          )
+      ).toBeVisible()
       await page.screenshot({ path: testInfo.outputPath('retained-paragraph-tip.png') })
       await marker.focus()
       await expect(
         panel.getByRole('button', { name: 'Retranslate this paragraph', exact: true })
       ).toBeVisible()
       const calls = directRequests.length
-      await panel.getByRole('button', { name: 'Retry PDF layout', exact: true }).click()
-      await expect(
-        panel.getByRole('button', { name: 'Layout unchanged', exact: true })
-      ).toBeDisabled({ timeout: 60000 })
+      const retryLayout = panel.getByRole('button', { name: 'Retry PDF layout', exact: true })
+      await retryLayout.click()
+      await retryLayout.hover()
+      await expect(page.getByRole('tooltip')).toContainText('Layout unchanged', { timeout: 60000 })
+      await expect(retryLayout).toBeEnabled()
       expect(directRequests).toHaveLength(calls)
       await expect(first.locator('[data-pdf-translated-page] [data-pdf-text-layer]')).toContainText(
         'Cell growth'
@@ -1579,8 +1587,22 @@ for (const variant of [
       await panel.getByRole('button', { name: 'Close translation', exact: true }).click()
       await selectRendition(page, 'Translation')
       await scroll.focus()
+      const translatedWord = first
+        .locator('[data-pdf-translated-page] .textLayer span')
+        .filter({
+          hasText: '细胞'
+        })
+        .first()
+      await expect(translatedWord).toBeVisible()
+      await translatedWord.evaluate((span) => {
+        const node = span.firstChild!
+        const start = node.textContent!.indexOf('细胞')
+        window.getSelection()!.setBaseAndExtent(node, start, node, start + 2)
+      })
       await page.keyboard.press('ControlOrMeta+f')
-      await page.getByRole('searchbox', { name: 'Search document', exact: true }).fill('细胞')
+      await expect(
+        page.getByRole('searchbox', { name: 'Search document', exact: true })
+      ).toHaveValue('细胞')
       await expect(
         page.getByRole('button', { name: 'Search in Translation', exact: true })
       ).toBeVisible()

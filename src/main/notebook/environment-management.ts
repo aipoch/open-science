@@ -44,6 +44,7 @@ type NotebookEnvironmentManagementOptions = {
   sessions: () => Iterable<EnvironmentManagementSession>
   ensureRecovered: () => Promise<void>
   assertPrefixRecoverable: (prefix: string) => void
+  hasUnreapedKernelProcesses: (environment: string) => boolean
   environmentOperations: Pick<NotebookEnvironmentOperations, 'runMutation'>
   runtimeRepair: Pick<NotebookRuntimeRepairOwner, 'completeRemovedManagedEnvironment'>
   isAgentEnvironmentCreationEnabled: () => Promise<boolean>
@@ -136,6 +137,8 @@ class NotebookEnvironmentManagementOwner {
             signal?.throwIfAborted()
             this.options.assertPrefixRecoverable(envPrefix(this.options.runtimeRoot, name))
             this.assertUnused(name)
+            if (this.options.hasUnreapedKernelProcesses(name))
+              throw new Error('Notebook processes using this environment could not be stopped.')
             manager.removeEnvironment(name)
             this.options.runtimeRepair.completeRemovedManagedEnvironment(name)
             return { removed: { name } }

@@ -44,6 +44,7 @@ type ProviderPreparationInput = Readonly<{
   frameworkId: AgentFrameworkId
   selectionText: string
   promptText: string
+  omitMainScopeGuidance?: () => boolean
   codex?: Readonly<{
     home?: string
     bridgeSkillsAvailable: boolean
@@ -331,7 +332,7 @@ class AcpTurnSkillOwner {
               ...state.scope.frameworkNames.map((name) => `- ${name}`),
               '</open_science_specialist_skill_scope>'
             ].join('\n')
-          : state.scope?.kind === 'main'
+          : state.scope?.kind === 'main' && !input.omitMainScopeGuidance?.()
             ? [
                 '<open_science_main_agent_scope>',
                 'Current agent: Main Agent. Any earlier Specialist identity and Specialist-specific Skill or Connector scope in this conversation is no longer active. Use only capabilities available in the current Main Agent runtime.',
