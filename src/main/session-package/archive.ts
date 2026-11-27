@@ -45,6 +45,29 @@ const MAX_MANIFEST_BYTES = 8 * 1024 ** 2
 const MAX_ENTRIES = 10004
 const ENTRY_PATH =
   /^(manifest\.json|session\.json|records\.json|ro-crate-metadata\.json|README\.md|objects\/[a-f0-9]{64})$/
+const GZIP_COMMENT_FLAG = 0x10
+const GZIP_HEADER_BYTES = 10
+const gzipComment = Buffer.from('AIPOCH Open-Science session package.\0', 'ascii')
+
+async function* addGzipComment(source: AsyncIterable<Buffer>): AsyncGenerator<Buffer> {
+  const header = Buffer.alloc(GZIP_HEADER_BYTES)
+  let headerBytes = 0
+  for await (const chunk of source) {
+    if (headerBytes === header.length) {
+      yield chunk
+      continue
+    }
+    const copied = chunk.copy(header, headerBytes, 0, header.length - headerBytes)
+    headerBytes += copied
+    if (headerBytes < header.length) continue
+    if (header[0] !== 0x1f || header[1] !== 0x8b || header[2] !== 8 || header[3] !== 0)
+      throw new Error('Unexpected gzip header while writing session package.')
+    header[3] = GZIP_COMMENT_FLAG
+    yield Buffer.concat([header, gzipComment])
+    if (copied < chunk.length) yield chunk.subarray(copied)
+  }
+  if (headerBytes !== header.length) throw new Error('Missing gzip header for session package.')
+}
 
 export { assertPackageSourcePath }
 
@@ -122,7 +145,8 @@ export const writePackageArchive = async (
     Math.floor(tarBytes / 4096) +
     Math.floor(tarBytes / 16384) +
     Math.floor(tarBytes / 33554432) +
-    25
+    25 +
+    gzipComment.length
   await assertPackageCapacity(dirname(path), archiveBound)
   let source: ReadStream | undefined
   try {
@@ -156,6 +180,7 @@ export const writePackageArchive = async (
       pacedFileTransform(signal),
       // Asynchronous zlib work keeps compression off the main event loop.
       createGzip({ level: 1, windowBits: 15, memLevel: 8 }),
+      addGzipComment,
       pacedFileTransform(signal),
       createWriteStream(path, { flags: 'wx' }),
       { signal }

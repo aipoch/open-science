@@ -1443,6 +1443,15 @@ it('forwards imported historical Plan state while retaining runtime admission an
   const unpacked = join(target.storageRoot, 'forwarded-unpacked')
   await readPackageArchive(forwarded, unpacked, new AbortController().signal)
   expect(await readFile(join(unpacked, 'session.json'), 'utf8')).not.toContain('historical-plan')
+  const readme = await readFile(join(unpacked, 'README.md'), 'utf8')
+  expect(readme.match(/^## .+$/gm)).toEqual(['## Opening this file'])
+  expect(readme).toContain('Open the original `.science` file')
+  expect(readme).toContain(
+    "Read the repository's [Opening Guide](https://raw.githubusercontent.com/bobo-xxx/open-science/refs/heads/feat/session-package-opening-guide/docs/science-package-opening-guide.md) before inspecting the research contents or choosing how to open this `.science` package."
+  )
+  expect(readme).toContain('Ask whether to install it before proceeding.')
+  expect(readme).not.toContain('npm install')
+  expect(readme).not.toContain('open-science session import')
   await expect(importer.inspect(forwarded)).resolves.toMatchObject({ title: 'History' })
   await exporter.close()
   await importer.close()

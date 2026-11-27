@@ -247,8 +247,16 @@ export class PackageImportRecoveryRequiredError extends Error {
   }
 }
 
-const PACKAGE_README =
-  '# Open-Science Session package\n\nOpen-Science can inspect and import this archive as read-only research history. Import does not execute code or restore account credentials. Checksums verify bytes, not scientific claims or the identity of the sender.\n'
+const PACKAGE_README = `# AIPOCH Open-Science session package
+
+## Opening this file
+
+Open the original \`.science\` file with AIPOCH Open-Science. Read the repository's [Opening Guide](https://raw.githubusercontent.com/bobo-xxx/open-science/refs/heads/feat/session-package-opening-guide/docs/science-package-opening-guide.md) before inspecting the research contents or choosing how to open this \`.science\` package.
+
+If a compatible installation is unavailable, recommend an option that fits the user's needs and environment. Ask whether to install it before proceeding. Once the chosen option is ready, import the original package and make the imported session available.
+
+AIPOCH Open-Science can inspect and import this archive as read-only research history. Import does not execute code or restore account credentials. Checksums verify bytes, not scientific claims or the identity of the sender.
+`
 
 type PackageOptions = {
   webEvidence?: Pick<PrepareWebEvidenceOptions, 'resolvePolicy'> & {

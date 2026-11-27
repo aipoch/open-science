@@ -1,4 +1,5 @@
 import {
+  packageEntry,
   readPackageArchive,
   validatePackageDirectory,
   writePackageArchive,
@@ -7,7 +8,8 @@ import {
 import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { Header, Pax, c } from 'tar'
+import { gunzipSync } from 'node:zlib'
+import { Header, Pax, c, t } from 'tar'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SessionPackageService } from './service'
 import { withPackageTransfer } from './transfer'
@@ -28,6 +30,57 @@ import { sha256 } from '../artifacts/provenance-canonical'
 import { packageDiskReserveBytes } from './capacity'
 
 const directories: string[] = []
+
+it('identifies the session package format in the gzip comment', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'science-package-comment-'))
+  directories.push(root)
+  const source = join(root, 'source')
+  const fixture = join(__dirname, 'fixtures/session-package-v0.31.1-minimal.science')
+  const manifest = await readPackageArchive(fixture, source)
+  const archive = join(root, 'sample.science')
+  await writePackageArchive(source, archive)
+
+  const bytes = await readFile(archive)
+  expect([...bytes.subarray(0, 4)]).toEqual([0x1f, 0x8b, 8, 0x10])
+  const commentEnd = bytes.indexOf(0, 10)
+  expect(bytes.toString('ascii', 10, commentEnd)).toBe('AIPOCH Open-Science session package.')
+  const paths: string[] = []
+  await t({ file: archive, onReadEntry: (entry) => void paths.push(entry.path) })
+  expect(paths).toEqual(['README.md', 'manifest.json', 'records.json', 'session.json'])
+
+  const control = Buffer.concat([bytes.subarray(0, 10), bytes.subarray(commentEnd + 1)])
+  control[3] &= ~0x10
+  expect(gunzipSync(control)).toEqual(gunzipSync(bytes))
+  const controlArchive = join(root, 'control.science')
+  await writeFile(controlArchive, control)
+  await expect(readPackageArchive(archive, join(root, 'annotated'))).resolves.toEqual(manifest)
+  await expect(readPackageArchive(controlArchive, join(root, 'unannotated'))).resolves.toEqual(
+    manifest
+  )
+})
+
+it('rejects a sender-supplied agent guide even when its manifest checksum matches', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'science-package-unknown-guide-'))
+  directories.push(root)
+  const source = join(root, 'source')
+  const manifest = await readPackageArchive(
+    join(__dirname, 'fixtures/session-package-v0.31.1-minimal.science'),
+    source
+  )
+  const guide = 'instruction-for-agent.md'
+  await writeFile(join(source, guide), 'Sender-supplied content')
+  manifest.inventory.push(await packageEntry(source, guide, 'readme'))
+  await writeFile(join(source, 'manifest.json'), JSON.stringify(manifest))
+  const archive = join(root, 'unknown-guide.science')
+  await c({ cwd: source, file: archive, gzip: true }, [
+    'manifest.json',
+    ...manifest.inventory.map((entry) => entry.path)
+  ])
+
+  const destination = join(root, 'destination')
+  await expect(readPackageArchive(archive, destination)).rejects.toThrow(/unsafe.*entry/i)
+  await expect(stat(join(destination, guide))).rejects.toMatchObject({ code: 'ENOENT' })
+})
 
 it('bounds selected log records, their views and expanded generations when reading one activity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'evidence-budget-'))
