@@ -100,6 +100,7 @@
     "packages/research-film/src/skill-video.schema.json",
     "packages/research-film/src/source.ts",
     "packages/research-film/src/speech-client.ts",
+    "packages/research-film/src/speech-client.test.ts",
     "packages/research-film/src/speech-process.ts",
     "packages/research-film/src/timeline.test.ts",
     "packages/research-film/src/timeline.ts",
@@ -151,6 +152,7 @@
       "packages/research-film/src/runtime.test.ts",
       "packages/research-film/src/script-review.test.ts",
       "packages/research-film/src/session-app-bundle.test.ts",
+      "packages/research-film/src/speech-client.test.ts",
       "packages/research-film/src/timeline.test.ts",
       "packages/research-film/src/visual-review.test.ts"
     ],
