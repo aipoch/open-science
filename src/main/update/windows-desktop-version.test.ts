@@ -51,19 +51,25 @@ it('hands a staged update to the supervisor despite a cached blocker from an old
   const marker = join(root, 'cache', 'open-science-prepared', id, 'occupant-123-456')
   await writeFile(marker, '')
   const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process')
-  vi.mocked(spawn)
-    .mockClear()
-    .mockImplementationOnce((_exe, _args, options) =>
-      actual.spawn(
-        process.execPath,
-        ['-e', "require('node:fs').writeFileSync(process.env.OPEN_SCIENCE_UPDATE_ACK, '')"],
-        {
-          env: options.env,
-          windowsHide: true,
-          stdio: 'ignore'
-        }
-      )
+  vi.mocked(spawn).mockClear()
+  expect(await applyPreparedWindowsUpdate({ current, enabled: async () => false })).toBe(false)
+  expect(spawn).not.toHaveBeenCalled()
+  vi.mocked(spawn).mockImplementationOnce(() => {
+    throw new Error('Supervisor unavailable')
+  })
+  // Continue startup when the installer cannot take over. The unclaimed update can be retried.
+  expect(await applyPreparedWindowsUpdate({ current, enabled: async () => true })).toBe(false)
+  vi.mocked(spawn).mockImplementationOnce((_exe, _args, options) =>
+    actual.spawn(
+      process.execPath,
+      ['-e', "require('node:fs').writeFileSync(process.env.OPEN_SCIENCE_UPDATE_ACK, '')"],
+      {
+        env: options.env,
+        windowsHide: true,
+        stdio: 'ignore'
+      }
     )
+  )
   expect(await applyPreparedWindowsUpdate({ current, enabled: async () => true })).toBe(true)
   expect(spawn).toHaveBeenCalledWith(
     expect.any(String),
