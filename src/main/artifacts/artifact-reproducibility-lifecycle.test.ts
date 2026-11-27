@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ChildProcess } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,7 +25,6 @@ import { ReproducibilityCleanupError } from '@aipoch/reproducibility'
 import { withReproducibilityNotebookLifecycle } from './reproducibility-notebook-lifecycle'
 import { SessionDeletionOwner } from '../session-deletion/owner'
 import { NotebookExecutionIntent } from '../notebook/execution-intent'
-import * as ownedResources from '../notebook/owned-resources'
 import { NotebookResourceReleaseOwner } from '../notebook/resource-release'
 import {
   ArtifactReproducibilityAttemptOwner,
@@ -234,18 +232,28 @@ describe('reproducibility resource lifecycle', () => {
     'settles the original release with an installer %s as %s',
     async (timing, outcome) => {
       const started = deferred()
-      const child = new ChildProcess()
       let live = true
       const finished = outcome !== 'partial with files pending'
       let filesBlocked = !finished
+      const releaseInstaller = vi.fn(async () => ({
+        reaped: !live && !filesBlocked,
+        processesTerminated: !live,
+        temporaryResourcesRemoved: !live && !filesBlocked
+      }))
+      const force = vi.fn(async () => {
+        live = false
+        if (outcome === 'released after retrying child files')
+          releaseInstaller.mockResolvedValueOnce({
+            reaped: false,
+            processesTerminated: true,
+            temporaryResourcesRemoved: false
+          })
+      })
       const installer = {
-        identity: child,
+        identity: {},
         startedAt: 123,
-        release: vi.fn(async () => ({
-          reaped: !live && !filesBlocked,
-          processesTerminated: !live,
-          temporaryResourcesRemoved: !live && !filesBlocked
-        }))
+        processControl: { hasLiveProcess: () => live, forceClose: force },
+        release: releaseInstaller
       }
       const removeAttemptRoot = vi.fn()
       const retainedCleanup = vi.fn(async () => {
@@ -253,20 +261,6 @@ describe('reproducibility resource lifecycle', () => {
         if (result.reaped) removeAttemptRoot()
         return result
       })
-      const verifyLive = vi
-        .spyOn(ownedResources, 'hasVerifiedRetainedInstaller')
-        .mockImplementation((identity): identity is ChildProcess => identity === child && live)
-      const force = vi
-        .spyOn(ownedResources, 'forceCloseRetainedInstaller')
-        .mockImplementation(async () => {
-          live = false
-          if (outcome === 'released after retrying child files')
-            installer.release.mockResolvedValueOnce({
-              reaped: false,
-              processesTerminated: true,
-              temporaryResourcesRemoved: false
-            })
-        })
       const execute = vi.fn<
         NonNullable<ArtifactReproducibilityAttemptOwnerDependencies['execute']>
       >(async (input) => {
@@ -311,7 +305,7 @@ describe('reproducibility resource lifecycle', () => {
         )
         await operation
 
-        expect(force).toHaveBeenCalledExactlyOnceWith(child)
+        expect(force).toHaveBeenCalledOnce()
         expect(removeAttemptRoot).toHaveBeenCalledTimes(finished ? 1 : 0)
         expect(execute).toHaveBeenCalledOnce()
         expect(hold).toHaveBeenCalledOnce()
@@ -332,8 +326,6 @@ describe('reproducibility resource lifecycle', () => {
         live = false
         filesBlocked = false
         await owner.dispose()
-        verifyLive.mockRestore()
-        force.mockRestore()
       }
     }
   )

@@ -474,8 +474,7 @@ class ArtifactReproducibilityAttemptOwner {
             sessionId,
             // An installer already in this snapshot is closed through its own resource. A handle
             // retained while this attempt drains still belongs to the confirmed attempt.
-            hasLiveProcess: () =>
-              !installer && hasVerifiedRetainedInstaller(attempt.installer?.identity),
+            hasLiveProcess: () => !installer && hasVerifiedRetainedInstaller(attempt.installer),
             release: (force) => this.releaseAttempt(attempt, force && !installer)
           },
           ...(installer
@@ -489,9 +488,9 @@ class ArtifactReproducibilityAttemptOwner {
                   startedAt: installer.startedAt,
                   projectId,
                   sessionId,
-                  hasLiveProcess: () => hasVerifiedRetainedInstaller(installer.identity),
+                  hasLiveProcess: () => hasVerifiedRetainedInstaller(installer),
                   release: async (force?: boolean) => {
-                    if (force) await forceCloseRetainedInstaller(installer.identity)
+                    if (force) await forceCloseRetainedInstaller(installer)
                     return installer.release()
                   }
                 }
@@ -531,8 +530,7 @@ class ArtifactReproducibilityAttemptOwner {
       if (!attempt.recording) attempt.controller.abort(new Error('Reproduction cancelled.'))
       await attempt.settled
       if (attempt.cleanupError) {
-        if (force && attempt.installer)
-          await forceCloseRetainedInstaller(attempt.installer.identity)
+        if (force && attempt.installer) await forceCloseRetainedInstaller(attempt.installer)
         const result = await attempt.retainedCleanup?.()
         if (!result?.reaped) return { reaped: false, error: attempt.cleanupError }
         attempt.cleanupError = undefined

@@ -3538,11 +3538,11 @@ class NotebookRuntimeService {
       {
         group: 'installer',
         kind: 'environment-install',
-        hasLiveProcess: () => hasVerifiedRetainedInstaller(unconfirmed?.cleanup?.identity),
+        hasLiveProcess: () => hasVerifiedRetainedInstaller(unconfirmed?.cleanup),
         cleanup: async (force) => {
           if (!unconfirmed) return { reaped: true }
           const cleanup = unconfirmed.cleanup
-          if (force && cleanup) await forceCloseRetainedInstaller(cleanup.identity)
+          if (force && cleanup) await forceCloseRetainedInstaller(cleanup)
           const stopped = await cleanup?.release()
           // The process cleanup can finish while the interrupted mutation remains quarantined.
           // Leave the runtime recovery record to its owner and report it separately from cleanup.

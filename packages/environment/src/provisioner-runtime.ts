@@ -22,6 +22,10 @@ export const isChildUnconfirmedError = (error: unknown): boolean =>
 export type EnvironmentChildCleanup = Readonly<{
   identity: object
   startedAt: number
+  processControl?: Readonly<{
+    hasLiveProcess(): boolean
+    forceClose(): Promise<void>
+  }>
   release(): Promise<{ reaped: boolean }>
 }>
 

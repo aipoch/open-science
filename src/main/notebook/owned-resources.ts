@@ -1,3 +1,4 @@
+import type { EnvironmentChildCleanup } from '@aipoch/environment'
 import { ChildProcess } from 'node:child_process'
 import {
   hasVerifiedPosixProcessTreeMember,
@@ -40,12 +41,18 @@ export type NotebookOwnedResource = {
 }
 
 export const hasVerifiedRetainedInstaller = (
-  identity: object | undefined
-): identity is ChildProcess =>
-  identity instanceof ChildProcess && hasVerifiedPosixProcessTreeMember(identity)
+  cleanup: EnvironmentChildCleanup | undefined
+): boolean =>
+  cleanup?.processControl?.hasLiveProcess() ??
+  (cleanup?.identity instanceof ChildProcess && hasVerifiedPosixProcessTreeMember(cleanup.identity))
 
-export const forceCloseRetainedInstaller = async (identity: object): Promise<void> => {
-  if (hasVerifiedRetainedInstaller(identity)) await terminateProcessTree(identity, 'SIGKILL')
+export const forceCloseRetainedInstaller = async (
+  cleanup: EnvironmentChildCleanup
+): Promise<void> => {
+  if (!hasVerifiedRetainedInstaller(cleanup)) return
+  if (cleanup.processControl) await cleanup.processControl.forceClose()
+  else if (cleanup.identity instanceof ChildProcess)
+    await terminateProcessTree(cleanup.identity, 'SIGKILL')
 }
 
 export const releaseNotebookResources = async (

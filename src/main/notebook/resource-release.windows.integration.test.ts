@@ -3,13 +3,18 @@ import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { environmentChildCleanup } from '@aipoch/environment'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { inspectOwnedWindowsProcessIds } from '../process-tree-windows'
+import { windowsProcessStartTicks } from '../windows-process-query'
 import type { NotebookRunDocument } from '../../shared/notebook'
 import { withNotebookExecutionIntent } from './execution-intent'
 import { createWindowsStandardProcessSandbox } from './fixtures/windows-standard-process-sandbox'
 import { healthyNotebookMemoryPolicy } from './memory-policy.test-support'
+import { forceCloseRetainedInstaller, hasVerifiedRetainedInstaller } from './owned-resources'
+import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import { NotebookResourceReleaseOwner } from './resource-release'
 import { NotebookRuntimeService } from './runtime-service'
 
 const requireNative = createRequire(import.meta.url)
@@ -72,6 +77,105 @@ describe.skipIf(process.platform !== 'win32')(
             ownedJobMembers,
             sandboxDisposed
           })
+      }
+    })
+
+    it('force closes a retained Windows installer through its original supervisor', async () => {
+      const scope = { projectId: 'project', sessionId: 'installer' }
+      const controller = new AbortController()
+      const pidPath = join(root, 'installer.pid')
+      let terminateJob: (() => Promise<boolean>) | undefined
+      const requestTermination = vi
+        .fn(async () => (await terminateJob?.()) ?? false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+      const terminateTree = vi.fn(async () => ({ reaped: false }))
+      const spawn = sandboxedPackageSpawn({
+        processSandbox: {
+          wrap: async (invocation) => {
+            const wrapped = await port.wrap(invocation)
+            terminateJob = wrapped.requestProcessTreeTermination
+            return { ...wrapped, requestProcessTreeTermination: requestTermination }
+          }
+        },
+        runtimeRoot: root,
+        storageRoot: root,
+        request: { ...scope, language: 'python', packages: ['example'], workspaceCwd: root },
+        terminateTree
+      })
+      const execution = spawn(
+        process.execPath,
+        [
+          '-e',
+          `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+           setTimeout(() => {}, 15000);`
+        ],
+        process.env,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        { signal: controller.signal }
+      ).catch((error: unknown) => error)
+      try {
+        await vi.waitFor(async () => expect(await readFile(pidPath, 'utf8')).toMatch(/^\d+$/), {
+          timeout: 10_000
+        })
+        const pid = Number(await readFile(pidPath, 'utf8'))
+        const birth = windowsProcessStartTicks(pid)
+        expect(birth).toBeDefined()
+        controller.abort()
+        const retained = environmentChildCleanup(await execution)
+        expect(retained).toBeDefined()
+        if (!retained) throw new Error('The installer did not retain its cleanup capability.')
+        let operation: Promise<void> | undefined
+        const owner = new NotebookResourceReleaseOwner({
+          resources: () => [
+            {
+              ...scope,
+              identity: retained.identity,
+              startedAt: retained.startedAt,
+              group: 'installer',
+              kind: 'environment-install',
+              phase: 'cleanup-pending',
+              hasLiveProcess: () => hasVerifiedRetainedInstaller(retained),
+              release: async (force) => {
+                if (force) await forceCloseRetainedInstaller(retained)
+                return retained.release()
+              }
+            }
+          ],
+          hold: () => () => undefined,
+          observe: (_scope, active) => {
+            operation = active
+          },
+          block: () => [],
+          decisions: () => [],
+          changed: () => undefined,
+          blockedReason: () => undefined,
+          logger: { info: vi.fn(), error: vi.fn() }
+        })
+        const [group] = (await owner.project(scope.projectId)).groups
+        const { operationId } = owner.release(
+          { ...scope, revision: group.revision, stopAll: {} },
+          () => undefined
+        )
+        await operation
+
+        expect(owner.get({ ...scope, operationId })).toMatchObject({
+          status: 'released',
+          phase: 'force-close',
+          resources: [{ processesTerminated: true, networkClosed: true }]
+        })
+        expect(requestTermination).toHaveBeenCalledTimes(4)
+        expect(terminateTree).toHaveBeenCalledOnce()
+        expect(hasVerifiedRetainedInstaller(retained)).toBe(false)
+        expect(windowsProcessStartTicks(pid)).not.toBe(birth)
+      } finally {
+        controller.abort()
+        await terminateJob?.()
+        await execution
       }
     })
 
