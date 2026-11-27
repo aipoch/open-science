@@ -1574,6 +1574,87 @@ describe('completed coordinator process release', () => {
     }
   })
 
+  it.each(['same context', 'other runtime', 'other provider Session', 'history replay'] as const)(
+    'scopes successive Main sends after native OpenCode reconnects with %s',
+    async (transition) => {
+      const processes: FakeAgentProcess[] = []
+      const agents: ReturnType<typeof startFakeAgent>[] = []
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          new AcpRuntime({
+            appVersion: 'test',
+            defaultCwd: '/workspace',
+            callbacks,
+            resolveBackend: () => {
+              const process = new FakeAgentProcess()
+              processes.push(process)
+              agents.push(startFakeAgent(process, [`opencode-session-${processes.length}`]))
+              return {
+                framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
+                executablePath: '/bin/opencode',
+                env: {}
+              }
+            }
+          }),
+        {},
+        '/workspace'
+      )
+      const cwd = '/workspace'
+      const agentTarget = {
+        frameworkId: 'opencode',
+        providerId: 'test-provider',
+        reasoningEffort: 'medium'
+      } as const
+      try {
+        const { sessionId, providerSessionId } = await coordinator.createSession({
+          cwd,
+          agentTarget
+        })
+        for (const [index, text] of ['First task', 'Second task', 'Third task'].entries()) {
+          const targetProviderSessionId =
+            transition === 'other provider Session' && index === 1
+              ? 'another-provider-session'
+              : providerSessionId
+          if (index > 0) {
+            const resumed = await coordinator.resumeSession({
+              sessionId,
+              providerSessionId: targetProviderSessionId,
+              cwd,
+              agentTarget:
+                transition === 'other runtime' && index === 1
+                  ? { ...agentTarget, model: 'other-model' }
+                  : agentTarget
+            })
+            expect(resumed.providerSessionId).toBe(targetProviderSessionId)
+            expect(resumed.contextReset).not.toBe(true)
+            expect(agents[index].newSessions).toHaveLength(0)
+            expect(agents[index].resumedSessions).toMatchObject([
+              { sessionId: targetProviderSessionId }
+            ])
+          }
+          await coordinator.sendPrompt({
+            sessionId,
+            text,
+            ...(transition === 'history replay' && index === 1
+              ? { historyPreamble: 'Earlier conversation' }
+              : {})
+          })
+          expect(agents[index].prompts).toMatchObject([
+            { sessionId: targetProviderSessionId, text: expect.stringContaining(text) }
+          ])
+          await vi.waitFor(() => expect(processes[index].killed).toBe(true))
+          expect(coordinator.getSnapshot().sessionIds).not.toContain(sessionId)
+        }
+        const requiresRevocation = transition !== 'same context'
+        expect(
+          agents.map(({ prompts }) => prompts[0].text.includes('<open_science_main_agent_scope>'))
+        ).toEqual([false, requiresRevocation, requiresRevocation])
+      } finally {
+        await coordinator.shutdownForQuit()
+      }
+    }
+  )
+
   it.each([
     ['Claude Code', claudeCodeFramework, 'claude-anthropic'],
     ['OpenCode', opencodeFramework, 'opencode-openai'],
@@ -1666,6 +1747,10 @@ describe('completed coordinator process release', () => {
         })
         await vi.waitFor(() => expect(processes[1].killed).toBe(true))
         expect(agents[1].prompts).toHaveLength(1)
+        expect(agents[0].prompts[0].text).not.toContain('<open_science_main_agent_scope>')
+        expect(agents[1].prompts[0].text.includes('<open_science_main_agent_scope>')).toBe(
+          resumed.contextReset === true
+        )
         if (resumed.contextReset)
           expect(JSON.stringify(agents[1].prompts)).toContain('First task persisted transcript')
       } finally {

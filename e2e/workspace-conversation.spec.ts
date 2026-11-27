@@ -452,6 +452,13 @@ test('persists Memory toggles after idle provider release and restart', async ({
 
   await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  const sessionId = await page.evaluate(async () => (await window.api.acp.getState()).sessionId)
+  expect(sessionId).toBeTruthy()
+  const mainScopeMarkers = async (text: string): Promise<boolean[]> =>
+    (await app.readFakeAgentPrompts())
+      .filter((entry) => entry.sessionId === sessionId && entry.prompt.includes(text))
+      .map(({ prompt }) => prompt.includes('<open_science_main_agent_scope>'))
+  await expect.poll(() => mainScopeMarkers(USER_MESSAGE)).toEqual([false])
   await expect
     .poll(() => page.evaluate(async () => (await window.api.acp.getState()).sessionIds), {
       // The provider remains warm for 60 seconds after its last activity.
@@ -473,12 +480,18 @@ test('persists Memory toggles after idle provider release and restart', async ({
     })
 
   await page.keyboard.press('Escape')
+  const followUp = 'Summarize the fixture after the provider reconnects.'
+  await submitPromptViaUi(page, followUp)
+  await expect(page.getByText(AGENT_REPLY, { exact: true })).toHaveCount(2)
+  await expect.poll(() => mainScopeMarkers(followUp)).toEqual([false])
+  await expect.poll(() => page.evaluate(() => window.api.storage.detectActive())).toEqual([])
+
   page = await app.restart()
   await page
     .getByRole('region', { name: 'Recent sessions' })
     .getByRole('button', { name: USER_MESSAGE })
     .click()
-  await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect(page.getByText(AGENT_REPLY, { exact: true })).toHaveCount(2)
 
   await page.getByRole('button', { name: /Agent controls:/ }).click()
   const restoredMemory = page.getByRole('menuitem', { name: 'Memory', exact: true })

@@ -218,14 +218,18 @@ class AcpSessionRegistry {
     this.options.onAttachmentChanged?.(registryEntry(appSessionId, record))
     return registryEntry(appSessionId, record)
   }
-  detach(attachment: AcpSessionAttachment, mode: 'provider' | 'connection'): boolean {
+  detach(
+    attachment: AcpSessionAttachment,
+    mode: 'provider' | 'connection',
+    preserveFreshMainContext = false
+  ): boolean {
     const record = this.records.get(attachment.appSessionId)
     if (!record?.attachment || record.attachment.generation !== attachment.generation) return false
     this.deleteAlias(record.attachment)
     record.attachment = undefined
     if (mode === 'provider') record.aggregate.detachProvider()
     else {
-      record.aggregate.detachConnection()
+      record.aggregate.detachConnection(preserveFreshMainContext)
       if (this.currentSessionIdValue === attachment.appSessionId) {
         this.currentSessionIdValue = undefined
       }

@@ -51,7 +51,7 @@ const deepFreeze = <Value>(value: Value): Value => {
 
 class AcpSessionAggregate {
   private session: ActiveSession | undefined
-  private freshMainContext = false
+  private freshMainProviderSessionId: string | undefined
   private cwd: string | undefined
   private projectId: string | undefined
   private frameworkId: AgentFrameworkId | undefined
@@ -159,17 +159,25 @@ class AcpSessionAggregate {
   }
 
   isFreshMainContext(): boolean {
-    return this.freshMainContext
+    return this.session !== undefined && this.session.sessionId === this.freshMainProviderSessionId
+  }
+
+  canResumeFreshMainContext(providerSessionId: string, frameworkId: AgentFrameworkId): boolean {
+    return (
+      this.session === undefined &&
+      this.frameworkId === frameworkId &&
+      this.freshMainProviderSessionId === providerSessionId
+    )
   }
 
   confirmFreshMainContext(session: ActiveSession): void {
     if (this.session === session && this.specialistBindingRevisionValue === 0) {
-      this.freshMainContext = true
+      this.freshMainProviderSessionId = session.sessionId
     }
   }
 
   clearFreshMainContext(): void {
-    this.freshMainContext = false
+    this.freshMainProviderSessionId = undefined
   }
 
   // Frameworks without dynamic Session system-prompt metadata return a prompt prefix from setup.
@@ -203,10 +211,10 @@ class AcpSessionAggregate {
     this.refreshSnapshot()
   }
 
-  detachConnection(): void {
+  detachConnection(preserveFreshMainContext = false): void {
     this.memoryController.abort()
     this.session = undefined
-    this.clearFreshMainContext()
+    if (!preserveFreshMainContext) this.clearFreshMainContext()
     this.appliedModel = undefined
     this.configOptions = undefined
     // Project and workspace belong to the App Session, not its provider connection. A drained
