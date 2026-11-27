@@ -34521,7 +34521,7 @@ it.each(['Stop', 'caller revocation', 'refusal replacement'] as const)(
         messageBranchId: provenanceContext.messageBranchId
       }
       const refused = intents.create(scope)
-      const refusalId = refused.block('memory', async () => undefined)
+      const refusalId = refused.block('memory', { recheckMemory: async () => undefined })
       let callerCurrent = true
       const starting = runtime.startPrompt(
         withNotebookUserOperation(

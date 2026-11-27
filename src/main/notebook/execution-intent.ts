@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 import { NotebookExecutionAdmissionError, type NotebookMemoryRecheck } from './execution-admission'
 import type { notebookExecutionIntentReference } from './execution-model-contract'
 
 export const ABANDONED_NOTEBOOK_PREPARATION = 'user-execution-preparation-not-committed'
+const log = createLogger('notebook:execution-intent')
 
 export type NotebookExecutionIntentScope = Readonly<{
   projectId: string
@@ -74,16 +76,38 @@ export class NotebookExecutionIntent {
     )
       return this
     const stopped = new NotebookExecutionIntent(this.scope)
-    stopped.block('originating-execution-context-unavailable')
+    stopped.block('originating-execution-context-unavailable', { phase: 'descendant-inheritance' })
     return stopped
   }
 
-  block(reason: string, recheckMemory?: NotebookMemoryRecheck): string {
-    this.refusal ??= Object.freeze({
+  block(
+    reason: string,
+    options: {
+      recheckMemory?: NotebookMemoryRecheck
+      phase?: string
+      mode?: string
+      originMessageId?: string
+      errorCategory?: string
+    } = {}
+  ): string {
+    if (this.refusal) return this.refusal.id
+    this.refusal = Object.freeze({
       id: randomUUID(),
       reason,
       blockedAt: Date.now(),
-      recheckMemory
+      recheckMemory: options.recheckMemory
+    })
+    log.info('Notebook execution context stopped', {
+      projectId: this.scope.projectId,
+      sessionId: this.scope.sessionId,
+      messageBranchId: this.scope.messageBranchId,
+      promptMessageId: this.scope.promptMessageId,
+      operationId: this.refusal.id,
+      reason,
+      phase: options.phase,
+      mode: options.mode,
+      originMessageId: options.originMessageId,
+      errorCategory: options.errorCategory
     })
     return this.refusal.id
   }
@@ -122,7 +146,16 @@ export class NotebookExecutionIntent {
 
   // Only an authenticated transport entry counts as another execution attempt. Boundary
   // rechecks of a single admitted request must not turn the first refusal into cancellation.
-  assertDispatch(credential: string | undefined): void {
+  assertDispatch(credential: string | undefined, operation: string): void {
+    if (this.refusal) {
+      log.warn('Notebook execution request refused', {
+        sessionId: this.scope.sessionId,
+        operation,
+        operationId: this.refusal.id,
+        reason: this.refusal.reason,
+        startedAt: this.refusal.blockedAt
+      })
+    }
     if (this.refusal && credential) {
       const branch = this.branches.get(credential)
       if (branch?.onViolation && !branch.providerStopRequested) {

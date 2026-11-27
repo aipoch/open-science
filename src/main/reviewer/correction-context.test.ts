@@ -164,15 +164,10 @@ describe('reviewed correction requirements', () => {
       if (scenario === 'scope answer then feedback')
         messages.unshift(message('earlier-task', 'user', -1), message('scope-question', 'agent', 0))
       const session = makeSession(messages)
+      const recordAdmission = vi.fn()
       const sendApplicationPrompt = vi.fn<ReviewerAcpRuntime['sendApplicationPrompt']>(
-        async (request, _attribution, options) => {
-          expect(options?.onPromptAdmitted).toBeTypeOf('function')
-          const admitted = await options!.onPromptAdmitted!()
-          expect(admitted).toMatchObject({
-            promptMessageId: request.provenanceContext?.promptMessageId,
-            messageBranchId: session.conversationGraph!.branches[0].id,
-            messageAncestry: expect.arrayContaining(messages.map((m) => m.id))
-          })
+        async (_request, _attribution, options) => {
+          recordAdmission(await options!.onPromptAdmitted!())
           throw new Error('test provider unavailable after admission')
         }
       )
@@ -199,6 +194,15 @@ describe('reviewed correction requirements', () => {
         sessionRefreshTimeoutMs: 0
       })
       expect(sendApplicationPrompt).toHaveBeenCalledOnce()
+      expect(recordAdmission).toHaveBeenCalledWith(
+        expect.objectContaining({
+          originMessageId: 'user',
+          promptMessageId:
+            sendApplicationPrompt.mock.calls[0][0].provenanceContext?.promptMessageId,
+          messageBranchId: session.conversationGraph!.branches[0].id,
+          messageAncestry: expect.arrayContaining(messages.map((m) => m.id))
+        })
+      )
       expect(repository.commitFindingDispositions).toHaveBeenCalledWith([
         expect.objectContaining({ trigger: 'correction_failed' })
       ])
