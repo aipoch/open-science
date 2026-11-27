@@ -25,7 +25,7 @@ import { configureSecureStorageCipher } from '../secure-storage'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { NotebookRunRepository } from '../notebook/repository'
 import { NotebookIdleReclamation, NOTEBOOK_SESSION_IDLE_MS } from '../notebook/idle-reclamation'
-import type { NotebookRuntimeService } from '../notebook/runtime-service'
+import { NotebookRuntimeService } from '../notebook/runtime-service'
 import * as windowsNotebookRuntime from '../notebook/windows-notebook-runtime'
 import { composeApplicationRuntime } from '../application-runtime'
 import { initDataRoot } from '../storage-root'
@@ -228,6 +228,17 @@ async function notebookComposition(
   }
 }
 
+function waitForProcessExit(pid: number): Promise<void> {
+  return vi.waitFor(
+    () => {
+      expect(() => process.kill(pid, 0), `Expected process ${pid} to exit`).toThrow(
+        expect.objectContaining({ code: 'ESRCH' })
+      )
+    },
+    { timeout: 5_000 }
+  )
+}
+
 it.each([
   ['submitted', 'expiry'],
   ['running', 'expiry'],
@@ -252,6 +263,17 @@ it.each([
     let now = Date.now()
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
     const check = vi.spyOn(NotebookIdleReclamation.prototype, 'check')
+    // Keep host memory pressure from triggering reclamation before the idle deadline.
+    const healthyMemory = {
+      status: 'healthy',
+      reason: { code: 'healthy' },
+      source: 'test',
+      executionScope: 'test:host'
+    } as const
+    vi.spyOn(NotebookRuntimeService.prototype, 'getMemoryPolicy').mockResolvedValue({
+      getState: async () => healthyMemory,
+      currentState: () => healthyMemory
+    })
     // As in kernel-executor.test.ts, use the test host Node for real REPL children on Windows.
     // These cases exercise process ownership/reclamation, without preparing the protected runtime
     // or running PowerShell; retain the real executor and process-tree cleanup.
@@ -376,11 +398,11 @@ it.each([
         expect(notebook.getProjectActivity(scope).kernels).toHaveLength(2)
         now++
         await sweep()
-        // Before this fix only the ordinary session reaches terminated here.
+        // Idle retirement removes kernels from activity before process cleanup finishes.
         const kernels = notebook.getProjectActivity(scope).kernels
         expect(kernels.some((kernel) => kernel.sessionId === 'ordinary')).toBe(false)
         expect(kernels).toHaveLength(0)
-        expect(() => process.kill(Number(ordinary.stdout.trim()), 0)).toThrow()
+        await waitForProcessExit(Number(ordinary.stdout.trim()))
       } else {
         now++
         expect((await execute('capacity-2', 'console.log(2)')).status).toBe('completed')
@@ -392,7 +414,7 @@ it.each([
         expect(kernels.some((kernel) => kernel.sessionId === scope.sessionId)).toBe(false)
         expect(() => process.kill(Number(ordinary.stdout.trim()), 0)).not.toThrow()
       }
-      expect(() => process.kill(pid, 0)).toThrow()
+      await waitForProcessExit(pid)
       expect((await jobs.get(jobId))?.status).toBe(stage)
 
       ray.start()
@@ -495,7 +517,7 @@ it.each([
         await sweep()
         now += NOTEBOOK_SESSION_IDLE_MS
         await sweep()
-        expect(() => process.kill(livePid, 0)).toThrow()
+        await waitForProcessExit(livePid)
         expect((await execute(scope.sessionId, 'console.log(42)')).stdout.trim()).toBe('42')
         expect((await jobs.get(jobId))?.status).toBe('running')
       }
