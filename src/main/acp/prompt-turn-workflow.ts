@@ -588,6 +588,16 @@ class AcpPromptTurnWorkflow {
         }
       }
       if (!preDispatchOutcome) {
+        // Admit replay from the request before the prompt merges any Side Chat advisory.
+        if (
+          admittedRequest.contextReset ||
+          admittedRequest.historyPreamble ||
+          admittedRequest.historyAttachments?.length ||
+          admittedRequest.historyImages?.length
+        ) {
+          const entry = this.options.registry.lookup(admittedRequest.sessionId)
+          if (entry?.attachment?.session === activeSession) entry.aggregate.clearFreshMainContext()
+        }
         this.options.registry.select(admittedRequest.sessionId)
         this.options.recordAdmittedPrompt(admittedRequest)
       }
@@ -705,7 +715,8 @@ class AcpPromptTurnWorkflow {
               .join('\n\n')
           }
         : request
-      const snapshot = registry.lookup(sessionId)?.aggregate.snapshot()
+      const aggregate = registry.lookup(sessionId)?.aggregate
+      const snapshot = aggregate?.snapshot()
       if (turn.mode.kind === 'user' && turn.mode.runtimeReviewOwner === 'task')
         await env.prepareTaskNotebookRuntime?.(
           request,
@@ -742,6 +753,8 @@ class AcpPromptTurnWorkflow {
         skillImportEnabled: env.skillImportEnabled(),
         skillImportTurnToken: turnToken,
         turnSkill: skill,
+        omitMainScopeGuidance: () =>
+          aggregate?.activeSession() === session && aggregate.isFreshMainContext(),
         selectedComputeHostIds: env.resolveComputeExecutionTargetIds?.(sessionId) ?? [],
         ...(planContext
           ? { protectedContext: formatPlanProtectedContext(planContext, turn.plan.source) }

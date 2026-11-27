@@ -2758,6 +2758,10 @@ class AcpRuntimeCoordinator {
   }
 
   private bindSessionRuntime(sessionId: string, runtime: AcpRuntime): void {
+    // An idle release may have removed active ownership while another runtime still has affinity.
+    for (const candidate of this.runtimes) {
+      if (candidate !== runtime) candidate.clearFreshMainContext(sessionId)
+    }
     this.sessionWriterTransfers.delete(sessionId)
     this.setSessionRuntime(sessionId, runtime)
     if (!this.isolatedRuntimes.has(runtime)) return

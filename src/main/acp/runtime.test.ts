@@ -1574,6 +1574,87 @@ describe('completed coordinator process release', () => {
     }
   })
 
+  it.each(['same context', 'other runtime', 'other provider Session', 'history replay'] as const)(
+    'scopes successive Main sends after native OpenCode reconnects with %s',
+    async (transition) => {
+      const processes: FakeAgentProcess[] = []
+      const agents: ReturnType<typeof startFakeAgent>[] = []
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          new AcpRuntime({
+            appVersion: 'test',
+            defaultCwd: '/workspace',
+            callbacks,
+            resolveBackend: () => {
+              const process = new FakeAgentProcess()
+              processes.push(process)
+              agents.push(startFakeAgent(process, [`opencode-session-${processes.length}`]))
+              return {
+                framework: { ...opencodeFramework, spawn: () => asAgentProcess(process) },
+                executablePath: '/bin/opencode',
+                env: {}
+              }
+            }
+          }),
+        {},
+        '/workspace'
+      )
+      const cwd = '/workspace'
+      const agentTarget = {
+        frameworkId: 'opencode',
+        providerId: 'test-provider',
+        reasoningEffort: 'medium'
+      } as const
+      try {
+        const { sessionId, providerSessionId } = await coordinator.createSession({
+          cwd,
+          agentTarget
+        })
+        for (const [index, text] of ['First task', 'Second task', 'Third task'].entries()) {
+          const targetProviderSessionId =
+            transition === 'other provider Session' && index === 1
+              ? 'another-provider-session'
+              : providerSessionId
+          if (index > 0) {
+            const resumed = await coordinator.resumeSession({
+              sessionId,
+              providerSessionId: targetProviderSessionId,
+              cwd,
+              agentTarget:
+                transition === 'other runtime' && index === 1
+                  ? { ...agentTarget, model: 'other-model' }
+                  : agentTarget
+            })
+            expect(resumed.providerSessionId).toBe(targetProviderSessionId)
+            expect(resumed.contextReset).not.toBe(true)
+            expect(agents[index].newSessions).toHaveLength(0)
+            expect(agents[index].resumedSessions).toMatchObject([
+              { sessionId: targetProviderSessionId }
+            ])
+          }
+          await coordinator.sendPrompt({
+            sessionId,
+            text,
+            ...(transition === 'history replay' && index === 1
+              ? { historyPreamble: 'Earlier conversation' }
+              : {})
+          })
+          expect(agents[index].prompts).toMatchObject([
+            { sessionId: targetProviderSessionId, text: expect.stringContaining(text) }
+          ])
+          await vi.waitFor(() => expect(processes[index].killed).toBe(true))
+          expect(coordinator.getSnapshot().sessionIds).not.toContain(sessionId)
+        }
+        const requiresRevocation = transition !== 'same context'
+        expect(
+          agents.map(({ prompts }) => prompts[0].text.includes('<open_science_main_agent_scope>'))
+        ).toEqual([false, requiresRevocation, requiresRevocation])
+      } finally {
+        await coordinator.shutdownForQuit()
+      }
+    }
+  )
+
   it.each([
     ['Claude Code', claudeCodeFramework, 'claude-anthropic'],
     ['OpenCode', opencodeFramework, 'opencode-openai'],
@@ -1666,6 +1747,10 @@ describe('completed coordinator process release', () => {
         })
         await vi.waitFor(() => expect(processes[1].killed).toBe(true))
         expect(agents[1].prompts).toHaveLength(1)
+        expect(agents[0].prompts[0].text).not.toContain('<open_science_main_agent_scope>')
+        expect(agents[1].prompts[0].text.includes('<open_science_main_agent_scope>')).toBe(
+          resumed.contextReset === true
+        )
         if (resumed.contextReset)
           expect(JSON.stringify(agents[1].prompts)).toContain('First task persisted transcript')
       } finally {
@@ -14452,7 +14537,7 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts).toHaveLength(0)
   })
 
-  it('keeps backend-persistent Codex guidance out while adding current turn scope', async () => {
+  it('keeps backend-persistent guidance and Main scope out of fresh Codex turns', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['codex-session'], {
       modes: {
@@ -14484,10 +14569,13 @@ describe('ACP runtime session management', () => {
       expect.arrayContaining([expect.stringContaining('open_science_large_file_instructions')])
     )
     expect(fakeAgent.prompts.map(({ text }) => text)).toEqual([
-      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+search PubMed$/),
-      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+summarize the results$/)
+      expect.stringMatching(/search PubMed$/),
+      expect.stringMatching(/summarize the results$/)
     ])
-    expect(fakeAgent.prompts.every(({ text }) => !text.includes(persistentInstructions))).toBe(true)
+    for (const { text } of fakeAgent.prompts) {
+      expect(text).not.toContain(persistentInstructions)
+      expect(text).not.toContain('<open_science_main_agent_scope>')
+    }
   })
 
   it('initializes directory notice baselines on create and resume before the first user send', async () => {
@@ -14613,7 +14701,7 @@ describe('ACP runtime session management', () => {
     })
   })
 
-  it('keeps backend-persistent OpenCode guidance out while adding current turn scope', async () => {
+  it('keeps OpenCode Main scope out after reselecting the same fresh attachment', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['oc-session'])
     let resolvedContext: { forcedSkillIds: string[]; systemPromptAppends?: string[] } | undefined
@@ -14628,24 +14716,50 @@ describe('ACP runtime session management', () => {
           env: {},
           persistentSystemPrompt: 'Stable OpenCode instructions.'
         }
+      },
+      skills: {
+        needForceLoad: async (ids) => ids.filter((id) => id === 'mcp-disabled'),
+        namesForIds: async (ids) => ids
       }
     })
 
     const session = await runtime.createSession({ cwd: '/workspace' })
-    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'hello opencode' })
-    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'hello opencode',
+      forcedSkillIds: ['mcp-enabled']
+    })
+    await expect(
+      runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'forged connector selection',
+        forcedSkillIds: ['mcp-disabled']
+      })
+    ).rejects.toThrow('Skill "mcp-disabled" is not available to Main Agent.')
+    await runtime.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+    const fallbackHistory = 'Only replay this after a provider context reset.'
+    await runtime.sendPrompt({
+      sessionId: session.sessionId,
+      text: 'continue',
+      resumeFallback: { historyPreamble: fallbackHistory }
+    })
 
     expect(fakeAgent.newSessions[0]._meta).toBeUndefined()
+    expect(fakeAgent.resumedSessions).toHaveLength(0)
     expect(resolvedContext?.systemPromptAppends).toEqual(
       expect.arrayContaining([expect.stringContaining('open_science_large_file_instructions')])
     )
     expect(fakeAgent.prompts.map(({ text }) => text)).toEqual([
-      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+hello opencode$/),
-      expect.stringMatching(/Current agent: Main Agent\.[\s\S]+continue$/)
+      expect.stringMatching(
+        /Use the following skill\(s\) for this task: mcp-enabled\.[\s\S]+hello opencode$/
+      ),
+      expect.stringMatching(/continue$/)
     ])
-    expect(
-      fakeAgent.prompts.every(({ text }) => !text.includes('Stable OpenCode instructions.'))
-    ).toBe(true)
+    for (const { text } of fakeAgent.prompts) {
+      expect(text).not.toContain('Stable OpenCode instructions.')
+      expect(text).not.toContain(fallbackHistory)
+      expect(text).not.toContain('<open_science_main_agent_scope>')
+    }
   })
 
   it('waits for session-scoped MCP capability readiness before creating the agent session', async () => {
@@ -32813,6 +32927,113 @@ describe('Specialist Skill scoping', () => {
       expect(agent.prompts[1]?.text).toContain('earlier Specialist identity')
       expect(agent.prompts[1]?.text).not.toContain('Previous Specialist identity')
       expect(agent.prompts[1]?.text).not.toContain('<open_science_specialist_skill_scope>')
+    }
+  )
+
+  it('retains Main revocation after a Specialist is bound and unbound before the first turn', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['unprompted-specialist-session'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: opencodeFramework,
+      resolveSpecialistIdentity: async () => ({ append: '', prefix: 'Specialist identity' }),
+      resolveSpecialistSkills: specialistSkillResolver
+    })
+
+    const { sessionId } = await runtime.createSession({ cwd: '/workspace' })
+    await runtime.switchSpecialist(sessionId, 'sp-1')
+    await runtime.switchSpecialist(sessionId, undefined)
+    await runtime.sendPrompt({ sessionId, text: 'start as Main' })
+
+    expect(agent.prompts).toHaveLength(1)
+    expect(agent.prompts[0].text).toContain('<open_science_main_agent_scope>')
+  })
+
+  it.each(['resume', 'adoption', 'reset'] as const)(
+    'sends Main revocation after provider %s',
+    async (operation) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['initial-provider', 'replacement-provider'], {
+        supportsResume: operation !== 'adoption'
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework: opencodeFramework
+      })
+
+      const cwd = '/workspace'
+      const sessionId =
+        operation === 'reset' ? (await runtime.createSession({ cwd })).sessionId : 'stored-session'
+      const session =
+        operation === 'reset'
+          ? await runtime.resetSessionContext({ sessionId, cwd })
+          : await runtime.resumeSession({ sessionId, cwd })
+      expect(session.contextReset === true).toBe(operation !== 'resume')
+      await runtime.sendPrompt({ sessionId, text: 'continue as Main' })
+
+      expect(agent.prompts).toEqual([
+        {
+          sessionId: session.providerSessionId,
+          text: expect.stringContaining('<open_science_main_agent_scope>')
+        }
+      ])
+    }
+  )
+
+  it.each(['text', 'images', 'attachments', 'reset marker'] as const)(
+    'retains Main revocation after admitting history via %s',
+    async (replay) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['main-replay-session'])
+      const repository =
+        replay === 'attachments' ? new UploadRepository(await createTemporaryRoot()) : undefined
+      const historyAttachments = repository
+        ? await stageUploadFixtures(repository, {
+            files: [
+              {
+                name: 'history.txt',
+                mimeType: 'text/plain',
+                content: Buffer.from('history upload').toString('base64')
+              }
+            ]
+          })
+        : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        framework: opencodeFramework,
+        ...(repository ? { uploads: { repository } } : {})
+      })
+
+      const { sessionId } = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({
+        sessionId,
+        text: 'restore context',
+        historyPreamble: replay === 'text' ? 'Prior conversation' : undefined,
+        historyImages:
+          replay === 'images'
+            ? [
+                {
+                  mimeType: 'image/png',
+                  data: imageBytes.toString('base64'),
+                  byteLength: imageBytes.length
+                }
+              ]
+            : undefined,
+        historyAttachments,
+        contextReset: replay === 'reset marker'
+      })
+      await runtime.sendPrompt({ sessionId, text: 'continue as Main' })
+
+      expect(agent.prompts).toHaveLength(2)
+      for (const { text } of agent.prompts) {
+        expect(text).toContain('<open_science_main_agent_scope>')
+      }
     }
   )
 

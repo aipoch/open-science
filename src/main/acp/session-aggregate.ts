@@ -51,6 +51,7 @@ const deepFreeze = <Value>(value: Value): Value => {
 
 class AcpSessionAggregate {
   private session: ActiveSession | undefined
+  private freshMainProviderSessionId: string | undefined
   private cwd: string | undefined
   private projectId: string | undefined
   private frameworkId: AgentFrameworkId | undefined
@@ -103,6 +104,7 @@ class AcpSessionAggregate {
   attach(input: AcpSessionAggregateAttachInput): ActiveSession | undefined {
     const previous = this.session
     this.session = input.session
+    this.clearFreshMainContext()
     this.cwd = input.cwd
     this.projectId = input.projectId
     this.frameworkId = input.frameworkId
@@ -138,6 +140,7 @@ class AcpSessionAggregate {
   }
 
   setSpecialistId(id: string | undefined): void {
+    if (id !== undefined) this.clearFreshMainContext()
     if (this.specialistId === id) return
     this.specialistId = id
     this.specialistBindingRevisionValue += 1
@@ -153,6 +156,28 @@ class AcpSessionAggregate {
 
   specialistBindingRevision(): number {
     return this.specialistBindingRevisionValue
+  }
+
+  isFreshMainContext(): boolean {
+    return this.session !== undefined && this.session.sessionId === this.freshMainProviderSessionId
+  }
+
+  canResumeFreshMainContext(providerSessionId: string, frameworkId: AgentFrameworkId): boolean {
+    return (
+      this.session === undefined &&
+      this.frameworkId === frameworkId &&
+      this.freshMainProviderSessionId === providerSessionId
+    )
+  }
+
+  confirmFreshMainContext(session: ActiveSession): void {
+    if (this.session === session && this.specialistBindingRevisionValue === 0) {
+      this.freshMainProviderSessionId = session.sessionId
+    }
+  }
+
+  clearFreshMainContext(): void {
+    this.freshMainProviderSessionId = undefined
   }
 
   // Frameworks without dynamic Session system-prompt metadata return a prompt prefix from setup.
@@ -180,14 +205,16 @@ class AcpSessionAggregate {
 
   detachProvider(): void {
     this.session = undefined
+    this.clearFreshMainContext()
     this.appliedModel = undefined
     this.configOptions = undefined
     this.refreshSnapshot()
   }
 
-  detachConnection(): void {
+  detachConnection(preserveFreshMainContext = false): void {
     this.memoryController.abort()
     this.session = undefined
+    if (!preserveFreshMainContext) this.clearFreshMainContext()
     this.appliedModel = undefined
     this.configOptions = undefined
     // Project and workspace belong to the App Session, not its provider connection. A drained
