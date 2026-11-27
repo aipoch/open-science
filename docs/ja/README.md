@@ -71,7 +71,7 @@ _2026 年 11 月 24 日_
 
 [`.science` パッケージ](https://aipoch.com/docs/guides/research-packages/)に、共有したい会話の分岐、ファイルのバージョン、Notebook の記録、検証の証跡をまとめます。受け取った人は自分のプロジェクトに取り込み、読み取り専用の記録を開いて、図表のもとになった入力をたどれます。検証記録は送信側で行った確認を示します。デスクトップアプリでフォークすると、編集可能なコピーが作成されます。
 
-同じ作業を[研究フィルム](https://aipoch.com/docs/guides/research-films/)で紹介できます。デスクトップアプリで完了した会話の分岐を選び、フィルムを生成します。設定したモデルがセッション記録から構成を作り、ローカルの音声エンジンが英語のナレーションを生成します。内容を確認して HTML プレーヤーをダウンロードするか、MP4 に書き出します。対象の分岐に生成済みのフィルムがあれば、そのプレーヤーを `.science` パッケージに含めることもできます。
+同じ作業を[研究フィルム](https://aipoch.com/docs/guides/research-films/)で紹介できます。デスクトップアプリで完了した会話の分岐を選び、フィルムを生成します。設定したモデルがセッション記録から構成を作ります。フィルムには英語のナレーションが付きます。内容を確認して HTML プレーヤーをダウンロードするか、MP4 に書き出します。対象の分岐に生成済みのフィルムがあれば、そのプレーヤーを `.science` パッケージに含めることもできます。
 
 ## 🚀 クイックスタート
 
@@ -133,7 +133,7 @@ Windows での再インストールでは研究データが保持されます。
 
 初回設定が済んだら、外観と通知はシステム設定で変更できます。一般設定では、アプリ情報、診断、コマンドラインツールを確認でき、手動インストールと更新のガイドも開けます。
 
-以前の「モデル」設定タブは **ローカル機能** に変わり、PDF 抽出、OCR 言語パック、研究ナレーションをまとめています。ナレーションにはローカルにインストールした音声モデルが必要です。
+以前の「モデル」設定タブは **ローカル機能** に変わり、PDF 抽出、OCR 言語パック、研究ナレーションをまとめています。ローカルでナレーションを生成するには、ローカルにインストールした音声モデルが必要です。
 
 <table>
   <tr>
@@ -173,17 +173,18 @@ Windows での再インストールでは研究データが保持されます。
 
 AIPOCH は AIPOCH Open-Science を、論文の検索から内容に関する質問への回答、研究計画の実行までのタスクで評価しました。以下は AIPOCH 自身による実行結果であり、各スコアは特定のタスクと評価設定に対応します。 計算結果の再現とデータに基づく仮説の発見も評価しました。
 
-| タスク                     | Benchmark              | AIPOCH Open-Science の結果                                                                                                                                       |
-| -------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 対象論文を見つける         | LitQA2-FullText-Search | LitQA2-FullText-Search の **テスト 75 問中 68 問**で、対象論文が上位 30 件に含まれました（**Recall@30：90.67%**、gpt-6-astra）。                                 |
-| 文献に基づいて回答する     | LitQA2-FullText        | 別の LitQA2-FullText 評価では、Open-Science が **75 問中 70 問に正解**しました（**正解率 93.33%**、deepseek-flash、Max 推論）。                                  |
-| 引用付きの回答をまとめる   | ScholarQA-CS2          | ScholarQA-CS2 の検証用 100 問で、deepseek-v4-flash を使用し **総合品質スコア 0.9289/1** を記録しました。公式テストの参考結果は異なる問題を使用しています。       |
-| 研究ワークフローを実行する | ASI-Bench              | 同じモデルを使ったローカルの ASI-Bench 評価で、B4 は Open-Science が **59.46**、Codex が **55.45** でした。B2 はほぼ同じスコアでした（**56.11** と **56.09**）。 |
-| ML・NLP の実験を再現する   | AstaBench SUPER-Expert | DeepSeek Flash/Max を使った 45 タスクのローカル評価で output_match/mean **46.30%**。                                                                             |
-| 科学研究のタスクを実行する | TB-Science 0.1         | 70 タスク、GPT-6 Astra/max：ローカル実行 210 回中 **145 回合格**（**69.05%**）。公式順位ではなく、各実行の記録は未公開です。                                     |
-| 生物医学データを分析する   | BiomniBench-DA         | BiomniBench-DA Public 50 で、2 つの評価モデルのスコアは **81.04** と **77.06**、等重み平均は **79.05** でした。                                                  |
-| 公表された結果の再現       | CORE-Bench-Hard        | CORE-Bench-Hard — ローカル評価ではテスト37件中36件に正答（97.30%）。最終集計には再試行を含みます。                                                               |
-| データからの仮説の発見     | DiscoveryBench         | DiscoveryBench — 検証セットから選んだ25件に対するローカルのモデル採点は平均0.7467/1でした。                                                                      |
+| タスク                     | Benchmark                             | AIPOCH Open-Science の結果                                                                                                                                       |
+| -------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 対象論文を見つける         | LitQA2-FullText-Search                | LitQA2-FullText-Search の **テスト 75 問中 68 問**で、対象論文が上位 30 件に含まれました（**Recall@30：90.67%**、gpt-6-astra）。                                 |
+| 文献に基づいて回答する     | LitQA2-FullText                       | 別の LitQA2-FullText 評価では、Open-Science が **75 問中 70 問に正解**しました（**正解率 93.33%**、deepseek-flash、Max 推論）。                                  |
+| 引用付きの回答をまとめる   | ScholarQA-CS2                         | ScholarQA-CS2 の検証用 100 問で、deepseek-v4-flash を使用し **総合品質スコア 0.9289/1** を記録しました。公式テストの参考結果は異なる問題を使用しています。       |
+| 研究ワークフローを実行する | ASI-Bench                             | 同じモデルを使ったローカルの ASI-Bench 評価で、B4 は Open-Science が **59.46**、Codex が **55.45** でした。B2 はほぼ同じスコアでした（**56.11** と **56.09**）。 |
+| ML・NLP の実験を再現する   | AstaBench SUPER-Expert                | DeepSeek Flash/Max を使った 45 タスクのローカル評価で output_match/mean **46.30%**。                                                                             |
+| 科学研究のタスクを実行する | TB-Science 0.1                        | 70 タスク、GPT-6 Astra/max：ローカル実行 210 回中 **145 回合格**（**69.05%**）。公式順位ではなく、各実行の記録は未公開です。                                     |
+| 生物医学データを分析する   | BiomniBench-DA                        | BiomniBench-DA Public 50 で、2 つの評価モデルのスコアは **81.04** と **77.06**、等重み平均は **79.05** でした。                                                  |
+| 公表された結果の再現       | CORE-Bench-Hard                       | CORE-Bench-Hard — ローカル評価ではテスト37件中36件に正答（97.30%）。最終集計には再試行を含みます。                                                               |
+| データからの仮説の発見     | DiscoveryBench                        | DiscoveryBench — 検証セットから選んだ25件に対するローカルのモデル採点は平均0.7467/1でした。                                                                      |
+| 研究論文の比較             | ArxivDIGESTables-Clean, テスト100課題 | **49.03%** (`score_tables/mean`). 別の評価モデルを用いたローカル評価.                                                                                            |
 
 <details>
 <summary>評価範囲とレポート</summary>
@@ -193,6 +194,8 @@ AIPOCH は AIPOCH Open-Science を、論文の検索から内容に関する質�
 詳細は [AstaBench と ASI-Bench のレポート](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA のレポート](https://aipoch.com/blog/open-science-biomnibench-da)、[TB-Science 0.1 のローカル結果](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)をご覧ください。 [SUPER-Expert のローカル結果](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)も参照してください。
 
 [CORE-Bench-Hard · 再現性評価レポート](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
+
+[ArxivDIGESTables-Clean · 評価レポート](https://aipoch.com/blog/aipoch-open-science-arxivdigestables-clean)
 
 </details>
 

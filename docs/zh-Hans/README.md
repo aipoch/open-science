@@ -71,7 +71,7 @@ _2026 年 11 月 24 日_
 
 用[`.science` 包](https://aipoch.com/docs/guides/research-packages/)交接研究结果。选择要分享的对话分支、文件版本、Notebook 记录和验证证据。接收者可将包导入自己的项目，打开只读记录，查看图表所用的输入。验证记录反映发送方做过的检查。在桌面端选择“创建分支以继续”可获得可编辑的副本。
 
-用[研究影片](https://aipoch.com/docs/guides/research-films/)展示同一项工作。在桌面端对已完成的对话分支选择“生成研究影片”。配置的模型根据会话记录编写演示内容，本地语音引擎生成英文旁白。预览后可下载 HTML 播放器或导出 MP4。如果所选分支已生成影片，`.science` 包也可携带其播放器。
+用[研究影片](https://aipoch.com/docs/guides/research-films/)展示同一项工作。在桌面端对已完成的对话分支选择“生成研究影片”。配置的模型根据会话记录编写演示内容，影片配有英文旁白。预览后可下载 HTML 播放器或导出 MP4。如果所选分支已生成影片，`.science` 包也可携带其播放器。
 
 ## 🚀 快速开始
 
@@ -133,7 +133,7 @@ Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重�
 
 首次设置完成后，可在系统设置中调整外观和通知。在通用设置中可查看应用信息、诊断和命令行工具，也能打开手动安装与更新指南。
 
-原“模型”设置页现更名为**本地能力**，集中管理 PDF 提取、OCR 语言包和研究语音讲解；语音讲解需要本地安装的语音模型。
+原“模型”设置页现更名为**本地能力**，集中管理 PDF 提取、OCR 语言包和研究语音讲解；在本地生成旁白需要安装语音模型。
 
 <table>
   <tr>
@@ -173,17 +173,18 @@ Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重�
 
 AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回答论文内容相关问题和执行研究计划。以下结果来自 AIPOCH 自行开展的测试，每项成绩对应特定任务与评测配置。 评测还覆盖计算复现和基于数据的假设发现。
 
-| 任务             | Benchmark              | AIPOCH Open-Science 的结果                                                                                                                  |
-| ---------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 找到目标论文     | LitQA2-FullText-Search | 在 LitQA2-FullText-Search 的 **75 道测试题中，有 68 道的目标论文出现在前 30 条结果中**（**Recall@30 为 90.67%**，gpt-6-astra）。            |
-| 根据文献回答问题 | LitQA2-FullText        | 在独立的 LitQA2-FullText 测试中，Open-Science **答对 75 题中的 70 题**（**准确率 93.33%**，deepseek-flash，Max 推理）。                     |
-| 综合带引用的答案 | ScholarQA-CS2          | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道验证题上获得 **0.9289/1 的综合质量分数**。官方测试参考结果使用不同的题目。                |
-| 执行研究流程     | ASI-Bench              | 在使用相同模型的本地 ASI-Bench 测试中，Open-Science 的 B4 得分为 **59.46**，Codex 为 **55.45**。B2 得分几乎相同（**56.11** 与 **56.09**）。 |
-| 复现 ML/NLP 实验 | AstaBench SUPER-Expert | 使用 DeepSeek Flash/Max 在 45 题本地测试中取得 **46.30%** output_match/mean。                                                               |
-| 执行科研工作流   | TB-Science 0.1         | 70 道任务，GPT-6 Astra/max：210 次本地执行中 **145 次通过**（**69.05%**）；非官方榜单名次，逐次记录未公开。                                 |
-| 分析生物医学数据 | BiomniBench-DA         | 在 BiomniBench-DA Public 50 上，两位评审模型的评分分别为 **81.04** 和 **77.06**，等权平均为 **79.05**。                                     |
-| 复现已发表的结果 | CORE-Bench-Hard        | CORE-Bench-Hard — 本地评测答对 37 项测试任务中的 36 项（97.30%），最终统计包含复测。                                                        |
-| 根据数据提出假设 | DiscoveryBench         | DiscoveryBench — 在验证集的 25 项任务上，本地模型评分的均值为 0.7467/1。                                                                    |
+| 任务             | Benchmark                              | AIPOCH Open-Science 的结果                                                                                                                  |
+| ---------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 找到目标论文     | LitQA2-FullText-Search                 | 在 LitQA2-FullText-Search 的 **75 道测试题中，有 68 道的目标论文出现在前 30 条结果中**（**Recall@30 为 90.67%**，gpt-6-astra）。            |
+| 根据文献回答问题 | LitQA2-FullText                        | 在独立的 LitQA2-FullText 测试中，Open-Science **答对 75 题中的 70 题**（**准确率 93.33%**，deepseek-flash，Max 推理）。                     |
+| 综合带引用的答案 | ScholarQA-CS2                          | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道验证题上获得 **0.9289/1 的综合质量分数**。官方测试参考结果使用不同的题目。                |
+| 执行研究流程     | ASI-Bench                              | 在使用相同模型的本地 ASI-Bench 测试中，Open-Science 的 B4 得分为 **59.46**，Codex 为 **55.45**。B2 得分几乎相同（**56.11** 与 **56.09**）。 |
+| 复现 ML/NLP 实验 | AstaBench SUPER-Expert                 | 使用 DeepSeek Flash/Max 在 45 题本地测试中取得 **46.30%** output_match/mean。                                                               |
+| 执行科研工作流   | TB-Science 0.1                         | 70 道任务，GPT-6 Astra/max：210 次本地执行中 **145 次通过**（**69.05%**）；非官方榜单名次，逐次记录未公开。                                 |
+| 分析生物医学数据 | BiomniBench-DA                         | 在 BiomniBench-DA Public 50 上，两位评审模型的评分分别为 **81.04** 和 **77.06**，等权平均为 **79.05**。                                     |
+| 复现已发表的结果 | CORE-Bench-Hard                        | CORE-Bench-Hard — 本地评测答对 37 项测试任务中的 36 项（97.30%），最终统计包含复测。                                                        |
+| 根据数据提出假设 | DiscoveryBench                         | DiscoveryBench — 在验证集的 25 项任务上，本地模型评分的均值为 0.7467/1。                                                                    |
+| 比较研究论文     | ArxivDIGESTables-Clean, 100 项测试任务 | **49.03%** (`score_tables/mean`). 使用替代评审模型的本地评测.                                                                               |
 
 <details>
 <summary>评测范围与报告</summary>
@@ -193,6 +194,8 @@ AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回�
 评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)和 [TB-Science 0.1 本地测试报告](https://aipoch.com/blog/aipoch-open-science-terminal-bench-science-local-result)。另见 [SUPER-Expert 本地测试报告](https://aipoch.com/blog/aipoch-open-science-astabench-super-expert-local-result)。
 
 [CORE-Bench-Hard · 复现评测报告](https://aipoch.com/blog/aipoch-open-science-core-bench-hard)
+
+[ArxivDIGESTables-Clean · 评测报告](https://aipoch.com/blog/aipoch-open-science-arxivdigestables-clean)
 
 </details>
 
