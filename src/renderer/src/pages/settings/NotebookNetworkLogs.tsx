@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { SlidersHorizontal } from 'lucide-react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Check, ChevronDown, SlidersHorizontal } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
@@ -8,6 +8,12 @@ import {
   SplitButtonPrimary,
   SplitButtonTrigger
 } from '@/components/ui/split-button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -47,12 +53,85 @@ function queryRange({ from, to }: { from: string; to: string }): NotebookNetwork
   }
 }
 
+type FilterKey = 'mode' | 'decision' | 'outcome'
+type FilterMenuProps = {
+  label: string
+  choices: Record<string, string>
+  value: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSelect: (value: string) => void
+}
+
+function FilterMenu({
+  label,
+  choices,
+  value,
+  open,
+  onOpenChange,
+  onSelect
+}: FilterMenuProps): React.JSX.Element {
+  const trigger = useRef<HTMLButtonElement>(null)
+  const valueId = useId()
+  return (
+    <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          ref={trigger}
+          variant="outline"
+          className="w-full justify-between font-normal"
+          aria-label={label}
+          aria-describedby={valueId}
+        >
+          <span id={valueId} className="truncate">
+            {choices[value]}
+          </span>
+          <ChevronDown aria-hidden="true" className="opacity-60" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="w-[var(--radix-dropdown-menu-trigger-width)]"
+        onFocusOutside={(event) => {
+          if (event.target === trigger.current) event.preventDefault()
+        }}
+        onKeyDownCapture={(event) => {
+          // Resume normal form tab order from the trigger instead of trapping Tab inside the menu.
+          if (event.key !== 'Tab') return
+          event.stopPropagation()
+          trigger.current?.focus()
+          onOpenChange(false)
+        }}
+        onCloseAutoFocus={(event) => {
+          // A newly focused sibling owns focus after a switch or Tab.
+          const focused = document.activeElement
+          if (focused && focused !== document.body && focused !== trigger.current)
+            event.preventDefault()
+        }}
+      >
+        {Object.entries(choices).map(([key, text]) => (
+          <DropdownMenuItem
+            key={key}
+            role="menuitemradio"
+            aria-checked={key === value}
+            onSelect={() => onSelect(key)}
+          >
+            <span className="flex-1">{text}</span>
+            {key === value && <Check aria-hidden="true" className="size-4" />}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function NetworkLogContent(): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const [page, setPage] = useState<NotebookNetworkAuditPage>()
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string>()
   const [filters, setFilters] = useState<NotebookNetworkAuditQuery>({})
+  const [openFilter, setOpenFilter] = useState<FilterKey | null>(null)
   const [range, setRange] = useState(lastSevenDays)
   const [advanced, setAdvanced] = useState(false)
   const [days, setDays] = useState('90'),
@@ -118,15 +197,22 @@ function NetworkLogContent(): React.JSX.Element {
       if (mounted.current) setSaving(false)
     }
   }
-  const labels = {
-    allowed: t('Allowed'),
-    blocked: t('Blocked'),
+  const outcomes = {
     connected: t('Connected'),
     completed: t('Completed'),
     failed: t('Failed'),
     cancelled: t('Cancelled'),
     timeout: t('Timed out')
   }
+  const labels = { allowed: t('Allowed'), blocked: t('Blocked'), ...outcomes }
+  const filterProps = (key: FilterKey): Omit<FilterMenuProps, 'label' | 'choices'> => ({
+    open: openFilter === key,
+    value: filters[key] ?? 'all',
+    onOpenChange: (open) =>
+      setOpenFilter((current) => (open ? key : current === key ? null : current)),
+    onSelect: (value) =>
+      setFilters((current) => ({ ...current, [key]: value === 'all' ? undefined : value }))
+  })
   const resultText = (record: NotebookNetworkAuditRecord): string => {
     const value = record.data.outcome ?? record.data.decision
     return value ? labels[value] : t('Unknown')
@@ -155,67 +241,25 @@ function NetworkLogContent(): React.JSX.Element {
           }}
         >
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <Select
-              value={filters.mode ?? 'all'}
-              onValueChange={(value) =>
-                setFilters({
-                  ...filters,
-                  mode: value === 'all' ? undefined : (value as NotebookNetworkAuditQuery['mode'])
-                })
-              }
-            >
-              <SelectTrigger className="h-8 w-full" aria-label={t('Network mode')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('All modes')}</SelectItem>
-                <SelectItem value="relaxed">{t('Relaxed')}</SelectItem>
-                <SelectItem value="strict">{t('Strict')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={filters.decision ?? 'all'}
-              onValueChange={(value) =>
-                setFilters({
-                  ...filters,
-                  decision:
-                    value === 'all' ? undefined : (value as NotebookNetworkAuditQuery['decision'])
-                })
-              }
-            >
-              <SelectTrigger className="h-8 w-full" aria-label={t('Decision')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('All decisions')}</SelectItem>
-                <SelectItem value="allowed">{t('Allowed')}</SelectItem>
-                <SelectItem value="blocked">{t('Blocked')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={filters.outcome ?? 'all'}
-              onValueChange={(value) =>
-                setFilters({
-                  ...filters,
-                  outcome:
-                    value === 'all' ? undefined : (value as NotebookNetworkAuditQuery['outcome'])
-                })
-              }
-            >
-              <SelectTrigger className="h-8 w-full" aria-label={t('Result')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('All results')}</SelectItem>
-                {Object.entries(labels)
-                  .filter(([key]) => key !== 'allowed' && key !== 'blocked')
-                  .map(([key, label]) => (
-                    <SelectItem key={key} value={key}>
-                      {label}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+            <FilterMenu
+              {...filterProps('mode')}
+              label={t('Network mode')}
+              choices={{ all: t('All modes'), relaxed: t('Relaxed'), strict: t('Strict') }}
+            />
+            <FilterMenu
+              {...filterProps('decision')}
+              label={t('Decision')}
+              choices={{
+                all: t('All decisions'),
+                allowed: labels.allowed,
+                blocked: labels.blocked
+              }}
+            />
+            <FilterMenu
+              {...filterProps('outcome')}
+              label={t('Result')}
+              choices={{ all: t('All results'), ...outcomes }}
+            />
           </div>
           {advanced ? (
             <div id="network-log-advanced" className="space-y-3">

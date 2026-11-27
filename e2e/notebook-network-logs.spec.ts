@@ -9,6 +9,61 @@ import { test } from './fixtures/electron-app'
 import { openSettingsPage } from './fixtures/settings-preferences'
 
 test.use({ windowMode: 'normal' })
+test('switches between network log filters with one click and dismisses on leaving', async ({
+  app
+}, testInfo) => {
+  await app.completeOnboarding()
+  const page = app.page
+  const settings = await openSettingsPage(page, 'Network')
+  await settings
+    .getByRole('region', { name: 'Notebook network access' })
+    .getByRole('button', { name: 'Open', exact: true })
+    .click()
+  const mode = settings.getByLabel('Network mode', { exact: true })
+  const decision = settings.getByLabel('Decision', { exact: true })
+  const result = settings.getByLabel('Result', { exact: true })
+  const heading = settings.getByRole('heading', { name: 'Notebook network logs', exact: true })
+  await mode.click()
+  await page.getByRole('menuitemradio', { name: 'Strict', exact: true }).click()
+  await decision.click()
+  await page.getByRole('menuitemradio', { name: 'Blocked', exact: true }).click()
+  await result.click()
+  await page.getByRole('menuitemradio', { name: 'Failed', exact: true }).click()
+
+  for (const filter of [mode, decision, result]) {
+    await filter.click()
+    await expect(filter).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.getByRole('menu')).toHaveCount(1)
+    await expect(settings.locator('form [aria-haspopup=menu][aria-expanded=true]')).toHaveCount(1)
+  }
+  await page.keyboard.press('ArrowDown')
+  await expect(page.getByRole('menuitemradio', { name: 'All results', exact: true })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(page.getByRole('menuitemradio', { name: 'Connected', exact: true })).toBeFocused()
+  await expect(page.getByRole('menuitemradio', { name: 'Failed', exact: true })).toBeChecked()
+  await page.screenshot({ path: testInfo.outputPath('filter-switch.png') })
+
+  await heading.click()
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await mode.click()
+  await page.keyboard.press('Tab')
+  await expect(decision).toBeFocused()
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await decision.press('ArrowDown')
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Shift+Tab')
+  await expect(mode).toBeFocused()
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await result.click()
+  const search = settings.getByRole('button', { name: 'Search', exact: true })
+  await search.focus()
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(search).toBeFocused()
+  await expect(mode).toHaveText('Strict')
+  await expect(decision).toHaveText('Blocked')
+  await expect(result).toHaveText('Failed')
+})
+
 test('queries daily network logs on demand and confirms retention changes', async ({
   app
 }, testInfo) => {
@@ -77,7 +132,7 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   const advancedLabels = ['Address', 'Project ID', 'Session ID', 'Notebook run ID', 'From', 'To']
   await expect(advanced).toHaveAttribute('aria-expanded', 'false')
   const sessionFilter = settings.getByRole('textbox', { name: 'Session ID', exact: true })
-  const resultFilter = settings.getByRole('combobox', { name: 'Result', exact: true })
+  const resultFilter = settings.getByRole('button', { name: 'Result', exact: true })
   await expect(sessionFilter).toBeHidden()
   await expect(resultFilter).toBeVisible()
   for (const label of advancedLabels)
@@ -165,8 +220,8 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await advanced.click()
   await submit.click()
   await expect(olderCell).toBeVisible()
-  await settings.getByRole('combobox', { name: 'Network mode', exact: true }).click()
-  await page.getByRole('option', { name: 'Strict', exact: true }).click()
+  await settings.getByRole('button', { name: 'Network mode', exact: true }).click()
+  await page.getByRole('menuitemradio', { name: 'Strict', exact: true }).click()
   await submit.click()
   await expect(settings.getByRole('cell', { name: 'run-relaxed', exact: true })).toHaveCount(0)
   await expect(settings.getByRole('cell', { name: 'run-strict', exact: true })).toBeVisible()
@@ -175,7 +230,7 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await sessionFilter.fill('other-session')
   await advanced.click()
   await resultFilter.click()
-  await page.getByRole('option', { name: 'Completed', exact: true }).click()
+  await page.getByRole('menuitemradio', { name: 'Completed', exact: true }).click()
   await submit.click()
   await expect(empty).toBeVisible()
   await advanced.click()
@@ -184,7 +239,7 @@ test('queries daily network logs on demand and confirms retention changes', asyn
   await submit.click()
   await expect(olderCell).toBeVisible()
   await resultFilter.click()
-  await page.getByRole('option', { name: 'Failed', exact: true }).click()
+  await page.getByRole('menuitemradio', { name: 'Failed', exact: true }).click()
   await submit.click()
   await expect(empty).toBeVisible()
   expect(await retentionFilter.boundingBox()).toEqual(footerBox)
