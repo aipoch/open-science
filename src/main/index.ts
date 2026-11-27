@@ -7,8 +7,7 @@ import { randomUUID } from 'node:crypto'
 import {
   inspectOwnedCrashpadProcesses,
   inspectOwnedLinuxAppImageLauncher,
-  inspectOwnedLinuxZygoteProcesses,
-  inspectMcpGroupProcessIds
+  inspectOwnedLinuxZygoteProcesses
 } from './update/installation-occupancy'
 import type { ChildProcess } from 'node:child_process'
 import {
@@ -408,15 +407,7 @@ async function startDesktop(): Promise<void> {
     !preservedStartupOptions &&
     (await applyPreparedWindowsUpdate({
       current: app.getVersion(),
-      enabled: async () => Boolean((await loadWindowsDownloadPreference(profilePath))?.enabled),
-      checkOccupancy: (signal) =>
-        inspectInstallationAvailability(
-          {
-            installationRoot: installationRootForEntry(initialBackendPaths.entry),
-            allowedProcessIds: allowedInstallationProcessIds
-          },
-          signal
-        )
+      enabled: async () => Boolean((await loadWindowsDownloadPreference(profilePath))?.enabled)
     }))
   ) {
     app.exit(0)
@@ -1712,19 +1703,7 @@ async function startDesktop(): Promise<void> {
     client: () => client!,
     currentVersion: app.getVersion(),
     allowedProcessIds: allowedInstallationProcessIds,
-    ...(process.platform === 'win32'
-      ? { updateAllowedProcessIds: () => inspectMcpGroupProcessIds([configRoot, profilePath]) }
-      : {}),
-    ...(process.platform === 'win32'
-      ? {
-          ownedRuntimeProcessIds: async (runtime, signal): Promise<number[]> => {
-            const pids = await runtime.invokeHost('desktop:update-owned-processes', [], signal)
-            if (!Array.isArray(pids) || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
-              throw new Error('The service returned invalid process ownership evidence.')
-            return pids as number[]
-          }
-        }
-      : {}),
+    installerHandlesOccupancy: process.platform === 'win32',
     preparedDebGate: () => preparedMacInstallation?.debGate,
     verifyInstallerReady: async () => {
       const gate = preparedMacInstallation?.debGate

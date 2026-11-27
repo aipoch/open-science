@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join, resolve, sep, win32 } from 'node:path'
+import { dirname, join, sep, win32 } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger, runtimeChildProcessErrorFields } from '@aipoch/diagnostics/node'
 import {
@@ -12,52 +12,6 @@ import {
 } from '../windows-process-query'
 
 const requireNative = createRequire(__filename)
-
-const MCP_GROUP_IDS = new Set(['core', 'research', 'literature'])
-const MCP_REGISTRY_HEARTBEAT_TTL_MS = 10_000
-
-// Windows installers can close these installation-root adapters. Admit only fresh registrations
-// for the selected profile so unrelated processes and stale heartbeat files remain blockers.
-export function inspectMcpGroupProcessIds(
-  configRoots: readonly string[],
-  now = Date.now()
-): number[] {
-  const pids = new Set<number>()
-  for (const root of new Set(configRoots.filter(Boolean).map((value) => resolve(value)))) {
-    const directory = join(root, 'runtime', 'mcp-groups')
-    let names: string[]
-    try {
-      names = readdirSync(directory)
-    } catch {
-      continue
-    }
-    for (const name of names) {
-      if (!name.endsWith('.json')) continue
-      try {
-        const value = JSON.parse(readFileSync(join(directory, name), 'utf8')) as Record<
-          string,
-          unknown
-        >
-        const lastSeenAt = Date.parse(String(value.lastSeenAt ?? ''))
-        if (
-          typeof value.profile !== 'string' ||
-          value.profile !== root ||
-          typeof value.group !== 'string' ||
-          !MCP_GROUP_IDS.has(value.group) ||
-          !Number.isSafeInteger(value.pid) ||
-          (value.pid as number) <= 0 ||
-          !Number.isFinite(lastSeenAt) ||
-          Math.abs(now - lastSeenAt) > MCP_REGISTRY_HEARTBEAT_TTL_MS
-        )
-          continue
-        pids.add(value.pid as number)
-      } catch {
-        // A concurrently replaced or malformed registry entry provides no update exemption.
-      }
-    }
-  }
-  return [...pids]
-}
 
 function windowsInstallationOccupants(resourcePids: readonly number[], root: string): number[] {
   const pids = new Set<number>()

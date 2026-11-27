@@ -1,23 +1,11 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  realpath,
-  rm,
-  utimes,
-  writeFile
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { UpdateLifecycleError } from '../../shared/update'
-import * as windowsProcesses from '../windows-process-query'
 import {
   applyPreparedWindowsUpdate,
-  checkColdLaunchOccupancy,
   preparedWindowsUpdateId,
   readPreparedWindowsUpdate,
   reclaimInstalledWindowsUpdates,
@@ -31,7 +19,7 @@ vi.mock('node:child_process', async (original) => {
   return { ...actual, execFile: extract, spawn: vi.fn(actual.spawn) }
 })
 
-it('hands a staged update to the supervisor only after a cached live holder is rechecked', async ({
+it('hands a staged update to the supervisor despite a cached blocker from an older client', async ({
   onTestFinished
 }) => {
   const root = await mkdtemp(join(tmpdir(), 'prepared-launch-'))
@@ -62,10 +50,6 @@ it('hands a staged update to the supervisor only after a cached live holder is r
   const id = preparedWindowsUpdateId(await realpath(process.execPath), sha512)
   const marker = join(root, 'cache', 'open-science-prepared', id, 'occupant-123-456')
   await writeFile(marker, '')
-  vi.spyOn(windowsProcesses, 'windowsProcessStartTicks').mockReturnValue('456')
-  const checkOccupancy = vi.fn(async () => {})
-  const apply = (): Promise<boolean> =>
-    applyPreparedWindowsUpdate({ current, enabled: async () => true, checkOccupancy })
   const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process')
   vi.mocked(spawn)
     .mockClear()
@@ -80,14 +64,7 @@ it('hands a staged update to the supervisor only after a cached live holder is r
         }
       )
     )
-  expect(await apply()).toBe(false)
-  expect(checkOccupancy).not.toHaveBeenCalled()
-  expect(spawn).not.toHaveBeenCalled()
-
-  const old = new Date(Date.now() - 60_000)
-  await utimes(marker, old, old)
-  expect(await apply()).toBe(true)
-  expect(checkOccupancy).toHaveBeenCalledOnce()
+  expect(await applyPreparedWindowsUpdate({ current, enabled: async () => true })).toBe(true)
   expect(spawn).toHaveBeenCalledWith(
     expect.any(String),
     expect.any(Array),
@@ -161,69 +138,6 @@ it('selects the SDK package alongside a claimed older package and reclaims both 
   ).toBeUndefined()
   await reclaimInstalledWindowsUpdates(pending, executable, '1.1.0')
   expect(await readdir(root)).toHaveLength(2)
-  const started = Promise.withResolvers<AbortSignal>()
-  const lateScan = Promise.withResolvers<void>()
-  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-  try {
-    const allowed = checkColdLaunchOccupancy(stage, (signal) => {
-      started.resolve(signal)
-      return lateScan.promise
-    })
-    const signal = await started.promise
-    await vi.advanceTimersByTimeAsync(9_999)
-    expect(signal.aborted).toBe(false)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(await allowed).toBe(false)
-    expect(signal.aborted).toBe(true)
-    lateScan.resolve()
-    // The next cold launch sees no ready receipt. Manual download/apply still owns its SDK cache.
-    expect(await read()).toBeUndefined()
-    expect(JSON.parse(await readFile(info, 'utf8'))).toEqual({ fileName: 'setup.exe', sha512 })
-  } finally {
-    vi.useRealTimers()
-  }
   await reclaimInstalledWindowsUpdates(pending, executable, '1.2.0')
   expect(await readdir(root)).toEqual([])
-})
-
-it('reuses only recent blocker observations and rechecks after expiry, exit or PID reuse', async ({
-  onTestFinished
-}) => {
-  const stage = await mkdtemp(join(tmpdir(), 'prepared-holders-'))
-  onTestFinished(() => rm(stage, { recursive: true, force: true }))
-  const identities = new Map([
-    [3, '123'],
-    [4, '456']
-  ])
-  const starts = vi
-    .spyOn(windowsProcesses, 'windowsProcessStartTicks')
-    .mockImplementation((pid) => identities.get(pid))
-  onTestFinished(() => {
-    starts.mockRestore()
-  })
-  const busy = new UpdateLifecycleError('installation-busy', 'busy', {
-    phase: 'preparing',
-    runtime: 'running',
-    installation: 'unchanged',
-    detail: 'foreign-process',
-    canCancel: true,
-    canRecover: false,
-    canRetryInstall: false,
-    blockingProcesses: [{ pid: 3 }, { pid: 4 }]
-  })
-  const scan = vi.fn<() => Promise<void>>().mockRejectedValueOnce(busy).mockResolvedValue(undefined)
-  await expect(checkColdLaunchOccupancy(stage, scan)).rejects.toBe(busy)
-  expect(await checkColdLaunchOccupancy(stage, scan)).toBe(false)
-  identities.delete(3)
-  expect(await checkColdLaunchOccupancy(stage, scan)).toBe(false)
-  expect(scan).toHaveBeenCalledTimes(1)
-  const old = new Date(Date.now() - 60_000)
-  await utimes(join(stage, 'occupant-4-456'), old, old)
-  scan.mockRejectedValueOnce(busy)
-  await expect(checkColdLaunchOccupancy(stage, scan)).rejects.toBe(busy)
-  expect(await checkColdLaunchOccupancy(stage, scan)).toBe(false)
-  expect(scan).toHaveBeenCalledTimes(2)
-  identities.set(4, '789')
-  expect(await checkColdLaunchOccupancy(stage, scan)).toBe(true)
-  expect(scan).toHaveBeenCalledTimes(3)
 })

@@ -69,7 +69,7 @@ function setup(
   preparation: Partial<
     Pick<
       Parameters<typeof createDesktopUpdateIntegration>[0],
-      'flushRenderer' | 'allowedProcessIds' | 'updateAllowedProcessIds' | 'ownedRuntimeProcessIds'
+      'flushRenderer' | 'allowedProcessIds' | 'installerHandlesOccupancy'
     >
   > = {}
 ): {
@@ -453,65 +453,21 @@ describe('supervised install admission release', () => {
 
 describe('legacy install for uncertified channels', () => {
   const legacy = (): true => true
-  it('uses live runtime ownership for admission but never exempts those processes after stop', async () => {
-    const owned = vi.fn(async () => [789])
-    const desktop = (): number[] => [process.pid]
+  it('hands file locks to NSIS through preparation, recheck and runtime stop', async () => {
     const { hooks, stop, onHandoff } = setup('desktop', undefined, legacy, {
-      allowedProcessIds: desktop,
-      ownedRuntimeProcessIds: owned
+      installerHandlesOccupancy: true
     })
-    state.availability.mockImplementation(async (options) => {
-      expect(await options.allowedProcessIds()).toEqual([process.pid, 789])
-    })
+    state.availability.mockRejectedValue(new Error('Installation file is locked'))
     await hooks.prepareInstall!(status, {})
-    expect(owned).toHaveBeenCalledOnce()
+    await hooks.recheckInstall!()
     await hooks.installGate!({})
-    expect(stop).toHaveBeenCalledOnce()
-    state.availability.mockImplementation(async (options) => {
-      expect(await options.allowedProcessIds()).toEqual([process.pid])
-      throw new UpdateLifecycleError('installation-busy', 'A child still holds installation files.')
-    })
-    await expect(hooks.beforeInstallHandoff!(status)).rejects.toMatchObject({
-      reason: 'installation-busy'
-    })
-    expect(owned).toHaveBeenCalledOnce()
-    expect(onHandoff).not.toHaveBeenCalled()
-  })
-
-  it('keeps fresh MCP adapter ownership through the update handoff', async () => {
-    const owned = vi.fn(async () => [789])
-    const mcp = vi.fn(() => [456])
-    const desktop = (): number[] => [process.pid]
-    const { hooks, stop } = setup('desktop', undefined, legacy, {
-      allowedProcessIds: desktop,
-      updateAllowedProcessIds: mcp,
-      ownedRuntimeProcessIds: owned
-    })
-    state.availability.mockImplementation(async (options) => {
-      expect(await options.allowedProcessIds()).toEqual([process.pid, 456, 789])
-    })
-    await hooks.prepareInstall!(status, {})
-    await hooks.installGate!({})
-    state.availability.mockImplementation(async (options) => {
-      expect(options.allowedProcessIds()).toEqual([process.pid, 456])
-    })
+    await hooks.recheckInstall!()
     await hooks.beforeInstallHandoff!(status)
-    expect(mcp).toHaveBeenCalled()
     expect(stop).toHaveBeenCalledOnce()
+    expect(onHandoff).toHaveBeenCalledOnce()
+    expect(state.availability).not.toHaveBeenCalled()
   })
 
-  it('does not classify failed ownership inspection as an unrelated application', async () => {
-    const owned = vi.fn(async (): Promise<number[]> => {
-      throw new Error('Job inspection unavailable')
-    })
-    const { hooks, stop } = setup('desktop', undefined, legacy, { ownedRuntimeProcessIds: owned })
-    state.availability.mockImplementation(async (options) => options.allowedProcessIds())
-    await expect(hooks.prepareInstall!(status, {})).rejects.toMatchObject({
-      reason: 'installation-busy',
-      recovery: { detail: 'occupancy-unknown' }
-    })
-    expect(stop).not.toHaveBeenCalled()
-  })
   it('stops and confirms the runtime without a supervised record or artifact verification', async () => {
     const { hooks, invoke, stop, retainLease, verifyArtifact, onHandoff } = setup(
       'desktop',

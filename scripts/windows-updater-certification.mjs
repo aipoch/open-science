@@ -24,7 +24,7 @@ import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 
 import { dump, load } from 'js-yaml'
-import { chromium, expect } from '@playwright/test'
+import { chromium } from '@playwright/test'
 import {
   prepareOwnedAgentFixture,
   startOwnedAgentFixture,
@@ -44,6 +44,7 @@ import {
   installAndProbe,
   launchAndExpectDatabaseBlocked,
   launchAndProbe,
+  drillLockedUpgrade,
   launchUninstallerLockHolder,
   runProcess,
   terminateDirectoryProcesses,
@@ -530,51 +531,6 @@ const readShortcutEvidence = async (env, since) => {
   return { scans: scans.sort(byTime), decisions: decisions.sort(byTime) }
 }
 
-// A new cold launch can recheck on holder exit or after the product's one-minute cache expires.
-const shortcutBlockerCacheMs = 60_000
-const waitForShortcutRecheck = async (pids) => {
-  const deadline = performance.now() + shortcutBlockerCacheMs
-  while (
-    performance.now() < deadline &&
-    pids.some((pid) => {
-      try {
-        process.kill(pid, 0)
-        return true
-      } catch (error) {
-        if (error.code === 'ESRCH') return false
-        if (error.code === 'EPERM') return true
-        throw error
-      }
-    })
-  )
-    await delay(250)
-}
-
-const certifyShortcutVersion = async (launch, expectedVersion, released) => {
-  let observation = await launch()
-  if (released && observation.current === released.previousVersion && observation.scans.length) {
-    const last = observation.decisions.at(-1)
-    const data = last?.data
-    const pids = Array.isArray(data?.blockers) ? data.blockers.map((blocker) => blocker?.pid) : []
-    if (
-      last?.msg === 'Prepared update deferred at startup' &&
-      data?.reason === 'installation-busy' &&
-      data.detail === 'foreign-process' &&
-      pids.length &&
-      pids.every((pid) => Number.isSafeInteger(pid) && pid > 0 && pid !== released.holderPid)
-    ) {
-      console.log('Released shortcut deferred by a different file holder:', JSON.stringify(last))
-      await released.waitForRecheck(pids)
-      observation = await launch()
-    }
-  }
-  if (observation.current !== expectedVersion)
-    throw new Error(
-      `Shortcut opened ${observation.current}, expected ${expectedVersion}. Handoff decisions: ${JSON.stringify(observation.decisions)}`
-    )
-  return observation.scans
-}
-
 // Launch the installer-created link itself. Its unchanged target and the version reported by
 // the healthy renderer distinguish activation from a harness that launched the staged exe.
 const launchInstalledShortcut = async (installDirectory, env, expectedVersion) => {
@@ -653,13 +609,6 @@ const launchInstalledShortcut = async (installDirectory, env, expectedVersion) =
   }
 }
 
-const probeInstalledShortcut = (installDirectory, env, expectedVersion, released) =>
-  certifyShortcutVersion(
-    () => launchInstalledShortcut(installDirectory, env, expectedVersion),
-    expectedVersion,
-    released
-  )
-
 const runElectronUpdater = async ({
   executable,
   env,
@@ -667,7 +616,6 @@ const runElectronUpdater = async ({
   expectedInstaller,
   onDownloaded,
   transferMetrics,
-  beforeApply,
   coldLaunch,
   ownedAgentFixture,
   windowsRecovery,
@@ -861,7 +809,23 @@ const runElectronUpdater = async ({
         'The installed updater did not complete Authenticode verification with an empty PATH.'
       )
     await onDownloaded(ownedEvidence)
-    await beforeApply?.({ invoke, page })
+    if (coldLaunch || windowsRecovery) {
+      const { child: holder } = await launchUninstallerLockHolder(
+        win32.dirname(executable),
+        env,
+        undefined,
+        undefined,
+        undefined,
+        'Read'
+      )
+      try {
+        const checked = await invoke('recheck')
+        if (checked.reason === 'installation-busy' || holder.exitCode !== null)
+          throw new Error('Desktop deferred to a file holder before installer handoff.')
+      } finally {
+        await terminateProcessTree(holder)
+      }
+    }
 
     if (coldLaunch) {
       phase = 'background-extraction'
@@ -1022,41 +986,6 @@ const applyWithOccupancyRecheck = async (invoke) => {
     throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
 }
 
-const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked }) => {
-  const lock = await acquireLock()
-  const observations = []
-  const command = async (action) => {
-    const started = Date.now()
-    const status = await withTimeout(invoke(action), `blocked update ${action}`, 30_000)
-    observations.push({
-      action,
-      elapsedMs: Date.now() - started,
-      status: summarizeUpdateStatus(status)
-    })
-    return status
-  }
-  const assertBlocked = (status) => {
-    if (
-      status.state !== 'ready' ||
-      status.reason !== 'installation-busy' ||
-      status.recovery?.detail !== 'foreign-process' ||
-      !status.recovery.blockingProcesses?.some((process) => process.pid === lock.pid)
-    ) {
-      throw new Error(`External file holder was not reported: ${JSON.stringify(status)}`)
-    }
-  }
-  try {
-    assertBlocked(await command('apply'))
-    assertBlocked(await command('recheck'))
-    await onBlocked?.()
-  } finally {
-    await lock.release()
-  }
-  await waitForInstallRetry(command)
-  console.log(`External process recovery: ${JSON.stringify(observations)}`)
-  return observations
-}
-
 const assertDifferentialObservation = (observation) => {
   if (
     observation.feedRequests < 1 ||
@@ -1141,6 +1070,17 @@ const main = async () => {
       legacyConfigRoots
     })
     installed = true
+    let lockedUpgrade
+    if (options.foreignProcess || options.coldLaunch) {
+      await drillLockedUpgrade({ installer: currentInstaller, installDirectory, env })
+      await launchAndProbe({
+        installDirectory,
+        expectedVersion: previousVersion,
+        env,
+        legacyConfigRoots
+      })
+      lockedUpgrade = { restoredVersion: previousVersion, ready: true }
+    }
     await profileGuard.verifyCycle('previous', previousConfigRoot)
     const ownedAgentFixture = options.ownedProcesses
       ? await prepareOwnedAgentFixture({
@@ -1201,6 +1141,7 @@ const main = async () => {
         previousVersion,
         currentVersion,
         installerBytes,
+        ...(lockedUpgrade ? { lockedUpgrade } : {}),
         ...assetServer.metrics,
         versionedFeed: true,
         previousInstallerCacheVerified: true,
@@ -1226,53 +1167,7 @@ const main = async () => {
       coldLaunch: options.coldLaunch,
       ownedAgentFixture,
       windowsRecovery: options.windowsRecovery,
-      notebook: options.notebook,
-      ...(options.foreignProcess
-        ? {
-            beforeApply: async ({ invoke, page }) => {
-              observation.foreignProcessRecovery = await certifyForeignProcessRecovery({
-                invoke,
-                acquireLock: async () => {
-                  const { child } = await launchUninstallerLockHolder(
-                    installDirectory,
-                    env,
-                    undefined,
-                    undefined,
-                    undefined,
-                    'Read'
-                  )
-                  return { pid: child.pid, release: () => terminateProcessTree(child) }
-                },
-                onBlocked: async () => {
-                  const dialog = page.getByTestId('runtime-update-dialog')
-                  await expect(dialog).toContainText('Another app is using Open-Science files')
-                  await expect(dialog).toContainText('Quit ')
-                  await expect(dialog).toContainText('then recheck.')
-                  await expect(
-                    dialog.getByRole('button', { name: 'Cancel', exact: true })
-                  ).toBeEnabled()
-                  await expect(
-                    dialog.getByRole('button', { name: 'Retry', exact: true })
-                  ).toBeEnabled()
-                  await page.screenshot({ path: `${options.output}.blocked.png` })
-                }
-              })
-              if (observation.ownedProcessRecovery) {
-                const { leaderPid, descendantPid } = observation.ownedProcessRecovery
-                for (const pid of [leaderPid, descendantPid]) {
-                  process.kill(pid, 0)
-                  if (
-                    observation.foreignProcessRecovery.some((entry) =>
-                      entry.status.recovery?.blockingProcesses?.some((item) => item.pid === pid)
-                    )
-                  )
-                    throw new Error('An application-owned process was reported as foreign.')
-                }
-              }
-              await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`)
-            }
-          }
-        : {})
+      notebook: options.notebook
     })
 
     const installedExecutable = join(installDirectory, 'open-science.exe')
@@ -1304,48 +1199,14 @@ const main = async () => {
         basename(currentInstaller),
         'ready.json'
       )
-      const { child } = await launchUninstallerLockHolder(
-        installDirectory,
-        env,
-        undefined,
-        undefined,
-        undefined,
-        'Read'
-      )
-      try {
-        const heldStart = performance.now()
-        successor.shortcutOccupancyScans = {
-          held: await probeInstalledShortcut(installDirectory, env, previousVersion)
-        }
-        successor.shortcutOccupancyScans.stillHeld = await probeInstalledShortcut(
-          installDirectory,
-          env,
-          previousVersion
-        )
-        if (
-          !successor.shortcutOccupancyScans.held.length ||
-          (performance.now() - heldStart < shortcutBlockerCacheMs &&
-            successor.shortcutOccupancyScans.stillHeld.length)
-        )
-          throw new Error(
-            'Expected one initial occupancy check and no rescan of the same live holder.'
-          )
-      } finally {
-        await terminateProcessTree(child)
-      }
-      successor.shortcutOccupancyScans.released = await probeInstalledShortcut(
-        installDirectory,
-        env,
-        currentVersion,
-        { previousVersion, holderPid: child.pid, waitForRecheck: waitForShortcutRecheck }
-      )
-      if (!successor.shortcutOccupancyScans.released.length)
-        throw new Error('The update must recheck occupancy after the holder exits.')
+      const shortcut = await launchInstalledShortcut(installDirectory, env, currentVersion)
+      if (shortcut.current !== currentVersion)
+        throw new Error('Unexpected prepared update handoff: ' + JSON.stringify(shortcut))
       successor.nextDeltaBasisSha512 = await verifyCachedInstaller(
         currentInstaller,
         cachedInstaller
       )
-      successor.shortcutVersions = [previousVersion, currentVersion]
+      successor.shortcutVersions = [shortcut.current]
       const remaining = await readdir(prepared)
       if (remaining.length !== 1 || remaining[0] !== basename(nextPreparation))
         throw new Error('Expected only the future preparation to survive the upgrade.')
@@ -1460,13 +1321,11 @@ if (invokedAsScript) {
 }
 
 export {
-  certifyShortcutVersion,
   applyWithOccupancyRecheck,
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   buildWindowsUninstallHelper,
   classifyUpdaterDownloadStatus,
-  certifyForeignProcessRecovery,
   invokeWebRpc,
   inspectUpdaterSuccessor,
   redactPackagedAppOutput,
