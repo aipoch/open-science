@@ -2,6 +2,7 @@ import { RENDERER_CONTRACT_CATALOG } from '../shared/renderer-contract-catalog'
 import {
   ApplicationCommandError,
   isSessionReadChannel,
+  isAcpSessionAdmissionChannel,
   toApplicationCommandErrorEnvelope,
   unwrapApplicationCommandOutcome
 } from '../shared/application-command-contract'
@@ -161,9 +162,10 @@ export const createElectronRendererContractAdapter = (
     if (encodedArgs === null) return null as Result
     const result = await port.invoke(channel, ...encodedArgs)
     const sessionRead = isSessionReadChannel(channel)
+    const acpAdmission = isAcpSessionAdmissionChannel(channel)
     try {
       if (
-        sessionRead &&
+        (sessionRead || acpAdmission) &&
         result &&
         typeof result === 'object' &&
         'ok' in result &&
@@ -177,6 +179,7 @@ export const createElectronRendererContractAdapter = (
       if (
         error instanceof ApplicationCommandError &&
         (sessionRead ||
+          acpAdmission ||
           publicPath === 'settings.getSettings' ||
           publicPath === 'sessions.rename' ||
           publicPath === 'sessions.setPinned' ||

@@ -83,6 +83,7 @@ vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
     sessionCleanups: {},
     actionError: null,
+    clearActionError: vi.fn(),
     pendingPermissions: [],
     deleteSession,
     sendMessage: runtime.sendMessage,

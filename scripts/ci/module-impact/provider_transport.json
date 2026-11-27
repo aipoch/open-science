@@ -9,6 +9,7 @@
     "src/main/settings/codex-transport-fallback-log.test.ts",
     "src/main/settings/codex-transport-fallback-log.ts",
     "src/main/settings/provider-failure-observation.ts",
+    "src/main/settings/provider-http-access.ts",
     "src/main/settings/provider-loopback-http-host.architecture.test.ts",
     "src/main/settings/provider-loopback-http-host.test.ts",
     "src/main/settings/provider-loopback-http-host.ts",
@@ -22,6 +23,7 @@
     "src/main/settings/codebuddy-skill-selector-transport.ts",
     "src/main/settings/codex-transport-fallback-log.ts",
     "src/main/settings/provider-failure-observation.ts",
+    "src/main/settings/provider-http-access.ts",
     "src/main/settings/provider-loopback-http-host.ts",
     "src/main/settings/skill-selection-contract.ts",
     "src/main/settings/skill-selector-routing.ts"
@@ -813,5 +815,6 @@
   },
   "consumerModules": ["artifact_provenance", "reviewer_orchestrator", "settings_service_facade"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Shared HTTP authorization adds a transport policy source beyond the reviewed provider bridge boundary. Run the full suite until the expanded transport boundary is reviewed."
 }

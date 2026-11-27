@@ -3,7 +3,11 @@ export {
   isSecureProviderUrl,
   isLoopbackProviderBaseUrl
 } from './transport/url-security'
-export { fetchProviderRequest, withProviderRequestPolicy } from './transport/request'
+export {
+  fetchProviderRequest,
+  withProviderRequestPolicy,
+  type ProviderRequestInit
+} from './transport/request'
 export {
   cloudflareGatewayRequestPolicy,
   foundryRequestPolicy,

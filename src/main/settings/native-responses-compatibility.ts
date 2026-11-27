@@ -1,3 +1,4 @@
+import { resolveProviderHttpAccess } from './provider-http-access'
 import {
   prepareNativeResponsesRequest,
   NativeResponsesRequestError,
@@ -67,6 +68,8 @@ type JsonObject = Record<string, any>
 
 type NativeResponsesCompatibilityTarget = {
   onProviderFailure?: ProviderFailureObserver
+  allowInsecureHttp?: boolean
+  isInsecureHttpAllowed?: (url: string) => Promise<boolean>
   baseUrl: string
   key?: string
   resolveKey?: (forceRefresh?: boolean) => Promise<string>
@@ -703,7 +706,9 @@ export class NativeResponsesCompatibilityProxy {
     try {
       const resolvedKey = this.target.resolveKey ? await this.target.resolveKey() : this.target.key
       const url = responsesUrl(this.target.baseUrl)
+      const allowInsecureHttp = await resolveProviderHttpAccess(this.target, url)
       const response = await fetchProviderRequest(this.fetchImpl, url, {
+        allowInsecureHttp,
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -994,6 +999,8 @@ export class NativeResponsesCompatibilityProxy {
         toolLessScoped
       })
       phase = 'upstream-fetch'
+      const upstreamUrl = responsesUrl(target.baseUrl)
+      const allowInsecureHttp = await resolveProviderHttpAccess(target, upstreamUrl)
       const replay = this.deterministicErrors.get(replayKey)
       if (replay) {
         phase = 'forward-response'
@@ -1013,7 +1020,8 @@ export class NativeResponsesCompatibilityProxy {
       )
       const providerRequestStartedAt = Date.now()
       const fetchUpstream = withProviderConnectionMarker(this.fetchImpl, response)
-      let upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
+      let upstream = await fetchProviderRequest(fetchUpstream, upstreamUrl, {
+        allowInsecureHttp,
         method: 'POST',
         headers: headersToForward,
         body: upstreamRequestBody,
@@ -1021,7 +1029,9 @@ export class NativeResponsesCompatibilityProxy {
       })
       if (upstream.status === 401 && target.resolveKey) {
         const refreshedKey = await target.resolveKey(true)
-        upstream = await fetchProviderRequest(fetchUpstream, responsesUrl(target.baseUrl), {
+        const retryAllowInsecureHttp = await resolveProviderHttpAccess(target, upstreamUrl)
+        upstream = await fetchProviderRequest(fetchUpstream, upstreamUrl, {
+          allowInsecureHttp: retryAllowInsecureHttp,
           method: 'POST',
           headers: upstreamHeaders(request, refreshedKey),
           body: upstreamRequestBody,

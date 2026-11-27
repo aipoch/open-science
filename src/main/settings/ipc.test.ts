@@ -584,17 +584,19 @@ describe('settings IPC handlers', () => {
     await expect(
       invoke('settings:save-validated-provider', { id: 'p1', type: 'custom', name: 'G' })
     ).resolves.toMatchObject({ providerId: 'p1' })
-    expect(service.saveValidatedProvider).toHaveBeenCalledWith({
-      id: 'p1',
-      type: 'custom',
-      name: 'G'
-    })
+    expect(service.saveValidatedProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'p1', type: 'custom', name: 'G' })
+    )
 
     await invoke('settings:delete-provider', { id: 'p1', scenarioModelHandling: 'inherit' })
     expect(service.deleteProvider).toHaveBeenCalledWith('p1', 'inherit')
 
-    await invoke('settings:validate-provider', { providerId: 'p1' })
-    expect(service.validateProvider).toHaveBeenCalledWith({ providerId: 'p1' })
+    await expect(invoke('settings:validate-provider', { providerId: 'p1' })).resolves.toMatchObject(
+      { ok: true }
+    )
+    expect(service.validateProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ providerId: 'p1' })
+    )
 
     await invoke('settings:cancel-codex-login')
     expect(service.cancelCodexLogin).toHaveBeenCalledOnce()

@@ -16,6 +16,7 @@ export const mainlineGroups = {
 }
 const specGroups = {
   'e2e/electron-foundation.spec.ts': ['projects', 'notebook'],
+  'e2e/custom-provider-http.spec.ts': ['conversation'],
   'e2e/workspace-conversation.spec.ts': ['conversation'],
   'e2e/workspace-files.spec.ts': ['files'],
   'e2e/windows-window-system.spec.ts': ['windows']

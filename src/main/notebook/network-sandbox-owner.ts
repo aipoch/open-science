@@ -812,7 +812,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           if (policySignal.aborted) return false
           if (liveSettings.mode === 'strict')
             return strictNetworkRuleMatches(
-              liveSettings.strictWhitelist ?? [],
+              buildNotebookNetworkPolicy(liveSettings).strictWhitelist ?? [],
               request.host,
               request.port ?? 443,
               request.protocol ?? 'https'

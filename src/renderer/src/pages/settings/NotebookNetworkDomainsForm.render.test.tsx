@@ -490,6 +490,82 @@ it('preserves the form on save failure without exposing backend details', async 
   expect(container.textContent).toContain('Could not save network rules.')
   expect(container.textContent).not.toContain('secret backend path')
 })
+it.each([
+  ['b.example', 'This address is already in the list.'],
+  ['*.example.org', 'Enter a valid hostname or IP and a port from 1 to 65535.']
+])('preserves all shared rules when editing A to %s', async (target, message) => {
+  const trustedPrivateDestinations = ['a.example', 'b.example', 'c.example'].map((hostname) => ({
+    hostname,
+    sharedWithAgent: true as const,
+    protocol: 'http' as const,
+    port: 8080,
+    approvedAddresses: []
+  }))
+  useSettingsStore.setState({
+    notebookNetwork: {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      mode: 'strict',
+      strictWhitelist: [],
+      trustedPrivateDestinations
+    }
+  })
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => button('Edit').click())
+  expect(hostInput().value).toBe('a.example')
+  await typeInput(hostInput(), target)
+  await act(async () => button('Confirm').click())
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain(message)
+  expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
+  expect(useSettingsStore.getState().notebookNetwork.trustedPrivateDestinations).toEqual(
+    trustedPrivateDestinations
+  )
+  expect(container.querySelector('form [aria-label="Group"]')).toBeNull()
+})
+
+const selectOption = async (label: string, value: string): Promise<void> => {
+  const trigger = container.querySelector<HTMLButtonElement>(
+    `[role="combobox"][aria-label="${label}"]`
+  )!
+  await act(async () =>
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+  )
+  const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (item) => item.textContent === value
+  )!
+  await act(async () => option.click())
+}
+
+it('keeps a relaxed-only HTTPS exception out of the strict whitelist after a shared HTTP edit', async () => {
+  const rule = {
+    hostname: '192.168.1.20',
+    port: 8080,
+    protocol: 'http' as const,
+    sharedWithAgent: true as const,
+    approvedAddresses: []
+  }
+  useSettingsStore.setState({
+    notebookNetwork: {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      mode: 'relaxed',
+      strictWhitelist: [],
+      trustedPrivateDestinations: [rule]
+    }
+  })
+  await act(async () => root.render(<NotebookNetworkDomainsForm />))
+  await act(async () => button('Edit').click())
+  await selectOption('Network protocol', 'HTTPS')
+  await act(async () => button('Confirm').click())
+  await act(async () => modeRadio('Strict').click())
+  await act(async () => button('Switch to Strict mode').click())
+  const saved = useSettingsStore.getState().notebookNetwork
+  expect(saved.mode).toBe('strict')
+  expect(saved.strictWhitelist).toEqual([])
+  expect(saved.trustedPrivateDestinations).toEqual([
+    expect.objectContaining({ hostname: rule.hostname, protocol: 'https' })
+  ])
+  expect(container.querySelector('code')?.textContent ?? '').not.toContain(rule.hostname)
+})
+
 it('creates a logical group and a manual strict rule without an origin field', async () => {
   useSettingsStore.setState({
     notebookNetwork: {
@@ -502,18 +578,6 @@ it('creates a logical group and a manual strict rule without an origin field', a
   await act(async () => root.render(<NotebookNetworkDomainsForm />))
   await act(async () => button('Add rule').click())
   await typeInput(hostInput(), '*.example.org')
-  const selectOption = async (label: string, value: string): Promise<void> => {
-    const trigger = container.querySelector<HTMLButtonElement>(
-      `[role="combobox"][aria-label="${label}"]`
-    )!
-    await act(async () =>
-      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-    )
-    const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      (item) => item.textContent === value
-    )!
-    await act(async () => option.click())
-  }
   await selectOption('Network protocol', 'HTTP')
   await selectOption('Group', 'New group…')
   await typeInput(

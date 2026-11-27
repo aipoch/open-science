@@ -5,12 +5,14 @@ import {
   OPEN_SCIENCE_DOMAIN_GROUP_IDS,
   OPEN_SCIENCE_DOMAIN_GROUPS,
   formatNetworkHostname,
+  trustedDestinationId,
   requiresNetworkException,
   normalizeNetworkHostname,
   type OpenScienceDomainGroupId,
   type TrustedPrivateDestination,
   type NotebookNetworkSettings,
-  type NotebookNetworkPolicy
+  type NotebookNetworkPolicy,
+  type NotebookStrictWhitelistEntry
 } from './notebook-network-settings'
 export { formatNetworkHostname, normalizeNetworkHostname } from './notebook-network-settings'
 export {
@@ -301,20 +303,60 @@ const buildLinkPreviewDomainPolicy = (settings: NotebookNetworkSettings): Notebo
     deniedDomainReasons: {}
   }
 }
+export const effectiveNotebookStrictWhitelist = (
+  settings: NotebookNetworkSettings
+): NotebookStrictWhitelistEntry[] => {
+  const strictRules = settings.strictWhitelist ?? []
+  const sharedRules = (settings.trustedPrivateDestinations ?? [])
+    .filter((entry) => entry.sharedWithAgent && !entry.managedGrantId && entry.protocol === 'http')
+    .map((entry) => {
+      const duplicate = strictRules.find(
+        (rule) =>
+          rule.protocol === entry.protocol &&
+          rule.port === entry.port &&
+          rule.hostnamePattern === entry.hostname
+      )
+      return {
+        hostnamePattern: entry.hostname,
+        port: entry.port,
+        protocol: entry.protocol ?? ('https' as const),
+        id: trustedDestinationId(entry),
+        origin: 'manual' as const,
+        ...(duplicate?.groupId ? { groupId: duplicate.groupId } : {})
+      }
+    })
+  return [
+    ...strictRules.filter(
+      (rule) =>
+        !sharedRules.some(
+          (entry) =>
+            rule.protocol === entry.protocol &&
+            rule.port === entry.port &&
+            rule.hostnamePattern === entry.hostnamePattern
+        )
+    ),
+    ...sharedRules
+  ]
+}
+
 // Notebook HTTPS admission is independent from link-preview and icon consent.
 export const buildNotebookNetworkPolicy = (
   settings: NotebookNetworkSettings
-): NotebookNetworkPolicy => ({
-  mode: settings.mode ?? 'relaxed',
-  ...(settings.mode === 'strict' ? { strictWhitelist: settings.strictWhitelist ?? [] } : {}),
-  ...(settings.mode !== 'strict' && settings.trustedPrivateDestinations?.length
-    ? { trustedPrivateDestinations: settings.trustedPrivateDestinations }
-    : {}),
-  allowedDomains: [],
-  askDomains: [],
-  deniedDomains: [],
-  deniedDomainReasons: {}
-})
+): NotebookNetworkPolicy => {
+  return {
+    mode: settings.mode ?? 'relaxed',
+    ...(settings.mode === 'strict'
+      ? { strictWhitelist: effectiveNotebookStrictWhitelist(settings) }
+      : {}),
+    ...(settings.mode !== 'strict' && settings.trustedPrivateDestinations?.length
+      ? { trustedPrivateDestinations: settings.trustedPrivateDestinations }
+      : {}),
+    allowedDomains: [],
+    askDomains: [],
+    deniedDomains: [],
+    deniedDomainReasons: {}
+  }
+}
 
 // Shape validation only. Trusted entries are explicit protocol/host exceptions;
 // runtime access does not depend on a DNS address snapshot.
@@ -354,6 +396,9 @@ export const normalizeTrustedPrivateDestinations = (
       hostname: host.hostname,
       port,
       ...(protocol !== undefined ? { protocol } : {}),
+      ...(item.sharedWithAgent === true && protocol === 'http' && !hasManagedId
+        ? { sharedWithAgent: true as const }
+        : {}),
       approvedAddresses: uniqueSorted(approvedAddresses),
       ...(hasManagedId ? { managedGrantId, source: 'global-destination-grant' as const } : {})
     })

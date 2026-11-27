@@ -340,6 +340,7 @@ const WorkspacePage = ({
   const runtime = useWorkspaceAgentRuntime()
   const {
     actionError,
+    clearActionError,
     pendingPermissions,
     permissionProfiles,
     permissionGrants,
@@ -1207,6 +1208,8 @@ const WorkspacePage = ({
     if (!isSessionPersistenceReady) return
 
     // The draft effect saves the outgoing doc/attachments and restores the new-conversation state.
+    clearActionError()
+    sessionController.actions.clearExportError()
     setAttachmentError(null)
     setNewConversationPermissionProfile(defaultPermissionProfile)
     setNewConversationAutoReviewEnabled(false)
@@ -1219,6 +1222,7 @@ const WorkspacePage = ({
     sessionController.actions.resetNewConversationSpecialist()
     clearSelection()
   }, [
+    clearActionError,
     clearSelection,
     defaultPermissionProfile,
     isSessionPersistenceReady,
@@ -1983,6 +1987,10 @@ const WorkspacePage = ({
                       ({ sessionId }) => sessionId === activeSession?.id
                     ),
                     actionError: visibleActionError,
+                    actionErrorCode:
+                      !activeSession && visibleActionError === actionError
+                        ? runtime.actionErrorCode
+                        : undefined,
                     authenticationRecovery,
                     sideChatDisabledReason,
                     sessionImport: {

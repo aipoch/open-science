@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  ApplicationCommandError,
+  MODEL_HTTP_DESTINATION_NOT_ALLOWED
+} from '../../../../shared/application-command-contract'
 import { sanitizeSessionConversationCommands } from '../../../../shared/session-conversation-command'
 import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
 import {
@@ -536,6 +540,27 @@ describe('Stop before an existing Session prompt reaches Main', () => {
     expect(agent.sendPrompt.mock.calls[0]?.at(-1)).toEqual(notebookSubmission)
     expect(main.read()?.conversationGraph?.messages.at(-1)?.content).toBe(input.text)
     expect(JSON.stringify(main.read())).not.toContain('notebookSubmission')
+  })
+
+  it('preserves a model HTTP denial when a fresh Notebook submission is rejected', async () => {
+    const { agent } = await existing()
+    const notebookSubmission = { refusalId: 'refusal', sessionId: input.sessionId }
+    agent.sendPrompt.mockRejectedValueOnce(
+      new ApplicationCommandError(MODEL_HTTP_DESTINATION_NOT_ALLOWED, 'Destination blocked')
+    )
+
+    const result = await sendWorkspaceMessage(
+      agent,
+      { ...input, notebookSubmission },
+      { flushPersistence: saveCurrent, awaitPromptAdmission: true }
+    )
+
+    expect(result).toBeUndefined()
+    expect(agent.sendPrompt.mock.calls[0]?.at(-1)).toEqual(notebookSubmission)
+    expect(useWorkspaceOperationErrors.getState().failures[input.sessionId]).toMatchObject({
+      reason: 'configuration/model-http-destination-not-allowed',
+      diagnostics: { code: MODEL_HTTP_DESTINATION_NOT_ALLOWED }
+    })
   })
 
   it.each(['prepare', 'flush'] as const)(

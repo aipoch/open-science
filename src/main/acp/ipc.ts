@@ -1,3 +1,4 @@
+import { acpSessionAdmissionIpcResult } from '../../shared/application-command-contract'
 import { app } from 'electron'
 
 import {
@@ -68,11 +69,15 @@ const registerAcpIpcHandlerSet = (
   )
   ipcMainHandle('acp:disconnect', () => stateCommand(runtime.disconnect()))
   ipcMainHandle('acp:create-session', (_event, request: AcpCreateSessionRequest) =>
-    withAgentAuthenticationRecovery(() => workflows.createSession(request))
+    acpSessionAdmissionIpcResult(() =>
+      withAgentAuthenticationRecovery(() => workflows.createSession(request))
+    )
   )
   ipcMainHandle('acp:resume-session', async (_event, request: AcpResumeSessionRequest) =>
-    withAgentAuthenticationRecovery(async () =>
-      workflows.resumeSession(await withDurableMemoryPreference(request, resolveMemoryEnabled))
+    acpSessionAdmissionIpcResult(() =>
+      withAgentAuthenticationRecovery(async () =>
+        workflows.resumeSession(await withDurableMemoryPreference(request, resolveMemoryEnabled))
+      )
     )
   )
   ipcMainHandle(
