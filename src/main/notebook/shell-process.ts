@@ -3,6 +3,7 @@ import { releaseNotebookResources, type NotebookOwnedResource } from './owned-re
 import { NotebookExecutionAdmissionError } from './execution-admission'
 import { ExecutionDeadline } from './execution-deadline'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
@@ -31,10 +32,16 @@ import {
   assertProcessTreeSupport,
   capturePosixProcessTreeIdentity,
   createPosixProcessTreeOwnership,
+  registerProcessTreeOwnership,
   terminateProcessTree,
   trackOwnedPosixProcessTree,
   type ProcessTreeKillResult
 } from '../process-tree'
+import {
+  hasVerifiedWindowsProcessTreeMember,
+  reapWindowsOwnedJob,
+  spawnWindowsOwnedProcess
+} from '../process-tree-windows'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { wsl2BashPreviewStatus } from '../wsl/wsl2-preview-gate'
 import {
@@ -747,6 +754,23 @@ const runShellCommand = (
       hosted: platform === 'win32' && Boolean(sandboxed?.confirmProcessTreeTermination)
     })
     const ownershipHost = launchOwnership?.host
+    const requestNativeTermination = sandboxed?.requestProcessTreeTermination
+    const confirmNativeTermination = sandboxed?.confirmProcessTreeTermination
+    const windowsJobName =
+      platform === 'win32' &&
+      process.platform === 'win32' &&
+      options.onProcess &&
+      runtimeBinding.kind !== 'wsl2-bash' &&
+      requestNativeTermination &&
+      confirmNativeTermination
+        ? `Local\\OpenScience.Notebook.${randomUUID()}`
+        : undefined
+    let windowsJobReaped = false
+    const reapShellJob = async (): Promise<ProcessTreeKillResult> => {
+      if (windowsJobName && (await reapWindowsOwnedJob(windowsJobName).catch(() => false)))
+        windowsJobReaped = true
+      return { reaped: windowsJobReaped }
+    }
     // A fast macOS command can exit before native identity capture. Keep the detached leader alive
     // until it is tracked, using a separate pipe so persistent interpreters retain their stdin.
     const gateLaunch = platform === 'darwin' && process.platform === 'darwin'
@@ -772,29 +796,40 @@ const runShellCommand = (
             ...(sandboxed?.args ?? invocation.args)
           ]
         : (sandboxed?.args ?? invocation.args)
-      child = spawn(
-        gateLaunch ? '/bin/sh' : executable,
-        gateLaunch
-          ? [
-              '-c',
-              'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
-              'open-science-shell-start',
-              executable,
-              ...args
-            ]
-          : args,
-        {
-          cwd: options.cwd,
-          env: ownershipHost
-            ? { ...processTreeOwnership.env, ...nodeRuntimeEnvironment() }
-            : processTreeOwnership.env,
-          windowsHide: true,
-          stdio: gateLaunch ? ['pipe', 'pipe', 'pipe', 'pipe'] : 'pipe',
-          // On POSIX this makes the shell the leader of a private process group/session. Keep its handle
-          // and stdio referenced (no unref), preserving normal completion while enabling safe -PGID kills.
-          detached: platform !== 'win32'
-        }
-      )
+      const spawnOptions = {
+        cwd: options.cwd,
+        env: ownershipHost
+          ? { ...processTreeOwnership.env, ...nodeRuntimeEnvironment() }
+          : processTreeOwnership.env,
+        windowsHide: true
+      }
+      if (windowsJobName) {
+        // The outer Job owns the entire launch even if the inner sandbox supervisor exits.
+        child = spawnWindowsOwnedProcess(windowsJobName, executable, args, {
+          ...spawnOptions,
+          stdio: 'pipe'
+        })
+        registerProcessTreeOwnership(child, { terminate: reapShellJob, settled: () => {} })
+      } else {
+        child = spawn(
+          gateLaunch ? '/bin/sh' : executable,
+          gateLaunch
+            ? [
+                '-c',
+                'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; exec "$@"',
+                'open-science-shell-start',
+                executable,
+                ...args
+              ]
+            : args,
+          {
+            ...spawnOptions,
+            stdio: gateLaunch ? ['pipe', 'pipe', 'pipe', 'pipe'] : 'pipe',
+            // POSIX uses a private process group and keeps its handle and streams referenced.
+            detached: platform !== 'win32'
+          }
+        )
+      }
     } catch (error) {
       launchOwnership?.abort()
       spawnAdmission?.notStarted()
@@ -913,22 +948,19 @@ const runShellCommand = (
       let exited = false
       let failed = false
       let nativeTreeReaped = false
-      const requestNativeTermination = sandboxed?.requestProcessTreeTermination
-      const confirmNativeTermination = sandboxed?.confirmProcessTreeTermination
       const windowsProcessControl: WindowsShellProcessControl | undefined =
-        platform === 'win32' &&
-        runtimeBinding.kind !== 'wsl2-bash' &&
-        requestNativeTermination &&
-        confirmNativeTermination
+        windowsJobName && requestNativeTermination
           ? {
-              // Keep the original supervisor handle and its launch-specific Job request together.
               hasLiveProcess: () =>
                 !nativeTreeReaped &&
-                child.pid !== undefined &&
-                child.exitCode === null &&
-                child.signalCode === null,
+                !windowsJobReaped &&
+                hasVerifiedWindowsProcessTreeMember(child),
+              hasReapedProcessTree: () => nativeTreeReaped || windowsJobReaped,
               forceClose: async () => {
                 if (await requestNativeTermination().catch(() => false)) nativeTreeReaped = true
+                // A Job handle can prove process exit after a supervisor failure. Keep sandbox
+                // cleanup pending until the sandbox supplies its own terminal proof.
+                else if (hasVerifiedWindowsProcessTreeMember(child)) await reapShellJob()
               }
             }
           : undefined

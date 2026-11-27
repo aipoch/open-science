@@ -26,6 +26,7 @@ import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-p
 
 export type WindowsShellProcessControl = {
   hasLiveProcess: () => boolean
+  hasReapedProcessTree: () => boolean
   forceClose: () => Promise<void>
 }
 
@@ -197,7 +198,7 @@ export class ShellCellSession {
     )
   }
 
-  async shutdown(forceIdentity?: object): Promise<{ reaped: boolean }> {
+  async shutdown(forceIdentity?: object): Promise<{ reaped: boolean; processesTerminated?: true }> {
     this.closed = true
     this.lifetime.abort()
     this.executionPolicy?.policy.dispose?.()
@@ -212,7 +213,12 @@ export class ShellCellSession {
       }
       const reaped = await this.verifyCleanup()
       this.cleanupAttemptFailed = !reaped
-      return { reaped }
+      return {
+        reaped,
+        ...(!reaped && this.windowsProcessControl?.hasReapedProcessTree()
+          ? { processesTerminated: true }
+          : {})
+      }
     } catch (error) {
       this.cleanupAttemptFailed = true
       throw error

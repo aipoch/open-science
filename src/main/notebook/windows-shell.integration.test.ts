@@ -29,6 +29,7 @@ import { NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS } from '../../shared/notebook'
 import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
 import { createRootNotebookLane } from './lane-identity'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { windowsProcessStartTicks } from '../windows-process-query'
 
 configureTestRuntimeMetadata()
 
@@ -190,6 +191,75 @@ it.runIf(process.platform === 'win32')(
       await terminateJob?.()
       await adapter.shutdown()
       terminateTree.mockRestore()
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  },
+  POWERSHELL_TEST_TIMEOUT_MS
+)
+
+it.runIf(process.platform === 'win32')(
+  'can force close a surviving Windows Shell descendant after the supervisor exits',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-supervisor-exited-'))
+    const pidPath = join(root, 'descendant.pid')
+    const stopPath = join(root, 'stop')
+    const descendant = `
+      const fs = require('node:fs');
+      fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+      setInterval(() => { if (fs.existsSync(${JSON.stringify(stopPath)})) process.exit(0) }, 25);
+      setTimeout(() => process.exit(0), 15000).unref();`
+    const supervisor = `
+      const child = require('node:child_process').spawn(process.execPath,
+        ['-e', ${JSON.stringify(descendant)}], { detached: true, stdio: 'ignore' });
+      child.unref();`
+    const registry = new ShellProcessOwnershipRegistry(root)
+    const requestTermination = vi.fn(async () => false)
+    // Model a supervisor exit without its terminal proof, leaving a descendant in the outer Job.
+    const adapter = new NotebookShellProcessAdapter(
+      'win32',
+      {
+        wrap: async () => ({
+          executable: process.execPath,
+          args: ['-e', supervisor],
+          env: process.env,
+          confirmProcessTreeTermination: async () => false,
+          requestProcessTreeTermination: requestTermination,
+          annotateStderr: (stderr) => stderr,
+          cleanup: async (_reason, outcome) => ({
+            processesTerminated: outcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: false
+          })
+        })
+      },
+      registry
+    )
+    let pid: number | undefined
+    let birth: string | undefined
+    try {
+      await expect(adapter.execute(shellRequest(root))).resolves.toMatchObject({
+        errorCode: 'shell-cleanup-incomplete'
+      })
+      await vi.waitFor(async () => expect(await readFile(pidPath, 'utf8')).toMatch(/^\d+$/), {
+        timeout: 10_000
+      })
+      pid = Number(await readFile(pidPath, 'utf8'))
+      birth = windowsProcessStartTicks(pid)
+      expect(birth).toBeDefined()
+      const [resource] = adapter.resources()
+      expect(resource.hasLiveProcess?.()).toBe(true)
+      await expect(resource.release(true)).resolves.toMatchObject({
+        reaped: false,
+        processesTerminated: true
+      })
+      expect(requestTermination).toHaveBeenCalledOnce()
+      expect(resource.hasLiveProcess?.()).toBe(false)
+      await expect.poll(() => windowsProcessStartTicks(pid!), { timeout: 4_000 }).not.toBe(birth)
+      expect(registry.hasReceipts()).toBe(true)
+    } finally {
+      await writeFile(stopPath, '')
+      if (pid !== undefined && birth)
+        await expect.poll(() => windowsProcessStartTicks(pid!)).not.toBe(birth)
       await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     }
   },
