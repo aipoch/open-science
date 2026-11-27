@@ -20,7 +20,7 @@ import {
   terminateOwnedPosixProcessGroupById,
   type ProcessTreeKillResult
 } from '../process-tree'
-import { windowsProcessCommandLine, windowsProcessIsAlive } from '../windows-process-query'
+import { windowsProcessCommandLine, windowsProcessStartTicks } from '../windows-process-query'
 import {
   hasSystemRestarted,
   isStableBootIdentity,
@@ -287,16 +287,16 @@ const processEvidence = async (
       return undefined
     }
   }
-  if (platform === 'win32') {
-    try {
-      return windowsProcessCommandLine(record.pid)
-    } catch {
-      // Unreadable evidence keeps the startup fence closed; see the caller.
-      return undefined
-    }
-  }
   return capture('ps', ['eww', '-p', String(record.pid), '-o', 'command='])
 }
+
+const matchesProcessEvidence = (
+  record: Readonly<KernelProcessRecord>,
+  evidence: string | undefined
+): boolean =>
+  evidence !== undefined &&
+  (evidence.includes(`${OWNER_TOKEN_ENV}=${record.ownerToken}`) ||
+    (!!record.commandIdentityMarker && evidence.includes(record.commandIdentityMarker)))
 
 const proofFileConfirmsWindowsProcessTreeReaped = (proof: WindowsProcessTreeProof): boolean => {
   try {
@@ -327,90 +327,113 @@ const requestWindowsProcessTreeReap = async (proof: WindowsProcessTreeProof): Pr
   return false
 }
 
+const createWindowsKernelRecovery = (): KernelProcessRecoveryController => {
+  // Carry the verified identity from probe to terminate for this recovery attempt.
+  const verifiedHostStartTicks = new WeakMap<Readonly<KernelProcessRecord>, string>()
+  return {
+    probe: async (record) => {
+      if (record.platform !== 'win32') return 'dead'
+      // New hosts are atomically created inside this exact Job before they can activate a receipt.
+      // Its identity survives the proof publisher; a missing Job proves there are no members left.
+      if (record.windowsJobName) {
+        return (await reapWindowsOwnedJob(record.windowsJobName).catch(() => false))
+          ? 'dead'
+          : 'unknown'
+      }
+      const { pid, windowsProcessTreeProof: proof } = record
+      if (!pid || !proof) return 'unknown'
+      verifiedHostStartTicks.delete(record)
+      try {
+        const startTicks = windowsProcessStartTicks(pid)
+        // Exited intermediate parents disappear from snapshots even if their children survive.
+        if (startTicks === undefined) {
+          return (await requestWindowsProcessTreeReap(proof)) ? 'dead' : 'unknown'
+        }
+        // Legacy receipts lack a recorded creation time. Read it around the ownership check so a
+        // PID recycled during that check cannot supply the verified host's identity.
+        if (
+          !matchesProcessEvidence(record, windowsProcessCommandLine(pid)) ||
+          windowsProcessStartTicks(pid) !== startTicks
+        ) {
+          return 'unknown'
+        }
+        verifiedHostStartTicks.set(record, startTicks)
+        return 'owned'
+      } catch {
+        return 'unknown'
+      }
+    },
+    terminate: async (record) => {
+      const { pid, windowsProcessTreeProof: proof } = record
+      const startTicks = verifiedHostStartTicks.get(record)
+      verifiedHostStartTicks.delete(record)
+      if (
+        !pid ||
+        !proof ||
+        startTicks === undefined ||
+        !(await requestWindowsProcessTreeReap(proof))
+      ) {
+        return { reaped: false }
+      }
+      try {
+        // A missing process or a different creation time proves that the verified host exited.
+        return { reaped: windowsProcessStartTicks(pid) !== startTicks }
+      } catch {
+        return { reaped: false }
+      }
+    }
+  }
+}
+
 const defaultController = (
   platform: NodeJS.Platform,
   currentBootToken: () => string | undefined = readBootToken
-): KernelProcessRecoveryController => ({
-  probe: async (record, checkpoint) => {
-    if (record.platform !== platform) return 'dead'
-    // New hosts are atomically created inside this exact Job before they can activate a receipt.
-    // Its identity survives the proof publisher; a missing Job proves there are no members left.
-    if (record.windowsJobName) {
-      return (await reapWindowsOwnedJob(record.windowsJobName).catch(() => false))
-        ? 'dead'
-        : 'unknown'
-    }
-    if (!record.pid) return 'unknown'
-
-    if (platform !== 'win32') {
-      const bootToken = currentBootToken()
-      if (bootTokenProvesReboot(record.bootToken, bootToken)) return 'dead'
-    }
-    if (platform === 'darwin') {
-      return createDarwinKernelRecovery().probe({ ...record, pid: record.pid }, checkpoint)
-    }
-    let alive: boolean
-    if (platform === 'win32') {
-      // Exited intermediate parents disappear from snapshots even if their children survive.
-      const proof = record.windowsProcessTreeProof
-      if (!proof) return 'unknown'
-      try {
-        alive = windowsProcessIsAlive(record.pid) && pidIsAlive(record.pid)
-      } catch {
-        alive = pidIsAlive(record.pid)
+): KernelProcessRecoveryController => {
+  if (platform === 'win32') return createWindowsKernelRecovery()
+  return {
+    probe: async (record, checkpoint) => {
+      if (record.platform !== platform) return 'dead'
+      if (!record.pid) return 'unknown'
+      if (bootTokenProvesReboot(record.bootToken, currentBootToken())) return 'dead'
+      if (platform === 'darwin') {
+        return createDarwinKernelRecovery().probe({ ...record, pid: record.pid }, checkpoint)
       }
-      if (!alive) return (await requestWindowsProcessTreeReap(proof)) ? 'dead' : 'unknown'
-    } else {
-      alive = pidIsAlive(record.pid)
-    }
-    if (platform !== 'win32') {
-      const groupAlive = isOwnedPosixProcessGroupAlive(record.pid)
-      if (!groupAlive) return 'dead'
+      const alive = pidIsAlive(record.pid)
+      if (!isOwnedPosixProcessGroupAlive(record.pid)) return 'dead'
       // Once the leader exits, its numeric group id is no longer tied to the persisted process
       // identity. A later group can reuse it during the same boot, so retain the fence rather than
       // authorizing a group signal from the number alone.
       if (!alive) return 'unknown'
-    }
 
-    if (record.processStartToken !== undefined) {
-      const current = readProcessStartToken(record.pid)
-      if (current !== undefined && current !== record.processStartToken) return 'reused'
+      if (record.processStartToken !== undefined) {
+        const current = readProcessStartToken(record.pid)
+        if (current !== undefined && current !== record.processStartToken) return 'reused'
+      }
+      return matchesProcessEvidence(record, await processEvidence(record, platform))
+        ? 'owned'
+        : 'unknown'
+    },
+    terminate: (record, checkpoint) => {
+      const pid = record.pid
+      if (!pid) return Promise.resolve({ reaped: false })
+      if (platform === 'darwin') {
+        return checkpoint
+          ? createDarwinKernelRecovery().terminate({ ...record, pid }, checkpoint)
+          : Promise.resolve({ reaped: false })
+      }
+      return terminateOwnedPosixProcessGroupById(
+        pid,
+        undefined,
+        undefined,
+        record.posixBirthToken,
+        {
+          name: OWNER_TOKEN_ENV,
+          value: record.ownerToken
+        }
+      )
     }
-    const evidence = await processEvidence(record, platform)
-    if (evidence?.includes(`${OWNER_TOKEN_ENV}=${record.ownerToken}`)) return 'owned'
-    if (record.commandIdentityMarker && evidence?.includes(record.commandIdentityMarker)) {
-      return 'owned'
-    }
-    // Missing identity evidence is not proof that the PID was reused: ps/CIM output can be
-    // truncated or unavailable under tighter host permissions. Only a start-token mismatch above
-    // proves reuse. Keep the startup fence closed rather than risk clearing or killing an unrelated
-    // process from ambiguous evidence.
-    return 'unknown'
-  },
-  terminate: (record, checkpoint) => {
-    const pid = record.pid
-    if (!pid) return Promise.resolve({ reaped: false })
-    if (platform === 'darwin') {
-      return checkpoint
-        ? createDarwinKernelRecovery().terminate({ ...record, pid }, checkpoint)
-        : Promise.resolve({ reaped: false })
-    }
-    if (platform === 'win32') {
-      const proof = record.windowsProcessTreeProof
-      // The recorded PID can be reused while the legacy supervisor answers the reap request.
-      // Require its workload proof and the outer host's exit before settling the receipt.
-      return proof
-        ? requestWindowsProcessTreeReap(proof).then((reaped) => ({
-            reaped: reaped && !pidIsAlive(pid)
-          }))
-        : Promise.resolve({ reaped: false })
-    }
-    return terminateOwnedPosixProcessGroupById(pid, undefined, undefined, record.posixBirthToken, {
-      name: OWNER_TOKEN_ENV,
-      value: record.ownerToken
-    })
   }
-})
+}
 
 class KernelProcessLifecycleOwner {
   readonly ownerInstanceId: string
