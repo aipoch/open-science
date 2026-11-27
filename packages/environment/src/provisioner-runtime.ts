@@ -22,6 +22,8 @@ export const isChildUnconfirmedError = (error: unknown): boolean =>
 export type EnvironmentChildCleanup = Readonly<{
   identity: object
   startedAt: number
+  /** The original child handle's state, without any claim about its descendants. */
+  hasLiveChild?(): boolean
   processControl?: Readonly<{
     hasLiveProcess(): boolean
     forceClose(): Promise<void>

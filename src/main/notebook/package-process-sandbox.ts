@@ -1,4 +1,3 @@
-import { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   closeSync,
@@ -394,20 +393,16 @@ export const sandboxedPackageSpawn =
       }
       const childCleanup = environmentChildCleanup(error)
       if (childCleanup && error instanceof Error) {
-        const child = childCleanup.identity
+        const hasLiveChild = childCleanup.hasLiveChild
         const requestNativeTermination = sandboxed.requestProcessTreeTermination
         const processControl =
           platform === 'win32' &&
-          child instanceof ChildProcess &&
+          hasLiveChild &&
           requestNativeTermination &&
           sandboxed.confirmProcessTreeTermination
             ? {
                 // The tracked child is the original supervisor; only its Job can answer this request.
-                hasLiveProcess: () =>
-                  !processesTerminated &&
-                  child.pid !== undefined &&
-                  child.exitCode === null &&
-                  child.signalCode === null,
+                hasLiveProcess: () => !processesTerminated && hasLiveChild(),
                 forceClose: async () => {
                   if (!processesTerminated && (await requestNativeTermination().catch(() => false)))
                     processesTerminated = true
