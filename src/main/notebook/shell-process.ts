@@ -7,7 +7,11 @@ import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { augmentedPathEnv } from '../settings/shell-path'
-import { ShellCellSession, ShellCellTimeout } from './shell-cell-session'
+import {
+  ShellCellSession,
+  ShellCellTimeout,
+  type WindowsShellProcessControl
+} from './shell-cell-session'
 import { createWslExecutionMemoryPolicy } from './memory-policy-wsl'
 import type { IdleInterpreter } from './idle-reclamation'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
@@ -619,7 +623,10 @@ const runShellCommand = (
     preparedLaunch?: PreparedShellLaunch
     terminateTree?: (process: ChildProcess) => Promise<ProcessTreeKillResult>
     previewAvailable?: () => boolean
-    onProcess?: (child: ChildProcessWithoutNullStreams) => void
+    onProcess?: (
+      child: ChildProcessWithoutNullStreams,
+      windowsProcessControl?: WindowsShellProcessControl
+    ) => void
     onCleanupRetry?: (retry: () => Promise<boolean>) => void
     configRoot?: string
   }
@@ -905,6 +912,26 @@ const runShellCommand = (
       let cancelled = false
       let exited = false
       let failed = false
+      let nativeTreeReaped = false
+      const requestNativeTermination = sandboxed?.requestProcessTreeTermination
+      const confirmNativeTermination = sandboxed?.confirmProcessTreeTermination
+      const windowsProcessControl: WindowsShellProcessControl | undefined =
+        platform === 'win32' &&
+        runtimeBinding.kind !== 'wsl2-bash' &&
+        requestNativeTermination &&
+        confirmNativeTermination
+          ? {
+              // Keep the original supervisor handle and its launch-specific Job request together.
+              hasLiveProcess: () =>
+                !nativeTreeReaped &&
+                child.pid !== undefined &&
+                child.exitCode === null &&
+                child.signalCode === null,
+              forceClose: async () => {
+                if (await requestNativeTermination().catch(() => false)) nativeTreeReaped = true
+              }
+            }
+          : undefined
 
       const finish = async (
         result: NotebookShellResult,
@@ -934,20 +961,20 @@ const runShellCommand = (
           const processesTerminated =
             nativeProcessState !== undefined
               ? nativeProcessState !== 'termination-unknown'
-              : sandboxed?.confirmProcessTreeTermination
-                ? await sandboxed.confirmProcessTreeTermination().catch(() => false)
+              : confirmNativeTermination
+                ? await confirmNativeTermination().catch(() => false)
                 : processOutcome.processesTerminated
           // Retain the original native owner's one-time proof for late reconciliation. Once
           // verified, receipt removal may retry without consuming that proof or signalling a PID.
-          let nativeTreeReaped = processesTerminated
-          const confirmNativeTermination = sandboxed?.confirmProcessTreeTermination
+          nativeTreeReaped = processesTerminated
           const cleanupOutcome: NotebookSandboxProcessOutcome = withNotebookSandboxProcessState(
             {
               processesTerminated,
               ...(!processesTerminated && confirmNativeTermination
                 ? {
                     confirmTermination: async () => {
-                      nativeTreeReaped ||= await confirmNativeTermination()
+                      if (!nativeTreeReaped && (await confirmNativeTermination()))
+                        nativeTreeReaped = true
                       if (nativeTreeReaped) releaseProcessOwnership?.()
                       return nativeTreeReaped
                     }
@@ -978,9 +1005,14 @@ const runShellCommand = (
               : 'termination-unknown'
           )
           const retryCleanup = async (): Promise<boolean> => {
-            const done = cleanupCompleted(
-              await cleanupSandboxWithRetry(cleanupReason, cleanupOutcome)
-            )
+            const outcome =
+              nativeTreeReaped && !processesTerminated
+                ? withNotebookSandboxProcessState(
+                    { processesTerminated: true },
+                    'started-and-reaped'
+                  )
+                : cleanupOutcome
+            const done = cleanupCompleted(await cleanupSandboxWithRetry(cleanupReason, outcome))
             if (done) releaseProcessOwnership?.()
             return done
           }
@@ -1009,8 +1041,8 @@ const runShellCommand = (
       ): void => {
         // Let the original native supervisor terminate its own Job first. taskkill can kill that
         // supervisor before it publishes the Job-empty proof, which must remain unknown.
-        const nativeTeardown = sandboxed?.requestProcessTreeTermination
-          ? sandboxed.requestProcessTreeTermination().catch(() => false)
+        const nativeTeardown = requestNativeTermination
+          ? requestNativeTermination().catch(() => false)
           : Promise.resolve(false)
         void nativeTeardown.then((nativeReaped) => {
           if (nativeReaped) {
@@ -1258,7 +1290,7 @@ const runShellCommand = (
       }
       if (options.onProcess) {
         timeoutTimer.cancel()
-        options.onProcess(child)
+        options.onProcess(child, windowsProcessControl)
       }
     })
   }

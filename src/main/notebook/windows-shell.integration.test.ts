@@ -130,6 +130,72 @@ const runPowerShell = (command: string, version?: '7.6'): ReturnType<typeof runS
     timeoutMs: POWERSHELL_PROCESS_TIMEOUT_MS
   })
 
+it.runIf(process.platform === 'win32')(
+  'force closes the original Windows Shell through its supervisor after incomplete cleanup',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-force-close-'))
+    const pidPath = join(root, 'shell.pid')
+    const registry = new ShellProcessOwnershipRegistry(root)
+    const sandbox = fixtureSandbox(
+      root,
+      `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+       setTimeout(() => {}, 25000);`
+    )
+    let terminateJob: (() => Promise<boolean>) | undefined
+    const requestTermination = vi.fn(async () => (await terminateJob?.()) ?? false)
+    requestTermination.mockResolvedValueOnce(false)
+    const terminateTree = vi
+      .spyOn(processTree, 'terminateProcessTree')
+      .mockResolvedValueOnce({ reaped: false })
+    const adapter = new NotebookShellProcessAdapter(
+      'win32',
+      {
+        wrap: async (invocation) => {
+          const wrapped = await sandbox.wrap(invocation)
+          terminateJob = wrapped.requestProcessTreeTermination
+          return { ...wrapped, requestProcessTreeTermination: requestTermination }
+        }
+      },
+      registry
+    )
+    const execution = adapter.execute(shellRequest(root))
+    try {
+      await Promise.race([
+        vi.waitFor(async () => expect(await readFile(pidPath, 'utf8')).toMatch(/^\d+$/), {
+          timeout: 10_000
+        }),
+        execution.then((result) => {
+          throw new Error(`Shell exited before the test stopped it: ${result.stderr}`)
+        })
+      ])
+      const [resource] = adapter.resources()
+      await expect(resource.release()).resolves.toMatchObject({ reaped: false })
+      await expect(resource.release()).resolves.toMatchObject({ reaped: false })
+      await expect(execution).resolves.toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
+      expect(requestTermination).toHaveBeenCalledOnce()
+      expect(registry.hasReceipts()).toBe(true)
+      expect(resource.hasLiveProcess?.()).toBe(true)
+
+      const [monitored] = adapter.monitoredProcesses()
+      expect(monitored.status).toBe('cleanup-failed')
+      expect(monitored.hasLiveProcess?.()).toBe(true)
+      await monitored.terminate(true)
+
+      expect(requestTermination).toHaveBeenCalledTimes(2)
+      expect(terminateTree).toHaveBeenCalledOnce()
+      expect(resource.hasLiveProcess?.()).toBe(false)
+      expect(adapter.resources()).toEqual([])
+      expect(registry.hasReceipts()).toBe(false)
+    } finally {
+      await terminateJob?.()
+      await adapter.shutdown()
+      terminateTree.mockRestore()
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  },
+  POWERSHELL_TEST_TIMEOUT_MS
+)
+
 describe.runIf(process.platform === 'win32')(
   'Windows standard execution without protection setup',
   () => {
